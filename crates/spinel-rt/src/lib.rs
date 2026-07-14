@@ -5,8 +5,10 @@
 
 mod arith;
 mod collections;
+mod constants;
 mod cvars;
 mod dispatch;
+mod globals;
 mod handling;
 mod rproc;
 mod signal;
@@ -15,11 +17,13 @@ mod value;
 
 pub use arith::*;
 pub use collections::*;
+pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
     MethodFn, Object, RObj, RubyObject,
 };
 pub use cvars::{cvar_get, cvar_set};
+pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};

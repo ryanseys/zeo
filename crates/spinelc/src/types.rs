@@ -87,9 +87,14 @@ pub fn infer_type_with_locals(
             name,
             args,
             ..
-        } if args.len() == 1 && INT_RESULT_BINARY_OPS.contains(&name.as_str()) => {
+        } if matches!(args.as_slice(), [crate::hir::ArrayElem::Single(_)])
+            && INT_RESULT_BINARY_OPS.contains(&name.as_str()) =>
+        {
+            let crate::hir::ArrayElem::Single(arg) = args[0] else {
+                unreachable!("guarded above")
+            };
             let recv_ty = infer_type_with_locals(compiler, locals, *recv);
-            let arg_ty = infer_type_with_locals(compiler, locals, args[0]);
+            let arg_ty = infer_type_with_locals(compiler, locals, arg);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
                 TyKind::Int
             } else {

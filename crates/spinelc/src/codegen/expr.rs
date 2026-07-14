@@ -11,9 +11,7 @@ use quote::quote;
 use super::call::emit_call;
 use super::collections::{emit_array_lit, emit_hash_lit, emit_range_lit, emit_string_lit};
 use super::ident::safe_ident;
-use super::loops::{
-    emit_break, emit_for, emit_loop, emit_multi_write_lets, emit_next, emit_redo, emit_while,
-};
+use super::loops::{emit_break, emit_for, emit_loop, emit_next, emit_redo, emit_while};
 use super::Ctx;
 use crate::compiler::ClassId;
 use crate::hir::{HirNode, NodeId};
@@ -91,7 +89,14 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(_) => Some("instance-variable"),
         HirNode::ClassVarRead(_) => Some("class variable"),
-        HirNode::ClassRef(_) => Some("constant"),
+        HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..) => Some("constant"),
+        // Same narrowing posture as `IvarRead` just above (classified
+        // whenever it's syntactically a `$foo` read, without tracking
+        // whether it was ever actually assigned -- a documented
+        // approximation of real Ruby, which returns `nil` for a
+        // never-assigned global specifically, unlike every OTHER
+        // classification here).
+        HirNode::GlobalRead(_) => Some("global-variable"),
         // Real Ruby: `defined?(self)` is always `"self"`, everywhere --
         // confirmed via `ruby -e 'puts defined?(self)'` -- unlike every other
         // classification here, this needs no further check at all.
@@ -123,6 +128,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::LocalWrite(..)
         | HirNode::IvarWrite(..)
         | HirNode::ClassVarWrite(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::Seq(_)
         | HirNode::While { .. }
         | HirNode::Loop { .. }
         | HirNode::For { .. }
@@ -307,42 +315,58 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { #slf.#ident.lock().clone() }
         }
         HirNode::IvarWrite(name, value) => {
-            let ident = safe_ident(name);
             let v = emit_expr(cx, *value);
-            let slf = &cx.self_ident;
+            // Boxed unconditionally (unlike a LOCAL's `box_for_local_storage`,
+            // which skips it for `Shadowed` storage): an ivar's own Rust field
+            // is ALWAYS `parking_lot::Mutex<RubyValue>` (see `ruby_class!`'s
+            // generated struct), never an unboxed concrete-class slot, so an
+            // Object-typed RHS (`@other = SomeClass.new`) must always be
+            // boxed here -- confirmed the hard way (a real `rustc` type
+            // mismatch storing one object instance inside another's ivar).
+            let v = box_if_object_typed(cx, *value, v);
             // RHS bound to `__v` BEFORE `.lock()` is ever called -- with
             // `parking_lot::Mutex` (non-reentrant, Part 9), a `#v` expression
             // that itself reads this same ivar would otherwise call `.lock()`
             // while the write guard below is already held, hanging forever
             // instead of RefCell's old clean "already borrowed" panic.
-            quote! { { let __v = #v; *#slf.#ident.lock() = __v.clone(); __v } }
+            let write = emit_ivar_write_stmt(cx, name, quote! { __v.clone() });
+            quote! { { let __v = #v; #write __v } }
         }
         HirNode::ClassVarRead(name) => {
             let owner = cvar_owner_id(cx, name);
             quote! { spinel_rt::cvar_get(#owner, #name) }
         }
         HirNode::ClassVarWrite(name, value) => {
-            let owner = cvar_owner_id(cx, name);
             let v = emit_expr(cx, *value);
-            quote! { { let __v = #v; spinel_rt::cvar_set(#owner, #name, __v.clone()); __v } }
+            // See `IvarWrite`'s docs: cvar storage is likewise always
+            // `RubyValue` (`spinel_rt::cvar_set`'s own signature), never an
+            // unboxed concrete-class slot.
+            let v = box_if_object_typed(cx, *value, v);
+            let write = emit_cvar_write_stmt(cx, name, quote! { __v.clone() });
+            quote! { { let __v = #v; #write __v } }
         }
-        HirNode::ClassRef(_) => {
-            panic!("a ClassRef should only be reached via the Call that invokes it")
+        // A bare constant name -- see `HirNode::ClassRef`'s docs on its dual
+        // reuse (a call receiver is intercepted before this arm ever runs,
+        // in `codegen::call::emit_call`/`emit_splat_call`). Used as a plain
+        // VALUE, it's either a genuine class/module reference (no first-
+        // class `Class`/`Module` runtime value exists -- see the plan's Part
+        // 6 scope-cut -- a clean rejection) or, when `name` isn't actually a
+        // registered class, an ordinary lexically-scoped constant READ.
+        HirNode::ClassRef(name) => {
+            if cx.compiler.class_by_name(name).is_some() {
+                panic!("a bare class/module name used as a value isn't supported yet (spike scope, no first-class Class/Module value exists) -- did you mean to call a class method, e.g. `{name}.foo`?");
+            }
+            emit_const_read(cx, None, name)
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
         HirNode::SuperCall { args } => super::call::emit_super_inline(cx, args),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
-        HirNode::For { var, iterable, body } => emit_for(cx, var, *iterable, body),
+        HirNode::For { target, iterable, body } => emit_for(cx, target, *iterable, body),
         HirNode::Break(v) => emit_break(cx, *v),
         HirNode::Next(v) => emit_next(cx, *v),
         HirNode::Redo => emit_redo(cx),
-        HirNode::MultiWrite {
-            before,
-            splat,
-            after,
-            value,
-        } => {
+        HirNode::MultiWrite { targets, value } => {
             // Sub-expression fallback (rare) -- see `stmt.rs` for the
             // primary, statement-position case, which is what makes the
             // assigned locals visible to LATER statements. Nested in its own
@@ -350,21 +374,40 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // the same simplification `LocalWrite`'s own sub-expression
             // fallback already makes above (real Ruby returns the RHS array
             // here), not a new gap this introduces.
-            let lets = emit_multi_write_lets(cx, before, splat, after, *value);
-            quote! { { #lets spinel_rt::RubyValue::Nil } }
+            let write = super::loops::emit_multi_write(cx, targets, *value);
+            quote! { { #write spinel_rt::RubyValue::Nil } }
         }
         HirNode::Call {
             receiver,
             name,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             safe,
-        } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
+        } => emit_call(cx, *receiver, name, args, kwargs, *kwargs_splat, *block, *block_arg, *safe),
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
+        HirNode::GlobalRead(name) => quote! { spinel_rt::global_get(#name) },
+        HirNode::GlobalWrite(name, value) => {
+            let v = emit_expr(cx, *value);
+            // See `IvarWrite`'s docs: global storage is likewise always
+            // `RubyValue` (`spinel_rt::global_set`'s own signature).
+            let v = box_if_object_typed(cx, *value, v);
+            quote! { { let __v = #v; spinel_rt::global_set(#name, __v.clone()); __v } }
+        }
+        HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
+        HirNode::ConstWrite { scope, name, value } => {
+            let v = emit_expr(cx, *value);
+            // See `IvarWrite`'s docs: constant storage is likewise always
+            // `RubyValue` (`spinel_rt::const_set`'s own signature).
+            let v = box_if_object_typed(cx, *value, v);
+            let write = emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() });
+            quote! { { let __v = #v; #write __v } }
+        }
+        HirNode::Seq(body) => super::stmt::emit_body(cx, body, false),
         HirNode::Eval(body) => super::stmt::emit_body(cx, body, false),
         HirNode::Return(v) => {
             let value = match v {
@@ -543,7 +586,7 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
 /// real type error, not just redundant, which is why this can't be a blind
 /// "wrap everything" step; it's keyed on the type, which this codebase's
 /// own invariant makes an exact proxy for "needs boxing".
-fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
+pub(super) fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
     match infer(cx, id) {
         TyKind::Object(cid) => {
             let class_ident = safe_ident(&cx.compiler.class(cid).name);
@@ -601,4 +644,90 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
         .get(name)
         .unwrap_or_else(|| panic!("internal error: `@@{name}` has no resolved owner (analyze::mro::resolve_cvars should have run)"))
         .0
+}
+
+/// An ivar WRITE as a bare Rust STATEMENT (no read-back) -- factored out of
+/// `emit_expr`'s `IvarWrite` arm so `codegen::loops::emit_target_write` (a
+/// multi-assignment/`for`-loop ivar target) can reuse the identical
+/// `self_ident`-aware write, instead of re-deriving it.
+pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
+    let ident = safe_ident(name);
+    let slf = &cx.self_ident;
+    quote! { *#slf.#ident.lock() = #value; }
+}
+
+/// A cvar WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s docs
+/// for why this is factored out the same way.
+pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
+    let owner = cvar_owner_id(cx, name);
+    quote! { spinel_rt::cvar_set(#owner, #name, #value); }
+}
+
+/// The already-resolved OWNER class id for a bare (lexically-scoped)
+/// constant reference (`scope: None`) or an explicit `Foo::NAME`
+/// (`scope: Some("Foo")`) -- mirrors `cvar_owner_id`'s exact "resolved once
+/// at analyze time" scheme (`analyze::mro::resolve_consts`), with one
+/// deliberate divergence: a bare reference with NO enclosing class/module
+/// body at all (ordinary top-level code, `cx.defining_class: None`) resolves
+/// against `compiler::OBJECT_CLASS` directly instead of panicking the way
+/// `cvar_owner_id` does -- real Ruby stores a top-level constant on `Object`
+/// itself, and (unlike a bare `@@x`) a bare top-level `FOO` is completely
+/// ordinary, valid Ruby. Never panics on a missing map entry either (unlike
+/// `cvar_owner_id`): a constant genuinely never assigned anywhere reachable
+/// still needs to resolve to SOME owner id so the runtime `const_get` lookup
+/// can correctly report "unset" (raising `NameError` -- see `emit_const_read`'s
+/// docs) as an ordinary RUNTIME outcome, not a spinelc-compile-time panic --
+/// an unset constant is legitimately-valid-but-erroring Ruby, not a
+/// programming mistake in the compiler itself.
+fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
+    let owner_class = match scope {
+        Some(class_name) => cx
+            .compiler
+            .class_by_name(class_name)
+            .unwrap_or_else(|| panic!("unknown class/module `{class_name}`")),
+        None => cx.defining_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+    };
+    cx.compiler
+        .class(owner_class)
+        .const_owners
+        .get(name)
+        .copied()
+        .unwrap_or(owner_class)
+        .0
+}
+
+/// A constant READ -- `scope: None` for a bare `NAME` (see `const_owner_id`'s
+/// docs for the lexical-then-top-level resolution rule), `scope:
+/// Some(class_name)` for an explicit `Foo::NAME`. An unset constant raises a
+/// real `NameError` (unlike an ivar/cvar/global's "never assigned" -> `nil`
+/// convention) -- matches actual Ruby, and is cheap here since the runtime
+/// `const_get` already distinguishes "never set" (`None`) from "set to
+/// `nil`" (`Some(RubyValue::Nil)`).
+fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
+    let owner = const_owner_id(cx, scope, name);
+    let qualified = match scope {
+        Some(s) => format!("{s}::{name}"),
+        None => name.to_string(),
+    };
+    let err = emit_boxed_new(
+        cx,
+        "NameError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #qualified)))
+        }],
+    );
+    quote! {
+        match spinel_rt::const_get(#owner, #name) {
+            Some(__v) => __v,
+            None => return Err(spinel_rt::Signal::Raise(#err)),
+        }
+    }
+}
+
+/// A constant WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s
+/// docs for why this is factored out the same way (reused by
+/// `codegen::loops::emit_target_write`'s `Const` multi-assignment target).
+pub(super) fn emit_const_write_stmt(cx: &Ctx, scope: Option<&str>, name: &str, value: TokenStream) -> TokenStream {
+    let owner = const_owner_id(cx, scope, name);
+    quote! { spinel_rt::const_set(#owner, #name, #value); }
 }

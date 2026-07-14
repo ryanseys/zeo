@@ -191,6 +191,107 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(cr.name().as_slice()).into_owned())
 }
 
+/// `Foo::BAR` (`ConstantPathNode`) -- resolves to `(scope, name)` for a
+/// `HirNode::ConstWrite`/`QualifiedConstRead`'s fields. Only a single level
+/// of explicit namespacing is supported (`parent`, if present, must itself
+/// be a plain `Foo` -- matching this spike's flat, non-nested class/module
+/// model, same restriction `constant_name` already enforces elsewhere);
+/// `::Foo` (no `parent` at all -- an explicit top-level anchor) resolves
+/// against `Object` directly, mirroring real Ruby's own representation of
+/// top-level constants as living on `Object`.
+fn constant_path_scope_and_name(node: &ruby_prism::ConstantPathNode<'_>) -> PResult<(String, String)> {
+    let name = node
+        .name()
+        .ok_or("a `::` constant path with a dynamic/computed name isn't supported (spike scope)")?;
+    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+    let scope = match node.parent() {
+        None => "Object".to_string(),
+        Some(p) => constant_name(&p)?,
+    };
+    Ok((scope, name))
+}
+
+/// The lvalue "storage kind" a compound-assignment (`+=`)/`||=`/`&&=`
+/// operator can target -- factors their identical read-then-write desugar
+/// (see the call sites in `lower_node` above) into one place instead of
+/// five near-identical repetitions, one per underlying `HirNode` read/write
+/// pair.
+enum Storage {
+    Local(String),
+    Ivar(String),
+    ClassVar(String),
+    Global(String),
+    /// `scope: None` = a bare, lexically-resolved name; `scope:
+    /// Some(class_name)` = an explicit `Foo::NAME` -- see
+    /// `HirNode::ConstWrite`'s docs.
+    Const { scope: Option<String>, name: String },
+}
+
+impl Storage {
+    fn read(&self, hir: &mut Hir) -> NodeId {
+        match self {
+            Storage::Local(n) => hir.push(HirNode::LocalRead(n.clone())),
+            Storage::Ivar(n) => hir.push(HirNode::IvarRead(n.clone())),
+            Storage::ClassVar(n) => hir.push(HirNode::ClassVarRead(n.clone())),
+            Storage::Global(n) => hir.push(HirNode::GlobalRead(n.clone())),
+            Storage::Const { scope: None, name } => hir.push(HirNode::ClassRef(name.clone())),
+            Storage::Const {
+                scope: Some(scope),
+                name,
+            } => hir.push(HirNode::QualifiedConstRead(scope.clone(), name.clone())),
+        }
+    }
+
+    fn write(&self, hir: &mut Hir, value: NodeId) -> NodeId {
+        match self {
+            Storage::Local(n) => hir.push(HirNode::LocalWrite(n.clone(), value)),
+            Storage::Ivar(n) => hir.push(HirNode::IvarWrite(n.clone(), value)),
+            Storage::ClassVar(n) => hir.push(HirNode::ClassVarWrite(n.clone(), value)),
+            Storage::Global(n) => hir.push(HirNode::GlobalWrite(n.clone(), value)),
+            Storage::Const { scope, name } => hir.push(HirNode::ConstWrite {
+                scope: scope.clone(),
+                name: name.clone(),
+                value,
+            }),
+        }
+    }
+}
+
+/// `target op= rhs` -- e.g. `x += 1`, desugared to `x = x + 1` (evaluating
+/// `rhs` unconditionally, unlike `||=`/`&&=` below).
+fn lower_compound_op_write(hir: &mut Hir, target: Storage, op: String, rhs: NodeId) -> NodeId {
+    let read = target.read(hir);
+    let call = hir.push(HirNode::Call {
+        receiver: Some(read),
+        name: op,
+        args: vec![ArrayElem::Single(rhs)],
+        kwargs: Vec::new(),
+        kwargs_splat: None,
+        block: None,
+        block_arg: None,
+        safe: false,
+    });
+    target.write(hir, call)
+}
+
+/// `target ||= rhs` -- `target || (target = rhs)`, NOT `target = target ||
+/// rhs`: `rhs` (and the write itself) must only be evaluated when `target`
+/// is falsy, which `HirNode::Or`'s existing short-circuit codegen gives for
+/// free.
+fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> NodeId {
+    let read = target.read(hir);
+    let write = target.write(hir, rhs);
+    hir.push(HirNode::Or(read, write))
+}
+
+/// `target &&= rhs` -- `target && (target = rhs)`; see `lower_or_write`'s
+/// docs for the same "don't evaluate/write unless needed" reasoning.
+fn lower_and_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> NodeId {
+    let read = target.read(hir);
+    let write = target.write(hir, rhs);
+    hir.push(HirNode::And(read, write))
+}
+
 /// Required-parameter-only helper for a `posts`/`requireds` entry -- both
 /// only ever contain `RequiredParameterNode`s (Ruby's grammar guarantees a
 /// splat's "post" params are always plain required names, same as the
@@ -461,65 +562,260 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         )));
     }
 
-    // `x += 1` / `@x += 1` -- desugars to a plain read-operator-write, e.g.
-    // `x = x + 1`, reusing the existing `LocalWrite`/`IvarWrite` + operator
-    // `Call` dispatch infrastructure entirely (no new HIR node needed, exactly
-    // like `unless`/ternary reuse `If`). Only the plain binary-operator form
-    // is handled -- `||=`/`&&=` are distinct prism nodes with short-circuit-
-    // don't-evaluate-the-value semantics (mirroring `And`/`Or`) rather than
-    // an unconditional read-op-write, and aren't supported yet (spike scope,
-    // falls through to the generic "unsupported syntax" error).
+    // `x += 1` / `@x += 1` / `@@x += 1` / `$x += 1` / `X += 1` -- desugars to
+    // a plain read-operator-write, e.g. `x = x + 1`, reusing the existing
+    // `*Read`/`*Write` + operator `Call` dispatch infrastructure entirely (no
+    // new HIR node needed for the operator form itself, exactly like
+    // `unless`/ternary reuse `If`). `||=`/`&&=` desugar to `Or`/`And` over the
+    // same read/write pair (`a ||= b` is `a || (a = b)`, NOT `a = a || b` --
+    // the RHS/assignment must not even be EVALUATED when `a` is already
+    // truthy, which `HirNode::Or`'s existing short-circuit codegen already
+    // gives for free). See `Storage`'s docs for why every one of these five
+    // storage kinds shares this one desugar instead of five near-identical
+    // repetitions.
     if let Some(op) = node.as_local_variable_operator_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
-        let read = hir.push(HirNode::LocalRead(name.clone()));
         let rhs = lower_node(result, hir, &op.value())?;
-        let call = hir.push(HirNode::Call {
-            receiver: Some(read),
-            name: op_name,
-            args: vec![rhs],
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        });
-        return Ok(hir.push(HirNode::LocalWrite(name, call)));
+        return Ok(lower_compound_op_write(hir, Storage::Local(name), op_name, rhs));
+    }
+    if let Some(op) = node.as_local_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::Local(name), rhs));
+    }
+    if let Some(op) = node.as_local_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::Local(name), rhs));
     }
     if let Some(op) = node.as_instance_variable_operator_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice())
             .trim_start_matches('@')
             .to_string();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
-        let read = hir.push(HirNode::IvarRead(name.clone()));
         let rhs = lower_node(result, hir, &op.value())?;
-        let call = hir.push(HirNode::Call {
-            receiver: Some(read),
-            name: op_name,
-            args: vec![rhs],
-            kwargs: Vec::new(),
-            block: None,
-            block_arg: None,
-            safe: false,
-        });
-        return Ok(hir.push(HirNode::IvarWrite(name, call)));
+        return Ok(lower_compound_op_write(hir, Storage::Ivar(name), op_name, rhs));
+    }
+    if let Some(op) = node.as_instance_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::Ivar(name), rhs));
+    }
+    if let Some(op) = node.as_instance_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::Ivar(name), rhs));
     }
     if let Some(op) = node.as_class_variable_operator_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice())
             .trim_start_matches('@')
             .to_string();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
-        let read = hir.push(HirNode::ClassVarRead(name.clone()));
         let rhs = lower_node(result, hir, &op.value())?;
-        let call = hir.push(HirNode::Call {
-            receiver: Some(read),
+        return Ok(lower_compound_op_write(hir, Storage::ClassVar(name), op_name, rhs));
+    }
+    if let Some(op) = node.as_class_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::ClassVar(name), rhs));
+    }
+    if let Some(op) = node.as_class_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::ClassVar(name), rhs));
+    }
+    if let Some(op) = node.as_global_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_compound_op_write(hir, Storage::Global(name), op_name, rhs));
+    }
+    if let Some(op) = node.as_global_variable_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::Global(name), rhs));
+    }
+    if let Some(op) = node.as_global_variable_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::Global(name), rhs));
+    }
+    if let Some(gvr) = node.as_global_variable_read_node() {
+        let name = String::from_utf8_lossy(gvr.name().as_slice()).into_owned();
+        return Ok(hir.push(HirNode::GlobalRead(name)));
+    }
+    if let Some(gvw) = node.as_global_variable_write_node() {
+        let name = String::from_utf8_lossy(gvw.name().as_slice()).into_owned();
+        let value = lower_node(result, hir, &gvw.value())?;
+        return Ok(hir.push(HirNode::GlobalWrite(name, value)));
+    }
+    if let Some(op) = node.as_constant_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_compound_op_write(hir, Storage::Const { scope: None, name }, op_name, rhs));
+    }
+    if let Some(op) = node.as_constant_and_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::Const { scope: None, name }, rhs));
+    }
+    if let Some(op) = node.as_constant_or_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::Const { scope: None, name }, rhs));
+    }
+    if let Some(cw) = node.as_constant_write_node() {
+        let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
+        let value = lower_node(result, hir, &cw.value())?;
+        return Ok(hir.push(HirNode::ConstWrite { scope: None, name, value }));
+    }
+    // `Foo::BAR` / `Foo::BAR = v` / `Foo::BAR += v` / `Foo::BAR ||= v` /
+    // `Foo::BAR &&= v` -- an explicitly namespace-qualified constant
+    // (`ConstantPathNode` and its write/operator-write/and-write/or-write
+    // relatives). See `constant_path_scope_and_name`'s docs.
+    if let Some(op) = node.as_constant_path_operator_write_node() {
+        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_compound_op_write(hir, Storage::Const { scope: Some(scope), name }, op_name, rhs));
+    }
+    if let Some(op) = node.as_constant_path_and_write_node() {
+        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_and_write(hir, Storage::Const { scope: Some(scope), name }, rhs));
+    }
+    if let Some(op) = node.as_constant_path_or_write_node() {
+        let (scope, name) = constant_path_scope_and_name(&op.target())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        return Ok(lower_or_write(hir, Storage::Const { scope: Some(scope), name }, rhs));
+    }
+    if let Some(cpw) = node.as_constant_path_write_node() {
+        let (scope, name) = constant_path_scope_and_name(&cpw.target())?;
+        let value = lower_node(result, hir, &cpw.value())?;
+        return Ok(hir.push(HirNode::ConstWrite { scope: Some(scope), name, value }));
+    }
+    if let Some(cp) = node.as_constant_path_node() {
+        let (scope, name) = constant_path_scope_and_name(&cp)?;
+        return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
+    }
+
+    // `obj.attr += rhs` / `obj.attr ||= rhs` / `obj.attr &&= rhs` -- evaluates
+    // `obj` exactly ONCE (bound to a hidden local via `HirNode::Seq`), since
+    // a receiver expression may have side effects (e.g. `get_obj().attr +=
+    // 1`) -- naively re-lowering the SAME prism receiver node twice (once
+    // for the getter call, once for the setter call) would silently
+    // double-evaluate it, a real correctness bug real Ruby doesn't have. See
+    // `bind_call_target_once`'s docs.
+    if let Some(op) = node.as_call_operator_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`+=` on a method call with no receiver isn't supported (spike scope)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let combined = hir.push(HirNode::Call {
+            receiver: Some(read_call),
             name: op_name,
-            args: vec![rhs],
+            args: vec![ArrayElem::Single(rhs)],
             kwargs: Vec::new(),
+            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
         });
-        return Ok(hir.push(HirNode::ClassVarWrite(name, call)));
+        let write_call = build_call_target_write(hir, &tmp, &write_name, combined);
+        return Ok(hir.push(HirNode::Seq(vec![bind, write_call])));
+    }
+    if let Some(op) = node.as_call_and_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`&&=` on a method call with no receiver isn't supported (spike scope)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
+        let and_node = hir.push(HirNode::And(read_call, write_call));
+        return Ok(hir.push(HirNode::Seq(vec![bind, and_node])));
+    }
+    if let Some(op) = node.as_call_or_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`||=` on a method call with no receiver isn't supported (spike scope)")?;
+        let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
+        let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (bind, read_call, tmp) = bind_call_target_once(result, hir, &recv, &read_name)?;
+        let write_call = build_call_target_write(hir, &tmp, &write_name, rhs);
+        let or_node = hir.push(HirNode::Or(read_call, write_call));
+        return Ok(hir.push(HirNode::Seq(vec![bind, or_node])));
+    }
+
+    // `arr[i] += rhs` / `arr[i] ||= rhs` / `arr[i] &&= rhs` -- same
+    // evaluate-once reasoning as the `obj.attr` forms above, extended to
+    // BOTH the receiver and the (single) index argument (`arr[compute_idx()]
+    // += 1` must call `compute_idx()` exactly once too). See
+    // `bind_index_target_once`'s docs.
+    if let Some(op) = node.as_index_operator_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`+=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let idx = single_index_argument(op.arguments())?;
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let combined = hir.push(HirNode::Call {
+            receiver: Some(read_call),
+            name: op_name,
+            args: vec![ArrayElem::Single(rhs)],
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, combined);
+        let mut stmts = binds;
+        stmts.push(write_call);
+        return Ok(hir.push(HirNode::Seq(stmts)));
+    }
+    if let Some(op) = node.as_index_and_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`&&=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let idx = single_index_argument(op.arguments())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, rhs);
+        let and_node = hir.push(HirNode::And(read_call, write_call));
+        let mut stmts = binds;
+        stmts.push(and_node);
+        return Ok(hir.push(HirNode::Seq(stmts)));
+    }
+    if let Some(op) = node.as_index_or_write_node() {
+        let recv = op
+            .receiver()
+            .ok_or("`||=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let idx = single_index_argument(op.arguments())?;
+        let rhs = lower_node(result, hir, &op.value())?;
+        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, rhs);
+        let or_node = hir.push(HirNode::Or(read_call, write_call));
+        let mut stmts = binds;
+        stmts.push(or_node);
+        return Ok(hir.push(HirNode::Seq(stmts)));
     }
 
     if let Some(and) = node.as_and_node() {
@@ -548,7 +844,19 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let (mut args, kwargs) = lower_call_args(result, hir, yield_node.arguments())?;
+        let (arg_elems, kwargs, kwargs_splat) = lower_call_args(result, hir, yield_node.arguments())?;
+        if kwargs_splat.is_some() {
+            return Err("a `**h` double-splat argument isn't supported in `yield` (spike scope)".to_string());
+        }
+        let mut args = arg_elems
+            .into_iter()
+            .map(|e| match e {
+                ArrayElem::Single(n) => Ok(n),
+                ArrayElem::Splat(_) => {
+                    Err("a `*expr` splat argument isn't supported in `yield` (spike scope)".to_string())
+                }
+            })
+            .collect::<PResult<Vec<_>>>()?;
         if !kwargs.is_empty() {
             args.push(hir.push(HirNode::HashLit(kwargs)));
         }
@@ -933,7 +1241,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
-        let (args, kwargs) = lower_call_args(result, hir, call.arguments())?;
+        let (args, kwargs, kwargs_splat) = lower_call_args(result, hir, call.arguments())?;
         // A call's `block()` slot is one of two distinct shapes: a literal
         // `{ }`/`do..end` (`BlockNode`), or `&existing_proc` forwarding an
         // already-built Proc value onward (`BlockArgumentNode`) -- real Ruby
@@ -960,6 +1268,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             safe: call.is_safe_navigation(),
@@ -1046,18 +1355,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         }));
     }
 
-    // `for var in iterable ... end` -- only a single plain local index
-    // variable is supported (`for a, b in pairs` destructuring is a distinct
-    // `MultiTargetNode` index, a clean lowering error rather than a panic).
+    // `for var in iterable ... end` / `for a, b in pairs ... end` -- see
+    // `lower_multi_target`'s docs for the full generalized target shape.
     if let Some(for_node) = node.as_for_node() {
-        let var = for_node
-            .index()
-            .as_local_variable_target_node()
-            .ok_or("`for` only supports a single plain local variable index (spike scope)")?;
-        let var = String::from_utf8_lossy(var.name().as_slice()).into_owned();
+        let target = lower_multi_target(result, hir, &for_node.index())?;
         let iterable = lower_node(result, hir, &for_node.collection())?;
         let body = lower_body(result, hir, for_node.statements().map(|s| s.as_node()))?;
-        return Ok(hir.push(HirNode::For { var, iterable, body }));
+        return Ok(hir.push(HirNode::For { target, iterable, body }));
     }
 
     // `break`/`next` (with an optional single value) and `redo` -- `ruby-prism`
@@ -1119,38 +1423,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Retry));
     }
 
-    // `a, b = 1, 2` / `a, *b, c = arr` -- see `HirNode::MultiWrite`'s docs for
-    // the supported target shape.
+    // `a, b = 1, 2` / `a, *b, c = arr` / `(a, b), @x, $y, Z, obj.attr, arr[i]
+    // = ...` -- see `MultiTargetGroup`/`lower_multi_target`'s docs for the
+    // full generalized target shape.
     if let Some(mw) = node.as_multi_write_node() {
-        let before = mw
-            .lefts()
-            .iter()
-            .map(|n| local_target_name(&n))
-            .collect::<PResult<Vec<_>>>()?;
-        let splat = match mw.rest() {
-            None => None,
-            Some(n) => {
-                let splat = n
-                    .as_splat_node()
-                    .ok_or("expected `*name` as a multi-assignment's splat target")?;
-                let expr = splat.expression().ok_or(
-                    "an anonymous `*` target in a multi-assignment isn't supported yet (spike scope)",
-                )?;
-                Some(local_target_name(&expr)?)
-            }
-        };
-        let after = mw
-            .rights()
-            .iter()
-            .map(|n| local_target_name(&n))
-            .collect::<PResult<Vec<_>>>()?;
+        let targets = lower_multi_target_group(result, hir, mw.lefts(), mw.rest(), mw.rights())?;
         let value = lower_node(result, hir, &mw.value())?;
-        return Ok(hir.push(HirNode::MultiWrite {
-            before,
-            splat,
-            after,
-            value,
-        }));
+        return Ok(hir.push(HirNode::MultiWrite { targets, value }));
     }
 
     Err(format!(
@@ -1174,54 +1453,61 @@ fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     Ok(ArrayElem::Single(lower_node(result, hir, node)?))
 }
 
-/// Splits a call's raw argument list into (positional NodeIds, keyword
-/// `HashPair`s) -- a trailing `KeywordHashNode` (`foo(x: 1, y: 2)`) is the
-/// only prism shape recognized as keyword arguments; every other entry
-/// lowers as an ordinary positional argument via `lower_node`. A call-site
-/// positional splat (`foo(*arr)`) or keyword-splat (`foo(**h)`) isn't
-/// supported yet -- see `HirNode::Call`'s docs -- a clean lowering error
-/// rather than a panic (spike scope: `Params`' `rest`/`keyword_rest` can
-/// still be exercised by simply passing enough plain positional/keyword
-/// args, no splat syntax needed at the call site).
+/// Splits a call's raw argument list into (positional `ArrayElem`s, literal
+/// keyword `HashPair`s, an optional trailing `**h` double-splat) -- a
+/// trailing `KeywordHashNode` (`foo(x: 1, y: 2, **h)`) is the only prism
+/// shape recognized as keyword arguments; every other entry lowers as an
+/// ordinary positional argument via `lower_array_elem` (reusing the exact
+/// same plain-value-or-`*expr`-splat recognizer an array literal's own
+/// elements already use -- `foo(*arr)` and `[*arr]` are structurally the
+/// same `SplatNode` shape at the `ruby-prism` level). A `KeywordHashNode`'s
+/// own elements are a mix of plain `key: value` `AssocNode`s and, at most
+/// one trailing `**h` `AssocSplatNode` (real Ruby only allows one double-
+/// splat per call, always last) -- `kwargs_splat` carries that one
+/// separately since it's merged into the callee's keyword args at RUNTIME
+/// (its keys aren't known at compile time), unlike every literal `key:
+/// value` pair.
 fn lower_call_args(
     result: &ParseResult,
     hir: &mut Hir,
     arguments: Option<ruby_prism::ArgumentsNode<'_>>,
-) -> PResult<(Vec<NodeId>, Vec<HashPair>)> {
+) -> PResult<(Vec<ArrayElem>, Vec<HashPair>, Option<NodeId>)> {
     let Some(arguments) = arguments else {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), None));
     };
     let mut list: Vec<_> = arguments.arguments().iter().collect();
+    let mut kwargs_splat = None;
     let kwargs = match list.last().and_then(|n| n.as_keyword_hash_node()) {
         Some(kw) => {
             list.pop();
-            kw.elements()
-                .iter()
-                .map(|el| {
-                    let assoc = el.as_assoc_node().ok_or(
-                        "a keyword-splat (`**expr`) call argument isn't supported yet (spike scope)",
+            let mut pairs = Vec::new();
+            for el in kw.elements().iter() {
+                if let Some(splat) = el.as_assoc_splat_node() {
+                    if kwargs_splat.is_some() {
+                        return Err("at most one `**h` double-splat is supported per call (spike scope)".to_string());
+                    }
+                    let expr = splat.value().ok_or(
+                        "an anonymous `**` keyword-forwarding argument isn't supported yet (spike scope)",
                     )?;
-                    let key = lower_node(result, hir, &assoc.key())?;
-                    let value = lower_node(result, hir, &assoc.value())?;
-                    Ok(HashPair(key, value))
-                })
-                .collect::<PResult<Vec<_>>>()?
+                    kwargs_splat = Some(lower_node(result, hir, &expr)?);
+                    continue;
+                }
+                let assoc = el
+                    .as_assoc_node()
+                    .ok_or("unsupported keyword-argument shape (spike scope)")?;
+                let key = lower_node(result, hir, &assoc.key())?;
+                let value = lower_node(result, hir, &assoc.value())?;
+                pairs.push(HashPair(key, value));
+            }
+            pairs
         }
         None => Vec::new(),
     };
     let args = list
         .iter()
-        .map(|n| {
-            if n.as_splat_node().is_some() {
-                return Err(
-                    "a positional splat (`*expr`) call argument isn't supported yet (spike scope)"
-                        .to_string(),
-                );
-            }
-            lower_node(result, hir, n)
-        })
+        .map(|n| lower_array_elem(result, hir, n))
         .collect::<PResult<Vec<_>>>()?;
-    Ok((args, kwargs))
+    Ok((args, kwargs, kwargs_splat))
 }
 
 /// A class body's statement list -- like `lower_statement_list`, but
@@ -1429,15 +1715,250 @@ fn lower_single_optional_argument(
     }
 }
 
-/// A multi-assignment target (`MultiWriteNode`'s `lefts`/`rights` entries, or
-/// a splat's inner expression) -- only a plain local variable is supported;
-/// nested destructuring, ivars, constants, and `a[i]`/`obj.attr` targets are
-/// each a distinct `ruby-prism` node this spike doesn't lower.
+/// Exactly one index argument (`arr[i]`, not `arr[i, j]`) -- the same
+/// single-index restriction `codegen::call::try_collection_dispatch`'s
+/// `[]`/`[]=` fast path already enforces, extended to the operator-write
+/// forms.
+fn single_index_argument(
+    result_args: Option<ruby_prism::ArgumentsNode<'_>>,
+) -> PResult<ruby_prism::ArgumentsNode<'_>> {
+    let args = result_args.ok_or("`[]`-style compound assignment requires exactly one index argument (spike scope)")?;
+    if args.arguments().iter().count() != 1 {
+        return Err("`[]`-style compound assignment only supports a single index argument (spike scope)".to_string());
+    }
+    Ok(args)
+}
+
+/// Binds `receiver` to a hidden local (a `HirNode::LocalWrite` statement)
+/// exactly ONCE, then builds `tmp.read_name` against that same binding --
+/// shared by every `obj.attr op= rhs`/`||=`/`&&=` desugar (see their own
+/// call sites in `lower_node`): a receiver expression may have side effects
+/// (`get_obj().attr += 1`), so re-lowering the SAME prism node twice (once
+/// per read/write call) would silently double-evaluate it. Returns `(bind
+/// statement, read call, hidden local's name)` -- the caller combines the
+/// read call with `rhs` however its own operator requires (see
+/// `build_call_target_write`'s docs for the matching write half).
+fn bind_call_target_once(
+    result: &ParseResult,
+    hir: &mut Hir,
+    receiver: &Node<'_>,
+    read_name: &str,
+) -> PResult<(NodeId, NodeId, String)> {
+    let recv_expr = lower_node(result, hir, receiver)?;
+    let tmp = hir.gensym("__recv");
+    let bind = hir.push(HirNode::LocalWrite(tmp.clone(), recv_expr));
+    let read_recv = hir.push(HirNode::LocalRead(tmp.clone()));
+    let read_call = hir.push(HirNode::Call {
+        receiver: Some(read_recv),
+        name: read_name.to_string(),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        kwargs_splat: None,
+        block: None,
+        block_arg: None,
+        safe: false,
+    });
+    Ok((bind, read_call, tmp))
+}
+
+/// The write half of `bind_call_target_once` -- `tmp.write_name(value)`,
+/// reading the SAME hidden receiver binding.
+fn build_call_target_write(hir: &mut Hir, tmp: &str, write_name: &str, value: NodeId) -> NodeId {
+    let write_recv = hir.push(HirNode::LocalRead(tmp.to_string()));
+    hir.push(HirNode::Call {
+        receiver: Some(write_recv),
+        name: write_name.to_string(),
+        args: vec![ArrayElem::Single(value)],
+        kwargs: Vec::new(),
+        kwargs_splat: None,
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
+/// Same reasoning as `bind_call_target_once`, extended to BOTH the receiver
+/// AND the (single) index argument of `arr[i] op= rhs`/`||=`/`&&=`
+/// (`arr[compute_idx()] += 1` must call `compute_idx()` exactly once too,
+/// not once per read/write `[]`/`[]=` call). Returns `(bind statements,
+/// read call, receiver's hidden local name, index's hidden local name)`.
+fn bind_index_target_once(
+    result: &ParseResult,
+    hir: &mut Hir,
+    receiver: &Node<'_>,
+    index_args: &ruby_prism::ArgumentsNode<'_>,
+) -> PResult<(Vec<NodeId>, NodeId, String, String)> {
+    let index_node = index_args.arguments().iter().next().expect("checked by single_index_argument");
+    let recv_expr = lower_node(result, hir, receiver)?;
+    let idx_expr = lower_node(result, hir, &index_node)?;
+    let recv_tmp = hir.gensym("__recv");
+    let bind_recv = hir.push(HirNode::LocalWrite(recv_tmp.clone(), recv_expr));
+    let idx_tmp = hir.gensym("__idx");
+    let bind_idx = hir.push(HirNode::LocalWrite(idx_tmp.clone(), idx_expr));
+    let read_recv = hir.push(HirNode::LocalRead(recv_tmp.clone()));
+    let read_idx = hir.push(HirNode::LocalRead(idx_tmp.clone()));
+    let read_call = hir.push(HirNode::Call {
+        receiver: Some(read_recv),
+        name: "[]".to_string(),
+        args: vec![ArrayElem::Single(read_idx)],
+        kwargs: Vec::new(),
+        kwargs_splat: None,
+        block: None,
+        block_arg: None,
+        safe: false,
+    });
+    Ok((vec![bind_recv, bind_idx], read_call, recv_tmp, idx_tmp))
+}
+
+/// The write half of `bind_index_target_once` -- `recv_tmp[idx_tmp] =
+/// value`, reading the SAME hidden receiver/index bindings.
+fn build_index_target_write(hir: &mut Hir, recv_tmp: &str, idx_tmp: &str, value: NodeId) -> NodeId {
+    let write_recv = hir.push(HirNode::LocalRead(recv_tmp.to_string()));
+    let write_idx = hir.push(HirNode::LocalRead(idx_tmp.to_string()));
+    hir.push(HirNode::Call {
+        receiver: Some(write_recv),
+        name: "[]=".to_string(),
+        args: vec![ArrayElem::Single(write_idx), ArrayElem::Single(value)],
+        kwargs: Vec::new(),
+        kwargs_splat: None,
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
+/// A `rescue ... => e` binding -- always a plain local-variable target in
+/// real Ruby's own grammar for this one position (unlike a general
+/// multi-assignment target, which additionally allows ivars/cvars/globals/
+/// constants/`obj.attr`/`arr[i]`/nested groups -- see `lower_multi_target`).
 fn local_target_name(node: &Node<'_>) -> PResult<String> {
-    let target = node.as_local_variable_target_node().ok_or(
-        "multi-assignment only supports plain local variable targets (spike scope)",
-    )?;
+    let target = node
+        .as_local_variable_target_node()
+        .ok_or("`rescue => name` only supports a plain local variable binding (spike scope)")?;
     Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
+}
+
+/// One `MultiTarget` -- a `MultiWriteNode`/nested `MultiTargetNode`'s own
+/// `lefts`/`rest`/`rights` entry, or a `for`-loop's `index()`. See
+/// `MultiTarget`'s docs for the full generalized shape this now covers
+/// (beyond the original plain-local-only restriction): local/ivar/cvar/
+/// global/bare-constant/`obj.attr`/`arr[i]`/nested-group targets.
+fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<crate::hir::MultiTarget> {
+    use crate::hir::MultiTarget;
+
+    if let Some(t) = node.as_local_variable_target_node() {
+        return Ok(MultiTarget::Local(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+    }
+    if let Some(t) = node.as_instance_variable_target_node() {
+        let name = String::from_utf8_lossy(t.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        return Ok(MultiTarget::Ivar(name));
+    }
+    if let Some(t) = node.as_class_variable_target_node() {
+        let name = String::from_utf8_lossy(t.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        return Ok(MultiTarget::ClassVar(name));
+    }
+    if let Some(t) = node.as_global_variable_target_node() {
+        return Ok(MultiTarget::Global(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+    }
+    if let Some(t) = node.as_constant_target_node() {
+        return Ok(MultiTarget::Const(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+    }
+    if node.as_constant_path_target_node().is_some() {
+        return Err(
+            "an explicit `Foo::BAR` multi-assignment target isn't supported yet (spike scope) -- only a bare, lexically-scoped constant name is".to_string(),
+        );
+    }
+    // `obj.attr, ... = ...` -- pre-builds the `attr=` write `Call` right now,
+    // with a synthetic hidden local (`tmp_name`) standing in for "the value
+    // this target receives" -- see `MultiTarget::Call`'s docs for why this
+    // lets codegen reuse the ordinary static/dynamic dispatch machinery with
+    // no bespoke attr-write codegen of its own.
+    if let Some(t) = node.as_call_target_node() {
+        let receiver = lower_node(result, hir, &t.receiver())?;
+        let setter_name = format!("{}=", String::from_utf8_lossy(t.name().as_slice()));
+        let tmp_name = hir.gensym("__mval");
+        let tmp_read = hir.push(HirNode::LocalRead(tmp_name.clone()));
+        let write_call = hir.push(HirNode::Call {
+            receiver: Some(receiver),
+            name: setter_name,
+            args: vec![ArrayElem::Single(tmp_read)],
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        return Ok(MultiTarget::Call { write_call, tmp_name });
+    }
+    // `arr[i], ... = ...` -- see `MultiTarget::Call`'s docs; same synthetic-
+    // hidden-local trick, targeting `[]=` instead of `attr=`.
+    if let Some(t) = node.as_index_target_node() {
+        let receiver = lower_node(result, hir, &t.receiver())?;
+        let arg_list: Vec<_> = t.arguments().map(|a| a.arguments().iter().collect()).unwrap_or_default();
+        if arg_list.len() != 1 {
+            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (spike scope)".to_string());
+        }
+        let index = lower_node(result, hir, &arg_list[0])?;
+        let tmp_name = hir.gensym("__mval");
+        let tmp_read = hir.push(HirNode::LocalRead(tmp_name.clone()));
+        let write_call = hir.push(HirNode::Call {
+            receiver: Some(receiver),
+            name: "[]=".to_string(),
+            args: vec![ArrayElem::Single(index), ArrayElem::Single(tmp_read)],
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        return Ok(MultiTarget::Call { write_call, tmp_name });
+    }
+    // `(a, b), c = ...` -- a nested destructuring group; see
+    // `lower_multi_target_group`'s docs.
+    if let Some(t) = node.as_multi_target_node() {
+        let group = lower_multi_target_group(result, hir, t.lefts(), t.rest(), t.rights())?;
+        return Ok(MultiTarget::Nested(group));
+    }
+    Err("unsupported multi-assignment/`for`-loop target shape (spike scope)".to_string())
+}
+
+/// The `before`/`splat`/`after` shape shared by `MultiWriteNode` and a
+/// nested `MultiTargetNode` (both expose the identical `lefts()`/`rest()`/
+/// `rights()` grammar) -- see `MultiTargetGroup`'s docs. An anonymous `*`
+/// splat target (no name at all) is still a clean lowering error, unchanged
+/// from the pre-existing plain-local-only restriction.
+fn lower_multi_target_group(
+    result: &ParseResult,
+    hir: &mut Hir,
+    lefts: ruby_prism::NodeList<'_>,
+    rest: Option<Node<'_>>,
+    rights: ruby_prism::NodeList<'_>,
+) -> PResult<crate::hir::MultiTargetGroup> {
+    let before = lefts
+        .iter()
+        .map(|n| lower_multi_target(result, hir, &n))
+        .collect::<PResult<Vec<_>>>()?;
+    let splat = match rest {
+        None => None,
+        Some(n) => {
+            let splat = n
+                .as_splat_node()
+                .ok_or("expected `*name` as a multi-assignment's splat target")?;
+            let expr = splat.expression().ok_or(
+                "an anonymous `*` target in a multi-assignment isn't supported yet (spike scope)",
+            )?;
+            Some(Some(Box::new(lower_multi_target(result, hir, &expr)?)))
+        }
+    };
+    let after = rights
+        .iter()
+        .map(|n| lower_multi_target(result, hir, &n))
+        .collect::<PResult<Vec<_>>>()?;
+    Ok(crate::hir::MultiTargetGroup { before, splat, after })
 }
 
 /// `begin body rescue R1 rescue R2 ... else ... ensure ... end` -- `rescue`

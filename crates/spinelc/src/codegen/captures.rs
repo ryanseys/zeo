@@ -132,7 +132,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         // `hir::HirNode::Lambda`'s docs) -- its mere presence never requires
         // the ENCLOSING method to install its own catch, so this is a leaf.
         HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
             if let Some(b) = block {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
                     panic!("a Block should only be reached via the Call that invokes it");
@@ -147,10 +147,14 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
                 }
             }
             receiver.is_some_and(|r| node_contains_escaping_block(compiler, r))
-                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+                || args.iter().any(|a| {
+                    let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                    node_contains_escaping_block(compiler, *n)
+                })
                 || kwargs.iter().any(|p| {
                     node_contains_escaping_block(compiler, p.0) || node_contains_escaping_block(compiler, p.1)
                 })
+                || kwargs_splat.is_some_and(|s| node_contains_escaping_block(compiler, s))
                 || block_arg.is_some_and(|b| node_contains_escaping_block(compiler, b))
         }
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
@@ -176,17 +180,27 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             node_contains_escaping_block(compiler, *cond) || body_contains_escaping_block(compiler, body)
         }
         HirNode::Loop { body } => body_contains_escaping_block(compiler, body),
-        HirNode::For { iterable, body, .. } => {
-            node_contains_escaping_block(compiler, *iterable) || body_contains_escaping_block(compiler, body)
+        HirNode::For { target, iterable, body } => {
+            let mut found = false;
+            target.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
+            found
+                || node_contains_escaping_block(compiler, *iterable)
+                || body_contains_escaping_block(compiler, body)
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             v.is_some_and(|v| node_contains_escaping_block(compiler, v))
         }
-        HirNode::MultiWrite { value, .. } => node_contains_escaping_block(compiler, *value),
+        HirNode::MultiWrite { targets, value } => {
+            let mut found = false;
+            targets.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
+            found || node_contains_escaping_block(compiler, *value)
+        }
+        HirNode::GlobalWrite(_, value) => node_contains_escaping_block(compiler, *value),
+        HirNode::ConstWrite { value, .. } => node_contains_escaping_block(compiler, *value),
         HirNode::Yield(args) | HirNode::Raise(args) => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
-        HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
+        HirNode::Seq(body) | HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
         HirNode::New { args, .. } | HirNode::SuperCall { args } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
@@ -246,6 +260,8 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -280,10 +296,14 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         // so a `begin`/`rescue` lexically inside one never requires the
         // ENCLOSING method to install its own `Signal::Return` catch.
         HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call { receiver, args, kwargs, kwargs_splat, block, block_arg, .. } => {
             receiver.is_some_and(|r| node_contains_begin(compiler, r))
-                || args.iter().any(|&a| node_contains_begin(compiler, a))
+                || args.iter().any(|a| {
+                    let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                    node_contains_begin(compiler, *n)
+                })
                 || kwargs.iter().any(|p| node_contains_begin(compiler, p.0) || node_contains_begin(compiler, p.1))
+                || kwargs_splat.is_some_and(|s| node_contains_begin(compiler, s))
                 || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| {
                     let HirNode::Block { body, .. } = &compiler.hir[b] else {
@@ -326,11 +346,19 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::While { cond, body, .. } => node_contains_begin(compiler, *cond) || body_contains_begin(compiler, body),
         HirNode::Loop { body } => body_contains_begin(compiler, body),
-        HirNode::For { iterable, body, .. } => {
-            node_contains_begin(compiler, *iterable) || body_contains_begin(compiler, body)
+        HirNode::For { target, iterable, body } => {
+            let mut found = false;
+            target.for_each_node(&mut |n| found |= node_contains_begin(compiler, n));
+            found || node_contains_begin(compiler, *iterable) || body_contains_begin(compiler, body)
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => v.is_some_and(|v| node_contains_begin(compiler, v)),
-        HirNode::MultiWrite { value, .. } => node_contains_begin(compiler, *value),
+        HirNode::MultiWrite { targets, value } => {
+            let mut found = false;
+            targets.for_each_node(&mut |n| found |= node_contains_begin(compiler, n));
+            found || node_contains_begin(compiler, *value)
+        }
+        HirNode::GlobalWrite(_, value) => node_contains_begin(compiler, *value),
+        HirNode::ConstWrite { value, .. } => node_contains_begin(compiler, *value),
         HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::New { args, .. } | HirNode::SuperCall { args } => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
@@ -347,7 +375,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
             StrPart::Lit(_) => false,
         }),
-        HirNode::Eval(body) => body_contains_begin(compiler, body),
+        HirNode::Seq(body) | HirNode::Eval(body) => body_contains_begin(compiler, body),
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
@@ -363,6 +391,8 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -481,7 +511,8 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps);
             }
         }
-        HirNode::For { iterable, body, .. } => {
+        HirNode::For { target, iterable, body } => {
+            walk_multi_target(compiler, target, in_escaping, param_exclusions, caps);
             walk(compiler, *iterable, in_escaping, param_exclusions, caps);
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps);
@@ -493,7 +524,20 @@ fn walk(
             }
         }
         HirNode::Redo | HirNode::BlockGiven => {}
-        HirNode::MultiWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::MultiWrite { targets, value } => {
+            walk_multi_target_group(compiler, targets, in_escaping, param_exclusions, caps);
+            walk(compiler, *value, in_escaping, param_exclusions, caps);
+        }
+        // A global/constant's storage doesn't depend on `self`/enclosing
+        // locals at all -- no capture registration needed, same posture as
+        // `ClassVarWrite` just above.
+        HirNode::GlobalWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::ConstWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::Seq(body) => {
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
         HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps);
@@ -608,16 +652,20 @@ fn walk(
                 }
             }
         }
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
             if let Some(r) = receiver {
                 walk(compiler, *r, in_escaping, param_exclusions, caps);
             }
-            for &a in args {
-                walk(compiler, a, in_escaping, param_exclusions, caps);
+            for a in args {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                walk(compiler, *n, in_escaping, param_exclusions, caps);
             }
             for pair in kwargs {
                 walk(compiler, pair.0, in_escaping, param_exclusions, caps);
                 walk(compiler, pair.1, in_escaping, param_exclusions, caps);
+            }
+            if let Some(s) = kwargs_splat {
+                walk(compiler, *s, in_escaping, param_exclusions, caps);
             }
             if let Some(b) = block_arg {
                 walk(compiler, *b, in_escaping, param_exclusions, caps);
@@ -654,10 +702,64 @@ fn walk(
         | HirNode::NilLit
         | HirNode::BoolLit(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
+    }
+}
+
+/// See `MultiTarget::for_each_node`'s docs on the shape being walked; unlike
+/// that generic traversal, THIS walk additionally needs to know about
+/// capture-registration semantics (a `Local`/`Call` target's synthetic
+/// `tmp_name` is a FRESH binding, same treatment `walk`'s own `LocalWrite`
+/// arm gives an ordinary assignment; an `Ivar` target needs `self` captured,
+/// same as `IvarWrite`; `ClassVar`/`Global`/`Const` targets need neither,
+/// same as `ClassVarWrite`).
+fn walk_multi_target(
+    compiler: &Compiler,
+    target: &crate::hir::MultiTarget,
+    in_escaping: bool,
+    param_exclusions: &HashSet<String>,
+    caps: &mut Captures,
+) {
+    use crate::hir::MultiTarget;
+    match target {
+        MultiTarget::Local(name) => {
+            if in_escaping && !param_exclusions.contains(name) {
+                caps.locals.insert(name.clone());
+            }
+        }
+        MultiTarget::Ivar(_) => {
+            if in_escaping {
+                caps.self_captured = true;
+            }
+        }
+        MultiTarget::ClassVar(_) | MultiTarget::Global(_) | MultiTarget::Const(_) => {}
+        MultiTarget::Call { write_call, tmp_name } => {
+            if in_escaping && !param_exclusions.contains(tmp_name) {
+                caps.locals.insert(tmp_name.clone());
+            }
+            walk(compiler, *write_call, in_escaping, param_exclusions, caps);
+        }
+        MultiTarget::Nested(group) => walk_multi_target_group(compiler, group, in_escaping, param_exclusions, caps),
+    }
+}
+
+fn walk_multi_target_group(
+    compiler: &Compiler,
+    group: &crate::hir::MultiTargetGroup,
+    in_escaping: bool,
+    param_exclusions: &HashSet<String>,
+    caps: &mut Captures,
+) {
+    for t in group.before.iter().chain(&group.after) {
+        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps);
+    }
+    if let Some(Some(t)) = &group.splat {
+        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps);
     }
 }

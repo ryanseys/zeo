@@ -21,7 +21,7 @@
 
 use quote::{format_ident, quote};
 
-use super::expr::emit_expr;
+use super::expr::{box_if_object_typed, emit_expr};
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::hir::{HashPair, HirNode, KeywordParam, NodeId, Params};
@@ -194,7 +194,17 @@ pub fn emit_call_args(
         && !needs_block
     {
         let method_ident = safe_ident(method_name);
-        let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+        // Boxed via `box_if_object_typed`: the callee's own Rust parameter
+        // type is always plain `RubyValue` (an ordinary parameter is never
+        // inferred `TyKind::Object` -- see that function's docs), but an
+        // Object-typed ARGUMENT expression (a `New`/`Shadowed`-local-read/
+        // `SelfRef`) emits a bare, unboxed `Arc<Concrete>` -- a real `rustc`
+        // type mismatch at the call site otherwise, confirmed by direct
+        // reproduction (passing an object instance as a plain argument).
+        let arg_exprs = args.iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
         return quote! { (#recv_expr).#method_ident(#(#arg_exprs),*)? };
     }
 
@@ -226,6 +236,7 @@ pub fn emit_call_args(
     let pos_temps: Vec<syn::Ident> = (0..args.len()).map(|i| format_ident!("__a{i}")).collect();
     let pos_lets = args.iter().zip(&pos_temps).map(|(&a, t)| {
         let e = emit_expr(cx, a);
+        let e = box_if_object_typed(cx, a, e);
         quote! { let #t = #e; }
     });
 
@@ -235,6 +246,7 @@ pub fn emit_call_args(
     let kw_temps: Vec<syn::Ident> = (0..kwargs.len()).map(|i| format_ident!("__kw{i}")).collect();
     let kw_lets = kwargs.iter().zip(&kw_temps).map(|(pair, t)| {
         let e = emit_expr(cx, pair.1);
+        let e = box_if_object_typed(cx, pair.1, e);
         quote! { let #t = #e; }
     });
     let kw_names: Vec<String> = kwargs

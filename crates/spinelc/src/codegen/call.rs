@@ -9,11 +9,11 @@
 
 use quote::{format_ident, quote};
 
-use super::expr::{emit_expr, emit_symbol_expr, infer, infer_class};
+use super::expr::{box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_class};
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::compiler::Compiler;
-use crate::hir::{HashPair, HirNode, KeywordParam, NodeId, Params, Visibility};
+use crate::hir::{ArrayElem, HashPair, HirNode, KeywordParam, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
@@ -193,12 +193,27 @@ fn try_proc_dispatch(
     if infer(cx, recv_id) != TyKind::Proc || !matches!(name, "call" | "()" | "[]") {
         return None;
     }
-    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    let arg_exprs = args.iter().map(|&a| {
+        let e = emit_expr(cx, a);
+        box_if_object_typed(cx, a, e)
+    });
     Some(quote! { ((#recv_expr).as_proc_unchecked())(&[#(#arg_exprs),*])? })
 }
 
 pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
-    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a)).collect();
+    // Boxed via `box_if_object_typed`: `initialize`'s own Rust parameters
+    // are always plain `RubyValue` (see that function's docs) -- an
+    // Object-typed constructor ARGUMENT (e.g. passing one class instance
+    // into another's constructor) otherwise emits a bare, unboxed
+    // `Arc<Concrete>`, a real `rustc` type mismatch confirmed by direct
+    // reproduction.
+    let arg_exprs = args
+        .iter()
+        .map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        })
+        .collect();
     emit_new_with_arg_tokens(cx, class_name, arg_exprs)
 }
 
@@ -729,12 +744,32 @@ pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,
     name: &str,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[HashPair],
+    kwargs_splat: Option<NodeId>,
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     safe: bool,
 ) -> TokenStream {
+    // A call-site `*expr`/`**h` splat can't take any of the arity-checked
+    // static paths below (the flattened argument COUNT isn't known until
+    // runtime) -- see `emit_splat_call`'s docs for the always-dynamic
+    // fallback this routes to instead. Every other call site (the
+    // overwhelming common case) is completely unaffected: `args` unwraps
+    // back to a plain `Vec<NodeId>` and every existing fast path below runs
+    // exactly as it did before call-site splats existed.
+    if kwargs_splat.is_some() || args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+        return emit_splat_call(cx, receiver, name, args, kwargs, kwargs_splat, block, block_arg, safe);
+    }
+    let args: Vec<NodeId> = args
+        .iter()
+        .map(|a| match a {
+            ArrayElem::Single(n) => *n,
+            ArrayElem::Splat(_) => unreachable!("checked above"),
+        })
+        .collect();
+    let args = &args[..];
+
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
@@ -800,6 +835,85 @@ pub fn emit_call(
     dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr, false)
 }
 
+/// A call site carrying a `*arr` positional splat and/or `**h` double-splat
+/// -- see `emit_call`'s docs for why this can never take a static, arity-
+/// checked calling convention. ALWAYS dispatches dynamically via
+/// `spinel_rt::send`, even when the receiver's class is statically known --
+/// a real, documented, minor perf cost (not a correctness gap): call-site
+/// splats are rare enough that duplicating Path 1's whole typed-parameter
+/// machinery for a runtime-variable argument count isn't worthwhile.
+/// Keyword arguments (literal `kwargs` or a `**h` double-splat) have no Path
+/// 2 channel at all (matches the existing `send`/`public_send`
+/// dynamic-dispatch restriction elsewhere in this file) -- a clean
+/// rejection, not silently dropped.
+#[allow(clippy::too_many_arguments)]
+fn emit_splat_call(
+    cx: &Ctx,
+    receiver: Option<NodeId>,
+    name: &str,
+    args: &[ArrayElem],
+    kwargs: &[HashPair],
+    kwargs_splat: Option<NodeId>,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    safe: bool,
+) -> TokenStream {
+    if !kwargs.is_empty() || kwargs_splat.is_some() {
+        panic!("a call combining a `*`/`**` splat argument with keyword arguments isn't supported yet (spike scope)");
+    }
+    if safe {
+        panic!("safe-navigation (`&.`) on a call with a splat argument isn't supported yet (spike scope)");
+    }
+    let recv_obj_expr = match receiver {
+        Some(recv_id) => {
+            if matches!(cx.compiler.hir[recv_id], HirNode::ClassRef(_)) {
+                panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
+            }
+            let recv_expr = emit_expr(cx, recv_id);
+            match infer_class(cx, recv_id) {
+                Some(cid) => {
+                    let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                    quote! { #class_ident::new_handle(#recv_expr) }
+                }
+                None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr).as_object_unchecked() },
+                None => panic!("a splat argument call on a receiver whose class isn't statically known (and isn't a `rescue` binding) isn't supported yet (spike scope)"),
+            }
+        }
+        None => {
+            // `puts`/other no-receiver builtins aren't reachable through
+            // `spinel_rt::send` at all (they have no `ClassRegistry` entry) --
+            // a clean rejection here beats generating code that only fails
+            // at RUNTIME with a confusing "no such method".
+            let Some(cid) = cx.current_class.filter(|&cid| cx.compiler.method_in_chain(cid, name).is_some()) else {
+                panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)");
+            };
+            let slf = &cx.self_ident;
+            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            quote! { #class_ident::new_handle(#slf.clone()) }
+        }
+    };
+    let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
+    let arg_pushes = args.iter().map(|a| match a {
+        ArrayElem::Single(n) => {
+            let e = emit_expr(cx, *n);
+            let e = box_if_object_typed(cx, *n, e);
+            quote! { __args.push(#e); }
+        }
+        ArrayElem::Splat(n) => {
+            let e = emit_expr(cx, *n);
+            quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
+        }
+    });
+    let block_value = emit_block_option(cx, block, block_arg);
+    quote! {
+        {
+            let mut __args: Vec<spinel_rt::RubyValue> = Vec::new();
+            #(#arg_pushes)*
+            spinel_rt::catch_break(spinel_rt::send(&#recv_obj_expr, #name_expr, &__args, #block_value))?
+        }
+    }
+}
+
 /// `ClassName.foo(...)` -- looked up in the target's MRO-resolved
 /// `class_methods` (see `Compiler::class_method_in_chain`) and called as a
 /// plain Rust associated-function/free-function path (`Target::foo(...)`),
@@ -849,7 +963,10 @@ fn emit_class_method_call(
     }
     let target_ident = safe_ident(target_name);
     let method_ident = safe_ident(name);
-    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    let arg_exprs = args.iter().map(|&a| {
+        let e = emit_expr(cx, a);
+        box_if_object_typed(cx, a, e)
+    });
     quote! { #target_ident::#method_ident(#(#arg_exprs),*)? }
 }
 
@@ -874,7 +991,10 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
         None => emit_expr(cx, recv_id),
     };
     let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
-    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    let arg_exprs = args.iter().map(|&a| {
+        let e = emit_expr(cx, a);
+        box_if_object_typed(cx, a, e)
+    });
     quote! {
         {
             let __safe_recv = #boxed_recv;
@@ -1224,7 +1344,10 @@ fn dispatch(
             None => quote! { (#recv_expr).as_object_unchecked() },
         };
         let name_expr = emit_symbol_expr(cx, args[0]);
-        let rest_args = args[1..].iter().map(|&a| emit_expr(cx, a));
+        let rest_args = args[1..].iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
         let block_value = emit_block_option(cx, block, block_arg);
         // `catch_break` applied unconditionally on this fully-dynamic path
         // (unlike Path 1's `needs_block`-gated version): `send`'s target
@@ -1412,7 +1535,10 @@ fn dispatch(
             );
         }
         let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
-        let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+        let arg_exprs = args.iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
         let block_value = emit_block_option(cx, block, block_arg);
         return quote! {
             spinel_rt::catch_break(spinel_rt::send(

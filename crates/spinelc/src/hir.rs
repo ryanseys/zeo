@@ -50,6 +50,19 @@ impl Hir {
         };
         *v = visibility;
     }
+
+    /// A fresh, arena-wide-unique synthetic identifier, for a compiler-
+    /// introduced hidden local that never appears in real Ruby source (e.g.
+    /// binding a compound-assignment target's receiver/index expression to a
+    /// name exactly once, so `obj.attr += 1` / `arr[i] += 1` don't
+    /// double-evaluate a side-effecting receiver -- see `lower_call_operator_write`'s
+    /// docs). `self.nodes.len()` strictly increases with every `push`, so
+    /// calling this before pushing anything for the current desugar gives a
+    /// suffix no earlier OR later desugar in the same file can ever collide
+    /// with.
+    pub fn gensym(&self, prefix: &str) -> String {
+        format!("{prefix}{}", self.nodes.len())
+    }
 }
 
 /// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose
@@ -380,6 +393,112 @@ pub struct PatternArm {
     pub body: Vec<NodeId>,
 }
 
+/// A single multi-assignment target slot (`a, b = ...`'s `a`/`b`, or a
+/// nested `(a, b), c = ...`'s `(a, b)`) -- generalizes the Phase-4-era
+/// plain-local-only shape to every real Ruby assignment target kind, mirrored
+/// directly from `MultiWriteNode`/`MultiTargetNode`'s own recursive
+/// `lefts`/`rest`/`rights` grammar (see `MultiTargetGroup`). `Call` covers
+/// BOTH `obj.attr = ...` and `arr[i] = ...` targets uniformly: both are
+/// ordinary Ruby method calls (`attr=`/`[]=`), so lowering PRE-BUILDS the
+/// actual write `Call` node (`write_call`) with a synthetic hidden local
+/// (`tmp_name`) standing in for "the value this target will receive" as its
+/// final argument -- codegen only has to bind `tmp_name` to the runtime-
+/// destructured value BEFORE emitting `write_call` via the ordinary
+/// `emit_expr` path, reusing the EXACT same static/dynamic dispatch
+/// `codegen::call::dispatch` already provides for every other call, with no
+/// bespoke attr/index-write codegen of its own. See `parse::lower_multi_target`.
+pub enum MultiTarget {
+    Local(String),
+    Ivar(String),
+    ClassVar(String),
+    Global(String),
+    /// A bare (lexically-scoped) constant target -- see `ConstWrite`'s docs
+    /// for the same `scope: None` resolution rule.
+    Const(String),
+    /// `obj.attr = tmp_name` / `arr[i] = tmp_name` -- see this enum's own
+    /// docs above.
+    Call { write_call: NodeId, tmp_name: String },
+    /// `(a, b)` -- a nested destructuring group; the value distributed to
+    /// this slot is itself further split via `spinel_rt::multi_assign`,
+    /// recursively.
+    Nested(MultiTargetGroup),
+}
+
+/// The `before`/`splat`/`after` shape EVERY multi-assignment target list
+/// has, at every nesting level (Ruby's own grammar allows at most one splat
+/// per group, anchoring plain targets before/after it) -- shared by the
+/// top-level `HirNode::MultiWrite`, a `MultiTarget::Nested` group, and a
+/// multi-target `for a, b in ...`'s own index (`HirNode::For`). `splat:
+/// None` = no `*` at all; `Some(None)` = an anonymous `*` (discards the
+/// middle slice -- still unsupported, matching the pre-existing plain-local
+/// restriction, a clean lowering error); `Some(Some(target))` = `*target`.
+pub struct MultiTargetGroup {
+    pub before: Vec<MultiTarget>,
+    pub splat: Option<Option<Box<MultiTarget>>>,
+    pub after: Vec<MultiTarget>,
+}
+
+impl MultiTarget {
+    /// Every `NodeId` directly embedded in this target (a `Call` target's
+    /// pre-built `write_call`, or a nested group's own embedded nodes) --
+    /// NOT the multi-assignment's own `value` (a sibling concern) -- mirrors
+    /// `Pattern::for_each_node`'s exact shape/purpose, shared by every
+    /// traversal that needs to walk sub-expressions nested inside a target
+    /// (ivar/cvar collection, local-type tracking, hoisting, capture
+    /// analysis).
+    pub fn for_each_node(&self, visit: &mut impl FnMut(NodeId)) {
+        match self {
+            MultiTarget::Local(_)
+            | MultiTarget::Ivar(_)
+            | MultiTarget::ClassVar(_)
+            | MultiTarget::Global(_)
+            | MultiTarget::Const(_) => {}
+            MultiTarget::Call { write_call, .. } => visit(*write_call),
+            MultiTarget::Nested(group) => group.for_each_node(visit),
+        }
+    }
+
+    /// Every LOCAL-like name this target binds, for hoisting/local-type-
+    /// tracking purposes: a plain `Local`, or a `Call` target's own hidden
+    /// `tmp_name` synthetic local (bound once per multi-assignment, read
+    /// back inside `write_call` -- see `MultiTarget::Call`'s docs). Ivar/
+    /// cvar/global/const targets have their own, separate storage and don't
+    /// participate in the enclosing scope's LOCAL-variable bookkeeping at
+    /// all, so they're excluded here (mirrors `Pattern::for_each_bound_name`'s
+    /// same "leaks into the enclosing scope" contract, narrowed to only the
+    /// target kinds that actually use local-variable storage).
+    pub fn for_each_local_name(&self, visit: &mut impl FnMut(&str)) {
+        match self {
+            MultiTarget::Local(n) => visit(n),
+            MultiTarget::Call { tmp_name, .. } => visit(tmp_name),
+            MultiTarget::Ivar(_) | MultiTarget::ClassVar(_) | MultiTarget::Global(_) | MultiTarget::Const(_) => {}
+            MultiTarget::Nested(group) => group.for_each_local_name(visit),
+        }
+    }
+}
+
+impl MultiTargetGroup {
+    /// See `MultiTarget::for_each_node`'s docs.
+    pub fn for_each_node(&self, visit: &mut impl FnMut(NodeId)) {
+        for t in self.before.iter().chain(&self.after) {
+            t.for_each_node(visit);
+        }
+        if let Some(Some(t)) = &self.splat {
+            t.for_each_node(visit);
+        }
+    }
+
+    /// See `MultiTarget::for_each_local_name`'s docs.
+    pub fn for_each_local_name(&self, visit: &mut impl FnMut(&str)) {
+        for t in self.before.iter().chain(&self.after) {
+            t.for_each_local_name(visit);
+        }
+        if let Some(Some(t)) = &self.splat {
+            t.for_each_local_name(visit);
+        }
+    }
+}
+
 /// One `rescue [classes] [=> binding] ... end` clause of a `begin`/an
 /// implicit method-body rescue. `classes` empty = a bare `rescue` -- matches
 /// `StandardError` and its descendants (real Ruby's own default), NOT
@@ -509,24 +628,25 @@ pub enum HirNode {
     /// argument list at lowering time (see `parse/mod.rs`), resolved by NAME
     /// against the callee's declared keyword params at codegen time (the
     /// callee's `Params` is always statically known at a Path 1 call site).
-    /// A call-site positional splat (`foo(*arr)`) and a call-site double-
-    /// splat (`foo(**h)`) aren't lowered yet -- distinct, currently-unhandled
-    /// prism nodes, a clean lowering error rather than a panic (spike scope:
-    /// a `Params`-declared `rest`/`keyword_rest` can still be exercised by
-    /// simply passing enough plain positional/keyword args, no splat syntax
-    /// needed at the call site to prove out the parameter-binding side).
-    /// `block_arg` is `foo(&existing_proc)` -- forwarding an already-built
-    /// `Proc` value as the call's block (a distinct `BlockArgumentNode`),
-    /// separate from `block` (a literal `{ }`/`do..end` at the call site);
-    /// real Ruby rejects having both on the same call, which this spike
-    /// doesn't separately re-validate (whichever lowers last silently wins --
-    /// harmless, since `ruby-prism` itself already rejects this at parse
-    /// time before lowering ever runs).
+    /// `args` reuses `ArrayElem` (a plain positional value, or a `*expr`
+    /// splat whose contents are flattened in at runtime -- see
+    /// `ArrayElem`'s docs and `codegen::params::emit_call_args`'s Path 1
+    /// splat-flattening); `kwargs_splat` is a call-site `**h` double-splat
+    /// (its pairs are merged into `kwargs` at runtime, after every literal
+    /// `name: value` pair -- matching real Ruby's own left-to-right
+    /// last-one-wins merge order). `block_arg` is `foo(&existing_proc)` --
+    /// forwarding an already-built `Proc` value as the call's block (a
+    /// distinct `BlockArgumentNode`), separate from `block` (a literal `{
+    /// }`/`do..end` at the call site); real Ruby rejects having both on the
+    /// same call, which this spike doesn't separately re-validate (whichever
+    /// lowers last silently wins -- harmless, since `ruby-prism` itself
+    /// already rejects this at parse time before lowering ever runs).
     Call {
         receiver: Option<NodeId>,
         name: String,
-        args: Vec<NodeId>,
+        args: Vec<ArrayElem>,
         kwargs: Vec<HashPair>,
+        kwargs_splat: Option<NodeId>,
         block: Option<NodeId>,
         block_arg: Option<NodeId>,
         safe: bool,
@@ -633,19 +753,22 @@ pub enum HirNode {
     /// only `break` (or, once Phase 9 exists, an uncaught `raise`) ever ends
     /// it.
     Loop { body: Vec<NodeId> },
-    /// `for var in iterable ... end`. Unlike block-based iteration (`each { |x|
-    /// ... }`), Ruby's `for` does NOT introduce a new variable scope: `var`
-    /// and any locals first assigned in the body stay visible after the loop
-    /// ends -- a real semantic difference, not a spike shortcut, and one
-    /// `codegen`'s plain (non-block-nested) `let` emission already gives for
-    /// free. Only a single plain local index variable is supported (`for a,
-    /// b in ...` multi-target `for` is a clean lowering error, not a panic).
-    /// The loop's own expression-position value is documented as `nil`
-    /// unless a `break value` fires -- real Ruby returns the iterated
-    /// collection itself in the no-break case, a narrower-than-real-Ruby
-    /// simplification nothing in the spike's examples depends on.
+    /// `for var in iterable ... end` / `for a, b in pairs ... end`. Unlike
+    /// block-based iteration (`each { |x| ... }`), Ruby's `for` does NOT
+    /// introduce a new variable scope: `var` and any locals first assigned
+    /// in the body stay visible after the loop ends -- a real semantic
+    /// difference, not a spike shortcut, and one `codegen`'s plain
+    /// (non-block-nested) `let` emission already gives for free. `target`
+    /// reuses `MultiTarget` (a plain `for x in ...` lowers to
+    /// `MultiTarget::Local`; `for a, b in ...` to `MultiTarget::Nested`),
+    /// destructured against each iterated element exactly like a
+    /// `MultiWrite`'s value. The loop's own expression-position value is
+    /// documented as `nil` unless a `break value` fires -- real Ruby returns
+    /// the iterated collection itself in the no-break case, a
+    /// narrower-than-real-Ruby simplification nothing in the spike's
+    /// examples depends on.
     For {
-        var: String,
+        target: MultiTarget,
         iterable: NodeId,
         body: Vec<NodeId>,
     },
@@ -672,21 +795,13 @@ pub enum HirNode {
     /// direct native Rust equivalent -- `continue` always re-tests/advances).
     /// See `codegen::loops`' inner-label trick this needs.
     Redo,
-    /// `a, b = 1, 2` / `a, *b, c = arr` -- only plain local-variable targets
-    /// are supported on the left (no nested destructuring, ivars, constants,
-    /// or `a[i]`/`obj.attr` targets -- each is a distinct `ruby-prism` node
-    /// this spike doesn't lower, a clean "unsupported syntax" error rather
-    /// than a panic). `splat` is `None` for a plain `a, b = ...` with no `*`
-    /// at all; `Some(name)` names the local that captures the
-    /// (possibly-empty) middle slice. See `spinel_rt::multi_assign`'s docs
-    /// for the exact leniency rules (missing positions become `nil`; extra
-    /// values are silently dropped when there's no splat to catch them).
-    MultiWrite {
-        before: Vec<String>,
-        splat: Option<String>,
-        after: Vec<String>,
-        value: NodeId,
-    },
+    /// `a, b = 1, 2` / `a, *b, c = arr` / `(a, b), c = ...` / `@x, $y, Z =
+    /// ...` -- see `MultiTargetGroup`/`MultiTarget`'s docs for the full
+    /// generalized target shape (local/ivar/cvar/global/const/attr/index/
+    /// nested-group). See `spinel_rt::multi_assign`'s docs for the exact
+    /// leniency rules (missing positions become `nil`; extra values are
+    /// silently dropped when there's no splat to catch them).
+    MultiWrite { targets: MultiTargetGroup, value: NodeId },
     /// `eval("literal ruby source")` -- ONLY the compile-time-constant-string
     /// form (see `parse/mod.rs`'s eval-call-shape recognizer). `body`'s
     /// source was parsed and lowered into THIS SAME arena at lowering time --
@@ -811,4 +926,47 @@ pub enum HirNode {
     /// `codegen::exceptions::emit_retry`'s docs for what happens to a
     /// mis-scoped one instead (an uncaught `Signal`, not silent wrongness).
     Retry,
+    /// `$foo` read/write -- a flat, genuinely process-wide store (Part 9's
+    /// `LazyLock<Mutex<_>>` pattern, same as `cvars`/the Symbol interner),
+    /// needing no ancestor search at all: unlike `@@x`, there's exactly ONE
+    /// global namespace, shared by every class and every thread. An unset
+    /// global reads as `nil`, matching real Ruby (no `NameError`, unlike an
+    /// unset constant -- see `ConstRead`'s docs).
+    GlobalRead(String),
+    GlobalWrite(String, NodeId),
+    /// `Foo::BAR` -- an explicit, namespace-qualified constant READ
+    /// (`ConstantPathNode`). The class name must already be a registered
+    /// class/module (same rule `constant_name`'s other callers enforce); the
+    /// owner search starts there (walking ITS ancestors, the same scheme as
+    /// `ClassVarRead`'s ownership resolution -- see
+    /// `codegen::expr::const_owner_id`), unlike a bare constant (lowered as
+    /// an ordinary `ClassRef`, which falls back to the LEXICALLY-enclosing
+    /// class when used as a plain value -- see `codegen::expr`'s `ClassRef`
+    /// docs). Unlike an ivar/cvar/global's "never assigned" -> `nil`
+    /// convention, an unset constant raises a real `NameError` -- matches
+    /// actual Ruby.
+    QualifiedConstRead(String, String),
+    /// `NAME = value` / `Foo::NAME = value` -- `scope: None` for the bare
+    /// form (owned by the LEXICALLY-enclosing class/module body it's written
+    /// in, or `Object` at the top level -- exactly `ClassVarWrite`'s
+    /// ownership scheme); `scope: Some(class_name)` for an explicit
+    /// `Foo::NAME = value` (`ConstantPathWriteNode`), which always targets
+    /// that NAMED class directly regardless of lexical position.
+    ConstWrite {
+        scope: Option<String>,
+        name: String,
+        value: NodeId,
+    },
+    /// A synthetic statement sequence introduced by LOWERING itself (never
+    /// written directly in Ruby source) -- used to bind a compound-
+    /// assignment target's receiver/index expression(s) to a hidden local
+    /// exactly ONCE before reading-then-writing through them (e.g. `obj.attr
+    /// += 1`, `arr[i] ||= 1`), matching real Ruby's own "evaluate the
+    /// receiver once" semantics; see `parse::lower_call_operator_write`'s
+    /// docs. Identical codegen shape to `Eval`'s (a `Vec<NodeId>` emitted as
+    /// one tail-value Rust block expression via `emit_body`) -- kept as a
+    /// distinct variant because it means something different to a Ruby
+    /// reader/tooling (`defined?`, error messages): `Eval` is a real
+    /// Ruby-level construct, `Seq` is purely a compiler lowering artifact.
+    Seq(Vec<NodeId>),
 }

@@ -78,6 +78,13 @@ pub struct ClassInfo {
     /// name -> the class/module that actually OWNS the runtime storage
     /// (nearest ancestor, including self, that ever claimed it first).
     pub cvar_owners: HashMap<String, ClassId>,
+    /// Bare-constant storage ownership, resolved once at analyze time --
+    /// same scheme as `cvar_owners` (nearest ancestor, including self, that
+    /// ever claimed the name first), used by `codegen::expr::const_owner_id`.
+    /// Only bare (`scope: None`) constant writes register ownership this way
+    /// -- an explicit `Foo::NAME` write always targets `Foo` directly,
+    /// regardless of lexical position (see `HirNode::ConstWrite`'s docs).
+    pub const_owners: HashMap<String, ClassId>,
     /// Class-body TOP-LEVEL `@@x = expr` statements (`@@count = 0` written
     /// directly inside `class Foo; ... end`, not inside any method) -- real
     /// Ruby executes a class body immediately, top to bottom, as part of
@@ -157,6 +164,7 @@ impl Compiler {
                 own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
                 cvar_owners: HashMap::new(),
+                const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
                 ancestors: Vec::new(),
             }],
@@ -189,6 +197,7 @@ impl Compiler {
             own_class_methods: Vec::new(),
             class_methods: Vec::new(),
             cvar_owners: HashMap::new(),
+            const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
             ancestors: Vec::new(),
         });

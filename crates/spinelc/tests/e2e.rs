@@ -554,14 +554,14 @@ fn multi_assign_with_and_without_a_splat() {
 
 #[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // A call-site positional splat isn't supported yet (spike scope) --
-    // update this to a still-unsupported construct if that ever lands and
-    // makes this compile. `begin`/`rescue` (Phase 9) is no longer a valid
-    // example here -- see the exception-handling tests below.
-    let err = spinelc::compile_to_rust("arr = [1, 2]\nputs foo(*arr)\n").unwrap_err();
+    // A double-splat (`**h`) inside a HASH LITERAL isn't supported yet
+    // (spike scope) -- update this to a still-unsupported construct if that
+    // ever lands and makes this compile. `begin`/`rescue` (Phase 9) and a
+    // call-site splat (Phase 12.5) are no longer valid examples here.
+    let err = spinelc::compile_to_rust("h = {a: 1}\nputs({b: 2, **h})\n").unwrap_err();
     assert!(
-        err.contains("splat"),
-        "expected a splat-related unsupported-syntax error, got: {err}"
+        err.contains("double-splat"),
+        "expected a double-splat-related unsupported-syntax error, got: {err}"
     );
 }
 
@@ -3627,5 +3627,288 @@ fn lambda_enforces_strict_arity_via_argument_error() {
     assert_eq!(
         result.stdout,
         "caught: wrong number of arguments (given 1, expected 2)\n3\n"
+    );
+}
+
+// Phase 12.5 -- globals, namespaced constants, compound-assignment and
+// multi-assignment completeness, call-site splats. Every test below is
+// oracle-verified against real `ruby` first, per this project's established
+// convention.
+
+#[test]
+fn global_variables_read_write_and_default_to_nil() {
+    let result = run_ruby(
+        r#"
+        $x = 10
+        puts $x
+        puts $never_set
+        $x += 5
+        puts $x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n\n15\n");
+}
+
+#[test]
+fn top_level_constant_read_and_write() {
+    let result = run_ruby("MAX = 100\nputs MAX");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "100\n");
+}
+
+#[test]
+fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
+    let result = run_ruby(
+        r#"
+        class Base
+          X = 1
+        end
+        class Sub < Base
+          def get
+            X
+          end
+        end
+        puts Sub.new.get
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn namespaced_constant_read_via_double_colon() {
+    let result = run_ruby(
+        r#"
+        class Foo
+          BAR = 42
+        end
+        puts Foo::BAR
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn a_bare_constant_still_falls_back_to_the_top_level_from_inside_a_class() {
+    let result = run_ruby(
+        r#"
+        MAX_ITEMS = 5
+        class Config
+          LIMIT = 3
+          def show
+            puts LIMIT
+            puts MAX_ITEMS
+          end
+        end
+        Config.new.show
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n5\n");
+}
+
+#[test]
+fn unset_constant_raises_a_name_error() {
+    let result = run_ruby(
+        r#"
+        begin
+          puts UNDEFINED_CONST
+        rescue NameError => e
+          puts "caught: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught: uninitialized constant UNDEFINED_CONST\n");
+}
+
+#[test]
+fn local_or_assign_and_and_assign() {
+    let result = run_ruby(
+        r#"
+        x = nil
+        x ||= 5
+        puts x
+        y = 1
+        y &&= 2
+        puts y
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n2\n");
+}
+
+#[test]
+fn compound_assignment_on_an_attribute_evaluates_the_receiver_exactly_once() {
+    let result = run_ruby(
+        r#"
+        class Box
+          attr_accessor :n
+          def initialize
+            @n = 0
+          end
+        end
+        class Tracker
+          attr_reader :calls
+          def initialize(box)
+            @box = box
+            @calls = 0
+          end
+          def get
+            @calls += 1
+            @box
+          end
+        end
+
+        b = Box.new
+        t = Tracker.new(b)
+        t.get.n += 5
+        puts b.n
+        puts t.calls
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n1\n");
+}
+
+#[test]
+fn or_assign_on_an_attribute_short_circuits_without_calling_the_setter() {
+    let result = run_ruby(
+        r#"
+        class Box
+          attr_accessor :n
+        end
+        b = Box.new
+        b.n = 5
+        b.n ||= 99
+        puts b.n
+        b.n = nil
+        b.n ||= 42
+        puts b.n
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n42\n");
+}
+
+#[test]
+fn compound_and_or_assignment_on_an_array_index() {
+    let result = run_ruby(
+        r#"
+        arr = [1, 2, 3]
+        arr[0] += 10
+        puts arr[0]
+        arr[1] ||= 99
+        puts arr[1]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "11\n2\n");
+}
+
+#[test]
+fn nested_destructuring_multi_assign() {
+    let result = run_ruby(
+        r#"
+        (a, b), c = [[1, 2], 3]
+        puts a
+        puts b
+        puts c
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n3\n");
+}
+
+#[test]
+fn multi_assign_to_ivar_and_global_targets() {
+    let result = run_ruby(
+        r#"
+        class Thing
+          attr_reader :x
+          def set_both(g)
+            @x, $g2 = 10, g
+          end
+        end
+        t = Thing.new
+        t.set_both(99)
+        puts t.x
+        puts $g2
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n99\n");
+}
+
+#[test]
+fn for_loop_destructures_each_pair() {
+    let result = run_ruby(
+        r#"
+        for aa, bb in [[1, 2], [3, 4]]
+          puts aa + bb
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n7\n");
+}
+
+#[test]
+fn call_site_splat_expands_an_array_into_positional_arguments() {
+    let result = run_ruby(
+        r#"
+        class Adder
+          def add3(a, b, c)
+            a + b + c
+          end
+        end
+        a = Adder.new
+        arr = [1, 2, 3]
+        puts a.add3(*arr)
+        puts a.add3(1, *[2, 3])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n6\n");
+}
+
+#[test]
+fn call_site_splat_on_an_implicit_self_sibling_call() {
+    let result = run_ruby(
+        r#"
+        class Adder
+          def add3(a, b, c)
+            a + b + c
+          end
+          def run(arr)
+            add3(*arr)
+          end
+        end
+        puts Adder.new.run([1, 2, 3])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+#[should_panic(expected = "splat argument with keyword arguments isn't supported yet")]
+fn kwargs_double_splat_at_a_call_site_is_a_clean_error() {
+    // A call-site `**h` double-splat has no Path 2 (`spinel_rt::send`)
+    // keyword channel at all (matches this file's other keyword-argument
+    // dynamic-dispatch restrictions above) -- a clean codegen-time panic,
+    // not silently dropped or misdispatched.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Greeter
+          def f(x:)
+            x
+          end
+        end
+        h = {x: 1}
+        puts Greeter.new.f(**h)
+        "#,
     );
 }

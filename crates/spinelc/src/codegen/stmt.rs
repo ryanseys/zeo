@@ -62,22 +62,19 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
         } else {
             quote! { #write }
         }
-    } else if let HirNode::MultiWrite {
-        before,
-        splat,
-        after,
-        value,
-    } = &cx.compiler.hir[stmt]
-    {
-        // Same reasoning as `LocalWrite` above: each target's `let` must be
-        // a plain top-level Rust statement (not nested in a sub-block) so
-        // later statements in this same body can see it.
-        let lets = super::loops::emit_multi_write_lets(cx, before, splat, after, *value);
+    } else if let HirNode::MultiWrite { targets, value } = &cx.compiler.hir[stmt] {
+        // Same reasoning as `LocalWrite` above: every target that's a plain
+        // `Local` reassigns the SAME already-hoisted identifier as before,
+        // so wrapping the destructuring scratch locals (`__elems`/`__before`/
+        // `__splat`/`__after`) in their own nested block (see
+        // `codegen::loops::emit_multi_target_group`) doesn't affect their
+        // visibility to LATER statements in this same body at all.
+        let write = super::loops::emit_multi_write(cx, targets, *value);
         if is_tail {
             let nil = tail_nil(wrap_ok);
-            quote! { #lets #nil }
+            quote! { #write #nil }
         } else {
-            quote! { #lets }
+            quote! { #write }
         }
     } else {
         let e = emit_expr(cx, stmt);

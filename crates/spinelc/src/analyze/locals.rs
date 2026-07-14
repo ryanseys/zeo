@@ -124,6 +124,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             receiver,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             ..
@@ -131,12 +132,16 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             if let Some(r) = receiver {
                 track_node(compiler, locals, *r);
             }
-            for &a in args {
-                track_node(compiler, locals, a);
+            for a in args {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                track_node(compiler, locals, *n);
             }
             for pair in kwargs {
                 track_node(compiler, locals, pair.0);
                 track_node(compiler, locals, pair.1);
+            }
+            if let Some(s) = kwargs_splat {
+                track_node(compiler, locals, *s);
             }
             if let Some(b) = block {
                 track_node(compiler, locals, *b);
@@ -157,17 +162,19 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         HirNode::Loop { body } => {
             *locals = join_loop(compiler, locals, body, None);
         }
-        HirNode::For { var, iterable, body } => {
+        HirNode::For { target, iterable, body } => {
             track_node(compiler, locals, *iterable);
             // A `for`-in-`Range` variable is provably always `Int` (the only
             // element type `Range` iteration supports -- see
-            // `codegen::loops::emit_for`); an `Array`'s element type isn't
-            // tracked per-element, so it widens to `Poly`.
-            let elem_ty = match infer_type_with_locals(compiler, locals, *iterable) {
-                TyKind::Range => TyKind::Int,
+            // `codegen::loops::emit_for`) when the target is a single plain
+            // local; an `Array`'s element type isn't tracked per-element (nor
+            // is a destructured `for a, b in ...`'s), so those widen to
+            // `Poly`.
+            let elem_ty = match (target, infer_type_with_locals(compiler, locals, *iterable)) {
+                (crate::hir::MultiTarget::Local(_), TyKind::Range) => TyKind::Int,
                 _ => TyKind::Poly,
             };
-            *locals = join_loop(compiler, locals, body, Some((var, elem_ty)));
+            *locals = join_loop(compiler, locals, body, Some((target, elem_ty)));
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
@@ -175,19 +182,22 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             }
         }
         HirNode::Redo | HirNode::BlockGiven | HirNode::SelfRef => {}
-        HirNode::MultiWrite {
-            before,
-            splat,
-            after,
-            value,
-        } => {
+        HirNode::MultiWrite { targets, value } => {
             track_node(compiler, locals, *value);
+            targets.for_each_node(&mut |n| track_node(compiler, locals, n));
             // Destructured targets' element types aren't tracked precisely
             // (spike scope) -- an arbitrary Array's element types are
-            // unknown -- so each one widens to `Poly`, same as any other
-            // Array-`[]` read.
-            for name in before.iter().chain(splat.iter()).chain(after.iter()) {
-                locals.insert(name.clone(), TyKind::Poly);
+            // unknown -- so each local-like target widens to `Poly`, same as
+            // any other Array-`[]` read.
+            targets.for_each_local_name(&mut |n| {
+                locals.insert(n.to_string(), TyKind::Poly);
+            });
+        }
+        HirNode::GlobalWrite(_, value) => track_node(compiler, locals, *value),
+        HirNode::ConstWrite { value, .. } => track_node(compiler, locals, *value),
+        HirNode::Seq(body) => {
+            for &n in body {
+                track_node(compiler, locals, n);
             }
         }
         HirNode::Eval(body) => {
@@ -304,6 +314,8 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -365,11 +377,14 @@ fn join_loop(
     compiler: &Compiler,
     before: &HashMap<String, TyKind>,
     body: &[NodeId],
-    seed: Option<(&str, TyKind)>,
+    seed: Option<(&crate::hir::MultiTarget, TyKind)>,
 ) -> HashMap<String, TyKind> {
     let mut ran = before.clone();
-    if let Some((name, ty)) = seed {
-        ran.insert(name.to_string(), ty);
+    if let Some((target, elem_ty)) = seed {
+        target.for_each_node(&mut |n| track_node(compiler, &mut ran, n));
+        target.for_each_local_name(&mut |n| {
+            ran.insert(n.to_string(), elem_ty);
+        });
     }
     for &n in body {
         track_node(compiler, &mut ran, n);

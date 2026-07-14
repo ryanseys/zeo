@@ -194,10 +194,13 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::For { var, iterable, body } => {
-            if !out.contains(var) {
-                out.push(var.clone());
-            }
+        HirNode::For { target, iterable, body } => {
+            target.for_each_node(&mut |n| collect_locals(compiler, n, out));
+            target.for_each_local_name(&mut |n| {
+                if !out.contains(&n.to_string()) {
+                    out.push(n.to_string());
+                }
+            });
             collect_locals(compiler, *iterable, out);
             for &n in body {
                 collect_locals(compiler, n, out);
@@ -209,24 +212,28 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             }
         }
         HirNode::Redo => {}
-        HirNode::MultiWrite {
-            before,
-            splat,
-            after,
-            value,
-        } => {
-            for name in before.iter().chain(splat.iter()).chain(after.iter()) {
-                if !out.contains(name) {
-                    out.push(name.clone());
+        HirNode::MultiWrite { targets, value } => {
+            targets.for_each_local_name(&mut |n| {
+                if !out.contains(&n.to_string()) {
+                    out.push(n.to_string());
                 }
-            }
+            });
+            targets.for_each_node(&mut |n| collect_locals(compiler, n, out));
             collect_locals(compiler, *value, out);
+        }
+        HirNode::GlobalWrite(_, value) => collect_locals(compiler, *value, out),
+        HirNode::ConstWrite { value, .. } => collect_locals(compiler, *value, out),
+        HirNode::Seq(body) => {
+            for &n in body {
+                collect_locals(compiler, n, out);
+            }
         }
         HirNode::Call {
             receiver,
             name,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             ..
@@ -234,12 +241,16 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             if let Some(r) = receiver {
                 collect_locals(compiler, *r, out);
             }
-            for &a in args {
-                collect_locals(compiler, a, out);
+            for a in args {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                collect_locals(compiler, *n, out);
             }
             for pair in kwargs {
                 collect_locals(compiler, pair.0, out);
                 collect_locals(compiler, pair.1, out);
+            }
+            if let Some(s) = kwargs_splat {
+                collect_locals(compiler, *s, out);
             }
             if let Some(b) = block {
                 // An ESCAPING block (anything but the `.times` inline fast
@@ -394,6 +405,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::BlockGiven
         | HirNode::Include(_)
         | HirNode::Extend(_)

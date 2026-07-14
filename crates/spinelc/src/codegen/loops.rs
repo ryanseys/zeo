@@ -24,7 +24,7 @@ use quote::quote;
 use super::expr::{emit_expr, infer};
 use super::stmt::emit_body;
 use super::Ctx;
-use crate::hir::NodeId;
+use crate::hir::{MultiTarget, MultiTargetGroup, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 use syn::Lifetime;
@@ -107,28 +107,33 @@ pub fn emit_loop(cx: &Ctx, body: &[NodeId]) -> TokenStream {
 /// hoisting prelude (see `codegen::hoisting`), since (unlike a block's own
 /// params) Ruby's `for` doesn't introduce a new scope for its index
 /// variable.
-pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> TokenStream {
+pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId]) -> TokenStream {
     let outer = fresh_label(cx, "for");
     let redo = fresh_label(cx, "for_body");
     let iterable_ty = infer(cx, iterable);
-    // Only a `Range`'s element type is provably `Int` -- an `Array`'s
-    // elements aren't tracked individually, so `var` stays `Poly` there (see
-    // `analyze::locals`' identical seeding for the same reason).
-    let elem_ty = match iterable_ty {
-        TyKind::Range => TyKind::Int,
+    // Only a `Range`'s element type is provably `Int`, and only when `target`
+    // is a single plain local -- an `Array`'s elements aren't tracked
+    // individually, nor is a destructured `for a, b in ...`'s, so those stay
+    // `Poly` (see `analyze::locals`' identical seeding for the same reason).
+    let elem_ty = match (target, iterable_ty) {
+        (MultiTarget::Local(_), TyKind::Range) => TyKind::Int,
         _ => TyKind::Poly,
     };
-    let loop_cx = cx.in_loop(redo.clone(), outer.clone()).with_for_var(var, elem_ty);
+    let loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    let loop_cx = match target {
+        MultiTarget::Local(name) => loop_cx.with_for_var(name, elem_ty),
+        _ => loop_cx,
+    };
     let inner = emit_redo_wrapped_body(&loop_cx, body, &redo);
     let iter_expr = emit_expr(cx, iterable);
-    // Routed through `emit_local_write` (not a hardcoded reassignment)
-    // because `var` might be captured by an escaping block somewhere in
-    // `body` -- if so, `hoisting`'s prelude declares it as an
+    // Routed through `emit_target_write` (not a hardcoded reassignment)
+    // because a target name might be captured by an escaping block somewhere
+    // in `body` -- if so, `hoisting`'s prelude declares it as an
     // `Arc<parking_lot::Mutex<RubyValue>>`, and a bare `var_ident = ...`
     // reassignment would be a Rust type error against that, not just a
     // semantic gap.
-    let bind_array = super::hoisting::emit_local_write(cx, var, quote! { __iter[__idx].clone() });
-    let bind_range = super::hoisting::emit_local_write(cx, var, quote! { spinel_rt::RubyValue::Int(__i) });
+    let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() });
+    let bind_range = emit_target_write(cx, target, quote! { spinel_rt::RubyValue::Int(__i) });
 
     match iterable_ty {
         TyKind::Array => quote! {
@@ -220,26 +225,85 @@ pub fn emit_redo(cx: &Ctx) -> TokenStream {
     }
 }
 
-/// The assignments produced by `a, b = 1, 2` / `a, *b, c = arr` -- shared
-/// between `stmt.rs` (the primary, statement-position case) and `expr.rs`'s
-/// minimal sub-expression fallback. Each target is a plain reassignment,
-/// not a `let` -- every target name is already declared `mut` in the
-/// enclosing scope's hoisting prelude (see `codegen::hoisting`'s docs for
-/// why a fresh `let` here would silently fail to persist across loop
-/// iterations); only `__elems`/`__before`/`__splat`/`__after` are genuine
-/// fresh, transient scratch locals, unrelated to that concern. The
-/// right-hand side must be statically `Array`-typed -- a clean codegen-time
-/// panic otherwise, since there's no other dispatch to fall back to (spike
-/// scope, same posture as `emit_call`'s final panic). See
+/// Writes `value` (an already-emitted Rust expression) into `target` -- the
+/// one place every multi-assignment/`for`-loop target kind's write
+/// semantics live, shared by `emit_multi_target_group` (below) and
+/// `emit_for`. `Local` reuses `hoisting::emit_local_write` (so a captured
+/// local's write goes through the exact same guard-hygiene it always does);
+/// `Ivar`/`ClassVar`/`Global`/`Const` are direct storage writes; `Call`
+/// (`obj.attr = ...`/`arr[i] = ...`) binds `value` into the write's own
+/// pre-built synthetic hidden local FIRST, then emits the write CALL itself
+/// through the ordinary `emit_expr` path -- reusing the exact same
+/// static/dynamic dispatch `codegen::call::dispatch` already provides for
+/// every other call, with no bespoke attr/index-write codegen needed here
+/// at all (see `hir::MultiTarget::Call`'s docs). `Nested` recurses into
+/// `emit_multi_target_group`, further destructuring `value` itself.
+pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> TokenStream {
+    match target {
+        MultiTarget::Local(name) => super::hoisting::emit_local_write(cx, name, value),
+        MultiTarget::Ivar(name) => super::expr::emit_ivar_write_stmt(cx, name, value),
+        MultiTarget::ClassVar(name) => super::expr::emit_cvar_write_stmt(cx, name, value),
+        MultiTarget::Global(name) => quote! { spinel_rt::global_set(#name, #value); },
+        MultiTarget::Const(name) => super::expr::emit_const_write_stmt(cx, None, name, value),
+        MultiTarget::Call { write_call, tmp_name } => {
+            let bind = super::hoisting::emit_local_write(cx, tmp_name, value);
+            let call = emit_expr(cx, *write_call);
+            quote! { #bind let _ = #call; }
+        }
+        MultiTarget::Nested(group) => emit_multi_target_group(cx, group, value),
+    }
+}
+
+/// Destructures `value_expr` (an Array-typed Rust expression) against
+/// `group`'s before/splat/after shape via `spinel_rt::multi_assign`, writing
+/// each target through `emit_target_write` -- the recursive core both
+/// `HirNode::MultiWrite` and a nested `MultiTarget::Nested` group reduce to.
+/// Only `__elems`/`__before`/`__splat`/`__after` are genuine fresh,
+/// transient scratch locals; every actual target write goes through
+/// `emit_target_write`'s own storage-appropriate rules. See
 /// `spinel_rt::multi_assign`'s docs for the destructuring rules this
 /// implements.
-pub fn emit_multi_write_lets(
-    cx: &Ctx,
-    before: &[String],
-    splat: &Option<String>,
-    after: &[String],
-    value: NodeId,
-) -> TokenStream {
+pub fn emit_multi_target_group(cx: &Ctx, group: &crate::hir::MultiTargetGroup, value_expr: TokenStream) -> TokenStream {
+    let n_before = group.before.len();
+    let n_after = group.after.len();
+    let has_splat = group.splat.is_some();
+
+    let bind_before = group
+        .before
+        .iter()
+        .enumerate()
+        .map(|(i, t)| emit_target_write(cx, t, quote! { __before[#i].clone() }));
+    let bind_after = group
+        .after
+        .iter()
+        .enumerate()
+        .map(|(i, t)| emit_target_write(cx, t, quote! { __after[#i].clone() }));
+    let bind_splat = match &group.splat {
+        Some(Some(t)) => Some(emit_target_write(
+            cx,
+            t,
+            quote! { spinel_rt::RubyValue::Array(spinel_rt::array_new(__splat)) },
+        )),
+        _ => None,
+    };
+
+    quote! {
+        {
+            let __elems = (#value_expr).as_array_unchecked().lock().clone();
+            let (__before, __splat, __after) = spinel_rt::multi_assign(&__elems, #n_before, #has_splat, #n_after);
+            #(#bind_before)*
+            #bind_splat
+            #(#bind_after)*
+        }
+    }
+}
+
+/// The top-level entry for `a, b = 1, 2` / `a, *b, c = arr` -- checks the
+/// right-hand side is statically `Array`-typed (a clean codegen-time panic
+/// otherwise, since there's no other dispatch to fall back to, spike scope,
+/// same posture as `emit_call`'s final panic) before delegating to
+/// `emit_multi_target_group`.
+pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> TokenStream {
     if infer(cx, value) != TyKind::Array {
         panic!(
             "multi-assignment requires an Array-typed right-hand side (spike scope), got {:?}",
@@ -247,29 +311,5 @@ pub fn emit_multi_write_lets(
         );
     }
     let value_expr = emit_expr(cx, value);
-    let n_before = before.len();
-    let n_after = after.len();
-    let has_splat = splat.is_some();
-
-    let bind_before = before.iter().enumerate().map(|(i, name)| {
-        super::hoisting::emit_local_write(cx, name, quote! { __before[#i].clone() })
-    });
-    let bind_after = after.iter().enumerate().map(|(i, name)| {
-        super::hoisting::emit_local_write(cx, name, quote! { __after[#i].clone() })
-    });
-    let bind_splat = splat.as_ref().map(|name| {
-        super::hoisting::emit_local_write(
-            cx,
-            name,
-            quote! { spinel_rt::RubyValue::Array(spinel_rt::array_new(__splat)) },
-        )
-    });
-
-    quote! {
-        let __elems = (#value_expr).as_array_unchecked().lock().clone();
-        let (__before, __splat, __after) = spinel_rt::multi_assign(&__elems, #n_before, #has_splat, #n_after);
-        #(#bind_before)*
-        #bind_splat
-        #(#bind_after)*
-    }
+    emit_multi_target_group(cx, targets, value_expr)
 }

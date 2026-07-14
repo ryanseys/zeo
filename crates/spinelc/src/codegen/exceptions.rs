@@ -302,7 +302,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                 || arms.iter().any(|arm| body_contains_bare_loop_jump(compiler, &arm.body))
                 || else_body.as_deref().is_some_and(|b| body_contains_bare_loop_jump(compiler, b))
         }
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
             let block_jumps = block.is_some_and(|b| {
                 let HirNode::Block { body, .. } = &compiler.hir[b] else {
                     panic!("a Block should only be reached via the Call that invokes it");
@@ -317,13 +317,24 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             });
             block_jumps
                 || receiver.is_some_and(|r| node_contains_bare_loop_jump(compiler, r))
-                || args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a))
+                || args.iter().any(|a| {
+                    let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                    node_contains_bare_loop_jump(compiler, *n)
+                })
                 || kwargs
                     .iter()
                     .any(|p| node_contains_bare_loop_jump(compiler, p.0) || node_contains_bare_loop_jump(compiler, p.1))
+                || kwargs_splat.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))
                 || block_arg.is_some_and(|b| node_contains_bare_loop_jump(compiler, b))
         }
-        HirNode::MultiWrite { value, .. } => node_contains_bare_loop_jump(compiler, *value),
+        HirNode::MultiWrite { targets, value } => {
+            let mut found = false;
+            targets.for_each_node(&mut |n| found |= node_contains_bare_loop_jump(compiler, n));
+            found || node_contains_bare_loop_jump(compiler, *value)
+        }
+        HirNode::GlobalWrite(_, value) => node_contains_bare_loop_jump(compiler, *value),
+        HirNode::ConstWrite { value, .. } => node_contains_bare_loop_jump(compiler, *value),
+        HirNode::Seq(body) => body_contains_bare_loop_jump(compiler, body),
         HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a)),
         HirNode::New { args, .. } | HirNode::SuperCall { args } => {
             args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a))

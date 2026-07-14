@@ -58,7 +58,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // registered, since `include`/`extend`/`prepend`/`< Super` targets must
     // already exist (same "defined earlier in the file" rule `superclass`
     // resolution already enforces). See `mro`'s module docs.
-    mro::materialize(&mut compiler)?;
+    mro::materialize(&mut compiler, &main_statements)?;
 
     let main_local_types = locals::infer_locals(&compiler, &main_statements);
 
@@ -125,7 +125,7 @@ fn register_class(
                 let target = resolve_module_target(compiler, m)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
             }
-            HirNode::ClassVarWrite(..) => {
+            HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);
@@ -245,13 +245,20 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             scan_bare_block_use(hir, *cond)? || scan_bare_block_use_body(hir, body)?
         }
         HirNode::Loop { body } => scan_bare_block_use_body(hir, body)?,
-        HirNode::For { iterable, body, .. } => {
-            scan_bare_block_use(hir, *iterable)? || scan_bare_block_use_body(hir, body)?
+        HirNode::For { target, iterable, body } => {
+            let mut found = scan_bare_block_use(hir, *iterable)?;
+            let mut ids = Vec::new();
+            target.for_each_node(&mut |n| ids.push(n));
+            for n in ids {
+                found |= scan_bare_block_use(hir, n)?;
+            }
+            found || scan_bare_block_use_body(hir, body)?
         }
         HirNode::Call {
             receiver,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             ..
@@ -260,12 +267,16 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             if let Some(r) = receiver {
                 found |= scan_bare_block_use(hir, *r)?;
             }
-            for &a in args {
-                found |= scan_bare_block_use(hir, a)?;
+            for a in args {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                found |= scan_bare_block_use(hir, *n)?;
             }
             for pair in kwargs {
                 found |= scan_bare_block_use(hir, pair.0)?;
                 found |= scan_bare_block_use(hir, pair.1)?;
+            }
+            if let Some(s) = kwargs_splat {
+                found |= scan_bare_block_use(hir, *s)?;
             }
             if let Some(b) = block_arg {
                 found |= scan_bare_block_use(hir, *b)?;
@@ -323,8 +334,18 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             }
             found
         }
-        HirNode::MultiWrite { value, .. } => scan_bare_block_use(hir, *value)?,
-        HirNode::Eval(body) => scan_bare_block_use_body(hir, body)?,
+        HirNode::MultiWrite { targets, value } => {
+            let mut found = scan_bare_block_use(hir, *value)?;
+            let mut ids = Vec::new();
+            targets.for_each_node(&mut |n| ids.push(n));
+            for n in ids {
+                found |= scan_bare_block_use(hir, n)?;
+            }
+            found
+        }
+        HirNode::GlobalWrite(_, value) => scan_bare_block_use(hir, *value)?,
+        HirNode::ConstWrite { value, .. } => scan_bare_block_use(hir, *value)?,
+        HirNode::Seq(body) | HirNode::Eval(body) => scan_bare_block_use_body(hir, body)?,
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
             Some(v) => scan_bare_block_use(hir, *v)?,
             None => false,
@@ -386,6 +407,8 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -534,6 +557,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             receiver,
             args,
             kwargs,
+            kwargs_splat,
             block,
             block_arg,
             ..
@@ -541,12 +565,16 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             if let Some(r) = receiver {
                 collect_ivars(hir, *r, out);
             }
-            for &a in args {
-                collect_ivars(hir, a, out);
+            for a in args {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
+                collect_ivars(hir, *n, out);
             }
             for pair in kwargs {
                 collect_ivars(hir, pair.0, out);
                 collect_ivars(hir, pair.1, out);
+            }
+            if let Some(s) = kwargs_splat {
+                collect_ivars(hir, *s, out);
             }
             if let Some(b) = block {
                 collect_ivars(hir, *b, out);
@@ -608,7 +636,8 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, n, out);
             }
         }
-        HirNode::For { iterable, body, .. } => {
+        HirNode::For { target, iterable, body } => {
+            target.for_each_node(&mut |n| collect_ivars(hir, n, out));
             collect_ivars(hir, *iterable, out);
             for &n in body {
                 collect_ivars(hir, n, out);
@@ -620,8 +649,13 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             }
         }
         HirNode::Redo | HirNode::BlockGiven => {}
-        HirNode::MultiWrite { value, .. } => collect_ivars(hir, *value, out),
-        HirNode::Eval(body) => {
+        HirNode::MultiWrite { targets, value } => {
+            collect_ivars(hir, *value, out);
+            targets.for_each_node(&mut |n| collect_ivars(hir, n, out));
+        }
+        HirNode::GlobalWrite(_, value) => collect_ivars(hir, *value, out),
+        HirNode::ConstWrite { value, .. } => collect_ivars(hir, *value, out),
+        HirNode::Seq(body) | HirNode::Eval(body) => {
             for &n in body {
                 collect_ivars(hir, n, out);
             }
@@ -689,6 +723,8 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::LocalRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::QualifiedConstRead(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_) => {}

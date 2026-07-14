@@ -6,7 +6,7 @@
 
 use quote::quote;
 
-use super::expr::emit_expr;
+use super::expr::{box_if_object_typed, emit_expr};
 use super::Ctx;
 use crate::hir::{ArrayElem, HashPair, NodeId, StrPart};
 use proc_macro2::TokenStream;
@@ -20,6 +20,7 @@ pub fn emit_array_lit(cx: &Ctx, elems: &[ArrayElem]) -> TokenStream {
     let pushes = elems.iter().map(|e| match e {
         ArrayElem::Single(n) => {
             let v = emit_expr(cx, *n);
+            let v = box_if_object_typed(cx, *n, v);
             quote! { __arr.push(#v); }
         }
         ArrayElem::Splat(n) => {
@@ -43,7 +44,9 @@ pub fn emit_array_lit(cx: &Ctx, elems: &[ArrayElem]) -> TokenStream {
 pub fn emit_hash_lit(cx: &Ctx, pairs: &[HashPair]) -> TokenStream {
     let inserts = pairs.iter().map(|HashPair(k, v)| {
         let k_expr = emit_expr(cx, *k);
+        let k_expr = box_if_object_typed(cx, *k, k_expr);
         let v_expr = emit_expr(cx, *v);
+        let v_expr = box_if_object_typed(cx, *v, v_expr);
         quote! { __pairs.push((#k_expr, #v_expr)); }
     });
     quote! {
