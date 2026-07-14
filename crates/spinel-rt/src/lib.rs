@@ -44,6 +44,7 @@ macro_rules! ruby_class {
             id: $id:expr;
             ivars { $($ivar:ident),* $(,)? }
             $( def $method:ident ( & $slf:tt $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
+            dispatch { $( $dname:ident => $tramp:expr ),* $(,)? }
         }
     ) => {
         pub struct $name {
@@ -97,21 +98,25 @@ macro_rules! ruby_class {
             /// Called once from generated `main()`. Populates the *runtime*
             /// dispatch table (Path 2) with a trampoline per method; Path 1
             /// (static) call sites never go through this table at all.
+            ///
+            /// Each trampoline's BODY is supplied by the caller (`$tramp`,
+            /// via the `dispatch { ... }` block below) rather than derived
+            /// here from `$arg`/`$arg_ty` pairs: once a method's params can
+            /// be optional/rest/keyword instead of uniformly required, a
+            /// bare exact-length slice-pattern match (the ONLY thing this
+            /// macro could derive on its own from the `def` clauses above)
+            /// can no longer express the binding logic -- spinelc already
+            /// has the full, precise parameter-kind info to author it
+            /// correctly (see `codegen::params`), so this macro's job
+            /// shrinks to exactly what its own doc comment always claimed:
+            /// struct/impl/registration ceremony, not binding logic.
             pub fn __register(registry: &mut $crate::ClassRegistry) {
                 registry.register(Self::CLASS_ID, Some(<$super>::CLASS_ID));
                 $(
                     registry.define_method(
                         Self::CLASS_ID,
-                        $crate::Symbol::intern(stringify!($method)),
-                        |recv, args| {
-                            let this = recv.as_any().downcast_ref::<$name>()
-                                .expect("class_id guarantees this downcast");
-                            #[allow(unused_variables)]
-                            match args {
-                                [$($arg),*] => $name::$method(this $(, $arg.clone())*),
-                                _ => panic!("wrong number of arguments for {}", stringify!($method)),
-                            }
-                        },
+                        $crate::Symbol::intern(stringify!($dname)),
+                        $tramp,
                     );
                 )*
             }
@@ -129,6 +134,22 @@ mod tests {
             ivars { x }
             def initialize(&self, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
             def x(&self) { Ok(self.x.borrow().clone()) }
+            dispatch {
+                initialize => |recv, args: &[RubyValue]| {
+                    let this = recv.as_any().downcast_ref::<Point>().expect("class_id guarantees this downcast");
+                    match args {
+                        [x] => Point::initialize(this, x.clone()),
+                        _ => panic!("wrong number of arguments for initialize"),
+                    }
+                },
+                x => |recv, args: &[RubyValue]| {
+                    let this = recv.as_any().downcast_ref::<Point>().expect("class_id guarantees this downcast");
+                    match args {
+                        [] => Point::x(this),
+                        _ => panic!("wrong number of arguments for x"),
+                    }
+                },
+            }
         }
     }
 
@@ -139,6 +160,22 @@ mod tests {
             def hello(&self) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(&self, name: RubyValue) {
                 Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
+            }
+            dispatch {
+                hello => |recv, args: &[RubyValue]| {
+                    let this = recv.as_any().downcast_ref::<Greeter>().expect("class_id guarantees this downcast");
+                    match args {
+                        [] => Greeter::hello(this),
+                        _ => panic!("wrong number of arguments for hello"),
+                    }
+                },
+                method_missing => |recv, args: &[RubyValue]| {
+                    let this = recv.as_any().downcast_ref::<Greeter>().expect("class_id guarantees this downcast");
+                    match args {
+                        [name] => Greeter::method_missing(this, name.clone()),
+                        _ => panic!("wrong number of arguments for method_missing"),
+                    }
+                },
             }
         }
     }

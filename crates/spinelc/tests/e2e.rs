@@ -638,3 +638,173 @@ fn eval_of_a_top_level_class_is_a_clean_compile_error() {
         "expected the top-level-def rejection, got: {err}"
     );
 }
+
+#[test]
+fn optional_params_use_the_default_only_when_omitted() {
+    let result = run_ruby(
+        r##"
+        class Greeter
+          def greet(name, greeting = "Hello")
+            "#{greeting}, #{name}!"
+          end
+        end
+        g = Greeter.new
+        puts g.greet("Ada")
+        puts g.greet("Ada", "Hi")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Hello, Ada!\nHi, Ada!\n");
+}
+
+#[test]
+fn rest_and_post_params_bind_a_real_array() {
+    let result = run_ruby(
+        r##"
+        class Collector
+          def count(*nums)
+            nums.length
+          end
+          def between(a, *mid, z)
+            "#{a}-#{mid.length}-#{z}"
+          end
+        end
+        c = Collector.new
+        puts c.count(1, 2, 3)
+        puts c.count
+        puts c.between(1, 2, 3, 9)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n0\n1-2-9\n");
+}
+
+#[test]
+fn keyword_params_bind_by_name_regardless_of_call_site_order() {
+    let result = run_ruby(
+        r#"
+        class Kw
+          def greet(x:, y: 10)
+            x + y
+          end
+          def opts(**rest)
+            rest.length
+          end
+        end
+        k = Kw.new
+        puts k.greet(x: 1)
+        puts k.greet(x: 1, y: 2)
+        puts k.greet(y: 3, x: 4)
+        puts k.opts(a: 1, b: 2, c: 3)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "11\n3\n7\n3\n");
+}
+
+#[test]
+fn attr_accessor_reader_and_writer_generate_real_methods() {
+    let result = run_ruby(
+        r#"
+        class Box
+          attr_accessor :value
+          attr_reader :ro
+          def initialize
+            @value = 1
+            @ro = 7
+          end
+        end
+        b = Box.new
+        puts b.value
+        b.value = 99
+        puts b.value
+        puts b.ro
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n99\n7\n");
+}
+
+#[test]
+fn visibility_keywords_are_recognized_and_do_not_error() {
+    // `private`/`public`/`protected` are recognized and dropped (a
+    // documented scope-cut -- not enforced yet, see
+    // `parse::lower_class_body_statement`'s docs). This only exercises
+    // "doesn't break compilation," not enforcement -- calling a private
+    // method from another method of the same class needs `self.`/implicit-
+    // self dispatch to a user-defined method, which is a separate,
+    // pre-existing gap this phase doesn't touch (see
+    // docs/PORTING_ANALYSIS.md).
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize
+            @x = 1
+          end
+          private
+          def helper
+            2
+          end
+          public
+          def x
+            @x
+          end
+        end
+        puts Box.new.x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn endless_method_definition() {
+    let result = run_ruby(
+        r#"
+        class Calc
+          def double(x) = x * 2
+        end
+        puts Calc.new.double(21)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn arithmetic_on_a_plain_method_parameter_works() {
+    // Method params are always statically `Poly` (spinelc never infers a
+    // param's type from call sites) -- this exercises the runtime-checked
+    // fallback in `codegen::call::dispatch`, not just literal/local `Int`
+    // operands.
+    let result = run_ruby(
+        r#"
+        class Adder
+          def add(a, b)
+            a + b
+          end
+        end
+        puts Adder.new.add(3, 4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn a_block_parameter_is_a_clean_compile_error() {
+    let err = spinelc::compile_to_rust("class Foo\n  def bar(&blk)\n  end\nend\n").unwrap_err();
+    assert!(
+        err.contains("&block"),
+        "expected the &block-parameter rejection, got: {err}"
+    );
+}
+
+#[test]
+fn forwarding_params_are_a_clean_compile_error() {
+    let err = spinelc::compile_to_rust("class Foo\n  def bar(...)\n  end\nend\n").unwrap_err();
+    assert!(
+        err.contains("forwarding"),
+        "expected the `...`-forwarding rejection, got: {err}"
+    );
+}

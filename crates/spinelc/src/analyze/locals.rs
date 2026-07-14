@@ -107,6 +107,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         HirNode::Call {
             receiver,
             args,
+            kwargs,
             block,
             ..
         } => {
@@ -115,6 +116,10 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             }
             for &a in args {
                 track_node(compiler, locals, a);
+            }
+            for pair in kwargs {
+                track_node(compiler, locals, pair.0);
+                track_node(compiler, locals, pair.1);
             }
             if let Some(b) = block {
                 track_node(compiler, locals, *b);
@@ -144,7 +149,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             };
             *locals = join_loop(compiler, locals, body, Some((var, elem_ty)));
         }
-        HirNode::Break(v) | HirNode::Next(v) => {
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
                 track_node(compiler, locals, *v);
             }

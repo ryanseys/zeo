@@ -21,6 +21,7 @@ mod expr;
 mod hoisting;
 mod ident;
 mod loops;
+mod params;
 mod stmt;
 
 use quote::quote;
@@ -179,10 +180,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let methods = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
         let method_ident = safe_ident(&scope.name);
-        let params = scope.params.iter().map(|p| {
-            let p_ident = safe_ident(p);
-            quote! { , #p_ident: spinel_rt::RubyValue }
-        });
+        let sig_params = params::emit_signature_params(&scope.params);
         let method_label_counter = Cell::new(0u32);
         let method_cx = Ctx {
             compiler,
@@ -193,12 +191,21 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             loop_labels: None,
             for_var_override: None,
         };
+        let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
         quote! {
-            def #method_ident(&self #(#params)*) {
+            def #method_ident(&self #sig_params) {
+                #prologue
                 #body
             }
         }
+    });
+
+    let dispatch_entries = ci.methods.iter().map(|&sid| {
+        let scope = compiler.scope(sid);
+        let method_ident = safe_ident(&scope.name);
+        let tramp = params::emit_dynamic_trampoline(&name_ident, &scope.name, &scope.params);
+        quote! { #method_ident => #tramp }
     });
 
     quote! {
@@ -207,6 +214,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
                 id: #id;
                 ivars { #(#ivar_idents),* }
                 #(#methods)*
+                dispatch { #(#dispatch_entries),* }
             }
         }
     }

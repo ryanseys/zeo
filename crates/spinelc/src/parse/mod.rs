@@ -7,7 +7,7 @@
 //! else is a clean `Err` (mirroring spinel's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
-use crate::hir::{ArrayElem, HashPair, Hir, HirNode, NodeId, StrPart};
+use crate::hir::{ArrayElem, HashPair, Hir, HirNode, KeywordParam, NodeId, Params, StrPart};
 use ruby_prism::{Node, ParseResult};
 
 type PResult<T> = Result<T, String>;
@@ -110,20 +110,123 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(cr.name().as_slice()).into_owned())
 }
 
-fn required_param_names(params: Option<ruby_prism::ParametersNode<'_>>) -> PResult<Vec<String>> {
+/// Required-parameter-only helper for a `posts`/`requireds` entry -- both
+/// only ever contain `RequiredParameterNode`s (Ruby's grammar guarantees a
+/// splat's "post" params are always plain required names, same as the
+/// params before it).
+fn required_param_name(node: &Node<'_>, where_: &str) -> PResult<String> {
+    let p = node
+        .as_required_parameter_node()
+        .ok_or_else(|| format!("only plain required parameters are supported {where_} (spike scope)"))?;
+    Ok(String::from_utf8_lossy(p.name().as_slice()).into_owned())
+}
+
+/// Full `ParametersNode` lowering: required -> optional (default evaluated
+/// LAZILY by the callee -- see `Params::optional`'s docs, so its expression
+/// is only lowered here, never eagerly evaluated at every call site) ->
+/// rest (`*`/`*name`) -> post (required params after a splat) -> keyword
+/// (required/optional) -> keyword_rest (`**`/`**name`/explicit `**nil`). A
+/// `&block` parameter (and bare `...` forwarding, which implies one) isn't
+/// supported yet -- see `hir::Params`'s docs for why -- a clean lowering
+/// error rather than a panic.
+fn lower_params(
+    result: &ParseResult,
+    hir: &mut Hir,
+    params: Option<ruby_prism::ParametersNode<'_>>,
+) -> PResult<Params> {
     let Some(params) = params else {
-        return Ok(Vec::new());
+        return Ok(Params::default());
     };
-    params
+    if params.block().is_some() {
+        return Err("a `&block` parameter isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase".to_string());
+    }
+
+    let required = params
         .requireds()
+        .iter()
+        .map(|n| required_param_name(&n, "before a `*rest`"))
+        .collect::<PResult<Vec<_>>>()?;
+
+    let optional = params
+        .optionals()
         .iter()
         .map(|n| {
             let p = n
-                .as_required_parameter_node()
-                .ok_or("only plain required parameters are supported")?;
-            Ok(String::from_utf8_lossy(p.name().as_slice()).into_owned())
+                .as_optional_parameter_node()
+                .ok_or("expected an optional parameter (spike scope)")?;
+            let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
+            let default = lower_node(result, hir, &p.value())?;
+            Ok((name, default))
         })
-        .collect()
+        .collect::<PResult<Vec<_>>>()?;
+
+    let rest = match params.rest() {
+        None => None,
+        Some(n) => {
+            let r = n.as_rest_parameter_node().ok_or(
+                "`...` forwarding isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase",
+            )?;
+            Some(r.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()))
+        }
+    };
+
+    let post = params
+        .posts()
+        .iter()
+        .map(|n| required_param_name(&n, "after a `*rest`"))
+        .collect::<PResult<Vec<_>>>()?;
+
+    let keywords = params
+        .keywords()
+        .iter()
+        .map(|n| {
+            if let Some(p) = n.as_required_keyword_parameter_node() {
+                Ok(KeywordParam::Required(
+                    String::from_utf8_lossy(p.name().as_slice()).into_owned(),
+                ))
+            } else if let Some(p) = n.as_optional_keyword_parameter_node() {
+                let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
+                let default = lower_node(result, hir, &p.value())?;
+                Ok(KeywordParam::Optional(name, default))
+            } else {
+                Err("unsupported keyword parameter form (spike scope)".to_string())
+            }
+        })
+        .collect::<PResult<Vec<_>>>()?;
+
+    let keyword_rest = match params.keyword_rest() {
+        None => None,
+        // Bare `...` forwarding surfaces here as a `ForwardingParameterNode`
+        // occupying the `keyword_rest` slot (confirmed empirically: `.rest()`
+        // and `.block()` both come back `None` for it) -- not a real
+        // `**`/`**name`, so give the dedicated forwarding message, not the
+        // generic "unsupported keyword-rest parameter form" one below.
+        Some(n) if n.as_forwarding_parameter_node().is_some() => {
+            return Err("`...` forwarding isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase".to_string());
+        }
+        Some(n) if n.as_no_keywords_parameter_node().is_some() => {
+            // `**nil` -- explicit "no extra keywords accepted". Treated the
+            // same as "no keyword_rest at all": real Ruby raises
+            // `ArgumentError` for an unexpected kwarg only when `**nil` is
+            // present, which needs exceptions to matter (spike scope).
+            None
+        }
+        Some(n) => {
+            let r = n
+                .as_keyword_rest_parameter_node()
+                .ok_or("unsupported keyword-rest parameter form (spike scope)")?;
+            Some(r.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()))
+        }
+    };
+
+    Ok(Params {
+        required,
+        optional,
+        rest,
+        post,
+        keywords,
+        keyword_rest,
+    })
 }
 
 fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
@@ -131,12 +234,12 @@ fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<
         .as_block_node()
         .ok_or("expected a block (`{ }` or `do..end`)")?;
     let params = match block.parameters() {
-        None => Vec::new(),
+        None => Params::default(),
         Some(p) => {
             let bp = p
                 .as_block_parameters_node()
-                .ok_or("unsupported block parameter form")?;
-            required_param_names(bp.parameters())?
+                .ok_or("unsupported block parameter form (spike scope)")?;
+            lower_params(result, hir, bp.parameters())?
         }
     };
     let body = lower_body(result, hir, block.body())?;
@@ -228,6 +331,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             receiver: Some(read),
             name: op_name,
             args: vec![rhs],
+            kwargs: Vec::new(),
             block: None,
             safe: false,
         });
@@ -244,6 +348,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             receiver: Some(read),
             name: op_name,
             args: vec![rhs],
+            kwargs: Vec::new(),
             block: None,
             safe: false,
         });
@@ -354,7 +459,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(sc) => Some(constant_name(&sc)?),
         };
-        let body = lower_body(result, hir, class.body())?;
+        let body = lower_class_body(result, hir, class.body())?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass,
@@ -364,7 +469,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
 
     if let Some(def) = node.as_def_node() {
         let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
-        let params = required_param_names(def.parameters())?;
+        let params = lower_params(result, hir, def.parameters())?;
         let body = lower_body(result, hir, def.body())?;
         return Ok(hir.push(HirNode::DefMethod { name, params, body }));
     }
@@ -406,12 +511,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             .as_block_node()
                             .ok_or("define_method's second argument must be a block")?;
                         let params = match block.parameters() {
-                            None => Vec::new(),
+                            None => Params::default(),
                             Some(p) => {
                                 let bp = p
                                     .as_block_parameters_node()
                                     .ok_or("unsupported block parameter form")?;
-                                required_param_names(bp.parameters())?
+                                lower_params(result, hir, bp.parameters())?
                             }
                         };
                         let body = lower_body(result, hir, block.body())?;
@@ -480,14 +585,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
-        let args = match call.arguments() {
-            None => Vec::new(),
-            Some(a) => a
-                .arguments()
-                .iter()
-                .map(|n| lower_node(result, hir, &n))
-                .collect::<PResult<Vec<_>>>()?,
-        };
+        let (args, kwargs) = lower_call_args(result, hir, call.arguments())?;
         let block = match call.block() {
             None => None,
             Some(b) => Some(lower_block(result, hir, &b)?),
@@ -496,6 +594,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             receiver,
             name,
             args,
+            kwargs,
             block,
             safe: call.is_safe_navigation(),
         }));
@@ -612,6 +711,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Redo));
     }
 
+    // `return` / `return value` -- see `HirNode::Return`'s docs.
+    if let Some(ret) = node.as_return_node() {
+        let value = lower_single_optional_argument(result, hir, ret.arguments(), "return")?;
+        return Ok(hir.push(HirNode::Return(value)));
+    }
+
     // `a, b = 1, 2` / `a, *b, c = arr` -- see `HirNode::MultiWrite`'s docs for
     // the supported target shape.
     if let Some(mw) = node.as_multi_write_node() {
@@ -665,6 +770,149 @@ fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         return Ok(ArrayElem::Splat(lower_node(result, hir, &expr)?));
     }
     Ok(ArrayElem::Single(lower_node(result, hir, node)?))
+}
+
+/// Splits a call's raw argument list into (positional NodeIds, keyword
+/// `HashPair`s) -- a trailing `KeywordHashNode` (`foo(x: 1, y: 2)`) is the
+/// only prism shape recognized as keyword arguments; every other entry
+/// lowers as an ordinary positional argument via `lower_node`. A call-site
+/// positional splat (`foo(*arr)`) or keyword-splat (`foo(**h)`) isn't
+/// supported yet -- see `HirNode::Call`'s docs -- a clean lowering error
+/// rather than a panic (spike scope: `Params`' `rest`/`keyword_rest` can
+/// still be exercised by simply passing enough plain positional/keyword
+/// args, no splat syntax needed at the call site).
+fn lower_call_args(
+    result: &ParseResult,
+    hir: &mut Hir,
+    arguments: Option<ruby_prism::ArgumentsNode<'_>>,
+) -> PResult<(Vec<NodeId>, Vec<HashPair>)> {
+    let Some(arguments) = arguments else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let mut list: Vec<_> = arguments.arguments().iter().collect();
+    let kwargs = match list.last().and_then(|n| n.as_keyword_hash_node()) {
+        Some(kw) => {
+            list.pop();
+            kw.elements()
+                .iter()
+                .map(|el| {
+                    let assoc = el.as_assoc_node().ok_or(
+                        "a keyword-splat (`**expr`) call argument isn't supported yet (spike scope)",
+                    )?;
+                    let key = lower_node(result, hir, &assoc.key())?;
+                    let value = lower_node(result, hir, &assoc.value())?;
+                    Ok(HashPair(key, value))
+                })
+                .collect::<PResult<Vec<_>>>()?
+        }
+        None => Vec::new(),
+    };
+    let args = list
+        .iter()
+        .map(|n| {
+            if n.as_splat_node().is_some() {
+                return Err(
+                    "a positional splat (`*expr`) call argument isn't supported yet (spike scope)"
+                        .to_string(),
+                );
+            }
+            lower_node(result, hir, n)
+        })
+        .collect::<PResult<Vec<_>>>()?;
+    Ok((args, kwargs))
+}
+
+/// A class body's statement list -- like `lower_statement_list`, but
+/// recognizes a handful of zero-receiver call shapes at this exact position
+/// (mirroring `lower_node`'s own `define_method`/`loop` desugars) that a
+/// strict 1-statement-to-1-node map can't express: `attr_reader`/
+/// `attr_writer`/`attr_accessor` each expand into MULTIPLE synthesized
+/// `DefMethod`s from one statement, and `private`/`public`/`protected` expand
+/// into NONE.
+fn lower_class_body(
+    result: &ParseResult,
+    hir: &mut Hir,
+    body: Option<Node<'_>>,
+) -> PResult<Vec<NodeId>> {
+    let stmts: Vec<Node<'_>> = match body {
+        None => return Ok(Vec::new()),
+        Some(n) => match n.as_statements_node() {
+            Some(stmts) => stmts.body().iter().collect(),
+            None => vec![n],
+        },
+    };
+    let mut out = Vec::new();
+    for stmt in &stmts {
+        out.extend(lower_class_body_statement(result, hir, stmt)?);
+    }
+    Ok(out)
+}
+
+/// `attr_reader :a, :b` -> a `DefMethod` getter per name (`body: [IvarRead]`).
+/// `attr_writer :a, :b` -> a `DefMethod` setter per name (`name=`, one
+/// required param, `body: [IvarWrite]`). `attr_accessor` emits both. Only
+/// literal symbol arguments are recognized (matching `define_method`'s own
+/// literal-name restriction elsewhere in this file); anything else falls
+/// through to an ordinary `Call` (which real Ruby would resolve dynamically,
+/// e.g. `attr_reader(*names)` -- outside spike scope, a clean rejection at
+/// codegen if `attr_reader` itself isn't otherwise defined).
+///
+/// `private`/`public`/`protected` (any receiver-less call with that name,
+/// any arguments) are recognized and dropped entirely -- a documented
+/// scope-cut, not an oversight: every call in this spike is already either a
+/// direct static call or a `send`, and enforcing visibility needs a static
+/// check at explicit-receiver Path 1 call sites plus a dynamic check inside
+/// `send` for Path 2, neither of which any current example depends on.
+fn lower_class_body_statement(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+) -> PResult<Vec<NodeId>> {
+    if let Some(call) = node.as_call_node() {
+        if call.receiver().is_none() {
+            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+            if matches!(name.as_str(), "private" | "public" | "protected") {
+                return Ok(Vec::new());
+            }
+            if matches!(name.as_str(), "attr_reader" | "attr_writer" | "attr_accessor") {
+                if let Some(args) = call.arguments() {
+                    let arg_list: Vec<_> = args.arguments().iter().collect();
+                    if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                        let mut defs = Vec::new();
+                        for n in &arg_list {
+                            let ivar = String::from_utf8_lossy(
+                                n.as_symbol_node().expect("checked above").unescaped(),
+                            )
+                            .into_owned();
+                            if name != "attr_writer" {
+                                let read = hir.push(HirNode::IvarRead(ivar.clone()));
+                                defs.push(hir.push(HirNode::DefMethod {
+                                    name: ivar.clone(),
+                                    params: Params::default(),
+                                    body: vec![read],
+                                }));
+                            }
+                            if name != "attr_reader" {
+                                let param = "value".to_string();
+                                let read_param = hir.push(HirNode::LocalRead(param.clone()));
+                                let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
+                                defs.push(hir.push(HirNode::DefMethod {
+                                    name: format!("{ivar}="),
+                                    params: Params {
+                                        required: vec![param],
+                                        ..Params::default()
+                                    },
+                                    body: vec![write],
+                                }));
+                            }
+                        }
+                        return Ok(defs);
+                    }
+                }
+            }
+        }
+    }
+    Ok(vec![lower_node(result, hir, node)?])
 }
 
 /// A `break`/`next`'s optional value -- at most one argument is supported

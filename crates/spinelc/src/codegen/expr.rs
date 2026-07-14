@@ -99,7 +99,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Loop { .. }
         | HirNode::For { .. }
         | HirNode::MultiWrite { .. } => Some("expression"),
-        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo => None,
+        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) => None,
         HirNode::Block { .. } | HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             None
         }
@@ -277,13 +277,26 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             receiver,
             name,
             args,
+            kwargs,
             block,
             safe,
-        } => emit_call(cx, *receiver, name, args, *block, *safe),
+        } => emit_call(cx, *receiver, name, args, kwargs, *block, *safe),
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
         HirNode::Eval(body) => super::stmt::emit_body(cx, body, false),
+        HirNode::Return(v) => {
+            let value = match v {
+                Some(id) => emit_expr(cx, *id),
+                None => quote! { spinel_rt::RubyValue::Nil },
+            };
+            // A literal Rust `return` -- valid in any expression position
+            // (its type is `!`, which unifies with anything) -- see
+            // `HirNode::Return`'s docs for why this is correct for every
+            // shape reachable today (an ordinary method body, or a
+            // fast-inline-path block spliced into the SAME method body).
+            quote! { return Ok(#value) }
+        }
         HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             panic!("unexpected top-level-only node in expression position")
         }

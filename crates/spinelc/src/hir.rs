@@ -46,6 +46,53 @@ pub enum ArrayElem {
     Splat(NodeId),
 }
 
+/// A method/block's declared parameter list -- mirrors `ParametersNode`'s own
+/// grouping directly (Ruby's grammar already enforces required->optional->
+/// rest->post->keyword->keyword_rest ordering, so grouping by kind loses
+/// nothing, and it maps 1:1 onto what `parse/mod.rs::lower_params` reads off
+/// `ruby_prism::ParametersNode`).
+///
+/// A `&block` parameter isn't represented here yet: it needs a real `Proc`
+/// runtime value to bind to, which doesn't exist until a later phase adds a
+/// closure runtime -- `def foo(&blk)` and bare `...` forwarding (which
+/// implies a block too) are a clean lowering error until then, not a
+/// half-working field here with nothing able to populate it (see
+/// `parse/mod.rs`'s `lower_params`).
+///
+/// Known, narrow, pre-existing-style gap: `analyze::collect_ivars`/
+/// `analyze::locals::track_node`/`codegen::hoisting::collect_locals` don't
+/// scan INTO a default-value expression here for `@ivar`/local references --
+/// only a body statement or a call-site argument does. A default that reads
+/// an ivar/local nowhere else referenced (e.g. `def f(x: @only_here)`) can
+/// hit a "no such field" codegen error rather than working; nothing in the
+/// spike's examples exercises this, so it's documented rather than fixed.
+#[derive(Clone, Default)]
+pub struct Params {
+    pub required: Vec<String>,
+    /// Each default value expression is evaluated LAZILY -- only when its
+    /// argument is actually omitted at the call site -- so codegen emits it
+    /// inside the callee's own prologue, never eagerly at every call site.
+    pub optional: Vec<(String, NodeId)>,
+    /// `None`: no `*` at all. `Some(None)`: an anonymous `*` (collects and
+    /// discards the extra positional args). `Some(Some(name))`: `*name`.
+    pub rest: Option<Option<String>>,
+    /// Required params that appear AFTER a splat (`def f(a, *b, c)` -- `c`
+    /// is a `post`; real Ruby allows this, and it's a distinct binding rule
+    /// from `required` since its position is anchored from the END of the
+    /// argument list, not the start).
+    pub post: Vec<String>,
+    pub keywords: Vec<KeywordParam>,
+    /// Same `None`/`Some(None)`/`Some(Some(name))` shape as `rest`.
+    pub keyword_rest: Option<Option<String>>,
+}
+
+#[derive(Clone)]
+pub enum KeywordParam {
+    Required(String),
+    /// Same lazy-default-evaluation contract as `Params::optional`.
+    Optional(String, NodeId),
+}
+
 /// One `key => value` / `key: value` pair inside a `{ }` literal.
 /// Double-splat (`**other`) isn't supported yet -- lowering rejects it with
 /// a clear error (spike scope), the same posture as `ParenthesesNode`'s other
@@ -132,10 +179,22 @@ pub enum HirNode {
     /// is `&.` (`recv.is_safe_navigation()` in prism -- a flag on the same
     /// `CallNode`, not a separate node kind): the call short-circuits to
     /// `nil` without evaluating at all when `receiver` is `nil` at runtime.
+    /// `kwargs` are the call site's own `name: value` pairs (`foo(x: 1)`) --
+    /// a distinct `KeywordHashNode` prism peels off the tail of the ordinary
+    /// argument list at lowering time (see `parse/mod.rs`), resolved by NAME
+    /// against the callee's declared keyword params at codegen time (the
+    /// callee's `Params` is always statically known at a Path 1 call site).
+    /// A call-site positional splat (`foo(*arr)`) and a call-site double-
+    /// splat (`foo(**h)`) aren't lowered yet -- distinct, currently-unhandled
+    /// prism nodes, a clean lowering error rather than a panic (spike scope:
+    /// a `Params`-declared `rest`/`keyword_rest` can still be exercised by
+    /// simply passing enough plain positional/keyword args, no splat syntax
+    /// needed at the call site to prove out the parameter-binding side).
     Call {
         receiver: Option<NodeId>,
         name: String,
         args: Vec<NodeId>,
+        kwargs: Vec<HashPair>,
         block: Option<NodeId>,
         safe: bool,
     },
@@ -154,7 +213,7 @@ pub enum HirNode {
         args: Vec<NodeId>,
     },
     Block {
-        params: Vec<String>,
+        params: Params,
         body: Vec<NodeId>,
     },
     ClassDef {
@@ -167,7 +226,7 @@ pub enum HirNode {
     /// mirroring spinel's `walk_scope`.
     DefMethod {
         name: String,
-        params: Vec<String>,
+        params: Params,
         body: Vec<NodeId>,
     },
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
@@ -260,4 +319,20 @@ pub enum HirNode {
     /// see docs/EVAL_VM.md for the future embedded-interpreter design those
     /// would need.
     Eval(Vec<NodeId>),
+    /// `return` / `return value` -- explicit early return from the enclosing
+    /// method. Compiles to a literal Rust `return Ok(value);` (Rust's own
+    /// early return already exits arbitrarily deep nesting -- an `if`/`case`/
+    /// loop body, or a fast-inline-path block like `.times`'s, which is
+    /// spliced directly into the SAME enclosing method body, so a literal
+    /// Rust `return` there already has real Ruby's exact semantics: `return`
+    /// inside a block always exits the enclosing method, not just the
+    /// block). This stops being correct only once a block can become a
+    /// genuinely separate Rust closure (a real escaping `Proc`, a later
+    /// phase) with its own Rust fn boundary a bare `return` would incorrectly
+    /// stop at instead of passing through -- that needs `Signal::Return`
+    /// (already reserved for exactly this in `spinel_rt::Signal`) once it
+    /// exists. At most one value is supported (`return a, b` building an
+    /// implicit array is a clean lowering error, spike scope, mirroring
+    /// `Break`/`Next`).
+    Return(Option<NodeId>),
 }

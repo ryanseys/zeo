@@ -80,7 +80,20 @@ fn register_class(
             for &n in &body {
                 collect_ivars(&compiler.hir, n, &mut ivars);
             }
-            let local_types = locals::infer_locals(compiler, &body);
+            let mut local_types = locals::infer_locals(compiler, &body);
+            // A named `*rest`/`**kwrest` param is provably a real `Array`/
+            // `Hash` (that's what `codegen::params`'s prologue always binds
+            // it to) -- seed it only if the body doesn't already have its
+            // own inferred type for that name (i.e. never reassigned),
+            // matching how `infer_locals` never sees params at all on its
+            // own (see `locals.rs`'s docs: a method's params aren't part of
+            // its `body`, so nothing would otherwise seed this).
+            if let Some(Some(name)) = &params.rest {
+                local_types.entry(name.clone()).or_insert(TyKind::Array);
+            }
+            if let Some(Some(name)) = &params.keyword_rest {
+                local_types.entry(name.clone()).or_insert(TyKind::Hash);
+            }
             compiler.add_scope(Scope {
                 name,
                 class: Some(class_id),
@@ -155,6 +168,7 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         HirNode::Call {
             receiver,
             args,
+            kwargs,
             block,
             ..
         } => {
@@ -163,6 +177,10 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             }
             for &a in args {
                 collect_ivars(hir, a, out);
+            }
+            for pair in kwargs {
+                collect_ivars(hir, pair.0, out);
+                collect_ivars(hir, pair.1, out);
             }
             if let Some(b) = block {
                 collect_ivars(hir, *b, out);
@@ -227,7 +245,7 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, n, out);
             }
         }
-        HirNode::Break(v) | HirNode::Next(v) => {
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
                 collect_ivars(hir, *v, out);
             }

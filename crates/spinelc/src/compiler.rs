@@ -5,7 +5,7 @@
 //! into `spinel_rt::ClassId` by codegen, but the two types are otherwise
 //! unrelated -- `spinelc` never links against `spinel-rt` at all.
 
-use crate::hir::{Hir, NodeId};
+use crate::hir::{Hir, NodeId, Params};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -33,7 +33,7 @@ pub struct ClassInfo {
 pub struct Scope {
     pub name: String,
     pub class: Option<ClassId>,
-    pub params: Vec<String>,
+    pub params: Params,
     pub body: Vec<NodeId>,
     /// Per-local static type, computed once by `analyze::locals::infer_locals`
     /// (a forward, single-pass walk -- not the deferred whole-program

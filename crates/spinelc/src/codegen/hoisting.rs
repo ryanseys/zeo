@@ -124,7 +124,7 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::Break(v) | HirNode::Next(v) => {
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
                 collect_locals(compiler, *v, out);
             }
@@ -146,6 +146,7 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
         HirNode::Call {
             receiver,
             args,
+            kwargs,
             block,
             ..
         } => {
@@ -154,6 +155,10 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
             }
             for &a in args {
                 collect_locals(compiler, a, out);
+            }
+            for pair in kwargs {
+                collect_locals(compiler, pair.0, out);
+                collect_locals(compiler, pair.1, out);
             }
             if let Some(b) = block {
                 collect_locals(compiler, *b, out);

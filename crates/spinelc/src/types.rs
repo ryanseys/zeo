@@ -88,6 +88,22 @@ pub fn infer_type_with_locals(
                 TyKind::Poly
             }
         }
+        // `.length`/`.size` on any of the built-in collection types always
+        // returns an `Int` (`spinel_rt::{array,hash,string}_len` all return
+        // `i64`) -- needed for e.g. `i < arr.length` to take the native
+        // `Int` comparison fast path in `codegen::call`, not just literal-
+        // on-literal comparisons.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && (name == "length" || name == "size") => {
+            match infer_type_with_locals(compiler, locals, *recv) {
+                TyKind::Array | TyKind::Hash | TyKind::Str => TyKind::Int,
+                _ => TyKind::Poly,
+            }
+        }
         _ => TyKind::Poly,
     }
 }

@@ -12,7 +12,7 @@ use quote::{format_ident, quote};
 use super::expr::{emit_expr, emit_symbol_expr, infer, infer_class};
 use super::ident::safe_ident;
 use super::Ctx;
-use crate::hir::{HirNode, NodeId};
+use crate::hir::{HashPair, HirNode, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
@@ -209,13 +209,14 @@ pub fn emit_call(
     receiver: Option<NodeId>,
     name: &str,
     args: &[NodeId],
+    kwargs: &[HashPair],
     block: Option<NodeId>,
     safe: bool,
 ) -> TokenStream {
     // Implicit self / no receiver: the spike's only builtin is `puts`.
     // `&.` is meaningless without a receiver, so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
-        if name == "puts" && args.len() == 1 {
+        if name == "puts" && args.len() == 1 && kwargs.is_empty() {
             let arg = emit_expr(cx, args[0]);
             return quote! { { spinel_rt::puts(#arg); spinel_rt::RubyValue::Nil } };
         }
@@ -223,11 +224,14 @@ pub fn emit_call(
     };
 
     if safe {
+        if !kwargs.is_empty() {
+            panic!("keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)");
+        }
         return emit_safe_call(cx, recv_id, name, args);
     }
 
     let recv_expr = emit_expr(cx, recv_id);
-    dispatch(cx, recv_id, name, args, block, &recv_expr)
+    dispatch(cx, recv_id, name, args, kwargs, block, &recv_expr)
 }
 
 /// `&.` always dispatches through the runtime `ClassRegistry`/`send` path
@@ -280,19 +284,28 @@ fn dispatch(
     recv_id: NodeId,
     name: &str,
     args: &[NodeId],
+    kwargs: &[HashPair],
     block: Option<NodeId>,
     recv_expr: &TokenStream,
 ) -> TokenStream {
+    // Every fast path below (operators, collection `[]`/`length`, `.times`)
+    // is a fixed, positional-only shape that has nowhere to put a keyword
+    // argument -- gated on `kwargs.is_empty()` so a call that actually
+    // passes one (a vanishingly rare shape for these, e.g. `a.+(x: 1)`
+    // written with explicit dot-call syntax) falls through to the general
+    // Path 1/Path 2 dispatch below instead of silently discarding it.
+    let no_kwargs = kwargs.is_empty();
+
     // `!`/`not` -- Ruby truthiness on ANY value, not an `Int`-specific
     // operator (`!0`, `!""`, `!nil` are all valid and not equivalent),
     // so this is handled separately from the numeric tables below.
-    if name == "!" && args.is_empty() {
+    if no_kwargs && name == "!" && args.is_empty() {
         return quote! { spinel_rt::RubyValue::Bool(!(#recv_expr).truthy()) };
     }
 
     // Native `Int` arithmetic/comparison/bitwise ops: both operands must be
     // statically known `Int` (see `INT_BINARY_OPS`'s docs above).
-    if args.len() == 1 {
+    if no_kwargs && args.len() == 1 {
         if let Some(&(_, rt_fn, result_ty)) =
             INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
         {
@@ -313,7 +326,7 @@ fn dispatch(
     }
 
     // Native `Int` unary operators (`-@`/`+@`/`~`), same eligibility rule.
-    if args.is_empty() {
+    if no_kwargs && args.is_empty() {
         if let Some(&(_, rt_fn)) = INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
             if infer(cx, recv_id) == TyKind::Int {
                 let func = format_ident!("{rt_fn}");
@@ -324,8 +337,10 @@ fn dispatch(
         }
     }
 
-    if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
-        return tokens;
+    if no_kwargs {
+        if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
+            return tokens;
+        }
     }
 
     // Known-shape block inlining (mirrors `emit_block_value_into`/`.times`,
@@ -334,7 +349,7 @@ fn dispatch(
     // `codegen::loops`' redo-wrapping machinery with `while`/`until`/`loop`/
     // `for`, so `break`/`next`/`redo` inside a `.times` block work exactly
     // the same way.
-    if name == "times" {
+    if no_kwargs && name == "times" {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
             let block_id = block.unwrap_or_else(|| panic!("`times` requires a block"));
@@ -344,7 +359,7 @@ fn dispatch(
             let outer = super::loops::fresh_label(cx, "times");
             let redo = super::loops::fresh_label(cx, "times_body");
             let loop_cx = cx.in_loop(redo.clone(), outer.clone());
-            let bind = params.first().map(|p| {
+            let bind = params.required.first().map(|p| {
                 let ident = safe_ident(p);
                 quote! { let #ident = spinel_rt::RubyValue::Int(__i); }
             });
@@ -371,13 +386,18 @@ fn dispatch(
     // Path 2 (the genuinely new part -- see the plan's Object Model
     // section) when the receiver's class isn't known, the name isn't a
     // literal, or the literal name doesn't resolve anywhere in the chain
-    // (which is exactly the `method_missing` trigger condition).
+    // (which is exactly the `method_missing` trigger condition). Path 2's
+    // calling convention has no keyword-argument channel (see
+    // `codegen::params::emit_dynamic_trampoline`'s docs) -- `kwargs` is
+    // simply dropped on that fallback path, matching the same documented
+    // scope-cut as a method declaring keyword params being unreachable via
+    // `send` at all.
     if (name == "send" || name == "public_send") && !args.is_empty() {
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
             if let Some(cid) = recv_class {
                 if cx.compiler.method_in_chain(cid, &target).is_some() {
-                    return dispatch(cx, recv_id, &target, &args[1..], block, recv_expr);
+                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, recv_expr);
                 }
             }
         }
@@ -396,10 +416,61 @@ fn dispatch(
     // (Path 1). This is the common case -- `method_in_chain` mirrors
     // `comp_method_in_chain` exactly (compiler.c:404).
     if let Some(cid) = recv_class {
-        if cx.compiler.method_in_chain(cid, name).is_some() {
-            let method_ident = safe_ident(name);
-            let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
-            return quote! { (#recv_expr).#method_ident(#(#arg_exprs),*)? };
+        if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+            let params = &cx.compiler.scope(sid).params;
+            return super::params::emit_call_args(cx, recv_expr, name, params, args, kwargs);
+        }
+    }
+
+    // Runtime-checked fallback for a built-in `Int` operator whose
+    // operand(s) couldn't be statically proven `Int` -- most commonly an
+    // ordinary method PARAMETER, which is always `Poly` (spinelc never
+    // infers a param's type from its call sites; see `Scope::params`'s
+    // docs), regardless of what's actually passed at runtime. Without this,
+    // `def add(a, b); a + b; end` -- arithmetic on the plainest possible
+    // method parameters -- can never work, which would make `Params`
+    // barely usable. This is deliberately narrow: a runtime type check for
+    // exactly the same built-in `Int` op tables above, not a general
+    // dynamic multi-method dispatch system (which would also need to
+    // resolve a runtime String/Array/user-`Object`'s own `+`/`<=>` -- a
+    // separably-scoped, much larger feature). `recv_class.is_none()` only
+    // (a known Object class's own operator overload, if any, already took
+    // priority above); real Ruby can't catch a type mismatch here
+    // statically either, so a clear runtime panic (not a raised exception,
+    // matching every other pre-`raise`/`rescue` failure in this spike) is a
+    // faithful, not a lesser, translation -- STRICTLY better than today's
+    // alternative of `dispatch` itself never reaching a fallback and
+    // panicking spinelc at compile time instead.
+    if no_kwargs && recv_class.is_none() {
+        if args.len() == 1 {
+            if let Some(&(_, rt_fn, result_ty)) =
+                INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
+            {
+                let arg_expr = emit_expr(cx, args[0]);
+                let func = format_ident!("{rt_fn}");
+                let wrapper = format_ident!("{result_ty}");
+                return quote! {
+                    match (&(#recv_expr), &(#arg_expr)) {
+                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Int(__a)) => {
+                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a))
+                        }
+                        _ => panic!("`{}` isn't supported yet for non-Int operands at runtime (spike scope)", #name),
+                    }
+                };
+            }
+        }
+        if args.is_empty() {
+            if let Some(&(_, rt_fn)) = INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
+                let func = format_ident!("{rt_fn}");
+                return quote! {
+                    match &(#recv_expr) {
+                        spinel_rt::RubyValue::Int(__r) => {
+                            spinel_rt::RubyValue::Int(spinel_rt::#func(*__r))
+                        }
+                        _ => panic!("`{}` isn't supported yet for non-Int operands at runtime (spike scope)", #name),
+                    }
+                };
+            }
         }
     }
 
