@@ -17,6 +17,18 @@ type PResult<T> = Result<T, String>;
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
+    let mut hir = Hir::default();
+    let statements = parse_and_lower_into(&mut hir, source)?;
+    let root = hir.push(HirNode::Program(statements));
+    Ok((hir, root))
+}
+
+/// Parses `source` as a standalone program and lowers it into `hir`, which
+/// may already contain other nodes -- the primitive both the top-level entry
+/// point above and `eval`'s literal-splice call-shape recognizer (below) need.
+/// File resolution/search-path concerns are deliberately NOT part of this --
+/// it's purely "parse a string of Ruby into an existing arena".
+fn parse_and_lower_into(hir: &mut Hir, source: &str) -> PResult<Vec<NodeId>> {
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
         return Err(format!("parse error: {}", err.message()));
@@ -25,11 +37,7 @@ pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
         .node()
         .as_program_node()
         .ok_or("expected a top-level ProgramNode")?;
-
-    let mut hir = Hir::default();
-    let statements = lower_statement_list(&result, &mut hir, program.statements().body())?;
-    let root = hir.push(HirNode::Program(statements));
-    Ok((hir, root))
+    lower_statement_list(&result, hir, program.statements().body())
 }
 
 fn lower_statement_list(
@@ -442,6 +450,32 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
         }
 
+        // `eval("literal string")` -- ONLY the compile-time-constant-string
+        // form. Unlike `define_method`/`loop` above, this is intercepted
+        // UNCONDITIONALLY: those two have a genuine second runtime path for
+        // their non-desugared shape (an ordinary implicit-self `Call`), but
+        // `eval` doesn't -- this spike has no runtime parser/interpreter (see
+        // docs/EVAL_VM.md), so letting a non-literal `eval(...)` fall through
+        // as a plain `Call` would compile cleanly and only fail at RUNTIME
+        // with a confusing `NoMethodError`, strictly worse than a clear
+        // compile-time rejection.
+        if name == "eval" && call.receiver().is_none() {
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.len() != 1 {
+                return Err("`eval` is only supported with exactly one string-literal argument (spike scope) -- the `binding`/`filename`/`lineno` forms need `binding` support, which doesn't exist yet".to_string());
+            }
+            let arg_id = lower_node(result, hir, &arg_list[0])?;
+            let Some(src) = literal_string_text(hir, arg_id) else {
+                return Err("`eval` with a non-literal argument isn't supported yet (spike scope) -- only a plain string literal, e.g. `eval(\"1 + 2\")`, is currently accepted; dynamic `eval` needs a runtime parser/interpreter (see docs/EVAL_VM.md)".to_string());
+            };
+            let body = parse_and_lower_into(hir, &src).map_err(|e| format!("eval(\"...\"): {e}"))?;
+            reject_top_level_defs(hir, &body)?;
+            return Ok(hir.push(HirNode::Eval(body)));
+        }
+
         let receiver = match call.receiver() {
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
@@ -662,6 +696,48 @@ fn local_target_name(node: &Node<'_>) -> PResult<String> {
         "multi-assignment only supports plain local variable targets (spike scope)",
     )?;
     Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
+}
+
+/// If `id` is a `StringLit` HIR node with no interpolation, its concatenated
+/// literal text -- the exact structural check `eval`'s literal-splice path
+/// needs (a `StringLit` is compile-time-constant iff every `StrPart` is
+/// `Lit`, never `Interp`). Reusable for any future "must be a literal"
+/// construct.
+fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
+    let HirNode::StringLit(parts) = &hir[id] else {
+        return None;
+    };
+    let mut out = String::new();
+    for p in parts {
+        match p {
+            StrPart::Lit(s) => out.push_str(s),
+            StrPart::Interp(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+/// `analyze::register_class`'s registration walk only ever scans the
+/// LITERAL top level of `Program`'s (or a class body's) own statement list
+/// for `ClassDef`/`DefMethod` -- an `Eval`'d body's top-level statements are
+/// nested inside its `Eval(body)` node, which that walk never unwraps. A
+/// top-level `class`/`def` inside an eval'd literal would otherwise flow
+/// straight to `codegen::expr::emit_expr`'s "unexpected top-level-only node
+/// in expression position" panic -- this rejects that case with a clean
+/// compile error instead of letting spinelc itself panic (spike scope: the
+/// same gap already exists today for any non-eval code that nests a
+/// `class`/`def` inside e.g. an `if`, so this isn't a new hole, just a new
+/// way to trigger an old one).
+fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
+    for &id in body {
+        if matches!(hir[id], HirNode::ClassDef { .. } | HirNode::DefMethod { .. }) {
+            return Err(
+                "`eval` containing a top-level `class`/`def` isn't supported yet (spike scope)"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One `parts()` entry of an `InterpolatedStringNode` -- either a literal

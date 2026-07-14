@@ -79,7 +79,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::IvarRead(_) => Some("instance-variable"),
-        HirNode::New { .. } | HirNode::Call { .. } | HirNode::SuperCall { .. } => Some("method"),
+        HirNode::New { .. } | HirNode::Call { .. } | HirNode::SuperCall { .. } | HirNode::Eval(_) => {
+            Some("method")
+        }
         HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::StringLit(_)
@@ -281,6 +283,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
+        HirNode::Eval(body) => super::stmt::emit_body(cx, body, false),
         HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             panic!("unexpected top-level-only node in expression position")
         }

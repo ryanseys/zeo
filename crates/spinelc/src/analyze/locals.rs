@@ -165,6 +165,11 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 locals.insert(name.clone(), TyKind::Poly);
             }
         }
+        HirNode::Eval(body) => {
+            for &n in body {
+                track_node(compiler, locals, n);
+            }
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

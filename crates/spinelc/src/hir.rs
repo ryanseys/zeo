@@ -249,4 +249,15 @@ pub enum HirNode {
         after: Vec<String>,
         value: NodeId,
     },
+    /// `eval("literal ruby source")` -- ONLY the compile-time-constant-string
+    /// form (see `parse/mod.rs`'s eval-call-shape recognizer). `body`'s
+    /// source was parsed and lowered into THIS SAME arena at lowering time --
+    /// by the time `analyze`/`codegen` ever see this node, it's ordinary
+    /// already-spliced Hir, indistinguishable from code written inline at the
+    /// eval call site (so local/ivar scoping "just works" -- see the
+    /// recognizer's docs). Runtime (non-literal) eval, `instance_eval`/
+    /// `class_eval` with dynamic content, and `binding` are NOT implemented --
+    /// see docs/EVAL_VM.md for the future embedded-interpreter design those
+    /// would need.
+    Eval(Vec<NodeId>),
 }

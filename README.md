@@ -45,7 +45,7 @@ cargo run -p xtask -- regen
 
 ## Status
 
-All 25 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
+All 26 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
 `cargo test --workspace` suite (`crates/spinelc/tests/e2e.rs`, in-process via
 `spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
 spawn for the compiler itself) that's now the default place to add coverage.

@@ -572,3 +572,69 @@ fn parse_error_is_a_clean_error_not_a_panic() {
         "expected a parse error, got: {err}"
     );
 }
+
+#[test]
+fn eval_of_a_literal_string_runs_inline() {
+    let result = run_ruby(r#"puts eval("1 + 2")"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn eval_shares_the_enclosing_local_scope() {
+    let result = run_ruby(
+        r#"
+        x = 1
+        eval("x = x + 1")
+        puts x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n");
+}
+
+#[test]
+fn eval_can_write_an_ivar_on_self() {
+    let result = run_ruby(
+        r#"
+        class Foo
+          def initialize
+            eval("@x = 42")
+          end
+          def x
+            @x
+          end
+        end
+        puts Foo.new.x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn eval_of_invalid_syntax_is_a_clean_compile_error() {
+    let err = spinelc::compile_to_rust(r#"eval("1 +")"#).unwrap_err();
+    assert!(
+        err.contains("eval") && err.contains("parse error"),
+        "expected eval's inner parse error to surface, got: {err}"
+    );
+}
+
+#[test]
+fn eval_of_a_non_literal_argument_is_a_clean_compile_error() {
+    let err = spinelc::compile_to_rust("y = 1\neval(y.to_s)\n").unwrap_err();
+    assert!(
+        err.contains("non-literal argument"),
+        "expected the non-literal-eval rejection, got: {err}"
+    );
+}
+
+#[test]
+fn eval_of_a_top_level_class_is_a_clean_compile_error() {
+    let err = spinelc::compile_to_rust(r#"eval("class Foo; end")"#).unwrap_err();
+    assert!(
+        err.contains("top-level `class`/`def`"),
+        "expected the top-level-def rejection, got: {err}"
+    );
+}

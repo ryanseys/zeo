@@ -234,6 +234,11 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         }
         HirNode::Redo => {}
         HirNode::MultiWrite { value, .. } => collect_ivars(hir, *value, out),
+        HirNode::Eval(body) => {
+            for &n in body {
+                collect_ivars(hir, n, out);
+            }
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

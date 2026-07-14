@@ -197,6 +197,11 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
                 }
             }
         }
+        HirNode::Eval(body) => {
+            for &n in body {
+                collect_locals(compiler, n, out);
+            }
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

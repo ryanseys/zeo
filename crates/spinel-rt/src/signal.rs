@@ -16,7 +16,10 @@
 //! payload is a plain `RubyValue` for now (any raised exception is just a
 //! value at this stage) rather than a dedicated exception type -- introducing
 //! a `RubyException` type is deferred to the phase that actually needs
-//! exception-class/backtrace machinery.
+//! exception-class/backtrace machinery. `Raise` is also already the intended
+//! vehicle for a *future* dynamic (runtime-string) `eval`'s parse/syntax
+//! errors -- see `docs/EVAL_VM.md` -- so no `Signal` change is anticipated
+//! for that either, once it's built.
 
 use crate::RubyValue;
 
