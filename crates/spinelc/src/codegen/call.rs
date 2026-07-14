@@ -273,7 +273,7 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
         current_class: Some(receiver_class),
         defining_class: Some(new_defining_class),
         current_method: Some(mname.to_string()),
-        local_types: &defining_scope.local_types,
+        local_types: std::borrow::Cow::Borrowed(&defining_scope.local_types),
         label_counter: cx.label_counter,
         loop_labels: cx.loop_labels.clone(),
         // NOT inherited -- see `Ctx::for_var_override`'s docs.

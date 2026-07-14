@@ -1763,3 +1763,420 @@ fn ivars_from_a_three_level_plain_inheritance_chain_are_all_present_on_the_leaf(
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "6\n");
 }
+
+// Phase 8: `case/in` pattern matching. Every test below was oracle-verified
+// against real `ruby` first, per this project's established convention.
+
+#[test]
+fn case_in_class_check_pattern_binds_and_statically_narrows_to_int() {
+    // `Integer => n` both binds `n` AND statically narrows its type for the
+    // rest of the arm's body -- `n + 1` should take the native `Int`
+    // arithmetic fast path, not a runtime Poly fallback (verified indirectly:
+    // if narrowing were broken this would still print `6`, but a fast-path
+    // regression would show up as a `spinelc` panic on `+` instead, since a
+    // Poly local has no runtime `+` fallback for a non-builtin-typed operand
+    // -- see `codegen::call::dispatch`'s docs).
+    let result = run_ruby("case 5\nin Integer => n\n  puts n + 1\nend\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+fn case_in_array_pattern_binds_pre_and_rest() {
+    let result = run_ruby(
+        r#"
+        case [1, 2, 3]
+        in [Integer => a, *rest]
+          puts a
+          puts rest.length
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n");
+}
+
+#[test]
+fn case_in_array_pattern_pre_and_post_splat() {
+    let result = run_ruby(
+        r#"
+        case [1, 2, 3, 4, 5]
+        in [*pre, 3, *post]
+          puts pre.length
+          puts post.length
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n2\n");
+}
+
+#[test]
+fn case_in_pin_pattern_matches_only_the_pinned_value() {
+    let result = run_ruby(
+        r#"
+        x = 5
+        case 10
+        in ^x
+          puts "same as x"
+        else
+          puts "different"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "different\n");
+}
+
+#[test]
+fn case_in_alternation_pattern_matches_any_member() {
+    let result = run_ruby(
+        r#"
+        case 3
+        in 1 | 2 | 3
+          puts "small"
+        else
+          puts "big"
+        end
+        case 99
+        in 1 | 2 | 3
+          puts "small"
+        else
+          puts "big"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "small\nbig\n");
+}
+
+#[test]
+fn case_in_guard_and_class_precedence() {
+    let result = run_ruby(
+        r#"
+        class Classifier
+          def classify(v)
+            case v
+            in Integer => n if n % 2 == 0
+              "even int #{n}"
+            in Integer
+              "odd int"
+            in String
+              "string"
+            else
+              "other"
+            end
+          end
+        end
+        c = Classifier.new
+        puts c.classify(4)
+        puts c.classify(3)
+        puts c.classify("hi")
+        puts c.classify(nil)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "even int 4\nodd int\nstring\nother\n");
+}
+
+#[test]
+fn case_in_unless_guard() {
+    let result = run_ruby(
+        r#"
+        case [1, 2]
+        in [a, *b] unless a == 0
+          puts a
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn case_in_hash_pattern_binds_value_and_rest() {
+    let result = run_ruby(
+        r#"
+        h = { a: 1, b: 2, c: 3 }
+        case h
+        in { a: Integer => av, **rest }
+          puts av
+          puts rest.length
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n");
+}
+
+#[test]
+fn case_in_hash_pattern_shorthand_binds_local_named_after_key() {
+    let result = run_ruby(
+        r#"
+        h = { name: 1 }
+        case h
+        in { name: }
+          puts name
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn case_in_hash_pattern_no_more_keys_rejects_extra_keys() {
+    let result = run_ruby(
+        r#"
+        case { a: 1 }
+        in { a: 1, **nil }
+          puts "exact match"
+        end
+        case { a: 1, b: 2 }
+        in { a: 1, **nil }
+          puts "should not print"
+        else
+          puts "extra keys rejected"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "exact match\nextra keys rejected\n");
+}
+
+#[test]
+fn case_in_find_pattern_locates_a_matching_window() {
+    let result = run_ruby(
+        r##"
+        case [1, 2, 3, 4, 5]
+        in [*, Integer => a, Integer => b, *]
+          puts "#{a} #{b}"
+        end
+        case [10, 20, 30]
+        in [*, 99, *]
+          puts "found 99"
+        else
+          puts "not found"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1 2\nnot found\n");
+}
+
+#[test]
+fn case_in_nested_array_pattern_narrows_each_element() {
+    let result = run_ruby(
+        r##"
+        case [[1, "a"], [2, "b"]]
+        in [[Integer => n1, String => s1], [Integer => n2, String => s2]]
+          puts "#{n1}#{s1} #{n2}#{s2}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1a 2b\n");
+}
+
+#[test]
+fn case_in_range_pattern() {
+    let result = run_ruby(
+        r#"
+        case 5
+        in 1..10
+          puts "in range"
+        end
+        case 15
+        in 1..10
+          puts "in range"
+        else
+          puts "out of range"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "in range\nout of range\n");
+}
+
+#[test]
+fn case_in_nil_true_false_literal_patterns() {
+    let result = run_ruby(
+        r#"
+        case nil
+        in nil
+          puts "was nil"
+        end
+        case true
+        in true
+          puts "was true"
+        end
+        case false
+        in false
+          puts "was false"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "was nil\nwas true\nwas false\n");
+}
+
+#[test]
+fn case_in_bare_bind_pattern_matches_anything() {
+    let result = run_ruby("case 42\nin x\n  puts \"bound: #{x}\"\nend\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "bound: 42\n");
+}
+
+#[test]
+fn case_in_object_deconstruct_dispatches_to_array_pattern() {
+    let result = run_ruby(
+        r#"
+        class Point
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+          def deconstruct
+            [@x, @y]
+          end
+        end
+        p1 = Point.new(1, 2)
+        case p1
+        in [px, py]
+          puts "array: #{px}, #{py}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "array: 1, 2\n");
+}
+
+#[test]
+fn case_in_object_deconstruct_keys_with_constant_guard() {
+    let result = run_ruby(
+        r#"
+        class Point
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+          def deconstruct_keys(keys)
+            { x: @x, y: @y }
+          end
+        end
+        p1 = Point.new(1, 2)
+        case p1
+        in Point(x:, y:)
+          puts "constant: #{x}, #{y}"
+        end
+        case p1
+        in { x:, y: }
+          puts "plain: #{x}, #{y}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "constant: 1, 2\nplain: 1, 2\n");
+}
+
+#[test]
+fn case_in_object_with_no_deconstruct_falls_through_to_else() {
+    // A statically-provable-never-matches array pattern (this class simply
+    // has no `#deconstruct`) is resolved entirely at CODEGEN time (a
+    // compile-time-constant `false`, no runtime call attempted at all) --
+    // see `codegen::patterns::emit_array_binding`'s docs.
+    let result = run_ruby(
+        r#"
+        class Plain
+        end
+        o = Plain.new
+        case o
+        in [a, b]
+          puts "matched"
+        else
+          puts "no deconstruct, fell to else"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "no deconstruct, fell to else\n");
+}
+
+#[test]
+fn match_predicate_one_liner_is_a_boolean_that_never_raises() {
+    let result = run_ruby(
+        r#"
+        if [1, 2] in [Integer, Integer]
+          puts "matched"
+        end
+        if [1, "x"] in [Integer, Integer]
+          puts "should not print"
+        else
+          puts "did not match"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "matched\ndid not match\n");
+}
+
+#[test]
+fn match_predicate_bindings_escape_to_the_enclosing_scope() {
+    let result = run_ruby(
+        r#"
+        arr = [1, "hi"]
+        arr in [Integer => a, String => b]
+        puts a
+        puts b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\nhi\n");
+}
+
+#[test]
+fn match_required_one_liner_binds_on_success() {
+    let result = run_ruby(
+        r#"
+        arr = [1, 2]
+        arr => [first, second]
+        puts first
+        puts second
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n");
+}
+
+#[test]
+fn match_required_one_liner_raises_no_matching_pattern_error_on_failure() {
+    let result = run_ruby("5 => String\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uncaught exception"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn case_in_with_no_matching_arm_and_no_else_raises() {
+    let result = run_ruby("case 5\nin String\n  puts \"no\"\nend\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uncaught exception: no matching pattern"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn case_in_capture_of_a_bare_bind_can_write_the_same_subject_to_two_names() {
+    // A real latent hazard this test guards against: `Capture(Bind(x), y)`
+    // writes the SAME scrutinee into two different locals -- if either write
+    // MOVED instead of CLONED the scrutinee, the second write would fail to
+    // compile ("use of moved value"). See `emit_pattern_match`'s docs.
+    let result = run_ruby("case 5\nin x => y\n  puts x\n  puts y\nend\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n5\n");
+}

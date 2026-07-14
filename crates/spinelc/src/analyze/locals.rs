@@ -186,9 +186,61 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, a);
             }
         }
+        HirNode::CaseIn { subject, arms, else_body } => {
+            track_node(compiler, locals, *subject);
+            let mut branch_locals: Vec<HashMap<String, TyKind>> = Vec::new();
+            for arm in arms {
+                let mut b = locals.clone();
+                // A pattern-bound name is always `Poly` from this static
+                // tracker's point of view -- narrowing to a builtin type
+                // after a class-guard match is a `codegen`-only concept
+                // (see `codegen::patterns::collect_narrowing`), scoped to
+                // just that one arm's own emitted body, not this longer-
+                // lived `Scope::local_types` map.
+                arm.pattern.for_each_bound_name(&mut |n| {
+                    b.entry(n.to_string()).or_insert(TyKind::Poly);
+                });
+                if let Some((g, _)) = arm.guard {
+                    track_node(compiler, &mut b, g);
+                }
+                for &n in &arm.body {
+                    track_node(compiler, &mut b, n);
+                }
+                branch_locals.push(b);
+            }
+            if let Some(body) = else_body {
+                let mut b = locals.clone();
+                for &n in body {
+                    track_node(compiler, &mut b, n);
+                }
+                branch_locals.push(b);
+            }
+            // No explicit `else` means an unmatched subject RAISES
+            // (`NoMatchingPatternError`) rather than falling through to
+            // `nil` the way a value-matching `CaseWhen` would -- so, unlike
+            // `join_branches`, there's no "nothing happened" continuation to
+            // merge in; only the arms' (and any explicit else's) own
+            // branches participate. An empty `branch_locals` (a
+            // `case/in` with no `in` clauses at all -- not valid Ruby, but
+            // guarded against rather than silently wiping every known local)
+            // leaves `locals` untouched.
+            if !branch_locals.is_empty() {
+                *locals = merge_locals(branch_locals);
+            }
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            track_node(compiler, locals, *subject);
+            let mut matched = locals.clone();
+            pattern.for_each_bound_name(&mut |n| {
+                matched.insert(n.to_string(), TyKind::Poly);
+            });
+            *locals = merge_locals(vec![matched, locals.clone()]);
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)

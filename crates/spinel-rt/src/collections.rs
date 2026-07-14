@@ -117,6 +117,29 @@ pub fn hash_len(h: &RHash) -> i64 {
     h.borrow().len() as i64
 }
 
+/// Whether `key` is actually present -- distinct from `hash_get` returning
+/// non-`Nil`, since a key whose VALUE happens to be Ruby `nil` is a real,
+/// present entry (`{a: nil}` has key `:a`; `{}` does not). Needed for hash
+/// PATTERN matching (`case/in`): `in {a: nil}` must fail against `{}`, which
+/// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
+pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
+    h.borrow().iter().any(|(k, _)| k.rb_eq(key))
+}
+
+/// A new Hash containing every pair from `h` whose key ISN'T in `keys` --
+/// backs a hash pattern's `**rest` binding (the leftover key/value pairs not
+/// matched by any explicit `key:` entry).
+pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
+    let excluded: Vec<RubyValue> = keys.iter().map(|k| RubyValue::Symbol(crate::Symbol::intern(k))).collect();
+    let pairs: Vec<(RubyValue, RubyValue)> = h
+        .borrow()
+        .iter()
+        .filter(|(k, _)| !excluded.iter().any(|e| e.rb_eq(k)))
+        .cloned()
+        .collect();
+    Rc::new(RefCell::new(pairs))
+}
+
 pub fn string_new(s: String) -> RStr {
     Rc::new(RefCell::new(s))
 }

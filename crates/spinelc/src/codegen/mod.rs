@@ -23,6 +23,7 @@ mod hoisting;
 mod ident;
 mod loops;
 mod params;
+mod patterns;
 mod stmt;
 
 use quote::{format_ident, quote};
@@ -61,7 +62,10 @@ struct Ctx<'a> {
     /// The enclosing method/top-level scope's per-local static types (see
     /// `analyze::locals`) -- lets operator dispatch resolve `x + y` to
     /// native `Int` arithmetic for locals, not just literal operands.
-    local_types: &'a HashMap<String, TyKind>,
+    /// `Cow` (not a plain `&'a HashMap`) so `with_narrowed_locals` can hand a
+    /// single `case/in` ARM's own body an OWNED, narrowed overlay (see that
+    /// method's docs) without needing a new `Ctx` field of its own.
+    local_types: std::borrow::Cow<'a, HashMap<String, TyKind>>,
     /// Shared by every loop nested inside the same generated `fn`, so each
     /// one gets a function-body-unique label (see `loops::fresh_label`) --
     /// Rust happily lets an inner loop shadow an outer one of the same
@@ -142,6 +146,24 @@ impl<'a> Ctx<'a> {
     fn with_for_var(&self, name: &str, ty: TyKind) -> Ctx<'a> {
         Ctx {
             for_var_override: Some((name.to_string(), ty)),
+            ..self.clone()
+        }
+    }
+
+    /// A child context for ONE `case/in` arm's own guard + body (or a
+    /// one-liner `in`/`=>`'s condition), narrowed by `overlay` -- see
+    /// `codegen::patterns::collect_narrowing`'s docs for what actually gets
+    /// inserted (only builtin, non-`Object` types; a name absent from
+    /// `overlay` keeps whatever type it already had). Clones the WHOLE
+    /// current map once (cheap -- a compile-time-only cost, not a per-call
+    /// runtime one) rather than needing a new `Ctx` field, since `Cow`
+    /// already models "borrowed until something needs to own a modified
+    /// copy" exactly.
+    fn with_narrowed_locals(&self, overlay: HashMap<String, TyKind>) -> Ctx<'a> {
+        let mut merged = self.local_types.clone().into_owned();
+        merged.extend(overlay);
+        Ctx {
+            local_types: std::borrow::Cow::Owned(merged),
             ..self.clone()
         }
     }
@@ -237,7 +259,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         current_class: None,
         defining_class: None,
         current_method: None,
-        local_types: &analyzed.main_local_types,
+        local_types: std::borrow::Cow::Borrowed(&analyzed.main_local_types),
         label_counter: &main_label_counter,
         loop_labels: None,
         for_var_override: None,
@@ -313,7 +335,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         current_class: Some(cid),
         defining_class: Some(cid),
         current_method: None,
-        local_types: &no_locals,
+        local_types: std::borrow::Cow::Borrowed(&no_locals),
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
@@ -402,7 +424,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         current_class: None,
         defining_class: Some(scope.defining_class),
         current_method: Some(scope.name.clone()),
-        local_types: &scope.local_types,
+        local_types: std::borrow::Cow::Borrowed(&scope.local_types),
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
@@ -444,7 +466,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             current_class: Some(cid),
             defining_class: Some(scope.defining_class),
             current_method: Some(scope.name.clone()),
-            local_types: &scope.local_types,
+            local_types: std::borrow::Cow::Borrowed(&scope.local_types),
             label_counter: &method_label_counter,
             loop_labels: None,
             for_var_override: None,

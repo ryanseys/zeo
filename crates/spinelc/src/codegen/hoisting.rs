@@ -304,9 +304,47 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, a, out);
             }
         }
+        HirNode::CaseIn { subject, arms, else_body } => {
+            collect_locals(compiler, *subject, out);
+            for arm in arms {
+                // A pattern's bound names leak into the enclosing METHOD
+                // scope exactly like an `if`/`case` branch's locals do (no
+                // new Ruby scope) -- collected here so `emit_hoisted_body`'s
+                // prelude declares them, same as `MultiWrite`'s targets just
+                // above.
+                arm.pattern.for_each_bound_name(&mut |n| {
+                    if !out.contains(&n.to_string()) {
+                        out.push(n.to_string());
+                    }
+                });
+                arm.pattern.for_each_node(&mut |n| collect_locals(compiler, n, out));
+                if let Some((g, _)) = arm.guard {
+                    collect_locals(compiler, g, out);
+                }
+                for &n in &arm.body {
+                    collect_locals(compiler, n, out);
+                }
+            }
+            if let Some(body) = else_body {
+                for &n in body {
+                    collect_locals(compiler, n, out);
+                }
+            }
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            collect_locals(compiler, *subject, out);
+            pattern.for_each_bound_name(&mut |n| {
+                if !out.contains(&n.to_string()) {
+                    out.push(n.to_string());
+                }
+            });
+            pattern.for_each_node(&mut |n| collect_locals(compiler, n, out));
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)

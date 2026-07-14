@@ -12,7 +12,7 @@ mod locals;
 mod mro;
 
 use crate::compiler::{ClassId, Compiler, Scope, OBJECT_CLASS};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, StrPart};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -318,11 +318,26 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             Some(v) => scan_bare_block_use(hir, *v)?,
             None => false,
         },
+        HirNode::CaseIn { subject, arms, else_body } => {
+            let mut found = scan_bare_block_use(hir, *subject)?;
+            for arm in arms {
+                found |= scan_bare_block_use_pattern_arm(hir, arm)?;
+            }
+            if let Some(body) = else_body {
+                found |= scan_bare_block_use_body(hir, body)?;
+            }
+            found
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            scan_bare_block_use(hir, *subject)? || scan_bare_block_use_pattern(hir, pattern)?
+        }
         HirNode::Redo
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
@@ -333,6 +348,29 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     })
+}
+
+/// Every `NodeId` embedded in `pattern` (see `Pattern::for_each_node`), OR'd
+/// through `scan_bare_block_use` -- collected into a `Vec` first (rather than
+/// scanned inside the `for_each_node` closure directly) since that closure
+/// can't propagate this function's `Result`.
+fn scan_bare_block_use_pattern(hir: &Hir, pattern: &Pattern) -> Result<bool, String> {
+    let mut ids = Vec::new();
+    pattern.for_each_node(&mut |n| ids.push(n));
+    let mut found = false;
+    for n in ids {
+        found |= scan_bare_block_use(hir, n)?;
+    }
+    Ok(found)
+}
+
+fn scan_bare_block_use_pattern_arm(hir: &Hir, arm: &PatternArm) -> Result<bool, String> {
+    let mut found = scan_bare_block_use_pattern(hir, &arm.pattern)?;
+    if let Some((g, _)) = arm.guard {
+        found |= scan_bare_block_use(hir, g)?;
+    }
+    found |= scan_bare_block_use_body(hir, &arm.body)?;
+    Ok(found)
 }
 
 fn scan_bare_block_use_body(hir: &Hir, body: &[NodeId]) -> Result<bool, String> {
@@ -361,6 +399,10 @@ fn body_contains_yield_or_block_given(hir: &Hir, body: &[NodeId]) -> bool {
         }
         HirNode::While { body, .. } | HirNode::Loop { body } | HirNode::For { body, .. } => {
             body_contains_yield_or_block_given(hir, body)
+        }
+        HirNode::CaseIn { arms, else_body, .. } => {
+            arms.iter().any(|arm| body_contains_yield_or_block_given(hir, &arm.body))
+                || else_body.as_deref().is_some_and(|b| body_contains_yield_or_block_given(hir, b))
         }
         // A body statement is a `Call` node, never a bare `Block` directly
         // (see `codegen::expr`'s docs: "a Block should only be reached via
@@ -535,9 +577,32 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             }
         }
         HirNode::ClassVarWrite(_, value) => collect_ivars(hir, *value, out),
+        HirNode::CaseIn { subject, arms, else_body } => {
+            collect_ivars(hir, *subject, out);
+            for arm in arms {
+                arm.pattern.for_each_node(&mut |n| collect_ivars(hir, n, out));
+                if let Some((g, _)) = arm.guard {
+                    collect_ivars(hir, g, out);
+                }
+                for &n in &arm.body {
+                    collect_ivars(hir, n, out);
+                }
+            }
+            if let Some(body) = else_body {
+                for &n in body {
+                    collect_ivars(hir, n, out);
+                }
+            }
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            collect_ivars(hir, *subject, out);
+            pattern.for_each_node(&mut |n| collect_ivars(hir, n, out));
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)

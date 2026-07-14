@@ -395,11 +395,34 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, a, out);
             }
         }
+        HirNode::CaseIn { subject, arms, else_body } => {
+            collect_cvars(hir, *subject, out);
+            for arm in arms {
+                arm.pattern.for_each_node(&mut |n| collect_cvars(hir, n, out));
+                if let Some((g, _)) = arm.guard {
+                    collect_cvars(hir, g, out);
+                }
+                for &n in &arm.body {
+                    collect_cvars(hir, n, out);
+                }
+            }
+            if let Some(body) = else_body {
+                for &n in body {
+                    collect_cvars(hir, n, out);
+                }
+            }
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            collect_cvars(hir, *subject, out);
+            pattern.for_each_node(&mut |n| collect_cvars(hir, n, out));
+        }
         HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassRef(_)

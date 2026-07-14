@@ -199,12 +199,34 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_escaping_block(compiler, *n),
             StrPart::Lit(_) => false,
         }),
+        HirNode::CaseIn { subject, arms, else_body } => {
+            node_contains_escaping_block(compiler, *subject)
+                || arms.iter().any(|arm| {
+                    let mut pattern_found = false;
+                    arm.pattern
+                        .for_each_node(&mut |n| pattern_found |= node_contains_escaping_block(compiler, n));
+                    pattern_found
+                        || arm.guard.is_some_and(|(g, _)| node_contains_escaping_block(compiler, g))
+                        || body_contains_escaping_block(compiler, &arm.body)
+                })
+                || else_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            if node_contains_escaping_block(compiler, *subject) {
+                return true;
+            }
+            let mut found = false;
+            pattern.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
+            found
+        }
         HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
@@ -322,6 +344,48 @@ fn walk(
                 walk(compiler, a, in_escaping, param_exclusions, caps);
             }
         }
+        HirNode::CaseIn { subject, arms, else_body } => {
+            walk(compiler, *subject, in_escaping, param_exclusions, caps);
+            for arm in arms {
+                // A pattern's bound names are a fresh binding, same
+                // treatment as `LocalWrite` just above -- only registered
+                // as a capture candidate while inside an escaping block; the
+                // later intersection with `collect_locals`'s whole-scope
+                // result (see `collect_escaping_captures`) is what decides
+                // whether it's GENUINELY shared with code outside the block.
+                if in_escaping {
+                    arm.pattern.for_each_bound_name(&mut |n| {
+                        if !param_exclusions.contains(n) {
+                            caps.locals.insert(n.to_string());
+                        }
+                    });
+                }
+                arm.pattern
+                    .for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps));
+                if let Some((g, _)) = arm.guard {
+                    walk(compiler, g, in_escaping, param_exclusions, caps);
+                }
+                for &n in &arm.body {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+            if let Some(body) = else_body {
+                for &n in body {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            walk(compiler, *subject, in_escaping, param_exclusions, caps);
+            if in_escaping {
+                pattern.for_each_bound_name(&mut |n| {
+                    if !param_exclusions.contains(n) {
+                        caps.locals.insert(n.to_string());
+                    }
+                });
+            }
+            pattern.for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps));
+        }
         HirNode::Eval(body) => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps);
@@ -401,6 +465,8 @@ fn walk(
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::ClassRef(_)
         | HirNode::Include(_)
         | HirNode::Extend(_)

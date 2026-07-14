@@ -34,7 +34,7 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return *ty;
         }
     }
-    infer_type_with_locals(cx.compiler, cx.local_types, id)
+    infer_type_with_locals(cx.compiler, &cx.local_types, id)
 }
 
 /// The receiver's statically-known class, if any -- the entire input to the
@@ -89,6 +89,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Raise(_) => Some("method"),
         HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
         | HirNode::StringLit(_)
         | HirNode::ArrayLit(_)
         | HirNode::HashLit(_)
@@ -98,6 +100,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Defined(_)
         | HirNode::If { .. }
         | HirNode::CaseWhen { .. }
+        | HirNode::CaseIn { .. }
+        | HirNode::MatchPredicate { .. }
+        | HirNode::MatchRequired { .. }
         | HirNode::LocalWrite(..)
         | HirNode::IvarWrite(..)
         | HirNode::ClassVarWrite(..)
@@ -196,6 +201,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }
         }
+        HirNode::NilLit => quote! { spinel_rt::RubyValue::Nil },
+        HirNode::BoolLit(b) => quote! { spinel_rt::RubyValue::Bool(#b) },
         HirNode::LocalRead(name) => super::hoisting::emit_local_read(cx, name),
         HirNode::And(l, r) => {
             // Ruby's `&&`/`and` returns the operand itself, not a bool --
@@ -348,6 +355,15 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
         HirNode::Raise(args) => emit_raise(cx, args),
+        HirNode::CaseIn { subject, arms, else_body } => {
+            super::patterns::emit_case_in(cx, *subject, arms, else_body)
+        }
+        HirNode::MatchPredicate { subject, pattern } => {
+            super::patterns::emit_match_predicate(cx, *subject, pattern)
+        }
+        HirNode::MatchRequired { subject, pattern } => {
+            super::patterns::emit_match_required(cx, *subject, pattern)
+        }
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. }
@@ -428,7 +444,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
 /// see that function's docs); `Signal::Raise` needs a real `RubyValue`, so
 /// this boxes it the same way `emit_safe_call` already does for its own
 /// uniform-representation needs.
-fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
+pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
     let class_ident = safe_ident(class_name);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
