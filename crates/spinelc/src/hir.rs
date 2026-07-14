@@ -46,6 +46,21 @@ pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
     SymbolLit(String),
+    /// `a && b` / `a and b` -- prism normalizes both spellings to the same
+    /// node (only precedence differs, already resolved by parse time).
+    /// Short-circuits like Ruby's real `&&`, not like Rust's bool-typed
+    /// `&&`: the *operand itself* is returned (`a` if falsy, else `b`), so
+    /// codegen can't emit a literal Rust `&&` here (see `expr.rs`).
+    And(NodeId, NodeId),
+    /// `a || b` / `a or b` -- see `And`'s docs; same short-circuit-the-
+    /// operand-not-a-bool semantics.
+    Or(NodeId, NodeId),
+    /// `defined?(expr)` -- a compile-time-resolvable classification of
+    /// `expr`'s syntactic form (mirrors CRuby's `"expression"`/`"method"`/
+    /// `"local-variable"`/`"instance-variable"`/`nil` results), not a
+    /// runtime check. See `codegen::expr::emit_defined`'s docs for the
+    /// scope-cut this approximates.
+    Defined(NodeId),
     LocalRead(String),
     LocalWrite(String, NodeId),
     IvarRead(String),

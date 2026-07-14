@@ -5,7 +5,7 @@
 //! `spinelc` cannot resolve a call statically). Spinel itself never needs
 //! this module at all -- it's the one deliberate architectural addition.
 
-use crate::{RubyValue, Symbol};
+use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -55,7 +55,11 @@ impl RubyObject for Object {
     }
 }
 
-pub type MethodFn = fn(&RObj, &[RubyValue]) -> RubyValue;
+/// Every generated method/trampoline returns `Result<RubyValue, Signal>`, not
+/// a bare `RubyValue` -- see `Signal`'s docs for why this is fixed from the
+/// start rather than retrofitted once `break`/`raise`/non-local `return`
+/// exist.
+pub type MethodFn = fn(&RObj, &[RubyValue]) -> Result<RubyValue, Signal>;
 
 struct ClassEntry {
     superclass: Option<ClassId>,
@@ -120,7 +124,7 @@ pub fn install_class_registry(registry: ClassRegistry) {
 /// then its superclass, etc. -- but this walk happens at runtime, over a
 /// table generated code populated and can still mutate. This is the question
 /// spinel's whole architecture is built to never have to ask.
-pub fn send(recv: &RObj, name: Symbol, args: &[RubyValue]) -> RubyValue {
+pub fn send(recv: &RObj, name: Symbol, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut class = Some(recv.class_id());
     while let Some(id) = class {
         let found = REGISTRY.with(|r| r.borrow().lookup(id, name));

@@ -6,6 +6,8 @@
 //! unrelated -- `spinelc` never links against `spinel-rt` at all.
 
 use crate::hir::{Hir, NodeId};
+use crate::types::TyKind;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ClassId(pub u32);
@@ -33,6 +35,11 @@ pub struct Scope {
     pub class: Option<ClassId>,
     pub params: Vec<String>,
     pub body: Vec<NodeId>,
+    /// Per-local static type, computed once by `analyze::locals::infer_locals`
+    /// (a forward, single-pass walk -- not the deferred whole-program
+    /// fixpoint). Lets codegen resolve `x + y` to native `Int` arithmetic
+    /// when `x`/`y` are locals, not just literal-on-literal operands.
+    pub local_types: HashMap<String, TyKind>,
 }
 
 pub struct Compiler {

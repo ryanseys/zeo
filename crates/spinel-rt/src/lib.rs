@@ -3,13 +3,17 @@
 //! the spike's 7 examples need. See `~/dev/spinel-rs/docs/PORTING_ANALYSIS.md`
 //! for the full design writeup.
 
+mod arith;
 mod dispatch;
+mod signal;
 mod symbol;
 mod value;
 
+pub use arith::*;
 pub use dispatch::{
     install_class_registry, send, ClassId, ClassRegistry, MethodFn, Object, RObj, RubyObject,
 };
+pub use signal::Signal;
 pub use symbol::Symbol;
 pub use value::RubyValue;
 
@@ -23,15 +27,6 @@ pub fn puts(value: RubyValue) {
     } else {
         println!("{s}");
     }
-}
-
-/// Mirrors `sp_int_add` (the default `--int-overflow=raise` mode,
-/// `lib/sp_runtime.h:140-242`): checked addition, raising on overflow rather
-/// than silently wrapping. Spinel raises a catchable `RangeError`; the spike
-/// has no `raise`/`rescue` yet (see the plan's Phase 3), so this panics --
-/// still fail-fast, not silent-wrong.
-pub fn int_add(a: i64, b: i64) -> i64 {
-    a.checked_add(b).expect("Integer overflow")
 }
 
 /// One declarative macro absorbs the struct/trait-impl/registration ceremony
@@ -67,14 +62,15 @@ macro_rules! ruby_class {
                 // written inside the caller's `$body`, so the receiver has
                 // to round-trip through the caller's tokens to match up.
                 //
-                // Return type is always `RubyValue`, never omitted: Ruby
-                // methods always implicitly return a value (the last
-                // expression, or nil), so codegen always emits a body whose
-                // final expression is a `RubyValue` -- `RubyValue::Nil` for
-                // methods with nothing meaningful to return (e.g.
-                // `initialize`), matching Ruby's own semantics rather than
-                // introducing a separate "void method" case.
-                pub fn $method(& $slf $(, $arg: $arg_ty)*) -> $crate::RubyValue $body
+                // Return type is always `Result<RubyValue, Signal>`, never
+                // omitted or bare `RubyValue`: Ruby methods always implicitly
+                // return a value (the last expression, or nil) -- codegen
+                // emits `Ok(RubyValue::Nil)` for methods with nothing
+                // meaningful to return (e.g. `initialize`) -- and every
+                // method body is a `?`-propagation boundary for non-local
+                // control flow from the first breadth phase onward, not just
+                // once `raise`/escaping `Proc`s exist (see `signal.rs`).
+                pub fn $method(& $slf $(, $arg: $arg_ty)*) -> Result<$crate::RubyValue, $crate::Signal> $body
             )*
         }
 
@@ -117,8 +113,8 @@ mod tests {
         class Point : Object {
             id: 1;
             ivars { x }
-            def initialize(&self, x: RubyValue) { *self.x.borrow_mut() = x; RubyValue::Nil }
-            def x(&self) { self.x.borrow().clone() }
+            def initialize(&self, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
+            def x(&self) { Ok(self.x.borrow().clone()) }
         }
     }
 
@@ -126,9 +122,9 @@ mod tests {
         class Greeter : Object {
             id: 2;
             ivars { }
-            def hello(&self) { RubyValue::Str("hi".to_string()) }
+            def hello(&self) { Ok(RubyValue::Str("hi".to_string())) }
             def method_missing(&self, name: RubyValue) {
-                RubyValue::Str(format!("no such method: {}", name.to_display_string()))
+                Ok(RubyValue::Str(format!("no such method: {}", name.to_display_string())))
             }
         }
     }
@@ -146,8 +142,8 @@ mod tests {
         let p = Point {
             x: std::cell::RefCell::new(RubyValue::Nil),
         };
-        p.initialize(RubyValue::Int(5));
-        match p.x() {
+        p.initialize(RubyValue::Int(5)).unwrap();
+        match p.x().unwrap() {
             RubyValue::Int(5) => {}
             other => panic!("expected Int(5), got {}", other.to_display_string()),
         }
@@ -165,7 +161,7 @@ mod tests {
     fn dynamic_send_finds_registered_method() {
         install();
         let g: RObj = Greeter::new_handle(Greeter {});
-        let result = send(&g, Symbol::intern("hello"), &[]);
+        let result = send(&g, Symbol::intern("hello"), &[]).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
 
@@ -173,7 +169,7 @@ mod tests {
     fn dynamic_send_falls_back_to_method_missing() {
         install();
         let g: RObj = Greeter::new_handle(Greeter {});
-        let result = send(&g, Symbol::intern("nope"), &[]);
+        let result = send(&g, Symbol::intern("nope"), &[]).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
     }
 }

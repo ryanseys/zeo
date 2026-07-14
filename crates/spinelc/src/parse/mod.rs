@@ -113,6 +113,32 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::SymbolLit(name)));
     }
 
+    // `(expr)` -- prism wraps a parenthesized expression in its own node
+    // (not transparently folded away), distinct from the identically-shaped
+    // `body: Option<Node>` on a `def`/`class`/`if` (see `lower_body`).
+    // Multiple-statement parens (`(a; b)`) would need a first-class
+    // "sequence of statements as one expression" HIR shape this spike
+    // doesn't have yet -- narrower than real Ruby, a clean error rather
+    // than silently dropping all but the last statement.
+    if let Some(paren) = node.as_parentheses_node() {
+        return match paren.body() {
+            None => Err("empty parentheses `()` aren't supported yet (spike scope)".to_string()),
+            Some(n) => match n.as_statements_node() {
+                Some(stmts) => {
+                    let body: Vec<_> = stmts.body().iter().collect();
+                    match body.len() {
+                        1 => lower_node(result, hir, &body[0]),
+                        _ => Err(
+                            "parenthesized multi-statement expressions aren't supported yet (spike scope)"
+                                .to_string(),
+                        ),
+                    }
+                }
+                None => lower_node(result, hir, &n),
+            },
+        };
+    }
+
     if let Some(lvr) = node.as_local_variable_read_node() {
         let name = String::from_utf8_lossy(lvr.name().as_slice()).into_owned();
         return Ok(hir.push(HirNode::LocalRead(name)));
@@ -136,6 +162,23 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name.trim_start_matches('@').to_string(),
             value,
         )));
+    }
+
+    if let Some(and) = node.as_and_node() {
+        let left = lower_node(result, hir, &and.left())?;
+        let right = lower_node(result, hir, &and.right())?;
+        return Ok(hir.push(HirNode::And(left, right)));
+    }
+
+    if let Some(or) = node.as_or_node() {
+        let left = lower_node(result, hir, &or.left())?;
+        let right = lower_node(result, hir, &or.right())?;
+        return Ok(hir.push(HirNode::Or(left, right)));
+    }
+
+    if let Some(defined) = node.as_defined_node() {
+        let value = lower_node(result, hir, &defined.value())?;
+        return Ok(hir.push(HirNode::Defined(value)));
     }
 
     if let Some(sup) = node.as_super_node() {

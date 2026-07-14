@@ -297,7 +297,11 @@ version = "0.1.0"
 name = "spinelc"
 version = "0.1.0"
 dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
  "ruby-prism",
+ "syn",
 ]
 
 [[package]]

@@ -8,9 +8,13 @@ binary -- proving out the same architecture in Rust, with genuine open-world
 object model from the start (something spinel itself never has -- see
 [`docs/PORTING_ANALYSIS.md`](docs/PORTING_ANALYSIS.md)).
 
-This is a spike, not a production compiler: it handles exactly the 7 example
-programs in `examples/`, chosen to exercise literals, blocks, instance state,
-inheritance, and dynamic dispatch end to end.
+This is a spike, not a production compiler: it handles exactly the example
+programs in `examples/`, chosen to exercise literals, operators, blocks,
+instance state, inheritance, and dynamic dispatch end to end. `examples/`
+doubles as a low-friction path for porting fixtures from spinel's own
+1,729-file `test/*.rb` + `.rb.expected` golden corpus: add a `.rb`, run
+`cargo run -p xtask -- regen` to get its `.expected` from real `ruby`, then
+`cargo run -p xtask -- test` to confirm spinelc matches it.
 
 ## Layout
 
@@ -41,8 +45,12 @@ cargo run -p xtask -- regen
 
 ## Status
 
-All 7 examples pass. Zero `unsafe` code in `spinelc` or `spinel-rt` (parsing
-safety is delegated entirely to the `ruby-prism` crate). See
+All 12 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
+`cargo test --workspace` suite (`crates/spinelc/tests/e2e.rs`, in-process via
+`spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
+spawn for the compiler itself) that's now the default place to add coverage.
+Zero `unsafe` code in `spinelc` or `spinel-rt` (parsing safety is delegated
+entirely to the `ruby-prism` crate). See
 [`docs/PORTING_ANALYSIS.md`](docs/PORTING_ANALYSIS.md) for the full
 feasibility analysis, design rationale, and phased roadmap beyond this spike.
 

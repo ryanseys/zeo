@@ -8,14 +8,22 @@
 //! walks the whole program and mutates a `Compiler`) is exactly what a real
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
+mod locals;
+
 use crate::compiler::{Compiler, Scope, OBJECT_CLASS};
 use crate::hir::{Hir, HirNode, NodeId};
+use crate::types::TyKind;
+use std::collections::HashMap;
 
 pub struct Analyzed {
     pub compiler: Compiler,
     /// Top-level statements that aren't class definitions -- the body of
     /// generated `fn main()`.
     pub main_statements: Vec<NodeId>,
+    /// The same per-local `TyKind` tracking `Scope::local_types` does for a
+    /// method body, but for `main_statements` -- there's no `Scope` for the
+    /// top level to hang this off of.
+    pub main_local_types: HashMap<String, TyKind>,
 }
 
 pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
@@ -42,9 +50,12 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         }
     }
 
+    let main_local_types = locals::infer_locals(&compiler, &main_statements);
+
     Ok(Analyzed {
         compiler,
         main_statements,
+        main_local_types,
     })
 }
 
@@ -69,11 +80,13 @@ fn register_class(
             for &n in &body {
                 collect_ivars(&compiler.hir, n, &mut ivars);
             }
+            let local_types = locals::infer_locals(compiler, &body);
             compiler.add_scope(Scope {
                 name,
                 class: Some(class_id),
                 params,
                 body,
+                local_types,
             });
         }
     }
@@ -101,6 +114,11 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             collect_ivars(hir, *value, out);
         }
         HirNode::LocalWrite(_, value) => collect_ivars(hir, *value, out),
+        HirNode::And(l, r) | HirNode::Or(l, r) => {
+            collect_ivars(hir, *l, out);
+            collect_ivars(hir, *r, out);
+        }
+        HirNode::Defined(v) => collect_ivars(hir, *v, out),
         HirNode::Call {
             receiver,
             args,
