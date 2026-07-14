@@ -171,6 +171,24 @@ pub enum HirNode {
     LocalWrite(String, NodeId),
     IvarRead(String),
     IvarWrite(String, NodeId),
+    /// `@@x` read/write. Ownership (which class/module's storage this
+    /// actually refers to) is resolved once at `analyze` time by walking the
+    /// referencing class's `ancestors` for an existing owner -- see
+    /// `compiler::ClassInfo::cvar_owners`'s docs -- not re-resolved at
+    /// codegen time, so this node just carries the bare name; codegen
+    /// consults the already-resolved owner via `Ctx.current_class`.
+    ClassVarRead(String),
+    ClassVarWrite(String, NodeId),
+    /// A bare constant used as a VALUE (currently only meaningful as a call
+    /// receiver: `ClassName.foo`/`ModuleName.foo`) -- distinct from
+    /// `ClassName.new(...)` (still its own `New` node) and from a
+    /// superclass/include/extend/prepend target name (those stay plain
+    /// `String`s, resolved directly, never wrapped in this). Resolves to
+    /// "the class/module object named X" for dispatch purposes only; there
+    /// is no first-class runtime `Class`/`Module` VALUE (can't be stored in
+    /// a variable, compared, or reflected on at runtime) -- see the plan's
+    /// Part 6 "Explicit scope-cut" on this point.
+    ClassRef(String),
     /// A literal-name-resolvable call: `recv.name(args) { block }`, or an
     /// implicit-self call (`receiver: None`). `send`/`public_send` are NOT a
     /// separate node kind (mirroring prism/spinel: they're just calls named
@@ -224,19 +242,50 @@ pub enum HirNode {
         params: Params,
         body: Vec<NodeId>,
     },
+    /// `class Name < Super ... end` / `module Name ... end` -- `is_module`
+    /// distinguishes the two: a module has no `superclass` (always `None`)
+    /// and is never instantiated (no `Name.new`, no generated Rust struct --
+    /// see `codegen::mod::emit_class`'s docs). Both share this one node
+    /// since everything about their BODY (methods, nested `include`/
+    /// `extend`/`prepend`, class variables) lowers identically; only
+    /// `analyze::register_class`'s registration differs.
     ClassDef {
         name: String,
         superclass: Option<String>,
         body: Vec<NodeId>,
+        is_module: bool,
     },
     /// Also the desugared form of a literal-name `define_method(:name) { .. }`
     /// -- lowering (`parse/mod.rs`) treats it identically to a plain `def`,
-    /// mirroring spinel's `walk_scope`.
+    /// mirroring spinel's `walk_scope`. `is_class_method` is `def self.name`
+    /// (`DefNode::receiver()` is `Some(SelfNode)`) -- a genuinely different
+    /// registration target (`ClassInfo::class_methods`, not `::methods`; no
+    /// `self: Rc<Self>` receiver at codegen time at all, see
+    /// `compiler::ClassInfo`'s docs) even though the body shape is
+    /// identical. Any OTHER explicit receiver (`def SomeConst.name`) is a
+    /// clean lowering rejection (spike scope -- reopening a class from
+    /// outside its own body isn't supported).
     DefMethod {
         name: String,
         params: Params,
         body: Vec<NodeId>,
+        is_class_method: bool,
     },
+    /// `include Mod` -- one node per module argument, in left-to-right
+    /// source order, when multiple are given (`include A, B` lowers to two
+    /// sequential `Include` statements in the class body, matching real
+    /// Ruby's "as if each were included one at a time, in order" rule). Only
+    /// valid directly in a class/module body -- see
+    /// `parse/mod.rs::lower_class_body_statement`.
+    Include(String),
+    /// `extend Mod` -- see `Include`'s docs; the module's OWN instance
+    /// methods are materialized as CLASS methods on the extending class
+    /// instead (`ClassInfo::class_methods`), not instance methods.
+    Extend(String),
+    /// `prepend Mod` -- see `Include`'s docs; the module is inserted BEFORE
+    /// the class itself in the linearized `ancestors` list, so its methods
+    /// take precedence over the class's own (reachable via `super`).
+    Prepend(String),
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
     /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
     /// `negate: true`, exactly like `unless` folds into `If` by swapping

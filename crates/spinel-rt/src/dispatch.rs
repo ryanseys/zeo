@@ -85,7 +85,14 @@ pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Rc<T>> {
 pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 struct ClassEntry {
-    superclass: Option<ClassId>,
+    /// The full, already-linearized MRO (this class first, then prepends/
+    /// includes/superclass in resolution order) -- computed at COMPILE time
+    /// by `spinelc::analyze::mro::compute_ancestors` and baked in as a
+    /// literal list by `ruby_class!`'s generated `__register`. Method
+    /// dispatch itself never needs to walk this (every reachable method is
+    /// already MATERIALIZED directly onto this class -- see the plan's Part
+    /// 6), but `is_a`/rescue-by-class matching does.
+    ancestors: Vec<ClassId>,
     methods: HashMap<Symbol, MethodFn>,
 }
 
@@ -100,12 +107,13 @@ impl ClassRegistry {
     }
 
     /// Mirrors declaring a class's place in the hierarchy -- called once per
-    /// class from that class's generated `__register`.
-    pub fn register(&mut self, id: ClassId, superclass: Option<ClassId>) {
+    /// class from that class's generated `__register`, with `ancestors`
+    /// already fully linearized at spinelc compile time.
+    pub fn register(&mut self, id: ClassId, ancestors: Vec<ClassId>) {
         self.entries.insert(
             id.0,
             ClassEntry {
-                superclass,
+                ancestors,
                 methods: HashMap::new(),
             },
         );
@@ -127,9 +135,22 @@ impl ClassRegistry {
         self.entries.get(&id.0)?.methods.get(&name).copied()
     }
 
-    fn superclass_of(&self, id: ClassId) -> Option<ClassId> {
-        self.entries.get(&id.0)?.superclass
+    fn ancestors_of(&self, id: ClassId) -> &[ClassId] {
+        self.entries.get(&id.0).map_or(&[], |e| &e.ancestors)
     }
+}
+
+/// `recv_class.is_a?(target)` -- a real ancestry check against the SAME
+/// linearized `ancestors` list `super`/reflection uses at compile time (see
+/// `analyze::mro::compute_ancestors`'s docs), not spinel's own two-tier
+/// "transplant for dispatch, shallower list for reflection" split (confirmed
+/// to diverge on a module-of-module diamond -- see the plan). The one
+/// runtime surface this spike needs for `Signal::Raise`/`rescue` matching:
+/// there's no first-class `Class`/`Module` runtime VALUE (can't be stored in
+/// a variable or reflected on generally), just this narrow "is this concrete
+/// class id ancestor-compatible with that one" check.
+pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
+    REGISTRY.with(|r| r.borrow().ancestors_of(recv_class).contains(&target))
 }
 
 thread_local! {
@@ -142,11 +163,13 @@ pub fn install_class_registry(registry: ClassRegistry) {
     REGISTRY.with(|r| *r.borrow_mut() = registry);
 }
 
-/// The general dispatcher -- reached only on Path 2 (see module docs). Mirrors
-/// the *shape* of `comp_method_in_chain` (compiler.c:404): walk the class,
-/// then its superclass, etc. -- but this walk happens at runtime, over a
-/// table generated code populated and can still mutate. This is the question
-/// spinel's whole architecture is built to never have to ask.
+/// The general dispatcher -- reached only on Path 2 (see module docs).
+/// Since every reachable method (own, inherited, or mixed-in) is already
+/// MATERIALIZED directly onto its receiver's own class at spinelc compile
+/// time (see the plan's Part 6 -- no cloning-with-shadow-names,
+/// monomorphization instead), this is now a FLAT lookup on the receiver's
+/// own class -- no ancestor walk needed here at all, only for `is_a`
+/// (above), which real dispatch doesn't need.
 ///
 /// `block` is threaded through to whichever `MethodFn` is actually found --
 /// including the `method_missing` fallback, matching real Ruby's own
@@ -157,28 +180,19 @@ pub fn send(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let mut class = Some(recv.class_id());
-    while let Some(id) = class {
-        let found = REGISTRY.with(|r| r.borrow().lookup(id, name));
-        if let Some(f) = found {
-            return f(recv, args, block);
-        }
-        class = REGISTRY.with(|r| r.borrow().superclass_of(id));
+    let id = recv.class_id();
+    if let Some(f) = REGISTRY.with(|r| r.borrow().lookup(id, name)) {
+        return f(recv, args, block);
     }
 
-    // method_missing fallback: same chain walk, looking for `method_missing`
-    // instead, with `name` prepended to args (mirrors CRuby's own protocol).
+    // method_missing fallback, with `name` prepended to args (mirrors
+    // CRuby's own protocol).
     let mm = Symbol::intern("method_missing");
-    let mut class = Some(recv.class_id());
-    while let Some(id) = class {
-        let found = REGISTRY.with(|r| r.borrow().lookup(id, mm));
-        if let Some(f) = found {
-            let mut full_args = Vec::with_capacity(args.len() + 1);
-            full_args.push(RubyValue::Symbol(name));
-            full_args.extend_from_slice(args);
-            return f(recv, &full_args, block);
-        }
-        class = REGISTRY.with(|r| r.borrow().superclass_of(id));
+    if let Some(f) = REGISTRY.with(|r| r.borrow().lookup(id, mm)) {
+        let mut full_args = Vec::with_capacity(args.len() + 1);
+        full_args.push(RubyValue::Symbol(name));
+        full_args.extend_from_slice(args);
+        return f(recv, &full_args, block);
     }
 
     // Minimal error handling (see plan Context): match Ruby's real default --

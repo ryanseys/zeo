@@ -133,7 +133,9 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             }
             collect_locals(compiler, *value, out);
         }
-        HirNode::IvarWrite(_, value) => collect_locals(compiler, *value, out),
+        HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
+            collect_locals(compiler, *value, out)
+        }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
             collect_locals(compiler, *l, out);
             collect_locals(compiler, *r, out);
@@ -307,7 +309,12 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::SymbolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
         | HirNode::BlockGiven
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

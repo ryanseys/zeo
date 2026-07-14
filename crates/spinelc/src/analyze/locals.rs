@@ -40,7 +40,9 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             let ty = infer_type_with_locals(compiler, locals, *value);
             locals.insert(name.clone(), ty);
         }
-        HirNode::IvarWrite(_, value) => track_node(compiler, locals, *value),
+        HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
+            track_node(compiler, locals, *value)
+        }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
             track_node(compiler, locals, *l);
             track_node(compiler, locals, *r);
@@ -189,6 +191,11 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         | HirNode::SymbolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

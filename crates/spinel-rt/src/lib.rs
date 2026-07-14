@@ -5,6 +5,7 @@
 
 mod arith;
 mod collections;
+mod cvars;
 mod dispatch;
 mod rproc;
 mod signal;
@@ -14,9 +15,10 @@ mod value;
 pub use arith::*;
 pub use collections::*;
 pub use dispatch::{
-    downcast_robj, install_class_registry, send, ClassId, ClassRegistry, MethodFn, Object, RObj,
-    RubyObject,
+    downcast_robj, install_class_registry, is_a, send, ClassId, ClassRegistry, MethodFn, Object,
+    RObj, RubyObject,
 };
+pub use cvars::{cvar_get, cvar_set};
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
@@ -60,11 +62,22 @@ pub fn puts(value: RubyValue) {
 /// TYPE annotation is now fixed to `Rc<Self>` (rather than varying, since
 /// `&self` never varied either -- `$slf:tt` only ever captured the single
 /// token `self`, never its type).
+///
+/// `ancestors` is the full, real linearized MRO (this class first, then
+/// prepends/includes/superclass in resolution order -- see
+/// `spinelc::analyze::mro::compute_ancestors`), computed entirely at
+/// spinelc compile time and baked in here as a literal list; `__register`
+/// just forwards it. No separate `ruby_module!` macro exists: a Ruby
+/// `module`'s methods are never emitted as their own Rust struct/impl at
+/// all -- they're MATERIALIZED directly onto whichever class(es)
+/// include/prepend/extend them (see the plan's Part 6), so every method
+/// this macro ever sees already belongs, concretely, to `$name`.
 #[macro_export]
 macro_rules! ruby_class {
     (
         class $name:ident : $super:path {
             id: $id:expr;
+            ancestors: [ $($anc:expr),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
             $( def $method:ident ( $slf:tt : std::rc::Rc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
             dispatch { $( $dname:ident => $tramp:expr ),* $(,)? }
@@ -129,7 +142,7 @@ macro_rules! ruby_class {
             /// shrinks to exactly what its own doc comment always claimed:
             /// struct/impl/registration ceremony, not binding logic.
             pub fn __register(registry: &mut $crate::ClassRegistry) {
-                registry.register(Self::CLASS_ID, Some(<$super>::CLASS_ID));
+                registry.register(Self::CLASS_ID, vec![$($crate::ClassId($anc)),*]);
                 $(
                     registry.define_method(
                         Self::CLASS_ID,
@@ -149,6 +162,7 @@ mod tests {
     ruby_class! {
         class Point : Object {
             id: 1;
+            ancestors: [1, 0];
             ivars { x }
             def initialize(self: std::rc::Rc<Self>, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
             def x(self: std::rc::Rc<Self>) { Ok(self.x.borrow().clone()) }
@@ -174,6 +188,7 @@ mod tests {
     ruby_class! {
         class Greeter : Object {
             id: 2;
+            ancestors: [2, 0];
             ivars { }
             def hello(self: std::rc::Rc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(self: std::rc::Rc<Self>, name: RubyValue) {
@@ -200,7 +215,7 @@ mod tests {
 
     fn install() {
         let mut registry = ClassRegistry::new();
-        registry.register(Object::CLASS_ID, None);
+        registry.register(Object::CLASS_ID, vec![Object::CLASS_ID]);
         Point::__register(&mut registry);
         Greeter::__register(&mut registry);
         install_class_registry(registry);

@@ -9,9 +9,10 @@
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
 
 mod locals;
+mod mro;
 
-use crate::compiler::{Compiler, Scope, OBJECT_CLASS};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId, StrPart};
+use crate::compiler::{ClassId, Compiler, Scope, OBJECT_CLASS};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, StrPart};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -39,16 +40,25 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             name,
             superclass,
             body,
+            is_module,
         } = &compiler.hir[stmt]
         {
             let name = name.clone();
             let superclass = superclass.clone();
             let body = body.clone();
-            register_class(&mut compiler, name, superclass, &body)?;
+            let is_module = *is_module;
+            register_class(&mut compiler, name, superclass, is_module, &body)?;
         } else {
             main_statements.push(stmt);
         }
     }
+
+    // Ancestor linearization + method/class-method materialization + class
+    // variable ownership -- must run AFTER every `ClassDef` above has been
+    // registered, since `include`/`extend`/`prepend`/`< Super` targets must
+    // already exist (same "defined earlier in the file" rule `superclass`
+    // resolution already enforces). See `mro`'s module docs.
+    mro::materialize(&mut compiler)?;
 
     let main_local_types = locals::infer_locals(&compiler, &main_statements);
 
@@ -63,59 +73,114 @@ fn register_class(
     compiler: &mut Compiler,
     name: String,
     superclass: Option<String>,
+    is_module: bool,
     body: &[NodeId],
 ) -> Result<(), String> {
-    let parent = match &superclass {
-        None => OBJECT_CLASS,
-        Some(s) => compiler.class_by_name(s).ok_or_else(|| {
-            format!("unknown superclass `{s}` (must be defined earlier in the file)")
-        })?,
+    let parent = if is_module {
+        None
+    } else {
+        Some(match &superclass {
+            None => OBJECT_CLASS,
+            Some(s) => compiler.class_by_name(s).ok_or_else(|| {
+                format!("unknown superclass `{s}` (must be defined earlier in the file)")
+            })?,
+        })
     };
-    let class_id = compiler.add_class(name, parent);
+    let class_id = compiler.add_class(name, parent, is_module);
 
-    let mut ivars: Vec<String> = Vec::new();
     for &stmt in body {
-        if let HirNode::DefMethod { name, params, body } = &compiler.hir[stmt] {
-            let (name, params, body) = (name.clone(), params.clone(), body.clone());
-            for &n in &body {
-                collect_ivars(&compiler.hir, n, &mut ivars);
-            }
-            let mut local_types = locals::infer_locals(compiler, &body);
-            // A named `*rest`/`**kwrest`/`&block` param is provably a real
-            // `Array`/`Hash`/`Proc` (that's what `codegen::params`'s
-            // prologue always binds it to) -- seed it only if the body
-            // doesn't already have its own inferred type for that name (i.e.
-            // never reassigned), matching how `infer_locals` never sees
-            // params at all on its own (see `locals.rs`'s docs: a method's
-            // params aren't part of its `body`, so nothing would otherwise
-            // seed this).
-            if let Some(Some(name)) = &params.rest {
-                local_types.entry(name.clone()).or_insert(TyKind::Array);
-            }
-            if let Some(Some(name)) = &params.keyword_rest {
-                local_types.entry(name.clone()).or_insert(TyKind::Hash);
-            }
-            if let Some(Some(name)) = &params.block {
-                local_types.entry(name.clone()).or_insert(TyKind::Proc);
-            }
-            let mut uses_bare_block = false;
-            for &n in &body {
-                if scan_bare_block_use(&compiler.hir, n)? {
-                    uses_bare_block = true;
-                }
-            }
-            compiler.add_scope(Scope {
+        match &compiler.hir[stmt] {
+            HirNode::DefMethod {
                 name,
-                class: Some(class_id),
                 params,
                 body,
-                local_types,
-                uses_bare_block,
-            });
+                is_class_method,
+            } => {
+                let (name, params, body, is_class_method) =
+                    (name.clone(), params.clone(), body.clone(), *is_class_method);
+                let sid = register_method(compiler, class_id, class_id, name, params, body)?;
+                if is_class_method {
+                    compiler.classes[class_id.0 as usize]
+                        .own_class_methods
+                        .push(sid);
+                } else {
+                    compiler.classes[class_id.0 as usize].own_methods.push(sid);
+                }
+            }
+            HirNode::Include(m) => {
+                let target = resolve_module_target(compiler, m)?;
+                compiler.classes[class_id.0 as usize].includes.push(target);
+            }
+            HirNode::Extend(m) => {
+                let target = resolve_module_target(compiler, m)?;
+                compiler.classes[class_id.0 as usize].extends.push(target);
+            }
+            HirNode::Prepend(m) => {
+                let target = resolve_module_target(compiler, m)?;
+                compiler.classes[class_id.0 as usize].prepends.push(target);
+            }
+            HirNode::ClassVarWrite(..) => {
+                compiler.classes[class_id.0 as usize]
+                    .class_body_stmts
+                    .push(stmt);
+            }
+            _ => {}
         }
     }
-    compiler.classes[class_id.0 as usize].ivars = ivars;
     Ok(())
+}
+
+fn resolve_module_target(compiler: &Compiler, name: &str) -> Result<ClassId, String> {
+    compiler
+        .class_by_name(name)
+        .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
+}
+
+/// Registers one method BODY (a class/module's own literal `def`, or a
+/// winning ancestor's body being materialized onto a descendant -- see
+/// `mro::materialize_methods`/`materialize_class_methods`) as a fresh
+/// `Scope`, running the full per-method analysis pipeline (local-type
+/// inference, named-`*rest`/`**kwrest`/`&block`-param type seeding,
+/// bare-`yield`/`block_given?` scanning) that used to live directly inline
+/// in `register_class` before materialization needed to reuse it too.
+/// `owner` is whichever class/module this Scope is filed under (and, for a
+/// materialized method, whose concrete struct it'll be generated into);
+/// `defining_class` is whichever class/module's HIR body `params`/`body`
+/// actually came from -- equal to `owner` for an ordinary own-body method,
+/// an ancestor otherwise (see `compiler::Scope::defining_class`'s docs).
+fn register_method(
+    compiler: &mut Compiler,
+    owner: ClassId,
+    defining_class: ClassId,
+    name: String,
+    params: Params,
+    body: Vec<NodeId>,
+) -> Result<crate::compiler::ScopeId, String> {
+    let mut local_types = locals::infer_locals(compiler, &body);
+    if let Some(Some(n)) = &params.rest {
+        local_types.entry(n.clone()).or_insert(TyKind::Array);
+    }
+    if let Some(Some(n)) = &params.keyword_rest {
+        local_types.entry(n.clone()).or_insert(TyKind::Hash);
+    }
+    if let Some(Some(n)) = &params.block {
+        local_types.entry(n.clone()).or_insert(TyKind::Proc);
+    }
+    let mut uses_bare_block = false;
+    for &n in &body {
+        if scan_bare_block_use(&compiler.hir, n)? {
+            uses_bare_block = true;
+        }
+    }
+    Ok(compiler.push_scope(Scope {
+        name,
+        class: Some(owner),
+        defining_class,
+        params,
+        body,
+        local_types,
+        uses_bare_block,
+    }))
 }
 
 /// Scans a method's own control flow (NOT descending into a nested `Block`'s
@@ -132,9 +197,9 @@ fn register_class(
 fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
     Ok(match &hir[id] {
         HirNode::Yield(_) | HirNode::BlockGiven => true,
-        HirNode::IvarWrite(_, value) | HirNode::LocalWrite(_, value) => {
-            scan_bare_block_use(hir, *value)?
-        }
+        HirNode::IvarWrite(_, value)
+        | HirNode::LocalWrite(_, value)
+        | HirNode::ClassVarWrite(_, value) => scan_bare_block_use(hir, *value)?,
         HirNode::And(l, r) | HirNode::Or(l, r) => {
             scan_bare_block_use(hir, *l)? || scan_bare_block_use(hir, *r)?
         }
@@ -260,6 +325,11 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::SymbolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     })
@@ -311,7 +381,7 @@ fn body_contains_yield_or_block_given(hir: &Hir, body: &[NodeId]) -> bool {
 /// bottom-up scan is enough here because ivar *names* -- unlike ivar
 /// *types* -- don't depend on inference, only on which `@name` tokens
 /// appear).
-fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
+pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
     match &hir[id] {
         HirNode::IvarRead(name) => {
             if !out.contains(name) {
@@ -464,10 +534,16 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, a, out);
             }
         }
+        HirNode::ClassVarWrite(_, value) => collect_ivars(hir, *value, out),
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
-        | HirNode::LocalRead(_) => {}
+        | HirNode::LocalRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_) => {}
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {}
     }
 }

@@ -147,7 +147,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
                 })
                 || block_arg.is_some_and(|b| node_contains_escaping_block(compiler, b))
         }
-        HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::Defined(v) => {
+        HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
             node_contains_escaping_block(compiler, *v)
         }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
@@ -205,6 +205,11 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::SymbolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -253,6 +258,12 @@ fn walk(
             }
             walk(compiler, *value, in_escaping, param_exclusions, caps);
         }
+        // A class variable's storage is keyed by a compile-time-resolved
+        // OWNER CLASS id (see `analyze::mro::resolve_cvars`), never by
+        // `self` -- unlike an ivar, referencing `@@x` inside an escaping
+        // block needs no `self` capture at all.
+        HirNode::ClassVarRead(_) => {}
+        HirNode::ClassVarWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps),
         HirNode::And(l, r) | HirNode::Or(l, r) => {
             walk(compiler, *l, in_escaping, param_exclusions, caps);
             walk(compiler, *r, in_escaping, param_exclusions, caps);
@@ -388,6 +399,10 @@ fn walk(
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

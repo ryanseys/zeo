@@ -387,6 +387,24 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         });
         return Ok(hir.push(HirNode::IvarWrite(name, call)));
     }
+    if let Some(op) = node.as_class_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let read = hir.push(HirNode::ClassVarRead(name.clone()));
+        let rhs = lower_node(result, hir, &op.value())?;
+        let call = hir.push(HirNode::Call {
+            receiver: Some(read),
+            name: op_name,
+            args: vec![rhs],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        });
+        return Ok(hir.push(HirNode::ClassVarWrite(name, call)));
+    }
 
     if let Some(and) = node.as_and_node() {
         let left = lower_node(result, hir, &and.left())?;
@@ -513,14 +531,71 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name,
             superclass,
             body,
+            is_module: false,
+        }));
+    }
+
+    // `module Name ... end` -- see `HirNode::ClassDef`'s docs for why this
+    // shares the same node as `class`. Nested modules/namespaced constant
+    // paths (`module Foo::Bar`) aren't supported yet (spike scope, matching
+    // today's existing top-level-only class restriction) -- `constant_name`
+    // already rejects anything but a plain `ConstantReadNode`.
+    if let Some(module) = node.as_module_node() {
+        let name = constant_name(&module.constant_path())?;
+        let body = lower_class_body(result, hir, module.body())?;
+        return Ok(hir.push(HirNode::ClassDef {
+            name,
+            superclass: None,
+            body,
+            is_module: true,
         }));
     }
 
     if let Some(def) = node.as_def_node() {
         let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
+        // `def self.name` (`DefNode::receiver()` is `Some(SelfNode)`) is a
+        // class method; any OTHER explicit receiver (`def SomeConst.name`,
+        // reopening a class from outside its own body) is a clean rejection
+        // -- see `HirNode::DefMethod`'s docs.
+        let is_class_method = match def.receiver() {
+            None => false,
+            Some(r) if r.as_self_node().is_some() => true,
+            Some(_) => {
+                return Err("`def` with an explicit non-`self` receiver isn't supported yet (spike scope) -- only `def self.name` inside the class/module's own body".to_string());
+            }
+        };
         let params = lower_params(result, hir, def.parameters())?;
         let body = lower_body(result, hir, def.body())?;
-        return Ok(hir.push(HirNode::DefMethod { name, params, body }));
+        return Ok(hir.push(HirNode::DefMethod {
+            name,
+            params,
+            body,
+            is_class_method,
+        }));
+    }
+
+    // A bare constant used as a VALUE -- currently only meaningful as a call
+    // receiver (`ClassName.foo`); see `HirNode::ClassRef`'s docs. Falls
+    // through generically via the ordinary `Call` receiver-lowering path
+    // below, so no change is needed there.
+    if let Some(c) = node.as_constant_read_node() {
+        let name = String::from_utf8_lossy(c.name().as_slice()).into_owned();
+        return Ok(hir.push(HirNode::ClassRef(name)));
+    }
+
+    if let Some(cvar) = node.as_class_variable_read_node() {
+        let name = String::from_utf8_lossy(cvar.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        return Ok(hir.push(HirNode::ClassVarRead(name)));
+    }
+
+    if let Some(cvar) = node.as_class_variable_write_node() {
+        let name = String::from_utf8_lossy(cvar.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let value = lower_node(result, hir, &cvar.value())?;
+        return Ok(hir.push(HirNode::ClassVarWrite(name, value)));
     }
 
     if let Some(call) = node.as_call_node() {
@@ -573,6 +648,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             name: method_name,
                             params,
                             body,
+                            is_class_method: false,
                         }));
                     }
                 }
@@ -952,6 +1028,34 @@ fn lower_class_body_statement(
             if matches!(name.as_str(), "private" | "public" | "protected") {
                 return Ok(Vec::new());
             }
+            // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare
+            // constant arguments, applied left-to-right (see `HirNode::
+            // Include`'s docs for the multi-arg ordering rule). Anything
+            // else (a non-constant argument, e.g. a computed module
+            // expression) falls through to an ordinary `Call`, a clean
+            // rejection at codegen time (spike scope: only a literal module
+            // name is resolvable to a `ClassId` at compile time anyway).
+            if matches!(name.as_str(), "include" | "extend" | "prepend") {
+                if let Some(args) = call.arguments() {
+                    let arg_list: Vec<_> = args.arguments().iter().collect();
+                    if !arg_list.is_empty() {
+                        let names = arg_list
+                            .iter()
+                            .map(constant_name)
+                            .collect::<PResult<Vec<_>>>()?;
+                        return Ok(names
+                            .into_iter()
+                            .map(|n| {
+                                hir.push(match name.as_str() {
+                                    "include" => HirNode::Include(n),
+                                    "extend" => HirNode::Extend(n),
+                                    _ => HirNode::Prepend(n),
+                                })
+                            })
+                            .collect());
+                    }
+                }
+            }
             if matches!(name.as_str(), "attr_reader" | "attr_writer" | "attr_accessor") {
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
@@ -968,6 +1072,7 @@ fn lower_class_body_statement(
                                     name: ivar.clone(),
                                     params: Params::default(),
                                     body: vec![read],
+                                    is_class_method: false,
                                 }));
                             }
                             if name != "attr_reader" {
@@ -981,6 +1086,7 @@ fn lower_class_body_statement(
                                         ..Params::default()
                                     },
                                     body: vec![write],
+                                    is_class_method: false,
                                 }));
                             }
                         }

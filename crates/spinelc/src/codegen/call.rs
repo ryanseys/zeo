@@ -186,37 +186,62 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
     }
 }
 
-/// `super` always resolves against the *static* superclass -- never through
-/// the dynamic dispatch table (mirrors `emit_super`, `codegen.c:3262`). The
-/// spike implements it via statement inlining rather than a cross-type
-/// function call: subclasses in this object model are distinct Rust structs
-/// with no shared layout (unlike spinel's C "common initial sequence"
-/// trick), so `Animal::speak(self: &Dog)` wouldn't type-check. Splicing the
-/// resolved parent method's body directly into the call site sidesteps that
-/// entirely -- and is a real spinel mechanism too, just used there as an
-/// optimization (`emit_super_inline`, reached when the parent yields) rather
-/// than the default.
+/// `super` always resolves against the receiver's REAL, full linearized
+/// `ancestors` -- never through the dynamic dispatch table (mirrors
+/// `emit_super`, `codegen.c:3262`) -- searching FORWARD (toward the root)
+/// from wherever the CURRENTLY-executing method was actually defined
+/// (`cx.defining_class`), not from `cx.current_class` (the receiver's own
+/// concrete type, which only coincides with `defining_class` for an
+/// ordinary own-body method). This is what makes a `super` chain that
+/// crosses a `prepend`/`include` boundary -- module -> module -> parent
+/// class, or any mix -- resolve correctly: in pure single inheritance,
+/// "the defining class's own parent" and "the receiver's ancestors past
+/// this point" are the same thing, but once a module can sit between two
+/// classes in the ancestor list, they're not, so this must consult
+/// `current_class`'s full `ancestors`, not `defining_class`'s own (a
+/// module has no `.parent` at all).
+///
+/// The spike implements this via statement inlining rather than a
+/// cross-type function call: subclasses in this object model are distinct
+/// Rust structs with no shared layout (unlike spinel's C "common initial
+/// sequence" trick), so `Animal::speak(self: &Dog)` wouldn't type-check.
+/// Splicing the resolved method's body directly into the call site
+/// sidesteps that entirely -- and is a real spinel mechanism too, just used
+/// there as an optimization (`emit_super_inline`, reached when the parent
+/// yields) rather than the default.
 pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
-    let cid = cx.current_class.expect("`super` outside a method");
+    let receiver_class = cx.current_class.expect("`super` outside a method");
+    let defining_class = cx.defining_class.expect("`super` outside a method");
     let mname = cx
         .current_method
         .as_deref()
         .expect("`super` outside a method");
-    let parent = cx.compiler.class(cid).parent.unwrap_or_else(|| {
-        panic!(
-            "`super` in {}, which has no superclass",
-            cx.compiler.class(cid).name
-        )
-    });
-    let (defining_class, sid) = cx
-        .compiler
-        .method_in_chain(parent, mname)
+
+    let ancestors = &cx.compiler.class(receiver_class).ancestors;
+    let pos = ancestors
+        .iter()
+        .position(|&a| a == defining_class)
         .unwrap_or_else(|| {
             panic!(
-                "`super`: no `{mname}` found above {}",
-                cx.compiler.class(cid).name
+                "internal error: {} not found in {}'s own ancestors",
+                cx.compiler.class(defining_class).name,
+                cx.compiler.class(receiver_class).name
             )
         });
+    let found = ancestors[pos + 1..].iter().find_map(|&anc| {
+        cx.compiler
+            .class(anc)
+            .own_methods
+            .iter()
+            .find(|&&s| cx.compiler.scope(s).name == mname)
+            .map(|&sid| (anc, sid))
+    });
+    let (new_defining_class, sid) = found.unwrap_or_else(|| {
+        panic!(
+            "`super`: no `{mname}` found above {}",
+            cx.compiler.class(defining_class).name
+        )
+    });
 
     let defining_scope = cx.compiler.scope(sid);
     let body = defining_scope.body.clone();
@@ -228,7 +253,10 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
     let defining_captures = super::captures::collect_escaping_captures(cx.compiler, &defining_scope.body);
     let inline_cx = Ctx {
         compiler: cx.compiler,
-        current_class: Some(defining_class),
+        // UNCHANGED across the splice -- `self` is still the SAME concrete
+        // receiver instance throughout a chain of nested `super` calls.
+        current_class: Some(receiver_class),
+        defining_class: Some(new_defining_class),
         current_method: Some(mname.to_string()),
         local_types: &defining_scope.local_types,
         label_counter: cx.label_counter,
@@ -385,6 +413,19 @@ pub fn emit_call(
         panic!("unsupported implicit-self call `{name}` (spike scope)");
     };
 
+    // `ClassName.foo(...)` / `ModuleName.foo(...)` -- a call on the
+    // class/module itself, not an instance (see `HirNode::ClassRef`'s
+    // docs). Never a `RubyValue`, so this must be intercepted before the
+    // ordinary `emit_expr(cx, recv_id)` receiver-evaluation path below ever
+    // sees it (mirrors `HirNode::Block`'s "only reached via the Call that
+    // invokes it" pattern).
+    if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
+        if safe || block.is_some() || block_arg.is_some() {
+            panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+        }
+        return emit_class_method_call(cx, target_name, name, args, kwargs);
+    }
+
     if safe {
         if !kwargs.is_empty() {
             panic!("keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)");
@@ -397,6 +438,59 @@ pub fn emit_call(
 
     let recv_expr = emit_expr(cx, recv_id);
     dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr)
+}
+
+/// `ClassName.foo(...)` -- looked up in the target's MRO-resolved
+/// `class_methods` (see `Compiler::class_method_in_chain`) and called as a
+/// plain Rust associated-function/free-function path (`Target::foo(...)`),
+/// never through `send`/the dynamic dispatch table at all (no runtime
+/// `Class`/`Module` value exists to dispatch through dynamically -- see the
+/// plan's Part 6 scope-cut). Only plain required parameters are supported
+/// (see `codegen::mod::emit_class_method_fn`'s matching rejection) -- kept
+/// deliberately narrow since call-site binding for optional/rest/keyword
+/// params would duplicate `params::emit_call_args`'s machinery for a
+/// second, self-less calling convention (`Target::method(...)` instead of
+/// `(recv).method(...)`) that class methods don't yet need.
+fn emit_class_method_call(
+    cx: &Ctx,
+    target_name: &str,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[HashPair],
+) -> TokenStream {
+    let target = cx
+        .compiler
+        .class_by_name(target_name)
+        .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+    let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
+        panic!(
+            "unsupported call `{target_name}.{name}` (spike scope, or no such class method is defined)"
+        );
+    };
+    let scope = cx.compiler.scope(sid);
+    if !kwargs.is_empty()
+        || !scope.params.optional.is_empty()
+        || scope.params.rest.is_some()
+        || !scope.params.post.is_empty()
+        || !scope.params.keywords.is_empty()
+        || scope.params.keyword_rest.is_some()
+        || scope.needs_block_param()
+    {
+        panic!(
+            "class method call `{target_name}.{name}` uses keyword arguments or a callee with optional/rest/post/keyword parameters or a block -- only plain required parameters are supported yet (spike scope)"
+        );
+    }
+    if args.len() != scope.params.required.len() {
+        panic!(
+            "wrong number of arguments for `{target_name}.{name}` (spike scope): expected {}, got {}",
+            scope.params.required.len(),
+            args.len()
+        );
+    }
+    let target_ident = safe_ident(target_name);
+    let method_ident = safe_ident(name);
+    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    quote! { #target_ident::#method_ident(#(#arg_exprs),*)? }
 }
 
 /// `&.` always dispatches through the runtime `ClassRegistry`/`send` path
@@ -474,6 +568,38 @@ fn dispatch(
     // so this is handled separately from the numeric tables below.
     if no_kwargs && name == "!" && args.is_empty() {
         return quote! { spinel_rt::RubyValue::Bool(!(#recv_expr).truthy()) };
+    }
+
+    // `is_a?`/`kind_of?` against a literal class/module constant -- a real
+    // ancestry check against the SAME linearized `ancestors` list `super`
+    // consults (see `analyze::mro`), not spinel's own two-tier dispatch/
+    // reflection split (confirmed to diverge on a module-of-module
+    // diamond). Constant-folds to a literal `true`/`false` when the
+    // receiver's class is statically known (the common Path 1 case);
+    // otherwise falls back to a runtime `spinel_rt::is_a` check against the
+    // receiver's actual runtime `class_id()`.
+    if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
+        if let HirNode::ClassRef(target_name) = &cx.compiler.hir[args[0]] {
+            let target = cx
+                .compiler
+                .class_by_name(target_name)
+                .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+            return match infer_class(cx, recv_id) {
+                Some(recv_class) => {
+                    let result = cx.compiler.class(recv_class).ancestors.contains(&target);
+                    quote! { spinel_rt::RubyValue::Bool(#result) }
+                }
+                None => {
+                    let target_ident = safe_ident(&cx.compiler.class(target).name);
+                    quote! {
+                        spinel_rt::RubyValue::Bool(spinel_rt::is_a(
+                            (#recv_expr).as_object_unchecked().class_id(),
+                            #target_ident::CLASS_ID,
+                        ))
+                    }
+                }
+            };
+        }
     }
 
     // Native `Int` arithmetic/comparison/bitwise ops: both operands must be

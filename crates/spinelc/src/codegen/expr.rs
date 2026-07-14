@@ -79,6 +79,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::IvarRead(_) => Some("instance-variable"),
+        HirNode::ClassVarRead(_) => Some("class variable"),
+        HirNode::ClassRef(_) => Some("constant"),
         HirNode::New { .. }
         | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
@@ -97,6 +99,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::CaseWhen { .. }
         | HirNode::LocalWrite(..)
         | HirNode::IvarWrite(..)
+        | HirNode::ClassVarWrite(..)
         | HirNode::While { .. }
         | HirNode::Loop { .. }
         | HirNode::For { .. }
@@ -107,9 +110,13 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // narrowings (see the module docs above).
         | HirNode::Yield(_) => Some("expression"),
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) => None,
-        HirNode::Block { .. } | HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
-            None
-        }
+        HirNode::Block { .. }
+        | HirNode::Program(_)
+        | HirNode::ClassDef { .. }
+        | HirNode::DefMethod { .. }
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_) => None,
     };
     match classification {
         Some(s) => quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) },
@@ -255,6 +262,18 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let slf = &cx.self_ident;
             quote! { { let __v = #v; *#slf.#ident.borrow_mut() = __v.clone(); __v } }
         }
+        HirNode::ClassVarRead(name) => {
+            let owner = cvar_owner_id(cx, name);
+            quote! { spinel_rt::cvar_get(#owner, #name) }
+        }
+        HirNode::ClassVarWrite(name, value) => {
+            let owner = cvar_owner_id(cx, name);
+            let v = emit_expr(cx, *value);
+            quote! { { let __v = #v; spinel_rt::cvar_set(#owner, #name, __v.clone()); __v } }
+        }
+        HirNode::ClassRef(_) => {
+            panic!("a ClassRef should only be reached via the Call that invokes it")
+        }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
         HirNode::SuperCall { .. } => super::call::emit_super_inline(cx),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
@@ -327,8 +346,32 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
-        HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
+        HirNode::Program(_)
+        | HirNode::ClassDef { .. }
+        | HirNode::DefMethod { .. }
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_) => {
             panic!("unexpected top-level-only node in expression position")
         }
     }
+}
+
+/// The already-resolved OWNER class id for a `@@name` reference (see
+/// `analyze::mro::resolve_cvars`) -- looked up via `cx.defining_class` (the
+/// class/module whose HIR body this reference is LEXICALLY written in), not
+/// `cx.current_class` (the concrete struct it's materialized onto for a
+/// mixed-in/inherited method): cvar ownership is a property of where the
+/// code was WRITTEN, exactly like a closure's lexical scope, not of which
+/// concrete receiver ends up calling it.
+fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
+    let defining = cx
+        .defining_class
+        .expect("`@@` class variable referenced outside any class/module body");
+    cx.compiler
+        .class(defining)
+        .cvar_owners
+        .get(name)
+        .unwrap_or_else(|| panic!("internal error: `@@{name}` has no resolved owner (analyze::mro::resolve_cvars should have run)"))
+        .0
 }

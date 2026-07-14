@@ -39,8 +39,25 @@ use syn::Lifetime;
 #[derive(Clone)]
 struct Ctx<'a> {
     compiler: &'a Compiler,
+    /// The RECEIVER's concrete class -- i.e. which `impl` block (generated
+    /// Rust struct) this method body is being emitted into. Stays fixed
+    /// across nested `super` splices (unlike `defining_class` below), since
+    /// `self` is always the SAME concrete instance throughout.
     current_class: Option<ClassId>,
     current_method: Option<String>,
+    /// Which class/module's HIR body the CURRENTLY-executing method
+    /// actually came from -- equal to `current_class` for an ordinary
+    /// own-body method, but set to the true source ancestor while emitting
+    /// a materialized (inherited or mixed-in) method, or while inlining a
+    /// `super` splice (see `compiler::Scope::defining_class`'s docs). Two
+    /// distinct roles read this: `super` resolution
+    /// (`codegen::call::emit_super_inline`) searches `current_class`'s
+    /// `ancestors` starting AFTER this position, and `@@cvar` ownership
+    /// lookup (`codegen::expr::cvar_owner_id`) uses it directly (cvar
+    /// ownership is a property of where the code was LEXICALLY written,
+    /// like a closure's scope -- not of which concrete receiver ends up
+    /// calling it).
+    defining_class: Option<ClassId>,
     /// The enclosing method/top-level scope's per-local static types (see
     /// `analyze::locals`) -- lets operator dispatch resolve `x + y` to
     /// native `Int` arithmetic for locals, not just literal operands.
@@ -165,21 +182,52 @@ pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, String> {
 fn codegen(analyzed: &Analyzed) -> TokenStream {
     let compiler = &analyzed.compiler;
 
+    // `Object` (index 0, built into `spinel-rt`) and every MODULE never get
+    // a generated Rust struct/`impl RubyObject`/`ClassRegistry` entry at
+    // all -- a module's methods only ever manifest indirectly, MATERIALIZED
+    // onto whatever includes/prepends/extends it (see the plan's Part 6 and
+    // `ruby_class!`'s docs).
     let classes = compiler
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, _)| idx != 0) // Object -- built into spinel-rt, not user-defined
+        .filter(|&(idx, class)| idx != 0 && !class.is_module)
         .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)));
 
+    // Class methods (`def self.x`, and instance methods pulled in via
+    // `extend`) get their own container -- an ADDITIONAL plain `impl` block
+    // for a class (Rust allows more than one `impl Type { }` for the same
+    // type, no conflict with `ruby_class!`'s own), or a `pub mod` of free
+    // functions for a module (which has no struct to attach an `impl` to at
+    // all). Emitted for every class/module with any (a module can have
+    // `class_methods` of its own too -- "module functions", e.g. `Math.sqrt`).
+    let class_method_containers = compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|&(idx, class)| idx != 0 && !class.class_methods.is_empty())
+        .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)));
+
+    // In FILE order (matching real Ruby's "a class/module body runs
+    // immediately as it's defined"): register the class's dispatch table
+    // (skipped for a module, which has none), then run any class-body
+    // top-level `@@x = expr` statements -- including a MODULE's own, which
+    // still needs to run even though a module never gets a `__register()`
+    // call of its own (see `ClassInfo::class_body_stmts`'s docs).
     let registrations = compiler
         .classes
         .iter()
         .enumerate()
         .filter(|&(idx, _)| idx != 0)
-        .map(|(_, class)| {
-            let ident = safe_ident(&class.name);
-            quote! { #ident::__register(&mut __registry); }
+        .map(|(idx, class)| {
+            let register = if class.is_module {
+                quote! {}
+            } else {
+                let ident = safe_ident(&class.name);
+                quote! { #ident::__register(&mut __registry); }
+            };
+            let class_body = emit_class_body_stmts(compiler, ClassId(idx as u32));
+            quote! { #register #class_body }
         });
 
     let main_label_counter = Cell::new(0u32);
@@ -187,6 +235,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     let cx = Ctx {
         compiler,
         current_class: None,
+        defining_class: None,
         current_method: None,
         local_types: &analyzed.main_local_types,
         label_counter: &main_label_counter,
@@ -200,10 +249,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
     quote! {
         #(#classes)*
+        #(#class_method_containers)*
 
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
-            __registry.register(spinel_rt::Object::CLASS_ID, None);
+            __registry.register(spinel_rt::Object::CLASS_ID, vec![spinel_rt::Object::CLASS_ID]);
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
 
@@ -214,6 +264,132 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 eprintln!("uncaught signal escaped the top level: {:?}", __signal);
                 std::process::exit(1);
             }
+        }
+    }
+}
+
+/// See `ClassInfo::class_body_stmts`'s docs -- only a bare `@@x = expr`
+/// written directly in a class/module body, run once (for its side effect
+/// on cvar storage) from generated `main()`, in file order, right after
+/// this class/module's own dispatch-table registration (if any). No
+/// `Signal`/`Result` propagation exists at this position (unlike an
+/// ordinary method body) -- an expression here that needed `?` would be a
+/// compile-time error, not silent wrongness, and nothing in this narrow,
+/// documented scope-cut needs one.
+fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
+    let stmts = &compiler.class(cid).class_body_stmts;
+    if stmts.is_empty() {
+        return quote! {};
+    }
+    let label_counter = Cell::new(0u32);
+    let no_captures = HashSet::new();
+    let no_locals = HashMap::new();
+    let cx = Ctx {
+        compiler,
+        current_class: Some(cid),
+        defining_class: Some(cid),
+        current_method: None,
+        local_types: &no_locals,
+        label_counter: &label_counter,
+        loop_labels: None,
+        for_var_override: None,
+        captured_locals: &no_captures,
+        self_ident: format_ident!("self"),
+        in_real_proc: false,
+    };
+    let exprs = stmts.iter().map(|&id| expr::emit_expr(&cx, id));
+    quote! { #(#exprs;)* }
+}
+
+/// Class methods (`def self.x`, `extend`) -- see `ClassInfo::class_methods`'s
+/// docs. A plain, ADDITIONAL `impl #name { }` block for a class (Rust
+/// allows more than one `impl Type { }` for the same type, so this doesn't
+/// conflict with `ruby_class!`'s own), or a `pub mod #name { }` of free
+/// functions for a module (no struct to attach an `impl` to at all) --
+/// either way, called identically at the call site (`#name::#method(...)`,
+/// see `codegen::call`'s `ClassRef` handling), so nothing downstream needs
+/// to know which kind of container it is.
+///
+/// **Explicit scope-cut**: only plain required parameters are supported
+/// (optional/rest/post/keyword/block are a clean rejection, in
+/// `emit_class_method_fn` below), and a class method's own body may not
+/// reference `self`/`@ivar` at all -- there's no concrete instance for
+/// `self` to mean here (a class-level ivar / `class << self` state store
+/// is real future work, not attempted this phase; see the plan's Part 6).
+fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
+    let ci = compiler.class(cid);
+    let name_ident = safe_ident(&ci.name);
+    let fns = ci.class_methods.iter().map(|&sid| emit_class_method_fn(compiler, sid));
+    if ci.is_module {
+        // Ruby module names are conventionally PascalCase (matching a Rust
+        // struct/type's own convention), which `rustc` otherwise flags as
+        // non-idiomatic for a `mod` (conventionally snake_case) -- silenced
+        // rather than renamed, since call sites (`ModuleName::method(...)`)
+        // must match the Ruby-visible name exactly.
+        quote! {
+            #[allow(non_snake_case)]
+            pub mod #name_ident { #(#fns)* }
+        }
+    } else {
+        quote! { impl #name_ident { #(#fns)* } }
+    }
+}
+
+fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> TokenStream {
+    let scope = compiler.scope(sid);
+    let mut ivars = Vec::new();
+    for &n in &scope.body {
+        crate::analyze::collect_ivars(&compiler.hir, n, &mut ivars);
+    }
+    if !ivars.is_empty() {
+        panic!(
+            "class method `{}` references `@{}` -- `self`/instance-variable access inside a class method (`def self.x`, or a module method pulled in via `extend`) isn't supported yet (spike scope, no class-level ivar/`class << self` state store exists)",
+            scope.name, ivars[0]
+        );
+    }
+    let params = &scope.params;
+    if !params.optional.is_empty()
+        || params.rest.is_some()
+        || !params.post.is_empty()
+        || !params.keywords.is_empty()
+        || params.keyword_rest.is_some()
+        || params.block.is_some()
+        || scope.uses_bare_block
+    {
+        panic!(
+            "class method `{}` uses optional/rest/post/keyword parameters or a block -- only plain required parameters are supported yet for class methods (spike scope)",
+            scope.name
+        );
+    }
+
+    let method_ident = safe_ident(&scope.name);
+    let sig_params = params.required.iter().map(|n| {
+        let ident = safe_ident(n);
+        quote! { #ident: spinel_rt::RubyValue }
+    });
+    let label_counter = Cell::new(0u32);
+    let no_captures = captures::collect_escaping_captures(compiler, &scope.body);
+    let cx = Ctx {
+        compiler,
+        // No concrete receiver exists for a class method (no `self:
+        // Rc<Self>`) -- but `defining_class` (which class/module this body
+        // was LEXICALLY written in) still needs to be real, for `@@cvar`
+        // ownership lookup (`codegen::expr::cvar_owner_id`).
+        current_class: None,
+        defining_class: Some(scope.defining_class),
+        current_method: Some(scope.name.clone()),
+        local_types: &scope.local_types,
+        label_counter: &label_counter,
+        loop_labels: None,
+        for_var_override: None,
+        captured_locals: &no_captures.locals,
+        self_ident: format_ident!("self"),
+        in_real_proc: false,
+    };
+    let body = hoisting::emit_hoisted_body(&cx, &scope.body, true);
+    quote! {
+        pub fn #method_ident(#(#sig_params),*) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            #body
         }
     }
 }
@@ -229,6 +405,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         quote! { #parent_ident }
     };
     let id = cid.0;
+    let ancestor_ids = ci.ancestors.iter().map(|a| a.0);
     let ivar_idents = ci.ivars.iter().map(|iv| safe_ident(iv));
 
     let methods = ci.methods.iter().map(|&sid| {
@@ -241,6 +418,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let method_cx = Ctx {
             compiler,
             current_class: Some(cid),
+            defining_class: Some(scope.defining_class),
             current_method: Some(scope.name.clone()),
             local_types: &scope.local_types,
             label_counter: &method_label_counter,
@@ -302,6 +480,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         spinel_rt::ruby_class! {
             class #name_ident : #parent_ty {
                 id: #id;
+                ancestors: [ #(#ancestor_ids),* ];
                 ivars { #(#ivar_idents),* }
                 #(#methods)*
                 dispatch { #(#dispatch_entries),* }

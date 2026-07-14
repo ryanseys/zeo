@@ -157,6 +157,19 @@ impl RubyValue {
         }
     }
 
+    /// Unwraps an `Object` payload -- see `as_array_unchecked`'s docs. Used
+    /// wherever a runtime `class_id()` is needed off a POLY-typed value
+    /// (a dynamic `is_a?`/`kind_of?` check, or -- once `raise`/`rescue`
+    /// exist -- matching a raised exception's class against a `rescue`
+    /// clause) rather than the statically-known-class fast path, which
+    /// constant-folds instead of calling this at all.
+    pub fn as_object_unchecked(&self) -> RObj {
+        match self {
+            RubyValue::Object(o) => o.clone(),
+            other => panic!("expected an Object, got {}", other.to_display_string()),
+        }
+    }
+
     /// `Range#first` -- `nil` for a beginless range (`..5`).
     pub fn range_first(&self) -> RubyValue {
         match self {
