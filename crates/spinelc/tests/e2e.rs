@@ -3509,3 +3509,123 @@ fn public_send_still_enforces_visibility_unlike_send() {
         "#,
     );
 }
+
+#[test]
+fn float_literals_and_arithmetic() {
+    let result = run_ruby(
+        r#"
+        puts 1.5 + 2.5
+        puts 3.0 - 1
+        puts 2.0 * 3
+        puts 7.0 / 2
+        puts 7.5 % 2
+        puts 2.0 ** 3
+        puts 1.0 == 1
+        puts 1.5 < 2.5
+        puts(1.5 <=> 2.5)
+        puts(-1.5)
+        puts 1.0
+        puts 100.0
+        puts 3.14
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "4.0\n2.0\n6.0\n3.5\n1.5\n8.0\ntrue\ntrue\n-1\n-1.5\n1.0\n100.0\n3.14\n"
+    );
+}
+
+#[test]
+fn float_and_int_mixed_arithmetic_promotes_to_float() {
+    let result = run_ruby(
+        r#"
+        class Adder
+          def add(a, b)
+            a + b
+          end
+        end
+        puts Adder.new.add(1, 2.5)
+        puts Adder.new.add(2.5, 1)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3.5\n3.5\n");
+}
+
+#[test]
+fn lambda_call_dot_call_and_bracket_syntax() {
+    let result = run_ruby(
+        r#"
+        add = ->(x, y) { x + y }
+        puts add.call(3, 4)
+        puts add.(3, 4)
+        puts add[3, 4]
+
+        square = lambda { |x| x * x }
+        puts square.call(5)
+
+        incr = -> (n = 1) { n + 1 }
+        puts incr.call
+        puts incr.call(10)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n7\n7\n25\n2\n11\n");
+}
+
+#[test]
+fn lambda_return_and_break_terminate_only_the_lambda_itself() {
+    // Real Ruby: unlike an ordinary Proc/block, `return`/`break` inside a
+    // lambda act like a method boundary -- they terminate just the lambda
+    // call, never the enclosing method.
+    let result = run_ruby(
+        r#"
+        class Runner
+          def return_test
+            f = -> {
+              return 10
+              20
+            }
+            puts f.call
+            "after"
+          end
+
+          def break_test
+            g = -> {
+              break 99
+              100
+            }
+            puts g.call
+            "after"
+          end
+        end
+
+        r = Runner.new
+        puts r.return_test
+        puts r.break_test
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\nafter\n99\nafter\n");
+}
+
+#[test]
+fn lambda_enforces_strict_arity_via_argument_error() {
+    let result = run_ruby(
+        r#"
+        f = ->(x, y) { x + y }
+        begin
+          f.call(1)
+        rescue ArgumentError => e
+          puts "caught: #{e.message}"
+        end
+        puts f.call(1, 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "caught: wrong number of arguments (given 1, expected 2)\n3\n"
+    );
+}

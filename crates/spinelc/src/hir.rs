@@ -549,6 +549,20 @@ pub enum HirNode {
         params: Params,
         body: Vec<NodeId>,
     },
+    /// `-> (x) { ... }` / `lambda { ... }` -- a STANDALONE expression
+    /// producing a real `RubyValue::Proc`, unlike `Block` (only ever reached
+    /// via the `Call` that invokes it, see that variant's docs). Reuses
+    /// `codegen::call::emit_proc_value`'s whole construction machinery
+    /// (captures, redo-wrapper loop) via a shared helper, differing in
+    /// exactly two ways real Ruby's own lambda semantics require: STRICT
+    /// arity checking (raises `ArgumentError`, not a lenient nil-fill/drop),
+    /// and `return`/`break` inside the body terminate the LAMBDA CALL
+    /// itself (folded into a normal `Ok` return, like a method boundary)
+    /// rather than propagating to the enclosing method/loop.
+    Lambda {
+        params: Params,
+        body: Vec<NodeId>,
+    },
     /// `class Name < Super ... end` / `module Name ... end` -- `is_module`
     /// distinguishes the two: a module has no `superclass` (always `None`)
     /// and is never instantiated (no `Name.new`, no generated Rust struct --

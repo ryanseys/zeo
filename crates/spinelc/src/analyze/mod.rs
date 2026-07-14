@@ -360,6 +360,18 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             }
             found
         }
+        // A lambda is its own separate scope (same as an escaping block --
+        // never recursed into for `uses_bare_block` purposes), but a bare
+        // `yield`/`block_given?` lexically inside one still refers to a
+        // DIFFERENT enclosing method's block in real Ruby, same as inside an
+        // ordinary nested block literal -- rejected here for the same
+        // reason `Call`'s own block-literal check above rejects that shape.
+        HirNode::Lambda { body, .. } => {
+            if body_contains_yield_or_block_given(hir, body) {
+                return Err("`yield`/`block_given?` inside a lambda literal isn't supported yet (spike scope) -- it refers to a different enclosing method's block in real Ruby".to_string());
+            }
+            false
+        }
         HirNode::Retry => false,
         HirNode::Redo
         | HirNode::Block { .. }
@@ -553,7 +565,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, a, out);
             }
         }
-        HirNode::Block { body, .. } => {
+        HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {
             for &n in body {
                 collect_ivars(hir, n, out);
             }

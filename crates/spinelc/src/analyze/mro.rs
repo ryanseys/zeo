@@ -339,7 +339,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, a, out);
             }
         }
-        HirNode::Block { body, .. } => {
+        HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {
             for &n in body {
                 collect_cvars(hir, n, out);
             }

@@ -317,35 +317,44 @@ fn lower_params(
     })
 }
 
-fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
-    let block = node
-        .as_block_node()
-        .ok_or("expected a block (`{ }` or `do..end`)")?;
-    let params = match block.parameters() {
-        None => Params::default(),
+/// Shared by `lower_block` and lambda lowering (`-> (x) { }`/`lambda { }`):
+/// both a `BlockNode` and a `LambdaNode` expose their own `.parameters()` as
+/// the identical `Option<Node>` shape (a `BlockParametersNode`, or the
+/// `_1`/`it` sugar nodes -- confirmed via `Prism.parse` directly, not just
+/// inferred from the bindings).
+fn lower_block_like_params(result: &ParseResult, hir: &mut Hir, params: Option<Node<'_>>) -> PResult<Params> {
+    match params {
+        None => Ok(Params::default()),
         // `_1`/`_2`/... -- `NumberedParametersNode { maximum }` reports the
         // highest `_N` referenced in the body; synthesize that many plain
         // required params (pure lowering-time sugar, no new HIR).
         Some(p) if p.as_numbered_parameters_node().is_some() => {
             let n = p.as_numbered_parameters_node().unwrap().maximum();
-            Params {
+            Ok(Params {
                 required: (1..=n).map(|i| format!("_{i}")).collect(),
                 ..Params::default()
-            }
+            })
         }
         // `it` -- `ItParametersNode` carries no fields (the body just
         // references bare `it`); synthesize a single required param.
-        Some(p) if p.as_it_parameters_node().is_some() => Params {
+        Some(p) if p.as_it_parameters_node().is_some() => Ok(Params {
             required: vec!["it".to_string()],
             ..Params::default()
-        },
+        }),
         Some(p) => {
             let bp = p
                 .as_block_parameters_node()
                 .ok_or("unsupported block parameter form (spike scope)")?;
-            lower_params(result, hir, bp.parameters())?
+            lower_params(result, hir, bp.parameters())
         }
-    };
+    }
+}
+
+fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
+    let block = node
+        .as_block_node()
+        .ok_or("expected a block (`{ }` or `do..end`)")?;
+    let params = lower_block_like_params(result, hir, block.parameters())?;
     let body = lower_body(result, hir, block.body())?;
     Ok(hir.push(HirNode::Block { params, body }))
 }
@@ -364,6 +373,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
 
     if let Some(float) = node.as_float_node() {
         return Ok(hir.push(HirNode::FloatLit(float.value())));
+    }
+
+    // `-> (x) { ... }` -- a real `ruby-prism` node (unlike `lambda { }`
+    // below, which is an ordinary method call). See `hir::HirNode::Lambda`'s
+    // docs.
+    if let Some(lambda) = node.as_lambda_node() {
+        let params = lower_block_like_params(result, hir, lambda.parameters())?;
+        let body = lower_body(result, hir, lambda.body())?;
+        return Ok(hir.push(HirNode::Lambda { params, body }));
     }
 
     if let Some(sym) = node.as_symbol_node() {
@@ -838,6 +856,27 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args && call.block().is_none() {
                 return Ok(hir.push(HirNode::BlockGiven));
+            }
+        }
+
+        // `lambda { ... }` / `lambda do ... end` -- an alternate spelling of
+        // `-> { ... }` (an ordinary `Kernel` method call with a block, not a
+        // distinct node, unlike `LambdaNode` above) -- same call-shape
+        // desugar posture as `loop`/`block_given?`. Only a zero-arg,
+        // literal-block call desugars here; anything else (an explicit
+        // receiver, arguments, or a forwarded `&block`) falls through to an
+        // ordinary `Call`, a clean rejection at codegen if `lambda` itself
+        // isn't otherwise defined (matching `loop`'s identical posture).
+        if name == "lambda" && call.receiver().is_none() {
+            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            if no_args {
+                if let Some(block_node) = call.block() {
+                    if let Some(block) = block_node.as_block_node() {
+                        let params = lower_block_like_params(result, hir, block.parameters())?;
+                        let body = lower_body(result, hir, block.body())?;
+                        return Ok(hir.push(HirNode::Lambda { params, body }));
+                    }
+                }
             }
         }
 

@@ -568,6 +568,21 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("expected a block")
     };
+    emit_proc_or_lambda_value(cx, params, body, false)
+}
+
+/// `-> (x) { ... }` / `lambda { ... }` (`HirNode::Lambda`) -- see that
+/// variant's docs. Shares its ENTIRE construction with `emit_proc_value`
+/// (captures, redo-wrapper loop) via `emit_proc_or_lambda_value`, differing
+/// only in the two places real Ruby's own lambda semantics require: strict
+/// arity (`is_lambda: true` gates a runtime `ArgumentError` check
+/// `emit_proc_or_lambda_value` inserts) and folding `Signal::Return`/`Break`
+/// into a normal `Ok` return instead of letting them propagate.
+pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream {
+    emit_proc_or_lambda_value(cx, params, body, true)
+}
+
+fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool) -> TokenStream {
     let block_caps = super::captures::block_captures(cx.compiler, params, body);
 
     let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
@@ -591,6 +606,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
 
     let proc_cx = cx.in_proc(needs_self);
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
+    let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =
         super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"));
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
@@ -601,6 +617,21 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let body_tokens = super::stmt::emit_body(&proc_cx, body, true);
     let redo_label = super::loops::fresh_label(cx, "proc_redo");
 
+    // A lambda folds `Return`/`Break` into a normal `Ok` return (it's a
+    // self-contained closure boundary, like a method -- see
+    // `hir::HirNode::Lambda`'s docs); an ordinary Proc lets them propagate
+    // via `other => break #redo_label other` (caught, respectively, at the
+    // call site that attached the block and the lexically enclosing
+    // method's own boundary).
+    let terminal_arm = if is_lambda {
+        quote! {
+            Err(spinel_rt::Signal::Return(__v)) | Err(spinel_rt::Signal::Break(__v)) => break #redo_label Ok(__v),
+            other => break #redo_label other,
+        }
+    } else {
+        quote! { other => break #redo_label other, }
+    };
+
     quote! {
         {
             #(#capture_clones)*
@@ -608,6 +639,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
             spinel_rt::RubyValue::Proc(::std::sync::Arc::new(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 #redo_label: loop {
                     let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                        #arity_check
                         #own_locals_prelude
                         #param_bindings
                         #body_tokens
@@ -615,10 +647,52 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
                     match __result {
                         Err(spinel_rt::Signal::Redo) => continue #redo_label,
                         Err(spinel_rt::Signal::Next(__v)) => break #redo_label Ok(__v),
-                        other => break #redo_label other,
+                        #terminal_arm
                     }
                 }
             }))
+        }
+    }
+}
+
+/// A lambda's STRICT arity check (real Ruby: missing/extra positional
+/// arguments raise `ArgumentError`, unlike an ordinary block's lenient nil-
+/// fill/drop -- see `codegen::params::emit_proc_param_bindings`'s docs).
+/// Emitted INSIDE the closure body, checked against the runtime `__args`
+/// slice, mirroring `codegen::params::emit_dynamic_trampoline`'s arity-check
+/// shape but raising a real, catchable exception instead of a bare panic
+/// (a lambda's `ArgumentError` is ordinary Ruby-level control flow, fully
+/// expected to be rescued).
+fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::Ident) -> TokenStream {
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let has_rest = params.rest.is_some();
+    let min_lit = nreq + npost;
+    let min_cond = (min_lit > 0).then(|| quote! { #args_ident.len() < #min_lit });
+    let max_cond = (!has_rest).then(|| {
+        let max_lit = nreq + nopt + npost;
+        quote! { #args_ident.len() > #max_lit }
+    });
+    let cond = match (min_cond, max_cond) {
+        (None, None) => return TokenStream::new(),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (Some(a), Some(b)) => quote! { #a || #b },
+    };
+    let err = super::expr::emit_boxed_new(
+        cx,
+        "ArgumentError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!(
+                "wrong number of arguments (given {}, expected {})",
+                #args_ident.len(), #min_lit
+            )))
+        }],
+    );
+    quote! {
+        if #cond {
+            return Err(spinel_rt::Signal::Raise(#err));
         }
     }
 }
@@ -1186,56 +1260,115 @@ fn dispatch(
     }
 
     // Runtime-checked fallback for a built-in `Int` operator whose
-    // operand(s) couldn't be statically proven `Int` -- most commonly an
-    // ordinary method PARAMETER, which is always `Poly` (spinelc never
-    // infers a param's type from its call sites; see `Scope::params`'s
-    // docs), regardless of what's actually passed at runtime. Without this,
-    // `def add(a, b); a + b; end` -- arithmetic on the plainest possible
-    // method parameters -- can never work, which would make `Params`
-    // barely usable. This is deliberately narrow: a runtime type check for
-    // exactly the same built-in `Int` op tables above, not a general
-    // dynamic multi-method dispatch system (which would also need to
-    // resolve a runtime String/Array/user-`Object`'s own `+`/`<=>` -- a
-    // separably-scoped, much larger feature). Deliberately `Int`-ONLY, not
-    // extended to `Float`/mixed here -- unlike the fully-static fast path
-    // above, `Float` support isn't extended into this ALREADY-narrow runtime
-    // fallback (a documented, narrower-still scope-cut: a Poly-typed
-    // parameter doing float arithmetic falls through to the final
-    // "unsupported call" panic below instead of working). `recv_class.is_none()` only
-    // (a known Object class's own operator overload, if any, already took
-    // priority above); real Ruby can't catch a type mismatch here
-    // statically either, so a clear runtime panic (not a raised exception,
-    // matching every other pre-`raise`/`rescue` failure in this spike) is a
-    // faithful, not a lesser, translation -- STRICTLY better than today's
-    // alternative of `dispatch` itself never reaching a fallback and
+    // operand(s) couldn't be statically proven `Int`/`Float` -- most
+    // commonly an ordinary method PARAMETER, which is always `Poly`
+    // (spinelc never infers a param's type from its call sites; see
+    // `Scope::params`'s docs), regardless of what's actually passed at
+    // runtime. Without this, `def add(a, b); a + b; end` -- arithmetic on
+    // the plainest possible method parameters -- can never work, which
+    // would make `Params` barely usable. This is deliberately narrow: a
+    // runtime type check for exactly the same built-in `Int`/`Float` op
+    // tables above (INCLUDING the same `Int`/`Float` mixed-promotion rule
+    // the static fast path uses), not a general dynamic multi-method
+    // dispatch system (which would also need to resolve a runtime
+    // String/Array/user-`Object`'s own `+`/`<=>` -- a separably-scoped, much
+    // larger feature). `recv_class.is_none()` only (a known Object class's
+    // own operator overload, if any, already took priority above); real
+    // Ruby can't catch a type mismatch here statically either, so a clear
+    // runtime panic (not a raised exception, matching every other pre-
+    // `raise`/`rescue` failure in this spike) is a faithful, not a lesser,
+    // translation for any OTHER operand shape -- STRICTLY better than
+    // today's alternative of `dispatch` itself never reaching a fallback and
     // panicking spinelc at compile time instead.
     if no_kwargs && recv_class.is_none() {
         if args.len() == 1 {
-            if let Some(&(_, rt_fn, result_ty)) =
-                INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
-            {
+            let int_entry = INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name);
+            let float_entry = FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name);
+            if int_entry.is_some() || float_entry.is_some() || name == "<=>" {
                 let arg_expr = emit_expr(cx, args[0]);
-                let func = format_ident!("{rt_fn}");
-                let wrapper = format_ident!("{result_ty}");
-                return quote! {
-                    match (&(#recv_expr), &(#arg_expr)) {
+                let int_arm = int_entry.map(|&(_, rt_fn, result_ty)| {
+                    let func = format_ident!("{rt_fn}");
+                    let wrapper = format_ident!("{result_ty}");
+                    quote! {
                         (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Int(__a)) => {
                             spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a))
                         }
-                        _ => panic!("`{}` isn't supported yet for non-Int operands at runtime (spike scope)", #name),
+                    }
+                });
+                // `Float`-`Float`/`Int`-`Float`/`Float`-`Int`, promoting any
+                // `Int` side to `f64` first -- same rule as the static fast
+                // path above, just runtime-checked instead of statically
+                // proven.
+                let float_arm = float_entry.map(|&(_, rt_fn, result_ty)| {
+                    let func = format_ident!("{rt_fn}");
+                    let wrapper = format_ident!("{result_ty}");
+                    quote! {
+                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Float(__a)) => {
+                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a))
+                        }
+                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Float(__a)) => {
+                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r as f64, *__a))
+                        }
+                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Int(__a)) => {
+                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a as f64))
+                        }
+                    }
+                });
+                // `<=>` isn't in `FLOAT_BINARY_OPS` (see its docs) -- a
+                // `NaN` comparison returns `nil`, not an `Int`.
+                let cmp_arm = (name == "<=>").then(|| {
+                    quote! {
+                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Float(__a)) => {
+                            match spinel_rt::float_cmp(*__r, *__a) {
+                                Some(__n) => spinel_rt::RubyValue::Int(__n),
+                                None => spinel_rt::RubyValue::Nil,
+                            }
+                        }
+                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Float(__a)) => {
+                            match spinel_rt::float_cmp(*__r as f64, *__a) {
+                                Some(__n) => spinel_rt::RubyValue::Int(__n),
+                                None => spinel_rt::RubyValue::Nil,
+                            }
+                        }
+                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Int(__a)) => {
+                            match spinel_rt::float_cmp(*__r, *__a as f64) {
+                                Some(__n) => spinel_rt::RubyValue::Int(__n),
+                                None => spinel_rt::RubyValue::Nil,
+                            }
+                        }
+                    }
+                });
+                return quote! {
+                    match (&(#recv_expr), &(#arg_expr)) {
+                        #int_arm
+                        #float_arm
+                        #cmp_arm
+                        _ => panic!("`{}` isn't supported yet for non-Int/Float operands at runtime (spike scope)", #name),
                     }
                 };
             }
         }
         if args.is_empty() {
-            if let Some(&(_, rt_fn)) = INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
-                let func = format_ident!("{rt_fn}");
+            let int_entry = INT_UNARY_OPS.iter().find(|(op, _)| *op == name);
+            let float_entry = FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name);
+            if int_entry.is_some() || float_entry.is_some() {
+                let int_arm = int_entry.map(|&(_, rt_fn)| {
+                    let func = format_ident!("{rt_fn}");
+                    quote! {
+                        spinel_rt::RubyValue::Int(__r) => spinel_rt::RubyValue::Int(spinel_rt::#func(*__r)),
+                    }
+                });
+                let float_arm = float_entry.map(|&(_, rt_fn)| {
+                    let func = format_ident!("{rt_fn}");
+                    quote! {
+                        spinel_rt::RubyValue::Float(__r) => spinel_rt::RubyValue::Float(spinel_rt::#func(*__r)),
+                    }
+                });
                 return quote! {
                     match &(#recv_expr) {
-                        spinel_rt::RubyValue::Int(__r) => {
-                            spinel_rt::RubyValue::Int(spinel_rt::#func(*__r))
-                        }
-                        _ => panic!("`{}` isn't supported yet for non-Int operands at runtime (spike scope)", #name),
+                        #int_arm
+                        #float_arm
+                        _ => panic!("`{}` isn't supported yet for non-Int/Float operands at runtime (spike scope)", #name),
                     }
                 };
             }

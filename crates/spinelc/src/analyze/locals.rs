@@ -44,6 +44,11 @@ pub fn track_extra(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id
 /// statements read it.
 fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: NodeId) {
     match &compiler.hir[id] {
+        // A lambda's own body is a fresh, independent scope for local-
+        // variable TYPE tracking purposes -- same treatment a non-`.times`
+        // escaping block already gets from this function's `Call` arm
+        // (simply never recursed into).
+        HirNode::Lambda { .. } => {}
         HirNode::LocalWrite(name, value) => {
             track_node(compiler, locals, *value);
             let ty = infer_type_with_locals(compiler, locals, *value);

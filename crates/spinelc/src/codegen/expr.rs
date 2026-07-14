@@ -127,6 +127,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Loop { .. }
         | HirNode::For { .. }
         | HirNode::MultiWrite { .. }
+        | HirNode::Lambda { .. }
         // Narrower than real CRuby, which returns the distinct string
         // "yield" here (only when a block was actually given) -- a
         // documented approximation, same posture as this function's other
@@ -216,6 +217,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     match &cx.compiler.hir[id] {
         HirNode::IntegerLit(v) => quote! { spinel_rt::RubyValue::Int(#v) },
         HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
+        HirNode::Lambda { params, body } => super::call::emit_lambda_value(cx, params, body),
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }
         }

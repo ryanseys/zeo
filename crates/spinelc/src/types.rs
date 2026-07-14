@@ -70,6 +70,7 @@ pub fn infer_type_with_locals(
     match &compiler.hir[id] {
         HirNode::IntegerLit(_) => TyKind::Int,
         HirNode::FloatLit(_) => TyKind::Float,
+        HirNode::Lambda { .. } => TyKind::Proc,
         HirNode::SymbolLit(_) => TyKind::Symbol,
         HirNode::StringLit(_) => TyKind::Str,
         HirNode::ArrayLit(_) => TyKind::Array,

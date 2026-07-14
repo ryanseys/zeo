@@ -126,6 +126,12 @@ pub fn body_contains_escaping_block(compiler: &Compiler, body: &[NodeId]) -> boo
 
 fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
+        // A lambda literal's own body is a fully self-contained closure
+        // boundary (it ALWAYS catches its own `Signal::Return`/`Break`,
+        // unconditionally, unlike an ordinary method -- see
+        // `hir::HirNode::Lambda`'s docs) -- its mere presence never requires
+        // the ENCLOSING method to install its own catch, so this is a leaf.
+        HirNode::Lambda { .. } => false,
         HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             if let Some(b) = block {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
@@ -269,6 +275,11 @@ pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         HirNode::Begin { .. } => true,
+        // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
+        // a lambda's own body is a fully self-contained closure boundary,
+        // so a `begin`/`rescue` lexically inside one never requires the
+        // ENCLOSING method to install its own `Signal::Return` catch.
+        HirNode::Lambda { .. } => false,
         HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
             receiver.is_some_and(|r| node_contains_begin(compiler, r))
                 || args.iter().any(|&a| node_contains_begin(compiler, a))
@@ -417,6 +428,21 @@ fn walk(
         // block needs no `self` capture at all.
         HirNode::ClassVarRead(_) => {}
         HirNode::ClassVarWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        // A lambda literal ALWAYS escapes (never an inline fast path, unlike
+        // `.times`'s block) -- same shape as an escaping `Call.block` below,
+        // minus the `is_inline` branch. Nested inside another escaping
+        // construct is the same unsupported "two-level closure capture"
+        // shape that block-within-escaping-block already rejects.
+        HirNode::Lambda { params, body } => {
+            if in_escaping {
+                panic!("a lambda escaping from inside another escaping block isn't supported yet (spike scope)");
+            }
+            let next_exclusions: HashSet<String> =
+                param_exclusions.union(&own_param_names(params)).cloned().collect();
+            for &n in body {
+                walk(compiler, n, true, &next_exclusions, caps);
+            }
+        }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
             walk(compiler, *l, in_escaping, param_exclusions, caps);
             walk(compiler, *r, in_escaping, param_exclusions, caps);

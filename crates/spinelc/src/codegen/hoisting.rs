@@ -132,6 +132,10 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
 /// `Call` arm's docs below).
 pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
     match &compiler.hir[id] {
+        // A lambda's own body is a fresh, independent local-variable scope
+        // (like a non-`.times` escaping block) -- never hoisted into the
+        // ENCLOSING scope's prelude.
+        HirNode::Lambda { .. } => {}
         HirNode::LocalWrite(name, value) => {
             if !out.contains(name) {
                 out.push(name.clone());
