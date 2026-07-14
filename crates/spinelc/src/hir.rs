@@ -1005,6 +1005,25 @@ pub enum HirNode {
     /// convention, an unset constant raises a real `NameError` -- matches
     /// actual Ruby.
     QualifiedConstRead(String, String),
+    /// A LENIENT constant read (`None` if never assigned, instead of raising
+    /// a `NameError`) -- `scope: None` for a bare name, `scope:
+    /// Some(class_name)` for `Foo::NAME`, same shape as `QualifiedConstRead`/
+    /// `ConstWrite`. Never produced by ordinary Ruby SOURCE (a real
+    /// constant read always raises when unset -- see `QualifiedConstRead`'s
+    /// docs); exists ONLY as `parse::lower_or_write`'s internal desugar for
+    /// `CONST ||= value` specifically. Confirmed against real Ruby that this
+    /// leniency is a genuine, narrow special case: `CONST ||= v` on a
+    /// never-before-assigned constant quietly defines it (no `NameError`),
+    /// but `CONST += v`/`CONST &&= v` on the same undefined constant DOES
+    /// still raise -- Ruby's own `||=`-on-constant sugar treats "never
+    /// assigned" as equivalent to a falsy read, `&&=`/other compound ops
+    /// don't get that same leniency. `codegen::expr::emit_defined`'s
+    /// existing `Defined`-node approximation can't back this (it's a
+    /// syntax-only "was this written as a constant read" classifier, not a
+    /// real "was this constant ever actually assigned" check -- see that
+    /// function's docs), so this needs its own real, `spinel_rt::const_get`-
+    /// backed codegen instead of reusing `Defined`.
+    ConstReadOrNil(Option<String>, String),
     /// `NAME = value` / `Foo::NAME = value` -- `scope: None` for the bare
     /// form (owned by the LEXICALLY-enclosing class/module body it's written
     /// in, or `Object` at the top level -- exactly `ClassVarWrite`'s

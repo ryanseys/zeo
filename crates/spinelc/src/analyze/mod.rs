@@ -432,6 +432,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
@@ -748,6 +749,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_) => {}

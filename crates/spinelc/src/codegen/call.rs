@@ -68,6 +68,44 @@ const INT_UNARY_OPS: &[(&str, &str)] = &[
     ("~", "int_bnot"),
 ];
 
+/// Wraps `spinel_rt::int_div`/`int_mod`'s call with a zero-divisor check,
+/// raising a real, catchable `ZeroDivisionError` instead of letting the
+/// division/modulo itself hard-panic the whole process -- real Ruby's own
+/// behavior (unlike `Float`, where division by zero is `Infinity`/`NaN`/
+/// `NaN`, not an error at all -- `float_div`'s own IEEE semantics already
+/// give that for free, no check needed there). Found as a real,
+/// previously-undetected gap via this session's own testing: `1 / 0`
+/// crashed the entire generated binary with a raw Rust panic (`spinel_rt::
+/// int_div`'s own internal `/` panicking) rather than raising something a
+/// `rescue ZeroDivisionError` could ever catch. A no-op passthrough for
+/// every other `rt_fn` (every non-`/`/`%` operator).
+fn emit_int_div_or_mod_checked(
+    cx: &Ctx,
+    rt_fn: &str,
+    recv_i64: TokenStream,
+    arg_i64: TokenStream,
+) -> TokenStream {
+    if rt_fn != "int_div" && rt_fn != "int_mod" {
+        let func = format_ident!("{rt_fn}");
+        return quote! { spinel_rt::#func(#recv_i64, #arg_i64) };
+    }
+    let func = format_ident!("{rt_fn}");
+    let err = super::expr::emit_boxed_new(
+        cx,
+        "ZeroDivisionError",
+        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new("divided by 0".to_string())) }],
+    );
+    quote! {
+        {
+            let __divisor = #arg_i64;
+            if __divisor == 0 {
+                return Err(spinel_rt::Signal::Raise(#err));
+            }
+            spinel_rt::#func(#recv_i64, __divisor)
+        }
+    }
+}
+
 /// Same shape as `INT_BINARY_OPS`, minus the bitwise/shift operators (real
 /// Ruby's `Float` has none of those) -- `<=>` is deliberately NOT here (see
 /// its own dedicated check in `dispatch`): a `Float` comparison against
@@ -1009,6 +1047,29 @@ pub fn emit_call(
                 );
             }
         }
+        // A no-receiver call from WITHIN another CLASS method's own body
+        // (`current_class` is `None` there -- no concrete `self` receiver
+        // exists, see `codegen::mod::emit_class_method_fn`'s docs) to a
+        // SIBLING class method on the same class/module (`def self.a;
+        // b; end` calling `def self.b`, or the equivalent inside `class <<
+        // self`) -- resolved the same way `ClassName.foo(...)` is
+        // (`Compiler::class_method_in_chain`), dispatched as a direct
+        // associated-function call (`Target::b(...)`), since a class method
+        // has no dynamic dispatch table to fall back through either (see
+        // the plan's Part 6 scope-cut on first-class `Class`/`Module`
+        // values). A prior version of this function had no such branch at
+        // all, meaning `class << self` blocks whose methods called each
+        // other implicitly (the common, idiomatic reason to write several
+        // class methods together) always panicked -- found via this
+        // phase's own testing, fixed here rather than left as a silent gap
+        // in a feature this same session just shipped.
+        if cx.current_class.is_none() {
+            if let Some(defining) = cx.defining_class {
+                if cx.compiler.class_method_in_chain(defining, name).is_some() {
+                    return emit_class_method_call_on(cx, defining, name, args, kwargs);
+                }
+            }
+        }
         panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
     };
 
@@ -1018,11 +1079,25 @@ pub fn emit_call(
     // ordinary `emit_expr(cx, recv_id)` receiver-evaluation path below ever
     // sees it (mirrors `HirNode::Block`'s "only reached via the Call that
     // invokes it" pattern).
+    //
+    // ONLY when `target_name` is an ACTUALLY-REGISTERED class/module --
+    // `ClassRef` is also how an ORDINARY bare constant read lowers (see its
+    // own docs: "used as a plain VALUE, ... an ordinary lexically-scoped
+    // constant READ" when the name isn't a class), so `MAX.+(1)` (the
+    // `MAX += 1` compound-assignment desugar, where `MAX` is a plain
+    // Integer constant, not a class) must NOT take this branch -- found as
+    // a real, previously-undetected bug via this session's own testing: it
+    // unconditionally treated ANY `ClassRef` receiver as a class-method
+    // call, so compound assignment (`+=`/`-=`/etc., every operator except
+    // `||=`) on a non-class constant panicked with a confusing "unknown
+    // class/module" error instead of reading its actual value.
     if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-        if safe || block.is_some() || block_arg.is_some() {
-            panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+        if cx.compiler.class_by_name(target_name).is_some() {
+            if safe || block.is_some() || block_arg.is_some() {
+                panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+            }
+            return emit_class_method_call(cx, target_name, name, args, kwargs);
         }
-        return emit_class_method_call(cx, target_name, name, args, kwargs);
     }
 
     if safe {
@@ -1070,8 +1145,12 @@ fn emit_splat_call(
     }
     let recv_obj_expr = match receiver {
         Some(recv_id) => {
-            if matches!(cx.compiler.hir[recv_id], HirNode::ClassRef(_)) {
-                panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
+            // Same "only an ACTUALLY-registered class/module" guard as
+            // `emit_call`'s own `ClassRef` interception -- see its docs.
+            if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
+                if cx.compiler.class_by_name(target_name).is_some() {
+                    panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
+                }
             }
             let recv_expr = emit_expr(cx, recv_id);
             match infer_class(cx, recv_id) {
@@ -1140,6 +1219,24 @@ fn emit_class_method_call(
         .compiler
         .class_by_name(target_name)
         .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+    emit_class_method_call_on(cx, target, name, args, kwargs)
+}
+
+/// The shared core behind `emit_class_method_call` (`ClassName.foo(...)`,
+/// `target` resolved from a literal constant name) AND an implicit-self call
+/// made FROM WITHIN another class method's own body (`emit_call`'s
+/// no-receiver branch, `target` already known as `cx.defining_class` --
+/// no name to look up at all). Same "plain required parameters only, no
+/// keyword args, no block" restriction either way (see
+/// `codegen::mod::emit_class_method_fn`'s matching rejection).
+fn emit_class_method_call_on(
+    cx: &Ctx,
+    target: crate::compiler::ClassId,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[HashPair],
+) -> TokenStream {
+    let target_name = &cx.compiler.class(target).name;
     let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
         panic!(
             "unsupported call `{target_name}.{name}` (spike scope, or no such class method is defined)"
@@ -1384,14 +1481,14 @@ fn dispatch(
             let arg_ty = infer(cx, args[0]);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
                 let arg_expr = emit_expr(cx, args[0]);
-                let func = format_ident!("{rt_fn}");
                 let wrapper = format_ident!("{result_ty}");
-                return quote! {
-                    spinel_rt::RubyValue::#wrapper(spinel_rt::#func(
-                        (#recv_expr).as_int_unchecked(),
-                        (#arg_expr).as_int_unchecked(),
-                    ))
-                };
+                let call = emit_int_div_or_mod_checked(
+                    cx,
+                    rt_fn,
+                    quote! { (#recv_expr).as_int_unchecked() },
+                    quote! { (#arg_expr).as_int_unchecked() },
+                );
+                return quote! { spinel_rt::RubyValue::#wrapper(#call) };
             }
         }
     }
@@ -1637,11 +1734,11 @@ fn dispatch(
             if int_entry.is_some() || float_entry.is_some() || name == "<=>" {
                 let arg_expr = emit_expr(cx, args[0]);
                 let int_arm = int_entry.map(|&(_, rt_fn, result_ty)| {
-                    let func = format_ident!("{rt_fn}");
                     let wrapper = format_ident!("{result_ty}");
+                    let call = emit_int_div_or_mod_checked(cx, rt_fn, quote! { *__r }, quote! { *__a });
                     quote! {
                         (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Int(__a)) => {
-                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a))
+                            spinel_rt::RubyValue::#wrapper(#call)
                         }
                     }
                 });

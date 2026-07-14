@@ -163,6 +163,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ClassVarWrite(..)
         | HirNode::GlobalWrite(..)
         | HirNode::ConstWrite { .. }
+        | HirNode::ConstReadOrNil(..)
         | HirNode::Seq(_)
         | HirNode::While { .. }
         | HirNode::Loop { .. }
@@ -352,7 +353,22 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // docs -- `let self = ...;` is illegal Rust, so the closure
             // clones into a DIFFERENT name).
             let slf = &cx.self_ident;
-            quote! { #slf.#ident.lock().clone() }
+            // The `MutexGuard` from `.lock()` is bound to an explicit `__g`
+            // local, INSIDE its own block, rather than written as a single
+            // bare `#slf.#ident.lock().clone()` expression -- found the hard
+            // way (this session's own testing, via `@x * @x`): Rust's
+            // temporary-lifetime rule keeps an UNNAMED `.lock()` guard alive
+            // until the end of the ENCLOSING STATEMENT, not just this one
+            // sub-expression, so referencing the SAME ivar TWICE within one
+            // statement (any expression reading an ivar more than once, e.g.
+            // `@x * @x`, not just the already-guarded read-modify-WRITE
+            // shape Part 9 audited) silently deadlocks a non-reentrant
+            // `parking_lot::Mutex` -- confirmed via a minimal, standalone
+            // repro BEFORE this fix, and confirmed this exact `{ let __g =
+            // ...; __g.clone() }` shape (not just wrapping in a bare `{ }`
+            // block, which does NOT change the guard's drop timing -- also
+            // confirmed empirically) resolves it.
+            quote! { { let __g = #slf.#ident.lock(); __g.clone() } }
         }
         HirNode::IvarWrite(name, value) => {
             let v = emit_expr(cx, *value);
@@ -439,6 +455,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { { let __v = #v; spinel_rt::global_set(#name, __v.clone()); __v } }
         }
         HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
+        HirNode::ConstReadOrNil(scope, name) => {
+            let owner = const_owner_id(cx, scope.as_deref(), name);
+            quote! { spinel_rt::const_get(#owner, #name).unwrap_or(spinel_rt::RubyValue::Nil) }
+        }
         HirNode::ConstWrite { scope, name, value } => {
             let v = emit_expr(cx, *value);
             // See `IvarWrite`'s docs: constant storage is likewise always

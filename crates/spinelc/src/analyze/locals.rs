@@ -316,6 +316,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)

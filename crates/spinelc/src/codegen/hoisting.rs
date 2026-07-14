@@ -91,7 +91,17 @@ pub fn local_storage(cx: &Ctx, name: &str) -> LocalStorage {
 pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
     let ident = safe_ident(name);
     match local_storage(cx, name) {
-        LocalStorage::Captured => quote! { #ident.lock().clone() },
+        // The `MutexGuard` is bound to an explicit `__g` local inside its
+        // own block, not written as a bare `#ident.lock().clone()` -- see
+        // `codegen::expr`'s `IvarRead` arm for the full explanation (found
+        // via this session's own testing): an UNNAMED `.lock()` temporary's
+        // scope extends to the end of the ENCLOSING STATEMENT, so reading
+        // the SAME captured local twice in one expression (e.g. `total *
+        // total`) would otherwise deadlock a non-reentrant
+        // `parking_lot::Mutex` -- confirmed empirically that a bare `{ }`
+        // wrapper alone does NOT change the guard's drop timing; only
+        // binding it to a named local inside the block does.
+        LocalStorage::Captured => quote! { { let __g = #ident.lock(); __g.clone() } },
         LocalStorage::Hoisted | LocalStorage::Shadowed => quote! { #ident.clone() },
     }
 }
@@ -407,6 +417,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::QualifiedConstRead(..)
+        | HirNode::ConstReadOrNil(..)
         | HirNode::BlockGiven
         | HirNode::Include(_)
         | HirNode::Extend(_)

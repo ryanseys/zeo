@@ -4709,3 +4709,342 @@ fn class_shift_self_containing_a_non_def_statement_is_a_clean_lowering_error() {
     .unwrap_err();
     assert!(err.contains("may only contain `def`s"), "{err}");
 }
+
+// --- Phase 12.9: bugs found via a comprehensive sweep (fixed, not deferred) ---
+//
+// Found by testing constructs adjacent to Phases 12.1-12.8's own work, not
+// by design review -- each is a real, previously-undetected defect, not a
+// documented scope-cut. Every test here was run against real `ruby` first,
+// per this project's established convention.
+
+#[test]
+fn implicit_self_call_between_sibling_class_methods_dispatches_correctly() {
+    // Found while testing `class << self` (Phase 12.8): `current_class` is
+    // `None` inside a class method's own `Ctx` (no concrete `self` receiver
+    // exists there), so a no-receiver call to a SIBLING class method
+    // (`def self.a; b; end` calling `def self.b`) always panicked --
+    // `codegen::call::emit_call`'s implicit-self branch only ever consulted
+    // `current_class`. Fixed by also checking `defining_class` against
+    // `Compiler::class_method_in_chain`, dispatching as a direct
+    // associated-function call, same as `ClassName.foo(...)`.
+    let result = run_ruby(
+        r#"
+        class Widget
+          def self.create
+            helper
+          end
+          def self.helper
+            "made"
+          end
+        end
+        puts Widget.create
+
+        class MathUtils
+          class << self
+            def sum_of_squares(a, b)
+              square(a) + square(b)
+            end
+            def square(x)
+              x * x
+            end
+          end
+        end
+        puts MathUtils.sum_of_squares(3, 4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "made\n25\n");
+}
+
+#[test]
+fn multi_assign_into_attr_targets_correctly_calls_the_setter() {
+    // A real, previously-undetected bug: `CallTargetNode::name()` is
+    // ALREADY the setter name (`:x=`, confirmed via `Prism.parse`), but
+    // `parse::lower_multi_target` appended ANOTHER `=`, building an
+    // unresolvable `x==` method name -- so ANY multi-assignment into two
+    // attr targets (`b.x, b.y = b.y, b.x`, the idiomatic in-place swap)
+    // panicked with a confusing "unsupported call `x==`" instead of
+    // swapping the values. Array-index multi-assign targets (`arr[0],
+    // arr[1] = ...`) were unaffected (a distinct code path, `[]=`, not
+    // string-formatted from a name at all).
+    let result = run_ruby(
+        r#"
+        arr = [1, 2, 3, 4]
+        arr[0], arr[1] = arr[1], arr[0]
+        puts arr[0]
+        puts arr[1]
+
+        class Box
+          attr_accessor :x, :y
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+        end
+        b = Box.new(1, 2)
+        b.x, b.y = b.y, b.x
+        puts b.x
+        puts b.y
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n1\n2\n1\n");
+}
+
+#[test]
+fn user_defined_operator_methods_can_be_defined_and_dispatched() {
+    // A real, previously-undetected bug: `safe_ident` had no escaping at
+    // all for a method name that's a bare operator symbol (`+`, `<=>`,
+    // `[]`, ...) -- `def +(other)` panicked at CODEGEN time with a raw
+    // `proc_macro2` "not a valid Ident" error. This meant user-defined
+    // operator overloading -- claimed since Phase 1 to "work for free"
+    // once operators became ordinary Calls -- never actually worked for
+    // the DEFINING side; every existing operator test exercised only
+    // native `Int`/`Float` fast paths, which bypass `safe_ident` entirely.
+    // Fixed via a fixed lookup table (`OPERATOR_METHOD_NAMES`) mapping
+    // every operator symbol to a valid Rust identifier, consulted by BOTH
+    // the method-definition side and the general-dispatch call site (the
+    // same function backs both), so they agree automatically.
+    let result = run_ruby(
+        r#"
+        class Vector
+          attr_reader :x, :y
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+          def +(other)
+            Vector.new(@x + other.x, @y + other.y)
+          end
+          def <=>(other)
+            (@x * @x + @y * @y) <=> (other.x * other.x + other.y * other.y)
+          end
+          def to_s
+            "(#{@x}, #{@y})"
+          end
+        end
+        v1 = Vector.new(1, 2)
+        v2 = Vector.new(3, 4)
+        v3 = v1 + v2
+        puts v3.to_s
+        puts(v1 <=> v2)
+        puts(v2 <=> v1)
+        puts(v1 <=> v1)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "(4, 6)\n-1\n1\n0\n");
+}
+
+#[test]
+fn reading_the_same_ivar_or_captured_local_twice_in_one_expression_does_not_deadlock() {
+    // CRITICAL bug, found via the operator-method test above (`@x * @x`
+    // inside `Vector#<=>`): `codegen::expr`'s `IvarRead` and
+    // `codegen::hoisting`'s captured-`LocalRead` both emitted a bare,
+    // UNNAMED `#expr.lock().clone()` -- Rust's temporary-lifetime rule
+    // keeps an unnamed `.lock()` guard alive until the end of the
+    // ENCLOSING STATEMENT (confirmed via a minimal, standalone
+    // `parking_lot::Mutex` repro), so referencing the SAME ivar or
+    // captured local TWICE in one expression/statement (a very common
+    // shape: squaring, self-comparison, `total - total`, not just the
+    // already-audited read-modify-WRITE case Part 9 covered) silently
+    // deadlocked the whole generated program forever -- no panic, no
+    // error, just a permanent hang. Fixed by binding the guard to an
+    // explicit named local INSIDE its own block (confirmed empirically
+    // that a bare `{ }` wrapper alone does NOT change the drop timing --
+    // only a named `let` binding does).
+    let result = run_ruby(
+        r#"
+        class Squarer
+          def initialize(n)
+            @n = n
+          end
+          def square
+            @n * @n
+          end
+        end
+        puts Squarer.new(7).square
+
+        class Once
+          def run
+            yield
+          end
+        end
+        total = 5
+        block_result = 0
+        Once.new.run { block_result = total * total }
+        puts block_result
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "49\n25\n");
+}
+
+#[test]
+fn or_assign_on_a_never_before_defined_constant_quietly_defines_it() {
+    // A real, previously-undetected bug: `CONST ||= v` on a constant that
+    // was NEVER assigned raised `NameError` instead of quietly defining
+    // it -- confirmed via real `ruby` that this is a genuine, narrow
+    // special case (ONLY `||=` gets this leniency; `+=`/`&&=` on the same
+    // undefined constant still raise, see the next test). Fixed via a new
+    // `HirNode::ConstReadOrNil`, used only by `||=`'s own desugar.
+    let result = run_ruby(
+        r#"
+        MAX ||= 100
+        puts MAX
+        MAX ||= 200
+        puts MAX
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "100\n100\n");
+}
+
+#[test]
+fn other_compound_assignment_operators_still_raise_on_an_undefined_constant() {
+    // Regression guard for the fix above: `||=`'s new leniency must NOT
+    // leak into `+=`/`&&=` -- confirmed against real `ruby` that those
+    // still raise on a genuinely undefined constant. An uncaught Ruby
+    // exception exits the compiled binary nonzero with a message on
+    // stderr (see `uncaught_raise_with_no_rescue_anywhere_exits_with_the_message`),
+    // not a Rust-level panic, so this asserts on the process output
+    // directly rather than `#[should_panic]`.
+    let result = run_ruby("UNDEF += 1");
+    assert!(!result.status.success());
+    assert!(result.stderr.contains("uninitialized constant UNDEF"), "{}", result.stderr);
+}
+
+#[test]
+fn compound_assignment_on_a_plain_non_class_constant_dispatches_correctly() {
+    // A real, previously-undetected bug, found alongside the `||=` fix
+    // above: `codegen::call::emit_call` treated ANY `HirNode::ClassRef`
+    // receiver as a `ClassName.foo(...)` class-method call, UNCONDITIONALLY
+    // -- but `ClassRef` is also how an ordinary bare constant read lowers
+    // (see its own docs). So `MAX += 1` (desugared to `MAX.+(1)`, where
+    // `MAX` is a plain `Integer` constant, not a class) panicked with a
+    // confusing "unknown class/module `MAX`" instead of reading/writing
+    // its actual value -- EVERY compound-assignment operator except `||=`
+    // on any non-class constant was completely broken. Fixed by only
+    // taking the class-method-call branch when the name is ACTUALLY a
+    // registered class/module.
+    let result = run_ruby(
+        r#"
+        MAX = 100
+        MAX += 1
+        puts MAX
+        MAX -= 50
+        puts MAX
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "101\n51\n");
+}
+
+#[test]
+fn integer_division_and_modulo_by_zero_raise_a_catchable_zero_division_error() {
+    // A real, previously-undetected bug: `1 / 0` crashed the ENTIRE
+    // generated binary with a raw Rust panic (`spinel_rt::int_div`'s own
+    // internal `/` panicking) instead of raising a catchable
+    // `ZeroDivisionError` -- real Ruby's actual behavior. This affected
+    // BOTH the static `Int`-`Int` fast path and the runtime-checked
+    // fallback used for method-parameter operands (always `Poly`). Fixed
+    // via `emit_int_div_or_mod_checked`, consulted at both call sites.
+    let result = run_ruby(
+        r#"
+        begin
+          puts(5 % 0)
+        rescue ZeroDivisionError
+          puts "mod zero div"
+        end
+        class Calc
+          def divide(a, b)
+            a / b
+          end
+        end
+        begin
+          puts Calc.new.divide(10, 0)
+        rescue ZeroDivisionError
+          puts "param zero div"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "mod zero div\nparam zero div\n");
+}
+
+#[test]
+fn float_division_by_zero_returns_infinity_not_an_error() {
+    // Regression guard for the fix above: `ZeroDivisionError` must stay
+    // `Int`/`Int`-division-specific -- real Ruby's `Float`/`0` is
+    // `Infinity`/`-Infinity`/`NaN` (IEEE semantics), never a raised
+    // exception, and `float_div` already gives this for free with no
+    // check needed.
+    let result = run_ruby("puts(1.0 / 0.0); puts(-1.0 / 0.0)");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Infinity\n-Infinity\n");
+}
+
+#[test]
+fn bitwise_operators_on_integers() {
+    let result = run_ruby(
+        r#"
+        a = 12
+        b = 10
+        puts a & b
+        puts a | b
+        puts a ^ b
+        puts a << 2
+        puts a >> 2
+        puts ~a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "8\n14\n6\n48\n3\n-13\n");
+}
+
+#[test]
+fn attr_reader_and_attr_writer_declared_standalone_generate_only_their_own_half() {
+    let result = run_ruby(
+        r#"
+        class Point
+          attr_reader :x
+          attr_writer :y
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+          def show_y
+            @y
+          end
+        end
+        p1 = Point.new(1, 2)
+        puts p1.x
+        p1.y = 99
+        puts p1.show_y
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n99\n");
+}
+
+#[test]
+fn combined_optional_rest_post_keyword_keyword_rest_and_block_params_all_bind_correctly() {
+    let result = run_ruby(
+        r#"
+        class Widget
+          def build(a, b = 10, *rest, c, d: 5, **kw, &blk)
+            puts a
+            puts b
+            puts rest
+            puts c
+            puts d
+            puts kw[:e]
+            puts blk.call
+          end
+        end
+        Widget.new.build(1, 2, 3, 4, 5, d: 99, e: 100) { "block!" }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n3\n4\n5\n99\n100\nblock!\n");
+}

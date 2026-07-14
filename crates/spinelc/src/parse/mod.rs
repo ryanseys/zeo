@@ -289,8 +289,24 @@ fn lower_compound_op_write(hir: &mut Hir, target: Storage, op: String, rhs: Node
 /// rhs`: `rhs` (and the write itself) must only be evaluated when `target`
 /// is falsy, which `HirNode::Or`'s existing short-circuit codegen gives for
 /// free.
+///
+/// A `Const` target is a genuine, narrow exception to reusing `Storage::read`
+/// as-is (confirmed against real Ruby, not assumed): `CONST ||= v` on a
+/// constant that was NEVER assigned quietly defines it, treating "never
+/// assigned" as equivalent to a falsy read -- unlike an ordinary constant
+/// read (`Storage::read`'s `ClassRef`/`QualifiedConstRead`), which always
+/// raises `NameError` for that case, and unlike `CONST += v`/`CONST &&= v`
+/// on the same undefined constant, which still DO raise (Ruby doesn't
+/// extend this leniency to any other compound-assignment operator on a
+/// constant). So only THIS function substitutes the lenient
+/// `HirNode::ConstReadOrNil` for a `Const` target's read half --
+/// `lower_and_write`/`lower_compound_op_write` deliberately keep using
+/// `Storage::read` unchanged.
 fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> NodeId {
-    let read = target.read(hir);
+    let read = match &target {
+        Storage::Const { scope, name } => hir.push(HirNode::ConstReadOrNil(scope.clone(), name.clone())),
+        _ => target.read(hir),
+    };
     let write = target.write(hir, rhs);
     hir.push(HirNode::Or(read, write))
 }
@@ -2039,7 +2055,14 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
     // no bespoke attr-write codegen of its own.
     if let Some(t) = node.as_call_target_node() {
         let receiver = lower_node(result, hir, &t.receiver())?;
-        let setter_name = format!("{}=", String::from_utf8_lossy(t.name().as_slice()));
+        // `CallTargetNode::name()` is ALREADY the setter name (`:x=`, not
+        // `:x`) -- confirmed via `Prism.parse("b.x, b.y = ...")`; appending
+        // another `=` here (a real bug, found via this session's own
+        // testing) produced a double-equals method name (`x==`) that could
+        // never resolve, silently breaking every multi-assignment into an
+        // attr target (`b.x, b.y = b.y, b.x`) with a confusing "unsupported
+        // call" panic instead of the correct swap.
+        let setter_name = String::from_utf8_lossy(t.name().as_slice()).into_owned();
         let tmp_name = hir.gensym("__mval");
         let tmp_read = hir.push(HirNode::LocalRead(tmp_name.clone()));
         let write_call = hir.push(HirNode::Call {
