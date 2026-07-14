@@ -105,9 +105,9 @@ struct Ctx<'a> {
     for_var_override: Option<(String, TyKind)>,
     /// Enclosing-scope local/parameter names that some escaping block (see
     /// `codegen::captures`) captures -- these get the `Captured`
-    /// (`Rc<RefCell<RubyValue>>`) storage class instead of a plain hoisted
-    /// `let mut` (see `hoisting::local_storage`), computed ONCE per method/
-    /// top-level scope, same lifetime as `local_types`.
+    /// (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a
+    /// plain hoisted `let mut` (see `hoisting::local_storage`), computed ONCE
+    /// per method/top-level scope, same lifetime as `local_types`.
     captured_locals: &'a HashSet<String>,
     /// The identifier that stands for `self` in THIS position -- ordinarily
     /// the literal `self`, but rebound to a fresh capture-alias identifier
@@ -419,7 +419,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let cx = Ctx {
         compiler,
         // No concrete receiver exists for a class method (no `self:
-        // Rc<Self>`) -- but `defining_class` (which class/module this body
+        // Arc<Self>`) -- but `defining_class` (which class/module this body
         // was LEXICALLY written in) still needs to be real, for `@@cvar`
         // ownership lookup (`codegen::expr::cvar_owner_id`).
         current_class: None,
@@ -529,7 +529,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             }
         };
         quote! {
-            def #method_ident(self: std::rc::Rc<Self> #sig_params) {
+            def #method_ident(self: std::sync::Arc<Self> #sig_params) {
                 #body_tokens
             }
         }

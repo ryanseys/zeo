@@ -124,15 +124,16 @@ pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> Token
     // Routed through `emit_local_write` (not a hardcoded reassignment)
     // because `var` might be captured by an escaping block somewhere in
     // `body` -- if so, `hoisting`'s prelude declares it as an
-    // `Rc<RefCell<RubyValue>>`, and a bare `var_ident = ...` reassignment
-    // would be a Rust type error against that, not just a semantic gap.
+    // `Arc<parking_lot::Mutex<RubyValue>>`, and a bare `var_ident = ...`
+    // reassignment would be a Rust type error against that, not just a
+    // semantic gap.
     let bind_array = super::hoisting::emit_local_write(cx, var, quote! { __iter[__idx].clone() });
     let bind_range = super::hoisting::emit_local_write(cx, var, quote! { spinel_rt::RubyValue::Int(__i) });
 
     match iterable_ty {
         TyKind::Array => quote! {
             {
-                let __iter = (#iter_expr).as_array_unchecked().borrow().clone();
+                let __iter = (#iter_expr).as_array_unchecked().lock().clone();
                 let mut __idx: usize = 0;
                 #outer: loop {
                     if __idx >= __iter.len() { break #outer spinel_rt::RubyValue::Nil; }
@@ -265,7 +266,7 @@ pub fn emit_multi_write_lets(
     });
 
     quote! {
-        let __elems = (#value_expr).as_array_unchecked().borrow().clone();
+        let __elems = (#value_expr).as_array_unchecked().lock().clone();
         let (__before, __splat, __after) = spinel_rt::multi_assign(&__elems, #n_before, #has_splat, #n_after);
         #(#bind_before)*
         #bind_splat

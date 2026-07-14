@@ -1,11 +1,15 @@
 //! Minimal `Array`/`Hash`/`String` runtime support (Phase 3) -- concrete
-//! `Rc<RefCell<_>>`-backed collection types, mirroring the same
+//! `Arc<parking_lot::Mutex<_>>`-backed collection types, mirroring the same
 //! shared-mutable-identity model `ruby_class!`'s generated structs already
-//! use (`RefCell` ivars) and the `Rc<ConcreteStruct>` wrapping `New`
+//! use (`Mutex` ivars) and the `Arc<ConcreteStruct>` wrapping `New`
 //! constructed objects settled on (see `codegen::call::emit_new`'s docs):
 //! assigning a collection to another local aliases the same underlying
 //! storage rather than deep-copying it, matching Ruby's own reference
-//! semantics for these types.
+//! semantics for these types. `Arc`/`Mutex` (not `Rc`/`RefCell`) so every
+//! `RubyValue` is genuinely `Send + Sync` -- see the plan's Part 9 for the
+//! full rationale; this migration needs no `unsafe` anywhere, since
+//! `Send`/`Sync` auto-derive through any compound type built entirely from
+//! `Send + Sync` leaves.
 //!
 //! Deliberately NOT a general Enumerable implementation -- see the plan's
 //! Phase 3 scope-cut: `[]`/`[]=`/`length` only. `each`/`map`/`select`/etc.
@@ -13,10 +17,10 @@
 //! not hand-implemented here.
 
 use crate::RubyValue;
-use std::cell::RefCell;
-use std::rc::Rc;
+use parking_lot::Mutex;
+use std::sync::Arc;
 
-pub type RArray = Rc<RefCell<Vec<RubyValue>>>;
+pub type RArray = Arc<Mutex<Vec<RubyValue>>>;
 
 /// Hash storage is a plain association *list*, not a real hash table: every
 /// lookup/insert is an O(n) linear scan compared via `RubyValue::rb_eq`. A
@@ -25,18 +29,18 @@ pub type RArray = Rc<RefCell<Vec<RubyValue>>>;
 /// exist yet -- a deliberate, documented spike scope-cut, not an oversight.
 /// Fine for the tiny hashes the spike's examples use; revisit once
 /// user-defined `#hash` exists.
-pub type RHash = Rc<RefCell<Vec<(RubyValue, RubyValue)>>>;
+pub type RHash = Arc<Mutex<Vec<(RubyValue, RubyValue)>>>;
 
-pub type RStr = Rc<RefCell<String>>;
+pub type RStr = Arc<Mutex<String>>;
 
 pub fn array_new(elems: Vec<RubyValue>) -> RArray {
-    Rc::new(RefCell::new(elems))
+    Arc::new(Mutex::new(elems))
 }
 
 /// Ruby's own `Array#[]`: negative indices count from the end, and an
 /// out-of-range index returns `nil` rather than raising/panicking.
 pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
-    let arr = arr.borrow();
+    let arr = arr.lock();
     resolve_index(index, arr.len())
         .and_then(|i| arr.get(i).cloned())
         .unwrap_or(RubyValue::Nil)
@@ -47,7 +51,7 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 /// that's still out of range panics -- a real `IndexError` needs exceptions
 /// (Phase 9), so this is a loud failure, not a silent one, in the meantime.
 pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> RubyValue {
-    let mut arr = arr.borrow_mut();
+    let mut arr = arr.lock();
     let i = if index < 0 {
         let from_end = arr.len() as i64 + index;
         usize::try_from(from_end).unwrap_or_else(|_| {
@@ -64,7 +68,7 @@ pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> RubyValue {
 }
 
 pub fn array_len(arr: &RArray) -> i64 {
-    arr.borrow().len() as i64
+    arr.lock().len() as i64
 }
 
 /// Flattens a `*splat` array-literal element in place -- panics (not a
@@ -73,7 +77,7 @@ pub fn array_len(arr: &RArray) -> i64 {
 /// as `RubyValue::as_int_unchecked` etc.).
 pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) {
     match value {
-        RubyValue::Array(a) => out.extend(a.borrow().iter().cloned()),
+        RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
         other => panic!("expected an Array to splat, got {}", other.to_display_string()),
     }
 }
@@ -84,7 +88,7 @@ fn resolve_index(index: i64, len: usize) -> Option<usize> {
 }
 
 pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
-    let h: RHash = Rc::new(RefCell::new(Vec::new()));
+    let h: RHash = Arc::new(Mutex::new(Vec::new()));
     for (k, v) in pairs {
         hash_set(&h, k, v);
     }
@@ -95,7 +99,7 @@ pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
 /// scope-cut -- real Ruby's per-instance `Hash.new(default)`/
 /// `Hash#default_proc` aren't modeled).
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
-    h.borrow()
+    h.lock()
         .iter()
         .find(|(k, _)| k.rb_eq(key))
         .map(|(_, v)| v.clone())
@@ -105,7 +109,7 @@ pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
 /// `Hash#[]=`: replaces an existing key's value in place (preserving
 /// insertion order, matching real Ruby) rather than appending a duplicate.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
-    let mut h = h.borrow_mut();
+    let mut h = h.lock();
     match h.iter_mut().find(|(k, _)| k.rb_eq(&key)) {
         Some((_, v)) => *v = value.clone(),
         None => h.push((key, value.clone())),
@@ -114,7 +118,7 @@ pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
 }
 
 pub fn hash_len(h: &RHash) -> i64 {
-    h.borrow().len() as i64
+    h.lock().len() as i64
 }
 
 /// Whether `key` is actually present -- distinct from `hash_get` returning
@@ -123,7 +127,7 @@ pub fn hash_len(h: &RHash) -> i64 {
 /// PATTERN matching (`case/in`): `in {a: nil}` must fail against `{}`, which
 /// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
 pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
-    h.borrow().iter().any(|(k, _)| k.rb_eq(key))
+    h.lock().iter().any(|(k, _)| k.rb_eq(key))
 }
 
 /// A new Hash containing every pair from `h` whose key ISN'T in `keys` --
@@ -132,16 +136,16 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
 pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
     let excluded: Vec<RubyValue> = keys.iter().map(|k| RubyValue::Symbol(crate::Symbol::intern(k))).collect();
     let pairs: Vec<(RubyValue, RubyValue)> = h
-        .borrow()
+        .lock()
         .iter()
         .filter(|(k, _)| !excluded.iter().any(|e| e.rb_eq(k)))
         .cloned()
         .collect();
-    Rc::new(RefCell::new(pairs))
+    Arc::new(Mutex::new(pairs))
 }
 
 pub fn string_new(s: String) -> RStr {
-    Rc::new(RefCell::new(s))
+    Arc::new(Mutex::new(s))
 }
 
 /// Character-indexed (not byte-indexed), matching Ruby's own UTF-8-aware
@@ -150,7 +154,7 @@ pub fn string_new(s: String) -> RStr {
 /// strings (documented, not fixed -- a byte-offset cache is a
 /// straightforward later optimization, not a spike blocker).
 pub fn string_get(s: &RStr, index: i64) -> RubyValue {
-    let s = s.borrow();
+    let s = s.lock();
     let chars: Vec<char> = s.chars().collect();
     match resolve_index(index, chars.len()) {
         Some(i) => RubyValue::Str(string_new(chars[i].to_string())),
@@ -166,8 +170,8 @@ pub fn string_set(s: &RStr, index: i64, value: &RubyValue) -> RubyValue {
     let RubyValue::Str(new_chars) = value else {
         panic!("expected a String, got {}", value.to_display_string());
     };
-    let new_chars = new_chars.borrow().clone();
-    let mut s = s.borrow_mut();
+    let new_chars = new_chars.lock().clone();
+    let mut s = s.lock();
     let mut chars: Vec<char> = s.chars().collect();
     let i = resolve_index(index, chars.len()).unwrap_or_else(|| {
         panic!("index {index} out of range for string of length {}", chars.len())
@@ -178,7 +182,7 @@ pub fn string_set(s: &RStr, index: i64, value: &RubyValue) -> RubyValue {
 }
 
 pub fn string_len(s: &RStr) -> i64 {
-    s.borrow().chars().count() as i64
+    s.lock().chars().count() as i64
 }
 
 /// Ruby multi-assignment's `a, b = ...` / `a, *b, c = ...` destructuring:

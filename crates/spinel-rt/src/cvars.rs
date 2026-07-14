@@ -10,14 +10,22 @@
 //! the runtime-mutable `HashMap` backing that already-resolved slot, keyed
 //! by `(owner_class_id, name)` since one class can own several distinct
 //! `@@` names.
+//!
+//! Genuinely process-wide-shared storage (Part 9), not per-thread: a real
+//! CRuby `@@counter` incremented by one `Thread` must be visible to another,
+//! so this migrated from a `thread_local!` to a real `LazyLock<Mutex<_>>`
+//! static rather than just swapping `Rc`/`RefCell` for `Arc`/`Mutex` in
+//! place -- leaving it thread-local would have silently made class
+//! variables per-thread, a real semantic bug, not just a representation
+//! change.
 
 use crate::RubyValue;
-use std::cell::RefCell;
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
-thread_local! {
-    static CVARS: RefCell<HashMap<(u32, String), RubyValue>> = RefCell::new(HashMap::new());
-}
+static CVARS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// `nil` for a `@@x` never yet written -- matches real Ruby's own behavior
 /// for reading a class variable before any assignment ever ran (a
@@ -25,17 +33,15 @@ thread_local! {
 /// posture elsewhere treats "never assigned" as `nil` rather than adding a
 /// distinct raise for it -- see `IvarRead`'s identical convention).
 pub fn cvar_get(owner_class_id: u32, name: &str) -> RubyValue {
-    CVARS.with(|c| {
-        c.borrow()
-            .get(&(owner_class_id, name.to_string()))
-            .cloned()
-            .unwrap_or(RubyValue::Nil)
-    })
+    CVARS
+        .lock()
+        .get(&(owner_class_id, name.to_string()))
+        .cloned()
+        .unwrap_or(RubyValue::Nil)
 }
 
 pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) {
-    CVARS.with(|c| {
-        c.borrow_mut()
-            .insert((owner_class_id, name.to_string()), value);
-    });
+    CVARS
+        .lock()
+        .insert((owner_class_id, name.to_string()), value);
 }

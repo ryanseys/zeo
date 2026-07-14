@@ -174,7 +174,7 @@ fn emit_rescue_chain(closure_cx: &Ctx, rescues: &[RescueClause]) -> TokenStream 
     let mut chain = quote! { Err(spinel_rt::Signal::Raise(__exc.clone())) };
     for r in rescues.iter().rev() {
         let cond = emit_rescue_match_cond(closure_cx, &r.classes);
-        // NOT narrowed to a concrete `Rc<Class>` the way a pattern's
+        // NOT narrowed to a concrete `Arc<Class>` the way a pattern's
         // `Integer => n`/`case/in`'s class-guard capture is (see
         // `codegen::patterns::collect_narrowing`'s docs): unlike a builtin
         // primitive's runtime TAG check, dispatch here is Rust `downcast::

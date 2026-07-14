@@ -512,7 +512,7 @@ pub enum HirNode {
     /// mirroring spinel's `walk_scope`. `is_class_method` is `def self.name`
     /// (`DefNode::receiver()` is `Some(SelfNode)`) -- a genuinely different
     /// registration target (`ClassInfo::class_methods`, not `::methods`; no
-    /// `self: Rc<Self>` receiver at codegen time at all, see
+    /// `self: Arc<Self>` receiver at codegen time at all, see
     /// `compiler::ClassInfo`'s docs) even though the body shape is
     /// identical. Any OTHER explicit receiver (`def SomeConst.name`) is a
     /// clean lowering rejection (spike scope -- reopening a class from

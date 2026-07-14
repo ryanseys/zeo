@@ -26,6 +26,23 @@ pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use value::RubyValue;
 
+/// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a
+/// GENERATED program's own crate, not this one) can reference
+/// `$crate::parking_lot::Mutex` without that program's own `Cargo.toml`
+/// needing a direct `parking_lot` dependency -- `parking_lot` stays an
+/// implementation detail of this runtime crate (Part 9).
+pub use parking_lot;
+
+/// A thin, poison-free wrapper around `parking_lot::Mutex::lock` -- a single
+/// choke point every generated read/write site goes through (Part 9), in
+/// case a uniform policy ever needs one later. `parking_lot`'s `Mutex` has
+/// no poisoning at all (unlike `std::sync::Mutex`), matching Ruby's own
+/// semantics: there's no such thing as a "poisoned object" if a thread
+/// panics while holding a lock on it.
+pub fn lock<T>(m: &parking_lot::Mutex<T>) -> parking_lot::MutexGuard<'_, T> {
+    m.lock()
+}
+
 /// Mirrors CRuby's `Kernel#puts` for the single scalar-argument case (the
 /// only form the spike's examples use): print the value, adding a trailing
 /// newline only if it doesn't already end in one.
@@ -42,28 +59,30 @@ pub fn puts(value: RubyValue) {
 /// spinel's codegen hand-emits as raw C text per class (`emit_class_struct`,
 /// `emit_class_new`, etc.) -- see the plan's "The `ruby_class!` macro"
 /// section for the full rationale. Each ivar becomes an individually
-/// interior-mutable field (`RefCell<RubyValue>`) so every generated method
-/// can uniformly take a receiver (see "A named risk" in the plan).
+/// interior-mutable field (`parking_lot::Mutex<RubyValue>`, not `RefCell` --
+/// see the plan's Part 9) so every generated method can uniformly take a
+/// receiver (see "A named risk" in the plan), and so every generated struct
+/// is genuinely `Send + Sync` for `Thread`/`Ractor` to eventually use.
 ///
-/// Every method receiver is `self: Rc<Self>`, not `&self` -- Phase 6 needs
+/// Every method receiver is `self: Arc<Self>`, not `&self` -- Phase 6 needs
 /// this: a real escaping `Proc` closure that references `self`/an ivar has
 /// to capture an OWNED, `'static` handle (a `RubyValue`-stored `Proc` has no
 /// lifetime parameter anywhere in this codebase), which a borrowed `&self`
-/// can never provide. Every call site already hands over an `Rc<Concrete>`
-/// (`New`'s result, and every local/ivar holding an object, are `Rc`-wrapped
+/// can never provide. Every call site already hands over an `Arc<Concrete>`
+/// (`New`'s result, and every local/ivar holding an object, are `Arc`-wrapped
 /// from the moment they're built -- see `new_handle`'s docs below), so this
 /// costs nothing at ordinary call sites; it only removes a capability
 /// (capturing `self` into a closure) that didn't exist before.
 ///
 /// `$slf` (not a hardcoded `self`) is still captured from the caller's own
-/// tokens, exactly as before the `Rc<Self>` migration -- confirmed the hard
-/// way: a `self` written directly in THIS template is hygienically distinct
-/// from a `self` written inside the caller's `$body`, so `rustc` rejects it
-/// (`E0424`, "self value is a keyword only available in methods with a self
-/// parameter") the moment `$body` references `self.some_ivar`. Only the
-/// TYPE annotation is now fixed to `Rc<Self>` (rather than varying, since
-/// `&self` never varied either -- `$slf:tt` only ever captured the single
-/// token `self`, never its type).
+/// tokens, exactly as before the `Rc<Self>` -> `Arc<Self>` migration --
+/// confirmed the hard way: a `self` written directly in THIS template is
+/// hygienically distinct from a `self` written inside the caller's `$body`,
+/// so `rustc` rejects it (`E0424`, "self value is a keyword only available
+/// in methods with a self parameter") the moment `$body` references
+/// `self.some_ivar`. Only the TYPE annotation is now fixed to `Arc<Self>`
+/// (rather than varying, since `&self` never varied either -- `$slf:tt`
+/// only ever captured the single token `self`, never its type).
 ///
 /// `ancestors` is the full, real linearized MRO (this class first, then
 /// prepends/includes/superclass in resolution order -- see
@@ -81,30 +100,34 @@ macro_rules! ruby_class {
             id: $id:expr;
             ancestors: [ $($anc:expr),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
-            $( def $method:ident ( $slf:tt : std::rc::Rc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
+            $( def $method:ident ( $slf:tt : std::sync::Arc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
             dispatch { $( $dname:literal => $tramp:expr ),* $(,)? }
         }
     ) => {
         pub struct $name {
-            $( pub $ivar: std::cell::RefCell<$crate::RubyValue>, )*
+            $( pub $ivar: $crate::parking_lot::Mutex<$crate::RubyValue>, )*
         }
 
         impl $name {
             pub const CLASS_ID: $crate::ClassId = $crate::ClassId($id);
 
-            /// Accepts an already-`Rc`-wrapped value (never `Self` by value):
-            /// generated code stores every `New`-constructed object as
-            /// `Rc<ConcreteStruct>` from the moment it's built (see
+            /// Accepts an already-`Arc`-wrapped value (never `Self` by
+            /// value): generated code stores every `New`-constructed object
+            /// as `Arc<ConcreteStruct>` from the moment it's built (see
             /// `codegen::call::emit_new`), so that a local variable holding
             /// it can be read more than once via a cheap, identity-preserving
-            /// `Rc::clone()` rather than needing (and not having) a `Clone`
+            /// `Arc::clone()` rather than needing (and not having) a `Clone`
             /// impl on the bare struct itself -- deriving one naively would
-            /// deep-copy each `RefCell` ivar, breaking Ruby's shared-mutable-
+            /// deep-copy each `Mutex` ivar, breaking Ruby's shared-mutable-
             /// object-identity semantics (`b = Box.new(1); c = b` must alias,
             /// not duplicate). This just returns `inner` unchanged, relying on
-            /// `Rc<Concrete> -> Rc<dyn RubyObject>` unsized coercion at the
-            /// return site to produce `RObj`.
-            pub fn new_handle(inner: std::rc::Rc<Self>) -> $crate::RObj {
+            /// `Arc<Concrete> -> Arc<dyn RubyObject>` unsized coercion at the
+            /// return site to produce `RObj`. `Arc` (not `Rc`, Part 9): every
+            /// generated struct is genuinely `Send + Sync` once its fields
+            /// are `Mutex`-wrapped, needed for `Thread`/`Ractor` to ever cross
+            /// a real OS thread boundary -- no `unsafe impl` involved, this
+            /// falls out of ordinary auto-trait derivation.
+            pub fn new_handle(inner: std::sync::Arc<Self>) -> $crate::RObj {
                 inner
             }
 
@@ -117,14 +140,14 @@ macro_rules! ruby_class {
                 // method body is a `?`-propagation boundary for non-local
                 // control flow from the first breadth phase onward, not just
                 // once `raise`/escaping `Proc`s exist (see `signal.rs`).
-                pub fn $method($slf: std::rc::Rc<Self> $(, $arg: $arg_ty)*) -> Result<$crate::RubyValue, $crate::Signal> $body
+                pub fn $method($slf: std::sync::Arc<Self> $(, $arg: $arg_ty)*) -> Result<$crate::RubyValue, $crate::Signal> $body
             )*
         }
 
         impl $crate::RubyObject for $name {
             fn class_id(&self) -> $crate::ClassId { Self::CLASS_ID }
             fn as_any(&self) -> &dyn std::any::Any { self }
-            fn as_any_rc(self: std::rc::Rc<Self>) -> std::rc::Rc<dyn std::any::Any> { self }
+            fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
         }
 
         impl $name {
@@ -176,8 +199,8 @@ mod tests {
             id: 1;
             ancestors: [1, 0];
             ivars { x }
-            def initialize(self: std::rc::Rc<Self>, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
-            def x(self: std::rc::Rc<Self>) { Ok(self.x.borrow().clone()) }
+            def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = x; Ok(RubyValue::Nil) }
+            def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone()) }
             dispatch {
                 "initialize" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
@@ -202,8 +225,8 @@ mod tests {
             id: 2;
             ancestors: [2, 0];
             ivars { }
-            def hello(self: std::rc::Rc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
-            def method_missing(self: std::rc::Rc<Self>, name: RubyValue) {
+            def hello(self: std::sync::Arc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
+            def method_missing(self: std::sync::Arc<Self>, name: RubyValue) {
                 Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
             }
             dispatch {
@@ -225,18 +248,30 @@ mod tests {
         }
     }
 
+    /// The class registry is now a genuinely process-wide `OnceLock` (Part
+    /// 9), correctly rejecting a second install -- exactly the "install
+    /// once, from `main()`, before anything else runs" contract a real
+    /// generated program relies on. Rust's test harness runs each `#[test]`
+    /// on its own OS thread, so more than one test in this module calling
+    /// `install()` would previously "work" only because each thread's own
+    /// `thread_local!` gave it an independent (and therefore untested-
+    /// against-each-other) copy -- `std::sync::Once` makes the test helper
+    /// itself match the real one-time-installation contract instead.
     fn install() {
-        let mut registry = ClassRegistry::new();
-        registry.register(Object::CLASS_ID, vec![Object::CLASS_ID]);
-        Point::__register(&mut registry);
-        Greeter::__register(&mut registry);
-        install_class_registry(registry);
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let mut registry = ClassRegistry::new();
+            registry.register(Object::CLASS_ID, vec![Object::CLASS_ID]);
+            Point::__register(&mut registry);
+            Greeter::__register(&mut registry);
+            install_class_registry(registry);
+        });
     }
 
     #[test]
     fn static_path_stores_and_reads_ivar() {
-        let p = std::rc::Rc::new(Point {
-            x: std::cell::RefCell::new(RubyValue::Nil),
+        let p = std::sync::Arc::new(Point {
+            x: parking_lot::Mutex::new(RubyValue::Nil),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
@@ -247,8 +282,8 @@ mod tests {
 
     #[test]
     fn new_handle_erases_to_a_trait_object() {
-        let handle: RObj = Point::new_handle(std::rc::Rc::new(Point {
-            x: std::cell::RefCell::new(RubyValue::Int(7)),
+        let handle: RObj = Point::new_handle(std::sync::Arc::new(Point {
+            x: parking_lot::Mutex::new(RubyValue::Int(7)),
         }));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
@@ -256,7 +291,7 @@ mod tests {
     #[test]
     fn dynamic_send_finds_registered_method() {
         install();
-        let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {}));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
@@ -264,8 +299,25 @@ mod tests {
     #[test]
     fn dynamic_send_falls_back_to_method_missing() {
         install();
-        let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {}));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
+    }
+
+    /// Part 9 (Send+Sync migration) regression guard: fails to compile if
+    /// `RubyValue`, `Signal`, or a generated class ever regains an `Rc`/
+    /// `RefCell` anywhere in its type graph -- catches the mistake via the
+    /// type system immediately, rather than silently reintroducing a
+    /// `!Send`/`!Sync` blocker.
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn core_types_are_send_and_sync() {
+        assert_send_sync::<RubyValue>();
+        assert_send_sync::<Signal>();
+        assert_send_sync::<Point>();
+        assert_send_sync::<Greeter>();
+        assert_send_sync::<RObj>();
+        assert_send_sync::<RProc>();
     }
 }

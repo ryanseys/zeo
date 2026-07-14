@@ -50,7 +50,9 @@ All 31 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
 `spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
 spawn for the compiler itself) that's now the default place to add coverage.
 Zero `unsafe` code in `spinelc` or `spinel-rt` (parsing safety is delegated
-entirely to the `ruby-prism` crate). See
+entirely to the `ruby-prism` crate; every `RubyValue`/generated class is
+genuinely `Send + Sync` via `Arc`/`parking_lot::Mutex`, needing no
+`unsafe impl` anywhere -- see the plan's Part 9). See
 [`docs/PORTING_ANALYSIS.md`](docs/PORTING_ANALYSIS.md) for the full
 feasibility analysis, design rationale, and phased roadmap beyond this spike.
 

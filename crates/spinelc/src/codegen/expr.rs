@@ -263,13 +263,18 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // docs -- `let self = ...;` is illegal Rust, so the closure
             // clones into a DIFFERENT name).
             let slf = &cx.self_ident;
-            quote! { #slf.#ident.borrow().clone() }
+            quote! { #slf.#ident.lock().clone() }
         }
         HirNode::IvarWrite(name, value) => {
             let ident = safe_ident(name);
             let v = emit_expr(cx, *value);
             let slf = &cx.self_ident;
-            quote! { { let __v = #v; *#slf.#ident.borrow_mut() = __v.clone(); __v } }
+            // RHS bound to `__v` BEFORE `.lock()` is ever called -- with
+            // `parking_lot::Mutex` (non-reentrant, Part 9), a `#v` expression
+            // that itself reads this same ivar would otherwise call `.lock()`
+            // while the write guard below is already held, hanging forever
+            // instead of RefCell's old clean "already borrowed" panic.
+            quote! { { let __v = #v; *#slf.#ident.lock() = __v.clone(); __v } }
         }
         HirNode::ClassVarRead(name) => {
             let owner = cvar_owner_id(cx, name);
@@ -473,7 +478,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
     }
 }
 
-/// `emit_new_with_arg_tokens` returns a bare, unboxed `Rc<Concrete>` (the
+/// `emit_new_with_arg_tokens` returns a bare, unboxed `Arc<Concrete>` (the
 /// same representation an ordinary `ClassName.new(...)` expression has --
 /// see that function's docs); `Signal::Raise` needs a real `RubyValue`, so
 /// this boxes it the same way `emit_safe_call` already does for its own

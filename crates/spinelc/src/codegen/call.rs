@@ -179,21 +179,22 @@ pub fn emit_new_with_arg_tokens(
 
     let fields = ci.ivars.iter().map(|iv| {
         let f = safe_ident(iv);
-        quote! { #f: std::cell::RefCell::new(spinel_rt::RubyValue::Nil), }
+        quote! { #f: spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil), }
     });
-    // Wrapped in `Rc` immediately, not just at `new_handle` time: a local
-    // holding this needs to be `Rc::clone()`-able on every re-read
+    // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
+    // holding this needs to be `Arc::clone()`-able on every re-read
     // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
-    // for why the bare struct can't just derive `Clone` instead). `Rc<T>`
+    // for why the bare struct can't just derive `Clone` instead). `Arc<T>`
     // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
-    // work unchanged against a `self: Rc<Self>`-shaped method.
-    let ctor = quote! { std::rc::Rc::new(#class_ident { #(#fields)* }) };
+    // work unchanged against a `self: Arc<Self>`-shaped method. `Arc` (not
+    // `Rc`, Part 9): every generated struct is genuinely `Send + Sync`.
+    let ctor = quote! { std::sync::Arc::new(#class_ident { #(#fields)* }) };
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some(_) => {
-            // `initialize` takes `self: Rc<Self>` BY VALUE now (see
+            // `initialize` takes `self: Arc<Self>` BY VALUE now (see
             // `ruby_class!`'s docs), so calling it on `__obj` directly would
-            // move it -- clone the `Rc` handle first (a cheap refcount bump,
+            // move it -- clone the `Arc` handle first (a cheap refcount bump,
             // not a deep copy) so `__obj` is still available to return.
             quote! { { let __obj = #ctor; __obj.clone().initialize(#(#arg_exprs),*)?; __obj } }
         }
@@ -305,7 +306,7 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
 ///
 /// Capture strategy: `codegen::captures::block_captures` finds every name
 /// this SPECIFIC block references. Names ALSO in `cx.captured_locals` (i.e.
-/// genuinely shared with code outside the block) get a `Rc::clone` into a
+/// genuinely shared with code outside the block) get an `Arc::clone` into a
 /// same-named local right before the closure, then `move`d in -- the
 /// closure body's ordinary `emit_local_read`/`write` codegen (via
 /// `cx.captured_locals`, unchanged inside the closure) transparently
@@ -313,7 +314,7 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
 /// block-OWNED locals (fresh every invocation, confirmed against real Ruby
 /// -- see `hoisting::emit_proc_own_locals_prelude`'s docs) and get their own
 /// declaration INSIDE the closure instead. `self`/ivar references clone an
-/// owned `Rc<Self>` handle the same way (`self_ident` cannot be `let`-bound
+/// owned `Arc<Self>` handle the same way (`self_ident` cannot be `let`-bound
 /// directly -- see `Ctx::in_proc`'s docs).
 ///
 /// `redo`/`next` never escape the closure (caught by the wrapping labeled
@@ -331,7 +332,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     genuine.sort();
     let capture_clones = genuine.iter().map(|name| {
         let ident = safe_ident(name);
-        quote! { let #ident = ::std::rc::Rc::clone(&#ident); }
+        quote! { let #ident = ::std::sync::Arc::clone(&#ident); }
     });
     let own_only: std::collections::HashSet<String> = block_caps
         .locals
@@ -343,7 +344,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let needs_self = block_caps.self_captured;
     let self_clone = needs_self.then(|| {
         let slf = &cx.self_ident;
-        quote! { let __self = ::std::rc::Rc::clone(&#slf); }
+        quote! { let __self = ::std::sync::Arc::clone(&#slf); }
     });
 
     let proc_cx = cx.in_proc(needs_self);
@@ -352,7 +353,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
         super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"));
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
     // this block references (including the genuine captures above) and
-    // declare them AGAIN, shadowing the shared `Rc::clone`s just captured
+    // declare them AGAIN, shadowing the shared `Arc::clone`s just captured
     // with brand-new empty cells. `own_locals_prelude` already handles the
     // one case that genuinely needs a fresh declaration.
     let body_tokens = super::stmt::emit_body(&proc_cx, body, true);
@@ -362,7 +363,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
         {
             #(#capture_clones)*
             #self_clone
-            spinel_rt::RubyValue::Proc(::std::rc::Rc::new(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            spinel_rt::RubyValue::Proc(::std::sync::Arc::new(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 #redo_label: loop {
                     let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                         #own_locals_prelude
@@ -516,7 +517,7 @@ fn emit_class_method_call(
 /// known and constructed via `New`, or an already-boxed `RubyValue` when
 /// it's dynamically typed. Checking "is it nil" needs one uniform runtime
 /// representation either way, so a statically-known-class receiver gets
-/// boxed into `RubyValue::Object` here (an otherwise-avoidable `Rc`
+/// boxed into `RubyValue::Object` here (an otherwise-avoidable `Arc`
 /// allocation this specific call site pays for `&.`'s uniformity) before the
 /// same nil-check-then-`send` logic runs regardless of which case it was.
 fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> TokenStream {
@@ -719,7 +720,7 @@ fn dispatch(
             }
         }
         // A statically-known class needs boxing into an `RObj` handle first
-        // (`recv_expr` is an unboxed `Rc<Concrete>` there); a `Poly` receiver
+        // (`recv_expr` is an unboxed `Arc<Concrete>` there); a `Poly` receiver
         // is ALREADY a `RubyValue::Object(...)` at runtime (e.g. a `rescue`
         // clause's exception binding -- see `codegen::exceptions`'s docs for
         // why that's never narrowed to a concrete class), so it just needs

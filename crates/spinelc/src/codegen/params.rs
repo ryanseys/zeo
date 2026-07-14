@@ -78,8 +78,8 @@ pub fn emit_signature_params(params: &Params, needs_block: bool) -> TokenStream 
 /// NOT absent, unlike every other kind's `None`-becomes-a-default rule).
 /// Finally, ANY of this method's own parameter names that some escaping
 /// block inside its body captures (see `codegen::captures`) get one more
-/// wrapping shadow into `Rc<RefCell<RubyValue>>` -- captured method
-/// PARAMETERS need this too, not just captured plain locals, since
+/// wrapping shadow into `Arc<parking_lot::Mutex<RubyValue>>` -- captured
+/// method PARAMETERS need this too, not just captured plain locals, since
 /// `codegen::hoisting`'s prelude only ever sees names `collect_locals` finds
 /// (which never includes a method's own params -- they're bound via the
 /// Rust fn signature, not that prelude).
@@ -130,8 +130,8 @@ pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
     let captured_param_wraps = captured_params.into_iter().map(|name| {
         let ident = safe_ident(name);
         quote! {
-            let #ident: std::rc::Rc<std::cell::RefCell<spinel_rt::RubyValue>> =
-                std::rc::Rc::new(std::cell::RefCell::new(#ident));
+            let #ident: std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(#ident));
         }
     });
     quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* #(#block)* #(#captured_param_wraps)* }
@@ -569,7 +569,7 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
                 Some(spinel_rt::RubyValue::Hash(__h)) => {
                     let __declared: &[&str] = &[#(#kw_names),*];
                     spinel_rt::RubyValue::Hash(spinel_rt::hash_new(
-                        __h.borrow()
+                        __h.lock()
                             .iter()
                             .filter(|(k, _)| match k {
                                 spinel_rt::RubyValue::Symbol(__s) => !__declared.contains(&__s.name().as_str()),

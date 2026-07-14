@@ -46,13 +46,13 @@ impl RubyValue {
             RubyValue::Bool(b) => b.to_string(),
             RubyValue::Int(i) => i.to_string(),
             RubyValue::Symbol(s) => s.name(),
-            RubyValue::Str(s) => s.borrow().clone(),
+            RubyValue::Str(s) => s.lock().clone(),
             // `puts` on an `Array` recursively flattens and prints each
             // element on its own line (not `[1, 2, 3]`, which is `inspect`'s
             // job, not `to_s`'s) -- real, verified CRuby behavior, not a
             // simplification.
             RubyValue::Array(a) => a
-                .borrow()
+                .lock()
                 .iter()
                 .map(RubyValue::to_display_string)
                 .collect::<Vec<_>>()
@@ -65,7 +65,7 @@ impl RubyValue {
             // documented simplification, not silent wrongness.
             RubyValue::Hash(h) => {
                 let body = h
-                    .borrow()
+                    .lock()
                     .iter()
                     .map(|(k, v)| match k {
                         RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.to_display_string()),
@@ -212,7 +212,7 @@ impl RubyValue {
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
             (RubyValue::Int(a), RubyValue::Int(b)) => a == b,
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
-            (RubyValue::Str(a), RubyValue::Str(b)) => *a.borrow() == *b.borrow(),
+            (RubyValue::Str(a), RubyValue::Str(b)) => *a.lock() == *b.lock(),
             _ => false,
         }
     }

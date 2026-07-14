@@ -47,7 +47,7 @@ use quote::quote;
 pub enum LocalStorage {
     /// A concrete class-instance local (`TyKind::Object`, e.g. `x =
     /// SomeClass.new`) -- Rust already infers this as an unboxed
-    /// `Rc<ConcreteClass>` (not `RubyValue`) directly from its own
+    /// `Arc<ConcreteClass>` (not `RubyValue`) directly from its own
     /// assignment expression, and `ruby_class!`'s whole "Path 1 static
     /// dispatch on a concrete Rust type" design depends on that unboxing --
     /// uniformly hoisting every local as `RubyValue` would break it
@@ -55,7 +55,7 @@ pub enum LocalStorage {
     /// `Box.new(...)`-assigned-to-a-local case). Takes priority over
     /// `Captured` even if some escaping block also references this name:
     /// object *identity* (and therefore ivar mutation through it) already
-    /// flows correctly via the shared `Rc` with no cell-wrapping needed --
+    /// flows correctly via the shared `Arc` with no cell-wrapping needed --
     /// only *reassigning the local's own binding* from inside a closure
     /// wouldn't propagate back out, the SAME pre-existing, narrow,
     /// documented gap as reassigning an object-typed local inside a native
@@ -65,9 +65,11 @@ pub enum LocalStorage {
     /// top of the scope, reassigned in place -- the common case.
     Hoisted,
     /// Captured by some escaping block (see `codegen::captures`) -- an
-    /// `Rc<RefCell<RubyValue>>` cell, declared once at the top of the
-    /// scope and shared (via `Rc::clone`) with every escaping closure that
-    /// references this name, so a mutation from inside the closure is
+    /// `Arc<parking_lot::Mutex<RubyValue>>` cell (Part 9: `Arc`/`Mutex`, not
+    /// `Rc`/`RefCell`, so a captured local is genuinely `Send + Sync` if a
+    /// `Thread`/`Ractor` ever needs it to be), declared once at the top of
+    /// the scope and shared (via `Arc::clone`) with every escaping closure
+    /// that references this name, so a mutation from inside the closure is
     /// visible to the enclosing scope and vice versa (real Ruby closure
     /// semantics, not a snapshot).
     Captured,
@@ -84,12 +86,12 @@ pub fn local_storage(cx: &Ctx, name: &str) -> LocalStorage {
 }
 
 /// A local-variable READ, e.g. a bare `x` -- the one place that decides
-/// between `x.clone()` (`Hoisted`/`Shadowed`) and `x.borrow().clone()`
+/// between `x.clone()` (`Hoisted`/`Shadowed`) and `x.lock().clone()`
 /// (`Captured`).
 pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
     let ident = safe_ident(name);
     match local_storage(cx, name) {
-        LocalStorage::Captured => quote! { #ident.borrow().clone() },
+        LocalStorage::Captured => quote! { #ident.lock().clone() },
         LocalStorage::Hoisted | LocalStorage::Shadowed => quote! { #ident.clone() },
     }
 }
@@ -97,22 +99,25 @@ pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
 /// A local-variable WRITE (assignment statement), given the already-emitted
 /// value expression -- the one place that decides between a plain
 /// reassignment (`Hoisted`), a fresh shadowing `let` (`Shadowed`), and a
-/// `RefCell` store (`Captured`). Ends in `;` (a statement, not an
-/// expression) -- callers needing the assigned value back (an assignment
-/// used as a sub-expression) read it again afterward via `emit_local_read`.
+/// `Mutex` store (`Captured`). Ends in `;` (a statement, not an expression)
+/// -- callers needing the assigned value back (an assignment used as a
+/// sub-expression) read it again afterward via `emit_local_read`.
 pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     match local_storage(cx, name) {
         // `value` is bound to a temporary FIRST, then the store happens as
-        // its own statement -- confirmed the hard way: `*#ident.borrow_mut()
-        // = #value;` evaluates the LHS place expression (calling
-        // `borrow_mut()`, activating the mutable borrow) before evaluating
-        // `value`, so an RHS that itself reads this SAME captured name
-        // (e.g. `total += n`, i.e. `total = total + n`) would call
-        // `.borrow()` while `.borrow_mut()` is already held -- a genuine
-        // runtime `RefCell` panic ("already borrowed"), not just a style
-        // nit.
-        LocalStorage::Captured => quote! { { let __cap_v = #value; *#ident.borrow_mut() = __cap_v; } },
+        // its own statement -- confirmed the hard way (originally against
+        // `RefCell`, and still exactly as true against `parking_lot::Mutex`,
+        // Part 9 -- if anything MORE important now): `*#ident.lock() =
+        // #value;` evaluates the LHS place expression (calling `lock()`,
+        // acquiring the guard) before evaluating `value`, so an RHS that
+        // itself reads this SAME captured name (e.g. `total += n`, i.e.
+        // `total = total + n`) would call `.lock()` again while the write
+        // guard below is already held. `RefCell` turned this into a clean
+        // "already borrowed" panic; a non-reentrant `Mutex` instead HANGS
+        // FOREVER (no error at all) -- binding to a temp first avoids ever
+        // holding a guard across a nested lock attempt.
+        LocalStorage::Captured => quote! { { let __cap_v = #value; *#ident.lock() = __cap_v; } },
         LocalStorage::Hoisted => quote! { #ident = #value; },
         LocalStorage::Shadowed => quote! { let #ident = #value; },
     }
@@ -416,8 +421,8 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
                 let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
             }),
             LocalStorage::Captured => Some(quote! {
-                let #ident: std::rc::Rc<std::cell::RefCell<spinel_rt::RubyValue>> =
-                    std::rc::Rc::new(std::cell::RefCell::new(spinel_rt::RubyValue::Nil));
+                let #ident: std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                    std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil));
             }),
             LocalStorage::Shadowed => None,
         }

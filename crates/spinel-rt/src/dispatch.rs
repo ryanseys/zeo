@@ -7,9 +7,8 @@
 
 use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 
 /// Identifies a Ruby class at runtime. Mirrors spinel's struct-embedded
 /// `cls_id` field (`emit_class_struct`, codegen.c:2496).
@@ -17,8 +16,10 @@ use std::rc::Rc;
 pub struct ClassId(pub u32);
 
 /// Implemented (via `ruby_class!`) by every generated Ruby class, and by the
-/// built-in `Object` root below.
-pub trait RubyObject: Any {
+/// built-in `Object` root below. `Send + Sync` supertrait bounds (Part 9):
+/// satisfied automatically for every generated class once its own fields are
+/// `parking_lot::Mutex`-wrapped, needing no manual `unsafe impl` anywhere.
+pub trait RubyObject: Any + Send + Sync {
     fn class_id(&self) -> ClassId;
 
     /// Lets `send`'s dispatcher downcast an erased `RObj` back to its
@@ -30,23 +31,25 @@ pub trait RubyObject: Any {
     fn as_any(&self) -> &dyn Any;
 
     /// The owned-handle counterpart to `as_any` -- needed because every
-    /// generated method now takes `self: Rc<Self>` (not `&self`, see
+    /// generated method now takes `self: Arc<Self>` (not `&self`, see
     /// `ruby_class!`'s docs), so Path 2's dynamic trampolines need an
-    /// `Rc<Concrete>`, not a `&Concrete`, to actually call one. `Rc<dyn Any>`
-    /// supports a real consuming `downcast::<T>()`; `Rc<dyn RubyObject>`
-    /// doesn't (there's no such inherent method on an arbitrary trait
-    /// object), so this is the bridge -- same "no default body" reasoning as
-    /// `as_any` above.
-    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
+    /// `Arc<Concrete>`, not a `&Concrete`, to actually call one. `Arc<dyn Any
+    /// + Send + Sync>` supports a real consuming `downcast::<T>()`; `Arc<dyn
+    /// RubyObject>` doesn't (there's no such inherent method on an arbitrary
+    /// trait object), so this is the bridge -- same "no default body"
+    /// reasoning as `as_any` above.
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
 /// statically known. Mirrors spinel's boxed `sp_RbVal { tag: SP_TAG_OBJ,
 /// cls_id, v: { p } }` (`lib/sp_gc.h:42`) for the object case -- except the
 /// Rust trait object's vtable *is* the tag. Mutability lives on individual
-/// ivar fields (see `ruby_class!`), not on this handle, so no `RefCell` layer
-/// is needed here.
-pub type RObj = Rc<dyn RubyObject>;
+/// ivar fields (see `ruby_class!`), not on this handle, so no lock layer is
+/// needed here. `Arc` (not `Rc`, Part 9): every concrete `RubyObject` impl is
+/// `Send + Sync` (via the trait's own supertrait bounds above), so this type
+/// itself is genuinely `Send + Sync` -- no `unsafe impl` needed.
+pub type RObj = Arc<dyn RubyObject>;
 
 /// The root of every class hierarchy. `ClassId(0)`, no ivars, no
 /// superclass -- the base case `ruby_class!`'s `$super` bottoms out at.
@@ -63,16 +66,16 @@ impl RubyObject for Object {
     fn as_any(&self) -> &dyn Any {
         self
     }
-    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 }
 
-/// Downcasts an erased `RObj` to an owned `Rc<T>` -- the Path 2 trampoline
+/// Downcasts an erased `RObj` to an owned `Arc<T>` -- the Path 2 trampoline
 /// counterpart to `as_any().downcast_ref()`, needed because every generated
-/// method takes `self: Rc<Self>` now (see `ruby_class!`'s docs). Cloning
-/// `recv` first is a cheap `Rc` refcount bump, not a deep copy.
-pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Rc<T>> {
+/// method takes `self: Arc<Self>` now (see `ruby_class!`'s docs). Cloning
+/// `recv` first is a cheap `Arc` refcount bump, not a deep copy.
+pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Arc<T>> {
     recv.clone().as_any_rc().downcast::<T>().ok()
 }
 
@@ -150,17 +153,29 @@ impl ClassRegistry {
 /// a variable or reflected on generally), just this narrow "is this concrete
 /// class id ancestor-compatible with that one" check.
 pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
-    REGISTRY.with(|r| r.borrow().ancestors_of(recv_class).contains(&target))
+    registry().ancestors_of(recv_class).contains(&target)
 }
 
-thread_local! {
-    static REGISTRY: RefCell<ClassRegistry> = RefCell::new(ClassRegistry::new());
+/// The class registry is installed exactly once, from generated `main()`,
+/// before any `Thread`/`Ractor` spawns anything (Part 9) -- a `OnceLock`
+/// (not a `thread_local!`, unlike before the Send+Sync migration) gives
+/// lock-free reads forever after that single write, and is itself the
+/// correct semantic choice regardless of concurrency: classes/methods are
+/// genuinely process-wide-shared in real Ruby, not per-thread state.
+static REGISTRY: OnceLock<ClassRegistry> = OnceLock::new();
+
+fn registry() -> &'static ClassRegistry {
+    REGISTRY
+        .get()
+        .expect("class registry not installed -- install_class_registry must run first")
 }
 
 /// Called once from generated `main()`, after every class's `__register` has
 /// populated the registry passed in.
 pub fn install_class_registry(registry: ClassRegistry) {
-    REGISTRY.with(|r| *r.borrow_mut() = registry);
+    REGISTRY
+        .set(registry)
+        .unwrap_or_else(|_| panic!("class registry installed twice"));
 }
 
 /// The general dispatcher -- reached only on Path 2 (see module docs).
@@ -181,14 +196,14 @@ pub fn send(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
-    if let Some(f) = REGISTRY.with(|r| r.borrow().lookup(id, name)) {
+    if let Some(f) = registry().lookup(id, name) {
         return f(recv, args, block);
     }
 
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol).
     let mm = Symbol::intern("method_missing");
-    if let Some(f) = REGISTRY.with(|r| r.borrow().lookup(id, mm)) {
+    if let Some(f) = registry().lookup(id, mm) {
         let mut full_args = Vec::with_capacity(args.len() + 1);
         full_args.push(RubyValue::Symbol(name));
         full_args.extend_from_slice(args);

@@ -382,15 +382,15 @@ fn emit_array_binding(
 ) -> Option<TokenStream> {
     match scrutinee_ty {
         TyKind::Array => Some(quote! {
-            let #arr_ident: Vec<spinel_rt::RubyValue> = (#scrutinee).as_array_unchecked().borrow().clone();
+            let #arr_ident: Vec<spinel_rt::RubyValue> = (#scrutinee).as_array_unchecked().lock().clone();
         }),
         TyKind::Object(cid) if cx.compiler.method_in_chain(cid, "deconstruct").is_some() => Some(quote! {
             let #arr_ident: Vec<spinel_rt::RubyValue> =
-                (#scrutinee.clone()).deconstruct()?.as_array_unchecked().borrow().clone();
+                (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().clone();
         }),
         TyKind::Poly => Some(quote! {
             let #arr_ident: Vec<spinel_rt::RubyValue> = match &(#scrutinee) {
-                spinel_rt::RubyValue::Array(__rc) => __rc.borrow().clone(),
+                spinel_rt::RubyValue::Array(__arc) => __arc.lock().clone(),
                 _ => break #label false,
             };
         }),

@@ -11,10 +11,15 @@
 //! Must be `'static`: `RubyValue` (which stores this) has no lifetime
 //! parameter anywhere in this codebase, so anything it holds has to be
 //! independently owned, not borrowed -- this is exactly why an escaping
-//! block captures OWNED `Rc<RefCell<RubyValue>>` cells (and an owned
-//! `Rc<Self>` for `self`/ivar access) rather than references.
+//! block captures OWNED `Arc<parking_lot::Mutex<RubyValue>>` cells (and an
+//! owned `Arc<Self>` for `self`/ivar access) rather than references.
+//!
+//! `+ Send + Sync` (Part 9): a Rust closure is automatically `Send`/`Sync`
+//! based purely on what it captures -- once every capture is `Arc`/`Mutex`-
+//! based, the closures codegen generates satisfy this bound with no manual
+//! annotation needed at the construction site.
 
 use crate::{RubyValue, Signal};
-use std::rc::Rc;
+use std::sync::Arc;
 
-pub type RProc = Rc<dyn Fn(&[RubyValue]) -> Result<RubyValue, Signal>>;
+pub type RProc = Arc<dyn Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync>;

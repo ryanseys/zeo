@@ -7,9 +7,17 @@
 //! name -- however they were produced -- always compare equal. A
 //! codegen-baked static table (matching spinel exactly) is a straightforward
 //! later optimization; see `docs/PORTING_ANALYSIS.md`.
+//!
+//! Genuinely process-wide-shared (Part 9), not per-thread: real CRuby's
+//! Symbol table is shared across every `Thread`/`Ractor` -- two threads
+//! interning `:foo` must get the SAME id, which a `thread_local!` interner
+//! could never guarantee (each thread would build its own independent
+//! table). Migrated to a `LazyLock<Mutex<_>>` static for this reason, not
+//! just as a mechanical `Rc`->`Arc` swap.
 
-use std::cell::RefCell;
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Symbol(u32);
@@ -20,29 +28,25 @@ struct Interner {
     by_name: HashMap<String, u32>,
 }
 
-thread_local! {
-    static INTERNER: RefCell<Interner> = RefCell::new(Interner::default());
-}
+static INTERNER: LazyLock<Mutex<Interner>> = LazyLock::new(|| Mutex::new(Interner::default()));
 
 impl Symbol {
     /// Mirrors `sp_sym_intern` (codegen.c:4470): look up or insert `name`,
     /// returning a stable id either way.
     pub fn intern(name: &str) -> Symbol {
-        INTERNER.with(|i| {
-            let mut i = i.borrow_mut();
-            if let Some(&id) = i.by_name.get(name) {
-                return Symbol(id);
-            }
-            let id = i.names.len() as u32;
-            i.names.push(name.to_string());
-            i.by_name.insert(name.to_string(), id);
-            Symbol(id)
-        })
+        let mut i = INTERNER.lock();
+        if let Some(&id) = i.by_name.get(name) {
+            return Symbol(id);
+        }
+        let id = i.names.len() as u32;
+        i.names.push(name.to_string());
+        i.by_name.insert(name.to_string(), id);
+        Symbol(id)
     }
 
     /// Mirrors `sp_sym_to_s`.
     pub fn name(&self) -> String {
-        INTERNER.with(|i| i.borrow().names[self.0 as usize].clone())
+        INTERNER.lock().names[self.0 as usize].clone()
     }
 }
 

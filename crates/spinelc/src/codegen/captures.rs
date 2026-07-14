@@ -7,7 +7,7 @@
 //! (method/top-level body) containing zero or more escaping blocks, which
 //! enclosing LOCAL NAMES (and possibly `self`) do they collectively need to
 //! capture, so `codegen::hoisting` knows which locals need the `Captured`
-//! (`Rc<RefCell<RubyValue>>`) storage class instead of a plain hoisted `let
+//! (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a plain hoisted `let
 //! mut`?
 
 use super::call::is_times_fast_path;
@@ -35,7 +35,7 @@ pub struct Captures {
 /// name a BLOCK's OWN parameter, not something captured from its enclosing
 /// scope". Mirrors `codegen::params`'s own per-kind enumeration. Also reused
 /// by `codegen::params::emit_prologue` to decide which of a METHOD's own
-/// parameter names need the additional `Rc<RefCell<_>>`-wrapping shadow
+/// parameter names need the additional `Arc<parking_lot::Mutex<_>>`-wrapping shadow
 /// (when captured by one of ITS OWN escaping blocks).
 pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
     let mut names: HashSet<String> = HashSet::new();
