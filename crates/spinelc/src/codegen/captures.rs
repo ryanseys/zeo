@@ -232,6 +232,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
@@ -343,6 +344,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
@@ -621,6 +623,7 @@ fn walk(
         }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)

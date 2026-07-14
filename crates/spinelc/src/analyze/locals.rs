@@ -291,6 +291,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)

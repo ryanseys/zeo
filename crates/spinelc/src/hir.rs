@@ -411,6 +411,10 @@ pub enum StrPart {
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
+    /// A real `f64` payload -- `HirNode` itself derives no `Eq`/`Hash` (see
+    /// this enum's own docs), so an un-`Eq`-able float here is no different
+    /// from `IntegerLit`'s `i64` in that respect.
+    FloatLit(f64),
     SymbolLit(String),
     /// `nil` -- previously unrepresentable (no example needed it before
     /// Phase 8), but `case/in`'s `Pattern::Value` fallback needs `in nil` to

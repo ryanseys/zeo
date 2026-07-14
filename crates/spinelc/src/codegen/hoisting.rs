@@ -381,6 +381,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)

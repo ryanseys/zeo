@@ -456,6 +456,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::SelfRef
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)

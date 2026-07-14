@@ -103,6 +103,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::BlockGiven
         | HirNode::Raise(_) => Some("method"),
         HirNode::IntegerLit(_)
+        | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
@@ -214,6 +215,7 @@ fn emit_case_when(
 pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     match &cx.compiler.hir[id] {
         HirNode::IntegerLit(v) => quote! { spinel_rt::RubyValue::Int(#v) },
+        HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }
         }

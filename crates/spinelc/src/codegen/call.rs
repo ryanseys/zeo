@@ -68,6 +68,28 @@ const INT_UNARY_OPS: &[(&str, &str)] = &[
     ("~", "int_bnot"),
 ];
 
+/// Same shape as `INT_BINARY_OPS`, minus the bitwise/shift operators (real
+/// Ruby's `Float` has none of those) -- `<=>` is deliberately NOT here (see
+/// its own dedicated check in `dispatch`): a `Float` comparison against
+/// `NaN` returns `nil`, not an `Int`, which this table's uniform
+/// "op -> one wrapper variant" shape can't express.
+const FLOAT_BINARY_OPS: &[(&str, &str, &str)] = &[
+    ("+", "float_add", "Float"),
+    ("-", "float_sub", "Float"),
+    ("*", "float_mul", "Float"),
+    ("/", "float_div", "Float"),
+    ("%", "float_mod", "Float"),
+    ("**", "float_pow", "Float"),
+    ("==", "float_eq", "Bool"),
+    ("!=", "float_neq", "Bool"),
+    ("<", "float_lt", "Bool"),
+    (">", "float_gt", "Bool"),
+    ("<=", "float_le", "Bool"),
+    (">=", "float_ge", "Bool"),
+];
+
+const FLOAT_UNARY_OPS: &[(&str, &str)] = &[("-@", "float_neg"), ("+@", "float_pos")];
+
 /// `Array`/`Hash`/`Str`/`Range`'s minimal built-in method set (Phase 3 --
 /// see `spinel_rt::collections`'s module docs for the deliberate scope-cut:
 /// `[]`/`[]=`/`length` only, no Enumerable). `a[i]`/`a[i] = v` are ordinary
@@ -968,6 +990,62 @@ fn dispatch(
         }
     }
 
+    // Native `Float` arithmetic/comparison, INCLUDING mixed `Int`/`Float`
+    // operands (Ruby's own numeric-tower promotion: `1 + 2.0` promotes the
+    // `Int` side to `f64` before operating, same as `Float`-`Float`).
+    // Reached only when the Int-Int fast path above didn't match (an
+    // Int-Int pair already returned), so this only ever needs to check "is
+    // at least one side Float, and is the other Int or Float".
+    if no_kwargs && args.len() == 1 {
+        let recv_ty = infer(cx, recv_id);
+        let arg_ty = infer(cx, args[0]);
+        let is_float_op = matches!(
+            (recv_ty, arg_ty),
+            (TyKind::Float, TyKind::Float) | (TyKind::Float, TyKind::Int) | (TyKind::Int, TyKind::Float)
+        );
+        if is_float_op {
+            let arg_expr = emit_expr(cx, args[0]);
+            let recv_f = match recv_ty {
+                TyKind::Float => quote! { (#recv_expr).as_float_unchecked() },
+                _ => quote! { (#recv_expr).as_int_unchecked() as f64 },
+            };
+            let arg_f = match arg_ty {
+                TyKind::Float => quote! { (#arg_expr).as_float_unchecked() },
+                _ => quote! { (#arg_expr).as_int_unchecked() as f64 },
+            };
+            // `<=>` isn't in `FLOAT_BINARY_OPS` (see its docs) -- a `NaN`
+            // comparison returns `nil`, not an `Int`.
+            if name == "<=>" {
+                return quote! {
+                    match spinel_rt::float_cmp(#recv_f, #arg_f) {
+                        Some(__n) => spinel_rt::RubyValue::Int(__n),
+                        None => spinel_rt::RubyValue::Nil,
+                    }
+                };
+            }
+            if let Some(&(_, rt_fn, result_ty)) = FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
+                let func = format_ident!("{rt_fn}");
+                let wrapper = format_ident!("{result_ty}");
+                return quote! {
+                    spinel_rt::RubyValue::#wrapper(spinel_rt::#func(#recv_f, #arg_f))
+                };
+            }
+        }
+    }
+
+    // Native `Float` unary operators (`-@`/`+@` -- no `~`, real Ruby's
+    // `Float` has none), same eligibility rule.
+    if no_kwargs && args.is_empty() {
+        if let Some(&(_, rt_fn)) = FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
+            if infer(cx, recv_id) == TyKind::Float {
+                let func = format_ident!("{rt_fn}");
+                return quote! {
+                    spinel_rt::RubyValue::Float(spinel_rt::#func((#recv_expr).as_float_unchecked()))
+                };
+            }
+        }
+    }
+
     if no_kwargs {
         if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
             return tokens;
@@ -1118,7 +1196,12 @@ fn dispatch(
     // exactly the same built-in `Int` op tables above, not a general
     // dynamic multi-method dispatch system (which would also need to
     // resolve a runtime String/Array/user-`Object`'s own `+`/`<=>` -- a
-    // separably-scoped, much larger feature). `recv_class.is_none()` only
+    // separably-scoped, much larger feature). Deliberately `Int`-ONLY, not
+    // extended to `Float`/mixed here -- unlike the fully-static fast path
+    // above, `Float` support isn't extended into this ALREADY-narrow runtime
+    // fallback (a documented, narrower-still scope-cut: a Poly-typed
+    // parameter doing float arithmetic falls through to the final
+    // "unsupported call" panic below instead of working). `recv_class.is_none()` only
     // (a known Object class's own operator overload, if any, already took
     // priority above); real Ruby can't catch a type mismatch here
     // statically either, so a clear runtime panic (not a raised exception,

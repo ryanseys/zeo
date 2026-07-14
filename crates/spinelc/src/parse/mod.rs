@@ -362,6 +362,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::IntegerLit(value)));
     }
 
+    if let Some(float) = node.as_float_node() {
+        return Ok(hir.push(HirNode::FloatLit(float.value())));
+    }
+
     if let Some(sym) = node.as_symbol_node() {
         let name = String::from_utf8_lossy(sym.unescaped()).into_owned();
         return Ok(hir.push(HirNode::SymbolLit(name)));

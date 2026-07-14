@@ -13,6 +13,7 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TyKind {
     Int,
+    Float,
     Symbol,
     Str,
     Array,
@@ -68,6 +69,7 @@ pub fn infer_type_with_locals(
 ) -> TyKind {
     match &compiler.hir[id] {
         HirNode::IntegerLit(_) => TyKind::Int,
+        HirNode::FloatLit(_) => TyKind::Float,
         HirNode::SymbolLit(_) => TyKind::Symbol,
         HirNode::StringLit(_) => TyKind::Str,
         HirNode::ArrayLit(_) => TyKind::Array,

@@ -13,6 +13,7 @@ pub enum RubyValue {
     Nil,
     Bool(bool),
     Int(i64),
+    Float(f64),
     Symbol(Symbol),
     Str(RStr),
     Array(RArray),
@@ -38,6 +39,27 @@ impl std::fmt::Debug for RubyValue {
     }
 }
 
+/// Mirrors real Ruby's `Float#to_s`: unlike Rust's own `f64::to_string()`
+/// (which omits the decimal point entirely for a whole number, e.g. `"1"`
+/// for `1.0`), Ruby always shows at least one digit after the point
+/// (`"1.0"`). A documented approximation, not a byte-for-byte match of
+/// Ruby's own shortest-round-trip-vs-scientific-notation threshold rules --
+/// same posture as this module's other narrower-than-real-Ruby formatting.
+fn float_to_display_string(f: f64) -> String {
+    if f.is_nan() {
+        return "NaN".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
+    }
+    let s = f.to_string();
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        s
+    } else {
+        format!("{s}.0")
+    }
+}
+
 impl RubyValue {
     /// Mirrors `sp_*_to_s`/CRuby's `Kernel#puts` argument stringification.
     pub fn to_display_string(&self) -> String {
@@ -45,6 +67,7 @@ impl RubyValue {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
             RubyValue::Int(i) => i.to_string(),
+            RubyValue::Float(f) => float_to_display_string(*f),
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().clone(),
             // `puts` on an `Array` recursively flattens and prints each
@@ -110,6 +133,14 @@ impl RubyValue {
         match self {
             RubyValue::Int(i) => *i,
             other => panic!("expected an Int, got {}", other.to_display_string()),
+        }
+    }
+
+    /// Unwraps a `Float` payload -- same posture as `as_int_unchecked`.
+    pub fn as_float_unchecked(&self) -> f64 {
+        match self {
+            RubyValue::Float(f) => *f,
+            other => panic!("expected a Float, got {}", other.to_display_string()),
         }
     }
 
@@ -211,6 +242,13 @@ impl RubyValue {
             (RubyValue::Nil, RubyValue::Nil) => true,
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
             (RubyValue::Int(a), RubyValue::Int(b)) => a == b,
+            (RubyValue::Float(a), RubyValue::Float(b)) => a == b,
+            // Real Ruby: `1 == 1.0` is `true` -- Int/Float compare
+            // numerically across the mixed numeric tower, not just
+            // same-variant pairs.
+            (RubyValue::Int(a), RubyValue::Float(b)) | (RubyValue::Float(b), RubyValue::Int(a)) => {
+                *a as f64 == *b
+            }
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
             (RubyValue::Str(a), RubyValue::Str(b)) => *a.lock() == *b.lock(),
             _ => false,

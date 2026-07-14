@@ -131,3 +131,72 @@ pub fn int_cmp(a: i64, b: i64) -> i64 {
         std::cmp::Ordering::Greater => 1,
     }
 }
+
+/// Native `f64` arithmetic/comparison, mirroring `int_*` above -- see
+/// `codegen::call`'s `FLOAT_BINARY_OPS`/mixed-`Int`/`Float`-promotion table.
+/// No overflow/`Bignum` concerns (`f64` saturates to `inf`, matching real
+/// Ruby's own `Float` behavior exactly, unlike `Integer`'s raise-on-overflow
+/// default) -- these are plain, unchecked IEEE 754 operations.
+pub fn float_add(a: f64, b: f64) -> f64 {
+    a + b
+}
+pub fn float_sub(a: f64, b: f64) -> f64 {
+    a - b
+}
+pub fn float_mul(a: f64, b: f64) -> f64 {
+    a * b
+}
+pub fn float_div(a: f64, b: f64) -> f64 {
+    a / b
+}
+
+/// Ruby's `Float#%` takes the sign of the divisor (floored modulo), same
+/// rule as `int_mod` -- unlike Rust's `%` (truncated remainder, C `fmod`
+/// semantics).
+pub fn float_mod(a: f64, b: f64) -> f64 {
+    let r = a % b;
+    if r != 0.0 && (r < 0.0) != (b < 0.0) {
+        r + b
+    } else {
+        r
+    }
+}
+pub fn float_pow(a: f64, b: f64) -> f64 {
+    a.powf(b)
+}
+pub fn float_neg(a: f64) -> f64 {
+    -a
+}
+pub fn float_pos(a: f64) -> f64 {
+    a
+}
+pub fn float_eq(a: f64, b: f64) -> bool {
+    a == b
+}
+pub fn float_neq(a: f64, b: f64) -> bool {
+    a != b
+}
+pub fn float_lt(a: f64, b: f64) -> bool {
+    a < b
+}
+pub fn float_gt(a: f64, b: f64) -> bool {
+    a > b
+}
+pub fn float_le(a: f64, b: f64) -> bool {
+    a <= b
+}
+pub fn float_ge(a: f64, b: f64) -> bool {
+    a >= b
+}
+
+/// Mirrors `Float#<=>`: -1/0/1, or `nil` for a `NaN` comparison (real Ruby's
+/// actual behavior -- `Float::NAN <=> 1.0` is `nil`, not an arbitrary
+/// ordering). Returns `Option<i64>` (unlike `int_cmp`'s infallible `i64`)
+/// for exactly this reason; `codegen::call` maps `None` to `RubyValue::Nil`.
+pub fn float_cmp(a: f64, b: f64) -> Option<i64> {
+    a.partial_cmp(&b).map(|o| match o {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    })
+}
