@@ -718,10 +718,20 @@ fn dispatch(
                 }
             }
         }
-        let cid = recv_class.unwrap_or_else(|| {
-            panic!("dynamic `send` on a receiver of unknown static class (spike scope)")
-        });
-        let class_ident = safe_ident(&cx.compiler.class(cid).name);
+        // A statically-known class needs boxing into an `RObj` handle first
+        // (`recv_expr` is an unboxed `Rc<Concrete>` there); a `Poly` receiver
+        // is ALREADY a `RubyValue::Object(...)` at runtime (e.g. a `rescue`
+        // clause's exception binding -- see `codegen::exceptions`'s docs for
+        // why that's never narrowed to a concrete class), so it just needs
+        // unwrapping, not a fabricated `new_handle` call (which would need a
+        // compile-time class name we don't have here).
+        let recv_obj_expr = match recv_class {
+            Some(cid) => {
+                let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                quote! { #class_ident::new_handle(#recv_expr) }
+            }
+            None => quote! { (#recv_expr).as_object_unchecked() },
+        };
         let name_expr = emit_symbol_expr(cx, args[0]);
         let rest_args = args[1..].iter().map(|&a| emit_expr(cx, a));
         let block_value = emit_block_option(cx, block, block_arg);
@@ -731,7 +741,7 @@ fn dispatch(
         // whether it might invoke a block -- the match is a cheap no-op
         // when no `Signal::Break` was actually raised.
         return quote! {
-            spinel_rt::catch_break(spinel_rt::send(&#class_ident::new_handle(#recv_expr), #name_expr, &[#(#rest_args),*], #block_value))?
+            spinel_rt::catch_break(spinel_rt::send(&#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value))?
         };
     }
 
@@ -805,6 +815,50 @@ fn dispatch(
                 };
             }
         }
+    }
+
+    // Last resort for a receiver that's dynamically typed with no more
+    // specific static shape at all (`TyKind::Poly` -- e.g. a `rescue`
+    // clause's exception binding, or an ordinary method parameter) and
+    // nothing above matched: dispatch dynamically (Path 2) against whatever
+    // `class_id()` the runtime value ACTUALLY carries, exactly the same
+    // `spinel_rt::send` call `send`/`public_send`'s own Path-2 fallback
+    // above already makes, minus needing a literal-symbol method name
+    // (ordinary dot-call syntax always has one, statically, at the call
+    // site). This is what makes calling an ordinary method on a `rescue`'s
+    // exception binding work (`e.message`, `e.to_s`) -- `e` is never
+    // narrowed to a concrete class (see
+    // `codegen::exceptions::emit_rescue_chain`'s docs for why that would be
+    // unsound), so it stays exactly this kind of receiver. Deliberately
+    // narrower than plain `recv_class.is_none()`: an `Array`/`Hash`/`Range`/
+    // `Str`/`Proc`-typed receiver ALSO has no `recv_class` (that's only ever
+    // `Some` for `TyKind::Object`), but calling an unimplemented method on
+    // one of those (e.g. `Array#each`, genuinely unsupported -- see the
+    // plan's Phase 3 scope-cut on Enumerable) should still hit the ordinary
+    // "unsupported call" panic below, not attempt `.as_object_unchecked()`
+    // on a value that was never an `Object` in the first place (confirmed
+    // the hard way: an earlier, broader version of this check based on
+    // `recv_class.is_none()` alone turned a clean "unsupported call" panic
+    // for `[1,2,3].each { ... }` into a confusing "expected an Object, got
+    // 1\n2\n3" one instead). `kwargs` has no Path 2 channel and is silently
+    // dropped here, matching the identical, already-documented limitation
+    // on the `send`/`public_send` case above. Found necessary as a direct,
+    // small extension while building Phase 9 -- before this, ANY method call
+    // on a Poly-typed value was an unconditional panic, which would have
+    // made a rescued exception's own `message`/`to_s` uncallable via
+    // ordinary syntax.
+    if infer(cx, recv_id) == TyKind::Poly {
+        let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
+        let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+        let block_value = emit_block_option(cx, block, block_arg);
+        return quote! {
+            spinel_rt::catch_break(spinel_rt::send(
+                &(#recv_expr).as_object_unchecked(),
+                #name_expr,
+                &[#(#arg_exprs),*],
+                #block_value,
+            ))?
+        };
     }
 
     panic!("unsupported call `{name}` (spike scope, or receiver's class isn't statically known)");

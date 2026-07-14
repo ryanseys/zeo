@@ -103,6 +103,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::CaseIn { .. }
         | HirNode::MatchPredicate { .. }
         | HirNode::MatchRequired { .. }
+        | HirNode::Begin { .. }
         | HirNode::LocalWrite(..)
         | HirNode::IvarWrite(..)
         | HirNode::ClassVarWrite(..)
@@ -115,7 +116,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // documented approximation, same posture as this function's other
         // narrowings (see the module docs above).
         | HirNode::Yield(_) => Some("expression"),
-        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) => None,
+        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
         HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::ClassDef { .. }
@@ -364,6 +365,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::MatchRequired { subject, pattern } => {
             super::patterns::emit_match_required(cx, *subject, pattern)
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => super::exceptions::emit_begin(cx, body, rescues, else_body, ensure_body),
+        HirNode::Retry => super::exceptions::emit_retry(),
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. }
@@ -381,11 +389,37 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// actually produces a value there either (control never returns to that
 /// position), so a literal Rust `return` is exactly as faithful here as
 /// `HirNode::Return`'s is in the non-Proc case.
+///
+/// Bare `raise` (zero args, re-raise) reads `spinel_rt::current_exception()`
+/// -- the innermost `rescue` clause currently executing, if any (see
+/// `spinel_rt::handling`'s docs) -- and re-raises it EXACTLY (same object,
+/// same ivars/message, not a fresh copy), matching real Ruby's re-raise
+/// semantics. Outside any `rescue` clause, real Ruby's bare `raise`
+/// constructs a fresh `RuntimeError` with an EMPTY message instead of
+/// erroring (confirmed via `ruby -e 'begin; raise; rescue => e; puts
+/// "[#{e.message}]"; end'` -> `"[]"`) -- faithfully mirrored here via
+/// `unwrap_or_else`, not a panic.
 fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
     let exc = match args {
-        [] => panic!(
-            "bare `raise` (re-raise) is only valid inside a `rescue` clause, which doesn't exist yet (spike scope) -- see the plan's Phase 9"
-        ),
+        [] => {
+            // NOT `.unwrap_or_else(|| #fallback)` -- `#fallback` itself
+            // contains a `?` (from constructing via `initialize`, which can
+            // fail), and `?` can't cross into a closure that doesn't itself
+            // return a `Result` (`unwrap_or_else`'s closure here must return
+            // a bare `RubyValue`, to match `current_exception()`'s `Option`
+            // payload). A `match` arm has no such closure boundary.
+            let fallback = emit_boxed_new(
+                cx,
+                "RuntimeError",
+                vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(String::new())) }],
+            );
+            quote! {
+                match spinel_rt::current_exception() {
+                    Some(__v) => __v,
+                    None => #fallback,
+                }
+            }
+        }
         [one] => emit_raise_value(cx, *one, None),
         [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
         _ => unreachable!("lowering rejects `raise`/`fail` with more than 2 arguments"),

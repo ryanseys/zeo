@@ -9,22 +9,24 @@
 
 use crate::hir::{
     ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
-    PatternArm, StrPart,
+    PatternArm, RescueClause, StrPart,
 };
 use ruby_prism::{Node, ParseResult};
 
 type PResult<T> = Result<T, String>;
 
-/// The minimal built-in exception hierarchy (Part 6's "raise/exception
-/// foundation") -- ordinary Ruby source, spliced into EVERY compiled
-/// program ahead of the user's own code via the exact same
-/// `parse_and_lower_into` mechanism `eval`'s literal-splice already uses
-/// (see that recognizer's docs below). This is the whole point: real
-/// classes/inheritance (Phase 7's MRO work) already makes `class X < Y; end`
-/// meaningful, so the built-in hierarchy needs ZERO dedicated Rust
-/// construction code -- it's just Ruby, using the same machinery a user's
-/// own classes do, trivially extended later (Phase 9) by appending more
-/// one-line classes to this same string. `msg` is a plain REQUIRED param,
+/// The built-in exception hierarchy (Part 6's minimal "raise/exception
+/// foundation", extended to spinel's own ~20-class set in Phase 9) --
+/// ordinary Ruby source, spliced into EVERY compiled program ahead of the
+/// user's own code via the exact same `parse_and_lower_into` mechanism
+/// `eval`'s literal-splice already uses (see that recognizer's docs below).
+/// This is the whole point: real classes/inheritance (Phase 7's MRO work)
+/// already makes `class X < Y; end` meaningful, so the built-in hierarchy
+/// needs ZERO dedicated Rust construction code -- it's just Ruby, using the
+/// same machinery a user's own classes do. A custom hierarchy (`class MyError
+/// < StandardError; def initialize(x); super(...); @x = x; end; end`) needs
+/// NO new machinery either -- it's just ordinary inheritance + materialized
+/// `super`, already built in Phase 7. `msg` is a plain REQUIRED param,
 /// not a Ruby-level default (`msg = "..."`, which real Ruby's own
 /// `Exception.new` supports) -- every construction site this spike
 /// generates (`raise`'s codegen -- see `codegen::expr::emit_raise_value`)
@@ -49,11 +51,43 @@ class Exception
 end
 class ScriptError < Exception
 end
+class NotImplementedError < ScriptError
+end
+class LoadError < ScriptError
+end
 class StandardError < Exception
+end
+class ArgumentError < StandardError
+end
+class EncodingError < StandardError
+end
+class IOError < StandardError
+end
+class EOFError < IOError
+end
+class IndexError < StandardError
+end
+class KeyError < IndexError
+end
+class StopIteration < IndexError
+end
+class NameError < StandardError
+end
+class NoMethodError < NameError
+end
+class RangeError < StandardError
+end
+class RegexpError < StandardError
 end
 class RuntimeError < StandardError
 end
+class FrozenError < RuntimeError
+end
 class NoMatchingPatternError < StandardError
+end
+class TypeError < StandardError
+end
+class ZeroDivisionError < StandardError
 end
 "#;
 
@@ -994,6 +1028,42 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Return(value)));
     }
 
+    // `begin ... rescue ... else ... ensure ... end` -- also reached for a
+    // method body that's implicitly a `BeginNode` (no explicit `begin`/`end`,
+    // just a bare `rescue`/`ensure` directly inside `def`), since
+    // `DefNode::body()` is that SAME node shape in that case (confirmed
+    // empirically via `Prism.parse`) and flows through this same `lower_node`
+    // call from `lower_body`.
+    if let Some(begin) = node.as_begin_node() {
+        return lower_begin(result, hir, &begin);
+    }
+
+    // `expr rescue fallback` -- the modifier form (also how an endless
+    // method's `def foo = risky rescue 1` and an assignment's `x = risky
+    // rescue 1` both surface: `RescueModifierNode` sits directly in the
+    // value/body position). Desugars to the same `HirNode::Begin` shape as
+    // an explicit `begin/rescue` with one bare (`classes: []`, matching
+    // `StandardError` and below) rescue clause and no `else`/`ensure`.
+    if let Some(rm) = node.as_rescue_modifier_node() {
+        let body = vec![lower_node(result, hir, &rm.expression())?];
+        let fallback = vec![lower_node(result, hir, &rm.rescue_expression())?];
+        return Ok(hir.push(HirNode::Begin {
+            body,
+            rescues: vec![RescueClause {
+                classes: Vec::new(),
+                binding: None,
+                body: fallback,
+            }],
+            else_body: None,
+            ensure_body: None,
+        }));
+    }
+
+    // `retry` -- see `HirNode::Retry`'s docs.
+    if node.as_retry_node().is_some() {
+        return Ok(hir.push(HirNode::Retry));
+    }
+
     // `a, b = 1, 2` / `a, *b, c = arr` -- see `HirNode::MultiWrite`'s docs for
     // the supported target shape.
     if let Some(mw) = node.as_multi_write_node() {
@@ -1251,6 +1321,56 @@ fn local_target_name(node: &Node<'_>) -> PResult<String> {
         "multi-assignment only supports plain local variable targets (spike scope)",
     )?;
     Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
+}
+
+/// `begin body rescue R1 rescue R2 ... else ... ensure ... end` -- `rescue`
+/// clauses arrive as a singly-linked chain (`RescueNode::subsequent()`), not
+/// a list, mirroring `if`/`elsif`'s own `subsequent()` chaining. `exceptions()`
+/// entries are expected to be plain constants (`rescue Foo, Bar => e`) --
+/// anything else (a splatted exception list, `rescue *errs`) falls through
+/// to `constant_name`'s existing "expected a plain constant name" rejection,
+/// same posture as `superclass`/`include`/`extend`/`prepend` resolution
+/// elsewhere in this file. `reference()` (the `=> e` binding) is always a
+/// plain local-variable target in real Ruby's own grammar for this position.
+fn lower_begin(result: &ParseResult, hir: &mut Hir, begin: &ruby_prism::BeginNode<'_>) -> PResult<NodeId> {
+    let body = lower_body(result, hir, begin.statements().map(|s| s.as_node()))?;
+
+    let mut rescues = Vec::new();
+    let mut next = begin.rescue_clause();
+    while let Some(r) = next {
+        let classes = r
+            .exceptions()
+            .iter()
+            .map(|n| constant_name(&n))
+            .collect::<PResult<Vec<_>>>()?;
+        let binding = match r.reference() {
+            None => None,
+            Some(n) => Some(local_target_name(&n)?),
+        };
+        let rescue_body = lower_body(result, hir, r.statements().map(|s| s.as_node()))?;
+        rescues.push(RescueClause {
+            classes,
+            binding,
+            body: rescue_body,
+        });
+        next = r.subsequent();
+    }
+
+    let else_body = match begin.else_clause() {
+        None => None,
+        Some(e) => Some(lower_body(result, hir, e.statements().map(|s| s.as_node()))?),
+    };
+    let ensure_body = match begin.ensure_clause() {
+        None => None,
+        Some(e) => Some(lower_body(result, hir, e.statements().map(|s| s.as_node()))?),
+    };
+
+    Ok(hir.push(HirNode::Begin {
+        body,
+        rescues,
+        else_body,
+        ensure_body,
+    }))
 }
 
 /// An `in` clause's pattern slot -- either the bare pattern, or (for a

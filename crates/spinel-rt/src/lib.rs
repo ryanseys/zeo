@@ -7,6 +7,7 @@ mod arith;
 mod collections;
 mod cvars;
 mod dispatch;
+mod handling;
 mod rproc;
 mod signal;
 mod symbol;
@@ -19,6 +20,7 @@ pub use dispatch::{
     RObj, RubyObject,
 };
 pub use cvars::{cvar_get, cvar_set};
+pub use handling::{current_exception, pop_handling, push_handling};
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
@@ -80,7 +82,7 @@ macro_rules! ruby_class {
             ancestors: [ $($anc:expr),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
             $( def $method:ident ( $slf:tt : std::rc::Rc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
-            dispatch { $( $dname:ident => $tramp:expr ),* $(,)? }
+            dispatch { $( $dname:literal => $tramp:expr ),* $(,)? }
         }
     ) => {
         pub struct $name {
@@ -141,12 +143,22 @@ macro_rules! ruby_class {
             /// correctly (see `codegen::params`), so this macro's job
             /// shrinks to exactly what its own doc comment always claimed:
             /// struct/impl/registration ceremony, not binding logic.
+            ///
+            /// `$dname` is a STRING LITERAL of the method's real Ruby name
+            /// (`"tag="`, `"empty?"`, ...), not the escaped Rust identifier
+            /// used for the `def` clause above (`tag_set`, `empty_p`, ...) --
+            /// confirmed the hard way this distinction matters: an earlier
+            /// version used `$dname:ident` + `stringify!($dname)` here, which
+            /// registered every escaped-name method under its ESCAPED name
+            /// instead of its real one, silently breaking `send`/`rescue`'s
+            /// own re-raise-then-`.send(:tag=, ...)` for any method whose
+            /// name needed escaping at all.
             pub fn __register(registry: &mut $crate::ClassRegistry) {
                 registry.register(Self::CLASS_ID, vec![$($crate::ClassId($anc)),*]);
                 $(
                     registry.define_method(
                         Self::CLASS_ID,
-                        $crate::Symbol::intern(stringify!($dname)),
+                        $crate::Symbol::intern($dname),
                         $tramp,
                     );
                 )*
@@ -167,14 +179,14 @@ mod tests {
             def initialize(self: std::rc::Rc<Self>, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
             def x(self: std::rc::Rc<Self>) { Ok(self.x.borrow().clone()) }
             dispatch {
-                initialize => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                "initialize" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [x] => Point::initialize(this, x.clone()),
                         _ => panic!("wrong number of arguments for initialize"),
                     }
                 },
-                x => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                "x" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [] => Point::x(this),
@@ -195,14 +207,14 @@ mod tests {
                 Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
             }
             dispatch {
-                hello => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                "hello" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Greeter>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [] => Greeter::hello(this),
                         _ => panic!("wrong number of arguments for hello"),
                     }
                 },
-                method_missing => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                "method_missing" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
                     let this = downcast_robj::<Greeter>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [name] => Greeter::method_missing(this, name.clone()),

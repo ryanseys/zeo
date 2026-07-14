@@ -340,6 +340,40 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             });
             pattern.for_each_node(&mut |n| collect_locals(compiler, n, out));
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            for &n in body {
+                collect_locals(compiler, n, out);
+            }
+            for r in rescues {
+                // A rescue binding (`=> e`) leaks into the enclosing METHOD
+                // scope exactly like a `case/in` pattern's bound names do --
+                // same treatment as that arm just above.
+                if let Some(name) = &r.binding {
+                    if !out.contains(name) {
+                        out.push(name.clone());
+                    }
+                }
+                for &n in &r.body {
+                    collect_locals(compiler, n, out);
+                }
+            }
+            if let Some(b) = else_body {
+                for &n in b {
+                    collect_locals(compiler, n, out);
+                }
+            }
+            if let Some(b) = ensure_body {
+                for &n in b {
+                    collect_locals(compiler, n, out);
+                }
+            }
+        }
+        HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

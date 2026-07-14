@@ -416,6 +416,32 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
             collect_cvars(hir, *subject, out);
             pattern.for_each_node(&mut |n| collect_cvars(hir, n, out));
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            for &n in body {
+                collect_cvars(hir, n, out);
+            }
+            for r in rescues {
+                for &n in &r.body {
+                    collect_cvars(hir, n, out);
+                }
+            }
+            if let Some(b) = else_body {
+                for &n in b {
+                    collect_cvars(hir, n, out);
+                }
+            }
+            if let Some(b) = ensure_body {
+                for &n in b {
+                    collect_cvars(hir, n, out);
+                }
+            }
+        }
+        HirNode::Retry => {}
         HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::Program(_)

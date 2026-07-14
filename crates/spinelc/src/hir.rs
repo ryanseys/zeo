@@ -329,6 +329,20 @@ pub struct PatternArm {
     pub body: Vec<NodeId>,
 }
 
+/// One `rescue [classes] [=> binding] ... end` clause of a `begin`/an
+/// implicit method-body rescue. `classes` empty = a bare `rescue` -- matches
+/// `StandardError` and its descendants (real Ruby's own default), NOT
+/// literally every `Exception` -- see `codegen::exceptions`'s docs for the
+/// matching codegen. `binding`'s name leaks into the enclosing METHOD scope
+/// exactly like a `case/in` pattern's bound names do (no new Ruby scope) --
+/// `codegen::hoisting`'s whole-scope local collection needs to see it up
+/// front, same treatment as `Pattern::for_each_bound_name`'s callers.
+pub struct RescueClause {
+    pub classes: Vec<String>,
+    pub binding: Option<String>,
+    pub body: Vec<NodeId>,
+}
+
 /// One part of a (possibly-interpolated) string literal. A plain `"..."`
 /// with no `#{}` lowers to a single `Lit` part. Only a single bare expression
 /// is supported inside `#{}` (mirrors `ParenthesesNode`'s single-statement
@@ -688,4 +702,32 @@ pub enum HirNode {
     /// this form's value is never used for anything but its binding/raising
     /// side effect).
     MatchRequired { subject: NodeId, pattern: Pattern },
+    /// `begin body rescue ... else ... ensure ... end` -- also the desugared
+    /// form of a method body that's implicitly a `BeginNode` (a `def` with a
+    /// bare `rescue`/`ensure` and no explicit `begin`/`end`, confirmed
+    /// empirically via `Prism.parse`) and of `expr rescue fallback` (the
+    /// modifier form, including inside an endless method) -- see
+    /// `parse/mod.rs`'s recognizers, all of which produce this same shape.
+    /// `rescues` are tested top to bottom, first matching clause wins; an
+    /// unmatched raise propagates (a `?` at this node's own codegen site,
+    /// mirroring every other fallible sub-expression -- see
+    /// `codegen::exceptions::emit_begin`). `else_body: Some(_)` runs (and its
+    /// value REPLACES `body`'s own) only when `body` completed with no
+    /// exception, matching real Ruby. `ensure_body`, when present, always
+    /// runs exactly once after everything else has settled -- including a
+    /// `retry`-driven re-attempt of `body` -- never once per attempt.
+    Begin {
+        body: Vec<NodeId>,
+        rescues: Vec<RescueClause>,
+        else_body: Option<Vec<NodeId>>,
+        ensure_body: Option<Vec<NodeId>>,
+    },
+    /// `retry` -- restarts the nearest enclosing `begin`'s own `body` from
+    /// the top (an `ensure` that already ran does NOT re-run). Only valid
+    /// lexically inside a `rescue` clause in real Ruby (a real, if rare,
+    /// `SyntaxError` otherwise) -- this spike doesn't re-validate that
+    /// positional restriction at lowering time; see
+    /// `codegen::exceptions::emit_retry`'s docs for what happens to a
+    /// mis-scoped one instead (an uncaught `Signal`, not silent wrongness).
+    Retry,
 }

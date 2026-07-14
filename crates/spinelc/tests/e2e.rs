@@ -554,13 +554,14 @@ fn multi_assign_with_and_without_a_splat() {
 
 #[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // `begin`/`rescue` isn't supported until Phase 9 (exceptions) -- update
-    // this to a still-unsupported construct if that lands and makes this
-    // compile.
-    let err = spinelc::compile_to_rust("begin\n  puts 1\nend\n").unwrap_err();
+    // A call-site positional splat isn't supported yet (spike scope) --
+    // update this to a still-unsupported construct if that ever lands and
+    // makes this compile. `begin`/`rescue` (Phase 9) is no longer a valid
+    // example here -- see the exception-handling tests below.
+    let err = spinelc::compile_to_rust("arr = [1, 2]\nputs foo(*arr)\n").unwrap_err();
     assert!(
-        err.contains("unsupported syntax"),
-        "expected an unsupported-syntax error, got: {err}"
+        err.contains("splat"),
+        "expected a splat-related unsupported-syntax error, got: {err}"
     );
 }
 
@@ -1495,23 +1496,24 @@ fn raise_of_a_plain_string_is_an_implicit_runtime_error() {
 }
 
 #[test]
-#[should_panic(expected = "rescue")]
-fn bare_raise_with_no_active_rescue_is_a_clean_compile_error() {
-    // Bare `raise` (re-raise) needs a currently-handled exception context
-    // that doesn't exist until `rescue` does (Phase 9) -- a clean
-    // rejection now, not a silent no-op. This is a CODEGEN-time panic (like
-    // `codegen::captures`'s other "spike scope" violations), not a
-    // parse-time `Result::Err`, hence `#[should_panic]` here rather than
-    // `.unwrap_err()`.
-    let _ = spinelc::compile_to_rust(
+fn bare_raise_with_no_active_rescue_constructs_a_runtime_error() {
+    // Bare `raise` (re-raise) outside any active `rescue` clause -- real
+    // Ruby constructs a fresh `RuntimeError` with an EMPTY message rather
+    // than erroring (oracle-verified: `ruby -e 'begin; raise; rescue => e;
+    // puts "[#{e.message}]"; end'` -> `"[]"`) -- see
+    // `codegen::expr::emit_raise`'s docs. This used to be a clean codegen
+    // panic before Phase 9's `spinel_rt::current_exception` fallback shipped.
+    let result = run_ruby(
         r#"
-        class Box
-          def check
-            raise
-          end
+        begin
+          raise
+        rescue => e
+          puts "[#{e.message}]"
         end
         "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[]\n");
 }
 
 // --- Phase 7: deeper include/extend/prepend/inherited-ivar coverage,
@@ -2179,4 +2181,769 @@ fn case_in_capture_of_a_bare_bind_can_write_the_same_subject_to_two_names() {
     let result = run_ruby("case 5\nin x => y\n  puts x\n  puts y\nend\n");
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "5\n5\n");
+}
+
+// --- Phase 9: exceptions (begin/rescue/else/ensure/retry, raise, custom
+// hierarchies), oracle-verified against real `ruby` first. `e`'s method
+// calls (`e.message`) always go through `.send(:message)` -- a rescue
+// binding is deliberately never narrowed to a concrete class (unlike a
+// pattern's `Integer => n`): unlike a builtin primitive's runtime tag check,
+// dispatch there is Rust `downcast::<T>()`-based, which only succeeds
+// against the EXACT concrete struct, and `rescue StandardError => e` must
+// also match any raised SUBCLASS instance -- see
+// `codegen::exceptions::emit_rescue_chain`'s docs.
+
+#[test]
+fn begin_rescue_catches_and_ensure_always_runs() {
+    let result = run_ruby(
+        r#"
+        begin
+          puts "try"
+          raise ArgumentError, "bad"
+        rescue ArgumentError => e
+          puts "caught: #{e.send(:message)}"
+        ensure
+          puts "ensure ran"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "try\ncaught: bad\nensure ran\n");
+}
+
+#[test]
+fn else_clause_runs_only_on_the_no_exception_path() {
+    let result = run_ruby(
+        r#"
+        begin
+          puts "body"
+        rescue
+          puts "rescued"
+        else
+          puts "else ran"
+        ensure
+          puts "ensure ran"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "body\nelse ran\nensure ran\n");
+}
+
+#[test]
+fn rescuing_a_middle_class_catches_a_raised_leaf_subclass() {
+    let result = run_ruby(
+        r#"
+        class AppError < StandardError
+        end
+        class ValidationError < AppError
+        end
+
+        begin
+          raise ValidationError, "bad input"
+        rescue AppError => e
+          puts "caught as AppError: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught as AppError: bad input\n");
+}
+
+#[test]
+fn rescue_with_multiple_classes_in_one_clause() {
+    let result = run_ruby(
+        r#"
+        begin
+          raise TypeError, "wrong type"
+        rescue ArgumentError, TypeError => e
+          puts "caught one of: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught one of: wrong type\n");
+}
+
+#[test]
+fn built_in_hierarchy_extension_classes_are_real_and_ancestor_matched() {
+    // `KeyError < IndexError` -- exercises the extended built-in hierarchy
+    // (Part 8's Phase 9 addition beyond Part 6's minimal foundation).
+    let result = run_ruby(
+        r#"
+        begin
+          raise KeyError, "missing"
+        rescue IndexError => e
+          puts "caught KeyError via IndexError: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught KeyError via IndexError: missing\n");
+}
+
+#[test]
+fn bare_raise_re_raises_preserving_a_custom_exceptions_own_ivars() {
+    let result = run_ruby(
+        r#"
+        class MyError < StandardError
+          def initialize(msg, code)
+            super(msg)
+            @code = code
+          end
+          def code
+            @code
+          end
+        end
+
+        class Inner
+          def call
+            begin
+              raise MyError.new("failed with code 42", 42)
+            rescue MyError => e
+              puts "inner saw code #{e.send(:code)}"
+              raise
+            end
+          end
+        end
+
+        begin
+          Inner.new.call
+        rescue MyError => e
+          puts "outer saw code #{e.send(:code)}"
+          puts "outer message: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "inner saw code 42\nouter saw code 42\nouter message: failed with code 42\n"
+    );
+}
+
+#[test]
+fn return_from_a_rescue_body_still_runs_ensure_exactly_once() {
+    let result = run_ruby(
+        r#"
+        class ReturnTester
+          def m
+            begin
+              raise "x"
+            rescue
+              return "returned"
+            ensure
+              puts "ensure ran before return"
+            end
+          end
+        end
+        puts ReturnTester.new.m
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ensure ran before return\nreturned\n");
+}
+
+#[test]
+fn retry_loop_runs_ensure_exactly_once_not_per_attempt() {
+    let result = run_ruby(
+        r#"
+        class Attempt
+          def initialize
+            @attempts = 0
+          end
+          def run
+            begin
+              @attempts += 1
+              raise "fail" if @attempts < 3
+              puts "succeeded after #{@attempts} attempts"
+            rescue
+              retry if @attempts < 3
+            ensure
+              puts "ensure ran, attempts=#{@attempts}"
+            end
+          end
+        end
+        Attempt.new.run
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "succeeded after 3 attempts\nensure ran, attempts=3\n");
+}
+
+#[test]
+fn nested_retry_only_restarts_the_innermost_begin() {
+    let result = run_ruby(
+        r#"
+        outer_runs = 0
+        inner_attempts = 0
+        begin
+          outer_runs += 1
+          begin
+            inner_attempts += 1
+            raise "x" if inner_attempts < 2
+            puts "inner ok after #{inner_attempts}"
+          rescue
+            retry if inner_attempts < 2
+          end
+          puts "outer ran #{outer_runs} times"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "inner ok after 2\nouter ran 1 times\n");
+}
+
+#[test]
+fn method_level_implicit_rescue_with_no_explicit_begin_end() {
+    // `def m; ...; rescue => e; ...; end` -- `DefNode::body()` is directly a
+    // `BeginNode` with no `begin_keyword_loc` in this shape (confirmed via
+    // `Prism.parse`), flowing through the SAME `HirNode::Begin` lowering as
+    // an explicit `begin`.
+    let result = run_ruby(
+        r#"
+        class Worker
+          def safe
+            raise "oops"
+          rescue => e
+            "handled: #{e.send(:message)}"
+          end
+        end
+        puts Worker.new.safe
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "handled: oops\n");
+}
+
+#[test]
+fn endless_method_rescue_modifier() {
+    let result = run_ruby(
+        r#"
+        class Unsafe
+          def op(n)
+            raise "negative" if n < 0
+            n * 2
+          end
+        end
+        class Calc
+          def safe_op(n) = Unsafe.new.op(n) rescue -1
+        end
+        c = Calc.new
+        puts c.safe_op(5)
+        puts c.safe_op(-5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n-1\n");
+}
+
+#[test]
+fn assignment_rescue_modifier() {
+    let result = run_ruby(
+        r#"
+        class TopRisk
+          def risky_top
+            raise "bad"
+          end
+        end
+        x = TopRisk.new.risky_top rescue "fallback"
+        puts x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "fallback\n");
+}
+
+#[test]
+fn unmatched_rescue_class_propagates_to_an_outer_rescue() {
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            raise TypeError, "inner"
+          rescue ArgumentError
+            puts "wrong handler"
+          end
+        rescue TypeError => e
+          puts "outer caught: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "outer caught: inner\n");
+}
+
+#[test]
+fn uncaught_raise_with_no_rescue_anywhere_exits_with_the_message() {
+    let result = run_ruby("raise \"boom\"\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uncaught exception: boom"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn break_next_from_inside_begin_rescue_nested_in_a_real_escaping_block_works() {
+    // `Array#each`/general Enumerable iteration isn't implemented (Phase 3's
+    // documented scope-cut), so a custom `yield`-based method is the
+    // supported way to attach a real escaping block here. The begin/rescue
+    // closure boundary (see `codegen::exceptions`'s module docs) needs no
+    // special handling: the block passed to `each_num` is ALREADY a real
+    // escaping `Proc` (its own closure boundary, `in_real_proc` already
+    // true), so a `next` inside the nested `begin`'s rescue clause raises
+    // the exact same `Signal` it already would have -- caught by the Proc's
+    // own wrapper loop, not by the (irrelevant here) native-loop rejection
+    // check.
+    let result = run_ruby(
+        r#"
+        class Each3
+          def each_num
+            yield 1
+            yield 2
+            yield 3
+          end
+        end
+
+        Each3.new.each_num do |i|
+          begin
+            raise "boom" if i == 2
+            puts "ok #{i}"
+          rescue
+            next
+          ensure
+            puts "ensure #{i}"
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ok 1\nensure 1\nensure 2\nok 3\nensure 3\n");
+}
+
+#[test]
+#[should_panic(expected = "targeting a loop OUTSIDE it")]
+fn break_inside_begin_rescue_targeting_an_outer_native_loop_is_a_clean_compile_error() {
+    // See `codegen::exceptions`'s module docs for why this specific shape
+    // (a native `while`/`for`/`.times` loop OUTSIDE the `begin`) can't be
+    // supported without abandoning loops' own zero-cost literal-label
+    // design -- a deliberate, documented scope-cut, not an oversight. A loop
+    // written INSIDE the `begin` itself (the previous test) is unaffected.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        i = 0
+        while i < 3
+          begin
+            break if i == 1
+          rescue
+          end
+          i += 1
+        end
+        "#,
+    );
+}
+
+// --- Phase 9 continued: deeper edge-case and composition coverage, added
+// after the initial batch above per an explicit request for more
+// comprehensive tests. Every scenario oracle-verified against real `ruby`
+// first, per this project's established convention.
+
+#[test]
+fn bare_rescue_does_not_catch_a_script_error_level_exception() {
+    // A bare `rescue` matches `StandardError` and below ONLY -- it must NOT
+    // catch a raised `ScriptError` (a sibling branch of the hierarchy, both
+    // direct children of `Exception`). This is the real semantic bare
+    // `rescue`'s default narrows to `StandardError`, not `Exception`.
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            raise ScriptError, "script problem"
+          rescue => e
+            puts "should not print: #{e.send(:message)}"
+          end
+        rescue ScriptError => e
+          puts "outer caught ScriptError: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "outer caught ScriptError: script problem\n");
+}
+
+#[test]
+fn rescue_exception_class_explicitly_catches_a_script_error() {
+    let result = run_ruby(
+        r#"
+        begin
+          raise ScriptError, "script problem"
+        rescue Exception => e
+          puts "caught via Exception: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught via Exception: script problem\n");
+}
+
+#[test]
+fn return_from_ensure_overrides_return_from_the_begin_body() {
+    // Real, tricky Ruby semantic: a `return` inside `ensure` wins over a
+    // `return` already in flight from `begin`'s own body -- not just "ensure
+    // runs afterward", it actually REPLACES the method's return value.
+    // Falls out for free here: `ensure`'s own statements are ordinary Rust
+    // code (not wrapped in the begin/rescue closure boundary -- see
+    // `codegen::exceptions`'s module docs), so a literal `return` inside it
+    // exits the enclosing method directly, superseding whatever `__final`
+    // already held.
+    let result = run_ruby(
+        r#"
+        class M
+          def m
+            begin
+              return "from begin"
+            ensure
+              return "from ensure"
+            end
+          end
+        end
+        puts M.new.m
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from ensure\n");
+}
+
+#[test]
+fn raise_inside_ensure_replaces_the_original_exception() {
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            raise "original"
+          ensure
+            raise "from ensure"
+          end
+        rescue => e
+          puts "caught: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught: from ensure\n");
+}
+
+#[test]
+fn nested_begin_ensure_runs_inner_before_outer() {
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            puts "inner body"
+          ensure
+            puts "inner ensure"
+          end
+        ensure
+          puts "outer ensure"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "inner body\ninner ensure\nouter ensure\n");
+}
+
+#[test]
+fn re_raise_preserves_the_exact_same_object_not_a_copy() {
+    // Proves re-raise doesn't construct a fresh exception -- mutating an
+    // ivar (via an `attr_accessor`-generated setter) INSIDE the inner
+    // `rescue`, then bare `raise`-ing, must be visible to the OUTER
+    // `rescue` reading the same ivar back. Constructed and raised in ONE
+    // expression (`raise Tagged.new(...)`), not first assigned to a named
+    // local -- a named local assigned an `Object`-typed value inside a
+    // `begin`'s body (or any branching construct) hits a real, pre-existing,
+    // Phase-9-independent codegen gap when that local's type has to widen
+    // to `Poly` across branches (confirmed to affect plain `if`/`else` too,
+    // not something this phase introduced or is responsible for fixing).
+    let result = run_ruby(
+        r#"
+        class Tagged < StandardError
+          def initialize(msg, tag)
+            super(msg)
+            @tag = tag
+          end
+          attr_accessor :tag
+        end
+        begin
+          begin
+            raise Tagged.new("x", "initial")
+          rescue Tagged => e
+            e.send(:tag=, "mutated")
+            raise
+          end
+        rescue Tagged => e
+          puts "tag: #{e.send(:tag)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "tag: mutated\n");
+}
+
+#[test]
+fn begin_rescue_used_as_an_expressions_value() {
+    let result = run_ruby(
+        r#"
+        x = begin
+          raise "bad"
+        rescue
+          -1
+        end
+        puts x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "-1\n");
+}
+
+#[test]
+fn begin_ensure_with_no_rescue_clause_still_runs_ensure_and_propagates() {
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            raise "boom"
+          ensure
+            puts "ensure ran"
+          end
+        rescue => e
+          puts "caught outside: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ensure ran\ncaught outside: boom\n");
+}
+
+#[test]
+fn ensure_runs_when_no_exception_is_raised_and_there_is_no_rescue_at_all() {
+    let result = run_ruby(
+        r#"
+        begin
+          puts "no exception"
+        ensure
+          puts "ensure always"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "no exception\nensure always\n");
+}
+
+#[test]
+fn three_rescue_clauses_skips_non_matching_ones_in_order() {
+    let result = run_ruby(
+        r#"
+        begin
+          raise RangeError, "oops"
+        rescue ArgumentError
+          puts "arg"
+        rescue TypeError
+          puts "type"
+        rescue RangeError => e
+          puts "range: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "range: oops\n");
+}
+
+#[test]
+fn plain_string_raise_is_caught_by_an_explicit_runtime_error_rescue() {
+    let result = run_ruby(
+        r#"
+        begin
+          raise "just a string"
+        rescue RuntimeError => e
+          puts "caught runtime: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught runtime: just a string\n");
+}
+
+#[test]
+fn case_in_pattern_matching_inside_a_rescue_body() {
+    // Composes Phase 8 (pattern matching) with Phase 9 (exceptions) --
+    // `e.send(:message)` is a `Poly` expression, matched via `case/in`'s own
+    // `#deconstruct`-independent `ClassCheck`/`Capture` path.
+    let result = run_ruby(
+        r#"
+        begin
+          raise "boom"
+        rescue => e
+          case e.send(:message)
+          in String => s
+            puts "matched string: #{s}"
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "matched string: boom\n");
+}
+
+#[test]
+fn times_loop_containing_begin_rescue_with_no_crossing_control_flow_still_works() {
+    // A native loop CONTAINING a `begin`/`rescue` (as opposed to a `begin`
+    // containing a bare `break`/`next` TARGETING an outer loop, the
+    // rejected shape) is completely unaffected -- the `.times` loop's own
+    // control flow doesn't cross the begin/rescue closure boundary at all
+    // here, so it just runs normally, once per iteration.
+    let result = run_ruby(
+        r#"
+        3.times do |i|
+          begin
+            raise "x" if i == 1
+            puts "ok #{i}"
+          rescue
+            puts "rescued #{i}"
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ok 0\nrescued 1\nok 2\n");
+}
+
+#[test]
+fn sequential_top_level_begin_blocks_do_not_leak_handling_state() {
+    // Guards `spinel_rt::handling`'s push/pop discipline: three INDEPENDENT
+    // `begin` blocks in sequence, the last a bare re-raise with nothing
+    // currently being handled -- if an earlier block's `pop_handling` were
+    // ever skipped (e.g. on an unusual exit path), this would incorrectly
+    // re-raise a STALE exception instead of falling back to a fresh
+    // `RuntimeError`.
+    let result = run_ruby(
+        r#"
+        begin
+          raise "first"
+        rescue => e
+          puts "1: #{e.send(:message)}"
+        end
+        begin
+          raise "second"
+        rescue => e
+          puts "2: #{e.send(:message)}"
+        end
+        begin
+          raise
+        rescue => e
+          puts "3: [#{e.send(:message)}]"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1: first\n2: second\n3: []\n");
+}
+
+#[test]
+fn class_method_begin_rescue_ensure_with_return() {
+    // Exercises `codegen::mod::emit_class_method_fn`'s own `Signal::Return`
+    // catch (added specifically for `Begin` nodes inside a class method --
+    // class methods can't contain an escaping block at all, so `Begin` was
+    // the only possible trigger there).
+    let result = run_ruby(
+        r#"
+        class Factory
+          def self.build(fail_it)
+            begin
+              raise "nope" if fail_it
+              "built"
+            rescue
+              return "fallback"
+            ensure
+              puts "factory ensure"
+            end
+          end
+        end
+        puts Factory.build(false)
+        puts Factory.build(true)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "factory ensure\nbuilt\nfactory ensure\nfallback\n");
+}
+
+#[test]
+fn defined_on_a_begin_expression_classifies_as_expression() {
+    let result = run_ruby("puts defined?(begin; 1; end)\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "expression\n");
+}
+
+#[test]
+fn retry_and_ensure_combined_inside_an_enclosing_while_loop() {
+    // The `begin`'s own `retry` restarts just its OWN body (not the `while`
+    // loop), and `ensure` runs once per `while` ITERATION (twice total,
+    // once per `i`) -- not once per `retry` attempt within an iteration.
+    let result = run_ruby(
+        r#"
+        total_ensure = 0
+        i = 0
+        while i < 2
+          attempts = 0
+          begin
+            attempts += 1
+            raise "x" if attempts < 2
+          rescue
+            retry if attempts < 2
+          ensure
+            total_ensure += 1
+          end
+          i += 1
+        end
+        puts total_ensure
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n");
+}
+
+#[test]
+fn unrescued_raise_propagates_through_multiple_method_call_frames() {
+    // Three separate objects (not sibling methods on one class) --
+    // implicit-self calls to a sibling method aren't supported yet
+    // (a separate, pre-existing, documented gap from Phase 5/6), so each
+    // level calls the next via an explicit receiver instead. Still a
+    // genuine 3-frame unwind, crossing object boundaries too.
+    let result = run_ruby(
+        r#"
+        class Level3
+          def run
+            raise "deep failure"
+          end
+        end
+        class Level2
+          def run
+            Level3.new.run
+          end
+        end
+        class Level1
+          def run
+            Level2.new.run
+          end
+        end
+        begin
+          Level1.new.run
+        rescue => e
+          puts "caught from deep: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught from deep: deep failure\n");
 }

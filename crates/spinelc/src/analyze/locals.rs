@@ -236,6 +236,50 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             });
             *locals = merge_locals(vec![matched, locals.clone()]);
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            // `before` (body may raise partway through, so a rescue clause
+            // conservatively forks from BEFORE any of body's own assignments
+            // -- safer than crediting a partial run, and `merge_locals`'
+            // disagreement-widens-to-`Poly` rule already makes this sound
+            // either way) vs. the success path (body ran to completion,
+            // optionally further refined by an `else`).
+            let before = locals.clone();
+            for &n in body {
+                track_node(compiler, locals, n);
+            }
+            let mut success = locals.clone();
+            if let Some(b) = else_body {
+                for &n in b {
+                    track_node(compiler, &mut success, n);
+                }
+            }
+            let mut branches = vec![success];
+            for r in rescues {
+                let mut b = before.clone();
+                if let Some(name) = &r.binding {
+                    b.entry(name.clone()).or_insert(TyKind::Poly);
+                }
+                for &n in &r.body {
+                    track_node(compiler, &mut b, n);
+                }
+                branches.push(b);
+            }
+            *locals = merge_locals(branches);
+            // `ensure` always runs, unconditionally, AFTER every other path
+            // has settled -- not one more branch to merge, a deterministic
+            // continuation of whichever state the merge above produced.
+            if let Some(b) = ensure_body {
+                for &n in b {
+                    track_node(compiler, locals, n);
+                }
+            }
+        }
+        HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

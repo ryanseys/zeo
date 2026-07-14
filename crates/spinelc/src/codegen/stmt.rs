@@ -79,7 +79,17 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
     } else {
         let e = emit_expr(cx, stmt);
         if is_tail {
-            if wrap_ok {
+            // `raise`/a bare `return`/`retry` already compile to a literal
+            // Rust `return ...;` (see `codegen::expr::emit_raise`/`HirNode::
+            // Return`'s docs, `codegen::exceptions::emit_retry`) -- a
+            // diverging expression whose type (`!`) already unifies with
+            // anything, so wrapping it in `Ok(...)` here would build an
+            // `Ok(return ...)` that can never actually construct its `Ok`
+            // (the `return` always exits first). Harmless in principle
+            // (`!` coerces fine either way) but `rustc` flags the `Ok(...)`
+            // call itself as unreachable -- skip the wrap for exactly these
+            // three diverging shapes rather than accept the warning.
+            if wrap_ok && !is_diverging_tail(&cx.compiler.hir[stmt]) {
                 quote! { Ok(#e) }
             } else {
                 e
@@ -88,4 +98,8 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             quote! { #e; }
         }
     }
+}
+
+fn is_diverging_tail(node: &HirNode) -> bool {
+    matches!(node, HirNode::Raise(_) | HirNode::Return(_) | HirNode::Retry)
 }

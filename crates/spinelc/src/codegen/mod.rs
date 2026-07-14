@@ -18,6 +18,7 @@
 mod call;
 mod captures;
 mod collections;
+mod exceptions;
 mod expr;
 mod hoisting;
 mod ident;
@@ -433,9 +434,29 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         in_real_proc: false,
     };
     let body = hoisting::emit_hoisted_body(&cx, &scope.body, true);
+    // See the matching comment on `emit_class`'s own method-wrapping below:
+    // a `begin`/`rescue` construct (or an escaping block, e.g. `arr.each { ...
+    // return ... }` -- this function only rejects a class method that itself
+    // NAMES a `&block` param/uses bare `yield`, not one that merely calls
+    // something with a literal block argument) introduces its own closure
+    // boundary a literal `return` can't cross, so this class method's body
+    // needs the SAME per-method `Signal::Return` catch an ordinary instance
+    // method gets when it contains either.
+    let needs_return_catch = captures::body_contains_begin(compiler, &scope.body)
+        || captures::body_contains_escaping_block(compiler, &scope.body);
+    let body_tokens = if needs_return_catch {
+        quote! {
+            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { #body })().or_else(|__e| match __e {
+                spinel_rt::Signal::Return(__v) => Ok(__v),
+                __e => Err(__e),
+            })
+        }
+    } else {
+        body
+    };
     quote! {
         pub fn #method_ident(#(#sig_params),*) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-            #body
+            #body_tokens
         }
     }
 }
@@ -477,17 +498,21 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
         // The `Signal::Return` catch is needed ONLY when this method's OWN
-        // body lexically contains an escaping block -- confirmed the hard
-        // way NOT to be "wrap every method unconditionally" (a simpler
-        // design tried first): a method with no escaping block of its own
-        // (e.g. one that just does `yield` to whatever block it's handed)
-        // must NOT catch `Signal::Return` in transit, or it would
+        // body lexically contains an escaping block OR a `begin`/`rescue`
+        // construct -- confirmed the hard way NOT to be "wrap every method
+        // unconditionally" (a simpler design tried first): a method with
+        // neither (e.g. one that just does `yield` to whatever block it's
+        // handed) must NOT catch `Signal::Return` in transit, or it would
         // incorrectly intercept a `return` meant for a DIFFERENT method --
         // wherever the block it's currently invoking was actually written --
         // turning "return from the caller" into "this method returns
         // normally instead". See `codegen::captures::body_contains_escaping_block`'s
-        // docs.
-        let body_tokens = if captures::body_contains_escaping_block(compiler, &scope.body) {
+        // docs, and `codegen::exceptions`'s module docs for why `begin`/
+        // `rescue` ALSO needs this (it introduces its own closure boundary a
+        // literal `return` can't cross either).
+        let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
+            || captures::body_contains_begin(compiler, &scope.body);
+        let body_tokens = if needs_return_catch {
             quote! {
                 (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                     #prologue
@@ -512,14 +537,21 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
 
     let dispatch_entries = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
-        let method_ident = safe_ident(&scope.name);
         let tramp = params::emit_dynamic_trampoline(
             &name_ident,
             &scope.name,
             &scope.params,
             scope.needs_block_param(),
         );
-        quote! { #method_ident => #tramp }
+        // The dispatch KEY is the method's real Ruby name (`"tag="`), a
+        // plain string literal -- NOT `safe_ident(&scope.name)` (the
+        // escaped Rust identifier, `tag_set`): `ruby_class!`'s `dispatch`
+        // block registers this string directly (`Symbol::intern($dname)`),
+        // so using the escaped identifier here would register the method
+        // under the wrong runtime name entirely, breaking `send`/a rescued
+        // exception's own `.send(:tag=, ...)` for any escaped-name method.
+        let dispatch_key = &scope.name;
+        quote! { #dispatch_key => #tramp }
     });
 
     quote! {

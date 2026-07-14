@@ -1,0 +1,19 @@
+try
+caught: bad
+ensure ran
+body
+else ran
+ensure2 ran
+caught as AppError: bad input
+caught one of: wrong type
+succeeded after 3 attempts
+ensure ran, attempts=3
+handled: oops
+ensure ran before return
+returned
+10
+-1
+fallback
+inner saw code 42
+outer saw code 42
+outer message: failed with code 42

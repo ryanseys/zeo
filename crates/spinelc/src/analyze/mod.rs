@@ -331,6 +331,25 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
             scan_bare_block_use(hir, *subject)? || scan_bare_block_use_pattern(hir, pattern)?
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            let mut found = scan_bare_block_use_body(hir, body)?;
+            for r in rescues {
+                found |= scan_bare_block_use_body(hir, &r.body)?;
+            }
+            if let Some(b) = else_body {
+                found |= scan_bare_block_use_body(hir, b)?;
+            }
+            if let Some(b) = ensure_body {
+                found |= scan_bare_block_use_body(hir, b)?;
+            }
+            found
+        }
+        HirNode::Retry => false,
         HirNode::Redo
         | HirNode::Block { .. }
         | HirNode::Program(_)
@@ -403,6 +422,17 @@ fn body_contains_yield_or_block_given(hir: &Hir, body: &[NodeId]) -> bool {
         HirNode::CaseIn { arms, else_body, .. } => {
             arms.iter().any(|arm| body_contains_yield_or_block_given(hir, &arm.body))
                 || else_body.as_deref().is_some_and(|b| body_contains_yield_or_block_given(hir, b))
+        }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            body_contains_yield_or_block_given(hir, body)
+                || rescues.iter().any(|r| body_contains_yield_or_block_given(hir, &r.body))
+                || else_body.as_deref().is_some_and(|b| body_contains_yield_or_block_given(hir, b))
+                || ensure_body.as_deref().is_some_and(|b| body_contains_yield_or_block_given(hir, b))
         }
         // A body statement is a `Call` node, never a bare `Block` directly
         // (see `codegen::expr`'s docs: "a Block should only be reached via
@@ -598,6 +628,32 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             collect_ivars(hir, *subject, out);
             pattern.for_each_node(&mut |n| collect_ivars(hir, n, out));
         }
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
+            for &n in body {
+                collect_ivars(hir, n, out);
+            }
+            for r in rescues {
+                for &n in &r.body {
+                    collect_ivars(hir, n, out);
+                }
+            }
+            if let Some(b) = else_body {
+                for &n in b {
+                    collect_ivars(hir, n, out);
+                }
+            }
+            if let Some(b) = ensure_body {
+                for &n in b {
+                    collect_ivars(hir, n, out);
+                }
+            }
+        }
+        HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

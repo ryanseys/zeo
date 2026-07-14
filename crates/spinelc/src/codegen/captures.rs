@@ -219,7 +219,124 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             pattern.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
             found
         }
-        HirNode::Redo
+        HirNode::Begin { body, rescues, else_body, ensure_body } => {
+            body_contains_escaping_block(compiler, body)
+                || rescues.iter().any(|r| body_contains_escaping_block(compiler, &r.body))
+                || else_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
+                || ensure_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
+        }
+        HirNode::Retry
+        | HirNode::Redo
+        | HirNode::BlockGiven
+        | HirNode::Block { .. }
+        | HirNode::Program(_)
+        | HirNode::IntegerLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::NilLit
+        | HirNode::BoolLit(_)
+        | HirNode::LocalRead(_)
+        | HirNode::IvarRead(_)
+        | HirNode::ClassVarRead(_)
+        | HirNode::ClassRef(_)
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::ClassDef { .. }
+        | HirNode::DefMethod { .. } => false,
+    }
+}
+
+/// Whether `body` lexically contains a `begin`/`rescue`/`else`/`ensure`
+/// construct ANYWHERE (including inside a `.times` inline block, which
+/// shares this same Rust function scope, and inside a real escaping block --
+/// redundant with that case already being caught by
+/// `body_contains_escaping_block` at the call site, but harmless to also
+/// detect here). See `codegen::exceptions::emit_begin`'s docs: `begin`'s own
+/// body/rescue-clause bodies/`else` are captured via a NON-move,
+/// immediately-invoked closure to test their `Result` against `rescue`
+/// clauses -- a `return` lexically inside one raises `Signal::Return`
+/// instead of a literal Rust `return` (since a literal `return` there would
+/// only exit that inner closure, not the enclosing method), so the SAME
+/// per-method catch `codegen::mod::emit_class` installs for an escaping
+/// block must also trigger here, independent of whether any block is
+/// involved at all.
+pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter().any(|&n| node_contains_begin(compiler, n))
+}
+
+fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
+    match &compiler.hir[id] {
+        HirNode::Begin { .. } => true,
+        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
+            receiver.is_some_and(|r| node_contains_begin(compiler, r))
+                || args.iter().any(|&a| node_contains_begin(compiler, a))
+                || kwargs.iter().any(|p| node_contains_begin(compiler, p.0) || node_contains_begin(compiler, p.1))
+                || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
+                || block.is_some_and(|b| {
+                    let HirNode::Block { body, .. } = &compiler.hir[b] else {
+                        panic!("a Block should only be reached via the Call that invokes it");
+                    };
+                    body_contains_begin(compiler, body)
+                })
+        }
+        HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
+            node_contains_begin(compiler, *v)
+        }
+        HirNode::And(l, r) | HirNode::Or(l, r) => node_contains_begin(compiler, *l) || node_contains_begin(compiler, *r),
+        HirNode::If { cond, then_body, else_body } => {
+            node_contains_begin(compiler, *cond)
+                || body_contains_begin(compiler, then_body)
+                || body_contains_begin(compiler, else_body)
+        }
+        HirNode::CaseWhen { subject, arms, else_body } => {
+            subject.is_some_and(|s| node_contains_begin(compiler, s))
+                || arms.iter().any(|(values, body)| {
+                    values.iter().any(|&v| node_contains_begin(compiler, v)) || body_contains_begin(compiler, body)
+                })
+                || body_contains_begin(compiler, else_body)
+        }
+        HirNode::CaseIn { subject, arms, else_body } => {
+            node_contains_begin(compiler, *subject)
+                || arms.iter().any(|arm| {
+                    let mut pattern_found = false;
+                    arm.pattern.for_each_node(&mut |n| pattern_found |= node_contains_begin(compiler, n));
+                    pattern_found
+                        || arm.guard.is_some_and(|(g, _)| node_contains_begin(compiler, g))
+                        || body_contains_begin(compiler, &arm.body)
+                })
+                || else_body.as_deref().is_some_and(|b| body_contains_begin(compiler, b))
+        }
+        HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
+            let mut found = node_contains_begin(compiler, *subject);
+            pattern.for_each_node(&mut |n| found |= node_contains_begin(compiler, n));
+            found
+        }
+        HirNode::While { cond, body, .. } => node_contains_begin(compiler, *cond) || body_contains_begin(compiler, body),
+        HirNode::Loop { body } => body_contains_begin(compiler, body),
+        HirNode::For { iterable, body, .. } => {
+            node_contains_begin(compiler, *iterable) || body_contains_begin(compiler, body)
+        }
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => v.is_some_and(|v| node_contains_begin(compiler, v)),
+        HirNode::MultiWrite { value, .. } => node_contains_begin(compiler, *value),
+        HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::New { args, .. } | HirNode::SuperCall { args } => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::ArrayLit(elems) => elems.iter().any(|e| {
+            let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+            node_contains_begin(compiler, *n)
+        }),
+        HirNode::HashLit(pairs) => {
+            pairs.iter().any(|p| node_contains_begin(compiler, p.0) || node_contains_begin(compiler, p.1))
+        }
+        HirNode::RangeLit { start, end, .. } => {
+            start.is_some_and(|s| node_contains_begin(compiler, s)) || end.is_some_and(|e| node_contains_begin(compiler, e))
+        }
+        HirNode::StringLit(parts) => parts.iter().any(|p| match p {
+            StrPart::Interp(n) => node_contains_begin(compiler, *n),
+            StrPart::Lit(_) => false,
+        }),
+        HirNode::Eval(body) => body_contains_begin(compiler, body),
+        HirNode::Retry
+        | HirNode::Redo
         | HirNode::BlockGiven
         | HirNode::Block { .. }
         | HirNode::Program(_)
@@ -386,6 +503,36 @@ fn walk(
             }
             pattern.for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps));
         }
+        HirNode::Begin { body, rescues, else_body, ensure_body } => {
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+            for r in rescues {
+                // A rescue binding is a fresh name, same treatment as
+                // `LocalWrite`/a pattern's bound names just above.
+                if in_escaping {
+                    if let Some(name) = &r.binding {
+                        if !param_exclusions.contains(name) {
+                            caps.locals.insert(name.clone());
+                        }
+                    }
+                }
+                for &n in &r.body {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+            if let Some(b) = else_body {
+                for &n in b {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+            if let Some(b) = ensure_body {
+                for &n in b {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+        }
+        HirNode::Retry => {}
         HirNode::Eval(body) => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps);
