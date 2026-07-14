@@ -13,7 +13,7 @@ use super::expr::{emit_expr, emit_symbol_expr, infer, infer_class};
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::compiler::Compiler;
-use crate::hir::{HashPair, HirNode, KeywordParam, NodeId, Params};
+use crate::hir::{HashPair, HirNode, KeywordParam, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
@@ -701,7 +701,7 @@ pub fn emit_call(
     }
 
     let recv_expr = emit_expr(cx, recv_id);
-    dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr)
+    dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr, false)
 }
 
 /// `ClassName.foo(...)` -- looked up in the target's MRO-resolved
@@ -801,10 +801,55 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
     }
 }
 
+/// Enforces `scope`'s visibility for an explicit-receiver Path 1 call --
+/// panics with a clear compile-time error if disallowed. Only ever called
+/// when `bypass_visibility` is `false` (see `dispatch`'s docs): an implicit-
+/// self call never reaches this at all (handled entirely separately in
+/// `emit_call`'s own no-receiver branch), and `send` always bypasses it
+/// (matching real Ruby). Mirrors real Ruby's actual rules: `private` allows
+/// an EXPLICIT literal `self` receiver (Ruby 2.7+) but nothing else;
+/// `protected` allows a call whose CALLING method's own receiver class is
+/// ancestor-related (either direction) to the target method's owner class
+/// -- e.g. `def ==(other); x == other.x; end` calling a `protected` `x` on
+/// `other`, another instance of the same class. Path 2 (dynamic dispatch
+/// against a receiver whose class isn't statically known) doesn't enforce
+/// this at all yet -- a documented, narrow gap, matching this codebase's
+/// existing posture on other Path-1-only guarantees (e.g. keyword args).
+fn enforce_visibility(cx: &Ctx, recv_id: NodeId, scope: &crate::compiler::Scope, method_name: &str) {
+    match scope.visibility {
+        Visibility::Public => {}
+        Visibility::Private => {
+            if !matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
+                panic!(
+                    "private method `{method_name}` called with an explicit receiver (spike scope: only a literal `self` receiver or no receiver at all is allowed, matching real Ruby)"
+                );
+            }
+        }
+        Visibility::Protected => {
+            let owner = scope.class.expect("a materialized method always has an owner class");
+            let related = cx.current_class.is_some_and(|caller_cid| {
+                caller_cid == owner
+                    || cx.compiler.class(caller_cid).ancestors.contains(&owner)
+                    || cx.compiler.class(owner).ancestors.contains(&caller_cid)
+            });
+            if !related {
+                panic!(
+                    "protected method `{method_name}` called from outside a related class (spike scope)"
+                );
+            }
+        }
+    }
+}
+
 /// The actual dispatch decision (see the module's "Two dispatch paths"
 /// docs), given an already-computed `recv_expr` for the receiver's runtime
 /// value -- factored out of `emit_call` so `&.`'s nil-guard can wrap this
-/// without the receiver expression being evaluated twice.
+/// without the receiver expression being evaluated twice. `bypass_visibility`
+/// is `true` only for the recursive call `send`/`public_send`'s own static-
+/// resolution retry below makes (both already resolved their own visibility
+/// rule -- `send` always bypasses, `public_send` already validated `Public`
+/// before recursing) -- `false` for every ordinary explicit-receiver call,
+/// which gets `enforce_visibility`'s real check.
 // `block_arg` is only threaded through the `send`/`public_send` static-
 // resolution retry below for now -- real Proc construction (which will
 // genuinely consume it) lands later in this same phase.
@@ -818,6 +863,7 @@ fn dispatch(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     recv_expr: &TokenStream,
+    bypass_visibility: bool,
 ) -> TokenStream {
     // Every fast path below (operators, collection `[]`/`length`, `.times`)
     // is a fixed, positional-only shape that has nowhere to put a keyword
@@ -984,8 +1030,19 @@ fn dispatch(
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
             if let Some(cid) = recv_class {
-                if cx.compiler.method_in_chain(cid, &target).is_some() {
-                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr);
+                if let Some((_, sid)) = cx.compiler.method_in_chain(cid, &target) {
+                    // `public_send` -- unlike `send` -- only ever calls
+                    // `Public` methods, with NO self-receiver/protected-
+                    // relatedness relaxation at all (stricter than an
+                    // ordinary explicit-receiver call, matching real Ruby).
+                    // Checked HERE (not via `enforce_visibility`, whose
+                    // rules are deliberately looser) before recursing.
+                    if name == "public_send" && cx.compiler.scope(sid).visibility != Visibility::Public {
+                        panic!(
+                            "`public_send` cannot call non-public method `{target}` (spike scope, matches real Ruby)"
+                        );
+                    }
+                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr, true);
                 }
             }
         }
@@ -1033,6 +1090,9 @@ fn dispatch(
     if let Some(cid) = recv_class {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
             let scope = cx.compiler.scope(sid);
+            if !bypass_visibility {
+                enforce_visibility(cx, recv_id, scope, name);
+            }
             return super::params::emit_call_args(
                 cx,
                 recv_expr,

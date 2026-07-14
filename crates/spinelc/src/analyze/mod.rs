@@ -12,7 +12,7 @@ mod locals;
 mod mro;
 
 use crate::compiler::{ClassId, Compiler, Scope, OBJECT_CLASS};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -95,10 +95,16 @@ fn register_class(
                 params,
                 body,
                 is_class_method,
+                visibility,
             } => {
-                let (name, params, body, is_class_method) =
-                    (name.clone(), params.clone(), body.clone(), *is_class_method);
-                let sid = register_method(compiler, class_id, class_id, name, params, body)?;
+                let (name, params, body, is_class_method, visibility) = (
+                    name.clone(),
+                    params.clone(),
+                    body.clone(),
+                    *is_class_method,
+                    *visibility,
+                );
+                let sid = register_method(compiler, class_id, class_id, name, params, body, visibility)?;
                 if is_class_method {
                     compiler.classes[class_id.0 as usize]
                         .own_class_methods
@@ -155,6 +161,7 @@ fn register_method(
     name: String,
     params: Params,
     body: Vec<NodeId>,
+    visibility: Visibility,
 ) -> Result<crate::compiler::ScopeId, String> {
     let mut local_types = locals::infer_locals(compiler, &body);
     for id in params.default_ids() {
@@ -183,6 +190,7 @@ fn register_method(
         body,
         local_types,
         uses_bare_block,
+        visibility,
     }))
 }
 

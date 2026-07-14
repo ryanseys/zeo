@@ -5,7 +5,7 @@
 //! into `spinel_rt::ClassId` by codegen, but the two types are otherwise
 //! unrelated -- `spinelc` never links against `spinel-rt` at all.
 
-use crate::hir::{Hir, NodeId, Params};
+use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -119,6 +119,10 @@ pub struct Scope {
     /// decides whether the method gets an implicit trailing `__blk` Rust
     /// parameter (see `codegen::params`).
     pub uses_bare_block: bool,
+    /// As of the `def`'s own position in its class body -- see
+    /// `hir::Visibility`'s docs. Enforced at `codegen::call::dispatch`'s
+    /// Path 1 site and `spinel_rt::send`'s Path 2 dispatch.
+    pub visibility: Visibility,
 }
 
 impl Scope {

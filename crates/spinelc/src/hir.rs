@@ -36,6 +36,20 @@ impl Hir {
         self.nodes.push(node);
         NodeId((self.nodes.len() - 1) as u32)
     }
+
+    /// Retroactively overrides an already-lowered `DefMethod`'s visibility --
+    /// used by `parse::lower_class_body_statement` for `private`/`public`/
+    /// `protected :name` (marking an already-lowered method by name) and the
+    /// `private def name; ... end` idiom (the `def` is lowered normally
+    /// first, then its visibility corrected). Panics if `id` isn't a
+    /// `DefMethod` -- every call site already confirmed the node shape
+    /// before calling.
+    pub fn set_method_visibility(&mut self, id: NodeId, visibility: Visibility) {
+        let HirNode::DefMethod { visibility: v, .. } = &mut self.nodes[id.0 as usize] else {
+            panic!("set_method_visibility: node isn't a DefMethod");
+        };
+        *v = visibility;
+    }
 }
 
 /// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose
@@ -83,6 +97,26 @@ pub struct Params {
     /// forwarding (which implies a block too, among other things) is still a
     /// clean lowering error -- see `parse/mod.rs::lower_params`'s docs.
     pub block: Option<Option<String>>,
+}
+
+/// A method's visibility, as of the point in the class body where its `def`
+/// was lowered (`private`/`public`/`protected` with no arguments switches the
+/// DEFAULT for every subsequent `def` in the same class body -- see
+/// `parse::lower_class_body`'s docs) or set retroactively by a same-named
+/// `private`/`public`/`protected :name` / `private def name; ... end` form.
+/// Enforced at `codegen::call::dispatch`'s Path 1 site and `spinel_rt::send`'s
+/// Path 2 dispatch -- see their docs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Visibility {
+    #[default]
+    Public,
+    Private,
+    /// Callable with an explicit receiver only from within a method whose
+    /// OWN receiver class is ancestor-related to the method's defining
+    /// class (real Ruby's actual rule -- e.g. `def ==(other); x == other.x;
+    /// end` calling a `protected` `x` on `other`, another instance of the
+    /// same class).
+    Protected,
 }
 
 #[derive(Clone)]
@@ -539,6 +573,7 @@ pub enum HirNode {
         params: Params,
         body: Vec<NodeId>,
         is_class_method: bool,
+        visibility: Visibility,
     },
     /// `include Mod` -- one node per module argument, in left-to-right
     /// source order, when multiple are given (`include A, B` lowers to two

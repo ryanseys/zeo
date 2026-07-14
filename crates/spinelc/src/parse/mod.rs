@@ -9,7 +9,7 @@
 
 use crate::hir::{
     ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
-    PatternArm, RescueClause, StrPart,
+    PatternArm, RescueClause, StrPart, Visibility,
 };
 use ruby_prism::{Node, ParseResult};
 
@@ -708,6 +708,14 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             params,
             body,
             is_class_method,
+            // Only `lower_class_body_statement`'s own class-body-scoped
+            // default-visibility tracking ever produces non-`Public` --
+            // this generic path is reached for a top-level/nested `def`, or
+            // one appearing as an ARGUMENT expression (`private def foo;
+            // end` lowers its inner `def` through here, then
+            // `lower_class_body_statement` retroactively mutates this same
+            // node's `visibility` field once it sees the enclosing call).
+            visibility: Visibility::Public,
         }));
     }
 
@@ -786,6 +794,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             params,
                             body,
                             is_class_method: false,
+                            visibility: Visibility::Public,
                         }));
                     }
                 }
@@ -1192,8 +1201,12 @@ fn lower_class_body(
         },
     };
     let mut out = Vec::new();
+    // The DEFAULT visibility for every subsequent `def` in this class body,
+    // switched by a bare `private`/`public`/`protected` (no arguments) --
+    // see `lower_class_body_statement`'s docs.
+    let mut visibility = Visibility::Public;
     for stmt in &stmts {
-        out.extend(lower_class_body_statement(result, hir, stmt)?);
+        lower_class_body_statement(result, hir, stmt, &mut visibility, &mut out)?;
     }
     Ok(out)
 }
@@ -1205,24 +1218,70 @@ fn lower_class_body(
 /// literal-name restriction elsewhere in this file); anything else falls
 /// through to an ordinary `Call` (which real Ruby would resolve dynamically,
 /// e.g. `attr_reader(*names)` -- outside spike scope, a clean rejection at
-/// codegen if `attr_reader` itself isn't otherwise defined).
+/// codegen if `attr_reader` itself isn't otherwise defined). Every
+/// synthesized getter/setter gets the CURRENT default `visibility`, exactly
+/// like an ordinary `def` would.
 ///
-/// `private`/`public`/`protected` (any receiver-less call with that name,
-/// any arguments) are recognized and dropped entirely -- a documented
-/// scope-cut, not an oversight: every call in this spike is already either a
-/// direct static call or a `send`, and enforcing visibility needs a static
-/// check at explicit-receiver Path 1 call sites plus a dynamic check inside
-/// `send` for Path 2, neither of which any current example depends on.
+/// `private`/`public`/`protected` recognize three real Ruby forms, appending
+/// nothing to `out` themselves (they're never a standalone HIR node): (1) a
+/// bare call with no arguments switches the DEFAULT `visibility` for every
+/// `def` for the REST of this class body; (2) `private def name; ... end`
+/// (the `def`-as-sole-argument idiom) lowers the `def` normally through the
+/// generic `lower_node` path, then retroactively overrides ITS OWN
+/// visibility; (3) `private :name1, :name2, ...` retroactively overrides
+/// the visibility of already-lowered method(s) of those names (searched in
+/// `out`, everything lowered so far in this same class body -- real Ruby
+/// requires the target already be defined earlier in the same body, so no
+/// forward search is needed). Anything else (a dynamic/computed argument)
+/// falls through to an ordinary `Call` -- a clean rejection at codegen time
+/// if `private`/`public`/`protected` themselves aren't otherwise defined,
+/// matching this function's own posture elsewhere.
 fn lower_class_body_statement(
     result: &ParseResult,
     hir: &mut Hir,
     node: &Node<'_>,
-) -> PResult<Vec<NodeId>> {
+    visibility: &mut Visibility,
+    out: &mut Vec<NodeId>,
+) -> PResult<()> {
     if let Some(call) = node.as_call_node() {
         if call.receiver().is_none() {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
             if matches!(name.as_str(), "private" | "public" | "protected") {
-                return Ok(Vec::new());
+                let new_vis = match name.as_str() {
+                    "private" => Visibility::Private,
+                    "protected" => Visibility::Protected,
+                    _ => Visibility::Public,
+                };
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if arg_list.is_empty() {
+                    *visibility = new_vis;
+                    return Ok(());
+                }
+                if arg_list.len() == 1 && arg_list[0].as_def_node().is_some() {
+                    let id = lower_node(result, hir, &arg_list[0])?;
+                    hir.set_method_visibility(id, new_vis);
+                    out.push(id);
+                    return Ok(());
+                }
+                if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                    for n in &arg_list {
+                        let target = String::from_utf8_lossy(
+                            n.as_symbol_node().expect("checked above").unescaped(),
+                        )
+                        .into_owned();
+                        if let Some(&id) = out.iter().find(|&&id| {
+                            matches!(&hir[id], HirNode::DefMethod { name: existing, .. } if *existing == target)
+                        }) {
+                            hir.set_method_visibility(id, new_vis);
+                        }
+                    }
+                    return Ok(());
+                }
+                // Falls through to the generic `Call` lowering below --
+                // a dynamic/computed argument (e.g. `private(*names)`).
             }
             // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare
             // constant arguments, applied left-to-right (see `HirNode::
@@ -1239,16 +1298,14 @@ fn lower_class_body_statement(
                             .iter()
                             .map(constant_name)
                             .collect::<PResult<Vec<_>>>()?;
-                        return Ok(names
-                            .into_iter()
-                            .map(|n| {
-                                hir.push(match name.as_str() {
-                                    "include" => HirNode::Include(n),
-                                    "extend" => HirNode::Extend(n),
-                                    _ => HirNode::Prepend(n),
-                                })
+                        out.extend(names.into_iter().map(|n| {
+                            hir.push(match name.as_str() {
+                                "include" => HirNode::Include(n),
+                                "extend" => HirNode::Extend(n),
+                                _ => HirNode::Prepend(n),
                             })
-                            .collect());
+                        }));
+                        return Ok(());
                     }
                 }
             }
@@ -1256,7 +1313,6 @@ fn lower_class_body_statement(
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
-                        let mut defs = Vec::new();
                         for n in &arg_list {
                             let ivar = String::from_utf8_lossy(
                                 n.as_symbol_node().expect("checked above").unescaped(),
@@ -1264,18 +1320,19 @@ fn lower_class_body_statement(
                             .into_owned();
                             if name != "attr_writer" {
                                 let read = hir.push(HirNode::IvarRead(ivar.clone()));
-                                defs.push(hir.push(HirNode::DefMethod {
+                                out.push(hir.push(HirNode::DefMethod {
                                     name: ivar.clone(),
                                     params: Params::default(),
                                     body: vec![read],
                                     is_class_method: false,
+                                    visibility: *visibility,
                                 }));
                             }
                             if name != "attr_reader" {
                                 let param = "value".to_string();
                                 let read_param = hir.push(HirNode::LocalRead(param.clone()));
                                 let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));
-                                defs.push(hir.push(HirNode::DefMethod {
+                                out.push(hir.push(HirNode::DefMethod {
                                     name: format!("{ivar}="),
                                     params: Params {
                                         required: vec![param],
@@ -1283,16 +1340,30 @@ fn lower_class_body_statement(
                                     },
                                     body: vec![write],
                                     is_class_method: false,
+                                    visibility: *visibility,
                                 }));
                             }
                         }
-                        return Ok(defs);
+                        return Ok(());
                     }
                 }
             }
         }
     }
-    Ok(vec![lower_node(result, hir, node)?])
+    // An ordinary `def` gets the CURRENT default visibility -- the generic
+    // `lower_node` path (reached below) always sets `Public` (it has no
+    // notion of a class body's running default; see its own docs), so this
+    // corrects it retroactively when the current default isn't `Public`.
+    if node.as_def_node().is_some() {
+        let id = lower_node(result, hir, node)?;
+        if *visibility != Visibility::Public {
+            hir.set_method_visibility(id, *visibility);
+        }
+        out.push(id);
+        return Ok(());
+    }
+    out.push(lower_node(result, hir, node)?);
+    Ok(())
 }
 
 /// A `break`/`next`'s optional value -- at most one argument is supported

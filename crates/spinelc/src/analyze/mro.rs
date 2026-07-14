@@ -113,8 +113,10 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body) = (scope.params.clone(), scope.body.clone());
-                let new_id = register_method(compiler, class_id, anc_id, name, params, body)?;
+                let (params, body, visibility) =
+                    (scope.params.clone(), scope.body.clone(), scope.visibility);
+                let new_id =
+                    register_method(compiler, class_id, anc_id, name, params, body, visibility)?;
                 materialized.push(new_id);
             }
         }
@@ -177,8 +179,9 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body) = (scope.params.clone(), scope.body.clone());
-                let new_id = register_method(compiler, class_id, cid, name, params, body)?;
+                let (params, body, visibility) =
+                    (scope.params.clone(), scope.body.clone(), scope.visibility);
+                let new_id = register_method(compiler, class_id, cid, name, params, body, visibility)?;
                 materialized.push(new_id);
             }
         }
@@ -189,8 +192,9 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                     continue;
                 }
                 let scope = compiler.scope(sid);
-                let (params, body) = (scope.params.clone(), scope.body.clone());
-                let new_id = register_method(compiler, class_id, m, name, params, body)?;
+                let (params, body, visibility) =
+                    (scope.params.clone(), scope.body.clone(), scope.visibility);
+                let new_id = register_method(compiler, class_id, m, name, params, body, visibility)?;
                 materialized.push(new_id);
             }
         }

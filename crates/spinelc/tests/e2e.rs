@@ -727,15 +727,13 @@ fn attr_accessor_reader_and_writer_generate_real_methods() {
 }
 
 #[test]
-fn visibility_keywords_are_recognized_and_do_not_error() {
-    // `private`/`public`/`protected` are recognized and dropped (a
-    // documented scope-cut -- not enforced yet, see
-    // `parse::lower_class_body_statement`'s docs). This only exercises
-    // "doesn't break compilation," not enforcement -- calling a private
-    // method from another method of the same class needs `self.`/implicit-
-    // self dispatch to a user-defined method, which is a separate,
-    // pre-existing gap this phase doesn't touch (see
-    // docs/PORTING_ANALYSIS.md).
+fn visibility_keywords_switch_the_default_for_subsequent_defs() {
+    // A bare `private`/`public` switches the DEFAULT visibility for every
+    // subsequent `def` in the class body (see
+    // `parse::lower_class_body_statement`'s docs) -- this test only checks
+    // that a PUBLIC method compiles/runs normally after a `private` section;
+    // see the dedicated visibility-enforcement tests below for the actual
+    // private/protected/public_send rejection cases.
     let result = run_ruby(
         r#"
         class Box
@@ -3333,6 +3331,181 @@ fn self_inside_a_class_method_is_a_clean_compile_error() {
           end
         end
         Foo.bar
+        "#,
+    );
+}
+
+#[test]
+#[should_panic(expected = "private method `helper` called with an explicit receiver")]
+fn private_method_called_with_an_explicit_receiver_is_a_clean_compile_error() {
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Box
+          def initialize
+            @x = 1
+          end
+
+          private
+
+          def helper
+            2
+          end
+        end
+
+        b = Box.new
+        puts b.helper
+        "#,
+    );
+}
+
+#[test]
+fn private_method_callable_via_implicit_self_and_explicit_self_dot() {
+    // Real Ruby (2.7+): a private method IS callable with an explicit
+    // receiver as long as it's a literal `self` -- not just implicit-self
+    // (no receiver at all).
+    let result = run_ruby(
+        r#"
+        class Box
+          def run
+            self.helper + implicit_helper
+          end
+
+          private
+
+          def helper
+            10
+          end
+
+          def implicit_helper
+            helper
+          end
+        end
+
+        puts Box.new.run
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n");
+}
+
+#[test]
+fn private_def_idiom_and_retroactive_private_by_name() {
+    let result = run_ruby(
+        r#"
+        class A
+          def pub_a
+            priv_a
+          end
+
+          private def priv_a
+            "priv_a"
+          end
+        end
+
+        class B
+          def pub_b
+            priv_b
+          end
+
+          def priv_b
+            "priv_b"
+          end
+
+          private :priv_b
+        end
+
+        puts A.new.pub_a
+        puts B.new.pub_b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "priv_a\npriv_b\n");
+}
+
+#[test]
+fn protected_method_callable_from_a_related_classs_own_method() {
+    let result = run_ruby(
+        r#"
+        class Money
+          def initialize(amount)
+            @amount = amount
+          end
+
+          def greater_than_five
+            other = Money.new(5)
+            amount > other.amount
+          end
+
+          protected
+
+          def amount
+            @amount
+          end
+        end
+
+        puts Money.new(10).greater_than_five
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+#[should_panic(expected = "protected method `amount` called from outside a related class")]
+fn protected_method_called_from_outside_any_related_class_is_a_clean_compile_error() {
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Money
+          def initialize(amount)
+            @amount = amount
+          end
+
+          protected
+
+          def amount
+            @amount
+          end
+        end
+
+        a = Money.new(10)
+        puts a.amount
+        "#,
+    );
+}
+
+#[test]
+fn send_bypasses_visibility_entirely() {
+    let result = run_ruby(
+        r#"
+        class Box
+          private
+
+          def secret
+            "shh"
+          end
+        end
+
+        puts Box.new.send(:secret)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "shh\n");
+}
+
+#[test]
+#[should_panic(expected = "`public_send` cannot call non-public method `secret`")]
+fn public_send_still_enforces_visibility_unlike_send() {
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Box
+          private
+
+          def secret
+            "shh"
+          end
+        end
+
+        puts Box.new.public_send(:secret)
         "#,
     );
 }
