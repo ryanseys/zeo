@@ -4,12 +4,14 @@
 //! for the full design writeup.
 
 mod arith;
+mod collections;
 mod dispatch;
 mod signal;
 mod symbol;
 mod value;
 
 pub use arith::*;
+pub use collections::*;
 pub use dispatch::{
     install_class_registry, send, ClassId, ClassRegistry, MethodFn, Object, RObj, RubyObject,
 };
@@ -134,9 +136,9 @@ mod tests {
         class Greeter : Object {
             id: 2;
             ivars { }
-            def hello(&self) { Ok(RubyValue::Str("hi".to_string())) }
+            def hello(&self) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(&self, name: RubyValue) {
-                Ok(RubyValue::Str(format!("no such method: {}", name.to_display_string())))
+                Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
             }
         }
     }

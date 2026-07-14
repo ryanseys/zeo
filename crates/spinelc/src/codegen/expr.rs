@@ -9,6 +9,7 @@
 use quote::quote;
 
 use super::call::emit_call;
+use super::collections::{emit_array_lit, emit_hash_lit, emit_range_lit, emit_string_lit};
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::compiler::ClassId;
@@ -69,6 +70,10 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::New { .. } | HirNode::Call { .. } | HirNode::SuperCall { .. } => Some("method"),
         HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
+        | HirNode::StringLit(_)
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_)
+        | HirNode::RangeLit { .. }
         | HirNode::And(..)
         | HirNode::Or(..)
         | HirNode::Defined(_)
@@ -81,7 +86,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         }
     };
     match classification {
-        Some(s) => quote! { spinel_rt::RubyValue::Str(#s.to_string()) },
+        Some(s) => quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) },
         None => quote! { spinel_rt::RubyValue::Nil },
     }
 }
@@ -180,6 +185,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::Defined(v) => emit_defined(cx, *v),
+        HirNode::ArrayLit(elems) => emit_array_lit(cx, elems),
+        HirNode::HashLit(pairs) => emit_hash_lit(cx, pairs),
+        HirNode::RangeLit {
+            start,
+            end,
+            exclusive,
+        } => emit_range_lit(cx, *start, *end, *exclusive),
+        HirNode::StringLit(parts) => emit_string_lit(cx, parts),
         HirNode::If {
             cond,
             then_body,

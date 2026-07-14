@@ -55,6 +55,70 @@ const INT_UNARY_OPS: &[(&str, &str)] = &[
     ("~", "int_bnot"),
 ];
 
+/// `Array`/`Hash`/`Str`/`Range`'s minimal built-in method set (Phase 3 --
+/// see `spinel_rt::collections`'s module docs for the deliberate scope-cut:
+/// `[]`/`[]=`/`length` only, no Enumerable). `a[i]`/`a[i] = v` are ordinary
+/// `CallNode`s named `"[]"`/`"[]="` at the `ruby-prism` level (just like the
+/// numeric operators above), so this is dispatch-table generalization, not a
+/// new HIR shape -- mirroring the Phase 1 insight that operators were
+/// already plain calls. Returns `None` (falls through to ordinary Path 1/
+/// Path 2 dispatch below) for any receiver whose static type isn't one of
+/// these four, so a user class's own `def []` is completely unaffected.
+fn try_collection_dispatch(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    recv_expr: &TokenStream,
+) -> Option<TokenStream> {
+    let ty = infer(cx, recv_id);
+    let tokens = match (ty, name, args.len()) {
+        (TyKind::Array, "[]", 1) => {
+            let idx = emit_expr(cx, args[0]);
+            quote! { spinel_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
+        }
+        (TyKind::Array, "[]=", 2) => {
+            let idx = emit_expr(cx, args[0]);
+            let val = emit_expr(cx, args[1]);
+            quote! { spinel_rt::array_set(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked(), #val) }
+        }
+        (TyKind::Array, "length" | "size", 0) => {
+            quote! { spinel_rt::RubyValue::Int(spinel_rt::array_len(&(#recv_expr).as_array_unchecked())) }
+        }
+        (TyKind::Hash, "[]", 1) => {
+            let key = emit_expr(cx, args[0]);
+            quote! { spinel_rt::hash_get(&(#recv_expr).as_hash_unchecked(), &(#key)) }
+        }
+        (TyKind::Hash, "[]=", 2) => {
+            let key = emit_expr(cx, args[0]);
+            let val = emit_expr(cx, args[1]);
+            quote! { spinel_rt::hash_set(&(#recv_expr).as_hash_unchecked(), #key, #val) }
+        }
+        (TyKind::Hash, "length" | "size", 0) => {
+            quote! { spinel_rt::RubyValue::Int(spinel_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
+        }
+        (TyKind::Str, "[]", 1) => {
+            let idx = emit_expr(cx, args[0]);
+            quote! { spinel_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
+        }
+        (TyKind::Str, "[]=", 2) => {
+            let idx = emit_expr(cx, args[0]);
+            let val = emit_expr(cx, args[1]);
+            quote! { spinel_rt::string_set(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked(), &(#val)) }
+        }
+        (TyKind::Str, "length" | "size", 0) => {
+            quote! { spinel_rt::RubyValue::Int(spinel_rt::string_len(&(#recv_expr).as_str_unchecked())) }
+        }
+        (TyKind::Range, "first", 0) => quote! { (#recv_expr).range_first() },
+        (TyKind::Range, "last", 0) => quote! { (#recv_expr).range_last() },
+        (TyKind::Range, "exclude_end?", 0) => {
+            quote! { spinel_rt::RubyValue::Bool((#recv_expr).range_exclude_end()) }
+        }
+        _ => return None,
+    };
+    Some(tokens)
+}
+
 pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
     let cid = cx
         .compiler
@@ -246,6 +310,10 @@ fn dispatch(
                 };
             }
         }
+    }
+
+    if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
+        return tokens;
     }
 
     // Known-shape block inlining (mirrors `emit_block_value_into`/`.times`,

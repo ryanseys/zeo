@@ -16,7 +16,7 @@
 //! times" as one more branch to agree with.
 
 use crate::compiler::Compiler;
-use crate::hir::{HirNode, NodeId};
+use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::{infer_type_with_locals, TyKind};
 use std::collections::{HashMap, HashSet};
 
@@ -75,6 +75,33 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         HirNode::New { args, .. } | HirNode::SuperCall { args } => {
             for &a in args {
                 track_node(compiler, locals, a);
+            }
+        }
+        HirNode::ArrayLit(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                track_node(compiler, locals, *n);
+            }
+        }
+        HirNode::HashLit(pairs) => {
+            for pair in pairs {
+                track_node(compiler, locals, pair.0);
+                track_node(compiler, locals, pair.1);
+            }
+        }
+        HirNode::RangeLit { start, end, .. } => {
+            if let Some(s) = start {
+                track_node(compiler, locals, *s);
+            }
+            if let Some(e) = end {
+                track_node(compiler, locals, *e);
+            }
+        }
+        HirNode::StringLit(parts) => {
+            for p in parts {
+                if let StrPart::Interp(n) = p {
+                    track_node(compiler, locals, *n);
+                }
             }
         }
         HirNode::Call {

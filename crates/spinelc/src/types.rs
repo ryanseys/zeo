@@ -14,6 +14,10 @@ use std::collections::HashMap;
 pub enum TyKind {
     Int,
     Symbol,
+    Str,
+    Array,
+    Hash,
+    Range,
     Object(ClassId),
     Poly,
 }
@@ -60,6 +64,10 @@ pub fn infer_type_with_locals(
     match &compiler.hir[id] {
         HirNode::IntegerLit(_) => TyKind::Int,
         HirNode::SymbolLit(_) => TyKind::Symbol,
+        HirNode::StringLit(_) => TyKind::Str,
+        HirNode::ArrayLit(_) => TyKind::Array,
+        HirNode::HashLit(_) => TyKind::Hash,
+        HirNode::RangeLit { .. } => TyKind::Range,
         HirNode::New { class_name, .. } => match compiler.class_by_name(class_name) {
             Some(cid) => TyKind::Object(cid),
             None => TyKind::Poly,

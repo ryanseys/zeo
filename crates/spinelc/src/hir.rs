@@ -38,6 +38,30 @@ impl Hir {
     }
 }
 
+/// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose
+/// contents are flattened in at runtime (its length isn't known until then,
+/// so this can't just be another plain element).
+pub enum ArrayElem {
+    Single(NodeId),
+    Splat(NodeId),
+}
+
+/// One `key => value` / `key: value` pair inside a `{ }` literal.
+/// Double-splat (`**other`) isn't supported yet -- lowering rejects it with
+/// a clear error (spike scope), the same posture as `ParenthesesNode`'s other
+/// narrowings (see `parse/mod.rs`).
+pub struct HashPair(pub NodeId, pub NodeId);
+
+/// One part of a (possibly-interpolated) string literal. A plain `"..."`
+/// with no `#{}` lowers to a single `Lit` part. Only a single bare expression
+/// is supported inside `#{}` (mirrors `ParenthesesNode`'s single-statement
+/// restriction) -- a multi-statement interpolation body is a clean lowering
+/// error, not silently truncated to its last statement.
+pub enum StrPart {
+    Lit(String),
+    Interp(NodeId),
+}
+
 /// A small, real enum instead of spinel's ~115 string-typed `SP_NODE_KINDS`
 /// that every pass has to `sp_streq` against. Sized to exactly what the
 /// spike's 7 examples need; growing it is additive (new variants), matching
@@ -83,6 +107,19 @@ pub enum HirNode {
         arms: Vec<(Vec<NodeId>, Vec<NodeId>)>,
         else_body: Vec<NodeId>,
     },
+    /// `[1, 2, *rest]` -- see `ArrayElem`'s docs for the splat handling.
+    ArrayLit(Vec<ArrayElem>),
+    /// `{ a: 1, b: 2 }` -- see `HashPair`'s docs for the double-splat gap.
+    HashLit(Vec<HashPair>),
+    /// `a..b` / `a...b` -- either endpoint may be absent (`a..`/`..b`),
+    /// matching Ruby's beginless/endless ranges.
+    RangeLit {
+        start: Option<NodeId>,
+        end: Option<NodeId>,
+        exclusive: bool,
+    },
+    /// A (possibly-interpolated) string literal -- see `StrPart`'s docs.
+    StringLit(Vec<StrPart>),
     LocalRead(String),
     LocalWrite(String, NodeId),
     IvarRead(String),

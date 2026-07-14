@@ -335,6 +335,99 @@ fn safe_navigation_on_a_non_nil_receiver() {
 }
 
 #[test]
+fn array_literal_indexing_and_mutation() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3]
+        puts(a[0])
+        puts(a[2])
+        puts(a[-1])
+        puts(a[10])
+        a[1] = 99
+        puts(a[1])
+        puts(a.length)
+        puts(a.size)
+
+        rest = [3, 4]
+        b = [1, 2, *rest, 5]
+        puts(b.length)
+        puts(b[2])
+        puts(b[4])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n3\n3\n\n99\n3\n3\n5\n3\n5\n"
+    );
+}
+
+#[test]
+fn hash_literal_indexing_and_mutation() {
+    let result = run_ruby(
+        r#"
+        h = { a: 1, b: 2 }
+        puts(h[:a])
+        puts(h[:b])
+        puts(h[:missing])
+        h[:c] = 3
+        puts(h[:c])
+        h[:a] = 10
+        puts(h[:a])
+        puts(h.length)
+        puts(h.size)
+        puts(h)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n2\n\n3\n10\n3\n3\n{a: 10, b: 2, c: 3}\n"
+    );
+}
+
+#[test]
+fn range_literal_and_accessors() {
+    let result = run_ruby(
+        r#"
+        r = 1..5
+        puts(r.first)
+        puts(r.last)
+        puts(r.exclude_end?)
+        puts(r)
+
+        r2 = 1...5
+        puts(r2.exclude_end?)
+        puts(r2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n5\nfalse\n1..5\ntrue\n1...5\n");
+}
+
+#[test]
+fn string_literal_interpolation_indexing_and_mutation() {
+    let result = run_ruby(
+        r#"
+        name = "world"
+        greeting = "hello #{name}, #{1 + 2} times"
+        puts(greeting)
+        puts(greeting.length)
+        puts(greeting[0])
+        puts(greeting[-1])
+        s = "cat"
+        s[0] = "b"
+        puts(s)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hello world, 3 times\n20\nh\ns\nbat\n"
+    );
+}
+
+#[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
     // `while` isn't supported until Phase 4 (loops) -- update this to a
     // still-unsupported construct if that lands and makes this compile.

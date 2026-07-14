@@ -11,7 +11,7 @@
 mod locals;
 
 use crate::compiler::{Compiler, Scope, OBJECT_CLASS};
-use crate::hir::{Hir, HirNode, NodeId};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, StrPart};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -181,6 +181,33 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         HirNode::Block { body, .. } => {
             for &n in body {
                 collect_ivars(hir, n, out);
+            }
+        }
+        HirNode::ArrayLit(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                collect_ivars(hir, *n, out);
+            }
+        }
+        HirNode::HashLit(pairs) => {
+            for pair in pairs {
+                collect_ivars(hir, pair.0, out);
+                collect_ivars(hir, pair.1, out);
+            }
+        }
+        HirNode::RangeLit { start, end, .. } => {
+            if let Some(s) = start {
+                collect_ivars(hir, *s, out);
+            }
+            if let Some(e) = end {
+                collect_ivars(hir, *e, out);
+            }
+        }
+        HirNode::StringLit(parts) => {
+            for p in parts {
+                if let StrPart::Interp(n) = p {
+                    collect_ivars(hir, *n, out);
+                }
             }
         }
         HirNode::Program(_)

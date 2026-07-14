@@ -7,7 +7,7 @@
 //! else is a clean `Err` (mirroring spinel's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
-use crate::hir::{Hir, HirNode, NodeId};
+use crate::hir::{ArrayElem, HashPair, Hir, HirNode, NodeId, StrPart};
 use ruby_prism::{Node, ParseResult};
 
 type PResult<T> = Result<T, String>;
@@ -403,8 +403,103 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         }));
     }
 
+    if let Some(s) = node.as_string_node() {
+        let content = String::from_utf8_lossy(s.unescaped()).into_owned();
+        return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(content)])));
+    }
+
+    if let Some(istr) = node.as_interpolated_string_node() {
+        let parts = istr
+            .parts()
+            .iter()
+            .map(|part| lower_string_part(result, hir, &part))
+            .collect::<PResult<Vec<_>>>()?;
+        return Ok(hir.push(HirNode::StringLit(parts)));
+    }
+
+    if let Some(arr) = node.as_array_node() {
+        let elements = arr
+            .elements()
+            .iter()
+            .map(|el| lower_array_elem(result, hir, &el))
+            .collect::<PResult<Vec<_>>>()?;
+        return Ok(hir.push(HirNode::ArrayLit(elements)));
+    }
+
+    if let Some(h) = node.as_hash_node() {
+        let pairs = h
+            .elements()
+            .iter()
+            .map(|el| {
+                let assoc = el.as_assoc_node().ok_or(
+                    "double-splat (`**expr`) in a hash literal isn't supported yet (spike scope)",
+                )?;
+                let key = lower_node(result, hir, &assoc.key())?;
+                let value = lower_node(result, hir, &assoc.value())?;
+                Ok(HashPair(key, value))
+            })
+            .collect::<PResult<Vec<_>>>()?;
+        return Ok(hir.push(HirNode::HashLit(pairs)));
+    }
+
+    if let Some(range) = node.as_range_node() {
+        let start = match range.left() {
+            None => None,
+            Some(n) => Some(lower_node(result, hir, &n)?),
+        };
+        let end = match range.right() {
+            None => None,
+            Some(n) => Some(lower_node(result, hir, &n)?),
+        };
+        return Ok(hir.push(HirNode::RangeLit {
+            start,
+            end,
+            exclusive: range.is_exclude_end(),
+        }));
+    }
+
     Err(format!(
         "unsupported syntax at {:?} (spike handles only what the 7 example programs need)",
         node.location()
     ))
+}
+
+/// One `elements()` entry of an `ArrayNode` -- either a plain value or a
+/// `*expr` splat (`SplatNode`). A bare `*` with no expression is only valid
+/// in a parameter/pattern position, never inside an array literal, so
+/// `SplatNode::expression()` returning `None` here is unreachable from real
+/// source and treated as a clean error rather than a panic.
+fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<ArrayElem> {
+    if let Some(splat) = node.as_splat_node() {
+        let expr = splat
+            .expression()
+            .ok_or("a bare `*` isn't supported inside an array literal (spike scope)")?;
+        return Ok(ArrayElem::Splat(lower_node(result, hir, &expr)?));
+    }
+    Ok(ArrayElem::Single(lower_node(result, hir, node)?))
+}
+
+/// One `parts()` entry of an `InterpolatedStringNode` -- either a literal
+/// chunk (`StringNode`) or an `#{ }` (`EmbeddedStatementsNode`, exactly one
+/// statement supported -- see `StrPart`'s docs). `EmbeddedVariableNode`
+/// (bare `#@ivar`/`#$global` interpolation, no braces) isn't handled, a
+/// narrower-than-real-Ruby spike scope-cut.
+fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<StrPart> {
+    if let Some(s) = node.as_string_node() {
+        return Ok(StrPart::Lit(String::from_utf8_lossy(s.unescaped()).into_owned()));
+    }
+    if let Some(embedded) = node.as_embedded_statements_node() {
+        let stmts: Vec<_> = embedded
+            .statements()
+            .map(|s| s.body().iter().collect())
+            .unwrap_or_default();
+        return match stmts.len() {
+            1 => Ok(StrPart::Interp(lower_node(result, hir, &stmts[0])?)),
+            _ => Err(
+                "string interpolation only supports a single expression inside `#{ }` (spike scope)"
+                    .to_string(),
+            ),
+        };
+    }
+    Err("unsupported string interpolation part (spike scope)".to_string())
 }

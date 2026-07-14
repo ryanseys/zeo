@@ -16,6 +16,7 @@
 //! failure in a temp dir.
 
 mod call;
+mod collections;
 mod expr;
 mod ident;
 mod stmt;
