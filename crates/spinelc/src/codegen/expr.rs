@@ -68,8 +68,8 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 /// (`is_a?`/`kind_of?`/`respond_to?`), not a constructible struct.
 pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     use crate::compiler::{
-        ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, PROC_CLASS, RANGE_CLASS, STRING_CLASS,
-        SYMBOL_CLASS,
+        ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, PROC_CLASS,
+        RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
     };
     match infer(cx, id) {
         TyKind::Object(cid) => Some(cid),
@@ -81,6 +81,8 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         TyKind::Hash => Some(HASH_CLASS),
         TyKind::Range => Some(RANGE_CLASS),
         TyKind::Proc => Some(PROC_CLASS),
+        TyKind::Regexp => Some(REGEXP_CLASS),
+        TyKind::MatchData => Some(MATCH_DATA_CLASS),
         TyKind::Poly => None,
     }
 }
@@ -143,6 +145,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::NilLit
         | HirNode::BoolLit(_)
         | HirNode::StringLit(_)
+        | HirNode::RegexpLit(..)
         | HirNode::ArrayLit(_)
         | HirNode::HashLit(_)
         | HirNode::RangeLit { .. }
@@ -227,7 +230,13 @@ fn emit_case_when(
         for &v in values {
             let v_expr = emit_expr(cx, v);
             let this_check = if has_subject {
-                quote! { (#v_expr).rb_eq(&__subject) }
+                // `rb_case_eq`, not plain `rb_eq`: a strict superset that
+                // additionally gives `when /regex/` real `Regexp#===`
+                // matching against a `String` subject (see
+                // `RubyValue::rb_case_eq`'s docs) -- every other value shape
+                // this desugar already supported behaves identically either
+                // way.
+                quote! { (#v_expr).rb_case_eq(&__subject) }
             } else {
                 quote! { (#v_expr).truthy() }
             };
@@ -310,6 +319,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             exclusive,
         } => emit_range_lit(cx, *start, *end, *exclusive),
         HirNode::StringLit(parts) => emit_string_lit(cx, parts),
+        HirNode::RegexpLit(parts, flags) => super::collections::emit_regexp_lit(cx, parts, *flags),
         HirNode::If {
             cond,
             then_body,

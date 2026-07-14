@@ -6,9 +6,9 @@
 
 use quote::quote;
 
-use super::expr::{box_if_object_typed, emit_expr};
+use super::expr::{box_if_object_typed, emit_boxed_new, emit_expr};
 use super::Ctx;
-use crate::hir::{ArrayElem, HashPair, NodeId, StrPart};
+use crate::hir::{ArrayElem, HashPair, NodeId, RegexpFlags, StrPart};
 use proc_macro2::TokenStream;
 
 /// `[1, 2, *rest]` -- a plain element is pushed directly; a `*splat`
@@ -105,5 +105,52 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
             #(#pieces)*
             __s
         }))
+    }
+}
+
+/// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated -- the
+/// pattern text is assembled exactly like `emit_string_lit`'s general
+/// (interpolated) case, then compiled at the construction site via
+/// `spinel_rt::regexp_new`. A compile failure raises a real, catchable
+/// `RegexpError` -- checked EVERY time this literal is reached, even for a
+/// non-interpolated pattern that could in principle be validated once at
+/// `spinelc` compile time instead (a documented, narrower-timing
+/// approximation of real Ruby's own parse-time `SyntaxError` for a static
+/// pattern -- see `hir::HirNode::RegexpLit`'s docs; not silent wrongness,
+/// since an invalid pattern is still caught, just one step later than real
+/// Ruby catches it).
+pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> TokenStream {
+    let pattern_expr = if let [StrPart::Lit(s)] = parts {
+        quote! { #s.to_string() }
+    } else {
+        let pieces = parts.iter().map(|p| match p {
+            StrPart::Lit(s) => quote! { __pat.push_str(#s); },
+            StrPart::Interp(n) => {
+                let e = emit_expr(cx, *n);
+                quote! { __pat.push_str(&(#e).to_display_string()); }
+            }
+        });
+        quote! {
+            {
+                #[allow(unused_mut)]
+                let mut __pat = String::new();
+                #(#pieces)*
+                __pat
+            }
+        }
+    };
+    let ignore_case = flags.ignore_case;
+    let extended = flags.extended;
+    let multiline = flags.multiline;
+    let regexp_error = emit_boxed_new(
+        cx,
+        "RegexpError",
+        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__err)) }],
+    );
+    quote! {
+        match spinel_rt::regexp_new(&(#pattern_expr), #ignore_case, #extended, #multiline) {
+            Ok(__re) => spinel_rt::RubyValue::Regexp(__re),
+            Err(__err) => return Err(spinel_rt::Signal::Raise(#regexp_error)),
+        }
     }
 }

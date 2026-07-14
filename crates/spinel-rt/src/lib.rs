@@ -10,6 +10,7 @@ mod cvars;
 mod dispatch;
 mod globals;
 mod handling;
+mod regexp;
 mod rproc;
 mod signal;
 mod symbol;
@@ -21,11 +22,13 @@ pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
     MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+    INTEGER_CLASS, MATCH_DATA_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS, REGEXP_CLASS,
+    STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
+pub use regexp::*;
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;

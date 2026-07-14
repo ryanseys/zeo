@@ -307,7 +307,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *e, out);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     collect_locals(compiler, *n, out);

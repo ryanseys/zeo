@@ -81,6 +81,8 @@ pub const NIL_CLASS: ClassId = ClassId(8);
 pub const TRUE_CLASS: ClassId = ClassId(9);
 pub const FALSE_CLASS: ClassId = ClassId(10);
 pub const PROC_CLASS: ClassId = ClassId(11);
+pub const REGEXP_CLASS: ClassId = ClassId(12);
+pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {

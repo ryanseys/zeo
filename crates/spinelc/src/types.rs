@@ -25,6 +25,18 @@ pub enum TyKind {
     /// named `*rest`/`**kwrest` param seeds `Array`/`Hash`); nothing else
     /// infers this today.
     Proc,
+    /// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
+    /// `hir::HirNode::RegexpLit`'s docs.
+    Regexp,
+    /// The result of a successful `Regexp#match`/`String#match` -- only ever
+    /// produced by `codegen::call`'s own static dispatch (a `MatchData`
+    /// value can't be constructed any other way), so nothing in
+    /// `infer_type_with_locals` itself seeds this; a local holding a match
+    /// result stays `Poly` unless the codegen call site narrows it directly
+    /// (a documented, narrower-than-`New`/literal-driven inference scope-cut,
+    /// matching this module's existing "no dataflow through arbitrary method
+    /// calls" posture).
+    MatchData,
     Poly,
 }
 
@@ -73,6 +85,7 @@ pub fn infer_type_with_locals(
         HirNode::Lambda { .. } => TyKind::Proc,
         HirNode::SymbolLit(_) => TyKind::Symbol,
         HirNode::StringLit(_) => TyKind::Str,
+        HirNode::RegexpLit(..) => TyKind::Regexp,
         HirNode::ArrayLit(_) => TyKind::Array,
         HirNode::HashLit(_) => TyKind::Hash,
         HirNode::RangeLit { .. } => TyKind::Range,
@@ -114,6 +127,50 @@ pub fn infer_type_with_locals(
         } if args.is_empty() && (name == "length" || name == "size") => {
             match infer_type_with_locals(compiler, locals, *recv) {
                 TyKind::Array | TyKind::Hash | TyKind::Str => TyKind::Int,
+                _ => TyKind::Poly,
+            }
+        }
+        // `Regexp#match`/`String#match` (either receiver/argument order)
+        // always returns a `MatchData` (or `nil`, which doesn't change a
+        // LOCAL's own static type -- a subsequent read still sees
+        // `MatchData`, matching this codebase's existing "narrow the
+        // ASSIGNED type, not a full nilable-union" posture for every other
+        // seeded local type). Without this, a local holding a match result
+        // stays `Poly`, and every `MatchData` accessor called on it later
+        // would incorrectly route through the `Poly`-dispatch-to-`send`
+        // fallback (which assumes an `Object` receiver) instead of this
+        // module's own static `TyKind::MatchData` dispatch.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if name == "match" && matches!(args.as_slice(), [crate::hir::ArrayElem::Single(_)]) => {
+            let crate::hir::ArrayElem::Single(arg) = args[0] else {
+                unreachable!("guarded above")
+            };
+            let recv_ty = infer_type_with_locals(compiler, locals, *recv);
+            let arg_ty = infer_type_with_locals(compiler, locals, arg);
+            match (recv_ty, arg_ty) {
+                (TyKind::Regexp, TyKind::Str) | (TyKind::Str, TyKind::Regexp) => TyKind::MatchData,
+                _ => TyKind::Poly,
+            }
+        }
+        // `MatchData#to_a`/`#captures` -> `Array`, `#named_captures` ->
+        // `Hash` -- same motivating need as the `match` arm just above (a
+        // local holding one of these results must resolve past `Poly` for
+        // its own later `[]`/`length` accesses to take the static fast
+        // path instead of the `Poly`-dispatch-to-`send` fallback, which
+        // assumes an `Object` receiver).
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && matches!(name.as_str(), "to_a" | "captures" | "named_captures") => {
+            match infer_type_with_locals(compiler, locals, *recv) {
+                TyKind::MatchData if name == "named_captures" => TyKind::Hash,
+                TyKind::MatchData => TyKind::Array,
                 _ => TyKind::Poly,
             }
         }

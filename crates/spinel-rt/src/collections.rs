@@ -74,6 +74,11 @@ fn hash_key(v: &RubyValue) -> HashKey {
         // identity).
         RubyValue::Object(o) => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
         RubyValue::Proc(p) => HashKey::Identity(Arc::as_ptr(p) as *const () as usize),
+        // Same identity-only fallback as `Object`/`Proc` above -- neither has
+        // a user-overridable `#hash`/`#eql?` protocol yet (see `HashKey`'s
+        // own docs on this documented, narrow scope-cut).
+        RubyValue::Regexp(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
+        RubyValue::MatchData(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
     }
 }
 

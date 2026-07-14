@@ -113,7 +113,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, *e);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     track_node(compiler, locals, *n);

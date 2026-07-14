@@ -131,17 +131,19 @@ fn emit_pattern_match(cx: &Ctx, pattern: &Pattern, scrutinee_ty: TyKind, scrutin
             let write = super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
             quote! { { #write true } }
         }
-        // Value patterns are matched via `RubyValue::rb_eq` -- the same
-        // value-equality escape hatch `CaseWhen`'s value matching already
-        // uses, not real Ruby's fully general `#===` protocol (see
-        // `Pattern::Value`'s docs).
+        // Value patterns are matched via `RubyValue::rb_case_eq` -- the same
+        // escape hatch `CaseWhen`'s value matching already uses (a strict
+        // superset of plain `rb_eq`, additionally giving `in /regex/` real
+        // `Regexp#===` matching -- see `RubyValue::rb_case_eq`'s docs), not
+        // real Ruby's fully general `#===` protocol (see `Pattern::Value`'s
+        // docs).
         Pattern::Value(node) => {
             let value_expr = emit_expr(cx, *node);
-            quote! { (#value_expr).rb_eq(&(#scrutinee)) }
+            quote! { (#value_expr).rb_case_eq(&(#scrutinee)) }
         }
         Pattern::Pin(node) => {
             let pin_expr = emit_expr(cx, *node);
-            quote! { (#pin_expr).rb_eq(&(#scrutinee)) }
+            quote! { (#pin_expr).rb_case_eq(&(#scrutinee)) }
         }
         Pattern::ClassCheck(name) => emit_class_check(cx, name, scrutinee_ty, scrutinee),
         Pattern::Range { start, end, exclusive } => emit_range_pattern(cx, *start, *end, *exclusive, scrutinee),

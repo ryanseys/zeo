@@ -523,6 +523,32 @@ pub enum StrPart {
     Interp(NodeId),
 }
 
+/// A `/pattern/flags` / `%r{pattern}flags` literal's option letters --
+/// `ruby-prism`'s `RegularExpressionNode`/`InterpolatedRegularExpressionNode`
+/// expose several more (`o`/`e`/`n`/`s`/`u`, all encoding/interpolation-once
+/// concerns), but this spike is UTF-8-only throughout (see
+/// `docs/limitations.md`'s existing posture on strings), so only the three
+/// letters that change actual MATCHING semantics are modeled; the rest are
+/// silently accepted as no-ops except a genuinely non-UTF-8-forcing encoding
+/// flag (`e`/`s`), which is a clean lowering rejection (see
+/// `parse/mod.rs`'s recognizer).
+#[derive(Clone, Copy, Default)]
+pub struct RegexpFlags {
+    /// `i` -- case-insensitive matching.
+    pub ignore_case: bool,
+    /// `x` -- ignore unescaped whitespace and `#` comments in the pattern
+    /// source (`regex`'s `ignore_whitespace`).
+    pub extended: bool,
+    /// `m` -- real Ruby's `/m` makes `.` match a newline too (`regex`'s
+    /// `dot_matches_new_line`) -- NOT the same thing as most other regex
+    /// flavors' "multi-line mode" (`regex`'s own `multi_line`, which
+    /// governs `^`/`$`). Ruby's `^`/`$` ALWAYS match at line boundaries by
+    /// default, with no opt-in flag at all -- see
+    /// `spinel_rt::regexp::regexp_new`'s docs for how this is modeled
+    /// (`multi_line(true)` is unconditional, independent of this field).
+    pub multiline: bool,
+}
+
 /// A small, real enum instead of spinel's ~115 string-typed `SP_NODE_KINDS`
 /// that every pass has to `sp_streq` against. Sized to exactly what the
 /// spike's 7 examples need; growing it is additive (new variants), matching
@@ -593,6 +619,23 @@ pub enum HirNode {
     },
     /// A (possibly-interpolated) string literal -- see `StrPart`'s docs.
     StringLit(Vec<StrPart>),
+    /// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated -- reuses
+    /// `StrPart` wholesale (a regex literal's `#{}` interpolation is
+    /// structurally identical to a string's, see `parse/mod.rs`'s recognizer,
+    /// which shares `lower_string_part`). A regex compile failure (either a
+    /// static, unconditionally-invalid pattern, or a runtime-only failure
+    /// once an interpolated part is substituted in) raises a real, catchable
+    /// `RegexpError` at codegen's construction site -- NOT rejected any
+    /// earlier at `spinelc` compile time, unlike real Ruby's own parse-time
+    /// `SyntaxError` for a static pattern: a documented, narrower-timing
+    /// approximation (see `codegen::collections::emit_regexp_lit`'s docs),
+    /// not silent wrongness. Backed by the `regex` crate, not Ruby's own
+    /// Onigmo engine -- no backreferences (`\1` inside the PATTERN itself,
+    /// as opposed to a `gsub`/`sub` REPLACEMENT string, where they *are*
+    /// supported -- see `spinel_rt::regexp`'s docs) and no lookaround
+    /// (`(?=...)`/`(?!...)`/`(?<=...)`/`(?<!...)`), a real, documented
+    /// semantic gap versus real Ruby, not an oversight.
+    RegexpLit(Vec<StrPart>, RegexpFlags),
     LocalRead(String),
     LocalWrite(String, NodeId),
     IvarRead(String),

@@ -215,7 +215,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             start.is_some_and(|s| node_contains_escaping_block(compiler, s))
                 || end.is_some_and(|e| node_contains_escaping_block(compiler, e))
         }
-        HirNode::StringLit(parts) => parts.iter().any(|p| match p {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => node_contains_escaping_block(compiler, *n),
             StrPart::Lit(_) => false,
         }),
@@ -371,7 +371,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::RangeLit { start, end, .. } => {
             start.is_some_and(|s| node_contains_begin(compiler, s)) || end.is_some_and(|e| node_contains_begin(compiler, e))
         }
-        HirNode::StringLit(parts) => parts.iter().any(|p| match p {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
             StrPart::Lit(_) => false,
         }),
@@ -645,7 +645,7 @@ fn walk(
                 walk(compiler, *e, in_escaping, param_exclusions, caps);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     walk(compiler, *n, in_escaping, param_exclusions, caps);

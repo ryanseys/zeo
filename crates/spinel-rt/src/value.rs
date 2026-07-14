@@ -7,9 +7,10 @@
 
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
-    ClassId, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, NIL_CLASS,
-    PROC_CLASS, RANGE_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+    ClassId, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS,
+    NIL_CLASS, PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
 };
+use crate::regexp::{RMatchData, RRegexp};
 use crate::{RObj, RProc, Symbol};
 
 #[derive(Clone)]
@@ -30,6 +31,11 @@ pub enum RubyValue {
     Object(RObj),
     /// A real, escaping block/`Proc` (Phase 6) -- see `rproc`'s module docs.
     Proc(RProc),
+    /// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
+    /// `regexp`'s module docs.
+    Regexp(RRegexp),
+    /// A successful `Regexp#match`/`String#match` result (Phase 12.7).
+    MatchData(RMatchData),
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -110,6 +116,12 @@ impl RubyValue {
             }
             RubyValue::Object(_) => "#<Object>".to_string(),
             RubyValue::Proc(_) => "#<Proc>".to_string(),
+            // `Regexp#to_s` -- real Ruby's `(?opts-negopts:body)` form (NOT
+            // the `/pattern/flags` literal form, that's `#inspect`'s job --
+            // see `regexp::regexp_to_s`'s docs).
+            RubyValue::Regexp(re) => crate::regexp::regexp_to_s(re).to_display_string(),
+            // `MatchData#to_s` -- the whole matched substring.
+            RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).to_display_string(),
         }
     }
 
@@ -136,6 +148,8 @@ impl RubyValue {
             RubyValue::Range(..) => RANGE_CLASS,
             RubyValue::Object(o) => o.class_id(),
             RubyValue::Proc(_) => PROC_CLASS,
+            RubyValue::Regexp(_) => REGEXP_CLASS,
+            RubyValue::MatchData(_) => MATCH_DATA_CLASS,
         }
     }
 
@@ -218,6 +232,22 @@ impl RubyValue {
         }
     }
 
+    /// Unwraps a `Regexp` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_regexp_unchecked(&self) -> RRegexp {
+        match self {
+            RubyValue::Regexp(r) => r.clone(),
+            other => panic!("expected a Regexp, got {}", other.to_display_string()),
+        }
+    }
+
+    /// Unwraps a `MatchData` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_matchdata_unchecked(&self) -> RMatchData {
+        match self {
+            RubyValue::MatchData(m) => m.clone(),
+            other => panic!("expected a MatchData, got {}", other.to_display_string()),
+        }
+    }
+
     /// Unwraps an `Object` payload -- see `as_array_unchecked`'s docs. Used
     /// wherever a runtime `class_id()` is needed off a POLY-typed value
     /// (a dynamic `is_a?`/`kind_of?` check, or -- once `raise`/`rescue`
@@ -281,7 +311,32 @@ impl RubyValue {
             }
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
             (RubyValue::Str(a), RubyValue::Str(b)) => *a.lock() == *b.lock(),
+            // Real Ruby `Regexp#==`: same source pattern AND same flags.
+            (RubyValue::Regexp(a), RubyValue::Regexp(b)) => {
+                a.source == b.source
+                    && a.ignore_case == b.ignore_case
+                    && a.extended == b.extended
+                    && a.multiline == b.multiline
+            }
             _ => false,
         }
+    }
+
+    /// `case`/`when`'s and `case`/`in`'s value-pattern matching escape hatch
+    /// -- a strict superset of `rb_eq` (falls back to it for every value
+    /// shape that isn't a `Regexp` pattern against a `Str` subject), adding
+    /// real Ruby's actual `Regexp#===` behavior (`when /foo/` matching
+    /// against a `String` subject) instead of the plain structural-equality
+    /// check `rb_eq` alone would give (which -- since a `Regexp` never
+    /// structurally equals a `Str` -- would make `when /foo/` never match
+    /// anything at all). A non-`String` subject against a `Regexp` pattern
+    /// is `false` (real Ruby: `Regexp#===` returns `false`, not an error,
+    /// for anything that doesn't respond to `to_str`), matching this
+    /// function's own no-panic-on-mismatched-shape posture.
+    pub fn rb_case_eq(&self, subject: &RubyValue) -> bool {
+        if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
+            return re.compiled.is_match(&s.lock());
+        }
+        self.rb_eq(subject)
     }
 }

@@ -456,7 +456,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec
                 collect_const_refs(compiler, *e, out);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     collect_const_refs(compiler, *n, out);
@@ -670,7 +670,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, *e, out);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     collect_cvars(hir, *n, out);

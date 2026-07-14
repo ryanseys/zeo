@@ -4047,3 +4047,433 @@ fn reopening_a_built_in_class_name_is_a_clean_error() {
     .unwrap_err();
     assert!(err.contains("reopening/redefining the built-in class"), "{err}");
 }
+
+// --- Phase 12.7: Regexp -----------------------------------------------
+//
+// Backed by the `regex` crate, not Ruby's own Onigmo engine -- see
+// `hir::HirNode::RegexpLit`'s docs for the documented semantic gap (no
+// backreferences/lookaround INSIDE a pattern) and `spinel_rt::regexp`'s
+// docs for the flag-translation rationale (Ruby's `^`/`$` are ALWAYS
+// line-anchored, unlike most other regex flavors -- confirmed against real
+// `ruby` in `mline_anchors_are_always_line_based_even_without_the_m_flag`
+// below). Every test here was run against real `ruby` first, per this
+// project's established convention.
+
+#[test]
+fn string_match_operator_returns_char_index_or_nil() {
+    let result = run_ruby(
+        r#"
+        puts("hello world" =~ /world/)
+        puts("hello world" =~ /xyz/)
+        puts("hello" =~ /l+/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n\n2\n");
+}
+
+#[test]
+fn match_p_works_from_both_the_string_and_the_regexp_receiver() {
+    let result = run_ruby(
+        r#"
+        puts "hello".match?(/l+/)
+        puts "hello".match?(/xyz/)
+        puts(/l+/.match?("hello"))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\n");
+}
+
+#[test]
+fn not_match_operator_negates_from_both_receivers() {
+    let result = run_ruby(
+        r#"
+        puts("hello" !~ /xyz/)
+        puts("hello" !~ /l+/)
+        puts(/xyz/ !~ "hello")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\n");
+}
+
+#[test]
+fn matchdata_whole_match_captures_pre_and_post_match() {
+    let result = run_ruby(
+        r#"
+        m = "hello world".match(/(\w+) (\w+)/)
+        puts m[0]
+        puts m[1]
+        puts m[2]
+        puts m.pre_match
+        puts m.post_match
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello world\nhello\nworld\n\n\n");
+}
+
+#[test]
+fn matchdata_to_a_and_captures() {
+    let result = run_ruby(
+        r#"
+        m = "hello world".match(/(\w+) (\w+)/)
+        puts m.to_a
+        puts "---"
+        puts m.captures
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello world\nhello\nworld\n---\nhello\nworld\n");
+}
+
+#[test]
+fn matchdata_named_group_access_by_symbol_string_and_named_captures_hash() {
+    let result = run_ruby(
+        r#"
+        m = "John Smith".match(/(?<first>\w+) (?<last>\w+)/)
+        puts m[:first]
+        puts m["last"]
+        h = m.named_captures
+        puts h["first"]
+        puts h["last"]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "John\nSmith\nJohn\nSmith\n");
+}
+
+#[test]
+fn ignore_case_flag() {
+    let result = run_ruby(
+        r#"
+        puts "HELLO".match?(/hello/i)
+        puts "HELLO".match?(/hello/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\n");
+}
+
+#[test]
+fn line_anchors_are_always_line_based_even_without_the_m_flag() {
+    // Real Ruby's `^`/`$` ALWAYS match at line boundaries -- there is no
+    // separate opt-in the way most other regex flavors need one. `/m`
+    // instead makes `.` match a newline too (verified against real `ruby`
+    // directly, since this is a common point of confusion between Ruby's
+    // flag vocabulary and most other engines').
+    let result = run_ruby(
+        r#"
+        puts("line1\nline2" =~ /^line2/)
+        s = "abc\ndef"
+        puts(s =~ /c.d/)
+        puts(s =~ /c.d/m)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n\n2\n");
+}
+
+#[test]
+fn to_s_renders_the_canonical_opts_body_form_and_inspect_the_literal_form() {
+    let result = run_ruby(
+        r#"
+        r = /abc/x
+        puts r.to_s
+        r2 = /a.c/im
+        puts r2.to_s
+        puts(/abc/x.inspect)
+        puts(/abc/mi.inspect)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "(?x-mi:abc)\n(?mi-x:a.c)\n/abc/x\n/abc/mi\n"
+    );
+}
+
+#[test]
+fn scan_without_and_with_capture_groups() {
+    let result = run_ruby(
+        r#"
+        puts "one two three".scan(/\w+/)
+        puts "---"
+        puts "a1b2c3".scan(/([a-z])(\d)/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "one\ntwo\nthree\n---\na\n1\nb\n2\nc\n3\n");
+}
+
+#[test]
+fn split_keeps_leading_and_embedded_empties_but_drops_trailing_ones() {
+    let result = run_ruby(
+        r#"
+        puts "a,b,,c".split(/,/)
+        puts "---"
+        puts ",a,b".split(/,/)
+        puts "---"
+        puts "a1b2c3".split(/\d/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\nb\n\nc\n---\n\na\nb\n---\na\nb\nc\n");
+}
+
+#[test]
+fn split_with_no_match_returns_the_whole_string_unsplit() {
+    // The empty-haystack-returns-an-empty-array case is exercised directly
+    // at the `spinel_rt::regexp_split` unit-test level instead (see
+    // `spinel-rt/src/regexp.rs`) -- `puts`-ing it here would conflate this
+    // phase's own behavior with a separate, pre-existing, unrelated gap:
+    // `Kernel#puts` on an EMPTY `Array` currently prints a blank line
+    // (real Ruby prints nothing at all for `puts []`) -- confirmed via a
+    // plain, regex-free `puts []; puts "x"` repro, so not something this
+    // phase introduces or should fix as a side effect. `Array#length`
+    // doesn't sidestep this cleanly either: `split`'s result has no static
+    // `TyKind` seeding (unlike a literal `[]`), so it stays `Poly` and hits
+    // the same "no static-array fast path" limitation.
+    let result = run_ruby(
+        r#"
+        puts "abc".split(/x/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "abc\n");
+}
+
+#[test]
+fn gsub_and_sub_with_a_string_replacement_including_numbered_backreferences() {
+    let result = run_ruby(
+        r#"
+        puts "hello world".gsub(/o/, "0")
+        puts "hello world".sub(/o/, "0")
+        puts "John Smith".gsub(/(\w+) (\w+)/, '\2 \1')
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hell0 w0rld\nhell0 world\nSmith John\n");
+}
+
+#[test]
+fn gsub_and_sub_block_forms() {
+    // The block body is a literal replacement (not `m.upcase`) since a
+    // block parameter's static type is always `Poly` (this codebase's own
+    // established rule -- params are never inferred from call sites), and
+    // `String#upcase` itself isn't implemented as a builtin method yet, a
+    // separate, pre-existing, unrelated gap this test isn't about.
+    let result = run_ruby(
+        r#"
+        puts "hello".gsub(/l/) { |m| "L" }
+        puts "hello".sub(/l/) { "L" }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "heLLo\nheLlo\n");
+}
+
+#[test]
+fn gsub_block_form_can_capture_and_mutate_an_enclosing_local() {
+    // Exercises the same real-`Proc`/capture machinery every other escaping
+    // block already uses (`emit_proc_value`) -- not a bespoke code path.
+    let result = run_ruby(
+        r#"
+        count = 0
+        "one two three".gsub(/\w+/) { |w| count += 1; w }
+        puts count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn regexp_case_eq_and_source() {
+    let result = run_ruby(
+        r#"
+        puts(/abc/ =~ "xxabcxx")
+        r = /foo/
+        puts r.source
+        puts(r === "foobar")
+        puts(r === "baz")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\nfoo\ntrue\nfalse\n");
+}
+
+#[test]
+fn case_when_dispatches_via_real_regexp_case_eq() {
+    // Method wrapped in a class, not a top-level `def` -- calling a
+    // top-level-defined method is a separate, pre-existing, unrelated gap
+    // (confirmed via a plain, regex-free repro), not something this phase
+    // introduces or should fix as a side effect.
+    let result = run_ruby(
+        r#"
+        class Checker
+          def check(x)
+            case x
+            when /^\d+$/
+              "number"
+            when /^[a-z]+$/
+              "lower"
+            else
+              "other"
+            end
+          end
+        end
+        c = Checker.new
+        puts c.check("123")
+        puts c.check("abc")
+        puts c.check("ABC")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "number\nlower\nother\n");
+}
+
+#[test]
+fn case_in_pattern_matching_dispatches_via_real_regexp_case_eq() {
+    let result = run_ruby(
+        r#"
+        class Checker
+          def check(x)
+            case x
+            in /^\d+$/
+              "number"
+            in /^[a-z]+$/
+              "lower"
+            else
+              "other"
+            end
+          end
+        end
+        c = Checker.new
+        puts c.check("123")
+        puts c.check("abc")
+        puts c.check("ABC")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "number\nlower\nother\n");
+}
+
+#[test]
+fn interpolated_regexp_literal_shares_the_enclosing_scope() {
+    let result = run_ruby(
+        r#"
+        word = "wor"
+        r = /#{word}ld/
+        puts r.match?("world")
+        puts r.source
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nworld\n");
+}
+
+#[test]
+fn percent_r_literal_syntax() {
+    let result = run_ruby(
+        r#"
+        r = %r{foo/bar}
+        puts r.match?("xxfoo/barxx")
+        puts r.source
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfoo/bar\n");
+}
+
+#[test]
+fn extended_mode_ignores_whitespace_and_comments() {
+    let result = run_ruby(
+        r#"
+        r = /
+          \d+  # a number
+          -
+          \d+  # another number
+        /x
+        puts r.match?("123-456")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn is_a_against_regexp_and_matchdata() {
+    let result = run_ruby(
+        r#"
+        r = /abc/
+        puts r.is_a?(Regexp)
+        puts r.is_a?(Object)
+        m = "abc".match(/a/)
+        puts m.is_a?(MatchData)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\n");
+}
+
+#[test]
+fn an_invalid_interpolated_pattern_raises_a_catchable_regexp_error() {
+    // A STATIC (non-interpolated) invalid pattern is a real, uncatchable
+    // `SyntaxError` at parse time in real Ruby -- this spike defers that
+    // check to construction time uniformly (a documented, narrower-timing
+    // approximation, see `hir::HirNode::RegexpLit`'s docs), so only the
+    // INTERPOLATED case (genuinely runtime-only in real Ruby too) is
+    // oracle-verified here as a rescuable exception.
+    let result = run_ruby(
+        r#"
+        bad = "("
+        begin
+          r = /#{bad}/
+          puts "no error"
+        rescue RegexpError => e
+          puts "regexp error"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "regexp error\n");
+}
+
+#[test]
+fn a_bare_regexp_literal_used_as_an_implicit_condition_is_a_clean_lowering_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        if /foo/
+          puts "matched"
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("implicit condition"), "{err}");
+}
+
+#[test]
+fn named_capture_auto_binding_via_match_write_is_a_clean_lowering_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        /(?<name>\w+)/ =~ "hello"
+        puts name
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("auto-binding"), "{err}");
+}
+
+#[test]
+#[should_panic(expected = "a String pattern argument to String#split isn't supported yet")]
+fn a_string_pattern_argument_to_split_is_a_clean_compile_error() {
+    let _ = spinelc::compile_to_rust(r#"puts "a,b".split(",")"#);
+}
+
+#[test]
+#[should_panic(expected = "a String pattern argument to String#gsub isn't supported yet")]
+fn a_string_pattern_argument_to_gsub_is_a_clean_compile_error() {
+    let _ = spinelc::compile_to_rust(r#"puts "a,b".gsub(",", ";")"#);
+}

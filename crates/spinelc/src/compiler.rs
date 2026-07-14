@@ -42,6 +42,11 @@ pub const NIL_CLASS: ClassId = ClassId(8);
 pub const TRUE_CLASS: ClassId = ClassId(9);
 pub const FALSE_CLASS: ClassId = ClassId(10);
 pub const PROC_CLASS: ClassId = ClassId(11);
+/// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
+/// `hir::HirNode::RegexpLit`'s docs.
+pub const REGEXP_CLASS: ClassId = ClassId(12);
+/// The result of a successful `Regexp#match`/`String#match` (Phase 12.7).
+pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
 
 /// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
 /// registration order -- the SINGLE source of truth `Compiler::new` seeds
@@ -60,6 +65,8 @@ const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
     (TRUE_CLASS, "TrueClass"),
     (FALSE_CLASS, "FalseClass"),
     (PROC_CLASS, "Proc"),
+    (REGEXP_CLASS, "Regexp"),
+    (MATCH_DATA_CLASS, "MatchData"),
 ];
 
 pub struct ClassInfo {

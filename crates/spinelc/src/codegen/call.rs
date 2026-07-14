@@ -176,6 +176,205 @@ fn try_collection_dispatch(
     Some(tokens)
 }
 
+/// `Regexp`/`MatchData` built-in methods, and `String`'s methods that take a
+/// `Regexp` pattern argument (Phase 12.7) -- mirrors `try_collection_dispatch`'s
+/// shape (a `None` return falls through to ordinary Path 1/Path 2 dispatch),
+/// kept as its own function since `gsub`/`sub`'s block form needs the call
+/// site's own `block`, which `try_collection_dispatch` was never threaded to
+/// receive.
+///
+/// Scope-cut, checked at `spinelc` CODEGEN time (a clear, immediate panic,
+/// not embedded runtime code -- same posture as e.g.
+/// `codegen::captures::walk`'s "block escaping from inside another escaping
+/// block" rejection): a `String` pattern ARGUMENT to `match`/`match?`/`=~`/
+/// `!~`/`scan`/`split`/`sub`/`gsub` (as opposed to a `Regexp` argument, this
+/// function's primary scope) isn't supported. Real Ruby's own behavior here
+/// is a genuinely asymmetric special case worth naming, not an oversight:
+/// `match`/`match?`/`=~`/`scan` compile a `String` pattern INTO a `Regexp`
+/// first, while `split`/`sub`/`gsub`'s `String` pattern is matched as a
+/// LITERAL substring (regex metacharacters NOT interpreted) -- reproducing
+/// both halves of that distinction is a separate, plain-`String`-methods
+/// feature, not part of this Regexp phase.
+fn try_regexp_dispatch(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    block: Option<NodeId>,
+    recv_expr: &TokenStream,
+) -> Option<TokenStream> {
+    let ty = infer(cx, recv_id);
+
+    // A borrowed `&str` view of a statically-`Str`-typed argument, bound to
+    // `ident` INSIDE the returned prelude -- never held across a nested call
+    // that could lock the SAME `RStr` again (the read-modify-write
+    // self-deadlock family `hoisting::emit_local_write`'s docs describe).
+    // Returns `None` (not a panic) when the argument isn't statically `Str`
+    // -- e.g. a `Poly`-typed argument -- so callers can cleanly decline via
+    // `?` and fall through to ordinary dispatch, same posture as every other
+    // arm here.
+    let str_guard = |arg_id: NodeId, ident: &str| -> Option<TokenStream> {
+        if infer(cx, arg_id) != TyKind::Str {
+            return None;
+        }
+        let e = emit_expr(cx, arg_id);
+        let var = format_ident!("{ident}");
+        Some(quote! { let #var = (#e).as_str_unchecked(); let #var = #var.lock(); })
+    };
+
+    if ty == TyKind::Regexp {
+        match (name, args.len()) {
+            ("source", 0) => return Some(quote! { spinel_rt::regexp_source(&(#recv_expr).as_regexp_unchecked()) }),
+            ("to_s", 0) => return Some(quote! { spinel_rt::regexp_to_s(&(#recv_expr).as_regexp_unchecked()) }),
+            ("inspect", 0) => return Some(quote! { spinel_rt::regexp_inspect(&(#recv_expr).as_regexp_unchecked()) }),
+            // `===` is safe against ANY subject shape (real Ruby: `Regexp#===`
+            // is `false`, not an error, for a non-String) -- routed through
+            // `RubyValue::rb_case_eq` rather than requiring a statically
+            // `Str`-typed argument like the other arms here, since it's the
+            // one Regexp method real Ruby itself designed to be called with
+            // an arbitrary-shaped subject (`case/when` dispatch).
+            ("===", 1) => {
+                let arg_expr = emit_expr(cx, args[0]);
+                return Some(quote! { spinel_rt::RubyValue::Bool((#recv_expr).rb_case_eq(&(#arg_expr))) });
+            }
+            ("=~", 1) => {
+                let guard = str_guard(args[0], "__h")?;
+                return Some(quote! {
+                    { #guard spinel_rt::regexp_match_index(&(#recv_expr).as_regexp_unchecked(), &__h) }
+                });
+            }
+            ("!~", 1) => {
+                let guard = str_guard(args[0], "__h")?;
+                return Some(quote! {
+                    { #guard spinel_rt::RubyValue::Bool(!spinel_rt::regexp_is_match(&(#recv_expr).as_regexp_unchecked(), &__h)) }
+                });
+            }
+            ("match", 1) => {
+                let guard = str_guard(args[0], "__h")?;
+                return Some(quote! {
+                    { #guard spinel_rt::regexp_match(&(#recv_expr).as_regexp_unchecked(), &__h) }
+                });
+            }
+            ("match?", 1) => {
+                let guard = str_guard(args[0], "__h")?;
+                return Some(quote! {
+                    { #guard spinel_rt::RubyValue::Bool(spinel_rt::regexp_is_match(&(#recv_expr).as_regexp_unchecked(), &__h)) }
+                });
+            }
+            _ => {}
+        }
+    }
+
+    if ty == TyKind::Str && !args.is_empty() {
+        let pattern_is_regexp = infer(cx, args[0]) == TyKind::Regexp;
+        let pattern_is_str = infer(cx, args[0]) == TyKind::Str;
+        let is_regexp_shaped_method = matches!(name, "match" | "match?" | "=~" | "!~" | "scan" | "split" | "sub" | "gsub");
+
+        if is_regexp_shaped_method && pattern_is_str {
+            panic!(
+                "a String pattern argument to String#{name} isn't supported yet (spike scope) -- pass a Regexp literal instead"
+            );
+        }
+
+        if pattern_is_regexp {
+            let re_expr = emit_expr(cx, args[0]);
+            let haystack_guard = quote! { let __h = (#recv_expr).as_str_unchecked(); let __h = __h.lock(); };
+            match (name, args.len()) {
+                ("=~", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::regexp_match_index(&(#re_expr).as_regexp_unchecked(), &__h) }
+                    });
+                }
+                ("!~", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::RubyValue::Bool(!spinel_rt::regexp_is_match(&(#re_expr).as_regexp_unchecked(), &__h)) }
+                    });
+                }
+                ("match", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::regexp_match(&(#re_expr).as_regexp_unchecked(), &__h) }
+                    });
+                }
+                ("match?", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::RubyValue::Bool(spinel_rt::regexp_is_match(&(#re_expr).as_regexp_unchecked(), &__h)) }
+                    });
+                }
+                ("scan", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::regexp_scan(&(#re_expr).as_regexp_unchecked(), &__h) }
+                    });
+                }
+                ("split", 1) => {
+                    return Some(quote! {
+                        { #haystack_guard spinel_rt::regexp_split(&(#re_expr).as_regexp_unchecked(), &__h) }
+                    });
+                }
+                ("sub", 2) if infer(cx, args[1]) == TyKind::Str => {
+                    let repl_expr = emit_expr(cx, args[1]);
+                    return Some(quote! {
+                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock();
+                          spinel_rt::regexp_sub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
+                    });
+                }
+                ("gsub", 2) if infer(cx, args[1]) == TyKind::Str => {
+                    let repl_expr = emit_expr(cx, args[1]);
+                    return Some(quote! {
+                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock();
+                          spinel_rt::regexp_gsub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
+                    });
+                }
+                ("sub", 1) => {
+                    let block_id = block?;
+                    let blk_expr = emit_proc_value(cx, block_id);
+                    return Some(quote! {
+                        { #haystack_guard
+                          spinel_rt::regexp_sub_block(&(#re_expr).as_regexp_unchecked(), &__h, &(#blk_expr).as_proc_unchecked())? }
+                    });
+                }
+                ("gsub", 1) => {
+                    let block_id = block?;
+                    let blk_expr = emit_proc_value(cx, block_id);
+                    return Some(quote! {
+                        { #haystack_guard
+                          spinel_rt::regexp_gsub_block(&(#re_expr).as_regexp_unchecked(), &__h, &(#blk_expr).as_proc_unchecked())? }
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if ty == TyKind::MatchData {
+        match (name, args.len()) {
+            ("[]", 1) => {
+                let arg_expr = emit_expr(cx, args[0]);
+                return Some(quote! {
+                    spinel_rt::matchdata_get(&(#recv_expr).as_matchdata_unchecked(), &(#arg_expr))
+                });
+            }
+            ("pre_match", 0) => {
+                return Some(quote! { spinel_rt::matchdata_pre_match(&(#recv_expr).as_matchdata_unchecked()) })
+            }
+            ("post_match", 0) => {
+                return Some(quote! { spinel_rt::matchdata_post_match(&(#recv_expr).as_matchdata_unchecked()) })
+            }
+            ("to_a", 0) => return Some(quote! { spinel_rt::matchdata_to_a(&(#recv_expr).as_matchdata_unchecked()) }),
+            ("captures", 0) => {
+                return Some(quote! { spinel_rt::matchdata_captures(&(#recv_expr).as_matchdata_unchecked()) })
+            }
+            ("named_captures", 0) => {
+                return Some(quote! { spinel_rt::matchdata_named_captures(&(#recv_expr).as_matchdata_unchecked()) })
+            }
+            ("string", 0) => return Some(quote! { spinel_rt::matchdata_string(&(#recv_expr).as_matchdata_unchecked()) }),
+            ("to_s", 0) => return Some(quote! { spinel_rt::matchdata_to_s(&(#recv_expr).as_matchdata_unchecked()) }),
+            _ => {}
+        }
+    }
+
+    None
+}
+
 /// `blk.call(args)` / `blk.(args)` / `blk[args]` on a statically
 /// `TyKind::Proc` receiver -- dispatches directly to the underlying
 /// closure, mirroring `try_collection_dispatch`'s shape. Only ever reached
@@ -1270,6 +1469,9 @@ fn dispatch(
             return tokens;
         }
         if let Some(tokens) = try_proc_dispatch(cx, recv_id, name, args, recv_expr) {
+            return tokens;
+        }
+        if let Some(tokens) = try_regexp_dispatch(cx, recv_id, name, args, block, recv_expr) {
             return tokens;
         }
     }

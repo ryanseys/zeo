@@ -348,7 +348,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             }
             found
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             let mut found = false;
             for p in parts {
                 if let StrPart::Interp(n) = p {
@@ -641,7 +641,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, *e, out);
             }
         }
-        HirNode::StringLit(parts) => {
+        HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
                     collect_ivars(hir, *n, out);

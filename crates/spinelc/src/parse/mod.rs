@@ -9,7 +9,7 @@
 
 use crate::hir::{
     ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
-    PatternArm, RescueClause, StrPart, Visibility,
+    PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
 };
 use ruby_prism::{Node, ParseResult};
 
@@ -1287,6 +1287,75 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             .map(|part| lower_string_part(result, hir, &part))
             .collect::<PResult<Vec<_>>>()?;
         return Ok(hir.push(HirNode::StringLit(parts)));
+    }
+
+    // `/pattern/flags` / `%r{pattern}flags` (`RegularExpressionNode` covers
+    // BOTH delimiter spellings -- prism only distinguishes opening/closing
+    // `Location`s, not a separate node kind). `e`/`s` (EUC-JP/Windows-31J)
+    // are a clean rejection: this spike is UTF-8-only throughout (see
+    // `docs/limitations.md`), unlike `o`/`n`/`u`, which are harmless no-ops
+    // here (`o`'s "only interpolate once" has no effect when every regex
+    // literal is freshly constructed anyway; `n`/`u` just reassert the
+    // encoding this spike already assumes).
+    if let Some(re) = node.as_regular_expression_node() {
+        if re.is_euc_jp() || re.is_windows_31j() {
+            return Err(
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string(),
+            );
+        }
+        let content = String::from_utf8_lossy(re.unescaped()).into_owned();
+        return Ok(hir.push(HirNode::RegexpLit(
+            vec![StrPart::Lit(content)],
+            RegexpFlags {
+                ignore_case: re.is_ignore_case(),
+                extended: re.is_extended(),
+                multiline: re.is_multi_line(),
+            },
+        )));
+    }
+
+    if let Some(re) = node.as_interpolated_regular_expression_node() {
+        if re.is_euc_jp() || re.is_windows_31j() {
+            return Err(
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string(),
+            );
+        }
+        let parts = re
+            .parts()
+            .iter()
+            .map(|part| lower_string_part(result, hir, &part))
+            .collect::<PResult<Vec<_>>>()?;
+        return Ok(hir.push(HirNode::RegexpLit(
+            parts,
+            RegexpFlags {
+                ignore_case: re.is_ignore_case(),
+                extended: re.is_extended(),
+                multiline: re.is_multi_line(),
+            },
+        )));
+    }
+
+    // A bare regex literal used directly as an implicit condition against
+    // `$_` (`if /foo/` -- `MatchLastLineNode`/its interpolated counterpart)
+    // -- `$_`/the "last read line" concept isn't modeled at all, a clean
+    // rejection rather than silently matching against an always-empty
+    // string.
+    if node.as_match_last_line_node().is_some() || node.as_interpolated_match_last_line_node().is_some() {
+        return Err(
+            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (spike scope) -- write an explicit `=~`/`match?` against a real receiver instead".to_string(),
+        );
+    }
+
+    // `/(?<name>...)/  =~ str` -- the named-capture auto-binding sugar
+    // (`MatchWriteNode`), which synthesizes local-variable writes for every
+    // named group. An ordinary `=~` with NO named captures is just a plain
+    // `CallNode` (falls through to the generic `Call` handling further below,
+    // dispatched by `codegen::call`'s Regexp/String arms) -- only this
+    // auto-binding sugar itself is out of scope.
+    if node.as_match_write_node().is_some() {
+        return Err(
+            "`=~`'s named-capture auto-binding sugar (synthesizing a local per named group) isn't supported yet (spike scope) -- bind the `MatchData` explicitly via `#match`/`#[]` instead".to_string(),
+        );
     }
 
     if let Some(arr) = node.as_array_node() {
