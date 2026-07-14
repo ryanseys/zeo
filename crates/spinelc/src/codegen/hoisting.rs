@@ -103,7 +103,16 @@ pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
 pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     match local_storage(cx, name) {
-        LocalStorage::Captured => quote! { *#ident.borrow_mut() = #value; },
+        // `value` is bound to a temporary FIRST, then the store happens as
+        // its own statement -- confirmed the hard way: `*#ident.borrow_mut()
+        // = #value;` evaluates the LHS place expression (calling
+        // `borrow_mut()`, activating the mutable borrow) before evaluating
+        // `value`, so an RHS that itself reads this SAME captured name
+        // (e.g. `total += n`, i.e. `total = total + n`) would call
+        // `.borrow()` while `.borrow_mut()` is already held -- a genuine
+        // runtime `RefCell` panic ("already borrowed"), not just a style
+        // nit.
+        LocalStorage::Captured => quote! { { let __cap_v = #value; *#ident.borrow_mut() = __cap_v; } },
         LocalStorage::Hoisted => quote! { #ident = #value; },
         LocalStorage::Shadowed => quote! { let #ident = #value; },
     }
@@ -112,8 +121,11 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
 /// Mirrors `analyze::collect_ivars`'s traversal shape (recursing into every
 /// sub-expression position a `LocalWrite` could appear in), but collects
 /// local-variable names instead of ivar names, and additionally descends
-/// into loop bodies and `MultiWrite`/`For` targets.
-fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
+/// into loop bodies and `MultiWrite`/`For` targets. `pub(super)`: also used
+/// by `codegen::captures` to compute which names are genuinely shared with
+/// an escaping block (as opposed to owned only by that block -- see the
+/// `Call` arm's docs below).
+pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
     match &compiler.hir[id] {
         HirNode::LocalWrite(name, value) => {
             if !out.contains(name) {
@@ -201,6 +213,7 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
         }
         HirNode::Call {
             receiver,
+            name,
             args,
             kwargs,
             block,
@@ -218,7 +231,24 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
                 collect_locals(compiler, pair.1, out);
             }
             if let Some(b) = block {
-                collect_locals(compiler, *b, out);
+                // An ESCAPING block (anything but the `.times` inline fast
+                // path) is a genuinely separate Ruby scope now (Phase 6) --
+                // a local first introduced INSIDE one is fresh per
+                // invocation (confirmed against real Ruby: a Proc's own
+                // internal local resets on every separate `.call()`, it
+                // does NOT persist like a captured one), so it must NOT be
+                // hoisted into THIS (enclosing) scope's prelude at all --
+                // `codegen::captures::block_captures`/`emit_proc_own_locals_prelude`
+                // give it its own fresh declaration INSIDE the closure
+                // instead. Only a name genuinely shared with code outside
+                // the block (which this same traversal will still find,
+                // since it walks the rest of the method) ends up hoisted
+                // here. `.times` stays inline (unchanged): its block is
+                // spliced directly into whichever Rust scope encloses it,
+                // so its locals still need to be part of THAT hoisting pass.
+                if super::call::is_times_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
+                    collect_locals(compiler, *b, out);
+                }
             }
             if let Some(b) = block_arg {
                 collect_locals(compiler, *b, out);
@@ -315,4 +345,34 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
     });
     let inner = emit_body(cx, body, wrap_ok);
     quote! { #(#decls)* #inner }
+}
+
+/// The escaping-block counterpart to `emit_hoisted_body`'s declaration
+/// step -- used by `codegen::call`'s Proc-construction site for names an
+/// escaping block references that AREN'T genuinely shared with its
+/// enclosing scope (see `hoisting::collect_locals`'s `Call` arm and
+/// `codegen::captures::block_captures`'s docs: these are fresh, block-owned
+/// locals, confirmed against real Ruby to reset on every separate `.call()`
+/// -- not `Captured` cells, and declared HERE, inside the closure, not in
+/// the enclosing method's own prelude). Only `Hoisted`-storage names need an
+/// explicit declaration at all: an Object-typed own-only name still just
+/// gets its natural shadowing `let` at first assignment, same as anywhere
+/// else in this codebase (see `LocalStorage::Shadowed`'s docs).
+pub fn emit_proc_own_locals_prelude(cx: &Ctx, names: &std::collections::HashSet<String>) -> TokenStream {
+    let mut sorted: Vec<&String> = names.iter().collect();
+    sorted.sort();
+    let decls = sorted.iter().filter_map(|n| {
+        let ident = safe_ident(n);
+        match local_storage(cx, n) {
+            LocalStorage::Hoisted => Some(quote! {
+                #[allow(unused_assignments)]
+                let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+            }),
+            LocalStorage::Captured => unreachable!(
+                "an own-only name is by definition not in captured_locals (see call.rs's split)"
+            ),
+            LocalStorage::Shadowed => None,
+        }
+    });
+    quote! { #(#decls)* }
 }

@@ -132,6 +132,27 @@ fn try_collection_dispatch(
     Some(tokens)
 }
 
+/// `blk.call(args)` / `blk.(args)` / `blk[args]` on a statically
+/// `TyKind::Proc` receiver -- dispatches directly to the underlying
+/// closure, mirroring `try_collection_dispatch`'s shape. Only ever reached
+/// for a NAMED `&block` parameter (the only way a local/param is currently
+/// inferred `Proc` -- see `analyze::register_class`'s seeding, mirroring
+/// how a named `*rest`/`**kwrest` seeds `Array`/`Hash`); nothing else infers
+/// this type yet, so a user class's own `def call` is unaffected.
+fn try_proc_dispatch(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    recv_expr: &TokenStream,
+) -> Option<TokenStream> {
+    if infer(cx, recv_id) != TyKind::Proc || !matches!(name, "call" | "()" | "[]") {
+        return None;
+    }
+    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    Some(quote! { ((#recv_expr).as_proc_unchecked())(&[#(#arg_exprs),*])? })
+}
+
 pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
     let cid = cx
         .compiler
@@ -229,6 +250,114 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
     // same Rust expression position (see `hoisting`'s docs).
     let inlined = super::hoisting::emit_hoisted_body(&inline_cx, &body, false);
     quote! { { #inlined } }
+}
+
+/// Builds a real, escaping `spinel_rt::RubyValue::Proc` value from a literal
+/// block (`HirNode::Block`) at a call site whose callee ISN'T the `.times`
+/// inline fast path (see `is_times_fast_path`'s docs -- that's the entire
+/// "escape decision", no separate dataflow analysis exists). A plain Rust
+/// closure (`move |args| { ... }`), not a hand-rolled env struct/trait --
+/// Rust's own closure capture already builds exactly the environment one
+/// would otherwise hand-generate (see `spinel_rt::rproc`'s docs).
+///
+/// Capture strategy: `codegen::captures::block_captures` finds every name
+/// this SPECIFIC block references. Names ALSO in `cx.captured_locals` (i.e.
+/// genuinely shared with code outside the block) get a `Rc::clone` into a
+/// same-named local right before the closure, then `move`d in -- the
+/// closure body's ordinary `emit_local_read`/`write` codegen (via
+/// `cx.captured_locals`, unchanged inside the closure) transparently
+/// resolves them to that shared cell. Names NOT in `cx.captured_locals` are
+/// block-OWNED locals (fresh every invocation, confirmed against real Ruby
+/// -- see `hoisting::emit_proc_own_locals_prelude`'s docs) and get their own
+/// declaration INSIDE the closure instead. `self`/ivar references clone an
+/// owned `Rc<Self>` handle the same way (`self_ident` cannot be `let`-bound
+/// directly -- see `Ctx::in_proc`'s docs).
+///
+/// `redo`/`next` never escape the closure (caught by the wrapping labeled
+/// loop below); `break`/`return` propagate via `?`/a raised `Signal`, caught
+/// respectively at the call site that attached this block
+/// (`emit_call_args`'s `catch_break`) and the lexically enclosing method's
+/// own boundary (`codegen::mod`'s per-method wrapping).
+pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
+    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+        panic!("expected a block")
+    };
+    let block_caps = super::captures::block_captures(cx.compiler, params, body);
+
+    let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
+    genuine.sort();
+    let capture_clones = genuine.iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! { let #ident = ::std::rc::Rc::clone(&#ident); }
+    });
+    let own_only: std::collections::HashSet<String> = block_caps
+        .locals
+        .iter()
+        .filter(|n| !cx.captured_locals.contains(*n))
+        .cloned()
+        .collect();
+
+    let needs_self = block_caps.self_captured;
+    let self_clone = needs_self.then(|| {
+        let slf = &cx.self_ident;
+        quote! { let __self = ::std::rc::Rc::clone(&#slf); }
+    });
+
+    let proc_cx = cx.in_proc(needs_self);
+    let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
+    let param_bindings =
+        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"));
+    // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
+    // this block references (including the genuine captures above) and
+    // declare them AGAIN, shadowing the shared `Rc::clone`s just captured
+    // with brand-new empty cells. `own_locals_prelude` already handles the
+    // one case that genuinely needs a fresh declaration.
+    let body_tokens = super::stmt::emit_body(&proc_cx, body, true);
+    let redo_label = super::loops::fresh_label(cx, "proc_redo");
+
+    quote! {
+        {
+            #(#capture_clones)*
+            #self_clone
+            spinel_rt::RubyValue::Proc(::std::rc::Rc::new(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                #redo_label: loop {
+                    let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                        #own_locals_prelude
+                        #param_bindings
+                        #body_tokens
+                    })();
+                    match __result {
+                        Err(spinel_rt::Signal::Redo) => continue #redo_label,
+                        Err(spinel_rt::Signal::Next(__v)) => break #redo_label Ok(__v),
+                        other => break #redo_label other,
+                    }
+                }
+            }))
+        }
+    }
+}
+
+/// The implicit block argument for a call site, as an `Option<RubyValue>`
+/// expression -- `Some(proc)` from a literal block (`emit_proc_value`) or a
+/// forwarded `&existing_proc`, `None` when neither is present. Shared by
+/// Path 1 (`codegen::params::emit_call_args`, gated on `needs_block`) and
+/// Path 2 (`send`/`public_send` below, built unconditionally since the
+/// dynamic target's own needs aren't known statically).
+pub(super) fn emit_block_option(cx: &Ctx, block: Option<NodeId>, block_arg: Option<NodeId>) -> TokenStream {
+    match (block, block_arg) {
+        (Some(b), None) => {
+            let v = emit_proc_value(cx, b);
+            quote! { Some(#v) }
+        }
+        (None, Some(e)) => {
+            let v = emit_expr(cx, e);
+            quote! { Some(#v) }
+        }
+        (None, None) => quote! { None },
+        (Some(_), Some(_)) => {
+            panic!("a call can't pass both a literal block and a block-forwarding argument")
+        }
+    }
 }
 
 // Every one of these is a genuinely distinct piece of a call site's syntax
@@ -385,6 +514,9 @@ fn dispatch(
         if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
             return tokens;
         }
+        if let Some(tokens) = try_proc_dispatch(cx, recv_id, name, args, recv_expr) {
+            return tokens;
+        }
     }
 
     // Known-shape block inlining (mirrors `emit_block_value_into`/`.times`,
@@ -451,11 +583,14 @@ fn dispatch(
         let class_ident = safe_ident(&cx.compiler.class(cid).name);
         let name_expr = emit_symbol_expr(cx, args[0]);
         let rest_args = args[1..].iter().map(|&a| emit_expr(cx, a));
-        // `block` isn't threaded into the constructed Proc value here yet --
-        // that lands together with the rest of Proc construction later in
-        // this same phase.
+        let block_value = emit_block_option(cx, block, block_arg);
+        // `catch_break` applied unconditionally on this fully-dynamic path
+        // (unlike Path 1's `needs_block`-gated version): `send`'s target
+        // isn't statically known here, so there's no way to tell in advance
+        // whether it might invoke a block -- the match is a cheap no-op
+        // when no `Signal::Break` was actually raised.
         return quote! {
-            spinel_rt::send(&#class_ident::new_handle(#recv_expr), #name_expr, &[#(#rest_args),*], None)?
+            spinel_rt::catch_break(spinel_rt::send(&#class_ident::new_handle(#recv_expr), #name_expr, &[#(#rest_args),*], #block_value))?
         };
     }
 
@@ -464,8 +599,18 @@ fn dispatch(
     // `comp_method_in_chain` exactly (compiler.c:404).
     if let Some(cid) = recv_class {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
-            let params = &cx.compiler.scope(sid).params;
-            return super::params::emit_call_args(cx, recv_expr, name, params, args, kwargs);
+            let scope = cx.compiler.scope(sid);
+            return super::params::emit_call_args(
+                cx,
+                recv_expr,
+                name,
+                &scope.params,
+                args,
+                kwargs,
+                block,
+                block_arg,
+                scope.needs_block_param(),
+            );
         }
     }
 

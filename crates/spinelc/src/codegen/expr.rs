@@ -241,12 +241,19 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
-            quote! { self.#ident.borrow().clone() }
+            // `cx.self_ident` is ordinarily the literal `self`, but becomes a
+            // fresh capture-alias identifier while emitting an escaping
+            // block's own body that captured `self` (see `Ctx::in_proc`'s
+            // docs -- `let self = ...;` is illegal Rust, so the closure
+            // clones into a DIFFERENT name).
+            let slf = &cx.self_ident;
+            quote! { #slf.#ident.borrow().clone() }
         }
         HirNode::IvarWrite(name, value) => {
             let ident = safe_ident(name);
             let v = emit_expr(cx, *value);
-            quote! { { let __v = #v; *self.#ident.borrow_mut() = __v.clone(); __v } }
+            let slf = &cx.self_ident;
+            quote! { { let __v = #v; *#slf.#ident.borrow_mut() = __v.clone(); __v } }
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
         HirNode::SuperCall { .. } => super::call::emit_super_inline(cx),
@@ -290,12 +297,22 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 Some(id) => emit_expr(cx, *id),
                 None => quote! { spinel_rt::RubyValue::Nil },
             };
-            // A literal Rust `return` -- valid in any expression position
-            // (its type is `!`, which unifies with anything) -- see
-            // `HirNode::Return`'s docs for why this is correct for every
-            // shape reachable today (an ordinary method body, or a
-            // fast-inline-path block spliced into the SAME method body).
-            quote! { return Ok(#value) }
+            if cx.in_real_proc {
+                // Inside a real escaping `Proc`'s own body, a literal Rust
+                // `return` would only return from the CLOSURE, not the
+                // lexically enclosing method -- wrong (real Ruby: `return`
+                // inside a block always exits the enclosing method). Raise
+                // `Signal::Return` instead, caught at the enclosing method's
+                // own boundary (see `codegen::mod`'s per-method wrapping).
+                quote! { return Err(spinel_rt::Signal::Return(#value)) }
+            } else {
+                // A literal Rust `return` -- valid in any expression
+                // position (its type is `!`, which unifies with anything) --
+                // correct here because this code is either the enclosing
+                // method's own body directly, or a fast-inline-path block
+                // (`.times`) spliced into that SAME method body.
+                quote! { return Ok(#value) }
+            }
         }
         HirNode::Yield(args) => {
             // `__blk` is the implicit trailing parameter every method that

@@ -161,44 +161,62 @@ pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> Token
     }
 }
 
-/// `break` / `break value` -- see `hir.rs`'s `Break` docs.
+/// `break` / `break value` -- see `hir.rs`'s `Break` docs. When there's no
+/// enclosing NATIVE loop (`cx.loop_labels` is `None`) but this code is
+/// inside a real escaping `Proc`'s own body (`cx.in_real_proc`), `break`
+/// instead raises `Signal::Break` -- it must unwind all the way out of the
+/// closure, back to whichever call site originally attached this block (see
+/// `codegen::params::emit_call_args`'s `catch_break` wrapping), exactly
+/// matching real Ruby: `arr.each { break }` makes the WHOLE `.each(...)`
+/// call evaluate to the break value, not just the block invocation.
 pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
-    let (_, outer) = cx
-        .loop_labels
-        .clone()
-        .unwrap_or_else(|| panic!("`break` outside a supported loop construct (spike scope)"));
     let value_expr = match value {
         Some(v) => emit_expr(cx, v),
         None => quote! { spinel_rt::RubyValue::Nil },
     };
-    quote! { break #outer #value_expr }
+    match &cx.loop_labels {
+        Some((_, outer)) => quote! { break #outer #value_expr },
+        None if cx.in_real_proc => quote! { return Err(spinel_rt::Signal::Break(#value_expr)) },
+        None => panic!("`break` outside a supported loop construct (spike scope)"),
+    }
 }
 
 /// `next` / `next value` -- see `hir.rs`'s `Next` docs. The value (if any)
 /// is still evaluated for its side effects before jumping, matching Ruby's
 /// evaluation order, even though a native loop has nowhere meaningful to
-/// send the result.
+/// send the result. Inside a real `Proc` with no enclosing native loop,
+/// raises `Signal::Next` instead -- caught inside the closure's own
+/// redo-wrapper loop (see `codegen::call`'s Proc-construction docs), never
+/// escaping past `Proc::call` itself.
 pub fn emit_next(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
-    let (_, outer) = cx
-        .loop_labels
-        .clone()
-        .unwrap_or_else(|| panic!("`next` outside a supported loop construct (spike scope)"));
-    match value {
-        None => quote! { continue #outer },
-        Some(v) => {
-            let e = emit_expr(cx, v);
-            quote! { { let _ = #e; continue #outer } }
+    match &cx.loop_labels {
+        Some((_, outer)) => match value {
+            None => quote! { continue #outer },
+            Some(v) => {
+                let e = emit_expr(cx, v);
+                quote! { { let _ = #e; continue #outer } }
+            }
+        },
+        None if cx.in_real_proc => {
+            let value_expr = match value {
+                Some(v) => emit_expr(cx, v),
+                None => quote! { spinel_rt::RubyValue::Nil },
+            };
+            quote! { return Err(spinel_rt::Signal::Next(#value_expr)) }
         }
+        None => panic!("`next` outside a supported loop construct (spike scope)"),
     }
 }
 
-/// `redo` -- see `hir.rs`'s `Redo` docs.
+/// `redo` -- see `hir.rs`'s `Redo` docs. Inside a real `Proc` with no
+/// enclosing native loop, raises `Signal::Redo` -- caught (and acted on) by
+/// the closure's own redo-wrapper loop, same as `Next`.
 pub fn emit_redo(cx: &Ctx) -> TokenStream {
-    let (redo, _) = cx
-        .loop_labels
-        .clone()
-        .unwrap_or_else(|| panic!("`redo` outside a supported loop construct (spike scope)"));
-    quote! { continue #redo }
+    match &cx.loop_labels {
+        Some((redo, _)) => quote! { continue #redo },
+        None if cx.in_real_proc => quote! { return Err(spinel_rt::Signal::Redo) },
+        None => panic!("`redo` outside a supported loop construct (spike scope)"),
+    }
 }
 
 /// The assignments produced by `a, b = 1, 2` / `a, *b, c = arr` -- shared

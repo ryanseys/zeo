@@ -33,8 +33,11 @@ pub struct Captures {
 
 /// Every name a `Params` list itself binds -- the exclusion set for "is this
 /// name a BLOCK's OWN parameter, not something captured from its enclosing
-/// scope". Mirrors `codegen::params`'s own per-kind enumeration.
-fn own_param_names(params: &Params) -> HashSet<String> {
+/// scope". Mirrors `codegen::params`'s own per-kind enumeration. Also reused
+/// by `codegen::params::emit_prologue` to decide which of a METHOD's own
+/// parameter names need the additional `Rc<RefCell<_>>`-wrapping shadow
+/// (when captured by one of ITS OWN escaping blocks).
+pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
     let mut names: HashSet<String> = HashSet::new();
     names.extend(params.required.iter().cloned());
     names.extend(params.optional.iter().map(|(n, _)| n.clone()));
@@ -59,13 +62,152 @@ fn own_param_names(params: &Params) -> HashSet<String> {
 }
 
 /// Scans a WHOLE scope's body (a method's or the top level's) for every
-/// escaping block, unioning their capture requirements.
+/// escaping block, unioning their capture requirements -- but ONLY names
+/// genuinely shared with code OUTSIDE the block(s) that reference them
+/// (verified against real Ruby: `proc { |x| tmp ||= 0; tmp += x }.call`
+/// resets `tmp` on every separate `.call()` -- it is NOT a capture at all
+/// when nothing outside the block ever uses that name, just a fresh local
+/// owned by the block itself; see `hoisting::collect_locals`'s `Call` arm,
+/// which -- as of Phase 6 -- no longer descends into an escaping block's
+/// body, making its result exactly "names used outside any escaping
+/// block"). `self` has no such distinction (an ivar always means the same
+/// object), so `self_captured` is passed through unfiltered.
 pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId]) -> Captures {
-    let mut caps = Captures::default();
+    let mut raw = Captures::default();
     for &n in body {
-        walk(compiler, n, false, &HashSet::new(), &mut caps);
+        walk(compiler, n, false, &HashSet::new(), &mut raw);
+    }
+    let mut outer_names = Vec::new();
+    for &n in body {
+        super::hoisting::collect_locals(compiler, n, &mut outer_names);
+    }
+    let outer: HashSet<String> = outer_names.into_iter().collect();
+    Captures {
+        locals: raw.locals.into_iter().filter(|n| outer.contains(n)).collect(),
+        self_captured: raw.self_captured,
+    }
+}
+
+/// The PRECISE capture set for ONE SPECIFIC escaping block, given its own
+/// declared params -- unlike `collect_escaping_captures` (which unions every
+/// escaping block in a whole scope, used to decide `codegen::hoisting`'s
+/// storage classes), this is what `codegen::call`'s Proc-construction site
+/// needs: exactly which of the enclosing scope's (already-`Captured`)
+/// names THIS closure must clone-capture, so it doesn't clone names it
+/// never references (which would otherwise show up as unused-variable
+/// warnings in the generated program).
+pub fn block_captures(compiler: &Compiler, params: &Params, body: &[NodeId]) -> Captures {
+    let mut caps = Captures::default();
+    let own = own_param_names(params);
+    for &n in body {
+        walk(compiler, n, true, &own, &mut caps);
     }
     caps
+}
+
+/// Whether `body` (a WHOLE method's own body) lexically contains at least
+/// one escaping block, ANYWHERE (including nested inside `if`/`while`/an
+/// inline `.times` block/etc) -- decides whether `codegen::mod`'s per-
+/// method `Signal::Return` catch is needed at all.
+///
+/// Confirmed the hard way this can't be "wrap every method unconditionally"
+/// (the original, simpler design): a method with NO escaping block of its
+/// own (e.g. `each_num`, which just yields to whatever block it's given)
+/// must NOT catch `Signal::Return` -- doing so would incorrectly intercept
+/// a `return` that belongs to a DIFFERENT method (wherever the block it's
+/// currently invoking was actually WRITTEN, e.g. `find_even`), silently
+/// turning "return from find_even" into "each_num returns normally instead"
+/// instead of propagating further. Only a method whose OWN body contains an
+/// escaping block can ever be the right place to catch a `Signal::Return`
+/// that block raises.
+pub fn body_contains_escaping_block(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter().any(|&n| node_contains_escaping_block(compiler, n))
+}
+
+fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
+    match &compiler.hir[id] {
+        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+            if let Some(b) = block {
+                let HirNode::Block { body, .. } = &compiler.hir[*b] else {
+                    panic!("a Block should only be reached via the Call that invokes it");
+                };
+                if !is_times_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
+                    return true;
+                }
+                // Still inline (`.times`) -- keep looking inside it (and in
+                // every other position this call touches).
+                if body_contains_escaping_block(compiler, body) {
+                    return true;
+                }
+            }
+            receiver.is_some_and(|r| node_contains_escaping_block(compiler, r))
+                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+                || kwargs.iter().any(|p| {
+                    node_contains_escaping_block(compiler, p.0) || node_contains_escaping_block(compiler, p.1)
+                })
+                || block_arg.is_some_and(|b| node_contains_escaping_block(compiler, b))
+        }
+        HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::Defined(v) => {
+            node_contains_escaping_block(compiler, *v)
+        }
+        HirNode::And(l, r) | HirNode::Or(l, r) => {
+            node_contains_escaping_block(compiler, *l) || node_contains_escaping_block(compiler, *r)
+        }
+        HirNode::If { cond, then_body, else_body } => {
+            node_contains_escaping_block(compiler, *cond)
+                || body_contains_escaping_block(compiler, then_body)
+                || body_contains_escaping_block(compiler, else_body)
+        }
+        HirNode::CaseWhen { subject, arms, else_body } => {
+            subject.is_some_and(|s| node_contains_escaping_block(compiler, s))
+                || arms.iter().any(|(values, body)| {
+                    values.iter().any(|&v| node_contains_escaping_block(compiler, v))
+                        || body_contains_escaping_block(compiler, body)
+                })
+                || body_contains_escaping_block(compiler, else_body)
+        }
+        HirNode::While { cond, body, .. } => {
+            node_contains_escaping_block(compiler, *cond) || body_contains_escaping_block(compiler, body)
+        }
+        HirNode::Loop { body } => body_contains_escaping_block(compiler, body),
+        HirNode::For { iterable, body, .. } => {
+            node_contains_escaping_block(compiler, *iterable) || body_contains_escaping_block(compiler, body)
+        }
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
+            v.is_some_and(|v| node_contains_escaping_block(compiler, v))
+        }
+        HirNode::MultiWrite { value, .. } => node_contains_escaping_block(compiler, *value),
+        HirNode::Yield(args) => args.iter().any(|&a| node_contains_escaping_block(compiler, a)),
+        HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
+        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+            args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+        }
+        HirNode::ArrayLit(elems) => elems.iter().any(|e| {
+            let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+            node_contains_escaping_block(compiler, *n)
+        }),
+        HirNode::HashLit(pairs) => pairs
+            .iter()
+            .any(|p| node_contains_escaping_block(compiler, p.0) || node_contains_escaping_block(compiler, p.1)),
+        HirNode::RangeLit { start, end, .. } => {
+            start.is_some_and(|s| node_contains_escaping_block(compiler, s))
+                || end.is_some_and(|e| node_contains_escaping_block(compiler, e))
+        }
+        HirNode::StringLit(parts) => parts.iter().any(|p| match p {
+            StrPart::Interp(n) => node_contains_escaping_block(compiler, *n),
+            StrPart::Lit(_) => false,
+        }),
+        HirNode::Redo
+        | HirNode::BlockGiven
+        | HirNode::Block { .. }
+        | HirNode::Program(_)
+        | HirNode::IntegerLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::LocalRead(_)
+        | HirNode::IvarRead(_)
+        | HirNode::ClassDef { .. }
+        | HirNode::DefMethod { .. } => false,
+    }
 }
 
 /// `in_escaping`: whether the walk has descended into some escaping

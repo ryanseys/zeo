@@ -29,8 +29,11 @@ use proc_macro2::TokenStream;
 
 /// The callee's extra Rust fn parameters (after `&self`), one per `Params`
 /// entry that gets a real Rust parameter (i.e. every kind except an
-/// anonymous `rest`/`keyword_rest` -- see the module's docs).
-pub fn emit_signature_params(params: &Params) -> TokenStream {
+/// anonymous `rest`/`keyword_rest` -- see the module's docs). `needs_block`
+/// (see `compiler::Scope::needs_block_param`) appends the implicit trailing
+/// `__blk: Option<RubyValue>` slot every method using `&block`/bare
+/// `yield`/`block_given?` gets.
+pub fn emit_signature_params(params: &Params, needs_block: bool) -> TokenStream {
     let required = params.required.iter().map(|name| {
         let ident = safe_ident(name);
         quote! { , #ident: spinel_rt::RubyValue }
@@ -61,7 +64,8 @@ pub fn emit_signature_params(params: &Params) -> TokenStream {
         let ident = safe_ident(name);
         quote! { , #ident: Vec<(spinel_rt::Symbol, spinel_rt::RubyValue)> }
     });
-    quote! { #(#required)* #(#optional)* #(#rest)* #(#post)* #(#keywords)* #(#keyword_rest)* }
+    let block = needs_block.then(|| quote! { , __blk: Option<spinel_rt::RubyValue> });
+    quote! { #(#required)* #(#optional)* #(#rest)* #(#post)* #(#keywords)* #(#keyword_rest)* #block }
 }
 
 /// The callee's own prologue: shadows every `Option<RubyValue>`/raw
@@ -69,7 +73,16 @@ pub fn emit_signature_params(params: &Params) -> TokenStream {
 /// holding a real `RubyValue` -- see the module's docs. Emitted in `Params`'
 /// declared order so a later default expression can reference an earlier
 /// parameter, matching Ruby's own rule that a default may only depend on
-/// parameters declared before it.
+/// parameters declared before it. A named `&blk` shadows `__blk` into an
+/// ordinary `RubyValue` local (`Nil` when unyielded, matching real Ruby --
+/// NOT absent, unlike every other kind's `None`-becomes-a-default rule).
+/// Finally, ANY of this method's own parameter names that some escaping
+/// block inside its body captures (see `codegen::captures`) get one more
+/// wrapping shadow into `Rc<RefCell<RubyValue>>` -- captured method
+/// PARAMETERS need this too, not just captured plain locals, since
+/// `codegen::hoisting`'s prelude only ever sees names `collect_locals` finds
+/// (which never includes a method's own params -- they're bound via the
+/// Rust fn signature, not that prelude).
 pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
     let optional = params.optional.iter().map(|(name, default)| {
         emit_lazy_default_shadow(cx, name, *default)
@@ -95,7 +108,33 @@ pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
             ));
         }
     });
-    quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* }
+    // `params.block` being `Some(Some(name))` already implies `needs_block`
+    // (see `Scope::needs_block_param`), so no extra gate is needed here --
+    // `.iter().flatten()` alone (same idiom as `rest`/`keyword_rest` above)
+    // naturally yields nothing for `None`/an anonymous `&`.
+    let block = params.block.iter().flatten().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            #[allow(unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = __blk.clone().unwrap_or(spinel_rt::RubyValue::Nil);
+        }
+    });
+    // Sorted for deterministic codegen output -- a `HashSet`'s iteration
+    // order is otherwise arbitrary, and these `let`s are independent (order
+    // among themselves doesn't affect behavior), but reproducible output is
+    // still worth having.
+    let own_names = super::captures::own_param_names(params);
+    let mut captured_params: Vec<&String> =
+        own_names.iter().filter(|name| cx.captured_locals.contains(*name)).collect();
+    captured_params.sort();
+    let captured_param_wraps = captured_params.into_iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: std::rc::Rc<std::cell::RefCell<spinel_rt::RubyValue>> =
+                std::rc::Rc::new(std::cell::RefCell::new(#ident));
+        }
+    });
+    quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* #(#block)* #(#captured_param_wraps)* }
 }
 
 fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStream {
@@ -124,6 +163,11 @@ fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStrea
 /// knowledge of both sides at a Path 1 call site, so this catches what real
 /// Ruby would only raise `ArgumentError` for at runtime -- strictly better,
 /// not a new restriction).
+// Every one of these is a genuinely distinct piece of the callee's shape
+// (receiver expr/name/params/call-site args-kwargs-block-block_arg/whether
+// a block channel exists at all) -- same reasoning as `codegen::call`'s
+// `emit_call`/`dispatch`.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_call_args(
     cx: &Ctx,
     recv_expr: &TokenStream,
@@ -131,19 +175,23 @@ pub fn emit_call_args(
     params: &Params,
     args: &[NodeId],
     kwargs: &[HashPair],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    needs_block: bool,
 ) -> TokenStream {
-    // Fast path: a plain required-only callee with no call-site kwargs --
-    // by far the common case, and everything Path 1 ever supported before
-    // `Params` existed. Emit the exact same simple shape as before (no
-    // temporaries, no block, no explicit arity check -- Rust's own
-    // fixed-arity call already catches a mismatch) rather than paying for
-    // the general machinery's temporaries/clones on every call.
+    // Fast path: a plain required-only callee with no call-site kwargs and
+    // no block channel -- by far the common case, and everything Path 1
+    // ever supported before `Params` existed. Emit the exact same simple
+    // shape as before (no temporaries, no explicit arity check -- Rust's
+    // own fixed-arity call already catches a mismatch) rather than paying
+    // for the general machinery's temporaries/clones on every call.
     if params.optional.is_empty()
         && params.rest.is_none()
         && params.post.is_empty()
         && params.keywords.is_empty()
         && params.keyword_rest.is_none()
         && kwargs.is_empty()
+        && !needs_block
     {
         let method_ident = safe_ident(method_name);
         let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
@@ -282,14 +330,38 @@ pub fn emit_call_args(
         }
     }
 
+    // The implicit trailing block argument (see `compiler::Scope::needs_block_param`).
+    // If the callee doesn't accept a block at all (`!needs_block`), nothing
+    // is built even if one was written at this call site -- an unused block
+    // is simply never invoked, matching real Ruby (it's always legal to
+    // pass a block a method ignores).
+    let block_arg_value = if needs_block {
+        let v = super::call::emit_block_option(cx, block, block_arg);
+        quote! { #v, }
+    } else {
+        TokenStream::new()
+    };
+
     let method_ident = safe_ident(method_name);
+    let call_expr = quote! {
+        (#recv_expr).#method_ident(
+            #(#required_args,)* #(#optional_args,)* #rest_arg #(#post_args,)* #(#keyword_args,)* #keyword_rest_arg #block_arg_value
+        )
+    };
+    // `catch_break` only matters when the callee might actually invoke a
+    // block (see its docs) -- gated on `needs_block` rather than applied
+    // unconditionally, purely to avoid the extra match on every ordinary
+    // call.
+    let dispatched = if needs_block {
+        quote! { spinel_rt::catch_break(#call_expr)? }
+    } else {
+        quote! { #call_expr? }
+    };
     quote! {
         {
             #(#pos_lets)*
             #(#kw_lets)*
-            (#recv_expr).#method_ident(
-                #(#required_args,)* #(#optional_args,)* #rest_arg #(#post_args,)* #(#keyword_args,)* #keyword_rest_arg
-            )?
+            #dispatched
         }
     }
 }
@@ -316,6 +388,7 @@ pub fn emit_dynamic_trampoline(
     class_ident: &proc_macro2::Ident,
     method_name: &str,
     params: &Params,
+    needs_block: bool,
 ) -> TokenStream {
     let method_ident = safe_ident(method_name);
 
@@ -365,17 +438,174 @@ pub fn emit_dynamic_trampoline(
         quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
     });
     let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
+    // Trailing comma, same reasoning as `rest_arg` -- safe regardless of
+    // position (and here, whether anything precedes it at all). The
+    // closure's own `blk` parameter is prefixed `_` when unused (not just
+    // when `needs_block` is false but ALSO named `_blk` there), matching
+    // every other unused-parameter convention in this codebase and avoiding
+    // a spurious unused-variable warning in the generated program.
+    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let block_arg = needs_block.then(|| quote! { blk, });
 
     quote! {
-        |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+        |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
             let this = spinel_rt::downcast_robj::<#class_ident>(recv)
                 .expect("class_id guarantees this downcast");
             #arity_check
             let __opt_bound = (args.len() - #min_lit).min(#nopt);
             #class_ident::#method_ident(
                 this,
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)*
+                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #block_arg
             )
         }
+    }
+}
+
+/// A real escaping block's OWN parameter binding, given its `Params` and the
+/// closure's own runtime `&[RubyValue]` argument slice (`args_ident`) --
+/// used by `codegen::call`'s Proc-construction site (decision 4: a block
+/// gets FULL `Params` support, not just plain required params). Unlike
+/// `emit_dynamic_trampoline`'s STRICT arity checking (correct for a real
+/// method call), this binds LENIENTLY: missing positional values become
+/// `Nil`, extra ones are silently dropped -- real Ruby's own block-arity
+/// leniency, not a method call's. All arithmetic here is RUNTIME (the
+/// closure's argument count isn't known until it's actually invoked, unlike
+/// Path 1's call sites, which know `args.len()` at spinelc-compile-time).
+///
+/// Keyword params on a block are a real, if rare, Ruby feature -- bound by
+/// treating the LAST yielded positional value as the keyword source when
+/// it's a `Hash` (mirroring real Ruby's own auto-conversion of a trailing
+/// Hash argument into block keywords). Missing keywords (required or
+/// optional) fall back to `Nil`/the default, never a panic -- and "does the
+/// key exist" is approximated as "is its value non-nil" (`hash_get` has no
+/// separate presence check), a documented imprecision, same posture as this
+/// codebase's other narrower-than-real-Ruby approximations.
+pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_macro2::Ident) -> TokenStream {
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let has_rest = params.rest.is_some();
+    let has_keywords = !params.keywords.is_empty() || params.keyword_rest.is_some();
+
+    let positional_and_kw_source = if has_keywords {
+        quote! {
+            let (__positional, __kw_source): (Vec<spinel_rt::RubyValue>, Option<spinel_rt::RubyValue>) =
+                match #args_ident.last() {
+                    Some(__v @ spinel_rt::RubyValue::Hash(_)) => {
+                        (#args_ident[..#args_ident.len() - 1].to_vec(), Some(__v.clone()))
+                    }
+                    _ => (#args_ident.to_vec(), None),
+                };
+        }
+    } else {
+        quote! {
+            let __positional: Vec<spinel_rt::RubyValue> = #args_ident.to_vec();
+        }
+    };
+
+    let required_lets = params.required.iter().enumerate().map(|(i, name)| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: spinel_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(spinel_rt::RubyValue::Nil);
+        }
+    });
+    let optional_lets = params.optional.iter().enumerate().map(|(i, (name, default))| {
+        let ident = safe_ident(name);
+        let default_expr = emit_expr(cx, *default);
+        quote! {
+            let #ident: spinel_rt::RubyValue = if #i < __opt_bound {
+                __positional.get(#nreq + #i).cloned().unwrap_or(spinel_rt::RubyValue::Nil)
+            } else {
+                #default_expr
+            };
+        }
+    });
+    let rest_let = params.rest.iter().flatten().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Array(spinel_rt::array_new(
+                (#nreq + __opt_bound..#nreq + __opt_bound + __rest_count)
+                    .filter_map(|__i| __positional.get(__i).cloned())
+                    .collect()
+            ));
+        }
+    });
+    let post_lets = params.post.iter().enumerate().map(|(i, name)| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: spinel_rt::RubyValue = {
+                let __idx = __n.saturating_sub(#npost) + #i;
+                __positional.get(__idx).cloned().unwrap_or(spinel_rt::RubyValue::Nil)
+            };
+        }
+    });
+    let kw_names: Vec<String> = params
+        .keywords
+        .iter()
+        .map(|kw| match kw {
+            KeywordParam::Required(n) | KeywordParam::Optional(n, _) => n.clone(),
+        })
+        .collect();
+    let keyword_lets = params.keywords.iter().map(|kw| {
+        let (name, default_expr) = match kw {
+            KeywordParam::Required(name) => (name, quote! { spinel_rt::RubyValue::Nil }),
+            KeywordParam::Optional(name, default) => (name, emit_expr(cx, *default)),
+        };
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: spinel_rt::RubyValue = match &__kw_source {
+                Some(spinel_rt::RubyValue::Hash(__h)) => {
+                    let __v = spinel_rt::hash_get(__h, &spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)));
+                    if __v.is_nil() { #default_expr } else { __v }
+                }
+                _ => #default_expr,
+            };
+        }
+    });
+    let keyword_rest_let = params.keyword_rest.iter().flatten().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: spinel_rt::RubyValue = match &__kw_source {
+                Some(spinel_rt::RubyValue::Hash(__h)) => {
+                    let __declared: &[&str] = &[#(#kw_names),*];
+                    spinel_rt::RubyValue::Hash(spinel_rt::hash_new(
+                        __h.borrow()
+                            .iter()
+                            .filter(|(k, _)| match k {
+                                spinel_rt::RubyValue::Symbol(__s) => !__declared.contains(&__s.name().as_str()),
+                                _ => true,
+                            })
+                            .cloned()
+                            .collect()
+                    ))
+                }
+                _ => spinel_rt::RubyValue::Hash(spinel_rt::hash_new(Vec::new())),
+            };
+        }
+    });
+
+    // `__opt_bound`/`__rest_count` are computed even when there's no
+    // rest/optional param at all -- harmless dead-ish locals the compiler
+    // won't warn about here since they're always at least read by the
+    // arity math below (and, when genuinely unused because neither optional
+    // nor rest is declared, `#[allow(unused_variables)]` covers it).
+    quote! {
+        #positional_and_kw_source
+        #[allow(unused_variables)]
+        let __n = __positional.len();
+        #[allow(unused_variables)]
+        let __min = #nreq + #npost;
+        #[allow(unused_variables)]
+        let __extra = __n.saturating_sub(__min);
+        #[allow(unused_variables)]
+        let __opt_bound = __extra.min(#nopt);
+        #[allow(unused_variables)]
+        let __rest_count = if #has_rest { __extra.saturating_sub(__opt_bound) } else { 0 };
+        #(#required_lets)*
+        #(#optional_lets)*
+        #(#rest_let)*
+        #(#post_lets)*
+        #(#keyword_lets)*
+        #(#keyword_rest_let)*
     }
 }

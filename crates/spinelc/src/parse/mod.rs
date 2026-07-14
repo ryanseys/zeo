@@ -317,6 +317,14 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::LocalRead(name)));
     }
 
+    // A bare `it` inside a block body (implicit-parameter sugar, distinct
+    // from an ordinary local read at the `ruby-prism` level) -- matches the
+    // synthesized `it` required-param name `lower_block` binds for
+    // `ItParametersNode` blocks.
+    if node.as_it_local_variable_read_node().is_some() {
+        return Ok(hir.push(HirNode::LocalRead("it".to_string())));
+    }
+
     if let Some(lvw) = node.as_local_variable_write_node() {
         let name = String::from_utf8_lossy(lvw.name().as_slice()).into_owned();
         let value = lower_node(result, hir, &lvw.value())?;
@@ -398,16 +406,18 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     // `yield` / `yield(args)` -- a real, distinct `ruby-prism` node (not an
-    // ordinary call), unlike `block_given?` below.
+    // ordinary call), unlike `block_given?` below. Reuses `lower_call_args`
+    // (not a bare per-argument `lower_node` map) so a trailing keyword hash
+    // (`yield x: 1, y: 2`) is recognized the same way an ordinary call's
+    // is -- `codegen::params::emit_proc_param_bindings` binds a block's own
+    // keyword params from the LAST *positional* yielded value, matching
+    // real Ruby's auto-conversion of a trailing Hash into block keywords,
+    // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let args = match yield_node.arguments() {
-            None => Vec::new(),
-            Some(a) => a
-                .arguments()
-                .iter()
-                .map(|n| lower_node(result, hir, &n))
-                .collect::<PResult<Vec<_>>>()?,
-        };
+        let (mut args, kwargs) = lower_call_args(result, hir, yield_node.arguments())?;
+        if !kwargs.is_empty() {
+            args.push(hir.push(HirNode::HashLit(kwargs)));
+        }
         return Ok(hir.push(HirNode::Yield(args)));
     }
 

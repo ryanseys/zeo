@@ -792,7 +792,6 @@ fn arithmetic_on_a_plain_method_parameter_works() {
 }
 
 #[test]
-#[ignore = "Phase 6 in progress: &block parsing lands before Proc construction/binding codegen -- unignored once that's wired (later in this same phase)"]
 fn a_named_block_parameter_can_be_called_explicitly() {
     // A `&block` parameter is real syntax now (Phase 6 lifted the Phase-5
     // rejection this test used to check for).
@@ -808,5 +807,336 @@ fn forwarding_params_are_a_clean_compile_error() {
     assert!(
         err.contains("forwarding"),
         "expected the `...`-forwarding rejection, got: {err}"
+    );
+}
+
+// --- Phase 6: real escaping Proc/closures, yield, block_given?, self-capture ---
+
+#[test]
+fn yield_and_block_given_branch_on_whether_a_block_was_passed() {
+    let result = run_ruby(
+        r#"
+        class Foo
+          def maybe_yield
+            if block_given?
+              yield 42
+            else
+              -1
+            end
+          end
+        end
+        f = Foo.new
+        puts f.maybe_yield { |x| x * 2 }
+        puts f.maybe_yield
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "84\n-1\n");
+}
+
+#[test]
+fn an_escaping_block_can_mutate_a_captured_enclosing_local() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b, c)
+            yield a
+            yield b
+            yield c
+          end
+        end
+        total = 0
+        Collector.new.each_num(1, 2, 3) { |n| total += n }
+        puts total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+fn an_escaping_block_can_mutate_an_ivar_via_self_capture() {
+    // Exercises the self:Rc<Self> migration + self-capture path: the block
+    // is written inside `Box#run` (so `self`/`@sum` are in scope there) and
+    // passed to a call on an EXPLICIT other receiver (`c`, a Collector
+    // constructed directly as a LOCAL, not taken as a method parameter --
+    // method params are always statically `Poly` in this spike, a separate
+    // pre-existing gap; a `New`-assigned local's class IS statically known,
+    // so this routes around that while still exercising real self-capture.
+    // Implicit-self calls to a user method are ALSO a separate, unrelated,
+    // still-unsupported gap, avoided here the same way).
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b, c)
+            yield a
+            yield b
+            yield c
+          end
+        end
+        class Box
+          def initialize
+            @sum = 0
+          end
+          def total
+            @sum
+          end
+          def run
+            c = Collector.new
+            c.each_num(1, 2, 3) { |n| @sum += n }
+          end
+        end
+        b = Box.new
+        b.run
+        puts b.total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+fn break_and_next_inside_a_yielded_block_behave_like_real_ruby() {
+    // `next` skips to the next yield; `break value` makes the WHOLE call
+    // (`each_num(...)`) evaluate to that value, stopping further yields.
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b, c)
+            yield a
+            yield b
+            yield c
+          end
+        end
+        result = Collector.new.each_num(1, 2, 3) { |n| next if n == 2; break "stopped" if n == 3; puts n }
+        puts result
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\nstopped\n");
+}
+
+#[test]
+fn redo_inside_a_yielded_block_reruns_without_advancing() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        attempts = 0
+        Collector.new.each_num(1, 2) do |n|
+          attempts += 1
+          if n == 1 && attempts < 2
+            redo
+          end
+          puts "n=#{n} attempts=#{attempts}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "n=1 attempts=2\nn=2 attempts=3\n");
+}
+
+#[test]
+fn explicit_return_inside_a_block_exits_the_enclosing_method() {
+    // `c` is a `New`-assigned LOCAL, not a method parameter -- see
+    // `an_escaping_block_can_mutate_an_ivar_via_self_capture`'s comment for
+    // why (params are always statically `Poly`, a separate pre-existing
+    // gap unrelated to this test's actual point: `return` inside a real
+    // escaping Proc unwinding all the way out of `find_even`, not just the
+    // block/`.each_num` call).
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b, c)
+            yield a
+            yield b
+            yield c
+          end
+        end
+        class Finder
+          def find_even
+            c = Collector.new
+            c.each_num(1, 3, 4) { |n| return n if n % 2 == 0 }
+            -1
+          end
+        end
+        puts Finder.new.find_even
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4\n");
+}
+
+#[test]
+fn dynamic_send_carries_a_block_through_to_a_yield_using_method() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b, c)
+            yield a
+            yield b
+            yield c
+          end
+        end
+        total = 0
+        Collector.new.send(:each_num, 1, 2, 3) { |n| total += n }
+        puts total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+fn numbered_params_work_through_the_times_inline_path() {
+    let result = run_ruby("3.times { puts _1 * 10 }");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n10\n20\n");
+}
+
+#[test]
+fn numbered_params_work_through_a_real_escaping_proc() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        Collector.new.each_num(5, 6) { puts _1 * 2 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n12\n");
+}
+
+#[test]
+fn it_works_through_a_real_escaping_proc() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        Collector.new.each_num(7, 8) { puts it + 1 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "8\n9\n");
+}
+
+#[test]
+fn a_block_with_more_params_than_yielded_values_nil_fills_leniently() {
+    // `puts` on `nil` prints an empty line -- real Ruby's own behavior, and
+    // avoids `Object#inspect` (a separate, unrelated, unimplemented method).
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_one(a)
+            yield a
+          end
+        end
+        Collector.new.each_one(1) { |a, b| puts a; puts b }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n\n");
+}
+
+#[test]
+fn keyword_params_on_a_block_bind_from_a_trailing_yielded_hash() {
+    let result = run_ruby(
+        r#"
+        class Collector
+          def emit
+            yield x: 1, y: 2
+          end
+        end
+        Collector.new.emit { |x:, y: 10| puts x + y }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn a_named_block_param_can_be_forwarded_to_another_call() {
+    // `c` is a `New`-assigned LOCAL inside `go`, not a parameter or an
+    // implicit-self call target -- see the self-capture test's comment for
+    // why (both are separate, pre-existing, unrelated gaps).
+    let result = run_ruby(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        class Relay
+          def go(a, b, &blk)
+            c = Collector.new
+            c.each_num(a, b, &blk)
+          end
+        end
+        total = 0
+        Relay.new.go(3, 4) { |n| total += n }
+        puts total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+#[should_panic(expected = "escaping from inside another escaping block")]
+fn a_block_escaping_from_inside_another_escaping_block_is_a_clean_compile_error() {
+    // Unlike the `&block`/`...`-forwarding rejections above (parse-time,
+    // `Result::Err`), this check runs during CODEGEN (`codegen::captures`),
+    // same posture as this codebase's other "spike scope" violations (e.g.
+    // `codegen::call`'s "unsupported call" panic) -- a clean, clearly-worded
+    // panic, not a silent miscompile, but a panic rather than an `Err`.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        c = Collector.new
+        c.each_num(1, 2) { |n| c.each_num(n, n) { |m| puts m } }
+        "#,
+    );
+}
+
+#[test]
+fn yield_inside_a_nested_block_literal_is_a_clean_compile_error() {
+    // `yield`/`block_given?` lexically inside a block passed elsewhere
+    // refers to a DIFFERENT enclosing method's block in real Ruby -- a
+    // documented spike-scope rejection (see `analyze::scan_bare_block_use`),
+    // checked during `register_class`, before codegen ever runs.
+    let err = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          def helper(x)
+            yield x
+          end
+          def bar
+            helper(1) { yield }
+          end
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("nested block"),
+        "expected the nested-yield rejection, got: {err}"
     );
 }

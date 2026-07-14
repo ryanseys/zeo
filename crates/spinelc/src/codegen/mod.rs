@@ -234,7 +234,8 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let methods = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
         let method_ident = safe_ident(&scope.name);
-        let sig_params = params::emit_signature_params(&scope.params);
+        let needs_block = scope.needs_block_param();
+        let sig_params = params::emit_signature_params(&scope.params, needs_block);
         let method_label_counter = Cell::new(0u32);
         let method_captures = captures::collect_escaping_captures(compiler, &scope.body);
         let method_cx = Ctx {
@@ -251,19 +252,19 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
-        // Wrapped in an immediately-invoked closure and matched for
-        // `Signal::Return` -- needed once a real (non-inlined) `Proc`
-        // closure exists inside this body: a bare `return` inside such a
-        // closure raises `Signal::Return` (see `codegen::expr`'s `Return`
-        // arm) rather than literally returning from JUST the closure, since
-        // real Ruby's `return` inside a block always exits the LEXICALLY
-        // ENCLOSING method, not the block itself. This wrapper is what
-        // catches that at the enclosing method's own boundary. Applied
-        // unconditionally (not just for methods containing an escaping
-        // block) -- cheap, and matches this project's "wrap uniformly
-        // rather than conditionally" precedent from locking the ABI early.
-        quote! {
-            def #method_ident(self: std::rc::Rc<Self> #sig_params) {
+        // The `Signal::Return` catch is needed ONLY when this method's OWN
+        // body lexically contains an escaping block -- confirmed the hard
+        // way NOT to be "wrap every method unconditionally" (a simpler
+        // design tried first): a method with no escaping block of its own
+        // (e.g. one that just does `yield` to whatever block it's handed)
+        // must NOT catch `Signal::Return` in transit, or it would
+        // incorrectly intercept a `return` meant for a DIFFERENT method --
+        // wherever the block it's currently invoking was actually written --
+        // turning "return from the caller" into "this method returns
+        // normally instead". See `codegen::captures::body_contains_escaping_block`'s
+        // docs.
+        let body_tokens = if captures::body_contains_escaping_block(compiler, &scope.body) {
+            quote! {
                 (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                     #prologue
                     #body
@@ -272,13 +273,28 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
                     __e => Err(__e),
                 })
             }
+        } else {
+            quote! {
+                #prologue
+                #body
+            }
+        };
+        quote! {
+            def #method_ident(self: std::rc::Rc<Self> #sig_params) {
+                #body_tokens
+            }
         }
     });
 
     let dispatch_entries = ci.methods.iter().map(|&sid| {
         let scope = compiler.scope(sid);
         let method_ident = safe_ident(&scope.name);
-        let tramp = params::emit_dynamic_trampoline(&name_ident, &scope.name, &scope.params);
+        let tramp = params::emit_dynamic_trampoline(
+            &name_ident,
+            &scope.name,
+            &scope.params,
+            scope.needs_block_param(),
+        );
         quote! { #method_ident => #tramp }
     });
 
