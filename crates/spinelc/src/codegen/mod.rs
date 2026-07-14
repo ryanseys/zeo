@@ -18,7 +18,9 @@
 mod call;
 mod collections;
 mod expr;
+mod hoisting;
 mod ident;
+mod loops;
 mod stmt;
 
 use quote::quote;
@@ -28,9 +30,11 @@ use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
 use crate::types::TyKind;
 use ident::safe_ident;
 use proc_macro2::TokenStream;
+use std::cell::Cell;
 use std::collections::HashMap;
-use stmt::emit_body;
+use syn::Lifetime;
 
+#[derive(Clone)]
 struct Ctx<'a> {
     compiler: &'a Compiler,
     current_class: Option<ClassId>,
@@ -39,6 +43,62 @@ struct Ctx<'a> {
     /// `analyze::locals`) -- lets operator dispatch resolve `x + y` to
     /// native `Int` arithmetic for locals, not just literal operands.
     local_types: &'a HashMap<String, TyKind>,
+    /// Shared by every loop nested inside the same generated `fn`, so each
+    /// one gets a function-body-unique label (see `loops::fresh_label`) --
+    /// Rust happily lets an inner loop shadow an outer one of the same
+    /// label, but `cargo clippy` flags it, and reusing a `Cell` here is far
+    /// simpler than threading a counter through every `emit_*` function's
+    /// return value.
+    label_counter: &'a Cell<u32>,
+    /// The nearest enclosing native loop's `(redo_label, outer_label)` pair
+    /// -- `None` at the top of a method/closure body, `Some` while emitting
+    /// the body of a `While`/`Loop`/`For`/the pre-existing `.times`
+    /// block-inlining special case. `break`/`next`/`redo` (see
+    /// `codegen::loops`) always target the NEAREST one: Ruby has no labeled
+    /// break, so a loop's own body simply shadows this field for itself, and
+    /// `emit_super_inline` preserves the *caller's* labels unchanged (the
+    /// inlined parent body is spliced at the call site, so a `break` inside
+    /// it must still target whatever loop lexically encloses that call
+    /// site, exactly as if the code were written there directly).
+    loop_labels: Option<(Lifetime, Lifetime)>,
+    /// A `for`-loop's own index variable's statically-known element type,
+    /// active only while emitting THAT loop's body -- overrides whatever
+    /// `local_types` (a single flat map covering the WHOLE enclosing scope,
+    /// not any particular position within it -- see its own docs) would
+    /// otherwise say. `local_types` has no notion of "the type as of this
+    /// exact position": it's the map after processing the entire body once,
+    /// so a `for`-loop variable introduced fresh, mid-scope, shows up there
+    /// as `Poly` (or not at all) even though it's provably `Int` for every
+    /// read inside the loop's own body (see `codegen::loops::emit_for`).
+    /// Mirrors `loop_labels`' same "child context overrides one field for
+    /// this construct's own body" shape -- but, unlike `loop_labels`,
+    /// `emit_super_inline` does NOT carry this over into the inlined parent
+    /// body: the override names a specific local by NAME, and the parent
+    /// method's own locals are a different Ruby scope that just might
+    /// happen to reuse that name for something unrelated (a narrow,
+    /// defensive choice -- worst case without it is a missed optimization,
+    /// not a wrong answer).
+    for_var_override: Option<(String, TyKind)>,
+}
+
+impl<'a> Ctx<'a> {
+    /// A child context for a native loop's own body -- see `loop_labels`'s
+    /// docs.
+    fn in_loop(&self, redo: Lifetime, outer: Lifetime) -> Ctx<'a> {
+        Ctx {
+            loop_labels: Some((redo, outer)),
+            ..self.clone()
+        }
+    }
+
+    /// A child context for a `for`-loop's own body -- see
+    /// `for_var_override`'s docs.
+    fn with_for_var(&self, name: &str, ty: TyKind) -> Ctx<'a> {
+        Ctx {
+            for_var_override: Some((name.to_string(), ty)),
+            ..self.clone()
+        }
+    }
 }
 
 pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, String> {
@@ -71,13 +131,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             quote! { #ident::__register(&mut __registry); }
         });
 
+    let main_label_counter = Cell::new(0u32);
     let cx = Ctx {
         compiler,
         current_class: None,
         current_method: None,
         local_types: &analyzed.main_local_types,
+        label_counter: &main_label_counter,
+        loop_labels: None,
+        for_var_override: None,
     };
-    let main_body = emit_body(&cx, &analyzed.main_statements, true);
+    let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
     quote! {
         #(#classes)*
@@ -119,13 +183,17 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             let p_ident = safe_ident(p);
             quote! { , #p_ident: spinel_rt::RubyValue }
         });
+        let method_label_counter = Cell::new(0u32);
         let method_cx = Ctx {
             compiler,
             current_class: Some(cid),
             current_method: Some(scope.name.clone()),
             local_types: &scope.local_types,
+            label_counter: &method_label_counter,
+            loop_labels: None,
+            for_var_override: None,
         };
-        let body = emit_body(&method_cx, &scope.body, true);
+        let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
         quote! {
             def #method_ident(&self #(#params)*) {
                 #body

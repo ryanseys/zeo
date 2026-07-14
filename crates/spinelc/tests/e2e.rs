@@ -428,10 +428,136 @@ fn string_literal_interpolation_indexing_and_mutation() {
 }
 
 #[test]
+fn while_loop_with_break_and_next_values() {
+    let result = run_ruby(
+        r#"
+        i = 0
+        sum = 0
+        while i < 10
+          i += 1
+          next if i == 5
+          break if i == 8
+          sum += i
+        end
+        puts sum
+        puts i
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "23\n8\n");
+}
+
+#[test]
+fn until_loop_and_modifier_forms() {
+    let result = run_ruby(
+        r#"
+        n = 5
+        until n == 0
+          n -= 1
+        end
+        puts n
+
+        count = 0
+        count += 1 while count < 3
+        puts count
+
+        x = 10
+        x -= 1 until x <= 5
+        puts x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n3\n5\n");
+}
+
+#[test]
+fn loop_do_end_with_break_value() {
+    let result = run_ruby(
+        r#"
+        i = 0
+        result = loop do
+          i += 1
+          break i * 10 if i == 3
+        end
+        puts result
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "30\n");
+}
+
+#[test]
+fn for_loop_over_range_and_array() {
+    // Arithmetic on the Range case works because `for`'s index variable is
+    // provably `Int` (see `codegen::loops::emit_for`'s `Ctx::for_var_override`
+    // use); an `Array`'s elements aren't tracked per-element (`Poly`), so the
+    // array case just displays each value -- arithmetic on a `Poly`-typed
+    // value is an existing, documented gap (see `codegen::call`'s
+    // `INT_BINARY_OPS` docs), not something this phase changes.
+    let result = run_ruby(
+        r#"
+        sum = 0
+        for i in 1..5
+          sum += i
+        end
+        puts sum
+        puts i
+
+        arr = [10, 20, 30]
+        for el in arr
+          puts el
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "15\n5\n10\n20\n30\n");
+}
+
+#[test]
+fn redo_reruns_the_current_iteration_without_retesting() {
+    let result = run_ruby(
+        r#"
+        i = 0
+        attempts = 0
+        while i < 3
+          attempts += 1
+          if attempts < 5 && i == 1
+            redo
+          end
+          i += 1
+        end
+        puts i
+        puts attempts
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n6\n");
+}
+
+#[test]
+fn multi_assign_with_and_without_a_splat() {
+    let result = run_ruby(
+        r#"
+        a, b = 1, 2
+        puts a
+        puts b
+
+        a, *b, c = [1, 2, 3, 4, 5]
+        puts a
+        puts b
+        puts c
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n1\n2\n3\n4\n5\n");
+}
+
+#[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // `while` isn't supported until Phase 4 (loops) -- update this to a
-    // still-unsupported construct if that lands and makes this compile.
-    let err = spinelc::compile_to_rust("while true\n  puts 1\nend\n").unwrap_err();
+    // `begin`/`rescue` isn't supported until Phase 9 (exceptions) -- update
+    // this to a still-unsupported construct if that lands and makes this
+    // compile.
+    let err = spinelc::compile_to_rust("begin\n  puts 1\nend\n").unwrap_err();
     assert!(
         err.contains("unsupported syntax"),
         "expected an unsupported-syntax error, got: {err}"

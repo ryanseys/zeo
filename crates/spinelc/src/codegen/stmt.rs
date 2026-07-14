@@ -38,22 +38,59 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
     }
 }
 
-/// One statement (or the tail expression) of a body. `LocalWrite` needs
-/// special handling: Rust's `let` is a statement, not an expression, so it
-/// can't flow through the same "expr, optionally `Ok`-wrapped" handling
-/// everything else uses. In tail position, a bare `let` has no value of its
-/// own to return, so a trailing nil follows it (see `emit_expr`'s
-/// `LocalWrite` arm for the sub-expression case, which does return the
-/// assigned value, matching Ruby's real assignment-as-expression semantics).
+/// One statement (or the tail expression) of a body. `LocalWrite`/
+/// `MultiWrite` need special handling: they compile to a plain Rust
+/// reassignment (`x = v;`, not `let x = v;` -- see `codegen::hoisting`'s
+/// docs for why a fresh `let` here would silently fail to persist mutations
+/// across loop iterations), whose Rust type is `()`, not `RubyValue`. In
+/// tail position that has no value of its own to return, so a trailing nil
+/// follows it (see `emit_expr`'s `LocalWrite`/`MultiWrite` arms for the
+/// sub-expression case, which does return the assigned value, matching
+/// Ruby's real assignment-as-expression semantics).
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
     if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
         let ident = safe_ident(name);
         let v = emit_expr(cx, *value);
+        if super::hoisting::is_hoisted(cx, name) {
+            // A plain reassignment, not a `let` -- `name` is already
+            // declared `mut` in the enclosing scope's hoisting prelude (see
+            // `codegen::hoisting`'s docs for why a shadowing `let` here
+            // would silently fail to persist mutations across loop
+            // iterations).
+            if is_tail {
+                let nil = tail_nil(wrap_ok);
+                quote! { #ident = #v; #nil }
+            } else {
+                quote! { #ident = #v; }
+            }
+        } else {
+            // A concrete class-instance local (`x = SomeClass.new`) isn't
+            // hoisted -- see `hoisting::is_hoisted`'s docs -- so this keeps
+            // the original shadowing `let`, letting Rust infer the unboxed
+            // `Rc<ConcreteClass>` type directly from `v`.
+            if is_tail {
+                let nil = tail_nil(wrap_ok);
+                quote! { let #ident = #v; #nil }
+            } else {
+                quote! { let #ident = #v; }
+            }
+        }
+    } else if let HirNode::MultiWrite {
+        before,
+        splat,
+        after,
+        value,
+    } = &cx.compiler.hir[stmt]
+    {
+        // Same reasoning as `LocalWrite` above: each target's `let` must be
+        // a plain top-level Rust statement (not nested in a sub-block) so
+        // later statements in this same body can see it.
+        let lets = super::loops::emit_multi_write_lets(cx, before, splat, after, *value);
         if is_tail {
             let nil = tail_nil(wrap_ok);
-            quote! { let #ident = #v; #nil }
+            quote! { #lets #nil }
         } else {
-            quote! { let #ident = #v; }
+            quote! { #lets }
         }
     } else {
         let e = emit_expr(cx, stmt);

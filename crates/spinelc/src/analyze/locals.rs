@@ -125,6 +125,46 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, n);
             }
         }
+        HirNode::While { cond, body, .. } => {
+            track_node(compiler, locals, *cond);
+            *locals = join_loop(compiler, locals, body, None);
+        }
+        HirNode::Loop { body } => {
+            *locals = join_loop(compiler, locals, body, None);
+        }
+        HirNode::For { var, iterable, body } => {
+            track_node(compiler, locals, *iterable);
+            // A `for`-in-`Range` variable is provably always `Int` (the only
+            // element type `Range` iteration supports -- see
+            // `codegen::loops::emit_for`); an `Array`'s element type isn't
+            // tracked per-element, so it widens to `Poly`.
+            let elem_ty = match infer_type_with_locals(compiler, locals, *iterable) {
+                TyKind::Range => TyKind::Int,
+                _ => TyKind::Poly,
+            };
+            *locals = join_loop(compiler, locals, body, Some((var, elem_ty)));
+        }
+        HirNode::Break(v) | HirNode::Next(v) => {
+            if let Some(v) = v {
+                track_node(compiler, locals, *v);
+            }
+        }
+        HirNode::Redo => {}
+        HirNode::MultiWrite {
+            before,
+            splat,
+            after,
+            value,
+        } => {
+            track_node(compiler, locals, *value);
+            // Destructured targets' element types aren't tracked precisely
+            // (spike scope) -- an arbitrary Array's element types are
+            // unknown -- so each one widens to `Poly`, same as any other
+            // Array-`[]` read.
+            for name in before.iter().chain(splat.iter()).chain(after.iter()) {
+                locals.insert(name.clone(), TyKind::Poly);
+            }
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
@@ -157,14 +197,45 @@ fn join_branches(
             b
         })
         .collect();
+    merge_locals(branch_locals)
+}
 
-    let keys: HashSet<&String> = branch_locals.iter().flat_map(HashMap::keys).collect();
-
+/// A local keeps its type only if every one of `maps` agrees on it (a map
+/// that never mentions it still "votes" with its own `.get`, so `None`
+/// disagrees with `Some(_)` just as much as two different `Some`s would);
+/// any disagreement widens to `Poly`. Shared by `join_branches` (`if`/`case`)
+/// and `join_loop` below -- both boil down to "does every possible path
+/// through this control-flow construct agree?".
+fn merge_locals(maps: Vec<HashMap<String, TyKind>>) -> HashMap<String, TyKind> {
+    let keys: HashSet<&String> = maps.iter().flat_map(HashMap::keys).collect();
     keys.into_iter()
         .map(|key| {
-            let first = branch_locals[0].get(key).copied();
-            let agrees = branch_locals.iter().all(|b| b.get(key).copied() == first);
+            let first = maps[0].get(key).copied();
+            let agrees = maps.iter().all(|m| m.get(key).copied() == first);
             (key.clone(), if agrees { first.unwrap_or(TyKind::Poly) } else { TyKind::Poly })
         })
         .collect()
+}
+
+/// Local types after a loop: must agree with either "the body ran zero
+/// times" (locals unchanged from `before`) or "the body ran" (walked once,
+/// optionally seeding a per-iteration binding first -- e.g. `for`'s index
+/// variable) -- the same disagreement-widens-to-`Poly` rule `join_branches`
+/// uses for `if`/`case`, since the real iteration count isn't known at
+/// compile time. Matches this module's stated plan for loops: "treating
+/// 'loop body ran zero times' as one more branch to agree with".
+fn join_loop(
+    compiler: &Compiler,
+    before: &HashMap<String, TyKind>,
+    body: &[NodeId],
+    seed: Option<(&str, TyKind)>,
+) -> HashMap<String, TyKind> {
+    let mut ran = before.clone();
+    if let Some((name, ty)) = seed {
+        ran.insert(name.to_string(), ty);
+    }
+    for &n in body {
+        track_node(compiler, &mut ran, n);
+    }
+    merge_locals(vec![ran, before.clone()])
 }

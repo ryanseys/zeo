@@ -11,7 +11,6 @@ use quote::{format_ident, quote};
 
 use super::expr::{emit_expr, emit_symbol_expr, infer, infer_class};
 use super::ident::safe_ident;
-use super::stmt::emit_body;
 use super::Ctx;
 use crate::hir::{HirNode, NodeId};
 use crate::types::TyKind;
@@ -182,13 +181,26 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
 
     let defining_scope = cx.compiler.scope(sid);
     let body = defining_scope.body.clone();
+    // `loop_labels`/`label_counter` carry over from `cx` unchanged: the
+    // parent method's body is spliced in at this call site, so a `break`
+    // inside it must still target whatever loop lexically encloses the
+    // `super` call, exactly as if that code were written there directly (see
+    // `Ctx::loop_labels`'s docs).
     let inline_cx = Ctx {
         compiler: cx.compiler,
         current_class: Some(defining_class),
         current_method: Some(mname.to_string()),
         local_types: &defining_scope.local_types,
+        label_counter: cx.label_counter,
+        loop_labels: cx.loop_labels.clone(),
+        // NOT inherited -- see `Ctx::for_var_override`'s docs.
+        for_var_override: None,
     };
-    let inlined = emit_body(&inline_cx, &body, false);
+    // A fresh hoisting prelude of its own: the parent method's local
+    // variables are a genuinely separate Ruby scope from the calling
+    // (sub)method's, even though inlining splices their statements into the
+    // same Rust expression position (see `hoisting`'s docs).
+    let inlined = super::hoisting::emit_hoisted_body(&inline_cx, &body, false);
     quote! { { #inlined } }
 }
 
@@ -317,8 +329,11 @@ fn dispatch(
     }
 
     // Known-shape block inlining (mirrors `emit_block_value_into`/`.times`,
-    // `codegen_iter.c:1281`): the block body is spliced into a native Rust
-    // `for` loop -- no closure or Proc object is allocated.
+    // `codegen_iter.c:1281`): the block body is spliced into a native,
+    // labeled Rust loop -- no closure or Proc object is allocated. Shares
+    // `codegen::loops`' redo-wrapping machinery with `while`/`until`/`loop`/
+    // `for`, so `break`/`next`/`redo` inside a `.times` block work exactly
+    // the same way.
     if name == "times" {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
@@ -326,13 +341,24 @@ fn dispatch(
             let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
                 panic!("`times`'s argument must be a block");
             };
+            let outer = super::loops::fresh_label(cx, "times");
+            let redo = super::loops::fresh_label(cx, "times_body");
+            let loop_cx = cx.in_loop(redo.clone(), outer.clone());
             let bind = params.first().map(|p| {
                 let ident = safe_ident(p);
                 quote! { let #ident = spinel_rt::RubyValue::Int(__i); }
             });
-            let inner = emit_body(cx, body, false);
+            let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
             return quote! {
-                { for __i in 0..#n { #bind #inner; } spinel_rt::RubyValue::Nil }
+                {
+                    let mut __i: i64 = 0;
+                    #outer: loop {
+                        if __i >= #n { break #outer spinel_rt::RubyValue::Nil; }
+                        #bind
+                        #inner
+                        __i += 1;
+                    }
+                }
             };
         }
     }

@@ -157,3 +157,92 @@ pub fn string_set(s: &RStr, index: i64, value: &RubyValue) -> RubyValue {
 pub fn string_len(s: &RStr) -> i64 {
     s.borrow().chars().count() as i64
 }
+
+/// Ruby multi-assignment's `a, b = ...` / `a, *b, c = ...` destructuring:
+/// splits `elems` into the fixed prefix (`n_before` positions), an optional
+/// splat-captured middle slice, and the fixed suffix (`n_after` positions).
+/// Lenient like Ruby itself: missing prefix/suffix positions become `Nil`
+/// (`elems` shorter than `n_before + n_after`), extra values are silently
+/// dropped when `has_splat` is `false` (nothing to catch them), and the
+/// splat captures whatever's left over between the prefix and suffix -- an
+/// empty `Vec`, not `Nil`, when there's nothing there. Verified against real
+/// `ruby`'s exact leniency behavior for every case codegen's `emit_for`/
+/// `emit_multi_write_lets` can produce (see `codegen::loops`'s tests).
+pub fn multi_assign(
+    elems: &[RubyValue],
+    n_before: usize,
+    has_splat: bool,
+    n_after: usize,
+) -> (Vec<RubyValue>, Vec<RubyValue>, Vec<RubyValue>) {
+    let get = |i: usize| elems.get(i).cloned().unwrap_or(RubyValue::Nil);
+    let before: Vec<RubyValue> = (0..n_before).map(get).collect();
+    if !has_splat {
+        return (before, Vec::new(), Vec::new());
+    }
+    let rest = elems.get(n_before..).unwrap_or(&[]);
+    let split_at = rest.len().saturating_sub(n_after);
+    let (splat_part, after_part) = rest.split_at(split_at);
+    let pad = n_after.saturating_sub(after_part.len());
+    let after: Vec<RubyValue> = std::iter::repeat_n(RubyValue::Nil, pad)
+        .chain(after_part.iter().cloned())
+        .collect();
+    (before, splat_part.to_vec(), after)
+}
+
+#[cfg(test)]
+mod multi_assign_tests {
+    use super::*;
+
+    fn ints(vs: &[i64]) -> Vec<RubyValue> {
+        vs.iter().map(|&i| RubyValue::Int(i)).collect()
+    }
+
+    /// `nil` displays as an empty string, so a plain `to_display_string()`
+    /// join is a simple, panic-free way to assert on a mix of real values
+    /// and nil-padding in one go.
+    fn display(vs: &[RubyValue]) -> Vec<String> {
+        vs.iter().map(RubyValue::to_display_string).collect()
+    }
+
+    /// Every case here is oracle-verified against real `ruby`'s exact
+    /// destructuring leniency (see `codegen::loops`'s module docs).
+    #[test]
+    fn matches_real_ruby_leniency() {
+        // (input, n_before, has_splat, n_after) -> (before, splat, after)
+        let (b, s, a) = multi_assign(&ints(&[1, 2, 3, 4, 5]), 1, true, 1);
+        assert_eq!(display(&b), ["1"]);
+        assert_eq!(display(&s), ["2", "3", "4"]);
+        assert_eq!(display(&a), ["5"]);
+
+        let (b, s, a) = multi_assign(&ints(&[1]), 1, true, 1);
+        assert_eq!(display(&b), ["1"]);
+        assert!(s.is_empty());
+        assert_eq!(display(&a), [""]); // nil-padded
+
+        let (b, s, a) = multi_assign(&ints(&[1, 2]), 1, true, 1);
+        assert_eq!(display(&b), ["1"]);
+        assert!(s.is_empty());
+        assert_eq!(display(&a), ["2"]);
+
+        let (b, s, a) = multi_assign(&ints(&[1, 2, 3]), 1, true, 0);
+        assert_eq!(display(&b), ["1"]);
+        assert_eq!(display(&s), ["2", "3"]);
+        assert!(a.is_empty());
+
+        let (b, s, a) = multi_assign(&ints(&[1, 2, 3]), 0, true, 1);
+        assert!(b.is_empty());
+        assert_eq!(display(&s), ["1", "2"]);
+        assert_eq!(display(&a), ["3"]);
+    }
+
+    #[test]
+    fn no_splat_drops_extras_and_pads_missing() {
+        let (before, splat, after) = multi_assign(&ints(&[1, 2, 3]), 2, false, 0);
+        assert_eq!(display(&before), ["1", "2"]);
+        assert!(splat.is_empty());
+        assert!(after.is_empty());
+
+        let (before, ..) = multi_assign(&ints(&[1]), 2, false, 0);
+        assert_eq!(display(&before), ["1", ""]); // nil-padded
+    }
+}

@@ -11,6 +11,9 @@ use quote::quote;
 use super::call::emit_call;
 use super::collections::{emit_array_lit, emit_hash_lit, emit_range_lit, emit_string_lit};
 use super::ident::safe_ident;
+use super::loops::{
+    emit_break, emit_for, emit_loop, emit_multi_write_lets, emit_next, emit_redo, emit_while,
+};
 use super::Ctx;
 use crate::compiler::ClassId;
 use crate::hir::{HirNode, NodeId};
@@ -22,6 +25,15 @@ use proc_macro2::TokenStream;
 /// so every dispatch decision (receiver class, numeric-operator eligibility)
 /// sees the same local-aware inference.
 pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
+    // A `for`-loop's own index variable overrides the enclosing scope's flat
+    // (position-insensitive) local-type map for reads of that exact name --
+    // see `Ctx::for_var_override`'s docs for why the map alone can't express
+    // this.
+    if let (HirNode::LocalRead(name), Some((var, ty))) = (&cx.compiler.hir[id], &cx.for_var_override) {
+        if name == var {
+            return *ty;
+        }
+    }
     infer_type_with_locals(cx.compiler, cx.local_types, id)
 }
 
@@ -80,7 +92,12 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::If { .. }
         | HirNode::CaseWhen { .. }
         | HirNode::LocalWrite(..)
-        | HirNode::IvarWrite(..) => Some("expression"),
+        | HirNode::IvarWrite(..)
+        | HirNode::While { .. }
+        | HirNode::Loop { .. }
+        | HirNode::For { .. }
+        | HirNode::MultiWrite { .. } => Some("expression"),
+        HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo => None,
         HirNode::Block { .. } | HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             None
         }
@@ -205,12 +222,21 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         } => emit_case_when(cx, *subject, arms, else_body),
         HirNode::LocalWrite(name, value) => {
             // Only reachable when a LocalWrite is used as a sub-expression
-            // (not a body statement) -- none of the 7 examples do this, but
-            // handle it faithfully to Ruby's "assignment evaluates to the
-            // assigned value" semantics rather than silently dropping it.
+            // (not a body statement) -- handle it faithfully to Ruby's
+            // "assignment evaluates to the assigned value" semantics rather
+            // than silently dropping it. A plain reassignment (`name` is
+            // already hoisted `mut` in the enclosing scope -- see
+            // `codegen::hoisting`), not a `let`, for the same reason
+            // `stmt.rs`'s statement-position case avoids one -- except for a
+            // concrete class-instance local, which keeps the original
+            // shadowing `let` (see `hoisting::is_hoisted`'s docs).
             let ident = safe_ident(name);
             let v = emit_expr(cx, *value);
-            quote! { { let #ident = #v; #ident.clone() } }
+            if super::hoisting::is_hoisted(cx, name) {
+                quote! { { #ident = #v; #ident.clone() } }
+            } else {
+                quote! { { let #ident = #v; #ident.clone() } }
+            }
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
@@ -223,6 +249,28 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
         HirNode::SuperCall { .. } => super::call::emit_super_inline(cx),
+        HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
+        HirNode::Loop { body } => emit_loop(cx, body),
+        HirNode::For { var, iterable, body } => emit_for(cx, var, *iterable, body),
+        HirNode::Break(v) => emit_break(cx, *v),
+        HirNode::Next(v) => emit_next(cx, *v),
+        HirNode::Redo => emit_redo(cx),
+        HirNode::MultiWrite {
+            before,
+            splat,
+            after,
+            value,
+        } => {
+            // Sub-expression fallback (rare) -- see `stmt.rs` for the
+            // primary, statement-position case, which is what makes the
+            // assigned locals visible to LATER statements. Nested in its own
+            // block here, so that visibility doesn't matter; yields `nil`,
+            // the same simplification `LocalWrite`'s own sub-expression
+            // fallback already makes above (real Ruby returns the RHS array
+            // here), not a new gap this introduces.
+            let lets = emit_multi_write_lets(cx, before, splat, after, *value);
+            quote! { { #lets spinel_rt::RubyValue::Nil } }
+        }
         HirNode::Call {
             receiver,
             name,

@@ -203,6 +203,45 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         )));
     }
 
+    // `x += 1` / `@x += 1` -- desugars to a plain read-operator-write, e.g.
+    // `x = x + 1`, reusing the existing `LocalWrite`/`IvarWrite` + operator
+    // `Call` dispatch infrastructure entirely (no new HIR node needed, exactly
+    // like `unless`/ternary reuse `If`). Only the plain binary-operator form
+    // is handled -- `||=`/`&&=` are distinct prism nodes with short-circuit-
+    // don't-evaluate-the-value semantics (mirroring `And`/`Or`) rather than
+    // an unconditional read-op-write, and aren't supported yet (spike scope,
+    // falls through to the generic "unsupported syntax" error).
+    if let Some(op) = node.as_local_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let read = hir.push(HirNode::LocalRead(name.clone()));
+        let rhs = lower_node(result, hir, &op.value())?;
+        let call = hir.push(HirNode::Call {
+            receiver: Some(read),
+            name: op_name,
+            args: vec![rhs],
+            block: None,
+            safe: false,
+        });
+        return Ok(hir.push(HirNode::LocalWrite(name, call)));
+    }
+    if let Some(op) = node.as_instance_variable_operator_write_node() {
+        let name = String::from_utf8_lossy(op.name().as_slice())
+            .trim_start_matches('@')
+            .to_string();
+        let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
+        let read = hir.push(HirNode::IvarRead(name.clone()));
+        let rhs = lower_node(result, hir, &op.value())?;
+        let call = hir.push(HirNode::Call {
+            receiver: Some(read),
+            name: op_name,
+            args: vec![rhs],
+            block: None,
+            safe: false,
+        });
+        return Ok(hir.push(HirNode::IvarWrite(name, call)));
+    }
+
     if let Some(and) = node.as_and_node() {
         let left = lower_node(result, hir, &and.left())?;
         let right = lower_node(result, hir, &and.right())?;
@@ -378,6 +417,31 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
         }
 
+        // `loop do ... end` -- `Kernel#loop` is an ordinary method call, not
+        // syntax, so this is a lowering-time call-shape desugar exactly like
+        // `define_method` above, not a distinct `ruby-prism` node. Only a
+        // zero-arg, no-param-block `loop` desugars here; anything else (an
+        // explicit receiver, arguments, or declared block params -- which
+        // `Kernel#loop` never yields anyway) falls through to the generic
+        // `Call` case and is handled as an ordinary (currently unsupported)
+        // implicit-self call.
+        if name == "loop" && call.receiver().is_none() {
+            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            if no_args {
+                if let Some(block_node) = call.block() {
+                    if let Some(block) = block_node.as_block_node() {
+                        let has_params = block
+                            .parameters()
+                            .is_some_and(|p| p.as_block_parameters_node().is_some());
+                        if !has_params {
+                            let body = lower_body(result, hir, block.body())?;
+                            return Ok(hir.push(HirNode::Loop { body }));
+                        }
+                    }
+                }
+            }
+        }
+
         let receiver = match call.receiver() {
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
@@ -458,6 +522,96 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         }));
     }
 
+    // `while`/`until`, both statement and modifier form -- `until` is `While`
+    // with `negate: true`, exactly like `unless` swaps `If`'s branches above.
+    // The do-while form (`begin...end while cond`) wraps an unhandled
+    // `BeginNode` in its `statements`, so it already surfaces as a clean
+    // "unsupported syntax" error from the recursive `lower_body` call below,
+    // with no special detection needed here.
+    if let Some(while_node) = node.as_while_node() {
+        let cond = lower_node(result, hir, &while_node.predicate())?;
+        let body = lower_body(result, hir, while_node.statements().map(|s| s.as_node()))?;
+        return Ok(hir.push(HirNode::While {
+            cond,
+            body,
+            negate: false,
+        }));
+    }
+    if let Some(until_node) = node.as_until_node() {
+        let cond = lower_node(result, hir, &until_node.predicate())?;
+        let body = lower_body(result, hir, until_node.statements().map(|s| s.as_node()))?;
+        return Ok(hir.push(HirNode::While {
+            cond,
+            body,
+            negate: true,
+        }));
+    }
+
+    // `for var in iterable ... end` -- only a single plain local index
+    // variable is supported (`for a, b in pairs` destructuring is a distinct
+    // `MultiTargetNode` index, a clean lowering error rather than a panic).
+    if let Some(for_node) = node.as_for_node() {
+        let var = for_node
+            .index()
+            .as_local_variable_target_node()
+            .ok_or("`for` only supports a single plain local variable index (spike scope)")?;
+        let var = String::from_utf8_lossy(var.name().as_slice()).into_owned();
+        let iterable = lower_node(result, hir, &for_node.collection())?;
+        let body = lower_body(result, hir, for_node.statements().map(|s| s.as_node()))?;
+        return Ok(hir.push(HirNode::For { var, iterable, body }));
+    }
+
+    // `break`/`next` (with an optional single value) and `redo` -- `ruby-prism`
+    // itself already guarantees these only ever appear inside a loop or block
+    // (a bare one anywhere else is a parse error caught before lowering even
+    // starts), so there's no context to re-validate here; `codegen::loops`
+    // is what actually resolves which native loop they target.
+    if let Some(brk) = node.as_break_node() {
+        let value = lower_single_optional_argument(result, hir, brk.arguments(), "break")?;
+        return Ok(hir.push(HirNode::Break(value)));
+    }
+    if let Some(nxt) = node.as_next_node() {
+        let value = lower_single_optional_argument(result, hir, nxt.arguments(), "next")?;
+        return Ok(hir.push(HirNode::Next(value)));
+    }
+    if node.as_redo_node().is_some() {
+        return Ok(hir.push(HirNode::Redo));
+    }
+
+    // `a, b = 1, 2` / `a, *b, c = arr` -- see `HirNode::MultiWrite`'s docs for
+    // the supported target shape.
+    if let Some(mw) = node.as_multi_write_node() {
+        let before = mw
+            .lefts()
+            .iter()
+            .map(|n| local_target_name(&n))
+            .collect::<PResult<Vec<_>>>()?;
+        let splat = match mw.rest() {
+            None => None,
+            Some(n) => {
+                let splat = n
+                    .as_splat_node()
+                    .ok_or("expected `*name` as a multi-assignment's splat target")?;
+                let expr = splat.expression().ok_or(
+                    "an anonymous `*` target in a multi-assignment isn't supported yet (spike scope)",
+                )?;
+                Some(local_target_name(&expr)?)
+            }
+        };
+        let after = mw
+            .rights()
+            .iter()
+            .map(|n| local_target_name(&n))
+            .collect::<PResult<Vec<_>>>()?;
+        let value = lower_node(result, hir, &mw.value())?;
+        return Ok(hir.push(HirNode::MultiWrite {
+            before,
+            splat,
+            after,
+            value,
+        }));
+    }
+
     Err(format!(
         "unsupported syntax at {:?} (spike handles only what the 7 example programs need)",
         node.location()
@@ -477,6 +631,37 @@ fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         return Ok(ArrayElem::Splat(lower_node(result, hir, &expr)?));
     }
     Ok(ArrayElem::Single(lower_node(result, hir, node)?))
+}
+
+/// A `break`/`next`'s optional value -- at most one argument is supported
+/// (`break a, b`, which real Ruby builds into an implicit array, is a clean
+/// lowering error rather than a panic; spike scope).
+fn lower_single_optional_argument(
+    result: &ParseResult,
+    hir: &mut Hir,
+    args: Option<ruby_prism::ArgumentsNode<'_>>,
+    keyword: &str,
+) -> PResult<Option<NodeId>> {
+    let Some(args) = args else { return Ok(None) };
+    let list: Vec<_> = args.arguments().iter().collect();
+    match list.len() {
+        0 => Ok(None),
+        1 => Ok(Some(lower_node(result, hir, &list[0])?)),
+        _ => Err(format!(
+            "`{keyword}` with more than one value isn't supported yet (spike scope)"
+        )),
+    }
+}
+
+/// A multi-assignment target (`MultiWriteNode`'s `lefts`/`rights` entries, or
+/// a splat's inner expression) -- only a plain local variable is supported;
+/// nested destructuring, ivars, constants, and `a[i]`/`obj.attr` targets are
+/// each a distinct `ruby-prism` node this spike doesn't lower.
+fn local_target_name(node: &Node<'_>) -> PResult<String> {
+    let target = node.as_local_variable_target_node().ok_or(
+        "multi-assignment only supports plain local variable targets (spike scope)",
+    )?;
+    Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
 }
 
 /// One `parts()` entry of an `InterpolatedStringNode` -- either a literal

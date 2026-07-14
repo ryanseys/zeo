@@ -170,4 +170,83 @@ pub enum HirNode {
         params: Vec<String>,
         body: Vec<NodeId>,
     },
+    /// `while cond ... end` / `until cond ... end` (+ modifier forms
+    /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
+    /// `negate: true`, exactly like `unless` folds into `If` by swapping
+    /// branches (see `parse/mod.rs`). Always compiles to a labeled Rust
+    /// `loop { }`, never a bare Rust `while` -- even for plain `while` --
+    /// so `break value` has an expression-position target to jump to
+    /// (Rust's own `while` is never an expression; see `codegen::loops`).
+    /// The do-while form (`begin ... end while cond`, body always runs at
+    /// least once) is a distinct prism shape wrapping a `BeginNode`, which
+    /// isn't lowered until Phase 9's `begin`/`rescue` -- it already falls
+    /// through to the generic "unsupported syntax" error untouched, so it
+    /// needs no explicit handling here.
+    While {
+        cond: NodeId,
+        body: Vec<NodeId>,
+        negate: bool,
+    },
+    /// `loop do ... end` -- NOT a distinct `ruby-prism` node (it's an
+    /// ordinary zero-arg, no-receiver `Kernel#loop` call with a block);
+    /// `parse/mod.rs` desugars that call shape to this at lowering time,
+    /// mirroring `define_method`'s existing call-shape desugar. An
+    /// unconditional labeled Rust `loop { }` with no exit test of its own --
+    /// only `break` (or, once Phase 9 exists, an uncaught `raise`) ever ends
+    /// it.
+    Loop { body: Vec<NodeId> },
+    /// `for var in iterable ... end`. Unlike block-based iteration (`each { |x|
+    /// ... }`), Ruby's `for` does NOT introduce a new variable scope: `var`
+    /// and any locals first assigned in the body stay visible after the loop
+    /// ends -- a real semantic difference, not a spike shortcut, and one
+    /// `codegen`'s plain (non-block-nested) `let` emission already gives for
+    /// free. Only a single plain local index variable is supported (`for a,
+    /// b in ...` multi-target `for` is a clean lowering error, not a panic).
+    /// The loop's own expression-position value is documented as `nil`
+    /// unless a `break value` fires -- real Ruby returns the iterated
+    /// collection itself in the no-break case, a narrower-than-real-Ruby
+    /// simplification nothing in the spike's examples depends on.
+    For {
+        var: String,
+        iterable: NodeId,
+        body: Vec<NodeId>,
+    },
+    /// `break` / `break value` -- unwinds to the end of the nearest *native*
+    /// loop construct (`While`/`Loop`/`For`, or the pre-existing `.times`
+    /// block-inlining special case in `codegen::call`), which `ruby-prism`
+    /// itself already guarantees is the only place these can appear (a bare
+    /// `break`/`next`/`redo` outside any loop/block is a parse error, not
+    /// something lowering has to re-validate). Compiles to a literal Rust
+    /// `break 'label value;` -- no `Signal` involved, per the ABI's stated
+    /// scope-cut (see `signal.rs`), since real escaping closures don't exist
+    /// until Part 1.3/Phase 6. At most one argument is supported (`break a,
+    /// b` building an implicit array is a clean lowering error, spike scope).
+    Break(Option<NodeId>),
+    /// `next` / `next value` -- ends the current iteration early, jumping to
+    /// the loop's own re-test-the-condition point. See `Break`'s docs; the
+    /// value is evaluated (for side effects) but otherwise discarded inside
+    /// a native loop, matching real Ruby: `next value` only matters as "what
+    /// the block call returns", which is meaningless for a bare `while`/
+    /// `for`/`loop`.
+    Next(Option<NodeId>),
+    /// `redo` -- re-runs the current iteration's body from the top WITHOUT
+    /// re-testing the loop condition or advancing (the one construct with no
+    /// direct native Rust equivalent -- `continue` always re-tests/advances).
+    /// See `codegen::loops`' inner-label trick this needs.
+    Redo,
+    /// `a, b = 1, 2` / `a, *b, c = arr` -- only plain local-variable targets
+    /// are supported on the left (no nested destructuring, ivars, constants,
+    /// or `a[i]`/`obj.attr` targets -- each is a distinct `ruby-prism` node
+    /// this spike doesn't lower, a clean "unsupported syntax" error rather
+    /// than a panic). `splat` is `None` for a plain `a, b = ...` with no `*`
+    /// at all; `Some(name)` names the local that captures the
+    /// (possibly-empty) middle slice. See `spinel_rt::multi_assign`'s docs
+    /// for the exact leniency rules (missing positions become `nil`; extra
+    /// values are silently dropped when there's no splat to catch them).
+    MultiWrite {
+        before: Vec<String>,
+        splat: Option<String>,
+        after: Vec<String>,
+        value: NodeId,
+    },
 }

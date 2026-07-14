@@ -210,6 +210,30 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 }
             }
         }
+        HirNode::While { cond, body, .. } => {
+            collect_ivars(hir, *cond, out);
+            for &n in body {
+                collect_ivars(hir, n, out);
+            }
+        }
+        HirNode::Loop { body } => {
+            for &n in body {
+                collect_ivars(hir, n, out);
+            }
+        }
+        HirNode::For { iterable, body, .. } => {
+            collect_ivars(hir, *iterable, out);
+            for &n in body {
+                collect_ivars(hir, n, out);
+            }
+        }
+        HirNode::Break(v) | HirNode::Next(v) => {
+            if let Some(v) = v {
+                collect_ivars(hir, *v, out);
+            }
+        }
+        HirNode::Redo => {}
+        HirNode::MultiWrite { value, .. } => collect_ivars(hir, *value, out),
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
