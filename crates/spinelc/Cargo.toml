@@ -1,0 +1,8 @@
+[package]
+name = "spinelc"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ruby-prism = "1.9.0"
