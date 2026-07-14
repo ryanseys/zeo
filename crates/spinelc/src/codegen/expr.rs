@@ -72,6 +72,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::And(..)
         | HirNode::Or(..)
         | HirNode::Defined(_)
+        | HirNode::If { .. }
+        | HirNode::CaseWhen { .. }
         | HirNode::LocalWrite(..)
         | HirNode::IvarWrite(..) => Some("expression"),
         HirNode::Block { .. } | HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
@@ -81,6 +83,71 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     match classification {
         Some(s) => quote! { spinel_rt::RubyValue::Str(#s.to_string()) },
         None => quote! { spinel_rt::RubyValue::Nil },
+    }
+}
+
+/// `if`/`unless`/`elsif`/ternary -- all normalized to `HirNode::If` at
+/// lowering time. Ruby's implicit-last-expression-return and Rust's
+/// `if`-as-expression are structurally identical, so this is a direct
+/// translation: both branches are emitted as bare `RubyValue`-typed
+/// *values* (`wrap_ok: false`, via `emit_body` -- this isn't a whole method
+/// body, just a value nested inside the enclosing one), matching every
+/// other `emit_expr` fragment's contract.
+fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -> TokenStream {
+    let cond_expr = emit_expr(cx, cond);
+    let then_val = super::stmt::emit_body(cx, then_body, false);
+    let else_val = super::stmt::emit_body(cx, else_body, false);
+    quote! {
+        if (#cond_expr).truthy() { #then_val } else { #else_val }
+    }
+}
+
+/// `case subject; when v1, v2 then ...; else ...; end`, desugared to a
+/// nested `if`/`else` chain (arms tested top-to-bottom, first match wins --
+/// NOT a native Rust `match`, since Ruby's `when` dispatches through
+/// `===`/truthiness on values that Rust's structural pattern matching can't
+/// express generically). With a `subject`, each value is compared via
+/// `RubyValue::rb_eq` (value equality -- see its docs for why this bypasses
+/// general `===`/`==` dispatch); with no subject, each value IS the boolean
+/// condition being tested directly (`case; when a > b; ...; end` behaves
+/// like a chained `if`/`elsif`). The subject (if any) is evaluated exactly
+/// once into a temporary, since every arm may reference it.
+fn emit_case_when(
+    cx: &Ctx,
+    subject: Option<NodeId>,
+    arms: &[(Vec<NodeId>, Vec<NodeId>)],
+    else_body: &[NodeId],
+) -> TokenStream {
+    let has_subject = subject.is_some();
+    let mut chain = super::stmt::emit_body(cx, else_body, false);
+
+    for (values, body) in arms.iter().rev() {
+        let body_val = super::stmt::emit_body(cx, body, false);
+        let mut check: Option<TokenStream> = None;
+        for &v in values {
+            let v_expr = emit_expr(cx, v);
+            let this_check = if has_subject {
+                quote! { (#v_expr).rb_eq(&__subject) }
+            } else {
+                quote! { (#v_expr).truthy() }
+            };
+            check = Some(match check {
+                None => this_check,
+                Some(prev) => quote! { (#prev) || (#this_check) },
+            });
+        }
+        let check = check.expect("a `when` clause always has at least one value");
+        chain = quote! {
+            if #check { #body_val } else { #chain }
+        };
+    }
+
+    match subject {
+        Some(s) => {
+            let subject_expr = emit_expr(cx, s);
+            quote! { { let __subject = #subject_expr; #chain } }
+        }
+        None => chain,
     }
 }
 
@@ -113,6 +180,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::Defined(v) => emit_defined(cx, *v),
+        HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => emit_if(cx, *cond, then_body, else_body),
+        HirNode::CaseWhen {
+            subject,
+            arms,
+            else_body,
+        } => emit_case_when(cx, *subject, arms, else_body),
         HirNode::LocalWrite(name, value) => {
             // Only reachable when a LocalWrite is used as a sub-expression
             // (not a body statement) -- none of the 7 examples do this, but
@@ -138,7 +215,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             name,
             args,
             block,
-        } => emit_call(cx, *receiver, name, args, *block),
+            safe,
+        } => emit_call(cx, *receiver, name, args, *block, *safe),
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }

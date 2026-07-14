@@ -119,6 +119,39 @@ fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             collect_ivars(hir, *r, out);
         }
         HirNode::Defined(v) => collect_ivars(hir, *v, out),
+        HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            collect_ivars(hir, *cond, out);
+            for &n in then_body {
+                collect_ivars(hir, n, out);
+            }
+            for &n in else_body {
+                collect_ivars(hir, n, out);
+            }
+        }
+        HirNode::CaseWhen {
+            subject,
+            arms,
+            else_body,
+        } => {
+            if let Some(s) = subject {
+                collect_ivars(hir, *s, out);
+            }
+            for (values, body) in arms {
+                for &v in values {
+                    collect_ivars(hir, v, out);
+                }
+                for &n in body {
+                    collect_ivars(hir, n, out);
+                }
+            }
+            for &n in else_body {
+                collect_ivars(hir, n, out);
+            }
+        }
         HirNode::Call {
             receiver,
             args,

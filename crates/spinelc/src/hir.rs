@@ -61,6 +61,28 @@ pub enum HirNode {
     /// runtime check. See `codegen::expr::emit_defined`'s docs for the
     /// scope-cut this approximates.
     Defined(NodeId),
+    /// `if`/`unless`/`elsif`/ternary all normalize to this at lowering time
+    /// (`unless` swaps `then_body`/`else_body`; `elsif` is prism's own
+    /// `IfNode::subsequent()` recursion, which lowering walks into a nested
+    /// `If`; ternary is literally the same `IfNode` shape prism produces for
+    /// `a ? b : c`). Ruby's implicit-last-expression-return and Rust's
+    /// `if`-as-expression are structurally identical, so this maps directly
+    /// onto a Rust `if/else` expression in tail position (see `codegen::expr`).
+    If {
+        cond: NodeId,
+        then_body: Vec<NodeId>,
+        else_body: Vec<NodeId>,
+    },
+    /// `case subject; when v1, v2 then ...; else ...; end` -- value
+    /// matching only (no subject means each `when` value is itself the
+    /// boolean condition, like a chained `if`/`elsif`). `case/in` pattern
+    /// matching is a distinct prism node (`CaseMatchNode`) and isn't
+    /// lowered to this -- see the plan's Phase 8.
+    CaseWhen {
+        subject: Option<NodeId>,
+        arms: Vec<(Vec<NodeId>, Vec<NodeId>)>,
+        else_body: Vec<NodeId>,
+    },
     LocalRead(String),
     LocalWrite(String, NodeId),
     IvarRead(String),
@@ -69,12 +91,16 @@ pub enum HirNode {
     /// implicit-self call (`receiver: None`). `send`/`public_send` are NOT a
     /// separate node kind (mirroring prism/spinel: they're just calls named
     /// "send") -- codegen inspects `name` and, for `send`, `args[0]` to
-    /// decide Path 1 (static) vs. Path 2 (`spinel_rt::send`).
+    /// decide Path 1 (static) vs. Path 2 (`spinel_rt::send`). `safe: true`
+    /// is `&.` (`recv.is_safe_navigation()` in prism -- a flag on the same
+    /// `CallNode`, not a separate node kind): the call short-circuits to
+    /// `nil` without evaluating at all when `receiver` is `nil` at runtime.
     Call {
         receiver: Option<NodeId>,
         name: String,
         args: Vec<NodeId>,
         block: Option<NodeId>,
+        safe: bool,
     },
     /// `ClassName.new(args)` -- a distinct node (not a plain `Call`) because
     /// it's always statically resolvable to a concrete class, and codegen

@@ -67,7 +67,13 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
         let f = safe_ident(iv);
         quote! { #f: std::cell::RefCell::new(spinel_rt::RubyValue::Nil), }
     });
-    let ctor = quote! { #class_ident { #(#fields)* } };
+    // Wrapped in `Rc` immediately, not just at `new_handle` time: a local
+    // holding this needs to be `Rc::clone()`-able on every re-read
+    // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
+    // for why the bare struct can't just derive `Clone` instead). `Rc<T>`
+    // derefs transparently, so `.initialize(...)` and Path 1's
+    // `(recv_expr).method(...)` both still work unchanged.
+    let ctor = quote! { std::rc::Rc::new(#class_ident { #(#fields)* }) };
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some(_) => {
@@ -128,8 +134,10 @@ pub fn emit_call(
     name: &str,
     args: &[NodeId],
     block: Option<NodeId>,
+    safe: bool,
 ) -> TokenStream {
     // Implicit self / no receiver: the spike's only builtin is `puts`.
+    // `&.` is meaningless without a receiver, so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
         if name == "puts" && args.len() == 1 {
             let arg = emit_expr(cx, args[0]);
@@ -138,11 +146,71 @@ pub fn emit_call(
         panic!("unsupported implicit-self call `{name}` (spike scope)");
     };
 
+    if safe {
+        return emit_safe_call(cx, recv_id, name, args);
+    }
+
+    let recv_expr = emit_expr(cx, recv_id);
+    dispatch(cx, recv_id, name, args, block, &recv_expr)
+}
+
+/// `&.` always dispatches through the runtime `ClassRegistry`/`send` path
+/// (Path 2), regardless of whether the receiver's class is statically
+/// known -- unlike ordinary calls, which prefer a direct Path 1 call. The
+/// receiver's *concrete Rust type* differs depending on that: an unboxed
+/// class struct (e.g. `Box`, with no `.is_nil()`/`Clone`) when the class is
+/// known and constructed via `New`, or an already-boxed `RubyValue` when
+/// it's dynamically typed. Checking "is it nil" needs one uniform runtime
+/// representation either way, so a statically-known-class receiver gets
+/// boxed into `RubyValue::Object` here (an otherwise-avoidable `Rc`
+/// allocation this specific call site pays for `&.`'s uniformity) before the
+/// same nil-check-then-`send` logic runs regardless of which case it was.
+fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> TokenStream {
+    let boxed_recv = match infer_class(cx, recv_id) {
+        Some(cid) => {
+            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let recv_expr = emit_expr(cx, recv_id);
+            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
+        }
+        None => emit_expr(cx, recv_id),
+    };
+    let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
+    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+    quote! {
+        {
+            let __safe_recv = #boxed_recv;
+            if __safe_recv.is_nil() {
+                spinel_rt::RubyValue::Nil
+            } else {
+                match &__safe_recv {
+                    spinel_rt::RubyValue::Object(__robj) => {
+                        spinel_rt::send(__robj, #name_expr, &[#(#arg_exprs),*])?
+                    }
+                    _ => panic!(
+                        "safe navigation on a non-Object receiver isn't supported yet (spike scope)"
+                    ),
+                }
+            }
+        }
+    }
+}
+
+/// The actual dispatch decision (see the module's "Two dispatch paths"
+/// docs), given an already-computed `recv_expr` for the receiver's runtime
+/// value -- factored out of `emit_call` so `&.`'s nil-guard can wrap this
+/// without the receiver expression being evaluated twice.
+fn dispatch(
+    cx: &Ctx,
+    recv_id: NodeId,
+    name: &str,
+    args: &[NodeId],
+    block: Option<NodeId>,
+    recv_expr: &TokenStream,
+) -> TokenStream {
     // `!`/`not` -- Ruby truthiness on ANY value, not an `Int`-specific
     // operator (`!0`, `!""`, `!nil` are all valid and not equivalent),
     // so this is handled separately from the numeric tables below.
     if name == "!" && args.is_empty() {
-        let recv_expr = emit_expr(cx, recv_id);
         return quote! { spinel_rt::RubyValue::Bool(!(#recv_expr).truthy()) };
     }
 
@@ -155,7 +223,6 @@ pub fn emit_call(
             let recv_ty = infer(cx, recv_id);
             let arg_ty = infer(cx, args[0]);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
-                let recv_expr = emit_expr(cx, recv_id);
                 let arg_expr = emit_expr(cx, args[0]);
                 let func = format_ident!("{rt_fn}");
                 let wrapper = format_ident!("{result_ty}");
@@ -173,7 +240,6 @@ pub fn emit_call(
     if args.is_empty() {
         if let Some(&(_, rt_fn)) = INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
             if infer(cx, recv_id) == TyKind::Int {
-                let recv_expr = emit_expr(cx, recv_id);
                 let func = format_ident!("{rt_fn}");
                 return quote! {
                     spinel_rt::RubyValue::Int(spinel_rt::#func((#recv_expr).as_int_unchecked()))
@@ -217,7 +283,7 @@ pub fn emit_call(
             let target = target.clone();
             if let Some(cid) = recv_class {
                 if cx.compiler.method_in_chain(cid, &target).is_some() {
-                    return emit_call(cx, receiver, &target, &args[1..], block);
+                    return dispatch(cx, recv_id, &target, &args[1..], block, recv_expr);
                 }
             }
         }
@@ -225,7 +291,6 @@ pub fn emit_call(
             panic!("dynamic `send` on a receiver of unknown static class (spike scope)")
         });
         let class_ident = safe_ident(&cx.compiler.class(cid).name);
-        let recv_expr = emit_expr(cx, recv_id);
         let name_expr = emit_symbol_expr(cx, args[0]);
         let rest_args = args[1..].iter().map(|&a| emit_expr(cx, a));
         return quote! {
@@ -238,7 +303,6 @@ pub fn emit_call(
     // `comp_method_in_chain` exactly (compiler.c:404).
     if let Some(cid) = recv_class {
         if cx.compiler.method_in_chain(cid, name).is_some() {
-            let recv_expr = emit_expr(cx, recv_id);
             let method_ident = safe_ident(name);
             let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
             return quote! { (#recv_expr).#method_ident(#(#arg_exprs),*)? };

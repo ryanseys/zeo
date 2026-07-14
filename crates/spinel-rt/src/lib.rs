@@ -51,8 +51,20 @@ macro_rules! ruby_class {
         impl $name {
             pub const CLASS_ID: $crate::ClassId = $crate::ClassId($id);
 
-            pub fn new_handle(inner: Self) -> $crate::RObj {
-                std::rc::Rc::new(inner)
+            /// Accepts an already-`Rc`-wrapped value (never `Self` by value):
+            /// generated code stores every `New`-constructed object as
+            /// `Rc<ConcreteStruct>` from the moment it's built (see
+            /// `codegen::call::emit_new`), so that a local variable holding
+            /// it can be read more than once via a cheap, identity-preserving
+            /// `Rc::clone()` rather than needing (and not having) a `Clone`
+            /// impl on the bare struct itself -- deriving one naively would
+            /// deep-copy each `RefCell` ivar, breaking Ruby's shared-mutable-
+            /// object-identity semantics (`b = Box.new(1); c = b` must alias,
+            /// not duplicate). This just returns `inner` unchanged, relying on
+            /// `Rc<Concrete> -> Rc<dyn RubyObject>` unsized coercion at the
+            /// return site to produce `RObj`.
+            pub fn new_handle(inner: std::rc::Rc<Self>) -> $crate::RObj {
+                inner
             }
 
             $(
@@ -151,16 +163,16 @@ mod tests {
 
     #[test]
     fn new_handle_erases_to_a_trait_object() {
-        let handle: RObj = Point::new_handle(Point {
+        let handle: RObj = Point::new_handle(std::rc::Rc::new(Point {
             x: std::cell::RefCell::new(RubyValue::Int(7)),
-        });
+        }));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
 
     #[test]
     fn dynamic_send_finds_registered_method() {
         install();
-        let g: RObj = Greeter::new_handle(Greeter {});
+        let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
         let result = send(&g, Symbol::intern("hello"), &[]).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
@@ -168,7 +180,7 @@ mod tests {
     #[test]
     fn dynamic_send_falls_back_to_method_missing() {
         install();
-        let g: RObj = Greeter::new_handle(Greeter {});
+        let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
         let result = send(&g, Symbol::intern("nope"), &[]).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
     }

@@ -216,8 +216,129 @@ fn defined_classifies_syntactic_form() {
 }
 
 #[test]
+fn if_elsif_else_as_statement_and_as_value() {
+    let result = run_ruby(
+        r#"
+        n = -5
+        if n < 0
+          puts :negative
+        elsif n == 0
+          puts :zero
+        else
+          puts :positive
+        end
+
+        n2 = 0
+        result = if n2 < 0
+          :negative
+        elsif n2 == 0
+          :zero
+        else
+          :positive
+        end
+        puts result
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "negative\nzero\n");
+}
+
+#[test]
+fn unless_with_else() {
+    let result = run_ruby(
+        r#"
+        n = 5
+        unless n < 0
+          puts :non_negative
+        else
+          puts :negative
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "non_negative\n");
+}
+
+#[test]
+fn ternary() {
+    let result = run_ruby(
+        r#"
+        n = 7
+        puts(n > 5 ? :big : :small)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "big\n");
+}
+
+#[test]
+fn case_when_with_and_without_a_subject() {
+    let result = run_ruby(
+        r#"
+        day = :tue
+        case day
+        when :sat, :sun
+          puts :weekend
+        when :mon, :tue, :wed, :thu, :fri
+          puts :weekday
+        else
+          puts :unknown
+        end
+
+        n = 7
+        case
+        when n < 0
+          puts :negative
+        when n == 0
+          puts :zero
+        else
+          puts :positive
+        end
+
+        x = :z
+        case x
+        when :a
+          puts :got_a
+        else
+          puts :fallback
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "weekday\npositive\nfallback\n");
+}
+
+#[test]
+fn safe_navigation_on_a_non_nil_receiver() {
+    // Only proves `&.` doesn't regress a normal, statically-typed dispatch --
+    // a receiver that's *actually* nil at runtime needs a nilable/union type
+    // this spike's `TyKind` doesn't have yet (every `New` is unconditionally
+    // a concrete `Object(ClassId)`, never possibly-nil), so that half of
+    // `&.`'s behavior isn't testable end to end until then.
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(value)
+            @value = value
+          end
+          def value
+            @value
+          end
+        end
+
+        b = Box.new(:present)
+        puts(b&.value)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "present\n");
+}
+
+#[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    let err = spinelc::compile_to_rust("if true\n  puts 1\nend\n").unwrap_err();
+    // `while` isn't supported until Phase 4 (loops) -- update this to a
+    // still-unsupported construct if that lands and makes this compile.
+    let err = spinelc::compile_to_rust("while true\n  puts 1\nend\n").unwrap_err();
     assert!(
         err.contains("unsupported syntax"),
         "expected an unsupported-syntax error, got: {err}"

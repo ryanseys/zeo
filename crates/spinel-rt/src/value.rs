@@ -74,4 +74,30 @@ impl RubyValue {
     pub fn truthy(&self) -> bool {
         !matches!(self, RubyValue::Nil | RubyValue::Bool(false))
     }
+
+    pub fn is_nil(&self) -> bool {
+        matches!(self, RubyValue::Nil)
+    }
+
+    /// Structural value equality for the primitive variants -- backs
+    /// `case`/`when`'s value-matching desugar (`val === subject`, which for
+    /// every value shape `case/when` currently supports -- `Int`/`Symbol`
+    /// literals -- means the same thing as `==`). Deliberately NOT wired
+    /// into the general `==`/`!=` operator table (`codegen::call`, still
+    /// scoped to statically-known `Int` operands): this is a narrower,
+    /// `case/when`-specific escape hatch, not a general `Object#==`. Two
+    /// `Object` values (or a mismatched-variant pair) conservatively compare
+    /// unequal rather than panicking -- real identity/`==` dispatch on
+    /// arbitrary objects needs a user-defined `==` method to call, which
+    /// doesn't exist as a built-in here yet.
+    pub fn rb_eq(&self, other: &RubyValue) -> bool {
+        match (self, other) {
+            (RubyValue::Nil, RubyValue::Nil) => true,
+            (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
+            (RubyValue::Int(a), RubyValue::Int(b)) => a == b,
+            (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
+            (RubyValue::Str(a), RubyValue::Str(b)) => a == b,
+            _ => false,
+        }
+    }
 }

@@ -56,6 +56,45 @@ fn lower_body(result: &ParseResult, hir: &mut Hir, body: Option<Node<'_>>) -> PR
     }
 }
 
+/// `if`/`elsif`/`elsif`.../`else` is one `IfNode` per level, chained through
+/// `subsequent()`: `None` (no further clauses), another `IfNode` (an
+/// `elsif`), or an `ElseNode` (the final `else`). Recursing here builds the
+/// same nesting `HirNode::If`'s `else_body` already expects -- an `elsif`
+/// becomes a single-statement `else_body` containing the nested `If`.
+fn lower_if_chain(
+    result: &ParseResult,
+    hir: &mut Hir,
+    predicate: &Node<'_>,
+    then_stmts: Option<ruby_prism::StatementsNode<'_>>,
+    subsequent: Option<Node<'_>>,
+) -> PResult<NodeId> {
+    let cond = lower_node(result, hir, predicate)?;
+    let then_body = lower_body(result, hir, then_stmts.map(|s| s.as_node()))?;
+    let else_body = match subsequent {
+        None => Vec::new(),
+        Some(n) => {
+            if let Some(elsif) = n.as_if_node() {
+                vec![lower_if_chain(
+                    result,
+                    hir,
+                    &elsif.predicate(),
+                    elsif.statements(),
+                    elsif.subsequent(),
+                )?]
+            } else if let Some(else_node) = n.as_else_node() {
+                lower_body(result, hir, else_node.statements().map(|s| s.as_node()))?
+            } else {
+                return Err("expected `elsif` or `else` after `if` (spike scope)".to_string());
+            }
+        }
+    };
+    Ok(hir.push(HirNode::If {
+        cond,
+        then_body,
+        else_body,
+    }))
+}
+
 fn constant_name(node: &Node<'_>) -> PResult<String> {
     let cr = node
         .as_constant_read_node()
@@ -181,6 +220,66 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Defined(value)));
     }
 
+    if let Some(if_node) = node.as_if_node() {
+        return lower_if_chain(
+            result,
+            hir,
+            &if_node.predicate(),
+            if_node.statements(),
+            if_node.subsequent(),
+        );
+    }
+
+    // `unless` has no `elsif` chain (only an optional `else`), and swaps
+    // which body is which relative to `HirNode::If`: Ruby runs `unless`'s
+    // primary statements when the predicate is FALSY, its `else` (if any)
+    // when truthy -- the opposite of `if`.
+    if let Some(unless_node) = node.as_unless_node() {
+        let cond = lower_node(result, hir, &unless_node.predicate())?;
+        let falsy_body = lower_body(result, hir, unless_node.statements().map(|s| s.as_node()))?;
+        let truthy_body = match unless_node.else_clause() {
+            None => Vec::new(),
+            Some(e) => lower_body(result, hir, e.statements().map(|s| s.as_node()))?,
+        };
+        return Ok(hir.push(HirNode::If {
+            cond,
+            then_body: truthy_body,
+            else_body: falsy_body,
+        }));
+    }
+
+    // `case subject; when ...; else ...; end` -- value matching only.
+    // `case/in` pattern matching (`CaseMatchNode`) is a distinct prism node,
+    // not handled here (see the plan's Phase 8).
+    if let Some(case_node) = node.as_case_node() {
+        let subject = match case_node.predicate() {
+            None => None,
+            Some(p) => Some(lower_node(result, hir, &p)?),
+        };
+        let mut arms = Vec::new();
+        for cond in case_node.conditions().iter() {
+            let when = cond
+                .as_when_node()
+                .ok_or("expected a `when` clause inside `case` (spike scope)")?;
+            let values = when
+                .conditions()
+                .iter()
+                .map(|n| lower_node(result, hir, &n))
+                .collect::<PResult<Vec<_>>>()?;
+            let body = lower_body(result, hir, when.statements().map(|s| s.as_node()))?;
+            arms.push((values, body));
+        }
+        let else_body = match case_node.else_clause() {
+            None => Vec::new(),
+            Some(e) => lower_body(result, hir, e.statements().map(|s| s.as_node()))?,
+        };
+        return Ok(hir.push(HirNode::CaseWhen {
+            subject,
+            arms,
+            else_body,
+        }));
+    }
+
     if let Some(sup) = node.as_super_node() {
         let args = match sup.arguments() {
             None => Vec::new(),
@@ -300,6 +399,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name,
             args,
             block,
+            safe: call.is_safe_navigation(),
         }));
     }
 
