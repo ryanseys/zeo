@@ -177,7 +177,9 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             v.is_some_and(|v| node_contains_escaping_block(compiler, v))
         }
         HirNode::MultiWrite { value, .. } => node_contains_escaping_block(compiler, *value),
-        HirNode::Yield(args) => args.iter().any(|&a| node_contains_escaping_block(compiler, a)),
+        HirNode::Yield(args) | HirNode::Raise(args) => {
+            args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+        }
         HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
         HirNode::New { args, .. } | HirNode::SuperCall { args } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
@@ -315,7 +317,7 @@ fn walk(
         }
         HirNode::Redo | HirNode::BlockGiven => {}
         HirNode::MultiWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps),
-        HirNode::Yield(args) => {
+        HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps);
             }

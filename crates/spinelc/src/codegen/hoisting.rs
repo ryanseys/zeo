@@ -299,7 +299,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::Yield(args) => {
+        HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
                 collect_locals(compiler, a, out);
             }

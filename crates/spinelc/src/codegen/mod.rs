@@ -261,8 +261,32 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 #main_body
             })();
             if let Err(__signal) = __result {
-                eprintln!("uncaught signal escaped the top level: {:?}", __signal);
-                std::process::exit(1);
+                match __signal {
+                    // An uncaught `raise` gets a real, Ruby-flavored
+                    // message -- calling the exception's own `message`
+                    // dynamically (Path 2), exactly as real Ruby's default
+                    // top-level handler does, rather than the generic
+                    // catch-all below. No runtime class-name table exists
+                    // yet (a narrow, deliberate simplification -- real
+                    // Ruby's own `"msg (ClassName)"` form needs one), so
+                    // only the message is shown until that lands.
+                    spinel_rt::Signal::Raise(__exc) => {
+                        let __msg = spinel_rt::send(
+                            &__exc.as_object_unchecked(),
+                            spinel_rt::Symbol::intern("message"),
+                            &[],
+                            None,
+                        )
+                        .map(|v| v.to_display_string())
+                        .unwrap_or_default();
+                        eprintln!("uncaught exception: {}", __msg);
+                        std::process::exit(1);
+                    }
+                    __other => {
+                        eprintln!("uncaught signal escaped the top level: {:?}", __other);
+                        std::process::exit(1);
+                    }
+                }
             }
         }
     }

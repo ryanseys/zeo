@@ -1140,3 +1140,626 @@ fn yield_inside_a_nested_block_literal_is_a_clean_compile_error() {
         "expected the nested-yield rejection, got: {err}"
     );
 }
+
+// --- Phase 7: full MRO (include/extend/prepend), inherited ivars, class
+// variables, minimal raise/exception foundation -- oracle-verified against
+// real `ruby` first, per this project's established convention.
+
+#[test]
+fn a_subclass_calls_a_non_overridden_inherited_method() {
+    // Closes a real, pre-existing latent gap: today's spike only ever
+    // generated a Rust method for a class's own LITERAL methods --
+    // `Dog.new.speak` with no override at all would fail to compile (Rust
+    // has no cross-struct inherent-method inheritance). `analyze::mro`'s
+    // materialization fixes this as a byproduct of doing modules correctly
+    // (every MRO-reachable method gets its own Scope on the receiver).
+    let result = run_ruby(
+        r#"
+        class Animal
+          def speak
+            "generic"
+          end
+        end
+        class Dog < Animal
+        end
+        puts Dog.new.speak
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "generic\n");
+}
+
+#[test]
+fn a_class_own_method_shadows_an_included_module_method() {
+    let result = run_ruby(
+        r#"
+        module Greetable
+          def greet
+            "hi"
+          end
+        end
+        class Person
+          include Greetable
+          def greet
+            "overridden"
+          end
+        end
+        class Robot
+          include Greetable
+        end
+        puts Person.new.greet
+        puts Robot.new.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "overridden\nhi\n");
+}
+
+#[test]
+fn super_from_an_override_reaches_an_included_module_method() {
+    let result = run_ruby(
+        r#"
+        module Tagged
+          def tag
+            "base(#{super})"
+          end
+        end
+        class Widget
+          include Tagged
+          def tag
+            "widget"
+          end
+        end
+        puts Widget.new.tag
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "widget\n");
+}
+
+#[test]
+fn stacked_prepends_resolve_in_reverse_declaration_order() {
+    // `prepend M1; prepend M2` -- M2 (most recently prepended) is closest,
+    // ahead of M1, ahead of the class's own definition.
+    let result = run_ruby(
+        r#"
+        module M1
+          def label
+            "m1"
+          end
+        end
+        module M2
+          def label
+            "m2"
+          end
+        end
+        class Stacked
+          prepend M1
+          prepend M2
+          def label
+            "own"
+          end
+        end
+        puts Stacked.new.label
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "m2\n");
+}
+
+#[test]
+fn a_module_of_module_diamond_dispatches_and_is_a_resolves_transitively() {
+    // The exact shape spinel's OWN reflection gets wrong (verified by
+    // running a repro against spinel's own binary): `D` included via two
+    // separate paths (`B`/`C`, both including `D`) must be deduped to a
+    // single shared position, and `is_a?(D)` must resolve `true` even
+    // though `D` was never included DIRECTLY by `A`.
+    let result = run_ruby(
+        r#"
+        module D
+          def who
+            "D"
+          end
+        end
+        module B
+          include D
+        end
+        module C
+          include D
+        end
+        class A
+          include B
+          include C
+        end
+        class Unrelated
+        end
+        puts A.new.who
+        puts A.new.is_a?(D)
+        puts A.new.is_a?(B)
+        puts A.new.is_a?(Unrelated)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "D\ntrue\ntrue\nfalse\n");
+}
+
+#[test]
+fn extend_pulls_in_module_instance_methods_as_class_methods() {
+    let result = run_ruby(
+        r#"
+        module MathHelpers
+          def double(x)
+            x * 2
+          end
+        end
+        class Calc
+          extend MathHelpers
+        end
+        puts Calc.double(21)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn a_module_function_is_callable_via_its_own_def_self() {
+    let result = run_ruby(
+        r#"
+        module Utility
+          def self.triple(x)
+            x * 3
+          end
+        end
+        puts Utility.triple(4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "12\n");
+}
+
+#[test]
+fn class_methods_are_inherited_by_a_subclass_with_no_override() {
+    let result = run_ruby(
+        r#"
+        class Base
+          def self.bump
+            1
+          end
+        end
+        class Sub < Base
+        end
+        puts Sub.bump
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn a_class_variable_is_shared_with_a_subclass_that_never_declares_its_own() {
+    let result = run_ruby(
+        r#"
+        class Base
+          @@count = 0
+          def bump
+            @@count += 1
+          end
+          def count
+            @@count
+          end
+        end
+        class Sub < Base
+          def bump_twice
+            @@count += 1
+            @@count += 1
+          end
+        end
+        b = Base.new
+        s = Sub.new
+        b.bump
+        s.bump_twice
+        puts b.count
+        puts s.count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n3\n");
+}
+
+#[test]
+fn a_subclass_reassigning_a_cvar_mutates_the_shared_inherited_storage() {
+    // Verified against real Ruby first: a subclass's own `@@x = ...`
+    // does NOT shadow -- it finds and mutates the SAME storage inherited
+    // from the superclass (real Ruby's actual, if slightly surprising,
+    // class-variable semantics). This is also the exact scenario spinel's
+    // own C implementation gets wrong (a subclass writing a superclass-only
+    // cvar allocates fresh, separate storage there -- an outright compile
+    // failure in spinel's case; see the plan's Part 6).
+    let result = run_ruby(
+        r#"
+        class Base
+          @@x = 1
+          def base_x
+            @@x
+          end
+        end
+        class Sub < Base
+          @@x = 99
+          def sub_x
+            @@x
+          end
+        end
+        puts Base.new.base_x
+        puts Sub.new.sub_x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "99\n99\n");
+}
+
+#[test]
+fn an_unrelated_class_own_cvar_is_independent_storage() {
+    let result = run_ruby(
+        r#"
+        class Base
+          @@count = 0
+          def count
+            @@count
+          end
+        end
+        class Other
+          @@count = 100
+          def count
+            @@count
+          end
+        end
+        puts Base.new.count
+        puts Other.new.count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n100\n");
+}
+
+#[test]
+fn raise_with_a_bare_class_defaults_the_message_to_the_class_name() {
+    // No `rescue` exists yet (Phase 9) -- assert the UNCAUGHT path instead:
+    // an unhandled `raise MyError` (no explicit message) exits 1 with the
+    // class's own name as the message (no runtime `self.class` reflection
+    // needed -- see `codegen::expr::emit_raise_value`'s docs).
+    let result = run_ruby(
+        r#"
+        class MyError < StandardError
+        end
+        class Box
+          def check
+            raise MyError
+          end
+        end
+        Box.new.check
+        "#,
+    );
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("MyError"),
+        "expected the default message to be the class's own name, got: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn raise_with_an_explicit_message_and_class() {
+    let result = run_ruby(
+        r#"
+        class MyError < StandardError
+        end
+        class Risky
+          def check(n)
+            raise MyError, "bad value: #{n}" if n < 0
+            n * 2
+          end
+        end
+        r = Risky.new
+        puts r.check(5)
+        puts r.check(-1)
+        "#,
+    );
+    assert!(!result.status.success());
+    assert_eq!(result.stdout, "10\n");
+    assert!(
+        result.stderr.contains("bad value: -1"),
+        "expected the explicit message in stderr, got: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn raise_of_a_plain_string_is_an_implicit_runtime_error() {
+    let result = run_ruby(
+        r#"
+        class Risky
+          def check
+            raise "plain string error"
+          end
+        end
+        Risky.new.check
+        "#,
+    );
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("plain string error"),
+        "expected the string message in stderr, got: {}",
+        result.stderr
+    );
+}
+
+#[test]
+#[should_panic(expected = "rescue")]
+fn bare_raise_with_no_active_rescue_is_a_clean_compile_error() {
+    // Bare `raise` (re-raise) needs a currently-handled exception context
+    // that doesn't exist until `rescue` does (Phase 9) -- a clean
+    // rejection now, not a silent no-op. This is a CODEGEN-time panic (like
+    // `codegen::captures`'s other "spike scope" violations), not a
+    // parse-time `Result::Err`, hence `#[should_panic]` here rather than
+    // `.unwrap_err()`.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Box
+          def check
+            raise
+          end
+        end
+        "#,
+    );
+}
+
+// --- Phase 7: deeper include/extend/prepend/inherited-ivar coverage,
+// oracle-verified against real `ruby` first (added after the initial batch
+// above, per the user's request for more comprehensive coverage of these
+// specifically).
+
+#[test]
+fn a_non_overridden_inherited_initialize_flattens_ivars_onto_the_subclass_struct() {
+    let result = run_ruby(
+        r#"
+        class Parent
+          def initialize(x)
+            @x = x
+          end
+        end
+        class Child < Parent
+          def show
+            @x * 10
+          end
+        end
+        puts Child.new(4).show
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "40\n");
+}
+
+#[test]
+fn an_included_module_method_mutates_an_ivar_on_the_includer() {
+    // Real self/ivar capture for a materialized module method -- proves
+    // the module body was re-typechecked against the INCLUDER's own
+    // concrete struct, not some shared/aliased representation.
+    let result = run_ruby(
+        r#"
+        module Counter
+          def bump
+            @count += 1
+          end
+        end
+        class Widget
+          include Counter
+          def initialize
+            @count = 0
+          end
+          def count
+            @count
+          end
+        end
+        w = Widget.new
+        w.bump
+        w.bump
+        w.bump
+        puts w.count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn multiple_modules_in_one_include_statement_resolve_in_given_order() {
+    let result = run_ruby(
+        r#"
+        module A
+          def a
+            "a"
+          end
+        end
+        module B
+          def b
+            "b"
+          end
+        end
+        class C
+          include A, B
+        end
+        c = C.new
+        puts c.a
+        puts c.b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\nb\n");
+}
+
+#[test]
+fn prepend_and_include_together_resolve_in_correct_precedence_order() {
+    // MRO here is `Pre, Own, Inc, Object` -- `Own`'s own `label` calls
+    // `super` and reaches `Inc` (the next ancestor after `Own`); `Pre`'s
+    // `label` calls `super` and reaches `Own`.
+    let result = run_ruby(
+        r#"
+        module Pre
+          def label
+            "pre(#{super})"
+          end
+        end
+        module Inc
+          def label
+            "inc"
+          end
+        end
+        class Own
+          prepend Pre
+          include Inc
+          def label
+            "own(#{super})"
+          end
+        end
+        puts Own.new.label
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "pre(own(inc))\n");
+}
+
+#[test]
+fn a_module_class_variable_is_shared_across_every_including_class() {
+    // Verified against real Ruby first: `@@total` declared inside the
+    // MODULE's own body is genuinely owned by the module itself -- every
+    // class that includes it (even two entirely unrelated classes) shares
+    // the SAME storage, not one copy per includer. Exercises
+    // `codegen::expr::cvar_owner_id` consulting `Ctx.defining_class`
+    // (the module a materialized method's body actually came from), not
+    // `Ctx.current_class` (whichever class it's materialized onto).
+    let result = run_ruby(
+        r#"
+        module Shared
+          @@total = 0
+          def add(n)
+            @@total += n
+          end
+          def total
+            @@total
+          end
+        end
+        class Left
+          include Shared
+        end
+        class Right
+          include Shared
+        end
+        l = Left.new
+        r = Right.new
+        l.add(5)
+        r.add(7)
+        puts l.total
+        puts r.total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "12\n12\n");
+}
+
+#[test]
+fn a_three_level_super_chain_crosses_a_module_boundary() {
+    // `Parent#greet` calls `super`, reaching `Middle#greet` (an included
+    // module), which itself calls `super`, reaching `GrandParent#greet` --
+    // a chain of 3, verifying `emit_super_inline`'s ancestors-based search
+    // composes correctly across more than one hop and a mixed
+    // class/module boundary.
+    let result = run_ruby(
+        r#"
+        class GrandParent
+          def greet
+            "grandparent"
+          end
+        end
+        module Middle
+          def greet
+            "middle(#{super})"
+          end
+        end
+        class Parent < GrandParent
+          include Middle
+          def greet
+            "parent(#{super})"
+          end
+        end
+        puts Parent.new.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "parent(middle(grandparent))\n");
+}
+
+#[test]
+fn extend_and_include_can_be_combined_on_the_same_class() {
+    let result = run_ruby(
+        r#"
+        module Ext
+          def helper(x)
+            x + 1
+          end
+        end
+        module Inc
+          def instance_helper
+            "inc"
+          end
+        end
+        class Both
+          extend Ext
+          include Inc
+        end
+        puts Both.helper(9)
+        puts Both.new.instance_helper
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\ninc\n");
+}
+
+#[test]
+fn ivars_from_a_three_level_plain_inheritance_chain_are_all_present_on_the_leaf() {
+    // A REAL bug found while adding this test: ivar-flattening originally
+    // only scanned the MRO-winning materialized methods, missing any ivar
+    // only ever touched through a `super`-reachable (but shadowed, not
+    // winning) ancestor body -- `B#initialize`/`C#initialize` both call
+    // `super` and their OWN bodies don't textually mention `@a`, only
+    // `A#initialize`'s spliced-in body does. Fixed by collecting ivars from
+    // EVERY ancestor's own methods, not just the ones that end up
+    // materialized as the winning definition.
+    let result = run_ruby(
+        r#"
+        class A
+          def initialize
+            @a = 1
+          end
+        end
+        class B < A
+          def initialize
+            super
+            @b = 2
+          end
+        end
+        class C < B
+          def initialize
+            super
+            @c = 3
+          end
+          def total
+            @a + @b + @c
+          end
+        end
+        puts C.new.total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}

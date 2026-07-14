@@ -409,4 +409,18 @@ pub enum HirNode {
     /// distinct `ruby-prism` node. Same "not inside a nested block" scope-cut
     /// as `Yield`.
     BlockGiven,
+    /// `raise`/`fail` (exact synonyms) -- a zero/one/two-arg call-shape
+    /// recognized at lowering time, same as `BlockGiven` above (real Ruby:
+    /// both are ordinary `Kernel` method calls, not syntax). Codegen
+    /// classifies the arg SHAPE itself (`ClassRef` vs. a `Str`-typed
+    /// expression vs. an already-constructed exception value) rather than
+    /// this node encoding it structurally -- mirrors `Yield`'s "let codegen,
+    /// which already has full type-inference machinery, decide" posture.
+    /// Bare `raise` (re-raise, zero args) needs a currently-handled
+    /// exception context that doesn't exist until `rescue` does (Phase 9) --
+    /// a clean rejection until then, not a silent no-op. The `cause:`
+    /// keyword-argument form isn't lowered (a documented, narrow scope-cut --
+    /// automatic cause chaining from an active `rescue` will still work once
+    /// Phase 9 lands; only the explicit override is deferred).
+    Raise(Vec<NodeId>),
 }

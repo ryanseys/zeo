@@ -181,7 +181,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, n);
             }
         }
-        HirNode::Yield(args) => {
+        HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
                 track_node(compiler, locals, a);
             }

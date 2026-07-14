@@ -12,13 +12,57 @@ use ruby_prism::{Node, ParseResult};
 
 type PResult<T> = Result<T, String>;
 
+/// The minimal built-in exception hierarchy (Part 6's "raise/exception
+/// foundation") -- ordinary Ruby source, spliced into EVERY compiled
+/// program ahead of the user's own code via the exact same
+/// `parse_and_lower_into` mechanism `eval`'s literal-splice already uses
+/// (see that recognizer's docs below). This is the whole point: real
+/// classes/inheritance (Phase 7's MRO work) already makes `class X < Y; end`
+/// meaningful, so the built-in hierarchy needs ZERO dedicated Rust
+/// construction code -- it's just Ruby, using the same machinery a user's
+/// own classes do, trivially extended later (Phase 9) by appending more
+/// one-line classes to this same string. `msg` is a plain REQUIRED param,
+/// not a Ruby-level default (`msg = "..."`, which real Ruby's own
+/// `Exception.new` supports) -- every construction site this spike
+/// generates (`raise`'s codegen -- see `codegen::expr::emit_raise_value`)
+/// always supplies a message explicitly (the raising class's own name as a
+/// compile-time string literal, when `raise` itself gave none), so this
+/// narrower shape avoids `codegen::call::emit_new`'s pre-existing,
+/// unrelated gap: it always passes constructor args 1:1 positionally,
+/// with no optional-argument `Some(...)`-wrapping smarts (fine for
+/// required-only signatures like this one; a separate, unrelated fix if a
+/// class's own `initialize` needs real optional-param support via `.new`).
+const EXCEPTION_PRELUDE: &str = r#"
+class Exception
+  def initialize(msg)
+    @message = msg
+  end
+  def message
+    @message
+  end
+  def to_s
+    @message
+  end
+end
+class ScriptError < Exception
+end
+class StandardError < Exception
+end
+class RuntimeError < StandardError
+end
+class NoMatchingPatternError < StandardError
+end
+"#;
+
 /// Returns the built `Hir` plus the id of its `Program` root -- `Hir` itself
 /// doesn't track a root (it's just an arena), so lowering hands the root id
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
     let mut hir = Hir::default();
-    let statements = parse_and_lower_into(&mut hir, source)?;
+    let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
+        .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
+    statements.extend(parse_and_lower_into(&mut hir, source)?);
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root))
 }
@@ -689,6 +733,29 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             if no_args && call.block().is_none() {
                 return Ok(hir.push(HirNode::BlockGiven));
             }
+        }
+
+        // `raise`/`fail` (exact synonyms) -- a zero/one/two positional-arg
+        // call-shape desugar, same posture as `block_given?` above. The
+        // `cause:` keyword form isn't lowered yet (see `HirNode::Raise`'s
+        // docs) -- rejected here rather than silently dropped, matching
+        // this project's "clean rejection over silent wrongness" rule.
+        if (name == "raise" || name == "fail") && call.receiver().is_none() {
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            if arg_list.iter().any(|n| n.as_keyword_hash_node().is_some()) {
+                return Err("`raise`/`fail` with a `cause:` keyword argument isn't supported yet (spike scope) -- automatic cause chaining from an active `rescue` works once that lands (Phase 9); only the explicit override is deferred".to_string());
+            }
+            if arg_list.len() > 2 {
+                return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string());
+            }
+            let args = arg_list
+                .iter()
+                .map(|n| lower_node(result, hir, n))
+                .collect::<PResult<Vec<_>>>()?;
+            return Ok(hir.push(HirNode::Raise(args)));
         }
 
         // `eval("literal string")` -- ONLY the compile-time-constant-string

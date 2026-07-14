@@ -154,6 +154,22 @@ fn try_proc_dispatch(
 }
 
 pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
+    let arg_exprs = args.iter().map(|&a| emit_expr(cx, a)).collect();
+    emit_new_with_arg_tokens(cx, class_name, arg_exprs)
+}
+
+/// The actual construction logic behind `ClassName.new(...)`, factored out
+/// to take already-built constructor-argument `TokenStream`s rather than
+/// `NodeId`s -- reused by `raise`'s codegen (`codegen::expr`'s `Raise` arm),
+/// which needs to construct an exception with a MESSAGE ARGUMENT that has
+/// no corresponding HIR node at all (e.g. the class's own name, defaulted
+/// as a compile-time string literal for a bare `raise SomeError`) --
+/// codegen has no `&mut Hir` to synthesize one into.
+pub fn emit_new_with_arg_tokens(
+    cx: &Ctx,
+    class_name: &str,
+    arg_exprs: Vec<TokenStream>,
+) -> TokenStream {
     let cid = cx
         .compiler
         .class_by_name(class_name)
@@ -175,7 +191,6 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some(_) => {
-            let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
             // `initialize` takes `self: Rc<Self>` BY VALUE now (see
             // `ruby_class!`'s docs), so calling it on `__obj` directly would
             // move it -- clone the `Rc` handle first (a cheap refcount bump,

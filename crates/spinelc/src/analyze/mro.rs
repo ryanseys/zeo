@@ -120,11 +120,24 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         }
     }
 
+    // Ivars are collected from EVERY ancestor's OWN methods -- not just the
+    // MRO-winning ones in `materialized` above. `super` can splice in a
+    // shadowed ancestor's body at codegen time (`emit_super_inline`) even
+    // though that body never gets its own entry in `methods[class_id]` --
+    // only the winning override does -- so an ivar only ever touched
+    // through a `super`-reachable (but not otherwise winning) method would
+    // otherwise be missing from this class's own generated struct entirely.
+    // Over-including a field for a method that's shadowed and never even
+    // reachable via `super` is harmless (an unused, always-`Nil` field),
+    // so this doesn't try to be more precise than "every ancestor's own
+    // body, unconditionally".
     let mut ivars = Vec::new();
-    for &sid in &materialized {
-        let body = compiler.scope(sid).body.clone();
-        for &n in &body {
-            super::collect_ivars(&compiler.hir, n, &mut ivars);
+    for &anc_id in &ancestors {
+        for &sid in &compiler.class(anc_id).own_methods.clone() {
+            let body = compiler.scope(sid).body.clone();
+            for &n in &body {
+                super::collect_ivars(&compiler.hir, n, &mut ivars);
+            }
         }
     }
 
@@ -377,7 +390,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, n, out);
             }
         }
-        HirNode::Yield(args) => {
+        HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
                 collect_cvars(hir, a, out);
             }

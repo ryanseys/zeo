@@ -85,7 +85,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
         | HirNode::Eval(_)
-        | HirNode::BlockGiven => Some("method"),
+        | HirNode::BlockGiven
+        | HirNode::Raise(_) => Some("method"),
         HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::StringLit(_)
@@ -346,6 +347,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
+        HirNode::Raise(args) => emit_raise(cx, args),
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. }
@@ -355,6 +357,81 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             panic!("unexpected top-level-only node in expression position")
         }
     }
+}
+
+/// `raise`/`fail` -- see `HirNode::Raise`'s docs for the call-shape survey.
+/// Always compiles to `return Err(Signal::Raise(exc))`: even though `raise`
+/// syntactically sits in expression position, real Ruby's `raise` never
+/// actually produces a value there either (control never returns to that
+/// position), so a literal Rust `return` is exactly as faithful here as
+/// `HirNode::Return`'s is in the non-Proc case.
+fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
+    let exc = match args {
+        [] => panic!(
+            "bare `raise` (re-raise) is only valid inside a `rescue` clause, which doesn't exist yet (spike scope) -- see the plan's Phase 9"
+        ),
+        [one] => emit_raise_value(cx, *one, None),
+        [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
+        _ => unreachable!("lowering rejects `raise`/`fail` with more than 2 arguments"),
+    };
+    quote! { return Err(spinel_rt::Signal::Raise(#exc)) }
+}
+
+/// Builds the actual `RubyValue` to raise, mirroring spinel's own `raise`
+/// call-shape dispatch (translated to `emit_new`-style construction -- see
+/// the plan's Part 6): `raise SomeError` (bare class ref) defaults the
+/// message to the class's own name, as a COMPILE-TIME string literal (no
+/// runtime `self.class` reflection needed, since the raised class is
+/// statically known at the call site in every shape handled here);
+/// `raise SomeError, "msg"` uses the explicit message; `raise "msg"`
+/// (a `Str`-typed expression, no class) implies `RuntimeError`; anything
+/// else is assumed to already be a constructed exception value (`raise
+/// SomeError.new(...)`, or a local variable holding one) and used directly,
+/// boxing a statically-known-`Object`-typed expression into
+/// `RubyValue::Object` the same way `emit_safe_call` already does for its
+/// own uniform-representation needs.
+fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> TokenStream {
+    if let Some(msg_id) = explicit_msg {
+        let HirNode::ClassRef(class_name) = &cx.compiler.hir[node] else {
+            panic!("`raise Class, message` requires a literal class name (spike scope)");
+        };
+        let msg_expr = emit_expr(cx, msg_id);
+        return emit_boxed_new(cx, class_name, vec![msg_expr]);
+    }
+    if let HirNode::ClassRef(class_name) = &cx.compiler.hir[node] {
+        let default_msg =
+            quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#class_name.to_string())) };
+        return emit_boxed_new(cx, class_name, vec![default_msg]);
+    }
+    match infer(cx, node) {
+        TyKind::Str => {
+            let msg_expr = emit_expr(cx, node);
+            emit_boxed_new(cx, "RuntimeError", vec![msg_expr])
+        }
+        TyKind::Object(cid) => {
+            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let expr = emit_expr(cx, node);
+            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#expr)) }
+        }
+        // Already dynamically typed (Poly) -- used directly, assuming it's
+        // already a constructed exception value (e.g. a local variable
+        // holding one). A non-exception Poly value raised this way is a
+        // narrow, documented gap (real Ruby raises `TypeError: exception
+        // class/object expected` here) -- the general runtime coercion
+        // this needs is Phase 9 work, alongside `rescue`.
+        _ => emit_expr(cx, node),
+    }
+}
+
+/// `emit_new_with_arg_tokens` returns a bare, unboxed `Rc<Concrete>` (the
+/// same representation an ordinary `ClassName.new(...)` expression has --
+/// see that function's docs); `Signal::Raise` needs a real `RubyValue`, so
+/// this boxes it the same way `emit_safe_call` already does for its own
+/// uniform-representation needs.
+fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
+    let class_ident = safe_ident(class_name);
+    let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+    quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
 }
 
 /// The already-resolved OWNER class id for a `@@name` reference (see
