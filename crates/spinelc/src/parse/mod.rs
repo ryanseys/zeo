@@ -191,6 +191,17 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(cr.name().as_slice()).into_owned())
 }
 
+/// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
+/// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
+/// and symbol `alias :new :old` spellings produce the identical node shape),
+/// but checked defensively (a clean `Err`, not a panic) rather than assumed.
+fn alias_target_name(node: &Node<'_>) -> PResult<String> {
+    let sym = node
+        .as_symbol_node()
+        .ok_or("`alias`'s target must be a plain method name (spike scope)")?;
+    Ok(String::from_utf8_lossy(sym.unescaped()).into_owned())
+}
+
 /// `Foo::BAR` (`ConstantPathNode`) -- resolves to `(scope, name)` for a
 /// `HirNode::ConstWrite`/`QualifiedConstRead`'s fields. Only a single level
 /// of explicit namespacing is supported (`parent`, if present, must itself
@@ -1641,6 +1652,86 @@ fn lower_class_body_statement(
     visibility: &mut Visibility,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
+    // `alias new_name old_name` / `alias :new_name :old_name` (`AliasMethodNode`
+    // -- a real Ruby KEYWORD, not a method call, so this is checked before the
+    // `as_call_node()` cascade below). `old_name` must already be defined
+    // EARLIER in this SAME class/module body (searched in `out`, exactly the
+    // same "no forward search, no ancestor walk" restriction `private
+    // :name1, :name2` already enforces above) -- aliasing an INHERITED
+    // method is a clean rejection, a documented, narrow scope-cut. Resolved
+    // entirely at LOWERING time: since the found `DefMethod`'s `params`/
+    // `body`/`is_class_method`/`visibility` are all cheaply `Clone`-able,
+    // the alias is just a second `DefMethod` node under a different name --
+    // no new analyze-phase machinery, no shared-body indirection to keep in
+    // sync with `super`/materialization.
+    if let Some(alias) = node.as_alias_method_node() {
+        let new_name = alias_target_name(&alias.new_name())?;
+        let old_name = alias_target_name(&alias.old_name())?;
+        let Some(&old_id) = out.iter().rev().find(
+            |&&id| matches!(&hir[id], HirNode::DefMethod { name, .. } if *name == old_name),
+        ) else {
+            return Err(format!(
+                "`alias {new_name} {old_name}`: `{old_name}` must already be defined earlier in the same class/module body (spike scope) -- aliasing an inherited method isn't supported yet"
+            ));
+        };
+        let HirNode::DefMethod {
+            params,
+            body,
+            is_class_method,
+            visibility: old_vis,
+            ..
+        } = &hir[old_id]
+        else {
+            unreachable!("guarded by the `find` above")
+        };
+        let (params, body, is_class_method, old_vis) =
+            (params.clone(), body.clone(), *is_class_method, *old_vis);
+        out.push(hir.push(HirNode::DefMethod {
+            name: new_name,
+            params,
+            body,
+            is_class_method,
+            visibility: old_vis,
+        }));
+        return Ok(());
+    }
+
+    // `class << self ... end` (`SingletonClassNode`) -- reopens the class's
+    // OWN singleton class, the idiomatic way to define several class
+    // methods at once without repeating `def self.` on each one. `class <<
+    // obj` on any expression OTHER than a bare `self` is a per-instance
+    // singleton class -- a materially bigger feature (a dynamically-
+    // growable per-instance vtable) this spike doesn't support, matching
+    // the plan's existing scope-cut on `define_singleton_method`; a clean
+    // rejection, not silently ignored. The nested body is lowered through
+    // the ORDINARY class-body path (so `attr_reader`/`private`/nested
+    // `def`s all work exactly as they would directly in the class body),
+    // then every resulting `def` is retroactively corrected to a class
+    // method -- see `Hir::set_method_is_class_method`'s docs. Anything else
+    // in the body (`include`/`extend`/`prepend`/a nested `class << self`)
+    // is a clean rejection: those would need to affect the ENCLOSING
+    // class's `class_methods` materialization in a way plain
+    // `is_class_method` retagging can't express, a separate, unattempted
+    // feature.
+    if let Some(singleton) = node.as_singleton_class_node() {
+        if singleton.expression().as_self_node().is_none() {
+            return Err(
+                "`class << obj` (a per-instance singleton class, `obj` other than a bare `self`) isn't supported yet (spike scope)".to_string(),
+            );
+        }
+        let inner = lower_class_body(result, hir, singleton.body())?;
+        for &id in &inner {
+            if !matches!(&hir[id], HirNode::DefMethod { .. }) {
+                return Err(
+                    "`class << self` may only contain `def`s (spike scope) -- `include`/`extend`/`prepend`/a nested `class << self` aren't supported inside it yet".to_string(),
+                );
+            }
+            hir.set_method_is_class_method(id);
+        }
+        out.extend(inner);
+        return Ok(());
+    }
+
     if let Some(call) = node.as_call_node() {
         if call.receiver().is_none() {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();

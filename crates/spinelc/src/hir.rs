@@ -51,6 +51,22 @@ impl Hir {
         *v = visibility;
     }
 
+    /// Retroactively marks an already-lowered `DefMethod` as a CLASS method
+    /// -- used by `parse::lower_class_body_statement`'s `class << self`
+    /// recognizer: the nested body is lowered exactly like an ordinary class
+    /// body first (so `attr_reader`/`private`/etc. inside it still work),
+    /// then every resulting `def` is corrected to `is_class_method: true`
+    /// (real Ruby: everything defined inside `class << self` becomes a
+    /// method on the class itself, not an instance method). Panics if `id`
+    /// isn't a `DefMethod` -- the caller already rejects any other statement
+    /// shape appearing inside `class << self` (spike scope).
+    pub fn set_method_is_class_method(&mut self, id: NodeId) {
+        let HirNode::DefMethod { is_class_method, .. } = &mut self.nodes[id.0 as usize] else {
+            panic!("set_method_is_class_method: node isn't a DefMethod");
+        };
+        *is_class_method = true;
+    }
+
     /// A fresh, arena-wide-unique synthetic identifier, for a compiler-
     /// introduced hidden local that never appears in real Ruby source (e.g.
     /// binding a compound-assignment target's receiver/index expression to a

@@ -4477,3 +4477,235 @@ fn a_string_pattern_argument_to_split_is_a_clean_compile_error() {
 fn a_string_pattern_argument_to_gsub_is_a_clean_compile_error() {
     let _ = spinelc::compile_to_rust(r#"puts "a,b".gsub(",", ";")"#);
 }
+
+// --- Phase 12.8: alias / class << self ---------------------------------
+//
+// `alias` is resolved entirely at LOWERING time (`parse::lower_class_body_statement`):
+// the aliased name's already-lowered `DefMethod` (params/body/visibility)
+// is cloned under the new name, so no new analyze/codegen machinery exists
+// at all -- it's indistinguishable from having written the method body
+// twice under two names. `class << self` similarly desugars its nested
+// `def`s to ordinary `is_class_method: true` `DefMethod`s (reusing
+// `ClassInfo::class_methods` materialization Phase 12.6/Part 6 already
+// built). Every test here was run against real `ruby` first, per this
+// project's established convention.
+
+#[test]
+fn alias_creates_a_second_callable_name_for_the_same_method() {
+    let result = run_ruby(
+        r#"
+        class Greeter
+          def hello
+            "hi"
+          end
+          alias hola hello
+        end
+        g = Greeter.new
+        puts g.hello
+        puts g.hola
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi\nhi\n");
+}
+
+#[test]
+fn alias_supports_the_symbol_spelling_of_both_names() {
+    let result = run_ruby(
+        r#"
+        class Greeter
+          def hello
+            "hi"
+          end
+          alias :bonjour :hello
+        end
+        puts Greeter.new.bonjour
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi\n");
+}
+
+#[test]
+fn alias_preserves_the_original_methods_own_parameters() {
+    let result = run_ruby(
+        r#"
+        class Calc
+          def add(a, b)
+            a + b
+          end
+          alias sum add
+        end
+        puts Calc.new.sum(3, 4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn alias_captures_the_overriding_bodys_own_behavior_in_a_subclass() {
+    // `alias` binds to whichever body is ALREADY in effect at the alias
+    // statement's own position -- here, `Dog`'s own override (found in
+    // `Dog`'s `own_methods`), not `Animal`'s.
+    let result = run_ruby(
+        r#"
+        class Animal
+          def speak
+            "generic"
+          end
+        end
+        class Dog < Animal
+          def speak
+            "woof"
+          end
+          alias original_speak speak
+        end
+        d = Dog.new
+        puts d.speak
+        puts d.original_speak
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "woof\nwoof\n");
+}
+
+#[test]
+fn alias_of_a_method_touching_an_ivar_works_through_either_name() {
+    let result = run_ruby(
+        r#"
+        class Counter
+          def initialize
+            @count = 0
+          end
+          def increment
+            @count += 1
+          end
+          alias inc increment
+          def value
+            @count
+          end
+        end
+        c = Counter.new
+        c.inc
+        c.inc
+        c.increment
+        puts c.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn class_shift_self_defines_multiple_class_methods_at_once() {
+    let result = run_ruby(
+        r#"
+        class MathUtils
+          class << self
+            def square(x)
+              x * x
+            end
+            def cube(x)
+              x * x * x
+            end
+          end
+        end
+        puts MathUtils.square(4)
+        puts MathUtils.cube(3)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "16\n27\n");
+}
+
+#[test]
+fn class_shift_self_works_inside_a_module() {
+    let result = run_ruby(
+        r#"
+        module MyMath
+          class << self
+            def double(x)
+              x * 2
+            end
+          end
+        end
+        puts MyMath.double(5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n");
+}
+
+#[test]
+fn class_shift_self_methods_can_read_and_write_class_variables() {
+    let result = run_ruby(
+        r#"
+        class Counter
+          class << self
+            def reset
+              @@total = 0
+            end
+            def bump
+              @@total += 1
+            end
+            def total
+              @@total
+            end
+          end
+        end
+        Counter.reset
+        Counter.bump
+        Counter.bump
+        puts Counter.total
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n");
+}
+
+#[test]
+fn aliasing_a_method_not_yet_defined_in_the_same_body_is_a_clean_lowering_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          alias bar undefined_method
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("must already be defined earlier"), "{err}");
+}
+
+#[test]
+fn class_shift_an_expression_other_than_self_is_a_clean_lowering_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          ANOTHER = Object.new
+          class << ANOTHER
+            def hi
+              "hi"
+            end
+          end
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("per-instance singleton class"), "{err}");
+}
+
+#[test]
+fn class_shift_self_containing_a_non_def_statement_is_a_clean_lowering_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          class << self
+            @x = 1
+          end
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("may only contain `def`s"), "{err}");
+}
