@@ -109,6 +109,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             args,
             kwargs,
             block,
+            block_arg,
             ..
         } => {
             if let Some(r) = receiver {
@@ -122,6 +123,9 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, pair.1);
             }
             if let Some(b) = block {
+                track_node(compiler, locals, *b);
+            }
+            if let Some(b) = block_arg {
                 track_node(compiler, locals, *b);
             }
         }
@@ -154,7 +158,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, *v);
             }
         }
-        HirNode::Redo => {}
+        HirNode::Redo | HirNode::BlockGiven => {}
         HirNode::MultiWrite {
             before,
             splat,
@@ -173,6 +177,11 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         HirNode::Eval(body) => {
             for &n in body {
                 track_node(compiler, locals, n);
+            }
+        }
+        HirNode::Yield(args) => {
+            for &a in args {
+                track_node(compiler, locals, a);
             }
         }
         HirNode::Program(_)

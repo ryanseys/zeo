@@ -6,7 +6,7 @@
 //! instead of a hand-written `{ tag; cls_id; union { ... } }` struct.
 
 use crate::collections::{RArray, RHash, RStr};
-use crate::{RObj, Symbol};
+use crate::{RObj, RProc, Symbol};
 
 #[derive(Clone)]
 pub enum RubyValue {
@@ -23,6 +23,8 @@ pub enum RubyValue {
     /// are enough -- no `Rc<RefCell<_>>` sharing needed.
     Range(Option<Box<RubyValue>>, Option<Box<RubyValue>>, bool),
     Object(RObj),
+    /// A real, escaping block/`Proc` (Phase 6) -- see `rproc`'s module docs.
+    Proc(RProc),
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -80,6 +82,7 @@ impl RubyValue {
                 format!("{s}{op}{e}")
             }
             RubyValue::Object(_) => "#<Object>".to_string(),
+            RubyValue::Proc(_) => "#<Proc>".to_string(),
         }
     }
 
@@ -143,6 +146,14 @@ impl RubyValue {
         match self {
             RubyValue::Str(s) => s.clone(),
             other => panic!("expected a String, got {}", other.to_display_string()),
+        }
+    }
+
+    /// Unwraps a `Proc` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_proc_unchecked(&self) -> RProc {
+        match self {
+            RubyValue::Proc(p) => p.clone(),
+            other => panic!("expected a Proc, got {}", other.to_display_string()),
         }
     }
 

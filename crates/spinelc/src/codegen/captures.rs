@@ -1,0 +1,252 @@
+//! Free-variable/`self` capture analysis for escaping blocks (Phase 6). See
+//! `codegen::call::is_times_fast_path`'s docs: there is no genuine "escape
+//! analysis" decision procedure here -- a block escapes (becomes a real,
+//! heap-allocated `Proc`) iff it's NOT the `.times` inline fast path, which
+//! is exactly the same check `codegen::call::dispatch` already makes. This
+//! module answers a different, purely mechanical question: for a scope
+//! (method/top-level body) containing zero or more escaping blocks, which
+//! enclosing LOCAL NAMES (and possibly `self`) do they collectively need to
+//! capture, so `codegen::hoisting` knows which locals need the `Captured`
+//! (`Rc<RefCell<RubyValue>>`) storage class instead of a plain hoisted `let
+//! mut`?
+
+use super::call::is_times_fast_path;
+use crate::compiler::Compiler;
+use crate::hir::{ArrayElem, HirNode, KeywordParam, NodeId, Params, StrPart};
+use std::collections::HashSet;
+
+#[derive(Default)]
+pub struct Captures {
+    /// Enclosing-scope local/parameter names referenced (read or written)
+    /// inside some escaping block, excluding every block's own params
+    /// (that block's own, AND every ancestor inline `.times` block's --
+    /// see `walk`'s `param_exclusions`, which is what makes this
+    /// exclusion correct even for a name shadowed two levels deep).
+    pub locals: HashSet<String>,
+    /// Whether any escaping block references `@ivar`/an instance variable --
+    /// the only way `self` is reachable in this spike's surface syntax
+    /// today (see `parse/mod.rs`: there's no explicit-`self`/implicit-self-
+    /// call HIR node at all yet), so this is the complete self-capture
+    /// condition, not an approximation of a larger one.
+    pub self_captured: bool,
+}
+
+/// Every name a `Params` list itself binds -- the exclusion set for "is this
+/// name a BLOCK's OWN parameter, not something captured from its enclosing
+/// scope". Mirrors `codegen::params`'s own per-kind enumeration.
+fn own_param_names(params: &Params) -> HashSet<String> {
+    let mut names: HashSet<String> = HashSet::new();
+    names.extend(params.required.iter().cloned());
+    names.extend(params.optional.iter().map(|(n, _)| n.clone()));
+    if let Some(Some(n)) = &params.rest {
+        names.insert(n.clone());
+    }
+    names.extend(params.post.iter().cloned());
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(n) | KeywordParam::Optional(n, _) => {
+                names.insert(n.clone());
+            }
+        }
+    }
+    if let Some(Some(n)) = &params.keyword_rest {
+        names.insert(n.clone());
+    }
+    if let Some(Some(n)) = &params.block {
+        names.insert(n.clone());
+    }
+    names
+}
+
+/// Scans a WHOLE scope's body (a method's or the top level's) for every
+/// escaping block, unioning their capture requirements.
+pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId]) -> Captures {
+    let mut caps = Captures::default();
+    for &n in body {
+        walk(compiler, n, false, &HashSet::new(), &mut caps);
+    }
+    caps
+}
+
+/// `in_escaping`: whether the walk has descended into some escaping
+/// block's own body (directly, or through an inline `.times` block nested
+/// inside one) -- only then do `LocalRead`/`LocalWrite`/`IvarRead`/
+/// `IvarWrite` actually register as captures. `param_exclusions`: every
+/// name bound by an ENCLOSING block's own params, of ANY kind (`.times`
+/// inline or a real escaping block) -- accumulated (unioned) as the walk
+/// descends into ANY block, regardless of `in_escaping`, so a name shadowed
+/// by an ancestor `.times` block's own parameter is never mistaken for an
+/// enclosing-METHOD-scope capture even two levels down (the bug a simpler
+/// "only track the innermost escaping block's own params" design would
+/// have: an escaping block nested inside a `.times` block, referencing the
+/// `.times` block's OWN iteration variable, would otherwise wrongly try to
+/// capture it as if it were a real enclosing local).
+fn walk(
+    compiler: &Compiler,
+    id: NodeId,
+    in_escaping: bool,
+    param_exclusions: &HashSet<String>,
+    caps: &mut Captures,
+) {
+    match &compiler.hir[id] {
+        HirNode::LocalRead(name) => {
+            if in_escaping && !param_exclusions.contains(name) {
+                caps.locals.insert(name.clone());
+            }
+        }
+        HirNode::LocalWrite(name, value) => {
+            if in_escaping && !param_exclusions.contains(name) {
+                caps.locals.insert(name.clone());
+            }
+            walk(compiler, *value, in_escaping, param_exclusions, caps);
+        }
+        HirNode::IvarRead(_) => {
+            if in_escaping {
+                caps.self_captured = true;
+            }
+        }
+        HirNode::IvarWrite(_, value) => {
+            if in_escaping {
+                caps.self_captured = true;
+            }
+            walk(compiler, *value, in_escaping, param_exclusions, caps);
+        }
+        HirNode::And(l, r) | HirNode::Or(l, r) => {
+            walk(compiler, *l, in_escaping, param_exclusions, caps);
+            walk(compiler, *r, in_escaping, param_exclusions, caps);
+        }
+        HirNode::Defined(v) => walk(compiler, *v, in_escaping, param_exclusions, caps),
+        HirNode::If { cond, then_body, else_body } => {
+            walk(compiler, *cond, in_escaping, param_exclusions, caps);
+            for &n in then_body.iter().chain(else_body) {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::CaseWhen { subject, arms, else_body } => {
+            if let Some(s) = subject {
+                walk(compiler, *s, in_escaping, param_exclusions, caps);
+            }
+            for (values, body) in arms {
+                for &v in values {
+                    walk(compiler, v, in_escaping, param_exclusions, caps);
+                }
+                for &n in body {
+                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                }
+            }
+            for &n in else_body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::While { cond, body, .. } => {
+            walk(compiler, *cond, in_escaping, param_exclusions, caps);
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::Loop { body } => {
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::For { iterable, body, .. } => {
+            walk(compiler, *iterable, in_escaping, param_exclusions, caps);
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
+            if let Some(v) = v {
+                walk(compiler, *v, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::Redo | HirNode::BlockGiven => {}
+        HirNode::MultiWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::Yield(args) => {
+            for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::Eval(body) => {
+            for &n in body {
+                walk(compiler, n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+            for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::ArrayLit(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                walk(compiler, *n, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::HashLit(pairs) => {
+            for pair in pairs {
+                walk(compiler, pair.0, in_escaping, param_exclusions, caps);
+                walk(compiler, pair.1, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::RangeLit { start, end, .. } => {
+            if let Some(s) = start {
+                walk(compiler, *s, in_escaping, param_exclusions, caps);
+            }
+            if let Some(e) = end {
+                walk(compiler, *e, in_escaping, param_exclusions, caps);
+            }
+        }
+        HirNode::StringLit(parts) => {
+            for p in parts {
+                if let StrPart::Interp(n) = p {
+                    walk(compiler, *n, in_escaping, param_exclusions, caps);
+                }
+            }
+        }
+        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+            if let Some(r) = receiver {
+                walk(compiler, *r, in_escaping, param_exclusions, caps);
+            }
+            for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps);
+            }
+            for pair in kwargs {
+                walk(compiler, pair.0, in_escaping, param_exclusions, caps);
+                walk(compiler, pair.1, in_escaping, param_exclusions, caps);
+            }
+            if let Some(b) = block_arg {
+                walk(compiler, *b, in_escaping, param_exclusions, caps);
+            }
+            if let Some(b) = block {
+                let HirNode::Block { params, body } = &compiler.hir[*b] else {
+                    panic!("a Block should only be reached via the Call that invokes it");
+                };
+                let is_inline = is_times_fast_path(compiler, *receiver, name, kwargs.is_empty());
+                if !is_inline && in_escaping {
+                    // A real escaping block nested inside another escaping
+                    // block -- Proc-within-Proc, a genuinely harder case
+                    // (nested closures capturing across two levels) this
+                    // spike doesn't support yet. Clean rejection, matching
+                    // this project's "unsupported (spike scope)" posture
+                    // elsewhere in codegen.
+                    panic!("a block escaping from inside another escaping block isn't supported yet (spike scope)");
+                }
+                let next_exclusions: HashSet<String> =
+                    param_exclusions.union(&own_param_names(params)).cloned().collect();
+                let next_in_escaping = in_escaping || !is_inline;
+                for &n in body {
+                    walk(compiler, n, next_in_escaping, &next_exclusions, caps);
+                }
+            }
+        }
+        HirNode::Block { .. } => {
+            panic!("a Block should only be reached via the Call that invokes it")
+        }
+        HirNode::Program(_)
+        | HirNode::IntegerLit(_)
+        | HirNode::SymbolLit(_)
+        | HirNode::ClassDef { .. }
+        | HirNode::DefMethod { .. } => {}
+    }
+}

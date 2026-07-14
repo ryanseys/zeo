@@ -22,7 +22,6 @@
 use quote::quote;
 
 use super::expr::{emit_expr, infer};
-use super::ident::safe_ident;
 use super::stmt::emit_body;
 use super::Ctx;
 use crate::hir::NodeId;
@@ -120,9 +119,15 @@ pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> Token
         _ => TyKind::Poly,
     };
     let loop_cx = cx.in_loop(redo.clone(), outer.clone()).with_for_var(var, elem_ty);
-    let var_ident = safe_ident(var);
     let inner = emit_redo_wrapped_body(&loop_cx, body, &redo);
     let iter_expr = emit_expr(cx, iterable);
+    // Routed through `emit_local_write` (not a hardcoded reassignment)
+    // because `var` might be captured by an escaping block somewhere in
+    // `body` -- if so, `hoisting`'s prelude declares it as an
+    // `Rc<RefCell<RubyValue>>`, and a bare `var_ident = ...` reassignment
+    // would be a Rust type error against that, not just a semantic gap.
+    let bind_array = super::hoisting::emit_local_write(cx, var, quote! { __iter[__idx].clone() });
+    let bind_range = super::hoisting::emit_local_write(cx, var, quote! { spinel_rt::RubyValue::Int(__i) });
 
     match iterable_ty {
         TyKind::Array => quote! {
@@ -131,7 +136,7 @@ pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> Token
                 let mut __idx: usize = 0;
                 #outer: loop {
                     if __idx >= __iter.len() { break #outer spinel_rt::RubyValue::Nil; }
-                    #var_ident = __iter[__idx].clone();
+                    #bind_array
                     #inner
                     __idx += 1;
                 }
@@ -146,7 +151,7 @@ pub fn emit_for(cx: &Ctx, var: &str, iterable: NodeId, body: &[NodeId]) -> Token
                 #outer: loop {
                     let __in_range = if __exclusive { __i < __end } else { __i <= __end };
                     if !__in_range { break #outer spinel_rt::RubyValue::Nil; }
-                    #var_ident = spinel_rt::RubyValue::Int(__i);
+                    #bind_range
                     #inner
                     __i += 1;
                 }
@@ -228,16 +233,17 @@ pub fn emit_multi_write_lets(
     let has_splat = splat.is_some();
 
     let bind_before = before.iter().enumerate().map(|(i, name)| {
-        let ident = safe_ident(name);
-        quote! { #ident = __before[#i].clone(); }
+        super::hoisting::emit_local_write(cx, name, quote! { __before[#i].clone() })
     });
     let bind_after = after.iter().enumerate().map(|(i, name)| {
-        let ident = safe_ident(name);
-        quote! { #ident = __after[#i].clone(); }
+        super::hoisting::emit_local_write(cx, name, quote! { __after[#i].clone() })
     });
     let bind_splat = splat.as_ref().map(|name| {
-        let ident = safe_ident(name);
-        quote! { #ident = spinel_rt::RubyValue::Array(spinel_rt::array_new(__splat)); }
+        super::hoisting::emit_local_write(
+            cx,
+            name,
+            quote! { spinel_rt::RubyValue::Array(spinel_rt::array_new(__splat)) },
+        )
     });
 
     quote! {

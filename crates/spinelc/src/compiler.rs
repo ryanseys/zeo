@@ -40,6 +40,21 @@ pub struct Scope {
     /// fixpoint). Lets codegen resolve `x + y` to native `Int` arithmetic
     /// when `x`/`y` are locals, not just literal-on-literal operands.
     pub local_types: HashMap<String, TyKind>,
+    /// Whether this method's own body (NOT a nested block's) uses a bare
+    /// `yield`/`block_given?` -- computed once by `analyze::register_class`'s
+    /// `scan_bare_block_use`. Together with `params.block.is_some()`, this
+    /// decides whether the method gets an implicit trailing `__blk` Rust
+    /// parameter (see `codegen::params`).
+    pub uses_bare_block: bool,
+}
+
+impl Scope {
+    /// Whether this method needs the implicit `__blk: Option<RubyValue>`
+    /// trailing parameter -- either it names its block (`&blk`) or uses
+    /// bare `yield`/`block_given?`.
+    pub fn needs_block_param(&self) -> bool {
+        self.params.block.is_some() || self.uses_bare_block
+    }
 }
 
 pub struct Compiler {

@@ -321,7 +321,7 @@ pub fn emit_dynamic_trampoline(
 
     if !params.keywords.is_empty() || params.keyword_rest.is_some() {
         return quote! {
-            |_recv: &spinel_rt::RObj, _args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            |_recv: &spinel_rt::RObj, _args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 panic!(
                     "dynamic dispatch to `{}` isn't supported yet (spike scope): it declares keyword parameters, which `send`/`method_missing` don't bind yet -- call it directly instead",
                     #method_name
@@ -367,8 +367,8 @@ pub fn emit_dynamic_trampoline(
     let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
 
     quote! {
-        |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-            let this = recv.as_any().downcast_ref::<#class_ident>()
+        |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            let this = spinel_rt::downcast_robj::<#class_ident>(recv)
                 .expect("class_id guarantees this downcast");
             #arity_check
             let __opt_bound = (args.len() - #min_lit).min(#nopt);

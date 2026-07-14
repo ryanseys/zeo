@@ -16,6 +16,7 @@
 //! failure in a temp dir.
 
 mod call;
+mod captures;
 mod collections;
 mod expr;
 mod hoisting;
@@ -24,7 +25,7 @@ mod loops;
 mod params;
 mod stmt;
 
-use quote::quote;
+use quote::{format_ident, quote};
 
 use crate::analyze::Analyzed;
 use crate::compiler::{ClassId, Compiler, OBJECT_CLASS};
@@ -32,7 +33,7 @@ use crate::types::TyKind;
 use ident::safe_ident;
 use proc_macro2::TokenStream;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use syn::Lifetime;
 
 #[derive(Clone)]
@@ -80,6 +81,33 @@ struct Ctx<'a> {
     /// defensive choice -- worst case without it is a missed optimization,
     /// not a wrong answer).
     for_var_override: Option<(String, TyKind)>,
+    /// Enclosing-scope local/parameter names that some escaping block (see
+    /// `codegen::captures`) captures -- these get the `Captured`
+    /// (`Rc<RefCell<RubyValue>>`) storage class instead of a plain hoisted
+    /// `let mut` (see `hoisting::local_storage`), computed ONCE per method/
+    /// top-level scope, same lifetime as `local_types`.
+    captured_locals: &'a HashSet<String>,
+    /// The identifier that stands for `self` in THIS position -- ordinarily
+    /// the literal `self`, but rebound to a fresh capture-alias identifier
+    /// while emitting an escaping block's own body that captured `self`
+    /// (`let self = ...;` is illegal Rust -- `self` is only bindable as a
+    /// receiver parameter -- so the closure clones into a DIFFERENT name;
+    /// see `codegen::call`'s Proc-construction docs). Consulted everywhere
+    /// an ivar is read/written (`codegen::expr`'s `IvarRead`/`IvarWrite`)
+    /// instead of a hardcoded `self`. `emit_super_inline` carries this over
+    /// into the inlined parent body (unlike `for_var_override`): the
+    /// splice needs to keep referring to whichever `self` the CALLING
+    /// method's body is already using.
+    self_ident: proc_macro2::Ident,
+    /// Whether the code currently being emitted is inside a real (escaping)
+    /// `Proc` closure's own body, as opposed to an ordinary method body or
+    /// an inline-spliced fast-path block (`.times`). Changes two things:
+    /// `break`/`next`/`redo` with no enclosing native loop raise a `Signal`
+    /// instead of panicking (`codegen::loops`), and a bare `return` raises
+    /// `Signal::Return` instead of literally returning (`codegen::expr`) --
+    /// see `HirNode::Return`'s docs for why a literal Rust `return` stops
+    /// being correct exactly at this boundary.
+    in_real_proc: bool,
 }
 
 impl<'a> Ctx<'a> {
@@ -97,6 +125,28 @@ impl<'a> Ctx<'a> {
     fn with_for_var(&self, name: &str, ty: TyKind) -> Ctx<'a> {
         Ctx {
             for_var_override: Some((name.to_string(), ty)),
+            ..self.clone()
+        }
+    }
+
+    /// A child context for a real escaping `Proc` closure's own body -- see
+    /// `in_real_proc`/`self_ident`'s docs. `loop_labels`/`for_var_override`
+    /// reset to `None`: a `break`/`next`/`redo`/`for`-variable lexically
+    /// inside the closure is never targeting a loop OUTSIDE it (a Rust
+    /// closure is its own function boundary, unlike inlined splices).
+    // Not consumed yet -- wired up together with Proc construction, later in
+    // this same phase.
+    #[allow(dead_code)]
+    fn in_proc(&self, needs_self_capture: bool) -> Ctx<'a> {
+        Ctx {
+            loop_labels: None,
+            for_var_override: None,
+            self_ident: if needs_self_capture {
+                format_ident!("__self")
+            } else {
+                self.self_ident.clone()
+            },
+            in_real_proc: true,
             ..self.clone()
         }
     }
@@ -133,6 +183,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         });
 
     let main_label_counter = Cell::new(0u32);
+    let main_captures = captures::collect_escaping_captures(compiler, &analyzed.main_statements);
     let cx = Ctx {
         compiler,
         current_class: None,
@@ -141,6 +192,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         label_counter: &main_label_counter,
         loop_labels: None,
         for_var_override: None,
+        captured_locals: &main_captures.locals,
+        self_ident: format_ident!("self"),
+        in_real_proc: false,
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
@@ -182,6 +236,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let method_ident = safe_ident(&scope.name);
         let sig_params = params::emit_signature_params(&scope.params);
         let method_label_counter = Cell::new(0u32);
+        let method_captures = captures::collect_escaping_captures(compiler, &scope.body);
         let method_cx = Ctx {
             compiler,
             current_class: Some(cid),
@@ -190,13 +245,32 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             label_counter: &method_label_counter,
             loop_labels: None,
             for_var_override: None,
+            captured_locals: &method_captures.locals,
+            self_ident: format_ident!("self"),
+            in_real_proc: false,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
+        // Wrapped in an immediately-invoked closure and matched for
+        // `Signal::Return` -- needed once a real (non-inlined) `Proc`
+        // closure exists inside this body: a bare `return` inside such a
+        // closure raises `Signal::Return` (see `codegen::expr`'s `Return`
+        // arm) rather than literally returning from JUST the closure, since
+        // real Ruby's `return` inside a block always exits the LEXICALLY
+        // ENCLOSING method, not the block itself. This wrapper is what
+        // catches that at the enclosing method's own boundary. Applied
+        // unconditionally (not just for methods containing an escaping
+        // block) -- cheap, and matches this project's "wrap uniformly
+        // rather than conditionally" precedent from locking the ABI early.
         quote! {
-            def #method_ident(&self #sig_params) {
-                #prologue
-                #body
+            def #method_ident(self: std::rc::Rc<Self> #sig_params) {
+                (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                    #prologue
+                    #body
+                })().or_else(|__e| match __e {
+                    spinel_rt::Signal::Return(__v) => Ok(__v),
+                    __e => Err(__e),
+                })
             }
         }
     });

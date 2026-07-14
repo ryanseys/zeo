@@ -48,16 +48,9 @@ pub enum ArrayElem {
 
 /// A method/block's declared parameter list -- mirrors `ParametersNode`'s own
 /// grouping directly (Ruby's grammar already enforces required->optional->
-/// rest->post->keyword->keyword_rest ordering, so grouping by kind loses
-/// nothing, and it maps 1:1 onto what `parse/mod.rs::lower_params` reads off
-/// `ruby_prism::ParametersNode`).
-///
-/// A `&block` parameter isn't represented here yet: it needs a real `Proc`
-/// runtime value to bind to, which doesn't exist until a later phase adds a
-/// closure runtime -- `def foo(&blk)` and bare `...` forwarding (which
-/// implies a block too) are a clean lowering error until then, not a
-/// half-working field here with nothing able to populate it (see
-/// `parse/mod.rs`'s `lower_params`).
+/// rest->post->keyword->keyword_rest->block ordering, so grouping by kind
+/// loses nothing, and it maps 1:1 onto what `parse/mod.rs::lower_params`
+/// reads off `ruby_prism::ParametersNode`).
 ///
 /// Known, narrow, pre-existing-style gap: `analyze::collect_ivars`/
 /// `analyze::locals::track_node`/`codegen::hoisting::collect_locals` don't
@@ -84,6 +77,13 @@ pub struct Params {
     pub keywords: Vec<KeywordParam>,
     /// Same `None`/`Some(None)`/`Some(Some(name))` shape as `rest`.
     pub keyword_rest: Option<Option<String>>,
+    /// `&blk` / anonymous `&` -- same `None`/`Some(None)`/`Some(Some(name))`
+    /// shape as `rest`/`keyword_rest` again. Bound to `Nil` when the method
+    /// is called with no block (real Ruby: an unyielded `&blk` is `nil`, not
+    /// absent) -- see `codegen::params::emit_prologue`. Bare `...`
+    /// forwarding (which implies a block too, among other things) is still a
+    /// clean lowering error -- see `parse/mod.rs::lower_params`'s docs.
+    pub block: Option<Option<String>>,
 }
 
 #[derive(Clone)]
@@ -190,12 +190,20 @@ pub enum HirNode {
     /// a `Params`-declared `rest`/`keyword_rest` can still be exercised by
     /// simply passing enough plain positional/keyword args, no splat syntax
     /// needed at the call site to prove out the parameter-binding side).
+    /// `block_arg` is `foo(&existing_proc)` -- forwarding an already-built
+    /// `Proc` value as the call's block (a distinct `BlockArgumentNode`),
+    /// separate from `block` (a literal `{ }`/`do..end` at the call site);
+    /// real Ruby rejects having both on the same call, which this spike
+    /// doesn't separately re-validate (whichever lowers last silently wins --
+    /// harmless, since `ruby-prism` itself already rejects this at parse
+    /// time before lowering ever runs).
     Call {
         receiver: Option<NodeId>,
         name: String,
         args: Vec<NodeId>,
         kwargs: Vec<HashPair>,
         block: Option<NodeId>,
+        block_arg: Option<NodeId>,
         safe: bool,
     },
     /// `ClassName.new(args)` -- a distinct node (not a plain `Call`) because
@@ -335,4 +343,21 @@ pub enum HirNode {
     /// implicit array is a clean lowering error, spike scope, mirroring
     /// `Break`/`Next`).
     Return(Option<NodeId>),
+    /// `yield` / `yield(args)` -- invokes the enclosing method's implicit
+    /// block. Only recognized directly within a method's own control flow
+    /// (if/case/while/etc.), not inside a NESTED block literal -- `yield`
+    /// lexically inside a block passed elsewhere refers to a different
+    /// thing in real Ruby (the block's own enclosing method, not this one),
+    /// a genuinely harder case this spike doesn't attempt; see
+    /// `analyze::register_class`'s `uses_bare_block` scan, which enforces
+    /// this restriction with a clean rejection. Compiles to invoking the
+    /// method's implicit `__blk` parameter (see `codegen::params`), panicking
+    /// with a clear "no block given" message (mirroring real Ruby's
+    /// `LocalJumpError`) if the method was called without one.
+    Yield(Vec<NodeId>),
+    /// `block_given?` -- a zero-arg, no-receiver call-shape recognized at
+    /// lowering time (mirrors `loop`/`define_method`'s desugars), not a
+    /// distinct `ruby-prism` node. Same "not inside a nested block" scope-cut
+    /// as `Yield`.
+    BlockGiven,
 }

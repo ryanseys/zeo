@@ -79,9 +79,11 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::IvarRead(_) => Some("instance-variable"),
-        HirNode::New { .. } | HirNode::Call { .. } | HirNode::SuperCall { .. } | HirNode::Eval(_) => {
-            Some("method")
-        }
+        HirNode::New { .. }
+        | HirNode::Call { .. }
+        | HirNode::SuperCall { .. }
+        | HirNode::Eval(_)
+        | HirNode::BlockGiven => Some("method"),
         HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::StringLit(_)
@@ -98,7 +100,12 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::While { .. }
         | HirNode::Loop { .. }
         | HirNode::For { .. }
-        | HirNode::MultiWrite { .. } => Some("expression"),
+        | HirNode::MultiWrite { .. }
+        // Narrower than real CRuby, which returns the distinct string
+        // "yield" here (only when a block was actually given) -- a
+        // documented approximation, same posture as this function's other
+        // narrowings (see the module docs above).
+        | HirNode::Yield(_) => Some("expression"),
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) => None,
         HirNode::Block { .. } | HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             None
@@ -181,10 +188,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }
         }
-        HirNode::LocalRead(name) => {
-            let ident = safe_ident(name);
-            quote! { #ident.clone() }
-        }
+        HirNode::LocalRead(name) => super::hoisting::emit_local_read(cx, name),
         HirNode::And(l, r) => {
             // Ruby's `&&`/`and` returns the operand itself, not a bool --
             // `false && anything` is `false`, but `1 && 2` is `2`, not
@@ -226,19 +230,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // Only reachable when a LocalWrite is used as a sub-expression
             // (not a body statement) -- handle it faithfully to Ruby's
             // "assignment evaluates to the assigned value" semantics rather
-            // than silently dropping it. A plain reassignment (`name` is
-            // already hoisted `mut` in the enclosing scope -- see
-            // `codegen::hoisting`), not a `let`, for the same reason
-            // `stmt.rs`'s statement-position case avoids one -- except for a
-            // concrete class-instance local, which keeps the original
-            // shadowing `let` (see `hoisting::is_hoisted`'s docs).
-            let ident = safe_ident(name);
+            // than silently dropping it. `__v` is a temporary so the value
+            // expression is evaluated exactly once, then written and read
+            // back via whichever storage class `name` has (see
+            // `hoisting::LocalStorage`'s docs).
             let v = emit_expr(cx, *value);
-            if super::hoisting::is_hoisted(cx, name) {
-                quote! { { #ident = #v; #ident.clone() } }
-            } else {
-                quote! { { let #ident = #v; #ident.clone() } }
-            }
+            let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
+            let read = super::hoisting::emit_local_read(cx, name);
+            quote! { { let __v = #v; #write #read } }
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
@@ -279,8 +278,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             args,
             kwargs,
             block,
+            block_arg,
             safe,
-        } => emit_call(cx, *receiver, name, args, kwargs, *block, *safe),
+        } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
@@ -297,6 +297,19 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // fast-inline-path block spliced into the SAME method body).
             quote! { return Ok(#value) }
         }
+        HirNode::Yield(args) => {
+            // `__blk` is the implicit trailing parameter every method that
+            // uses `yield`/`block_given?`/`&block` gets (see
+            // `codegen::params`'s `emit_signature_params`/`emit_prologue`) --
+            // an `Option<RubyValue>`, `None` when the call passed no block.
+            // Panics with a clear "no block given" message otherwise,
+            // mirroring real Ruby's `LocalJumpError`.
+            let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+            quote! {
+                (__blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked())(&[#(#arg_exprs),*])?
+            }
+        }
+        HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
         HirNode::Program(_) | HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {
             panic!("unexpected top-level-only node in expression position")
         }

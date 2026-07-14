@@ -6,6 +6,7 @@
 mod arith;
 mod collections;
 mod dispatch;
+mod rproc;
 mod signal;
 mod symbol;
 mod value;
@@ -13,9 +14,11 @@ mod value;
 pub use arith::*;
 pub use collections::*;
 pub use dispatch::{
-    install_class_registry, send, ClassId, ClassRegistry, MethodFn, Object, RObj, RubyObject,
+    downcast_robj, install_class_registry, send, ClassId, ClassRegistry, MethodFn, Object, RObj,
+    RubyObject,
 };
-pub use signal::Signal;
+pub use rproc::RProc;
+pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use value::RubyValue;
 
@@ -36,14 +39,34 @@ pub fn puts(value: RubyValue) {
 /// `emit_class_new`, etc.) -- see the plan's "The `ruby_class!` macro"
 /// section for the full rationale. Each ivar becomes an individually
 /// interior-mutable field (`RefCell<RubyValue>`) so every generated method
-/// can uniformly take `&self` (see "A named risk" in the plan).
+/// can uniformly take a receiver (see "A named risk" in the plan).
+///
+/// Every method receiver is `self: Rc<Self>`, not `&self` -- Phase 6 needs
+/// this: a real escaping `Proc` closure that references `self`/an ivar has
+/// to capture an OWNED, `'static` handle (a `RubyValue`-stored `Proc` has no
+/// lifetime parameter anywhere in this codebase), which a borrowed `&self`
+/// can never provide. Every call site already hands over an `Rc<Concrete>`
+/// (`New`'s result, and every local/ivar holding an object, are `Rc`-wrapped
+/// from the moment they're built -- see `new_handle`'s docs below), so this
+/// costs nothing at ordinary call sites; it only removes a capability
+/// (capturing `self` into a closure) that didn't exist before.
+///
+/// `$slf` (not a hardcoded `self`) is still captured from the caller's own
+/// tokens, exactly as before the `Rc<Self>` migration -- confirmed the hard
+/// way: a `self` written directly in THIS template is hygienically distinct
+/// from a `self` written inside the caller's `$body`, so `rustc` rejects it
+/// (`E0424`, "self value is a keyword only available in methods with a self
+/// parameter") the moment `$body` references `self.some_ivar`. Only the
+/// TYPE annotation is now fixed to `Rc<Self>` (rather than varying, since
+/// `&self` never varied either -- `$slf:tt` only ever captured the single
+/// token `self`, never its type).
 #[macro_export]
 macro_rules! ruby_class {
     (
         class $name:ident : $super:path {
             id: $id:expr;
             ivars { $($ivar:ident),* $(,)? }
-            $( def $method:ident ( & $slf:tt $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
+            $( def $method:ident ( $slf:tt : std::rc::Rc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
             dispatch { $( $dname:ident => $tramp:expr ),* $(,)? }
         }
     ) => {
@@ -71,12 +94,6 @@ macro_rules! ruby_class {
             }
 
             $(
-                // `$slf` (not a hardcoded `self`) is captured from the
-                // caller's own tokens -- macro_rules! hygiene treats a bare
-                // `self` written in this template as distinct from a `self`
-                // written inside the caller's `$body`, so the receiver has
-                // to round-trip through the caller's tokens to match up.
-                //
                 // Return type is always `Result<RubyValue, Signal>`, never
                 // omitted or bare `RubyValue`: Ruby methods always implicitly
                 // return a value (the last expression, or nil) -- codegen
@@ -85,13 +102,14 @@ macro_rules! ruby_class {
                 // method body is a `?`-propagation boundary for non-local
                 // control flow from the first breadth phase onward, not just
                 // once `raise`/escaping `Proc`s exist (see `signal.rs`).
-                pub fn $method(& $slf $(, $arg: $arg_ty)*) -> Result<$crate::RubyValue, $crate::Signal> $body
+                pub fn $method($slf: std::rc::Rc<Self> $(, $arg: $arg_ty)*) -> Result<$crate::RubyValue, $crate::Signal> $body
             )*
         }
 
         impl $crate::RubyObject for $name {
             fn class_id(&self) -> $crate::ClassId { Self::CLASS_ID }
             fn as_any(&self) -> &dyn std::any::Any { self }
+            fn as_any_rc(self: std::rc::Rc<Self>) -> std::rc::Rc<dyn std::any::Any> { self }
         }
 
         impl $name {
@@ -132,18 +150,18 @@ mod tests {
         class Point : Object {
             id: 1;
             ivars { x }
-            def initialize(&self, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
-            def x(&self) { Ok(self.x.borrow().clone()) }
+            def initialize(self: std::rc::Rc<Self>, x: RubyValue) { *self.x.borrow_mut() = x; Ok(RubyValue::Nil) }
+            def x(self: std::rc::Rc<Self>) { Ok(self.x.borrow().clone()) }
             dispatch {
-                initialize => |recv, args: &[RubyValue]| {
-                    let this = recv.as_any().downcast_ref::<Point>().expect("class_id guarantees this downcast");
+                initialize => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                    let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [x] => Point::initialize(this, x.clone()),
                         _ => panic!("wrong number of arguments for initialize"),
                     }
                 },
-                x => |recv, args: &[RubyValue]| {
-                    let this = recv.as_any().downcast_ref::<Point>().expect("class_id guarantees this downcast");
+                x => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                    let this = downcast_robj::<Point>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [] => Point::x(this),
                         _ => panic!("wrong number of arguments for x"),
@@ -157,20 +175,20 @@ mod tests {
         class Greeter : Object {
             id: 2;
             ivars { }
-            def hello(&self) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
-            def method_missing(&self, name: RubyValue) {
+            def hello(self: std::rc::Rc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
+            def method_missing(self: std::rc::Rc<Self>, name: RubyValue) {
                 Ok(RubyValue::Str(string_new(format!("no such method: {}", name.to_display_string()))))
             }
             dispatch {
-                hello => |recv, args: &[RubyValue]| {
-                    let this = recv.as_any().downcast_ref::<Greeter>().expect("class_id guarantees this downcast");
+                hello => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                    let this = downcast_robj::<Greeter>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [] => Greeter::hello(this),
                         _ => panic!("wrong number of arguments for hello"),
                     }
                 },
-                method_missing => |recv, args: &[RubyValue]| {
-                    let this = recv.as_any().downcast_ref::<Greeter>().expect("class_id guarantees this downcast");
+                method_missing => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                    let this = downcast_robj::<Greeter>(recv).expect("class_id guarantees this downcast");
                     match args {
                         [name] => Greeter::method_missing(this, name.clone()),
                         _ => panic!("wrong number of arguments for method_missing"),
@@ -190,10 +208,10 @@ mod tests {
 
     #[test]
     fn static_path_stores_and_reads_ivar() {
-        let p = Point {
+        let p = std::rc::Rc::new(Point {
             x: std::cell::RefCell::new(RubyValue::Nil),
-        };
-        p.initialize(RubyValue::Int(5)).unwrap();
+        });
+        p.clone().initialize(RubyValue::Int(5)).unwrap();
         match p.x().unwrap() {
             RubyValue::Int(5) => {}
             other => panic!("expected Int(5), got {}", other.to_display_string()),
@@ -212,7 +230,7 @@ mod tests {
     fn dynamic_send_finds_registered_method() {
         install();
         let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
-        let result = send(&g, Symbol::intern("hello"), &[]).unwrap();
+        let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
 
@@ -220,7 +238,7 @@ mod tests {
     fn dynamic_send_falls_back_to_method_missing() {
         install();
         let g: RObj = Greeter::new_handle(std::rc::Rc::new(Greeter {}));
-        let result = send(&g, Symbol::intern("nope"), &[]).unwrap();
+        let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
     }
 }

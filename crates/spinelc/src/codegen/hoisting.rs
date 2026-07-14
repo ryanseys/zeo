@@ -36,21 +36,77 @@ use crate::types::TyKind;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-/// Whether `name` gets a hoisted `let mut ... = Nil;` declaration (and, in
-/// turn, whether its `LocalWrite`/`MultiWrite` sites compile to a plain
-/// reassignment rather than a `let` -- see `stmt.rs`/`codegen::loops`) --
-/// everything EXCEPT a concrete class-instance local (`TyKind::Object`,
-/// e.g. `x = SomeClass.new`). Rust already infers THAT as an unboxed
-/// `Rc<ConcreteClass>` (not `RubyValue`) directly from its own assignment
-/// expression, and `ruby_class!`'s whole "Path 1 static dispatch on a
-/// concrete Rust type" design depends on that unboxing -- uniformly
-/// hoisting every local as `RubyValue` would break it (confirmed the hard
-/// way: it broke safe-navigation's `Box.new(...)`-assigned-to-a-local
-/// case). Known, narrow, pre-existing gap this doesn't fix: reassigning an
-/// object-typed local INSIDE a loop still relies on shadowing and won't
-/// persist across iterations -- nothing exercises that yet.
-pub fn is_hoisted(cx: &Ctx, name: &str) -> bool {
-    !matches!(cx.local_types.get(name), Some(TyKind::Object(_)))
+/// The three ways a local/parameter name's storage can be emitted -- see
+/// each variant's docs. Replaces a 2-way `is_hoisted` bool now that Phase 6
+/// adds a real, escaping capture case (see `codegen::captures`); every read/
+/// write site should go through `emit_local_read`/`emit_local_write` below
+/// rather than matching this directly, so the 3-way logic lives in ONE
+/// place instead of being re-derived at each of the (now 4+) sites a local
+/// is read or written.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum LocalStorage {
+    /// A concrete class-instance local (`TyKind::Object`, e.g. `x =
+    /// SomeClass.new`) -- Rust already infers this as an unboxed
+    /// `Rc<ConcreteClass>` (not `RubyValue`) directly from its own
+    /// assignment expression, and `ruby_class!`'s whole "Path 1 static
+    /// dispatch on a concrete Rust type" design depends on that unboxing --
+    /// uniformly hoisting every local as `RubyValue` would break it
+    /// (confirmed the hard way: it broke safe-navigation's
+    /// `Box.new(...)`-assigned-to-a-local case). Takes priority over
+    /// `Captured` even if some escaping block also references this name:
+    /// object *identity* (and therefore ivar mutation through it) already
+    /// flows correctly via the shared `Rc` with no cell-wrapping needed --
+    /// only *reassigning the local's own binding* from inside a closure
+    /// wouldn't propagate back out, the SAME pre-existing, narrow,
+    /// documented gap as reassigning an object-typed local inside a native
+    /// loop (nothing exercises either case).
+    Shadowed,
+    /// A plain hoisted `let mut ...: RubyValue = Nil;` declaration at the
+    /// top of the scope, reassigned in place -- the common case.
+    Hoisted,
+    /// Captured by some escaping block (see `codegen::captures`) -- an
+    /// `Rc<RefCell<RubyValue>>` cell, declared once at the top of the
+    /// scope and shared (via `Rc::clone`) with every escaping closure that
+    /// references this name, so a mutation from inside the closure is
+    /// visible to the enclosing scope and vice versa (real Ruby closure
+    /// semantics, not a snapshot).
+    Captured,
+}
+
+pub fn local_storage(cx: &Ctx, name: &str) -> LocalStorage {
+    if matches!(cx.local_types.get(name), Some(TyKind::Object(_))) {
+        LocalStorage::Shadowed
+    } else if cx.captured_locals.contains(name) {
+        LocalStorage::Captured
+    } else {
+        LocalStorage::Hoisted
+    }
+}
+
+/// A local-variable READ, e.g. a bare `x` -- the one place that decides
+/// between `x.clone()` (`Hoisted`/`Shadowed`) and `x.borrow().clone()`
+/// (`Captured`).
+pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
+    let ident = safe_ident(name);
+    match local_storage(cx, name) {
+        LocalStorage::Captured => quote! { #ident.borrow().clone() },
+        LocalStorage::Hoisted | LocalStorage::Shadowed => quote! { #ident.clone() },
+    }
+}
+
+/// A local-variable WRITE (assignment statement), given the already-emitted
+/// value expression -- the one place that decides between a plain
+/// reassignment (`Hoisted`), a fresh shadowing `let` (`Shadowed`), and a
+/// `RefCell` store (`Captured`). Ends in `;` (a statement, not an
+/// expression) -- callers needing the assigned value back (an assignment
+/// used as a sub-expression) read it again afterward via `emit_local_read`.
+pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
+    let ident = safe_ident(name);
+    match local_storage(cx, name) {
+        LocalStorage::Captured => quote! { *#ident.borrow_mut() = #value; },
+        LocalStorage::Hoisted => quote! { #ident = #value; },
+        LocalStorage::Shadowed => quote! { let #ident = #value; },
+    }
 }
 
 /// Mirrors `analyze::collect_ivars`'s traversal shape (recursing into every
@@ -148,6 +204,7 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
             args,
             kwargs,
             block,
+            block_arg,
             ..
         } => {
             if let Some(r) = receiver {
@@ -161,6 +218,9 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
                 collect_locals(compiler, pair.1, out);
             }
             if let Some(b) = block {
+                collect_locals(compiler, *b, out);
+            }
+            if let Some(b) = block_arg {
                 collect_locals(compiler, *b, out);
             }
         }
@@ -207,11 +267,17 @@ fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
                 collect_locals(compiler, n, out);
             }
         }
+        HirNode::Yield(args) => {
+            for &a in args {
+                collect_locals(compiler, a, out);
+            }
+        }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
+        | HirNode::BlockGiven
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }
@@ -228,15 +294,23 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
     for &n in body {
         collect_locals(cx.compiler, n, &mut names);
     }
-    let decls = names.iter().filter(|n| is_hoisted(cx, n)).map(|n| {
+    let decls = names.iter().filter_map(|n| {
         let ident = safe_ident(n);
-        // `#[allow(unused_assignments)]`: the `Nil` default is frequently
-        // overwritten before ever being read (e.g. a local's very first
-        // assignment happens unconditionally right after this) -- that's
-        // the intended, Ruby-faithful shape, not a mistake to warn about.
-        quote! {
-            #[allow(unused_assignments)]
-            let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+        match local_storage(cx, n) {
+            // `#[allow(unused_assignments)]`: the `Nil` default is
+            // frequently overwritten before ever being read (e.g. a local's
+            // very first assignment happens unconditionally right after
+            // this) -- that's the intended, Ruby-faithful shape, not a
+            // mistake to warn about.
+            LocalStorage::Hoisted => Some(quote! {
+                #[allow(unused_assignments)]
+                let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+            }),
+            LocalStorage::Captured => Some(quote! {
+                let #ident: std::rc::Rc<std::cell::RefCell<spinel_rt::RubyValue>> =
+                    std::rc::Rc::new(std::cell::RefCell::new(spinel_rt::RubyValue::Nil));
+            }),
+            LocalStorage::Shadowed => None,
         }
     });
     let inner = emit_body(cx, body, wrap_ok);

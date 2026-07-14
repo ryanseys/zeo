@@ -12,9 +12,23 @@ use quote::{format_ident, quote};
 use super::expr::{emit_expr, emit_symbol_expr, infer, infer_class};
 use super::ident::safe_ident;
 use super::Ctx;
+use crate::compiler::Compiler;
 use crate::hir::{HashPair, HirNode, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
+
+/// Whether a call shape is the `.times` fast path (inline splice, no real
+/// `Proc` ever allocated) -- the exact condition `dispatch` already checks
+/// for below, factored out so `codegen::captures`' escaping-block scan can
+/// ask the identical question: any block NOT matching this shape becomes a
+/// real, heap-allocated `Proc` (see that module's docs -- there is no
+/// separate "escape analysis" beyond this one check, since `.times` is the
+/// only inline fast path that exists).
+pub fn is_times_fast_path(compiler: &Compiler, receiver: Option<NodeId>, name: &str, kwargs_empty: bool) -> bool {
+    kwargs_empty
+        && name == "times"
+        && receiver.is_some_and(|r| matches!(compiler.hir[r], HirNode::IntegerLit(_)))
+}
 
 /// Binary operators with a native `spinel_rt::int_*` implementation, and
 /// which `spinel_rt::RubyValue` variant wraps their result. Every one of
@@ -134,14 +148,18 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
     // holding this needs to be `Rc::clone()`-able on every re-read
     // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
     // for why the bare struct can't just derive `Clone` instead). `Rc<T>`
-    // derefs transparently, so `.initialize(...)` and Path 1's
-    // `(recv_expr).method(...)` both still work unchanged.
+    // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
+    // work unchanged against a `self: Rc<Self>`-shaped method.
     let ctor = quote! { std::rc::Rc::new(#class_ident { #(#fields)* }) };
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some(_) => {
             let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
-            quote! { { let __obj = #ctor; __obj.initialize(#(#arg_exprs),*)?; __obj } }
+            // `initialize` takes `self: Rc<Self>` BY VALUE now (see
+            // `ruby_class!`'s docs), so calling it on `__obj` directly would
+            // move it -- clone the `Rc` handle first (a cheap refcount bump,
+            // not a deep copy) so `__obj` is still available to return.
+            quote! { { let __obj = #ctor; __obj.clone().initialize(#(#arg_exprs),*)?; __obj } }
         }
         None => ctor,
     }
@@ -186,6 +204,7 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
     // inside it must still target whatever loop lexically encloses the
     // `super` call, exactly as if that code were written there directly (see
     // `Ctx::loop_labels`'s docs).
+    let defining_captures = super::captures::collect_escaping_captures(cx.compiler, &defining_scope.body);
     let inline_cx = Ctx {
         compiler: cx.compiler,
         current_class: Some(defining_class),
@@ -195,6 +214,14 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
         loop_labels: cx.loop_labels.clone(),
         // NOT inherited -- see `Ctx::for_var_override`'s docs.
         for_var_override: None,
+        captured_locals: &defining_captures.locals,
+        // Both ARE inherited (unlike `for_var_override`): the inlined body
+        // must keep referring to whichever `self` the CALLING method's own
+        // body is already using, and `break`/`next`/`redo`/`return` inside
+        // it must still behave per whatever Rust-function boundary actually
+        // encloses this splice (a real Proc closure or not).
+        self_ident: cx.self_ident.clone(),
+        in_real_proc: cx.in_real_proc,
     };
     // A fresh hoisting prelude of its own: the parent method's local
     // variables are a genuinely separate Ruby scope from the calling
@@ -204,6 +231,11 @@ pub fn emit_super_inline(cx: &Ctx) -> TokenStream {
     quote! { { #inlined } }
 }
 
+// Every one of these is a genuinely distinct piece of a call site's syntax
+// (receiver/name/positional args/kwargs/literal block/forwarded block/safe-
+// nav), not incidental duplication a struct would meaningfully collapse --
+// bundling them would just move the same count behind one more layer.
+#[allow(clippy::too_many_arguments)]
 pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,
@@ -211,6 +243,7 @@ pub fn emit_call(
     args: &[NodeId],
     kwargs: &[HashPair],
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
     safe: bool,
 ) -> TokenStream {
     // Implicit self / no receiver: the spike's only builtin is `puts`.
@@ -227,11 +260,14 @@ pub fn emit_call(
         if !kwargs.is_empty() {
             panic!("keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)");
         }
+        if block.is_some() || block_arg.is_some() {
+            panic!("a block on a safe-navigation (`&.`) call isn't supported yet (spike scope)");
+        }
         return emit_safe_call(cx, recv_id, name, args);
     }
 
     let recv_expr = emit_expr(cx, recv_id);
-    dispatch(cx, recv_id, name, args, kwargs, block, &recv_expr)
+    dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr)
 }
 
 /// `&.` always dispatches through the runtime `ClassRegistry`/`send` path
@@ -264,7 +300,10 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
             } else {
                 match &__safe_recv {
                     spinel_rt::RubyValue::Object(__robj) => {
-                        spinel_rt::send(__robj, #name_expr, &[#(#arg_exprs),*])?
+                        // `&.` doesn't accept a block yet (spike scope,
+                        // unrelated to Phase 6 -- narrower than real Ruby,
+                        // matches this call's existing kwargs restriction).
+                        spinel_rt::send(__robj, #name_expr, &[#(#arg_exprs),*], None)?
                     }
                     _ => panic!(
                         "safe navigation on a non-Object receiver isn't supported yet (spike scope)"
@@ -279,6 +318,10 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
 /// docs), given an already-computed `recv_expr` for the receiver's runtime
 /// value -- factored out of `emit_call` so `&.`'s nil-guard can wrap this
 /// without the receiver expression being evaluated twice.
+// `block_arg` is only threaded through the `send`/`public_send` static-
+// resolution retry below for now -- real Proc construction (which will
+// genuinely consume it) lands later in this same phase.
+#[allow(clippy::too_many_arguments, clippy::only_used_in_recursion)]
 fn dispatch(
     cx: &Ctx,
     recv_id: NodeId,
@@ -286,6 +329,7 @@ fn dispatch(
     args: &[NodeId],
     kwargs: &[HashPair],
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
     recv_expr: &TokenStream,
 ) -> TokenStream {
     // Every fast path below (operators, collection `[]`/`length`, `.times`)
@@ -349,7 +393,7 @@ fn dispatch(
     // `codegen::loops`' redo-wrapping machinery with `while`/`until`/`loop`/
     // `for`, so `break`/`next`/`redo` inside a `.times` block work exactly
     // the same way.
-    if no_kwargs && name == "times" {
+    if is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs) {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
             let block_id = block.unwrap_or_else(|| panic!("`times` requires a block"));
@@ -397,7 +441,7 @@ fn dispatch(
             let target = target.clone();
             if let Some(cid) = recv_class {
                 if cx.compiler.method_in_chain(cid, &target).is_some() {
-                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, recv_expr);
+                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr);
                 }
             }
         }
@@ -407,8 +451,11 @@ fn dispatch(
         let class_ident = safe_ident(&cx.compiler.class(cid).name);
         let name_expr = emit_symbol_expr(cx, args[0]);
         let rest_args = args[1..].iter().map(|&a| emit_expr(cx, a));
+        // `block` isn't threaded into the constructed Proc value here yet --
+        // that lands together with the rest of Proc construction later in
+        // this same phase.
         return quote! {
-            spinel_rt::send(&#class_ident::new_handle(#recv_expr), #name_expr, &[#(#rest_args),*])?
+            spinel_rt::send(&#class_ident::new_handle(#recv_expr), #name_expr, &[#(#rest_args),*], None)?
         };
     }
 

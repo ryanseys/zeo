@@ -125,10 +125,12 @@ fn required_param_name(node: &Node<'_>, where_: &str) -> PResult<String> {
 /// LAZILY by the callee -- see `Params::optional`'s docs, so its expression
 /// is only lowered here, never eagerly evaluated at every call site) ->
 /// rest (`*`/`*name`) -> post (required params after a splat) -> keyword
-/// (required/optional) -> keyword_rest (`**`/`**name`/explicit `**nil`). A
-/// `&block` parameter (and bare `...` forwarding, which implies one) isn't
-/// supported yet -- see `hir::Params`'s docs for why -- a clean lowering
-/// error rather than a panic.
+/// (required/optional) -> keyword_rest (`**`/`**name`/explicit `**nil`) ->
+/// `&block`/anonymous `&` (same `None`/`Some(None)`/`Some(Some(name))` shape
+/// as `rest`/`keyword_rest` -- see `hir::Params::block`'s docs). Bare `...`
+/// forwarding (positional + keyword + block all at once) is a separate,
+/// still-unsupported call-site construct -- see the `keyword_rest` match arm
+/// below, which gives it a dedicated rejection message.
 fn lower_params(
     result: &ParseResult,
     hir: &mut Hir,
@@ -137,9 +139,9 @@ fn lower_params(
     let Some(params) = params else {
         return Ok(Params::default());
     };
-    if params.block().is_some() {
-        return Err("a `&block` parameter isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase".to_string());
-    }
+    let block = params
+        .block()
+        .map(|b| b.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()));
 
     let required = params
         .requireds()
@@ -200,9 +202,13 @@ fn lower_params(
         // occupying the `keyword_rest` slot (confirmed empirically: `.rest()`
         // and `.block()` both come back `None` for it) -- not a real
         // `**`/`**name`, so give the dedicated forwarding message, not the
-        // generic "unsupported keyword-rest parameter form" one below.
+        // generic "unsupported keyword-rest parameter form" one below. Still
+        // unsupported even though a real Proc runtime exists now (Phase 6):
+        // `...` needs one call-site construct forwarding rest+keyword_rest+
+        // block all at once, which hasn't been built -- a narrower gap than
+        // before, not the same one.
         Some(n) if n.as_forwarding_parameter_node().is_some() => {
-            return Err("`...` forwarding isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase".to_string());
+            return Err("`...` forwarding isn't supported yet (spike scope) -- it needs a dedicated call-site construct forwarding positional/keyword/block args all at once".to_string());
         }
         Some(n) if n.as_no_keywords_parameter_node().is_some() => {
             // `**nil` -- explicit "no extra keywords accepted". Treated the
@@ -226,6 +232,7 @@ fn lower_params(
         post,
         keywords,
         keyword_rest,
+        block,
     })
 }
 
@@ -235,6 +242,22 @@ fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<
         .ok_or("expected a block (`{ }` or `do..end`)")?;
     let params = match block.parameters() {
         None => Params::default(),
+        // `_1`/`_2`/... -- `NumberedParametersNode { maximum }` reports the
+        // highest `_N` referenced in the body; synthesize that many plain
+        // required params (pure lowering-time sugar, no new HIR).
+        Some(p) if p.as_numbered_parameters_node().is_some() => {
+            let n = p.as_numbered_parameters_node().unwrap().maximum();
+            Params {
+                required: (1..=n).map(|i| format!("_{i}")).collect(),
+                ..Params::default()
+            }
+        }
+        // `it` -- `ItParametersNode` carries no fields (the body just
+        // references bare `it`); synthesize a single required param.
+        Some(p) if p.as_it_parameters_node().is_some() => Params {
+            required: vec!["it".to_string()],
+            ..Params::default()
+        },
         Some(p) => {
             let bp = p
                 .as_block_parameters_node()
@@ -333,6 +356,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             args: vec![rhs],
             kwargs: Vec::new(),
             block: None,
+            block_arg: None,
             safe: false,
         });
         return Ok(hir.push(HirNode::LocalWrite(name, call)));
@@ -350,6 +374,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             args: vec![rhs],
             kwargs: Vec::new(),
             block: None,
+            block_arg: None,
             safe: false,
         });
         return Ok(hir.push(HirNode::IvarWrite(name, call)));
@@ -370,6 +395,20 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(defined) = node.as_defined_node() {
         let value = lower_node(result, hir, &defined.value())?;
         return Ok(hir.push(HirNode::Defined(value)));
+    }
+
+    // `yield` / `yield(args)` -- a real, distinct `ruby-prism` node (not an
+    // ordinary call), unlike `block_given?` below.
+    if let Some(yield_node) = node.as_yield_node() {
+        let args = match yield_node.arguments() {
+            None => Vec::new(),
+            Some(a) => a
+                .arguments()
+                .iter()
+                .map(|n| lower_node(result, hir, &n))
+                .collect::<PResult<Vec<_>>>()?,
+        };
+        return Ok(hir.push(HirNode::Yield(args)));
     }
 
     if let Some(if_node) = node.as_if_node() {
@@ -555,6 +594,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
         }
 
+        // `block_given?` -- an ordinary zero-arg, no-receiver `Kernel`
+        // method call at the `ruby-prism` level (not a distinct node, unlike
+        // `yield` above), so this is a lowering-time call-shape desugar
+        // exactly like `loop`/`define_method`.
+        if name == "block_given?" && call.receiver().is_none() {
+            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            if no_args && call.block().is_none() {
+                return Ok(hir.push(HirNode::BlockGiven));
+            }
+        }
+
         // `eval("literal string")` -- ONLY the compile-time-constant-string
         // form. Unlike `define_method`/`loop` above, this is intercepted
         // UNCONDITIONALLY: those two have a genuine second runtime path for
@@ -586,9 +636,26 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
         let (args, kwargs) = lower_call_args(result, hir, call.arguments())?;
-        let block = match call.block() {
-            None => None,
-            Some(b) => Some(lower_block(result, hir, &b)?),
+        // A call's `block()` slot is one of two distinct shapes: a literal
+        // `{ }`/`do..end` (`BlockNode`), or `&existing_proc` forwarding an
+        // already-built Proc value onward (`BlockArgumentNode`) -- real Ruby
+        // syntax forbids a call from having both, so this is a clean
+        // either/or, not a "prefer one" choice.
+        let (block, block_arg) = match call.block() {
+            None => (None, None),
+            Some(b) => {
+                if let Some(barg) = b.as_block_argument_node() {
+                    let expr = match barg.expression() {
+                        Some(e) => lower_node(result, hir, &e)?,
+                        None => return Err(
+                            "an anonymous `&` block-forwarding argument (forwarding the enclosing method's own `&block` onward without naming it) isn't supported yet (spike scope)".to_string(),
+                        ),
+                    };
+                    (None, Some(expr))
+                } else {
+                    (Some(lower_block(result, hir, &b)?), None)
+                }
+            }
         };
         return Ok(hir.push(HirNode::Call {
             receiver,
@@ -596,6 +663,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             args,
             kwargs,
             block,
+            block_arg,
             safe: call.is_safe_navigation(),
         }));
     }

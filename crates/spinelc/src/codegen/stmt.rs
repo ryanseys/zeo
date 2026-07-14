@@ -13,7 +13,6 @@
 use quote::quote;
 
 use super::expr::emit_expr;
-use super::ident::safe_ident;
 use super::Ctx;
 use crate::hir::{HirNode, NodeId};
 use proc_macro2::TokenStream;
@@ -49,31 +48,16 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
 /// Ruby's real assignment-as-expression semantics).
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
     if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
-        let ident = safe_ident(name);
         let v = emit_expr(cx, *value);
-        if super::hoisting::is_hoisted(cx, name) {
-            // A plain reassignment, not a `let` -- `name` is already
-            // declared `mut` in the enclosing scope's hoisting prelude (see
-            // `codegen::hoisting`'s docs for why a shadowing `let` here
-            // would silently fail to persist mutations across loop
-            // iterations).
-            if is_tail {
-                let nil = tail_nil(wrap_ok);
-                quote! { #ident = #v; #nil }
-            } else {
-                quote! { #ident = #v; }
-            }
+        // `emit_local_write` picks the right shape (plain reassignment,
+        // shadowing `let`, or a `RefCell` store) for whichever storage
+        // class `name` has -- see `codegen::hoisting::LocalStorage`'s docs.
+        let write = super::hoisting::emit_local_write(cx, name, v);
+        if is_tail {
+            let nil = tail_nil(wrap_ok);
+            quote! { #write #nil }
         } else {
-            // A concrete class-instance local (`x = SomeClass.new`) isn't
-            // hoisted -- see `hoisting::is_hoisted`'s docs -- so this keeps
-            // the original shadowing `let`, letting Rust infer the unboxed
-            // `Rc<ConcreteClass>` type directly from `v`.
-            if is_tail {
-                let nil = tail_nil(wrap_ok);
-                quote! { let #ident = #v; #nil }
-            } else {
-                quote! { let #ident = #v; }
-            }
+            quote! { #write }
         }
     } else if let HirNode::MultiWrite {
         before,

@@ -792,12 +792,14 @@ fn arithmetic_on_a_plain_method_parameter_works() {
 }
 
 #[test]
-fn a_block_parameter_is_a_clean_compile_error() {
-    let err = spinelc::compile_to_rust("class Foo\n  def bar(&blk)\n  end\nend\n").unwrap_err();
-    assert!(
-        err.contains("&block"),
-        "expected the &block-parameter rejection, got: {err}"
+#[ignore = "Phase 6 in progress: &block parsing lands before Proc construction/binding codegen -- unignored once that's wired (later in this same phase)"]
+fn a_named_block_parameter_can_be_called_explicitly() {
+    // A `&block` parameter is real syntax now (Phase 6 lifted the Phase-5
+    // rejection this test used to check for).
+    let result = support::run_ruby(
+        "class Foo\n  def bar(&blk)\n    blk.call(5)\n  end\nend\nputs Foo.new.bar { |x| x * 2 }\n",
     );
+    assert_eq!(result.stdout, "10\n");
 }
 
 #[test]

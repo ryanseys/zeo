@@ -28,6 +28,16 @@ pub trait RubyObject: Any {
     /// concrete impl provides the one-line body instead (`ruby_class!`
     /// generates it), where `Self` is always a concrete, sized type.
     fn as_any(&self) -> &dyn Any;
+
+    /// The owned-handle counterpart to `as_any` -- needed because every
+    /// generated method now takes `self: Rc<Self>` (not `&self`, see
+    /// `ruby_class!`'s docs), so Path 2's dynamic trampolines need an
+    /// `Rc<Concrete>`, not a `&Concrete`, to actually call one. `Rc<dyn Any>`
+    /// supports a real consuming `downcast::<T>()`; `Rc<dyn RubyObject>`
+    /// doesn't (there's no such inherent method on an arbitrary trait
+    /// object), so this is the bridge -- same "no default body" reasoning as
+    /// `as_any` above.
+    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any>;
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
@@ -53,13 +63,26 @@ impl RubyObject for Object {
     fn as_any(&self) -> &dyn Any {
         self
     }
+    fn as_any_rc(self: Rc<Self>) -> Rc<dyn Any> {
+        self
+    }
+}
+
+/// Downcasts an erased `RObj` to an owned `Rc<T>` -- the Path 2 trampoline
+/// counterpart to `as_any().downcast_ref()`, needed because every generated
+/// method takes `self: Rc<Self>` now (see `ruby_class!`'s docs). Cloning
+/// `recv` first is a cheap `Rc` refcount bump, not a deep copy.
+pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Rc<T>> {
+    recv.clone().as_any_rc().downcast::<T>().ok()
 }
 
 /// Every generated method/trampoline returns `Result<RubyValue, Signal>`, not
 /// a bare `RubyValue` -- see `Signal`'s docs for why this is fixed from the
 /// start rather than retrofitted once `break`/`raise`/non-local `return`
-/// exist.
-pub type MethodFn = fn(&RObj, &[RubyValue]) -> Result<RubyValue, Signal>;
+/// exist. The third parameter is the call's block, if any (`None` when no
+/// block was given) -- see `signal.rs`'s `catch_break` and `codegen::params`'s
+/// docs for how a block crosses the Path 2 boundary.
+pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 struct ClassEntry {
     superclass: Option<ClassId>,
@@ -124,12 +147,21 @@ pub fn install_class_registry(registry: ClassRegistry) {
 /// then its superclass, etc. -- but this walk happens at runtime, over a
 /// table generated code populated and can still mutate. This is the question
 /// spinel's whole architecture is built to never have to ask.
-pub fn send(recv: &RObj, name: Symbol, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+///
+/// `block` is threaded through to whichever `MethodFn` is actually found --
+/// including the `method_missing` fallback, matching real Ruby's own
+/// `method_missing(name, *args, &block)` protocol.
+pub fn send(
+    recv: &RObj,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let mut class = Some(recv.class_id());
     while let Some(id) = class {
         let found = REGISTRY.with(|r| r.borrow().lookup(id, name));
         if let Some(f) = found {
-            return f(recv, args);
+            return f(recv, args, block);
         }
         class = REGISTRY.with(|r| r.borrow().superclass_of(id));
     }
@@ -144,7 +176,7 @@ pub fn send(recv: &RObj, name: Symbol, args: &[RubyValue]) -> Result<RubyValue, 
             let mut full_args = Vec::with_capacity(args.len() + 1);
             full_args.push(RubyValue::Symbol(name));
             full_args.extend_from_slice(args);
-            return f(recv, &full_args);
+            return f(recv, &full_args, block);
         }
         class = REGISTRY.with(|r| r.borrow().superclass_of(id));
     }

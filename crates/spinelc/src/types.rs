@@ -19,6 +19,11 @@ pub enum TyKind {
     Hash,
     Range,
     Object(ClassId),
+    /// A real `Proc` (Phase 6) -- only ever seeded for a named `&block`
+    /// parameter (see `analyze::register_class`'s seeding, mirroring how a
+    /// named `*rest`/`**kwrest` param seeds `Array`/`Hash`); nothing else
+    /// infers this today.
+    Proc,
     Poly,
 }
 

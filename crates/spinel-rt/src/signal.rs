@@ -32,3 +32,19 @@ pub enum Signal {
     Return(RubyValue),
     Raise(RubyValue),
 }
+
+/// Catches a `break`/`break value` that unwound out of a real `Proc` (see
+/// `crate::rproc`'s docs) back to the call site that attached the block --
+/// exactly where real Ruby's own `break` semantics land: it makes the WHOLE
+/// method call (the one the block was passed to) evaluate to the break
+/// value, not just the block invocation. Every call site whose callee might
+/// invoke a block wraps its result in this (`codegen::params::emit_call_args`
+/// and every `send`/`public_send` call site) -- a no-op match when no
+/// `Break` was actually raised, so it's safe to apply unconditionally even
+/// when the specific call didn't pass a block this time.
+pub fn catch_break(result: Result<RubyValue, Signal>) -> Result<RubyValue, Signal> {
+    match result {
+        Err(Signal::Break(v)) => Ok(v),
+        other => other,
+    }
+}
