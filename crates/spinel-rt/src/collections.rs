@@ -17,19 +17,75 @@
 //! not hand-implemented here.
 
 use crate::RubyValue;
+use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub type RArray = Arc<Mutex<Vec<RubyValue>>>;
 
-/// Hash storage is a plain association *list*, not a real hash table: every
-/// lookup/insert is an O(n) linear scan compared via `RubyValue::rb_eq`. A
-/// real `HashMap` needs `Hash`/`Eq` on `RubyValue`, which in turn needs a
-/// user-overridable `#hash`/`#eql?` protocol for `Object` keys that doesn't
-/// exist yet -- a deliberate, documented spike scope-cut, not an oversight.
-/// Fine for the tiny hashes the spike's examples use; revisit once
-/// user-defined `#hash` exists.
-pub type RHash = Arc<Mutex<Vec<(RubyValue, RubyValue)>>>;
+/// A structural, hashable projection of a `RubyValue` -- the actual
+/// `IndexMap` key (see `RHash` below), so `Hash#[]`/`#[]=` are real
+/// O(1)-average lookups instead of an O(n) linear scan compared via
+/// `RubyValue::rb_eq`. Built-in immutable/value-like types (`Nil`/`Bool`/
+/// `Int`/`Float`/`Symbol`/`Str`/an `Array` of hashable elements/`Range`)
+/// hash and compare STRUCTURALLY, matching real Ruby's own `#hash`/`#eql?`
+/// for these types (note `eql?`, not `==`: `1` and `1.0` are DISTINCT keys,
+/// matching `Integer#eql?`'s stricter same-class rule -- see `Int`/`Float`
+/// staying separate variants below). Everything else (`Object`/`Proc`/a
+/// nested `Hash`) falls back to pointer IDENTITY -- real Ruby's own default
+/// `Object#hash` before a user overrides it, and this spike has no
+/// user-overridable `#hash`/`#eql?` protocol yet (a documented, narrow
+/// scope-cut -- see the plan's Part 10, Tier 1 #10).
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum HashKey {
+    Nil,
+    Bool(bool),
+    Int(i64),
+    /// Bit-pattern equality/hashing, not IEEE `==` -- a `Float::NAN` key
+    /// compares equal to an IDENTICAL NaN bit pattern (unlike real Ruby's
+    /// `Float#eql?`, where NaN never equals anything, even itself); a
+    /// documented, narrow approximation for a vanishingly rare key shape.
+    Float(u64),
+    Symbol(crate::Symbol),
+    Str(String),
+    Array(Vec<HashKey>),
+    Range(Option<Box<HashKey>>, Option<Box<HashKey>>, bool),
+    Identity(usize),
+}
+
+fn hash_key(v: &RubyValue) -> HashKey {
+    match v {
+        RubyValue::Nil => HashKey::Nil,
+        RubyValue::Bool(b) => HashKey::Bool(*b),
+        RubyValue::Int(i) => HashKey::Int(*i),
+        RubyValue::Float(f) => HashKey::Float(f.to_bits()),
+        RubyValue::Symbol(s) => HashKey::Symbol(*s),
+        RubyValue::Str(s) => HashKey::Str(s.lock().clone()),
+        RubyValue::Array(a) => HashKey::Array(a.lock().iter().map(hash_key).collect()),
+        RubyValue::Range(start, end, exclusive) => HashKey::Range(
+            start.as_ref().map(|b| Box::new(hash_key(b))),
+            end.as_ref().map(|b| Box::new(hash_key(b))),
+            *exclusive,
+        ),
+        RubyValue::Hash(h) => HashKey::Identity(Arc::as_ptr(h) as usize),
+        // `Arc<dyn Trait>`'s pointer is a FAT pointer (data + vtable) -- cast
+        // through `*const ()` first to get a plain, `usize`-castable thin
+        // pointer to the data alone (the vtable half is irrelevant to
+        // identity).
+        RubyValue::Object(o) => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+        RubyValue::Proc(p) => HashKey::Identity(Arc::as_ptr(p) as *const () as usize),
+    }
+}
+
+/// A real hash table (`IndexMap`, not a linear-scan association list),
+/// preserving Ruby's own insertion-order iteration guarantee for free
+/// (`IndexMap`'s whole reason for existing over a plain `HashMap`). Stores
+/// each entry's ORIGINAL `RubyValue` key alongside its `HashKey` projection
+/// (not just the value), since `HashKey` is lossy for e.g. an `Object` key
+/// (identity-only) -- anything that needs to iterate/display/rebuild the
+/// actual key (`to_display_string`, `#deconstruct_keys` pattern binding)
+/// needs the real value back.
+pub type RHash = Arc<Mutex<IndexMap<HashKey, (RubyValue, RubyValue)>>>;
 
 pub type RStr = Arc<Mutex<String>>;
 
@@ -91,7 +147,7 @@ fn resolve_index(index: i64, len: usize) -> Option<usize> {
 }
 
 pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
-    let h: RHash = Arc::new(Mutex::new(Vec::new()));
+    let h: RHash = Arc::new(Mutex::new(IndexMap::new()));
     for (k, v) in pairs {
         hash_set(&h, k, v);
     }
@@ -102,21 +158,15 @@ pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
 /// scope-cut -- real Ruby's per-instance `Hash.new(default)`/
 /// `Hash#default_proc` aren't modeled).
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
-    h.lock()
-        .iter()
-        .find(|(k, _)| k.rb_eq(key))
-        .map(|(_, v)| v.clone())
-        .unwrap_or(RubyValue::Nil)
+    h.lock().get(&hash_key(key)).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
 }
 
-/// `Hash#[]=`: replaces an existing key's value in place (preserving
-/// insertion order, matching real Ruby) rather than appending a duplicate.
+/// `Hash#[]=`: replaces an existing key's VALUE in place, preserving its
+/// original insertion position (matching real Ruby) rather than moving it to
+/// the end -- `IndexMap::insert`'s own documented behavior for a
+/// re-inserted, already-present key.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
-    let mut h = h.lock();
-    match h.iter_mut().find(|(k, _)| k.rb_eq(&key)) {
-        Some((_, v)) => *v = value.clone(),
-        None => h.push((key, value.clone())),
-    }
+    h.lock().insert(hash_key(&key), (key, value.clone()));
     value
 }
 
@@ -130,19 +180,22 @@ pub fn hash_len(h: &RHash) -> i64 {
 /// PATTERN matching (`case/in`): `in {a: nil}` must fail against `{}`, which
 /// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
 pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
-    h.lock().iter().any(|(k, _)| k.rb_eq(key))
+    h.lock().contains_key(&hash_key(key))
 }
 
 /// A new Hash containing every pair from `h` whose key ISN'T in `keys` --
 /// backs a hash pattern's `**rest` binding (the leftover key/value pairs not
 /// matched by any explicit `key:` entry).
 pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
-    let excluded: Vec<RubyValue> = keys.iter().map(|k| RubyValue::Symbol(crate::Symbol::intern(k))).collect();
-    let pairs: Vec<(RubyValue, RubyValue)> = h
+    let excluded: Vec<HashKey> = keys
+        .iter()
+        .map(|k| hash_key(&RubyValue::Symbol(crate::Symbol::intern(k))))
+        .collect();
+    let pairs: IndexMap<HashKey, (RubyValue, RubyValue)> = h
         .lock()
         .iter()
-        .filter(|(k, _)| !excluded.iter().any(|e| e.rb_eq(k)))
-        .cloned()
+        .filter(|(k, _)| !excluded.contains(k))
+        .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
     Arc::new(Mutex::new(pairs))
 }

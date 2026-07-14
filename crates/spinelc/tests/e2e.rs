@@ -3912,3 +3912,138 @@ fn kwargs_double_splat_at_a_call_site_is_a_clean_error() {
         "#,
     );
 }
+
+// Phase 12.6 -- a real Hash table (IndexMap-backed, structural keys for
+// built-in types, insertion-order preserved) and built-in types
+// (Integer/Float/String/Symbol/Array/Hash/Range/NilClass/TrueClass/
+// FalseClass/Proc) wired into the same ClassId/ancestors system every
+// user-defined class already goes through, so `is_a?`/`kind_of?` resolve
+// correctly against a built-in-typed receiver instead of panicking.
+
+#[test]
+fn hash_reassigning_an_existing_key_keeps_its_original_insertion_position() {
+    let result = run_ruby(
+        r#"
+        h = {}
+        h[:a] = 1
+        h[:b] = 2
+        h[:c] = 3
+        h[:a] = 99
+        puts h
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "{a: 99, b: 2, c: 3}\n");
+}
+
+#[test]
+fn hash_keyed_by_an_array_hashes_structurally_not_by_identity() {
+    let result = run_ruby(
+        r#"
+        h = {}
+        h[[1, 2]] = "pair"
+        puts h[[1, 2]]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "pair\n");
+}
+
+#[test]
+fn is_a_and_kind_of_against_a_statically_known_int_local() {
+    let result = run_ruby(
+        r#"
+        x = 5
+        puts x.is_a?(Integer)
+        puts x.is_a?(String)
+        puts x.is_a?(Object)
+        puts x.kind_of?(Integer)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\ntrue\n");
+}
+
+#[test]
+fn is_a_against_a_poly_typed_method_parameter() {
+    // A method PARAMETER is always `TyKind::Poly` (spinelc never infers a
+    // param's type from its call sites) -- this exercises the runtime
+    // `spinel_rt::is_a` fallback (via the new universal `RubyValue::class_id`)
+    // rather than the static ancestors-constant-fold path.
+    let result = run_ruby(
+        r#"
+        class Checker
+          def check(v)
+            v.is_a?(Integer)
+          end
+        end
+        c = Checker.new
+        puts c.check(5)
+        puts c.check("hi")
+        puts c.check([1, 2])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\nfalse\n");
+}
+
+#[test]
+fn is_a_for_nil_true_and_false_against_their_own_singleton_classes() {
+    let result = run_ruby(
+        r#"
+        puts nil.is_a?(NilClass)
+        puts true.is_a?(TrueClass)
+        puts false.is_a?(FalseClass)
+        puts true.is_a?(Object)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\ntrue\n");
+}
+
+#[test]
+fn is_a_against_statically_typed_array_hash_range_and_symbol_locals() {
+    let result = run_ruby(
+        r#"
+        arr = [1, 2, 3]
+        puts arr.is_a?(Array)
+        puts arr.is_a?(Object)
+        puts arr.is_a?(Hash)
+        h = {a: 1}
+        puts h.is_a?(Hash)
+        r = 1..5
+        puts r.is_a?(Range)
+        sym = :foo
+        puts sym.is_a?(Symbol)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\ntrue\ntrue\ntrue\n");
+}
+
+#[test]
+fn subclassing_a_built_in_type_is_a_clean_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        class MyInt < Integer
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("subclassing the built-in type"), "{err}");
+}
+
+#[test]
+fn reopening_a_built_in_class_name_is_a_clean_error() {
+    let err = spinelc::compile_to_rust(
+        r#"
+        class Array
+          def foo
+            1
+          end
+        end
+        "#,
+    )
+    .unwrap_err();
+    assert!(err.contains("reopening/redefining the built-in class"), "{err}");
+}

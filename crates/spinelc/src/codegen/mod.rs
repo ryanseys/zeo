@@ -205,16 +205,25 @@ pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, String> {
 fn codegen(analyzed: &Analyzed) -> TokenStream {
     let compiler = &analyzed.compiler;
 
-    // `Object` (index 0, built into `spinel-rt`) and every MODULE never get
-    // a generated Rust struct/`impl RubyObject`/`ClassRegistry` entry at
-    // all -- a module's methods only ever manifest indirectly, MATERIALIZED
-    // onto whatever includes/prepends/extends it (see the plan's Part 6 and
-    // `ruby_class!`'s docs).
+    // `Object` (index 0, built into `spinel-rt`), every MODULE, and every
+    // reserved BUILT-IN placeholder (`Integer`/`Array`/etc. -- see
+    // `compiler::BUILTIN_CLASSES`) never get a generated Rust struct/
+    // `impl RubyObject`/`ClassRegistry` entry via `ruby_class!` at all -- a
+    // module's methods only ever manifest indirectly, MATERIALIZED onto
+    // whatever includes/prepends/extends it (see the plan's Part 6 and
+    // `ruby_class!`'s docs), and a built-in type's runtime representation
+    // already IS a `RubyValue` variant, needing no separate struct (see
+    // `builtin_registrations` below for how it still gets a `ClassRegistry`
+    // entry so `is_a?`/`kind_of?` resolve correctly against it -- its
+    // `methods` table stays empty, though, since built-in methods dispatch
+    // via hardcoded codegen paths rather than the dynamic registry, so
+    // `respond_to?` against one always reports `false`, a separate,
+    // pre-existing-shaped scope-cut, not a regression this introduces).
     let classes = compiler
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, class)| idx != 0 && !class.is_module)
+        .filter(|&(idx, class)| idx != 0 && !class.is_module && !class.is_builtin)
         .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)));
 
     // Class methods (`def self.x`, and instance methods pulled in via
@@ -241,7 +250,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, _)| idx != 0)
+        .filter(|&(idx, class)| idx != 0 && !class.is_builtin)
         .map(|(idx, class)| {
             let register = if class.is_module {
                 quote! {}
@@ -251,6 +260,25 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             };
             let class_body = emit_class_body_stmts(compiler, ClassId(idx as u32));
             quote! { #register #class_body }
+        });
+
+    // A built-in placeholder has no generated `__register` function to call
+    // (see the `classes` filter above) -- it still needs a `ClassRegistry`
+    // entry of its own, with the SAME linearized `ancestors` every user
+    // class gets (computed by `analyze::mro::materialize` uniformly, no
+    // special-casing needed there), so `is_a?`/`respond_to?` against a
+    // built-in-typed receiver resolve correctly instead of finding nothing.
+    let builtin_registrations = compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|&(_, class)| class.is_builtin)
+        .map(|(idx, class)| {
+            let id = idx as u32;
+            let ancestor_ids = class.ancestors.iter().map(|a| a.0);
+            quote! {
+                __registry.register(spinel_rt::ClassId(#id), vec![#(spinel_rt::ClassId(#ancestor_ids)),*]);
+            }
         });
 
     let main_label_counter = Cell::new(0u32);
@@ -277,6 +305,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
             __registry.register(spinel_rt::Object::CLASS_ID, vec![spinel_rt::Object::CLASS_ID]);
+            #(#builtin_registrations)*
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
 

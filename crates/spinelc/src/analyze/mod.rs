@@ -76,14 +76,37 @@ fn register_class(
     is_module: bool,
     body: &[NodeId],
 ) -> Result<(), String> {
+    // A built-in placeholder (`Integer`/`Array`/etc. -- see
+    // `compiler::BUILTIN_CLASSES`) has no generated Rust struct to reopen or
+    // add methods onto; a real user class sharing its name would silently
+    // shadow it in `class_by_name` (which always resolves the FIRST match)
+    // without actually being reachable through any of the ordinary
+    // is_a?/dispatch machinery. Reject cleanly here rather than let this
+    // surface later as a confusing generated-`rustc`-compile failure or
+    // silently-wrong dispatch.
+    if let Some(existing) = compiler.class_by_name(&name) {
+        if compiler.class(existing).is_builtin {
+            return Err(format!(
+                "reopening/redefining the built-in class `{name}` isn't supported yet (spike scope)"
+            ));
+        }
+    }
     let parent = if is_module {
         None
     } else {
         Some(match &superclass {
             None => OBJECT_CLASS,
-            Some(s) => compiler.class_by_name(s).ok_or_else(|| {
-                format!("unknown superclass `{s}` (must be defined earlier in the file)")
-            })?,
+            Some(s) => {
+                let cid = compiler.class_by_name(s).ok_or_else(|| {
+                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                })?;
+                if compiler.class(cid).is_builtin {
+                    return Err(format!(
+                        "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
+                    ));
+                }
+                cid
+            }
         })
     };
     let class_id = compiler.add_class(name, parent, is_module);

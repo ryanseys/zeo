@@ -55,6 +55,36 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     }
 }
 
+/// Like `infer_class`, but ALSO resolves a statically-known BUILT-IN
+/// primitive type (`Int`/`Float`/`Str`/`Symbol`/`Array`/`Hash`/`Range`/
+/// `Proc`) to its reserved `ClassId` (see `compiler::BUILTIN_CLASSES`).
+/// Deliberately kept separate from `infer_class` itself: that function's
+/// `Some(cid)` result is used all over `codegen::call` to mean "there's a
+/// real generated Rust struct here, safe to call `#class_ident::new_handle`/
+/// dispatch a static method on it" -- which is FALSE for a built-in type (no
+/// struct exists for `Integer`/`Array`/etc., see `codegen::mod`'s
+/// builtin-skipping filters). This helper is for the narrower set of call
+/// sites that only need the class's IDENTITY for an ancestry/registry check
+/// (`is_a?`/`kind_of?`/`respond_to?`), not a constructible struct.
+pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
+    use crate::compiler::{
+        ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, PROC_CLASS, RANGE_CLASS, STRING_CLASS,
+        SYMBOL_CLASS,
+    };
+    match infer(cx, id) {
+        TyKind::Object(cid) => Some(cid),
+        TyKind::Int => Some(INTEGER_CLASS),
+        TyKind::Float => Some(FLOAT_CLASS),
+        TyKind::Str => Some(STRING_CLASS),
+        TyKind::Symbol => Some(SYMBOL_CLASS),
+        TyKind::Array => Some(ARRAY_CLASS),
+        TyKind::Hash => Some(HASH_CLASS),
+        TyKind::Range => Some(RANGE_CLASS),
+        TyKind::Proc => Some(PROC_CLASS),
+        TyKind::Poly => None,
+    }
+}
+
 /// A Rust expression of type `spinel_rt::Symbol` (not `RubyValue`) -- used
 /// for `send`'s second argument. A literal `:sym` skips the
 /// box-then-immediately-unwrap round trip.

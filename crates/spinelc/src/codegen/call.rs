@@ -9,7 +9,7 @@
 
 use quote::{format_ident, quote};
 
-use super::expr::{box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_class};
+use super::expr::{box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_any_class, infer_class};
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::compiler::Compiler;
@@ -233,6 +233,11 @@ pub fn emit_new_with_arg_tokens(
         .compiler
         .class_by_name(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+    if cx.compiler.class(cid).is_builtin {
+        panic!(
+            "`{class_name}.new` isn't supported yet -- built-in types are constructed via their own literal syntax, not `.new` (spike scope)"
+        );
+    }
     let ci = cx.compiler.class(cid);
     let class_ident = safe_ident(class_name);
 
@@ -1110,20 +1115,37 @@ fn dispatch(
                 .compiler
                 .class_by_name(target_name)
                 .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
-            return match infer_class(cx, recv_id) {
+            let target_id = target.0;
+            // `infer_any_class` (not `infer_class`): a statically-known
+            // BUILT-IN-typed receiver (e.g. `TyKind::Int`) must also
+            // constant-fold here, not fall through to the runtime branch
+            // below, which assumes `#recv_expr` is an actual `RubyValue` it
+            // can call `.class_id()` on at runtime -- true either way now
+            // (see the universal `RubyValue::class_id`), but the static
+            // fold is strictly cheaper and matches every other statically-
+            // known-class case in this function.
+            return match infer_any_class(cx, recv_id) {
                 Some(recv_class) => {
                     let result = cx.compiler.class(recv_class).ancestors.contains(&target);
-                    quote! { spinel_rt::RubyValue::Bool(#result) }
+                    // The `true`/`false` verdict is fully compile-time-known
+                    // here, but `recv_expr` itself must still be EVALUATED --
+                    // it may be an arbitrary expression with side effects
+                    // (`log_and_get(x).is_a?(Integer)`), and real Ruby always
+                    // evaluates a method call's receiver regardless of what
+                    // the call itself does with it. `let _ = ...;` forces
+                    // that evaluation without actually using the (statically
+                    // already-known) value, and as a side benefit keeps a
+                    // receiver-only-ever-used-via-`is_a?` local from
+                    // generating a spurious "value assigned but never read"
+                    // warning in the GENERATED program.
+                    quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Bool(#result) } }
                 }
-                None => {
-                    let target_ident = safe_ident(&cx.compiler.class(target).name);
-                    quote! {
-                        spinel_rt::RubyValue::Bool(spinel_rt::is_a(
-                            (#recv_expr).as_object_unchecked().class_id(),
-                            #target_ident::CLASS_ID,
-                        ))
-                    }
-                }
+                None => quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::is_a(
+                        (#recv_expr).class_id(),
+                        spinel_rt::ClassId(#target_id),
+                    ))
+                },
             };
         }
     }
@@ -1138,12 +1160,15 @@ fn dispatch(
     // always calls into the registry.
     if no_kwargs && name == "respond_to?" && args.len() == 1 {
         let sym_expr = emit_symbol_expr(cx, args[0]);
-        let class_id_expr = match infer_class(cx, recv_id) {
+        let class_id_expr = match infer_any_class(cx, recv_id) {
             Some(cid) => {
-                let class_ident = safe_ident(&cx.compiler.class(cid).name);
-                quote! { #class_ident::CLASS_ID }
+                let id = cid.0;
+                // Same "evaluate the receiver for its side effects even
+                // though the class id itself is compile-time-known" reasoning
+                // as `is_a?`/`kind_of?` above.
+                quote! { { let _ = #recv_expr; spinel_rt::ClassId(#id) } }
             }
-            None => quote! { (#recv_expr).as_object_unchecked().class_id() },
+            None => quote! { (#recv_expr).class_id() },
         };
         return quote! {
             spinel_rt::RubyValue::Bool(spinel_rt::responds_to(#class_id_expr, #sym_expr))

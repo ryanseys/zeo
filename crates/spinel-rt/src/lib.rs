@@ -20,7 +20,8 @@ pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
-    MethodFn, Object, RObj, RubyObject,
+    MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use globals::{global_get, global_set};

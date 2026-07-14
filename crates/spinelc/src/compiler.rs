@@ -20,6 +20,48 @@ pub struct ScopeId(pub u32);
 /// class index 0 as the implicit root.
 pub const OBJECT_CLASS: ClassId = ClassId(0);
 
+/// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
+/// models as a `RubyValue` variant rather than a generated `ruby_class!`
+/// struct -- numerically mirrored by `spinel_rt::dispatch`'s own constants
+/// of the same name (see that module's docs; same "two `ClassId` types, on
+/// purpose" convention as `OBJECT_CLASS`/`spinel_rt::Object::CLASS_ID`).
+/// Registering these in the SAME `classes`/`ancestors` system every
+/// user-defined class already goes through is what makes
+/// `5.is_a?(Integer)`-style checks against a built-in-typed receiver work
+/// uniformly, and is the prerequisite for eventually `include`ing a
+/// plain-Ruby `Enumerable`/`Comparable` into these types via ordinary
+/// materialization (see the plan's Part 10, Tier 1 #11).
+pub const INTEGER_CLASS: ClassId = ClassId(1);
+pub const FLOAT_CLASS: ClassId = ClassId(2);
+pub const STRING_CLASS: ClassId = ClassId(3);
+pub const SYMBOL_CLASS: ClassId = ClassId(4);
+pub const ARRAY_CLASS: ClassId = ClassId(5);
+pub const HASH_CLASS: ClassId = ClassId(6);
+pub const RANGE_CLASS: ClassId = ClassId(7);
+pub const NIL_CLASS: ClassId = ClassId(8);
+pub const TRUE_CLASS: ClassId = ClassId(9);
+pub const FALSE_CLASS: ClassId = ClassId(10);
+pub const PROC_CLASS: ClassId = ClassId(11);
+
+/// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
+/// registration order -- the SINGLE source of truth `Compiler::new` seeds
+/// `classes` from (each pushed via `add_class`, so its index lines up with
+/// the constant above by construction; a `debug_assert_eq!` there catches
+/// any future drift between this list's order and the constants).
+const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
+    (INTEGER_CLASS, "Integer"),
+    (FLOAT_CLASS, "Float"),
+    (STRING_CLASS, "String"),
+    (SYMBOL_CLASS, "Symbol"),
+    (ARRAY_CLASS, "Array"),
+    (HASH_CLASS, "Hash"),
+    (RANGE_CLASS, "Range"),
+    (NIL_CLASS, "NilClass"),
+    (TRUE_CLASS, "TrueClass"),
+    (FALSE_CLASS, "FalseClass"),
+    (PROC_CLASS, "Proc"),
+];
+
 pub struct ClassInfo {
     pub name: String,
     /// `None` for `Object` (the implicit root) and for every MODULE (a
@@ -99,6 +141,16 @@ pub struct ClassInfo {
     /// `analyze::mro::compute_ancestors`), computed once. Empty until
     /// `analyze::mro::materialize` runs.
     pub ancestors: Vec<ClassId>,
+    /// `true` for one of the reserved `BUILTIN_CLASSES` placeholders
+    /// (`Integer`/`Array`/etc.) -- never gets a generated Rust
+    /// struct/`impl RubyObject`/`ruby_class!` invocation at all (there's no
+    /// concrete struct to generate: `RubyValue::Int`/`Array`/etc. ARE the
+    /// runtime representation already -- see `codegen::mod`'s filters), only
+    /// a `ClassRegistry` entry (`codegen::mod`'s `builtin_registrations`) so
+    /// `is_a?`/`respond_to?` resolve correctly against it. `false` for
+    /// `Object` (index 0, handled by its own pre-existing `idx != 0` checks)
+    /// and for every ordinary user-defined class/module.
+    pub is_builtin: bool,
 }
 
 pub struct Scope {
@@ -149,7 +201,7 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new(hir: Hir) -> Compiler {
-        Compiler {
+        let mut compiler = Compiler {
             hir,
             classes: vec![ClassInfo {
                 name: "Object".to_string(),
@@ -167,9 +219,19 @@ impl Compiler {
                 const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
                 ancestors: Vec::new(),
+                is_builtin: false,
             }],
             scopes: Vec::new(),
+        };
+        for &(expected_id, name) in BUILTIN_CLASSES {
+            let id = compiler.add_class(name.to_string(), Some(OBJECT_CLASS), false);
+            debug_assert_eq!(
+                id, expected_id,
+                "BUILTIN_CLASSES order must match its own reserved ClassId constants"
+            );
+            compiler.classes[id.0 as usize].is_builtin = true;
         }
+        compiler
     }
 
     pub fn class_by_name(&self, name: &str) -> Option<ClassId> {
@@ -200,6 +262,7 @@ impl Compiler {
             const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
             ancestors: Vec::new(),
+            is_builtin: false,
         });
         ClassId((self.classes.len() - 1) as u32)
     }

@@ -59,6 +59,29 @@ impl Object {
     pub const CLASS_ID: ClassId = ClassId(0);
 }
 
+/// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
+/// models as a `RubyValue` variant rather than a generated `ruby_class!`
+/// struct -- numerically mirrored by `spinelc::compiler::BUILTIN_CLASSES`
+/// (same "two `ClassId` types, on purpose" convention as `Object::CLASS_ID`/
+/// `compiler::OBJECT_CLASS`). Registered into the `ClassRegistry` once, from
+/// generated `main()` (`codegen::mod`'s `builtin_registrations`), with the
+/// SAME linearized `ancestors` every user class gets -- what makes
+/// `5.is_a?(Integer)`/`"x".is_a?(Object)`-style checks against a built-in-
+/// typed receiver work uniformly through the one general `is_a`/`send`
+/// mechanism, and the prerequisite for eventually `include`ing a plain-Ruby
+/// `Enumerable`/`Comparable` into these types via ordinary materialization.
+pub const INTEGER_CLASS: ClassId = ClassId(1);
+pub const FLOAT_CLASS: ClassId = ClassId(2);
+pub const STRING_CLASS: ClassId = ClassId(3);
+pub const SYMBOL_CLASS: ClassId = ClassId(4);
+pub const ARRAY_CLASS: ClassId = ClassId(5);
+pub const HASH_CLASS: ClassId = ClassId(6);
+pub const RANGE_CLASS: ClassId = ClassId(7);
+pub const NIL_CLASS: ClassId = ClassId(8);
+pub const TRUE_CLASS: ClassId = ClassId(9);
+pub const FALSE_CLASS: ClassId = ClassId(10);
+pub const PROC_CLASS: ClassId = ClassId(11);
+
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
         Self::CLASS_ID

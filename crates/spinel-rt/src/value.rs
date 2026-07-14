@@ -6,6 +6,10 @@
 //! instead of a hand-written `{ tag; cls_id; union { ... } }` struct.
 
 use crate::collections::{RArray, RHash, RStr};
+use crate::dispatch::{
+    ClassId, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, NIL_CLASS,
+    PROC_CLASS, RANGE_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+};
 use crate::{RObj, RProc, Symbol};
 
 #[derive(Clone)]
@@ -89,7 +93,7 @@ impl RubyValue {
             RubyValue::Hash(h) => {
                 let body = h
                     .lock()
-                    .iter()
+                    .values()
                     .map(|(k, v)| match k {
                         RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.to_display_string()),
                         _ => format!("{} => {}", k.to_display_string(), v.to_display_string()),
@@ -106,6 +110,32 @@ impl RubyValue {
             }
             RubyValue::Object(_) => "#<Object>".to_string(),
             RubyValue::Proc(_) => "#<Proc>".to_string(),
+        }
+    }
+
+    /// This value's runtime class -- the UNIVERSAL counterpart to
+    /// `as_object_unchecked().class_id()` (which panics on anything but an
+    /// `Object`): works for every variant, including the built-in primitive
+    /// types, by returning their reserved, well-known `ClassId` (see
+    /// `dispatch`'s `INTEGER_CLASS`/etc., mirrored on the `spinelc` side by
+    /// `compiler::BUILTIN_CLASSES`). Backs `is_a?`/`kind_of?`/`respond_to?`
+    /// whenever the receiver's static type isn't known at compile time
+    /// (`TyKind::Poly`), so a builtin-tagged Poly value resolves correctly
+    /// instead of panicking.
+    pub fn class_id(&self) -> ClassId {
+        match self {
+            RubyValue::Nil => NIL_CLASS,
+            RubyValue::Bool(true) => TRUE_CLASS,
+            RubyValue::Bool(false) => FALSE_CLASS,
+            RubyValue::Int(_) => INTEGER_CLASS,
+            RubyValue::Float(_) => FLOAT_CLASS,
+            RubyValue::Symbol(_) => SYMBOL_CLASS,
+            RubyValue::Str(_) => STRING_CLASS,
+            RubyValue::Array(_) => ARRAY_CLASS,
+            RubyValue::Hash(_) => HASH_CLASS,
+            RubyValue::Range(..) => RANGE_CLASS,
+            RubyValue::Object(o) => o.class_id(),
+            RubyValue::Proc(_) => PROC_CLASS,
         }
     }
 
