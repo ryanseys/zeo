@@ -157,6 +157,9 @@ fn register_method(
     body: Vec<NodeId>,
 ) -> Result<crate::compiler::ScopeId, String> {
     let mut local_types = locals::infer_locals(compiler, &body);
+    for id in params.default_ids() {
+        locals::track_extra(compiler, &mut local_types, id);
+    }
     if let Some(Some(n)) = &params.rest {
         local_types.entry(n.clone()).or_insert(TyKind::Array);
     }
@@ -357,6 +360,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
+        | HirNode::SelfRef
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
@@ -659,6 +663,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
+        | HirNode::SelfRef
         | HirNode::LocalRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)

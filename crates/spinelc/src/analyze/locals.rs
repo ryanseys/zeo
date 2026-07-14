@@ -28,6 +28,15 @@ pub fn infer_locals(compiler: &Compiler, body: &[NodeId]) -> HashMap<String, TyK
     locals
 }
 
+/// Additionally walks one more root (a parameter's default-value expression,
+/// via `Params::default_ids`) into an already-built locals map -- see
+/// `hir::Params`'s docs: a default can reference/assign a
+/// local exactly like an ordinary body statement can, and `infer_locals`
+/// alone never sees it (defaults aren't part of `body`).
+pub fn track_extra(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: NodeId) {
+    track_node(compiler, locals, id);
+}
+
 /// Recurses into every sub-expression position a `LocalWrite` could appear
 /// in (mirrors `analyze::collect_ivars`'s traversal shape exactly), so an
 /// assignment nested inside a call's receiver/args/block -- not just a
@@ -160,7 +169,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 track_node(compiler, locals, *v);
             }
         }
-        HirNode::Redo | HirNode::BlockGiven => {}
+        HirNode::Redo | HirNode::BlockGiven | HirNode::SelfRef => {}
         HirNode::MultiWrite {
             before,
             splat,

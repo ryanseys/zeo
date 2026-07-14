@@ -156,6 +156,16 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     registry().ancestors_of(recv_class).contains(&target)
 }
 
+/// `recv.respond_to?(:name)` -- a flat lookup on the receiver's own
+/// already-materialized method table (every reachable method -- own,
+/// inherited, or mixed-in -- is already present there, so no ancestor walk
+/// is needed, mirroring `send`'s own dispatch below). Matches real Ruby's
+/// default behavior (doesn't consult `method_missing`/`respond_to_missing?`,
+/// which this spike doesn't model).
+pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
+    registry().lookup(recv_class, name).is_some()
+}
+
 /// The class registry is installed exactly once, from generated `main()`,
 /// before any `Thread`/`Ractor` spawns anything (Part 9) -- a `OnceLock`
 /// (not a `thread_local!`, unlike before the Send+Sync migration) gives

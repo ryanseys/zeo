@@ -49,6 +49,9 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
     if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
         let v = emit_expr(cx, *value);
+        // Box an `Object`-typed RHS when `name`'s OWN storage disagrees (Tier
+        // 0 fix #2) -- see `emit_expr::box_for_local_storage`'s docs.
+        let v = super::expr::box_for_local_storage(cx, name, *value, v);
         // `emit_local_write` picks the right shape (plain reassignment,
         // shadowing `let`, or a `RefCell` store) for whichever storage
         // class `name` has -- see `codegen::hoisting::LocalStorage`'s docs.
@@ -90,6 +93,12 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             // call itself as unreachable -- skip the wrap for exactly these
             // three diverging shapes rather than accept the warning.
             if wrap_ok && !is_diverging_tail(&cx.compiler.hir[stmt]) {
+                // Box a bare tail `New`/`SelfRef`/`Shadowed`-local-read into
+                // `RubyValue::Object` before wrapping -- this whole body's
+                // enclosing function returns `Result<RubyValue, Signal>`,
+                // but those three shapes emit an unboxed `Arc<Concrete>`
+                // (see `codegen::expr::box_for_tail_return`'s docs).
+                let e = super::expr::box_for_tail_return(cx, stmt, e);
                 quote! { Ok(#e) }
             } else {
                 e

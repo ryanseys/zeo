@@ -2947,3 +2947,392 @@ fn unrescued_raise_propagates_through_multiple_method_call_frames() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "caught from deep: deep failure\n");
 }
+
+// Correctness-fix regression tests below -- each reproduces one bug a
+// codebase-wide gap audit found (see docs/PORTING_ANALYSIS.md).
+
+#[test]
+fn super_with_explicit_args_binds_the_parents_own_param_names() {
+    // Before this fix, `emit_super_inline` spliced the parent's body without
+    // ever binding its parameter names -- this only "worked" when parent/
+    // child happened to share names. Here they deliberately DON'T (`name`
+    // vs. `name, breed`), so this only passes once `super(name)` actually
+    // binds Animal's own `name` parameter fresh.
+    let result = run_ruby(
+        r#"
+        class Animal
+          def initialize(name)
+            @name = name
+          end
+          def name
+            @name
+          end
+        end
+
+        class Dog < Animal
+          def initialize(name, breed)
+            super(name)
+            @breed = breed
+          end
+          def breed
+            @breed
+          end
+        end
+
+        d = Dog.new("Rex", "Lab")
+        puts d.name
+        puts d.breed
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Rex\nLab\n");
+}
+
+#[test]
+fn bare_super_forwards_the_current_methods_own_params() {
+    // Bare `super` (no parens) forwards the CURRENT method's own already-
+    // bound parameter values positionally -- also unbound before this fix
+    // (same root cause as the explicit-args case above).
+    let result = run_ruby(
+        r#"
+        class Animal
+          def initialize(name)
+            @name = name
+          end
+          def name
+            @name
+          end
+        end
+
+        class Dog < Animal
+          def initialize(name)
+            super
+            @greeting = "woof from #{name}"
+          end
+          def greeting
+            @greeting
+          end
+        end
+
+        d = Dog.new("Rex")
+        puts d.name
+        puts d.greeting
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Rex\nwoof from Rex\n");
+}
+
+#[test]
+fn object_typed_local_widened_to_poly_across_branches_boxes_correctly() {
+    // `x`'s two branches assign DIFFERENT classes, so
+    // `analyze::locals::merge_locals` widens its whole-scope type to `Poly`
+    // (a plain `RubyValue` slot) -- but each branch's own `HirNode::New`
+    // codegen still produces a bare, unboxed `Arc<Concrete>` unless the
+    // write site itself boxes it. Before this fix, this was
+    // a genuine `rustc` type-mismatch in the GENERATED Rust, not just a
+    // wrong answer.
+    let result = run_ruby(
+        r#"
+        class Foo
+          def initialize
+            @tag = "foo"
+          end
+          def tag
+            @tag
+          end
+        end
+
+        class Bar
+          def initialize
+            @tag = "bar"
+          end
+          def tag
+            @tag
+          end
+        end
+
+        class Picker
+          def pick(flag)
+            if flag
+              x = Foo.new
+            else
+              x = Bar.new
+            end
+            x
+          end
+        end
+
+        p = Picker.new
+        puts p.pick(true).tag
+        puts p.pick(false).tag
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "foo\nbar\n");
+}
+
+#[test]
+fn array_index_assign_out_of_range_raises_index_error_not_a_panic() {
+    // Before this fix, a negative out-of-range `Array#[]=` index was an
+    // unconditional Rust `panic!` -- a real `IndexError` (catchable) is
+    // constructed instead now, and the array is otherwise
+    // unaffected (an in-range negative-from-end or growing-positive index
+    // still works exactly as before).
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3]
+        begin
+          a[-10] = :x
+        rescue IndexError => e
+          puts "caught"
+        end
+        a[5] = :y
+        puts a.length
+        puts a[5]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught\n6\ny\n");
+}
+
+#[test]
+#[should_panic(expected = "dynamic dispatch of `send` with keyword arguments isn't supported yet")]
+fn send_with_a_non_literal_target_and_keyword_args_is_a_clean_error() {
+    // Before this fix, `send`'s truly-dynamic fallback (reached because the
+    // target name isn't a literal symbol here) silently DROPPED `kwargs`
+    // and dispatched without them -- now it raises the same clear codegen
+    // error a directly-called method with keyword params already gives via
+    // `emit_dynamic_trampoline`, instead of silently
+    // diverging from that behavior.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          def bar(x:)
+            x
+          end
+        end
+        name = :bar
+        Foo.new.send(name, x: 1)
+        "#,
+    );
+}
+
+#[test]
+#[should_panic(expected = "dynamic dispatch of `foo` with keyword arguments isn't supported yet")]
+fn ordinary_call_on_a_poly_receiver_with_keyword_args_is_a_clean_error() {
+    // Same bug, the OTHER silent-drop site: an ordinary (non-`send`) call on
+    // a `Poly`-typed receiver (a rescued exception binding is never narrowed
+    // to a concrete class -- see `codegen::exceptions`'s docs) with keyword
+    // arguments used to dispatch silently without them.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        begin
+          raise "boom"
+        rescue => e
+          e.foo(bar: 1)
+        end
+        "#,
+    );
+}
+
+#[test]
+fn optional_param_default_expr_referencing_an_ivar_is_scanned() {
+    // Before this fix, `analyze::collect_ivars`/`locals::track_extra`/
+    // `hoisting`'s per-method scans never walked into a `Params::optional`/
+    // `keywords` default expression -- an ivar referenced ONLY there (never
+    // in the method's own body) would be missing from the generated
+    // struct's fields entirely, a "no such field" codegen error. Also
+    // exercises the keyword-optional case (`y:`) in the same call.
+    let result = run_ruby(
+        r#"
+        class Greeter
+          def initialize
+            @default_name = "World"
+          end
+          def greet(x = @default_name, y: @default_name)
+            "hi #{x} and #{y}"
+          end
+        end
+
+        puts Greeter.new.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi World and World\n");
+}
+
+#[test]
+fn implicit_self_call_dispatches_to_a_sibling_method() {
+    let result = run_ruby(
+        r#"
+        class Greeter
+          def greet
+            hello
+          end
+
+          def hello
+            "hi from hello"
+          end
+        end
+
+        puts Greeter.new.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi from hello\n");
+}
+
+#[test]
+fn implicit_self_call_with_args_can_mutate_an_ivar() {
+    let result = run_ruby(
+        r#"
+        class Counter
+          def initialize
+            @count = 0
+          end
+
+          def bump(n)
+            add(n)
+            @count
+          end
+
+          def add(n)
+            @count = @count + n
+          end
+        end
+
+        c = Counter.new
+        puts c.bump(5)
+        puts c.bump(2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n7\n");
+}
+
+#[test]
+fn explicit_self_dot_method_and_bare_self_as_a_value() {
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(v)
+            @v = v
+          end
+
+          def value
+            @v
+          end
+
+          def describe
+            self.value
+          end
+
+          def identity
+            self
+          end
+        end
+
+        b = Box.new(42)
+        puts b.describe
+        puts b.identity.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n42\n");
+}
+
+#[test]
+fn respond_to_true_and_false_on_a_statically_known_receiver() {
+    let result = run_ruby(
+        r#"
+        class Dog
+          def bark
+            "woof"
+          end
+        end
+
+        d = Dog.new
+        puts d.respond_to?(:bark)
+        puts d.respond_to?(:meow)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\n");
+}
+
+#[test]
+fn respond_to_on_a_poly_typed_rescue_binding() {
+    // `e` (a rescue clause's exception binding) is never narrowed to a
+    // concrete class (see `codegen::exceptions`'s docs) -- exercises
+    // `respond_to?`'s runtime `class_id()` fallback path, not the
+    // statically-known-class one the test above exercises.
+    let result = run_ruby(
+        r#"
+        begin
+          raise "boom"
+        rescue => e
+          puts e.respond_to?(:message)
+          puts e.respond_to?(:not_a_thing)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\n");
+}
+
+#[test]
+fn an_escaping_block_capturing_self_via_explicit_self_dot_method() {
+    // Before `HirNode::SelfRef` existed, an escaping block could only ever
+    // capture `self` implicitly via a bare `@ivar` reference --
+    // `self.method_name` is another way a block needs the same capture (see
+    // `codegen::captures`'s new `SelfRef` arm). Also exercises implicit-self
+    // dispatch (`each_num(a, b)`, no receiver) from inside the SAME method
+    // that constructs the escaping block.
+    let result = run_ruby(
+        r#"
+        class Collector
+          def initialize(tag)
+            @tag = tag
+          end
+
+          def tag
+            @tag
+          end
+
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+
+          def run(a, b)
+            each_num(a, b) { |n| puts "tag=#{self.tag}:#{n}" }
+          end
+        end
+
+        Collector.new("x").run(1, 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "tag=x:1\ntag=x:2\n");
+}
+
+#[test]
+#[should_panic(expected = "`self` isn't supported inside a class method")]
+fn self_inside_a_class_method_is_a_clean_compile_error() {
+    // No first-class `Class`/`Module` runtime value exists (a documented
+    // scope-cut -- see the plan's Part 6), so `self` inside `def self.x`
+    // has nothing to represent it. Must be a clean codegen-time panic, not
+    // a `rustc` failure on the generated program referencing a Rust `self`
+    // binding that doesn't exist in a class method's signature.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Foo
+          def self.bar
+            self
+          end
+        end
+        Foo.bar
+        "#,
+    );
+}

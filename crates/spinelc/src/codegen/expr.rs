@@ -34,6 +34,17 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return *ty;
         }
     }
+    // `self`'s static type is the CURRENT method's own receiver class --
+    // `types::infer_type_with_locals` has no notion of "current class" at
+    // all (it's a context-free per-node classifier), so this is handled here
+    // instead, the same way `for_var_override` is. Lets `self.foo(...)`/
+    // implicit-self dispatch resolve Path 1 exactly like any other
+    // statically-known-class receiver.
+    if matches!(cx.compiler.hir[id], HirNode::SelfRef) {
+        if let Some(cid) = cx.current_class {
+            return TyKind::Object(cid);
+        }
+    }
     infer_type_with_locals(cx.compiler, &cx.local_types, id)
 }
 
@@ -81,6 +92,10 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::IvarRead(_) => Some("instance-variable"),
         HirNode::ClassVarRead(_) => Some("class variable"),
         HirNode::ClassRef(_) => Some("constant"),
+        // Real Ruby: `defined?(self)` is always `"self"`, everywhere --
+        // confirmed via `ruby -e 'puts defined?(self)'` -- unlike every other
+        // classification here, this needs no further check at all.
+        HirNode::SelfRef => Some("self"),
         HirNode::New { .. }
         | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
@@ -204,6 +219,27 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::NilLit => quote! { spinel_rt::RubyValue::Nil },
         HirNode::BoolLit(b) => quote! { spinel_rt::RubyValue::Bool(#b) },
+        HirNode::SelfRef => {
+            // Only meaningful inside an ordinary instance method body (see
+            // `hir::HirNode::SelfRef`'s docs) -- a class method/module
+            // function has no `self: Arc<Self>` receiver at all in its Rust
+            // signature, so referencing `self_ident` there would emit a
+            // reference to a Rust binding that doesn't exist. Rejected here,
+            // at codegen time, rather than letting `rustc` fail on the
+            // GENERATED program with a confusing "cannot find value `self`".
+            if cx.current_class.is_none() {
+                panic!("`self` isn't supported inside a class method/module function body yet (spike scope, no first-class Class/Module value exists)");
+            }
+            // Unboxed `Arc<Concrete>` -- exactly what an Object-typed local
+            // read (`LocalStorage::Shadowed`) already returns, and exactly
+            // what a call receiver needs for Path 1 dispatch (`emit_call`'s
+            // `recv_expr = emit_expr(cx, recv_id)`). `cx.self_ident` is the
+            // capture-alias identifier while emitting a self-capturing
+            // escaping block's own body (see `Ctx::self_ident`'s docs), the
+            // literal `self` receiver parameter otherwise.
+            let slf = &cx.self_ident;
+            quote! { #slf.clone() }
+        }
         HirNode::LocalRead(name) => super::hoisting::emit_local_read(cx, name),
         HirNode::And(l, r) => {
             // Ruby's `&&`/`and` returns the operand itself, not a bool --
@@ -251,6 +287,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // back via whichever storage class `name` has (see
             // `hoisting::LocalStorage`'s docs).
             let v = emit_expr(cx, *value);
+            let v = box_for_local_storage(cx, name, *value, v);
             let write = super::hoisting::emit_local_write(cx, name, quote! { __v });
             let read = super::hoisting::emit_local_read(cx, name);
             quote! { { let __v = #v; #write #read } }
@@ -289,7 +326,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             panic!("a ClassRef should only be reached via the Call that invokes it")
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
-        HirNode::SuperCall { .. } => super::call::emit_super_inline(cx),
+        HirNode::SuperCall { args } => super::call::emit_super_inline(cx, args),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
         HirNode::For { var, iterable, body } => emit_for(cx, var, *iterable, body),
@@ -487,6 +524,60 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
     let class_ident = safe_ident(class_name);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
+}
+
+/// Boxes `value` into `RubyValue::Object` if `id`'s own static type is
+/// `TyKind::Object` -- which, by this codebase's construction, ALWAYS means
+/// `value` is currently a bare, unboxed `Arc<Concrete>`. The only three
+/// shapes `infer` ever classifies `TyKind::Object` are `HirNode::New`, a
+/// `Shadowed`-storage local read, and a bare `HirNode::SelfRef` -- and all
+/// three deliberately emit unboxed (so a cheap Path 1 call RECEIVER can
+/// reuse the value directly, e.g. `emit_call`'s `recv_expr =
+/// emit_expr(cx, recv_id)`; see `LocalStorage::Shadowed`'s docs). Anything
+/// else (an ordinary method call, an ivar read, etc.) always infers `Poly`
+/// and is ALREADY a real, boxed `RubyValue` -- boxing it again would be a
+/// real type error, not just redundant, which is why this can't be a blind
+/// "wrap everything" step; it's keyed on the type, which this codebase's
+/// own invariant makes an exact proxy for "needs boxing".
+fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
+    match infer(cx, id) {
+        TyKind::Object(cid) => {
+            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#value)) }
+        }
+        _ => value,
+    }
+}
+
+/// Boxes `value` (already-emitted codegen for a `LocalWrite`'s RHS) into
+/// `RubyValue::Object` when needed to match the TARGET LOCAL's own storage.
+/// `codegen::hoisting::local_storage` decides a local's storage from its
+/// WHOLE-SCOPE merged type -- if some OTHER branch assigns this same local a
+/// different class (`if cond; x = Foo.new; else; x = Bar.new; end`),
+/// `analyze::locals::merge_locals`'s disagreement-widens-to-`Poly` rule
+/// makes the local's storage `Hoisted` (a plain `RubyValue` slot) even
+/// though THIS particular write's own RHS still emits a bare, unboxed
+/// `Arc<Concrete>` (see `box_if_object_typed`'s docs) -- a real `rustc` type
+/// mismatch in the generated program, confirmed by direct reproduction with
+/// a plain `if`/`else`, no `rescue` needed. A `Shadowed` local (this write's
+/// RHS is the ONLY class ever assigned to it) needs no boxing at all -- it
+/// keeps its natural unboxed `Arc<Concrete>` type, exactly as
+/// `LocalStorage::Shadowed`'s docs describe.
+pub(super) fn box_for_local_storage(cx: &Ctx, name: &str, value_id: NodeId, value: TokenStream) -> TokenStream {
+    if super::hoisting::local_storage(cx, name) == super::hoisting::LocalStorage::Shadowed {
+        return value;
+    }
+    box_if_object_typed(cx, value_id, value)
+}
+
+/// Boxes a method/closure body's TAIL expression the same way, for the exact
+/// same reason: the enclosing function always returns `Result<RubyValue,
+/// Signal>`, but a bare tail `HirNode::New`/`SelfRef`/`Shadowed`-local-read
+/// (e.g. `def identity; self; end`, or `def make; Foo.new; end`) emits an
+/// unboxed `Arc<Concrete>` that can't go directly into `Ok(...)`. See
+/// `codegen::stmt::emit_statement`'s only call site.
+pub(super) fn box_for_tail_return(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
+    box_if_object_typed(cx, id, value)
 }
 
 /// The already-resolved OWNER class id for a `@@name` reference (see

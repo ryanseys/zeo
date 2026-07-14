@@ -48,15 +48,18 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 
 /// Ruby's `Array#[]=`: an index past the current end pads with `nil` up to
 /// it (`a = []; a[3] = :x` gives `[nil, nil, nil, :x]`); a negative index
-/// that's still out of range panics -- a real `IndexError` needs exceptions
-/// (Phase 9), so this is a loud failure, not a silent one, in the meantime.
-pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> RubyValue {
+/// that's still out of range raises a real `IndexError` -- `None` here,
+/// which `codegen::call`'s `[]=` dispatch (the only caller) turns into a
+/// proper `Signal::Raise(IndexError.new(...))` (exceptions
+/// exist now, so this is no longer the "loud panic in the meantime" it was
+/// before Phase 9 landed). The actual message/exception CONSTRUCTION happens
+/// in codegen, not here, since only codegen has the class registry needed to
+/// build an `IndexError` value.
+pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {
     let mut arr = arr.lock();
     let i = if index < 0 {
         let from_end = arr.len() as i64 + index;
-        usize::try_from(from_end).unwrap_or_else(|_| {
-            panic!("index {index} too small for array of length {}", arr.len())
-        })
+        usize::try_from(from_end).ok()?
     } else {
         index as usize
     };
@@ -64,7 +67,7 @@ pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> RubyValue {
         arr.resize(i + 1, RubyValue::Nil);
     }
     arr[i] = value.clone();
-    value
+    Some(value)
 }
 
 pub fn array_len(arr: &RArray) -> i64 {

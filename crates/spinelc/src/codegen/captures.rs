@@ -228,6 +228,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
+        | HirNode::SelfRef
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
@@ -338,6 +339,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
+        | HirNode::SelfRef
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
@@ -398,6 +400,14 @@ fn walk(
                 caps.self_captured = true;
             }
             walk(compiler, *value, in_escaping, param_exclusions, caps);
+        }
+        // A bare/explicit `self` reference is another way an escaping block
+        // needs the receiver captured -- same flag `IvarRead`/`IvarWrite`
+        // already set above (they're really just `self`-via-ivar-sugar).
+        HirNode::SelfRef => {
+            if in_escaping {
+                caps.self_captured = true;
+            }
         }
         // A class variable's storage is keyed by a compile-time-resolved
         // OWNER CLASS id (see `analyze::mro::resolve_cvars`), never by

@@ -52,13 +52,12 @@ pub enum ArrayElem {
 /// loses nothing, and it maps 1:1 onto what `parse/mod.rs::lower_params`
 /// reads off `ruby_prism::ParametersNode`).
 ///
-/// Known, narrow, pre-existing-style gap: `analyze::collect_ivars`/
-/// `analyze::locals::track_node`/`codegen::hoisting::collect_locals` don't
-/// scan INTO a default-value expression here for `@ivar`/local references --
-/// only a body statement or a call-site argument does. A default that reads
-/// an ivar/local nowhere else referenced (e.g. `def f(x: @only_here)`) can
-/// hit a "no such field" codegen error rather than working; nothing in the
-/// spike's examples exercises this, so it's documented rather than fixed.
+/// `default_ids()` below is the one place `analyze::collect_ivars`/
+/// `analyze::locals::track_extra`/`codegen::hoisting`'s per-method scans walk
+/// INTO a default-value expression for `@ivar`/local references -- otherwise
+/// a default that reads an ivar/local nowhere else referenced (e.g. `def
+/// f(x: @only_here)`) could hit a "no such field" codegen error instead of
+/// working.
 #[derive(Clone, Default)]
 pub struct Params {
     pub required: Vec<String>,
@@ -91,6 +90,24 @@ pub enum KeywordParam {
     Required(String),
     /// Same lazy-default-evaluation contract as `Params::optional`.
     Optional(String, NodeId),
+}
+
+impl Params {
+    /// Every default-value expression this `Params` declares (positional
+    /// `optional` + keyword-optional) -- the one place all three per-method
+    /// scans (ivar collection, local-type tracking, hoisting's local
+    /// collection) need to additionally walk into, alongside the method's
+    /// own body, since a default can reference `@ivar`s/locals exactly like
+    /// an ordinary statement can (see this struct's docs).
+    pub fn default_ids(&self) -> Vec<NodeId> {
+        let mut ids: Vec<NodeId> = self.optional.iter().map(|(_, d)| *d).collect();
+        for kw in &self.keywords {
+            if let KeywordParam::Optional(_, d) = kw {
+                ids.push(*d);
+            }
+        }
+        ids
+    }
 }
 
 /// One `key => value` / `key: value` pair inside a `{ }` literal.
@@ -661,6 +678,17 @@ pub enum HirNode {
     /// distinct `ruby-prism` node. Same "not inside a nested block" scope-cut
     /// as `Yield`.
     BlockGiven,
+    /// A bare `self` used as a VALUE (an explicit receiver, `self.foo`, or
+    /// standalone, `puts self`) -- a real `ruby-prism` `SelfNode`, recognized
+    /// generically (not a call-shape desugar). Only meaningful inside an
+    /// ordinary instance method body (`cx.current_class` is `Some`, see
+    /// `codegen::expr::infer`'s special case); a class method/module
+    /// function has no backing instance to be (this spike has no first-class
+    /// `Class`/`Module` runtime value -- see the plan's Part 6 scope-cut), so
+    /// `codegen::expr::emit_expr`'s `SelfRef` arm rejects that case with a
+    /// clear error instead of emitting a reference to a Rust `self` that
+    /// doesn't exist in that generated function's signature.
+    SelfRef,
     /// `raise`/`fail` (exact synonyms) -- a zero/one/two-arg call-shape
     /// recognized at lowering time, same as `BlockGiven` above (real Ruby:
     /// both are ordinary `Kernel` method calls, not syntax). Codegen

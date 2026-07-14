@@ -384,6 +384,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
         | HirNode::BoolLit(_)
+        | HirNode::SelfRef
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
@@ -404,8 +405,26 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
 /// enclosing scope's locals -- re-hoisting there would just reintroduce the
 /// same shadowing bug this exists to fix, one level down).
 pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
+    emit_hoisted_body_with_extra_roots(cx, body, &[], wrap_ok)
+}
+
+/// Same as `emit_hoisted_body`, but additionally scans `extra_roots` (a
+/// method's own `Params::default_ids()` -- see `hir::Params`'s docs) for
+/// names to declare in the hoisting prelude. A default's own
+/// codegen still happens separately, inside `codegen::params::emit_prologue`
+/// -- `extra_roots` here only feeds the NAME-COLLECTION pass, so a local a
+/// default assigns (e.g. `def f(x: (y = 1; y))`) gets hoisted correctly too.
+pub fn emit_hoisted_body_with_extra_roots(
+    cx: &Ctx,
+    body: &[NodeId],
+    extra_roots: &[NodeId],
+    wrap_ok: bool,
+) -> TokenStream {
     let mut names = Vec::new();
     for &n in body {
+        collect_locals(cx.compiler, n, &mut names);
+    }
+    for &n in extra_roots {
         collect_locals(cx.compiler, n, &mut names);
     }
     let decls = names.iter().filter_map(|n| {

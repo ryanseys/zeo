@@ -134,9 +134,14 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     let mut ivars = Vec::new();
     for &anc_id in &ancestors {
         for &sid in &compiler.class(anc_id).own_methods.clone() {
-            let body = compiler.scope(sid).body.clone();
+            let scope = compiler.scope(sid);
+            let body = scope.body.clone();
+            let default_ids = scope.params.default_ids();
             for &n in &body {
                 super::collect_ivars(&compiler.hir, n, &mut ivars);
+            }
+            for id in default_ids {
+                super::collect_ivars(&compiler.hir, id, &mut ivars);
             }
         }
     }
@@ -444,6 +449,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         HirNode::Retry => {}
         HirNode::Redo
         | HirNode::BlockGiven
+        | HirNode::SelfRef
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
         | HirNode::SymbolLit(_)

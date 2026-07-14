@@ -388,6 +388,9 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     for &n in &scope.body {
         crate::analyze::collect_ivars(&compiler.hir, n, &mut ivars);
     }
+    for id in scope.params.default_ids() {
+        crate::analyze::collect_ivars(&compiler.hir, id, &mut ivars);
+    }
     if !ivars.is_empty() {
         panic!(
             "class method `{}` references `@{}` -- `self`/instance-variable access inside a class method (`def self.x`, or a module method pulled in via `extend`) isn't supported yet (spike scope, no class-level ivar/`class << self` state store exists)",
@@ -433,7 +436,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_ident: format_ident!("self"),
         in_real_proc: false,
     };
-    let body = hoisting::emit_hoisted_body(&cx, &scope.body, true);
+    let body = hoisting::emit_hoisted_body_with_extra_roots(&cx, &scope.body, &scope.params.default_ids(), true);
     // See the matching comment on `emit_class`'s own method-wrapping below:
     // a `begin`/`rescue` construct (or an escaping block, e.g. `arr.each { ...
     // return ... }` -- this function only rejects a class method that itself
@@ -496,7 +499,12 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             in_real_proc: false,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params);
-        let body = hoisting::emit_hoisted_body(&method_cx, &scope.body, true);
+        let body = hoisting::emit_hoisted_body_with_extra_roots(
+            &method_cx,
+            &scope.body,
+            &scope.params.default_ids(),
+            true,
+        );
         // The `Signal::Return` catch is needed ONLY when this method's OWN
         // body lexically contains an escaping block OR a `begin`/`rescue`
         // construct -- confirmed the hard way NOT to be "wrap every method

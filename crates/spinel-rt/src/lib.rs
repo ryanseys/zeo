@@ -16,8 +16,8 @@ mod value;
 pub use arith::*;
 pub use collections::*;
 pub use dispatch::{
-    downcast_robj, install_class_registry, is_a, send, ClassId, ClassRegistry, MethodFn, Object,
-    RObj, RubyObject,
+    downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
+    MethodFn, Object, RObj, RubyObject,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use handling::{current_exception, pop_handling, push_handling};

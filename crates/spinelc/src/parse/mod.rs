@@ -376,6 +376,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if node.as_false_node().is_some() {
         return Ok(hir.push(HirNode::BoolLit(false)));
     }
+    if node.as_self_node().is_some() {
+        return Ok(hir.push(HirNode::SelfRef));
+    }
 
     // `(expr)` -- prism wraps a parenthesized expression in its own node
     // (not transparently folded away), distinct from the identically-shaped
