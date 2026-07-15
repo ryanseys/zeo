@@ -33,9 +33,10 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         return Err("expected a Program root".to_string());
     };
     let statements = statements.clone();
+    let prelude_len = compiler.hir.prelude_len;
 
     let mut main_statements = Vec::new();
-    for stmt in statements {
+    for (idx, stmt) in statements.into_iter().enumerate() {
         if let HirNode::ClassDef {
             name,
             superclass,
@@ -47,7 +48,16 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             let superclass = superclass.clone();
             let body = body.clone();
             let is_module = *is_module;
+            let before = compiler.classes.len();
             register_class(&mut compiler, name, superclass, is_module, &body)?;
+            // Exception-prelude classes are BOOTSTRAP: the "defined before
+            // any user program runs" set every `Ruby::Box` sees (see
+            // `Compiler::resolve_class`'s fallback and `Hir::prelude_len`).
+            if idx < prelude_len {
+                for c in &mut compiler.classes[before..] {
+                    c.is_bootstrap = true;
+                }
+            }
         } else {
             main_statements.push(stmt);
         }
@@ -79,12 +89,12 @@ fn register_class(
     // A built-in placeholder (`Integer`/`Array`/etc. -- see
     // `compiler::BUILTIN_CLASSES`) has no generated Rust struct to reopen or
     // add methods onto; a real user class sharing its name would silently
-    // shadow it in `class_by_name` (which always resolves the FIRST match)
+    // shadow it in `resolve_class` (which always resolves the FIRST match)
     // without actually being reachable through any of the ordinary
     // is_a?/dispatch machinery. Reject cleanly here rather than let this
     // surface later as a confusing generated-`rustc`-compile failure or
     // silently-wrong dispatch.
-    if let Some(existing) = compiler.class_by_name(&name) {
+    if let Some(existing) = compiler.resolve_class(&name, &[], 0) {
         if compiler.class(existing).is_builtin {
             return Err(format!(
                 "reopening/redefining the built-in class `{name}` isn't supported yet (spike scope)"
@@ -97,7 +107,7 @@ fn register_class(
         Some(match &superclass {
             None => OBJECT_CLASS,
             Some(s) => {
-                let cid = compiler.class_by_name(s).ok_or_else(|| {
+                let cid = compiler.resolve_class(s, &[], 0).ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).is_builtin {
@@ -180,7 +190,7 @@ fn register_class(
 
 fn resolve_module_target(compiler: &Compiler, name: &str) -> Result<ClassId, String> {
     compiler
-        .class_by_name(name)
+        .resolve_class(name, &[], 0)
         .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
 }
 

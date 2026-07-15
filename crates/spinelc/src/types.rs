@@ -99,7 +99,7 @@ pub fn infer_type_with_locals(
         HirNode::ArrayLit(_) => TyKind::Array,
         HirNode::HashLit(_) => TyKind::Hash,
         HirNode::RangeLit { .. } => TyKind::Range,
-        HirNode::New { class_name, .. } => match compiler.class_by_name(class_name) {
+        HirNode::New { class_name, .. } => match compiler.resolve_class(class_name, &[], 0) {
             Some(cid) => TyKind::Object(cid),
             None => TyKind::Poly,
         },

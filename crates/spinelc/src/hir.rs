@@ -39,6 +39,14 @@ pub struct Hir {
     /// crate when the feature actually fired", the reference project's own
     /// `.o`-linking rule. See `add_native_dep`.
     pub native_deps: Vec<String>,
+    /// How many of the root `Program`'s leading statements came from the
+    /// built-in exception prelude (`parse::EXCEPTION_PRELUDE`), set by
+    /// `parse_and_lower_with` (Phase 15.1). `analyze` marks the classes
+    /// those statements register as `is_bootstrap` -- the AOT analogue of
+    /// CRuby's "defined before any user program runs" set, which stays
+    /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
+    /// bootstrap fallback).
+    pub prelude_len: usize,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.

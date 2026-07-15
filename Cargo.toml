@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/spinel-abi",
     "crates/spinelc",
     "crates/spinel-rt",
     "crates/spinel-fiber",

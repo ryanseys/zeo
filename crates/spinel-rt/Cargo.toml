@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+spinel-abi = { path = "../spinel-abi" }
 parking_lot = "0.12"
 indexmap = "2"
 regex = "1"

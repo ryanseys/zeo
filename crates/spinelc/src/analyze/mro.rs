@@ -212,7 +212,7 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
 /// silently allocates fresh, WRONG per-class storage there, an outright C
 /// compile failure in spinel's case; see the plan). Processed in
 /// declaration order (`compiler.classes`' index order IS file order, since
-/// `class_by_name` resolution already requires a target to be defined
+/// `resolve_class` resolution already requires a target to be defined
 /// earlier), so every ancestor's own `cvar_owners` is already fully
 /// resolved by the time a later class searches it.
 fn resolve_cvars(compiler: &mut Compiler) -> Result<(), String> {
@@ -359,7 +359,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec
     let hir = &compiler.hir;
     match &hir[id] {
         HirNode::ClassRef(name) => {
-            if compiler.class_by_name(name).is_none() && !out.contains(name) {
+            if compiler.resolve_class(name, &[], 0).is_none() && !out.contains(name) {
                 out.push(name.clone());
             }
         }

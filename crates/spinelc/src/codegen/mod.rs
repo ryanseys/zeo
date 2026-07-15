@@ -41,6 +41,13 @@ use syn::Lifetime;
 #[derive(Clone)]
 struct Ctx<'a> {
     compiler: &'a Compiler,
+    /// Which `Ruby::Box` the code currently being emitted is DEFINED in --
+    /// the AOT analogue of CRuby's `cme->def->box` stamp (a method resolves
+    /// names against its DEFINING box, never its caller's). `0` (the main
+    /// box) everywhere until Phase 18 lights it up: a method body carries
+    /// its `defining_class`'s box, a `BoxScope` body overrides it. Consumed
+    /// by `Ctx::resolve_class` (and, from Phase 18, gvar/dispatch emission).
+    box_id: u32,
     /// The RECEIVER's concrete class -- i.e. which `impl` block (generated
     /// Rust struct) this method body is being emitted into. Stays fixed
     /// across nested `super` splices (unlike `defining_class` below), since
@@ -133,6 +140,33 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
+    /// Resolves a class/module NAME as seen from the code currently being
+    /// emitted -- the one funnel every codegen name-resolution site goes
+    /// through (Phase 15.1), keyed by the lexical cref chain (derived from
+    /// `defining_class`'s `lexical_parent` links, so there's no separate
+    /// context field to thread) and this context's box. See
+    /// `Compiler::resolve_class` for the resolution order.
+    fn resolve_class(&self, name: &str) -> Option<ClassId> {
+        self.compiler
+            .resolve_class(name, &self.cref_chain(), self.box_id)
+    }
+
+    /// The lexical scope chain enclosing the current code, outermost first
+    /// (`resolve_class` walks it back-to-front, i.e. innermost-outward):
+    /// `defining_class` itself plus its `lexical_parent` links. Empty at the
+    /// top level; at most one entry until Phase 15.3 lands nested
+    /// class/module definitions.
+    fn cref_chain(&self) -> Vec<ClassId> {
+        let mut chain = Vec::new();
+        let mut cur = self.defining_class;
+        while let Some(c) = cur {
+            chain.push(c);
+            cur = self.compiler.class(c).lexical_parent;
+        }
+        chain.reverse();
+        chain
+    }
+
     /// A child context for a native loop's own body -- see `loop_labels`'s
     /// docs.
     fn in_loop(&self, redo: Lifetime, outer: Lifetime) -> Ctx<'a> {
@@ -255,7 +289,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             let register = if class.is_module {
                 quote! {}
             } else {
-                let ident = safe_ident(&class.name);
+                let ident = ident::class_ident(compiler, ClassId(idx as u32));
                 quote! { #ident::__register(&mut __registry); }
             };
             let class_body = emit_class_body_stmts(compiler, ClassId(idx as u32));
@@ -289,6 +323,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     );
     let cx = Ctx {
         compiler,
+        box_id: 0,
         current_class: None,
         defining_class: None,
         current_method: None,
@@ -392,6 +427,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let no_locals = HashMap::new();
     let cx = Ctx {
         compiler,
+        box_id: compiler.class(cid).box_id,
         current_class: Some(cid),
         defining_class: Some(cid),
         current_method: None,
@@ -424,7 +460,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
 /// is real future work, not attempted this phase; see the plan's Part 6).
 fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
-    let name_ident = safe_ident(&ci.name);
+    let name_ident = ident::class_ident(compiler, cid);
     let fns = ci.class_methods.iter().map(|&sid| emit_class_method_fn(compiler, sid));
     if ci.is_module {
         // Ruby module names are conventionally PascalCase (matching a Rust
@@ -489,6 +525,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
     let cx = Ctx {
         compiler,
+        box_id: compiler.class(scope.defining_class).box_id,
         // No concrete receiver exists for a class method (no `self:
         // Arc<Self>`) -- but `defining_class` (which class/module this body
         // was LEXICALLY written in) still needs to be real, for `@@cvar`
@@ -534,12 +571,12 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
 
 fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
-    let name_ident = safe_ident(&ci.name);
+    let name_ident = ident::class_ident(compiler, cid);
     let parent = ci.parent.unwrap_or(OBJECT_CLASS);
     let parent_ty = if parent == OBJECT_CLASS {
         quote! { spinel_rt::Object }
     } else {
-        let parent_ident = safe_ident(&compiler.class(parent).name);
+        let parent_ident = ident::class_ident(compiler, parent);
         quote! { #parent_ident }
     };
     let id = cid.0;
@@ -555,6 +592,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
         let method_cx = Ctx {
             compiler,
+            box_id: compiler.class(scope.defining_class).box_id,
             current_class: Some(cid),
             defining_class: Some(scope.defining_class),
             current_method: Some(scope.name.clone()),

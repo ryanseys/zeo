@@ -19,7 +19,6 @@
 use quote::{format_ident, quote};
 
 use super::expr::{emit_expr, infer};
-use super::ident::safe_ident;
 use super::loops::fresh_label;
 use super::Ctx;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
@@ -209,8 +208,7 @@ fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &Toke
         return check;
     }
     let cid = cx
-        .compiler
-        .class_by_name(name)
+        .resolve_class(name)
         .unwrap_or_else(|| panic!("unknown class/module `{name}` used in a pattern"));
     match scrutinee_ty {
         // The receiver's class is already statically known -- constant-folds
@@ -222,7 +220,7 @@ fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &Toke
             quote! { #result }
         }
         TyKind::Poly => {
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             quote! {
                 spinel_rt::is_a((#scrutinee).as_object_unchecked().class_id(), #class_ident::CLASS_ID)
             }

@@ -49,7 +49,6 @@
 
 use quote::quote;
 
-use super::ident::safe_ident;
 use super::loops::fresh_label;
 use super::Ctx;
 use crate::compiler::Compiler;
@@ -224,10 +223,9 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
     };
     let checks = targets.iter().map(|name| {
         let cid = cx
-            .compiler
-            .class_by_name(name)
+            .resolve_class(name)
             .unwrap_or_else(|| panic!("unknown class `{name}` in a `rescue` clause (must be defined earlier in the file)"));
-        let ident = safe_ident(&cx.compiler.class(cid).name);
+        let ident = super::ident::class_ident(cx.compiler, cid);
         quote! { spinel_rt::is_a(__exc.as_object_unchecked().class_id(), #ident::CLASS_ID) }
     });
     quote! { #(#checks)||* }

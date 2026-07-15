@@ -129,6 +129,7 @@ pub fn parse_and_lower_with(
     let mut hir = Hir::default();
     let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
         .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
+    hir.prelude_len = statements.len();
     statements.extend(loader::lower_main_file(
         &mut hir,
         source,

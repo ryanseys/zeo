@@ -417,7 +417,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // 6 scope-cut -- a clean rejection) or, when `name` isn't actually a
         // registered class, an ordinary lexically-scoped constant READ.
         HirNode::ClassRef(name) => {
-            if cx.compiler.class_by_name(name).is_some() {
+            if cx.resolve_class(name).is_some() {
                 panic!("a bare class/module name used as a value isn't supported yet (spike scope, no first-class Class/Module value exists) -- did you mean to call a class method, e.g. `{name}.foo`?");
             }
             emit_const_read(cx, None, name)
@@ -656,7 +656,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
             emit_boxed_new(cx, "RuntimeError", vec![msg_expr])
         }
         TyKind::Object(cid) => {
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             let expr = emit_expr(cx, node);
             quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#expr)) }
         }
@@ -676,7 +676,10 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
 /// this boxes it the same way `emit_safe_call` already does for its own
 /// uniform-representation needs.
 pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
-    let class_ident = safe_ident(class_name);
+    let cid = cx
+        .resolve_class(class_name)
+        .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+    let class_ident = super::ident::class_ident(cx.compiler, cid);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
 }
@@ -697,7 +700,7 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
 pub(super) fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> TokenStream {
     match infer(cx, id) {
         TyKind::Object(cid) => {
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#value)) }
         }
         _ => value,
@@ -816,8 +819,7 @@ pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
     let owner_class = match scope {
         Some(class_name) => cx
-            .compiler
-            .class_by_name(class_name)
+            .resolve_class(class_name)
             .unwrap_or_else(|| panic!("unknown class/module `{class_name}`")),
         None => cx.defining_class.unwrap_or(crate::compiler::OBJECT_CLASS),
     };

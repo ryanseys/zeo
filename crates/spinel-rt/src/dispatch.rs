@@ -11,9 +11,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 /// Identifies a Ruby class at runtime. Mirrors spinel's struct-embedded
-/// `cls_id` field (`emit_class_struct`, codegen.c:2496).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ClassId(pub u32);
+/// `cls_id` field (`emit_class_struct`, codegen.c:2496). Since Phase 15.1
+/// this is the SHARED `spinel-abi` type -- the compiler bakes the same
+/// numbering into generated code from the same source of truth, so there is
+/// nothing left to keep in sync by hand.
+pub use spinel_abi::ClassId;
 
 /// Implemented (via `ruby_class!`) by every generated Ruby class, and by the
 /// built-in `Object` root below. `Send + Sync` supertrait bounds (Part 9):
@@ -92,29 +94,17 @@ impl Object {
 /// typed receiver work uniformly through the one general `is_a`/`send`
 /// mechanism, and the prerequisite for eventually `include`ing a plain-Ruby
 /// `Enumerable`/`Comparable` into these types via ordinary materialization.
-pub const INTEGER_CLASS: ClassId = ClassId(1);
-pub const FLOAT_CLASS: ClassId = ClassId(2);
-pub const STRING_CLASS: ClassId = ClassId(3);
-pub const SYMBOL_CLASS: ClassId = ClassId(4);
-pub const ARRAY_CLASS: ClassId = ClassId(5);
-pub const HASH_CLASS: ClassId = ClassId(6);
-pub const RANGE_CLASS: ClassId = ClassId(7);
-pub const NIL_CLASS: ClassId = ClassId(8);
-pub const TRUE_CLASS: ClassId = ClassId(9);
-pub const FALSE_CLASS: ClassId = ClassId(10);
-pub const PROC_CLASS: ClassId = ClassId(11);
-pub const REGEXP_CLASS: ClassId = ClassId(12);
-pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
-pub const FIBER_CLASS: ClassId = ClassId(14);
-pub const THREAD_CLASS: ClassId = ClassId(15);
-pub const MUTEX_CLASS: ClassId = ClassId(16);
-pub const QUEUE_CLASS: ClassId = ClassId(17);
-pub const RACTOR_CLASS: ClassId = ClassId(18);
-/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- mirrored by
-/// `spinelc::compiler::ENUMERABLE_CLASS`; consulted by `send`'s Enumerable
-/// fallback (an Object whose registered ancestors contain this id
-/// dispatches unresolved Enumerable-method names to `crate::enumerable`).
-pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
+pub use spinel_abi::{
+    ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS,
+    REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
+};
+/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
+/// `send`'s Enumerable fallback (an Object whose registered ancestors
+/// contain this id dispatches unresolved Enumerable-method names to
+/// `crate::enumerable`). Like every id above, re-exported from the shared
+/// `spinel-abi` numbering.
+pub use spinel_abi::ENUMERABLE_CLASS;
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
@@ -273,6 +263,39 @@ pub fn install_no_method_error_factory(factory: fn(String) -> RubyValue) {
         .unwrap_or_else(|_| panic!("NoMethodError factory installed twice"));
 }
 
+/// The declarative table of dynamically-dispatchable BUILTIN methods
+/// (Phase 15.1): one block per receiver kind, one row per
+/// `(method name(s), arity) => body`, expanded into `send_value`'s match.
+/// Before this macro the same surface was a hand-grown nest of match arms;
+/// as a table it is ONE place to add a builtin method (Phase 17.1's breadth
+/// lands as rows here), one place the user-override layer (Phase 16.3)
+/// hooks in front of, and one place Phase 18's per-box overlay lookup keys.
+///
+/// Row contract: a row's body must `return` to ANSWER the call. Falling off
+/// the end of a body (e.g. an argument-TYPE guard that didn't match, like
+/// `Array#[]` with a non-Int index) falls through past the whole table to
+/// the numeric-operator/Enumerable/NoMethodError stages after it, exactly
+/// like an unlisted name does -- so partial rows degrade to Ruby's own
+/// NoMethodError behavior, never to silent wrongness.
+macro_rules! builtin_methods {
+    (
+        ($recv:ident, $name:ident, $args:ident);
+        $( $variant:ident ( $($payload:pat),+ ) { $( $row:pat => $body:block )* } )*
+    ) => {
+        match $recv {
+            $(
+                RubyValue::$variant($($payload),+) => {
+                    match ($name, $args.len()) {
+                        $( $row => $body )*
+                        _ => {}
+                    }
+                }
+            )*
+            _ => {}
+        }
+    };
+}
+
 /// The general dispatcher -- reached only on Path 2 (see module docs).
 /// Since every reachable method (own, inherited, or mixed-in) is already
 /// MATERIALIZED directly onto its receiver's own class at spinelc compile
@@ -317,8 +340,9 @@ pub fn send_value(
         ("!=", 1) => return Ok(RubyValue::Bool(!recv.rb_eq(&args[0]))),
         _ => {}
     }
-    match recv {
-        RubyValue::Array(arr) => match (n, args.len()) {
+    builtin_methods! {
+        (recv, n, args);
+        Array(arr) {
             ("[]", 1) => {
                 if let RubyValue::Int(i) = &args[0] {
                     return Ok(crate::array_get(arr, *i));
@@ -336,15 +360,15 @@ pub fn send_value(
                     };
                 }
             }
-            ("<<" | "push", 1) => return Ok(crate::array_push(arr, args[0].clone())),
-            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::array_len(arr))),
+            ("<<" | "push", 1) => { return Ok(crate::array_push(arr, args[0].clone())); }
+            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::array_len(arr))); }
             ("include?" | "member?", 1) => {
-                return Ok(RubyValue::Bool(crate::array_include(arr, &args[0])))
+                return Ok(RubyValue::Bool(crate::array_include(arr, &args[0])));
             }
-            ("empty?", 0) => return Ok(RubyValue::Bool(crate::array_len(arr) == 0)),
-            ("first", 0) => return Ok(crate::array_get(arr, 0)),
-            ("last", 0) => return Ok(crate::array_get(arr, -1)),
-            ("to_a", 0) => return Ok(recv.clone()),
+            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::array_len(arr) == 0)); }
+            ("first", 0) => { return Ok(crate::array_get(arr, 0)); }
+            ("last", 0) => { return Ok(crate::array_get(arr, -1)); }
+            ("to_a", 0) => { return Ok(recv.clone()); }
             ("each", 0) => {
                 let Some(RubyValue::Proc(p)) = &block else {
                     panic!("Array#each without a block isn't supported (no Enumerator; spike scope)");
@@ -358,19 +382,18 @@ pub fn send_value(
                 }
                 return Ok(recv.clone());
             }
-            _ => {}
-        },
-        RubyValue::Hash(h) => match (n, args.len()) {
-            ("[]", 1) => return Ok(crate::hash_get(h, &args[0])),
-            ("[]=", 2) => return Ok(crate::hash_set(h, args[0].clone(), args[1].clone())),
-            ("delete", 1) => return Ok(crate::hash_delete(h, &args[0])),
+        }
+        Hash(h) {
+            ("[]", 1) => { return Ok(crate::hash_get(h, &args[0])); }
+            ("[]=", 2) => { return Ok(crate::hash_set(h, args[0].clone(), args[1].clone())); }
+            ("delete", 1) => { return Ok(crate::hash_delete(h, &args[0])); }
             ("key?" | "has_key?" | "include?" | "member?", 1) => {
-                return Ok(RubyValue::Bool(crate::hash_has_key(h, &args[0])))
+                return Ok(RubyValue::Bool(crate::hash_has_key(h, &args[0])));
             }
-            ("keys", 0) => return Ok(crate::hash_keys(h)),
-            ("values", 0) => return Ok(crate::hash_values(h)),
-            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::hash_len(h))),
-            ("empty?", 0) => return Ok(RubyValue::Bool(crate::hash_len(h) == 0)),
+            ("keys", 0) => { return Ok(crate::hash_keys(h)); }
+            ("values", 0) => { return Ok(crate::hash_values(h)); }
+            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::hash_len(h))); }
+            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::hash_len(h) == 0)); }
             ("each", 0) => {
                 let Some(RubyValue::Proc(p)) = &block else {
                     panic!("Hash#each without a block isn't supported (no Enumerator; spike scope)");
@@ -382,11 +405,10 @@ pub fn send_value(
                 }
                 return Ok(recv.clone());
             }
-            _ => {}
-        },
-        RubyValue::Str(s) => match (n, args.len()) {
-            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::string_len(s))),
-            ("empty?", 0) => return Ok(RubyValue::Bool(crate::string_len(s) == 0)),
+        }
+        Str(s) {
+            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::string_len(s))); }
+            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::string_len(s) == 0)); }
             ("include?", 1) => {
                 if let RubyValue::Str(needle) = &args[0] {
                     let found = s.lock().contains(&*needle.lock());
@@ -399,10 +421,32 @@ pub fn send_value(
                     return Ok(RubyValue::Str(crate::string_new(joined)));
                 }
             }
-            ("to_s", 0) => return Ok(recv.clone()),
-            _ => {}
-        },
-        _ => {}
+            ("to_s", 0) => { return Ok(recv.clone()); }
+        }
+        // The one Range iteration primitive Enumerable needs -- Array/Hash/
+        // Range are the builtin `include Enumerable` set (real Ruby's own),
+        // and an unresolved name on any of them tries the Rust Enumerable
+        // implementation below before NoMethodError.
+        Range(start, end, exclusive) {
+            ("each", 0) => {
+                let Some(RubyValue::Proc(p)) = &block else {
+                    panic!("Range#each without a block isn't supported (no Enumerator; spike scope)");
+                };
+                let (Some(s), Some(e)) = (start.as_deref(), end.as_deref()) else {
+                    panic!("can't iterate from a beginless/endless Range (spike scope)");
+                };
+                let (RubyValue::Int(s), RubyValue::Int(e)) = (s, e) else {
+                    panic!("can't iterate a non-Integer Range (spike scope)");
+                };
+                let last = if *exclusive { *e - 1 } else { *e };
+                let mut i = *s;
+                while i <= last {
+                    p(&[RubyValue::Int(i)])?;
+                    i += 1;
+                }
+                return Ok(recv.clone());
+            }
+        }
     }
     // Numeric receivers: the binary operators, so `5.send(:+, 2)` and --
     // the motivating case -- `reduce(:+)`'s per-element
@@ -475,28 +519,7 @@ pub fn send_value(
     // Ruby's own), hardcoded rather than registry-consulted so this works
     // registry-less too (this crate's own unit tests): an unresolved name
     // on one of these tries the Rust Enumerable implementation before the
-    // NoMethodError below. `Range#each` itself lives here (the one Range
-    // iteration primitive Enumerable needs).
-    if let RubyValue::Range(start, end, exclusive) = recv {
-        if n == "each" {
-            let Some(RubyValue::Proc(p)) = &block else {
-                panic!("Range#each without a block isn't supported (no Enumerator; spike scope)");
-            };
-            let (Some(s), Some(e)) = (start.as_deref(), end.as_deref()) else {
-                panic!("can't iterate from a beginless/endless Range (spike scope)");
-            };
-            let (RubyValue::Int(s), RubyValue::Int(e)) = (s, e) else {
-                panic!("can't iterate a non-Integer Range (spike scope)");
-            };
-            let last = if *exclusive { *e - 1 } else { *e };
-            let mut i = *s;
-            while i <= last {
-                p(&[RubyValue::Int(i)])?;
-                i += 1;
-            }
-            return Ok(recv.clone());
-        }
-    }
+    // NoMethodError below.
     if matches!(
         recv,
         RubyValue::Array(_) | RubyValue::Hash(_) | RubyValue::Range(..)

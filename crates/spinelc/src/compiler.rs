@@ -9,92 +9,45 @@ use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ClassId(pub u32);
+/// The SHARED compiler/runtime class numbering (Phase 15.1): `ClassId` and
+/// every reserved builtin id are re-exported from `spinel-abi`, the
+/// zero-dependency leaf crate both `spinelc` and `spinel-rt` consume -- the
+/// two numbering schemes this file and `spinel_rt::dispatch` used to
+/// maintain in parallel (synced by a `debug_assert`) are now literally one
+/// definition. `Compiler::new` seeds the class arena from
+/// `spinel_abi::BUILTINS` (id + Ruby-visible name + module-ness), which is
+/// what makes `5.is_a?(Integer)`-style checks work uniformly through the
+/// same `classes`/`ancestors` system as user classes.
+pub use spinel_abi::{
+    ClassId, ARRAY_CLASS, ENUMERABLE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    MATCH_DATA_CLASS, MUTEX_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
+    RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ScopeId(pub u32);
 
-/// `ClassId(0)`, always present, no ivars, no methods, no superclass -- the
-/// root every user class ultimately chains up to. Mirrors spinel reserving
-/// class index 0 as the implicit root.
-pub const OBJECT_CLASS: ClassId = ClassId(0);
-
-/// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
-/// models as a `RubyValue` variant rather than a generated `ruby_class!`
-/// struct -- numerically mirrored by `spinel_rt::dispatch`'s own constants
-/// of the same name (see that module's docs; same "two `ClassId` types, on
-/// purpose" convention as `OBJECT_CLASS`/`spinel_rt::Object::CLASS_ID`).
-/// Registering these in the SAME `classes`/`ancestors` system every
-/// user-defined class already goes through is what makes
-/// `5.is_a?(Integer)`-style checks against a built-in-typed receiver work
-/// uniformly, and is the prerequisite for eventually `include`ing a
-/// plain-Ruby `Enumerable`/`Comparable` into these types via ordinary
-/// materialization (see the plan's Part 10, Tier 1 #11).
-pub const INTEGER_CLASS: ClassId = ClassId(1);
-pub const FLOAT_CLASS: ClassId = ClassId(2);
-pub const STRING_CLASS: ClassId = ClassId(3);
-pub const SYMBOL_CLASS: ClassId = ClassId(4);
-pub const ARRAY_CLASS: ClassId = ClassId(5);
-pub const HASH_CLASS: ClassId = ClassId(6);
-pub const RANGE_CLASS: ClassId = ClassId(7);
-pub const NIL_CLASS: ClassId = ClassId(8);
-pub const TRUE_CLASS: ClassId = ClassId(9);
-pub const FALSE_CLASS: ClassId = ClassId(10);
-pub const PROC_CLASS: ClassId = ClassId(11);
-/// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
-/// `hir::HirNode::RegexpLit`'s docs.
-pub const REGEXP_CLASS: ClassId = ClassId(12);
-/// The result of a successful `Regexp#match`/`String#match` (Phase 12.7).
-pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
-/// A `Fiber` (Phase 13.3) -- see `spinel_rt::fiber`'s module docs.
-pub const FIBER_CLASS: ClassId = ClassId(14);
-/// `Thread`/`Mutex`/`Queue` (Phase 13.5) -- see `spinel_rt::thread`'s docs.
-pub const THREAD_CLASS: ClassId = ClassId(15);
-pub const MUTEX_CLASS: ClassId = ClassId(16);
-pub const QUEUE_CLASS: ClassId = ClassId(17);
-/// A `Ractor` (Phase 13.8) -- see `spinel_rt::ractor`'s docs.
-pub const RACTOR_CLASS: ClassId = ClassId(18);
-/// `Enumerable` -- a builtin MODULE (Phase 14.4 rev.2: implemented in RUST
-/// in `spinel_rt::enumerable`, per the resolved decision that
-/// Enumerable/Enumerator are core-language infrastructure, not package
-/// content). `include Enumerable` on a user class linearizes this id into
-/// its `ancestors` exactly like a user module (nothing materializes -- the
-/// builtin has no `own_methods`; dispatch reaches the Rust implementation
-/// through `send`/`send_value`'s Enumerable fallback instead), and
-/// `Array`/`Hash`/`Range` carry it in their `includes` from construction,
-/// matching real Ruby's own `include Enumerable` on those classes.
-pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
-
-/// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
-/// registration order -- the SINGLE source of truth `Compiler::new` seeds
-/// `classes` from (each pushed via `add_class`, so its index lines up with
-/// the constant above by construction; a `debug_assert_eq!` there catches
-/// any future drift between this list's order and the constants).
-const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
-    (INTEGER_CLASS, "Integer"),
-    (FLOAT_CLASS, "Float"),
-    (STRING_CLASS, "String"),
-    (SYMBOL_CLASS, "Symbol"),
-    (ARRAY_CLASS, "Array"),
-    (HASH_CLASS, "Hash"),
-    (RANGE_CLASS, "Range"),
-    (NIL_CLASS, "NilClass"),
-    (TRUE_CLASS, "TrueClass"),
-    (FALSE_CLASS, "FalseClass"),
-    (PROC_CLASS, "Proc"),
-    (REGEXP_CLASS, "Regexp"),
-    (MATCH_DATA_CLASS, "MatchData"),
-    (FIBER_CLASS, "Fiber"),
-    (THREAD_CLASS, "Thread"),
-    (MUTEX_CLASS, "Mutex"),
-    (QUEUE_CLASS, "Queue"),
-    (RACTOR_CLASS, "Ractor"),
-    (ENUMERABLE_CLASS, "Enumerable"),
-];
-
 pub struct ClassInfo {
     pub name: String,
+    /// Which `Ruby::Box` this class/module is DEFINED in -- `0` is the main
+    /// box (where the user's own top-level program runs; builtins and the
+    /// exception prelude also live at box 0, distinguished by
+    /// `is_builtin`/`is_bootstrap`). Always `0` until Phase 18 populates it
+    /// for box-required/box-eval'd definitions; carried from day one (Phase
+    /// 15.1) so every consumer is already box-shaped -- see
+    /// `Compiler::resolve_class`.
+    pub box_id: u32,
+    /// The class/module this one is LEXICALLY nested inside (`class Item`
+    /// written within `class Store`'s body -> `Some(Store)`), or `None` for
+    /// a top-level definition. Always `None` until Phase 15.3 lands nested
+    /// definitions; part of `resolve_class`'s key from day one.
+    pub lexical_parent: Option<ClassId>,
+    /// `true` for classes from the built-in exception prelude
+    /// (`parse::EXCEPTION_PRELUDE`) -- together with `is_builtin`, the
+    /// "defined before any user program runs" set that stays visible inside
+    /// EVERY box (CRuby's dup-from-master rule; see the plan's Part 14).
+    /// Marked by `analyze` via `Hir::prelude_len`.
+    pub is_bootstrap: bool,
     /// `None` for `Object` (the implicit root) and for every MODULE (a
     /// module has no superclass at all, not even implicitly `Object` --
     /// real Ruby's `Module#ancestors` on a standalone module is just
@@ -246,6 +199,9 @@ impl Compiler {
             hir,
             classes: vec![ClassInfo {
                 name: "Object".to_string(),
+                box_id: 0,
+                lexical_parent: None,
+                is_bootstrap: false,
                 parent: None,
                 prepends: Vec::new(),
                 includes: Vec::new(),
@@ -266,15 +222,14 @@ impl Compiler {
             }],
             scopes: Vec::new(),
         };
-        for &(expected_id, name) in BUILTIN_CLASSES {
-            // `Enumerable` is the one builtin MODULE (no superclass, never
-            // instantiated); everything else is a class under `Object`.
-            let is_module = expected_id == ENUMERABLE_CLASS;
-            let parent = if is_module { None } else { Some(OBJECT_CLASS) };
-            let id = compiler.add_class(name.to_string(), parent, is_module);
+        for b in spinel_abi::BUILTINS {
+            // A builtin MODULE (`Enumerable`) has no superclass and is never
+            // instantiated; every builtin CLASS sits under `Object`.
+            let parent = if b.is_module { None } else { Some(OBJECT_CLASS) };
+            let id = compiler.add_class(b.name.to_string(), parent, b.is_module);
             debug_assert_eq!(
-                id, expected_id,
-                "BUILTIN_CLASSES order must match its own reserved ClassId constants"
+                id, b.id,
+                "spinel_abi::BUILTINS must stay contiguous from ClassId(1)"
             );
             compiler.classes[id.0 as usize].is_builtin = true;
         }
@@ -289,10 +244,55 @@ impl Compiler {
         compiler
     }
 
-    pub fn class_by_name(&self, name: &str) -> Option<ClassId> {
+    /// THE name-resolution primitive (Phase 15.1) -- every "which class does
+    /// this name mean HERE" question goes through this one function, keyed
+    /// by the full resolution context real Ruby uses: the lexical cref chain
+    /// (innermost scope last; empty until Phase 15.3 lands nested
+    /// definitions), and the box the referencing code is defined in (always
+    /// `0` until Phase 18). Resolution order mirrors CRuby: the lexical
+    /// chain innermost-outward, then the box's own top level, then the
+    /// BOOTSTRAP set (builtins + the exception prelude -- the
+    /// "defined before any user program runs" classes every box sees; a
+    /// box's own definition of the same name shadows it, exactly like
+    /// CRuby's per-box constant overlay). First-registered wins within one
+    /// scope, same as the old flat `class_by_name` (reopening semantics --
+    /// Phase 15.2 -- attach to that first registration rather than adding
+    /// duplicates).
+    pub fn resolve_class(&self, name: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
+        for &scope in cref.iter().rev() {
+            if let Some(cid) = self.class_in_scope(Some(scope), name, box_id) {
+                return Some(cid);
+            }
+        }
+        if let Some(cid) = self.class_in_scope(None, name, box_id) {
+            return Some(cid);
+        }
+        if box_id != 0 {
+            return self
+                .classes
+                .iter()
+                .position(|c| {
+                    c.name == name
+                        && c.box_id == 0
+                        && c.lexical_parent.is_none()
+                        && (c.is_builtin || c.is_bootstrap)
+                })
+                .map(|i| ClassId(i as u32));
+        }
+        None
+    }
+
+    /// First class/module named `name` defined directly inside
+    /// `lexical_parent` (or at the top level for `None`) in `box_id`.
+    fn class_in_scope(
+        &self,
+        lexical_parent: Option<ClassId>,
+        name: &str,
+        box_id: u32,
+    ) -> Option<ClassId> {
         self.classes
             .iter()
-            .position(|c| c.name == name)
+            .position(|c| c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent)
             .map(|i| ClassId(i as u32))
     }
 
@@ -303,6 +303,9 @@ impl Compiler {
     pub fn add_class(&mut self, name: String, parent: Option<ClassId>, is_module: bool) -> ClassId {
         self.classes.push(ClassInfo {
             name,
+            box_id: 0,
+            lexical_parent: None,
+            is_bootstrap: false,
             parent,
             prepends: Vec::new(),
             includes: Vec::new(),

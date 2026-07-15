@@ -1,0 +1,105 @@
+//! The compiler/runtime ABI, single-sourced (Phase 15.1).
+//!
+//! `spinelc` (the compiler) and `spinel-rt` (the runtime every generated
+//! program links) deliberately never link each other -- but they must agree
+//! on the numeric identity of every built-in class: the compiler bakes
+//! `ClassId`s into generated code as literals, and the runtime's dispatch/
+//! `is_a?`/registry machinery interprets them. Before this crate existed,
+//! that agreement was TWO parallel hand-maintained const lists
+//! (`spinelc::compiler` and `spinel_rt::dispatch`) synced by a
+//! `debug_assert` -- a growing burden as the ABI gains class names,
+//! module-ness, and (Phase 18) per-box method-table keys. This crate is the
+//! one source of truth both sides re-export.
+//!
+//! Zero dependencies, on purpose: the earlier decision against a shared
+//! crate (Phase 14.4 rev.2) was about dragging the runtime's heavy deps
+//! (`may`/`corosensei`) into every compiler build -- a dependency-free leaf
+//! has no such cost.
+
+/// Identifies a Ruby class at runtime AND at compile time -- the compiler
+/// mirrors of this id are baked into generated code as literals, so the two
+/// sides genuinely share one numbering (this type), not two synced copies.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ClassId(pub u32);
+
+/// One reserved built-in class/module -- see [`BUILTINS`].
+pub struct BuiltinClass {
+    pub id: ClassId,
+    /// The Ruby-visible name (`"Integer"`, `"Enumerable"`, ...).
+    pub name: &'static str,
+    /// `true` for a built-in MODULE (`Enumerable`): no superclass, never
+    /// instantiated, participates in `ancestors` via `include` only.
+    pub is_module: bool,
+}
+
+/// `ClassId(0)`, always present: the root every class ultimately chains up
+/// to. Not part of [`BUILTINS`] -- both sides construct/register `Object`
+/// specially (the compiler seeds it as class index 0; the runtime's
+/// `Object` unit struct carries it as `CLASS_ID`).
+pub const OBJECT_CLASS: ClassId = ClassId(0);
+
+pub const INTEGER_CLASS: ClassId = ClassId(1);
+pub const FLOAT_CLASS: ClassId = ClassId(2);
+pub const STRING_CLASS: ClassId = ClassId(3);
+pub const SYMBOL_CLASS: ClassId = ClassId(4);
+pub const ARRAY_CLASS: ClassId = ClassId(5);
+pub const HASH_CLASS: ClassId = ClassId(6);
+pub const RANGE_CLASS: ClassId = ClassId(7);
+pub const NIL_CLASS: ClassId = ClassId(8);
+pub const TRUE_CLASS: ClassId = ClassId(9);
+pub const FALSE_CLASS: ClassId = ClassId(10);
+pub const PROC_CLASS: ClassId = ClassId(11);
+pub const REGEXP_CLASS: ClassId = ClassId(12);
+pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
+pub const FIBER_CLASS: ClassId = ClassId(14);
+pub const THREAD_CLASS: ClassId = ClassId(15);
+pub const MUTEX_CLASS: ClassId = ClassId(16);
+pub const QUEUE_CLASS: ClassId = ClassId(17);
+pub const RACTOR_CLASS: ClassId = ClassId(18);
+/// The builtin `Enumerable` MODULE -- implemented in Rust in
+/// `spinel_rt::enumerable` (the enum.c architecture); `include Enumerable`
+/// linearizes this id into a class's `ancestors` exactly like a user
+/// module.
+pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
+
+/// Every reserved built-in class/module except `Object` (see
+/// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
+/// construction (asserted by the unit test below), which is what lets the
+/// compiler seed its class arena by pushing these in order.
+pub const BUILTINS: &[BuiltinClass] = &[
+    BuiltinClass { id: INTEGER_CLASS, name: "Integer", is_module: false },
+    BuiltinClass { id: FLOAT_CLASS, name: "Float", is_module: false },
+    BuiltinClass { id: STRING_CLASS, name: "String", is_module: false },
+    BuiltinClass { id: SYMBOL_CLASS, name: "Symbol", is_module: false },
+    BuiltinClass { id: ARRAY_CLASS, name: "Array", is_module: false },
+    BuiltinClass { id: HASH_CLASS, name: "Hash", is_module: false },
+    BuiltinClass { id: RANGE_CLASS, name: "Range", is_module: false },
+    BuiltinClass { id: NIL_CLASS, name: "NilClass", is_module: false },
+    BuiltinClass { id: TRUE_CLASS, name: "TrueClass", is_module: false },
+    BuiltinClass { id: FALSE_CLASS, name: "FalseClass", is_module: false },
+    BuiltinClass { id: PROC_CLASS, name: "Proc", is_module: false },
+    BuiltinClass { id: REGEXP_CLASS, name: "Regexp", is_module: false },
+    BuiltinClass { id: MATCH_DATA_CLASS, name: "MatchData", is_module: false },
+    BuiltinClass { id: FIBER_CLASS, name: "Fiber", is_module: false },
+    BuiltinClass { id: THREAD_CLASS, name: "Thread", is_module: false },
+    BuiltinClass { id: MUTEX_CLASS, name: "Mutex", is_module: false },
+    BuiltinClass { id: QUEUE_CLASS, name: "Queue", is_module: false },
+    BuiltinClass { id: RACTOR_CLASS, name: "Ractor", is_module: false },
+    BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true },
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The contiguity both consumers rely on: the compiler pushes
+    /// `BUILTINS` in order into its class arena (so each entry's index must
+    /// equal its id), and the runtime treats these ids as stable literals
+    /// baked into generated programs.
+    #[test]
+    fn builtin_ids_are_contiguous_from_one() {
+        for (i, b) in BUILTINS.iter().enumerate() {
+            assert_eq!(b.id.0 as usize, i + 1, "{} out of order", b.name);
+        }
+    }
+}

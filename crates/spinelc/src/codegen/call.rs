@@ -553,8 +553,7 @@ pub fn emit_new_with_arg_tokens(
     arg_exprs: Vec<TokenStream>,
 ) -> TokenStream {
     let cid = cx
-        .compiler
-        .class_by_name(class_name)
+        .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
     if cx.compiler.class(cid).is_builtin {
         panic!(
@@ -562,7 +561,7 @@ pub fn emit_new_with_arg_tokens(
         );
     }
     let ci = cx.compiler.class(cid);
-    let class_ident = safe_ident(class_name);
+    let class_ident = super::ident::class_ident(cx.compiler, cid);
 
     let fields = ci.ivars.iter().map(|iv| {
         let f = safe_ident(iv);
@@ -732,6 +731,9 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId]) -> TokenStream {
     );
     let inline_cx = Ctx {
         compiler: cx.compiler,
+        // The spliced parent body resolves names against ITS OWN defining
+        // box (CRuby's def->box stamp), not the caller's.
+        box_id: cx.compiler.class(new_defining_class).box_id,
         // UNCHANGED across the splice -- `self` is still the SAME concrete
         // receiver instance throughout a chain of nested `super` calls.
         current_class: Some(receiver_class),
@@ -1394,7 +1396,7 @@ pub fn emit_call(
     }
 
     if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-        if cx.compiler.class_by_name(target_name).is_some() {
+        if cx.resolve_class(target_name).is_some() {
             if safe || block.is_some() || block_arg.is_some() {
                 panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
             }
@@ -1450,14 +1452,14 @@ fn emit_splat_call(
             // Same "only an ACTUALLY-registered class/module" guard as
             // `emit_call`'s own `ClassRef` interception -- see its docs.
             if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-                if cx.compiler.class_by_name(target_name).is_some() {
+                if cx.resolve_class(target_name).is_some() {
                     panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
                 }
             }
             let recv_expr = emit_expr(cx, recv_id);
             match infer_class(cx, recv_id) {
                 Some(cid) => {
-                    let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                    let class_ident = super::ident::class_ident(cx.compiler, cid);
                     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
                 }
                 None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr) },
@@ -1473,7 +1475,7 @@ fn emit_splat_call(
                 panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)");
             };
             let slf = &cx.self_ident;
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
         }
     };
@@ -1518,8 +1520,7 @@ fn emit_class_method_call(
     kwargs: &[HashPair],
 ) -> TokenStream {
     let target = cx
-        .compiler
-        .class_by_name(target_name)
+        .resolve_class(target_name)
         .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
     emit_class_method_call_on(cx, target, name, args, kwargs)
 }
@@ -1615,7 +1616,7 @@ fn emit_class_method_call_on(
 fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> TokenStream {
     let boxed_recv = match infer_class(cx, recv_id) {
         Some(cid) => {
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             let recv_expr = emit_expr(cx, recv_id);
             quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
         }
@@ -1733,8 +1734,7 @@ fn dispatch(
     if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
         if let HirNode::ClassRef(target_name) = &cx.compiler.hir[args[0]] {
             let target = cx
-                .compiler
-                .class_by_name(target_name)
+                .resolve_class(target_name)
                 .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
             let target_id = target.0;
             // `infer_any_class` (not `infer_class`): a statically-known
@@ -1836,7 +1836,7 @@ fn dispatch(
         if !user_defined {
             return match infer(cx, recv_id) {
                 TyKind::Object(cid) => {
-                    let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                    let class_ident = super::ident::class_ident(cx.compiler, cid);
                     if name == "freeze" {
                         // Returns self, boxed -- `freeze`'s result is
                         // Poly-typed downstream (see `types.rs`), so the
@@ -2306,7 +2306,7 @@ fn dispatch(
         // compile-time class name we don't have here).
         let recv_obj_expr = match recv_class {
             Some(cid) => {
-                let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                let class_ident = super::ident::class_ident(cx.compiler, cid);
                 quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
             }
             // Any non-Object receiver (a builtin collection, or genuinely
@@ -2570,7 +2570,7 @@ fn dispatch(
                     "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
                 );
             }
-            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
             let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
             let arg_exprs = args.iter().map(|&a| {
                 let e = emit_expr(cx, a);

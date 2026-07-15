@@ -18,11 +18,17 @@ doubles as a low-friction path for porting fixtures from spinel's own
 
 ## Layout
 
+- `crates/spinel-abi` -- the zero-dependency leaf crate holding the
+  compiler/runtime ABI both sides re-export: the `ClassId` newtype and the
+  single builtin class-numbering table (`BUILTINS`). The compiler bakes
+  these ids into generated code as literals and the runtime interprets
+  them, so they live in exactly one place.
 - `crates/spinelc` -- the compiler: `ruby-prism` parse → `Hir` lowering →
   minimal `analyze` → `codegen` (emits Rust source text).
 - `crates/spinel-rt` -- the runtime every generated program links against:
   `RubyValue`, `Symbol`, the `ruby_class!` macro, and the `ClassRegistry`/
-  `send` dynamic dispatch table.
+  `send` dynamic dispatch table (its curated builtin-method surface is the
+  declarative `builtin_methods!` table in `dispatch.rs`).
 - `crates/spinelc-base64` -- the native half of the `base64` package: plain
   Rust free functions linked (as a prebuilt rlib, like `spinel-rt`) only
   into programs that actually `require "base64"`.

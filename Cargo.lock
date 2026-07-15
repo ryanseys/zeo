@@ -568,6 +568,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "spinel-abi"
+version = "0.1.0"
+
+[[package]]
 name = "spinel-fiber"
 version = "0.1.0"
 dependencies = [
@@ -582,6 +586,7 @@ dependencies = [
  "may",
  "parking_lot",
  "regex",
+ "spinel-abi",
  "spinel-fiber",
 ]
 
@@ -593,6 +598,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "ruby-prism",
+ "spinel-abi",
  "syn",
  "toml",
 ]
