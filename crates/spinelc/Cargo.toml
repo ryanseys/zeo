@@ -10,6 +10,7 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing"] }
 prettyplease = "0.2"
+toml = "1"
 
 [lib]
 name = "spinelc"

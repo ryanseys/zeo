@@ -428,9 +428,18 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
         // non-idiomatic for a `mod` (conventionally snake_case) -- silenced
         // rather than renamed, since call sites (`ModuleName::method(...)`)
         // must match the Ruby-visible name exactly.
+        // `use super::*;`: unlike a class's `impl` block (whose function
+        // bodies resolve paths at the CRATE root, where every generated
+        // item lives), a `pub mod` is a real child module -- a module
+        // function's body referencing any sibling top-level item (another
+        // module's functions, a class's `new_handle` for `SomeClass.new`/
+        // `raise`) wouldn't resolve without re-importing the root scope.
+        // Found by Phase 14.2's cross-package test (`Greet.hi` calling
+        // `Upper.dashed`), but reproducible in one file with any
+        // module-function calling another module -- a pre-existing gap.
         quote! {
             #[allow(non_snake_case)]
-            pub mod #name_ident { #(#fns)* }
+            pub mod #name_ident { #[allow(unused_imports)] use super::*; #(#fns)* }
         }
     } else {
         quote! { impl #name_ident { #(#fns)* } }

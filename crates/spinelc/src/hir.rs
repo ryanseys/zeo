@@ -22,12 +22,51 @@ pub struct NodeId(u32);
 #[derive(Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
+    /// Provenance of every `require`/`require_relative`/`load` SPLICE
+    /// INSTANCE grafted into this arena, in splice order (Phase 14.1) --
+    /// the main file itself is NOT recorded (matching CRuby, where the main
+    /// script never enters `$LOADED_FEATURES`). Deliberately per-instance,
+    /// not per-canonical-file: `load` re-splices the same file fresh, and
+    /// Phase 14.5's `Ruby::Box` work re-executes a file once per box, so an
+    /// instance is the unit provenance must track. Nothing downstream
+    /// consumes this yet -- it exists so 14.5's `BoxId` becomes a field
+    /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
+    /// loader rework (see `parse::loader`).
+    pub loaded_files: Vec<LoadedFile>,
+}
+
+/// One splice instance -- see `Hir::loaded_files`.
+pub struct LoadedFile {
+    /// Canonicalized (symlink-resolved) path, mirroring CRuby's separate
+    /// realpath dedup layer (`load.c`'s `loaded_features_realpaths`).
+    pub canonical: std::path::PathBuf,
+    /// Index into `loaded_files` of the file whose `require`/`load`
+    /// statement pulled this one in; `None` when required directly by the
+    /// main file.
+    pub required_from: Option<usize>,
+    /// The package (Phase 14.2 `spin.toml` unit) this file belongs to:
+    /// `Some(name)` when the file was resolved out of a package's roots, or
+    /// pulled in via `require_relative`/`load` FROM a file already
+    /// belonging to that package (attribution is inherited -- a package's
+    /// internal files are part of the package). `None` for plain `-I`-root
+    /// and main-file-relative files. This is the natural box-boundary
+    /// candidate for Phase 14.5 (real `Ruby::Box` isolation is per
+    /// require-graph subtree, and a package is exactly such a subtree).
+    pub package: Option<String>,
+    /// Always 0 (the root box) until Phase 14.5 -- see `Hir::loaded_files`.
+    pub box_id: u32,
 }
 
 impl std::ops::Index<NodeId> for Hir {
     type Output = HirNode;
     fn index(&self, id: NodeId) -> &HirNode {
         &self.nodes[id.0 as usize]
+    }
+}
+
+impl std::ops::IndexMut<NodeId> for Hir {
+    fn index_mut(&mut self, id: NodeId) -> &mut HirNode {
+        &mut self.nodes[id.0 as usize]
     }
 }
 

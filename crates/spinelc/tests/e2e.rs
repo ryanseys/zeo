@@ -6790,3 +6790,583 @@ fn the_concurrency_composite_is_invariant_across_scheduler_modes() {
     assert!(no_gvl.status.success(), "stderr: {}", no_gvl.stderr);
     assert_eq!(no_gvl.stdout, expected);
 }
+
+// ---- Phase 14.1: require/require_relative/load compile-time splicing ----
+// Every positive-path expectation below was oracle-verified against real
+// `ruby` (4.0.5) first, per this project's standing convention.
+
+#[test]
+fn require_relative_splices_in_document_order_and_shares_the_global_namespace() {
+    let result = support::run_ruby_project(
+        &[
+            // Top-level `def` in ANY file (main or required) is a separate,
+            // pre-existing gap ("unexpected top-level-only node"), routed
+            // around with classes/module functions here exactly like every
+            // prior phase's tests.
+            (
+                "greeter.rb",
+                r##"
+                    GREETING = "hello"
+                    class Greeter
+                      def greet(name)
+                        "#{GREETING}, #{name}!"
+                      end
+                    end
+                    puts "greeter loaded"
+                "##,
+            ),
+            (
+                "main.rb",
+                r#"
+                    puts "before require"
+                    require_relative "greeter"
+                    puts "after require"
+                    g = Greeter.new
+                    puts g.greet("world")
+                    puts GREETING
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "before require\ngreeter loaded\nafter require\nhello, world!\nhello\n"
+    );
+}
+
+#[test]
+fn diamond_requires_execute_the_shared_file_exactly_once() {
+    let result = support::run_ruby_project(
+        &[
+            ("shared.rb", "puts \"shared executed\"\nSHARED = 7\n"),
+            (
+                "liba.rb",
+                "require_relative \"shared\"\nputs \"liba loaded\"\n",
+            ),
+            (
+                "libb.rb",
+                "require_relative \"shared\"\nputs \"libb loaded\"\n",
+            ),
+            (
+                "main.rb",
+                r#"
+                    require_relative "liba"
+                    require_relative "libb"
+                    require_relative "shared"
+                    puts SHARED
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "shared executed\nliba loaded\nlibb loaded\n7\n"
+    );
+}
+
+#[test]
+fn circular_requires_compose_in_rubys_execution_order() {
+    // CRuby registers a feature as loading BEFORE executing it, so the
+    // inner require of an in-progress file is a no-op and execution order
+    // is ca-start, all of cb, ca-end -- the dedup-before-lowering rule
+    // reproduces this exactly.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "ca.rb",
+                "puts \"ca start\"\nrequire_relative \"cb\"\nputs \"ca end\"\n",
+            ),
+            (
+                "cb.rb",
+                "puts \"cb start\"\nrequire_relative \"ca\"\nputs \"cb end\"\n",
+            ),
+            (
+                "main.rb",
+                "require_relative \"ca\"\nputs \"main done\"\n",
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ca start\ncb start\ncb end\nca end\nmain done\n"
+    );
+}
+
+#[test]
+fn plain_require_resolves_against_search_roots_including_nested_features() {
+    let result = support::run_ruby_project(
+        &[
+            (
+                "vendorlib/util.rb",
+                r#"
+                    require "util/strings"
+                    UTIL = "util root"
+                    puts "util loaded"
+                "#,
+            ),
+            (
+                "vendorlib/util/strings.rb",
+                r#"
+                    module Spacer
+                      def self.doubled(n)
+                        n * 2
+                      end
+                    end
+                    puts "util/strings loaded"
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    require "util"
+                    puts UTIL
+                    puts Spacer.doubled(21)
+                "#,
+            ),
+        ],
+        "main.rb",
+        &["vendorlib"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "util/strings loaded\nutil loaded\nutil root\n42\n"
+    );
+}
+
+#[test]
+fn a_required_files_top_level_locals_are_isolated_from_the_main_file() {
+    // Real Ruby gives every file its own top-level local scope: main's
+    // `count` and the lib's `count` (mutated through a block, exercising
+    // the rename pass inside shared-scope block bodies) never touch. The
+    // lib hands its result out through a global -- the only channel real
+    // Ruby shares.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "counterlib.rb",
+                r#"
+                    count = 100
+                    3.times do
+                      count += 1
+                    end
+                    $lib_count = count
+                    class CounterBox
+                      def initialize
+                        @n = 0
+                      end
+                      def bump
+                        @n += 1
+                      end
+                      def n
+                        @n
+                      end
+                    end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    count = 5
+                    require_relative "counterlib"
+                    puts count
+                    puts $lib_count
+                    b = CounterBox.new
+                    b.bump
+                    b.bump
+                    puts b.n
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n103\n2\n");
+}
+
+#[test]
+fn load_reexecutes_every_time_with_fresh_locals_and_never_registers_the_feature() {
+    // Three executions: two `load`s plus a `require` -- load never adds to
+    // the feature table in real Ruby, so the require still fires. `ticks`
+    // restarts at 0 each execution (fresh local scope per load), which the
+    // per-splice-instance gensym reproduces.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "tick.rb",
+                r#"
+                    ticks = 0
+                    ticks += 1
+                    $total = ($total || 0) + ticks
+                    puts "tick! total=#{$total}"
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    load "./tick.rb"
+                    load "./tick.rb"
+                    require_relative "tick"
+                    puts "end total=#{$total}"
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "tick! total=1\ntick! total=2\ntick! total=3\nend total=3\n"
+    );
+}
+
+#[test]
+fn missing_require_is_a_compile_error_with_crubys_message() {
+    let err = support::compile_project(
+        &[("main.rb", "require \"definitely_missing\"\n")],
+        "main.rb",
+        &[],
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("cannot load such file -- definitely_missing"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn missing_require_relative_reports_the_absolutized_path() {
+    let err = support::compile_project(
+        &[("main.rb", "require_relative \"nope\"\n")],
+        "main.rb",
+        &[],
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("cannot load such file -- ") && err.contains("nope.rb"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn non_literal_and_non_top_level_requires_are_clean_compile_errors() {
+    let err = support::compile_project(
+        &[("main.rb", "name = \"x\"\nrequire name\n")],
+        "main.rb",
+        &[],
+    )
+    .unwrap_err();
+    assert!(err.contains("non-literal"), "unexpected error: {err}");
+
+    // Inside a method body -- reaches lower_node's rejection.
+    let err = spinelc::compile_to_rust("def m\n  require \"x\"\nend\n").unwrap_err();
+    assert!(
+        err.contains("only supported as a top-level statement"),
+        "unexpected error: {err}"
+    );
+
+    // Inside begin/rescue -- the optional-dependency idiom is a LOUD
+    // compile error under compile-time resolution, never a silent skip.
+    let err = spinelc::compile_to_rust(
+        "begin\n  require \"optional_dep\"\nrescue LoadError\nend\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("only supported as a top-level statement"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn pathless_require_relative_cannot_infer_basepath() {
+    // `compile_to_rust` (no input path) mirrors CRuby's eval/irb context:
+    // require_relative has no requiring-file directory to resolve against.
+    let err = spinelc::compile_to_rust("require_relative \"x\"\n").unwrap_err();
+    assert!(err.contains("cannot infer basepath"), "unexpected error: {err}");
+}
+
+#[test]
+fn autoload_and_load_wrap_are_clean_rejections() {
+    let err = spinelc::compile_to_rust("autoload :Foo, \"foo\"\n").unwrap_err();
+    assert!(err.contains("autoload"), "unexpected error: {err}");
+
+    let err = support::compile_project(
+        &[
+            ("w.rb", "puts 1\n"),
+            ("main.rb", "load \"./w.rb\", true\n"),
+        ],
+        "main.rb",
+        &[],
+    )
+    .unwrap_err();
+    assert!(err.contains("wrap"), "unexpected error: {err}");
+}
+
+#[test]
+fn load_cycles_are_detected_at_compile_time() {
+    // Real Ruby would recurse forever at runtime (load has no dedup); a
+    // compile-time resolver rejects the cycle loudly instead.
+    let err = support::compile_project(
+        &[("selfload.rb", "load \"./selfload.rb\"\n"), ("main.rb", "load \"./selfload.rb\"\n")],
+        "main.rb",
+        &[],
+    )
+    .unwrap_err();
+    assert!(err.contains("cycle"), "unexpected error: {err}");
+}
+
+// ---- Phase 14.2: spin.toml packages + search-path resolution ----
+// Positive-path output oracle-verified by simulating package roots with
+// real `ruby -I <pkg>/lib` (the package layer IS just ordered roots).
+
+#[test]
+fn packages_resolve_with_nested_features_and_cross_package_requires() {
+    let result = support::run_ruby_packages(
+        &[
+            (
+                "packages/greet/spin.toml",
+                "[package]\nname = \"greet\"\n",
+            ),
+            (
+                "packages/greet/lib/greet.rb",
+                r##"
+                    require "greet/upper"
+                    require "farewell"
+                    module Greet
+                      def self.hi(name)
+                        Upper.dashed("hi, #{name}")
+                      end
+                    end
+                    puts "greet loaded"
+                "##,
+            ),
+            (
+                "packages/greet/lib/greet/upper.rb",
+                r##"
+                    module Upper
+                      def self.dashed(s)
+                        "-- #{s} --"
+                      end
+                    end
+                    puts "upper loaded"
+                "##,
+            ),
+            (
+                "packages/farewell/spin.toml",
+                "[package]\nname = \"farewell\"\n",
+            ),
+            (
+                "packages/farewell/lib/farewell.rb",
+                r#"
+                    module Farewell
+                      def self.bye
+                        "bye!"
+                      end
+                    end
+                    puts "farewell loaded"
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    require "greet"
+                    puts Greet.hi("ann")
+                    puts Farewell.bye
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "upper loaded\nfarewell loaded\ngreet loaded\n-- hi, ann --\nbye!\n"
+    );
+}
+
+#[test]
+fn a_package_can_override_require_paths_reference_style_flat_layout() {
+    let result = support::run_ruby_packages(
+        &[
+            (
+                "packages/flat/spin.toml",
+                "[package]\nname = \"flat\"\nrequire_paths = [\".\"]\n",
+            ),
+            ("packages/flat/flat.rb", "FLAT = \"flat pkg\"\n"),
+            ("main.rb", "require \"flat\"\nputs FLAT\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "flat pkg\n");
+}
+
+#[test]
+fn dash_i_roots_shadow_packages_and_earlier_package_dirs_shadow_later_ones() {
+    // CRuby's own ordering: -I beats even default gems; and one package
+    // NAME resolves to exactly one package, nearest package-dir first.
+    let result = support::run_ruby_packages(
+        &[
+            ("override/dual.rb", "puts \"from -I root\"\n"),
+            (
+                "projpkgs/thing/spin.toml",
+                "[package]\nname = \"thing\"\n",
+            ),
+            (
+                "projpkgs/thing/lib/thing.rb",
+                "puts \"thing from projpkgs\"\n",
+            ),
+            (
+                "bundledpkgs/thing/spin.toml",
+                "[package]\nname = \"thing\"\n",
+            ),
+            (
+                "bundledpkgs/thing/lib/thing.rb",
+                "puts \"thing from bundledpkgs\"\n",
+            ),
+            (
+                "bundledpkgs/dual/spin.toml",
+                "[package]\nname = \"dual\"\n",
+            ),
+            (
+                "bundledpkgs/dual/lib/dual.rb",
+                "puts \"dual from package\"\n",
+            ),
+            (
+                "main.rb",
+                "require \"dual\"\nrequire \"thing\"\n",
+            ),
+        ],
+        "main.rb",
+        &["override"],
+        &["projpkgs", "bundledpkgs"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from -I root\nthing from projpkgs\n");
+}
+
+#[test]
+fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
+    // Mirrors RubyGems' own `Gem::LoadError "found in multiple gems"` --
+    // stricter than silent $LOAD_PATH-order shadowing.
+    let err = support::compile_packages(
+        &[
+            ("packages/alpha/spin.toml", "[package]\nname = \"alpha\"\n"),
+            ("packages/alpha/lib/common.rb", "puts 1\n"),
+            ("packages/beta/spin.toml", "[package]\nname = \"beta\"\n"),
+            ("packages/beta/lib/common.rb", "puts 2\n"),
+            ("main.rb", "require \"common\"\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("found in multiple packages") && err.contains("alpha") && err.contains("beta"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn bad_manifests_are_loud_configuration_errors() {
+    // Name/directory mismatch.
+    let err = support::compile_packages(
+        &[
+            ("packages/aaa/spin.toml", "[package]\nname = \"bbb\"\n"),
+            ("packages/aaa/lib/aaa.rb", "puts 1\n"),
+            ("main.rb", "puts :ok\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    )
+    .unwrap_err();
+    assert!(err.contains("doesn't match its directory name"), "unexpected error: {err}");
+
+    // Missing [package] name.
+    let err = support::compile_packages(
+        &[
+            ("packages/aaa/spin.toml", "[package]\n"),
+            ("main.rb", "puts :ok\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    )
+    .unwrap_err();
+    assert!(err.contains("needs a string `name`"), "unexpected error: {err}");
+
+    // Default require_paths (["lib"]) pointing at a missing lib/.
+    let err = support::compile_packages(
+        &[
+            ("packages/aaa/spin.toml", "[package]\nname = \"aaa\"\n"),
+            ("packages/aaa/aaa.rb", "puts 1\n"),
+            ("main.rb", "puts :ok\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    )
+    .unwrap_err();
+    assert!(err.contains("doesn't exist under"), "unexpected error: {err}");
+}
+
+#[test]
+fn a_directory_without_a_manifest_is_not_a_package() {
+    // No spin.toml -> ignored entirely; the feature is simply not found.
+    let err = support::compile_packages(
+        &[
+            ("packages/plain/lib/plain.rb", "puts 1\n"),
+            ("main.rb", "require \"plain\"\n"),
+        ],
+        "main.rb",
+        &[],
+        &["packages"],
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("cannot load such file -- plain"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn a_module_function_can_call_another_modules_function() {
+    // Pre-existing gap found by 14.2's cross-package test: module-function
+    // bodies live inside a generated `pub mod` (a real child module), so a
+    // reference to a sibling top-level module didn't resolve. One file, no
+    // packages needed.
+    let result = run_ruby(
+        r#"
+            module A
+              def self.f
+                41
+              end
+            end
+            module B
+              def self.g
+                A.f + 1
+              end
+            end
+            puts B.g
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}

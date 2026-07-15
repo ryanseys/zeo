@@ -7,6 +7,9 @@
 //! else is a clean `Err` (mirroring spinel's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
+mod loader;
+mod rename;
+
 use crate::hir::{
     ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
     PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
@@ -104,10 +107,35 @@ end
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
+    parse_and_lower_with(source, None, &[], &[])
+}
+
+/// `parse_and_lower` plus the file context Phase 14.1's compile-time
+/// `require` resolution needs: `input_path` (the requiring-file directory
+/// for the main file's own `require_relative` calls -- `None` means any
+/// `require_relative` fails with CRuby's "cannot infer basepath") and the
+/// ordered `-I` search roots for plain `require`. The main file's
+/// statements go through `loader::lower_main_file` (which recognizes the
+/// require/load call shapes at top-level statement position and splices
+/// resolved files into this same arena); the exception prelude and `eval`
+/// bodies keep going through `parse_and_lower_into`, where those shapes are
+/// rejected by `lower_node` instead.
+pub fn parse_and_lower_with(
+    source: &str,
+    input_path: Option<&std::path::Path>,
+    load_roots: &[std::path::PathBuf],
+    package_dirs: &[std::path::PathBuf],
+) -> PResult<(Hir, NodeId)> {
     let mut hir = Hir::default();
     let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
         .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
-    statements.extend(parse_and_lower_into(&mut hir, source)?);
+    statements.extend(loader::lower_main_file(
+        &mut hir,
+        source,
+        input_path,
+        load_roots,
+        package_dirs,
+    )?);
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root))
 }
@@ -1264,6 +1292,37 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // as a plain `Call` would compile cleanly and only fail at RUNTIME
         // with a confusing `NoMethodError`, strictly worse than a clear
         // compile-time rejection.
+        // `require`/`require_relative`/`load` reaching THIS function means
+        // the statement was NOT in direct top-level statement position (the
+        // one place `parse::loader`'s file-level loop recognizes and
+        // resolves them at compile time) -- a method body, a `begin` block,
+        // a conditional, an `eval` body, a class body. Rejected
+        // unconditionally, same reasoning as `eval` below: there is no
+        // runtime loader, so falling through as a plain `Call` would
+        // compile cleanly and only fail at RUNTIME with a confusing
+        // `NoMethodError`. Notably this makes the `begin; require "x";
+        // rescue LoadError; end` optional-dependency idiom a LOUD compile
+        // error -- a documented divergence (a compile-time resolver has no
+        // runtime LoadError to rescue).
+        if call.receiver().is_none()
+            && matches!(name.as_str(), "require" | "require_relative" | "load")
+        {
+            return Err(format!(
+                "`{name}` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
+            ));
+        }
+        // `autoload` registers a constant-triggered LAZY require -- the
+        // trigger point (first constant ACCESS, from anywhere, at runtime)
+        // has no faithful compile-time equivalent (eager splicing changes
+        // top-level side-effect ordering; `defined?` doesn't trigger it) --
+        // a clean rejection, not an approximation.
+        if name == "autoload" && call.receiver().is_none() {
+            return Err(
+                "`autoload` isn't supported (spike scope) -- its lazy, first-constant-access trigger has no compile-time equivalent; use an explicit `require`"
+                    .to_string(),
+            );
+        }
+
         if name == "eval" && call.receiver().is_none() {
             let arg_list: Vec<_> = call
                 .arguments()

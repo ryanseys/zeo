@@ -17,6 +17,103 @@ pub fn run_ruby(source: &str) -> RunResult {
     run_ruby_configured(source, &[], &[])
 }
 
+/// Multi-file harness for Phase 14.1's compile-time `require` resolution:
+/// writes `files` (relative path -> source) into a fresh per-test temp
+/// project directory, compiles `entry` (a key in `files`) with the project
+/// dir itself as the requiring-file base and `roots` (relative to the
+/// project dir) as `-I` search roots, then builds and runs it like
+/// `run_ruby`. The temp tree is removed afterwards.
+#[allow(dead_code)] // each test binary compiles its own copy of this module
+pub fn run_ruby_project(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> RunResult {
+    run_ruby_packages(files, entry, roots, &[])
+}
+
+/// `run_ruby_project` plus `spin.toml` package directories (Phase 14.2),
+/// also relative to the temp project dir.
+#[allow(dead_code)]
+pub fn run_ruby_packages(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+    package_dirs: &[&str],
+) -> RunResult {
+    let result = compile_packages(files, entry, roots, package_dirs);
+    let (rust_source, dir) = match result {
+        Ok(v) => v,
+        Err(e) => panic!("compile_to_rust_with failed: {e}"),
+    };
+
+    let bin = std::env::temp_dir().join(format!(
+        "spinelc-test-bin-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    spinelc::build::build_binary(&rust_source, &bin).unwrap_or_else(|e| {
+        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
+    });
+    let out = std::process::Command::new(&bin)
+        .output()
+        .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
+    let _ = std::fs::remove_file(&bin);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    RunResult {
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        status: out.status,
+    }
+}
+
+/// The compile-only half of `run_ruby_project`, exposed separately so
+/// negative-path tests can assert on the compile error without a build.
+/// Returns the generated Rust plus the temp project dir (caller cleans up
+/// on the success path; the error path cleans up here).
+#[allow(dead_code)]
+pub fn compile_project(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+) -> Result<(String, std::path::PathBuf), String> {
+    compile_packages(files, entry, roots, &[])
+}
+
+/// `compile_project` plus package directories -- see `run_ruby_packages`.
+#[allow(dead_code)]
+pub fn compile_packages(
+    files: &[(&str, &str)],
+    entry: &str,
+    roots: &[&str],
+    package_dirs: &[&str],
+) -> Result<(String, std::path::PathBuf), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "spinelc-test-proj-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (rel, source) in files {
+        let path = dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("creating test project dirs");
+        }
+        std::fs::write(&path, source).expect("writing test project file");
+    }
+    let entry_path = dir.join(entry);
+    let entry_source = std::fs::read_to_string(&entry_path).expect("entry must be in `files`");
+    let opts = spinelc::CompileOptions {
+        input_path: Some(entry_path),
+        load_roots: roots.iter().map(|r| dir.join(r)).collect(),
+        package_dirs: package_dirs.iter().map(|r| dir.join(r)).collect(),
+    };
+    match spinelc::compile_to_rust_with(&entry_source, &opts) {
+        Ok(rust) => Ok((rust, dir)),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(e)
+        }
+    }
+}
+
 /// `run_ruby` plus environment variables and argv for the COMPILED BINARY's
 /// own invocation -- backs the Phase 13.4 scheduler-config tests
 /// (`SPINEL_THREADS=N` / `--no-gvl` must change nothing observable for a

@@ -36,6 +36,17 @@ cargo run -p spinelc -- examples/hello.rb -o /tmp/hello && /tmp/hello
 # Print the generated Rust instead of compiling it
 cargo run -p spinelc -- examples/dynamic.rb -S
 
+# Multi-file programs: require/require_relative/load are resolved at
+# COMPILE time (spliced into one compilation unit); -I adds a `require`
+# search root, like ruby's own -I (repeatable, first hit wins)
+cargo run -p spinelc -- app/main.rb -I app/lib -o /tmp/app
+
+# Packages: a directory with a spin.toml ([package] name = "...", optional
+# require_paths, default ["lib"]) contributes `require` search roots.
+# Searched after every -I root; discovered from --packages dirs, the input
+# file's sibling packages/, and the compiler's bundled packages/
+cargo run -p spinelc -- app/main.rb --packages vendor/packages -o /tmp/app
+
 # Run every example through spinelc and diff against real ruby's output
 cargo run -p xtask -- test
 
