@@ -6221,3 +6221,572 @@ fn a_deeply_frozen_object_crosses_a_ractor_boundary_by_reference() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\n42\n");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 13.9: the comprehensive cross-feature sweep. Every scenario was
+// FIRST run as one combined program, oracle-verified byte-for-byte against
+// real `ruby`, then confirmed byte-identical under all three scheduler
+// modes (default GVL, SPINEL_THREADS=4, --no-gvl) and stable across
+// repeated 8-worker runs. Individual tests below keep failures localized;
+// the composite mode-invariance test at the end is the plan's headline
+// "the toggle changes nothing observable" check.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fiber_yield_from_a_deep_method_call_stack() {
+    // The spinel-fiber shim's raison d'etre: suspension from inside a chain
+    // of ordinary compiled method frames that never saw a yielder.
+    let result = run_ruby(
+        r#"
+        class Chain
+          def a; b; end
+          def b; c; end
+          def c
+            Fiber.yield :from_deep
+            :done
+          end
+        end
+        ch = Chain.new
+        f = Fiber.new { ch.a }
+        puts f.resume
+        puts f.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from_deep\ndone\n");
+}
+
+#[test]
+fn fiber_yield_inside_an_inline_times_block() {
+    let result = run_ruby(
+        r#"
+        f = Fiber.new do
+          3.times do |i|
+            Fiber.yield i
+          end
+          :end
+        end
+        puts f.resume
+        puts f.resume
+        puts f.resume
+        puts f.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n1\n2\nend\n");
+}
+
+#[test]
+fn fiber_yield_through_a_real_escaping_block() {
+    // The hardest suspension shape: Fiber.yield fires inside a real Proc
+    // (the block each_twice invokes), unwinding through the Proc's closure
+    // frame AND each_twice's own method frame to the resumer.
+    let result = run_ruby(
+        r#"
+        class Iter
+          def each_twice
+            yield 1
+            yield 2
+          end
+        end
+        it = Iter.new
+        f = Fiber.new do
+          it.each_twice do |n|
+            Fiber.yield n
+          end
+          :done
+        end
+        puts f.resume
+        puts f.resume
+        puts f.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\ndone\n");
+}
+
+#[test]
+fn a_fiber_driven_entirely_inside_a_thread() {
+    // The fiber table is per-OS-thread; a fiber created and resumed inside
+    // one Thread's coroutine works because both operations run on the same
+    // worker.
+    let result = run_ruby(
+        r#"
+        t = Thread.new do
+          ff = Fiber.new do |x|
+            Fiber.yield x + 1
+            99
+          end
+          a = ff.resume(1)
+          b = ff.resume
+          a + b
+        end
+        puts t.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "101\n");
+}
+
+#[test]
+fn zero_arg_resume_binds_nil_block_params() {
+    let result = run_ruby(
+        r#"
+        f = Fiber.new { |x| x.nil? }
+        puts f.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn an_exception_from_deep_inside_a_fibers_method_stack_reraises_at_the_resumer() {
+    let result = run_ruby(
+        r#"
+        class Deep
+          def go; boom; end
+          def boom
+            raise "deep boom"
+          end
+        end
+        d = Deep.new
+        f = Fiber.new { d.go }
+        begin
+          f.resume
+        rescue RuntimeError => e
+          puts "resumer caught: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "resumer caught: deep boom\n");
+}
+
+#[test]
+fn a_fiber_rebinding_a_captured_local_propagates_to_the_enclosing_scope() {
+    // From the reference project's own regression corpus
+    // (fiber_reassign_capture.rb): REBINDING (not just mutating) a captured
+    // name inside the fiber must write through the shared cell.
+    let result = run_ruby(
+        r#"
+        s = "old"
+        f = Fiber.new do
+          s = "new"
+          Fiber.yield
+        end
+        f.resume
+        puts s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "new\n");
+}
+
+#[test]
+fn three_threads_join_out_of_creation_order() {
+    let result = run_ruby(
+        r#"
+        t1 = Thread.new { 1 }
+        t2 = Thread.new { 2 }
+        t3 = Thread.new { 3 }
+        puts t3.value + t1.value + t2.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
+}
+
+#[test]
+fn mutex_synchronize_exits_with_a_break_value_and_unlocks() {
+    let result = run_ruby(
+        r#"
+        mu = Mutex.new
+        r = mu.synchronize { break 5 }
+        puts r
+        puts mu.locked?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\nfalse\n");
+}
+
+#[test]
+fn a_blocked_consumer_is_woken_by_a_producer_thread() {
+    // Under the default single worker the consumer runs first (at
+    // main's `.value` yield), genuinely BLOCKS on the empty pop
+    // (a coroutine-yielding Condvar wait), and is woken by the producer --
+    // exercising the real wakeup path, deterministically.
+    let result = run_ruby(
+        r#"
+        q = Queue.new
+        consumer = Thread.new { q.pop }
+        producer = Thread.new { q.push 42 }
+        puts consumer.value
+        producer.join
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn closing_a_queue_wakes_a_blocked_consumer_with_nil() {
+    let result = run_ruby(
+        r#"
+        q = Queue.new
+        consumer = Thread.new do
+          v = q.pop
+          if v.nil?
+            :got_nil
+          else
+            :got_value
+          end
+        end
+        closer = Thread.new { q.close }
+        puts consumer.value
+        closer.join
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "got_nil\n");
+}
+
+#[test]
+fn multiple_producers_one_consumer_sum_is_exact() {
+    let result = run_ruby(
+        r#"
+        q = Queue.new
+        p1 = Thread.new { 10.times { q.push 1 } }
+        p2 = Thread.new { 10.times { q.push 1 } }
+        consumer = Thread.new do
+          total = 0
+          loop do
+            v = q.pop
+            break if v.nil?
+            total += v
+          end
+          total
+        end
+        p1.join
+        p2.join
+        q.close
+        puts consumer.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n");
+}
+
+#[test]
+fn globals_and_cvars_are_mutex_protectable_across_threads() {
+    let result = run_ruby(
+        r#"
+        $total = 0
+        class Counter
+          @@n = 0
+          def self.bump
+            @@n = @@n + 1
+          end
+          def self.n
+            @@n
+          end
+        end
+        m = Mutex.new
+        t1 = Thread.new { 100.times { m.synchronize { $total += 1 } } }
+        t2 = Thread.new { 100.times { m.synchronize { Counter.bump } } }
+        t1.join
+        t2.join
+        puts $total
+        puts Counter.n
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "100\n100\n");
+}
+
+#[test]
+fn begin_rescue_ensure_and_retry_work_inside_threads() {
+    let result = run_ruby(
+        r#"
+        t1 = Thread.new do
+          begin
+            raise "in thread"
+          rescue RuntimeError => e
+            "rescued"
+          ensure
+            x = 1
+          end
+        end
+        puts t1.value
+        t2 = Thread.new do
+          attempts = 0
+          begin
+            attempts += 1
+            raise "flaky" if attempts < 3
+            attempts
+          rescue RuntimeError
+            retry
+          end
+        end
+        puts t2.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued\n3\n");
+}
+
+#[test]
+fn a_thread_and_the_fiber_it_resumes_have_isolated_handling() {
+    // The plan's own listed 13.9 scenario: a Thread mid-rescue resumes a
+    // fiber whose bare raise must see an EMPTY $!, not the thread's.
+    let result = run_ruby(
+        r#"
+        t = Thread.new do
+          f = Fiber.new do
+            begin
+              raise
+            rescue RuntimeError => e
+              "fiber saw: [#{e.send(:message)}]"
+            end
+          end
+          begin
+            raise "thread's exception"
+          rescue RuntimeError
+            f.resume
+          end
+        end
+        puts t.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "fiber saw: []\n");
+}
+
+#[test]
+fn no_method_error_propagates_out_of_fibers_and_ractors() {
+    let result = run_ruby(
+        r#"
+        class Bare; end
+        f = Fiber.new { Bare.new.send(:nope) }
+        begin
+          f.resume
+        rescue NoMethodError
+          puts "rescued in resumer"
+        end
+        puts f.alive?
+        r = Ractor.new { Bare.new.send(:nope) }
+        begin
+          r.value
+        rescue NoMethodError
+          puts "rescued at value"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued in resumer\nfalse\nrescued at value\n");
+}
+
+#[test]
+fn make_shareable_deep_freezes_a_nested_object_graph_that_then_crosses() {
+    // The plan's own listed scenario: object -> array -> object, every node
+    // frozen by one make_shareable, the whole graph then crossing a Ractor
+    // boundary by reference and dispatching on the far side.
+    let result = run_ruby(
+        r#"
+        class Node
+          def initialize(v, child)
+            @v = v
+            @child = child
+          end
+          def v; @v; end
+        end
+        leaf = Node.new(3, nil)
+        root = Node.new(1, [leaf])
+        Ractor.make_shareable(root)
+        puts root.frozen?
+        puts leaf.frozen?
+        puts Ractor.shareable?(root)
+        sink = Ractor.new do
+          got = Ractor.receive
+          got.send(:v)
+        end
+        sink.send(root)
+        puts sink.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\n1\n");
+}
+
+#[test]
+fn several_ractors_run_in_parallel_and_all_values_collect() {
+    let result = run_ruby(
+        r#"
+        r1 = Ractor.new(1) { |n| n * 10 }
+        r2 = Ractor.new(2) { |n| n * 10 }
+        r3 = Ractor.new(3) { |n| n * 10 }
+        puts r1.value + r2.value + r3.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "60\n");
+}
+
+#[test]
+fn ractor_messages_are_received_in_fifo_order() {
+    let result = run_ruby(
+        r#"
+        r = Ractor.new do
+          a = Ractor.receive
+          b = Ractor.receive
+          c = Ractor.receive
+          a * 100 + b * 10 + c
+        end
+        r.send(1)
+        r.send(2)
+        r.send(3)
+        puts r.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "123\n");
+}
+
+#[test]
+fn a_fiber_works_inside_a_ractor() {
+    // The fiber table is thread-pinned and a Ractor is its own OS thread --
+    // create and drive entirely within it.
+    let result = run_ruby(
+        r#"
+        r = Ractor.new do
+          f = Fiber.new do
+            Fiber.yield 1
+            2
+          end
+          a = f.resume
+          b = f.resume
+          a + b
+        end
+        puts r.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn the_shareable_predicate_is_deep() {
+    // A frozen container holding an UNFROZEN element is not shareable --
+    // CRuby's frozen-and-everything-reachable-shareable rule.
+    let result = run_ruby(
+        r#"
+        arr = ["mut"]
+        arr.freeze
+        puts Ractor.shareable?(arr)
+        Ractor.make_shareable(arr)
+        puts Ractor.shareable?(arr)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\ntrue\n");
+}
+
+#[test]
+fn a_frozen_error_raised_inside_a_thread_surfaces_at_join() {
+    let result = run_ruby(
+        r#"
+        a = [1]
+        a.freeze
+        t = Thread.new { a[0] = 9 }
+        begin
+          t.join
+        rescue FrozenError => e
+          puts "at join: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "at join: can't modify frozen Array: [1]\n");
+}
+
+#[test]
+fn freezing_in_one_thread_is_visible_after_join() {
+    // Threads share the heap (no Ractor boundary): a freeze in one is the
+    // same AtomicBool every other execution context reads.
+    let result = run_ruby(
+        r#"
+        s = "x"
+        t = Thread.new { s.freeze }
+        t.join
+        puts s.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn index_compound_assignment_works_inside_a_thread_block() {
+    // From the reference corpus (index_opassign_in_thread_block.rb): the
+    // `Seq` desugar's hidden temps declared inside an escaping Proc's own
+    // prelude, against a captured-cell array.
+    let result = run_ruby(
+        r#"
+        arr = [10]
+        t = Thread.new do
+          50.times { arr[0] += 1 }
+        end
+        t.join
+        puts arr[0]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "60\n");
+}
+
+#[test]
+fn the_concurrency_composite_is_invariant_across_scheduler_modes() {
+    // The plan's headline 13.9 check: a well-synchronized program mixing
+    // Threads, a Mutex counter, a Queue rendezvous, and parallel Ractors
+    // produces byte-identical output under the GVL default, an explicit
+    // worker count, and --no-gvl.
+    let src = r#"
+        m = Mutex.new
+        count = 0
+        t1 = Thread.new { 200.times { m.synchronize { count += 1 } } }
+        t2 = Thread.new { 200.times { m.synchronize { count += 1 } } }
+        q = Queue.new
+        consumer = Thread.new do
+          total = 0
+          loop do
+            v = q.pop
+            break if v.nil?
+            total += v
+          end
+          total
+        end
+        producer = Thread.new do
+          25.times { |i| q.push i }
+          q.close
+        end
+        r1 = Ractor.new(5) { |n| n * n }
+        r2 = Ractor.new(6) { |n| n * n }
+        t1.join
+        t2.join
+        producer.join
+        puts count
+        puts consumer.value
+        puts r1.value + r2.value
+    "#;
+    let expected = "400\n300\n61\n";
+    let default = support::run_ruby(src);
+    assert!(default.status.success(), "stderr: {}", default.stderr);
+    assert_eq!(default.stdout, expected);
+    let threads4 = support::run_ruby_configured(src, &[("SPINEL_THREADS", "4")], &[]);
+    assert!(threads4.status.success(), "stderr: {}", threads4.stderr);
+    assert_eq!(threads4.stdout, expected);
+    let no_gvl = support::run_ruby_configured(src, &[], &["--no-gvl"]);
+    assert!(no_gvl.status.success(), "stderr: {}", no_gvl.stderr);
+    assert_eq!(no_gvl.stdout, expected);
+}
