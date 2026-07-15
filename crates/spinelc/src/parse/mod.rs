@@ -264,6 +264,69 @@ fn constant_path_name(node: &Node<'_>) -> PResult<String> {
     })
 }
 
+/// Whether `node` is exactly `Ruby::Box.new` (no args, no block) -- the
+/// only allocation shape Phase 18 supports, recognized by the loader at
+/// top-level `box = Ruby::Box.new` statements.
+pub(super) fn is_ruby_box_new(node: &Node<'_>) -> bool {
+    let Some(call) = node.as_call_node() else { return false };
+    if call.name().as_slice() != b"new" || call.block().is_some() {
+        return false;
+    }
+    if call.arguments().is_some_and(|a| a.arguments().iter().next().is_some()) {
+        return false;
+    }
+    call.receiver()
+        .is_some_and(|r| constant_path_name(&r).is_ok_and(|n| n == "Ruby::Box"))
+}
+
+/// `box::A::B` -- a constant path rooted at a LOCAL bound to a box handle
+/// (Phase 18). Returns the box id plus the path INSIDE the box (`"A::B"`).
+fn box_rooted_path(node: &Node<'_>) -> Option<(u32, String)> {
+    let cp = node.as_constant_path_node()?;
+    let name = cp.name()?;
+    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+    let parent = cp.parent()?;
+    if let Some(lv) = parent.as_local_variable_read_node() {
+        let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
+        let bx = loader::current_box_binding(&lname)?;
+        return Some((bx, name));
+    }
+    let (bx, prefix) = box_rooted_path(&parent)?;
+    Some((bx, format!("{prefix}::{name}")))
+}
+
+/// `box.eval("literal")`'s body splice -- shared by the loader's
+/// STATEMENT-position recognizer (class definitions allowed: real Ruby's
+/// `Box#eval` compiles a top-level iseq) and `lower_node`'s
+/// expression-position one (which additionally rejects defs, same as root
+/// `eval`).
+pub(super) fn lower_box_eval_body(
+    hir: &mut Hir,
+    _result: &ruby_prism::ParseResult,
+    call: &ruby_prism::CallNode<'_>,
+) -> PResult<Vec<NodeId>> {
+    if call.block().is_some() {
+        return Err("`Ruby::Box#eval` doesn't take a block".to_string());
+    }
+    let args: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    if args.len() != 1 {
+        return Err(
+            "`Ruby::Box#eval` is only supported with exactly one string-literal argument (spike scope)"
+                .to_string(),
+        );
+    }
+    let Some(src) = args[0].as_string_node().map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned()) else {
+        return Err(
+            "`Ruby::Box#eval` with a non-literal argument isn't supported (spike scope) -- the source must be a plain string literal, resolvable at compile time"
+                .to_string(),
+        );
+    };
+    parse_and_lower_into(hir, &src).map_err(|e| format!("Ruby::Box#eval: {e}"))
+}
+
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
@@ -861,6 +924,21 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::ConstWrite { scope: Some(scope), name, value }));
     }
     if let Some(cp) = node.as_constant_path_node() {
+        // `box::X` (Phase 18): an external access into the box -- the
+        // ordinary bare-name lowering, wrapped in the box's scope.
+        // A single segment lowers as a bare `ClassRef` (codegen's class-
+        // or-constant rule under the box); deeper paths as the qualified
+        // read they'd be inside the box.
+        if let Some((bx, path)) = box_rooted_path(node) {
+            let inner = match path.rsplit_once("::") {
+                Some((scope, leaf)) => hir.push(HirNode::QualifiedConstRead(
+                    scope.to_string(),
+                    leaf.to_string(),
+                )),
+                None => hir.push(HirNode::ClassRef(path)),
+            };
+            return Ok(hir.push(HirNode::BoxScope { box_id: bx, body: vec![inner] }));
+        }
         let (scope, name) = constant_path_scope_and_name(&cp)?;
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
     }
@@ -1253,7 +1331,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // runtime constructor.
                 .filter(|r| r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some())
             {
-                let class_name = constant_path_name(&recv)?;
+                // `box::Widget.new(...)` (Phase 18): the ordinary static
+                // `New`, resolved inside the box.
+                let box_ctx = box_rooted_path(&recv);
+                let class_name = match &box_ctx {
+                    Some((_, path)) => path.clone(),
+                    None => constant_path_name(&recv)?,
+                };
                 if class_name == "Struct" {
                     return Err(
                         "`Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`)"
@@ -1297,7 +1381,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             })
                             .collect::<PResult<Vec<_>>>()?,
                     };
-                    return Ok(hir.push(HirNode::New { class_name, args }));
+                    let new_id = hir.push(HirNode::New { class_name, args });
+                    return Ok(match box_ctx {
+                        Some((bx, _)) => {
+                            hir.push(HirNode::BoxScope { box_id: bx, body: vec![new_id] })
+                        }
+                        None => new_id,
+                    });
                 }
             }
         }
@@ -1488,6 +1578,43 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 "`autoload` isn't supported (spike scope) -- its lazy, first-constant-access trigger has no compile-time equivalent; use an explicit `require`"
                     .to_string(),
             );
+        }
+
+        // Phase 18 guard rails. `Ruby::Box` class-method calls outside the
+        // one recognized shape (`box = Ruby::Box.new` at top-level
+        // statement position, handled by the loader) are clean rejections:
+        // `.current`/`.root`/`.main`/`.enabled?` have no compile-time
+        // meaning in this AOT model, and an unassigned/nested `.new` would
+        // allocate a box nothing could ever reference.
+        if let Some(recv) = call.receiver() {
+            if constant_path_name(&recv).is_ok_and(|n| n == "Ruby::Box") {
+                return Err(format!(
+                    "`Ruby::Box.{name}` isn't supported here (spike scope) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement; `.current`/`.root`/`.main`/`.enabled?` have no compile-time meaning"
+                ));
+            }
+            // Operations on a bound box handle outside their recognized
+            // positions: `box.require`-family must be a TOP-LEVEL
+            // statement (same rule as receiver-less `require`);
+            // expression-position `box.eval` is allowed but, like root
+            // `eval`, can't define classes/methods.
+            if let Some(lv) = recv.as_local_variable_read_node() {
+                let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
+                if let Some(bx) = loader::current_box_binding(&lname) {
+                    match name.as_str() {
+                        "require" | "require_relative" | "load" => {
+                            return Err(format!(
+                                "`{lname}.{name}` is only supported as a top-level statement (same rule as the receiver-less `{name}`)"
+                            ));
+                        }
+                        "eval" => {
+                            let body = lower_box_eval_body(hir, result, &call)?;
+                            reject_top_level_defs(hir, &body)?;
+                            return Ok(hir.push(HirNode::BoxScope { box_id: bx, body }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         if name == "eval" && call.receiver().is_none() {

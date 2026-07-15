@@ -53,7 +53,7 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return TyKind::Object(cid);
         }
     }
-    infer_type_with_locals(cx.compiler, cx.defining_class, &cx.local_types, id)
+    infer_type_with_locals(cx.compiler, cx.defining_class, cx.box_id, &cx.local_types, id)
 }
 
 /// The static type of `self` inside a reopened BUILTIN class's methods --
@@ -193,6 +193,10 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
         | HirNode::Eval(_)
+        // A box-scoped splice classifies like the eval it rode in on; a
+        // handle literal is an ordinary expression value.
+        | HirNode::BoxScope { .. }
+        | HirNode::BoxHandle(_)
         | HirNode::BlockGiven
         | HirNode::Raise(_) => Some("method"),
         HirNode::IntegerLit(_)
@@ -612,6 +616,26 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let b = super::stmt::emit_body(cx, body, false);
             quote! { { #b } }
         }
+        // The `Eval` emit shape with the box switched (Phase 18): the body
+        // resolves classes/constants/globals against `box_id` -- the AOT
+        // loading-box context.
+        HirNode::BoxScope { box_id, body } => {
+            let box_cx = cx.in_box(*box_id);
+            let b = super::stmt::emit_body(&box_cx, body, false);
+            quote! { { #b } }
+        }
+        // The handle VALUE `box = Ruby::Box.new` binds: a Class of the
+        // box's top-level surrogate (`p box` prints its registered
+        // `#<Ruby::Box:N>` name; CRuby's own inspect carries a
+        // `,user,optional` suffix -- documented divergence).
+        HirNode::BoxHandle(box_id) => {
+            let cid = cx
+                .compiler
+                .box_surrogate(*box_id)
+                .expect("analyze registers a surrogate for every allocated box")
+                .0;
+            quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#cid)) }
+        }
         HirNode::Return(v) => {
             let value = match v {
                 Some(id) => emit_expr(cx, *id),
@@ -938,7 +962,19 @@ fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
         Some(class_name) => cx
             .resolve_class(class_name)
             .unwrap_or_else(|| panic!("unknown class/module `{class_name}`")),
-        None => cx.defining_class.unwrap_or(crate::compiler::OBJECT_CLASS),
+        // A bare constant at a BOX's top level (Phase 18) is owned by the
+        // box's surrogate -- readable externally as `box::CONST`, invisible
+        // to other boxes; `Object` (the shared id-0 root) stays the owner
+        // only for the root program.
+        None => cx.defining_class.unwrap_or_else(|| {
+            if cx.box_id != 0 {
+                cx.compiler
+                    .box_surrogate(cx.box_id)
+                    .expect("analyze registers a surrogate for every allocated box")
+            } else {
+                crate::compiler::OBJECT_CLASS
+            }
+        }),
     };
     cx.compiler
         .class(owner_class)

@@ -158,6 +158,12 @@ pub struct ClassInfo {
     /// `Object` (index 0, handled by its own pre-existing `idx != 0` checks)
     /// and for every ordinary user-defined class/module.
     pub is_builtin: bool,
+    /// `Some(root builtin id)` for a PER-BOX builtin-reopen OVERLAY (Phase
+    /// 18): this ClassInfo carries a box's patches on the root builtin --
+    /// its methods emit as value methods registered under `(root id,
+    /// box_id)`, while instances keep the ROOT's ClassId (`box::String ==
+    /// String`). `None` for every ordinary class, including root builtins.
+    pub builtin_overlay: Option<ClassId>,
 }
 
 pub struct Scope {
@@ -204,6 +210,12 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
+    /// Each box's TOP-LEVEL SURROGATE (Phase 18): a module-shaped
+    /// `ClassInfo` named `#<Ruby::Box:N>` that owns the box's top-level
+    /// constants and doubles as the handle's runtime `RubyValue::Class`
+    /// payload. Created by `analyze` (one per box id the loader
+    /// allocated), looked up by codegen.
+    pub box_surrogates: HashMap<u32, ClassId>,
 }
 
 impl Compiler {
@@ -233,8 +245,10 @@ impl Compiler {
                 native_methods: Vec::new(),
                 ancestors: Vec::new(),
                 is_builtin: false,
+                builtin_overlay: None,
             }],
             scopes: Vec::new(),
+            box_surrogates: HashMap::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table (Phase
         // 17.1): superclass edges (`Integer < Numeric`, `Class < Module`,
@@ -301,7 +315,12 @@ impl Compiler {
             // 0 even when `box_id` differs).
             cur = self.class_in_scope(Some(cur), seg, self.class(cur).box_id)?;
         }
-        Some(cur)
+        // A per-box builtin-reopen OVERLAY (Phase 18) is a patch container,
+        // never a distinct class: as a resolved NAME it collapses to the
+        // root builtin (`box::String == String` stays true; instances keep
+        // the root's identity). Reopen-merge detection deliberately uses
+        // the raw `class_in_scope` instead.
+        Some(self.class(cur).builtin_overlay.unwrap_or(cur))
     }
 
     /// `resolve_class`'s single-segment core -- see its docs for the rule.
@@ -345,6 +364,23 @@ impl Compiler {
             .iter()
             .position(|c| c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent)
             .map(|i| ClassId(i as u32))
+    }
+
+    /// Creates (idempotently) box `box_id`'s top-level surrogate -- see
+    /// `box_surrogates`' docs. Registered like any module, so `p box`
+    /// prints the surrogate's name through the ordinary Class-value path.
+    pub fn ensure_box_surrogate(&mut self, box_id: u32) -> ClassId {
+        if let Some(&cid) = self.box_surrogates.get(&box_id) {
+            return cid;
+        }
+        let cid = self.add_class(format!("#<Ruby::Box:{box_id}>"), None, true);
+        self.classes[cid.0 as usize].box_id = box_id;
+        self.box_surrogates.insert(box_id, cid);
+        cid
+    }
+
+    pub fn box_surrogate(&self, box_id: u32) -> Option<ClassId> {
+        self.box_surrogates.get(&box_id).copied()
     }
 
     /// The lexical cref chain enclosing (and including) `defining`,
@@ -407,6 +443,7 @@ impl Compiler {
             native_methods: Vec::new(),
             ancestors: Vec::new(),
             is_builtin: false,
+            builtin_overlay: None,
         });
         ClassId((self.classes.len() - 1) as u32)
     }

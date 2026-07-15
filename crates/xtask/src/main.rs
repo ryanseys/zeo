@@ -32,7 +32,16 @@ fn examples(root: &Path) -> Vec<PathBuf> {
 fn regen(root: &Path) -> ExitCode {
     for rb in examples(root) {
         let expected = rb.with_extension("expected");
-        let output = Command::new("ruby")
+        let mut cmd = Command::new("ruby");
+        // A `Ruby::Box` example (Phase 18) needs the experimental feature
+        // enabled on the oracle side; every other example runs plain ruby
+        // exactly as before.
+        let source = std::fs::read_to_string(&rb)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", rb.display()));
+        if source.contains("Ruby::Box") {
+            cmd.env("RUBY_BOX", "1").arg("-W:no-experimental");
+        }
+        let output = cmd
             .arg(&rb)
             .output()
             .unwrap_or_else(|e| panic!("running ruby: {e}"));

@@ -165,7 +165,10 @@ impl Walker {
                 self.bind(name);
                 self.visit(hir, *value);
             }
-            HirNode::Program(body) | HirNode::Eval(body) | HirNode::Seq(body) => {
+            HirNode::Program(body)
+            | HirNode::Eval(body)
+            | HirNode::Seq(body)
+            | HirNode::BoxScope { body, .. } => {
                 self.visit_all(hir, &body.clone())
             }
             HirNode::And(l, r) | HirNode::Or(l, r) => {
@@ -326,6 +329,7 @@ impl Walker {
             | HirNode::FloatLit(_)
             | HirNode::SymbolLit(_)
             | HirNode::NilLit
+            | HirNode::BoxHandle(_)
             | HirNode::BoolLit(_)
             | HirNode::IvarRead(_)
             | HirNode::ClassVarRead(_)

@@ -58,9 +58,50 @@
 //! are pre-existing unsupported territory, unchanged by splicing.
 
 use super::{lower_node, rename, PResult};
-use crate::hir::{Hir, LoadedFile, NodeId};
-use std::collections::HashSet;
+use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+// Per-FILE `box = Ruby::Box.new` handle bindings (Phase 18), as a stack --
+// one frame per file currently being lowered (recognition happens during
+// that file's own lowering, BEFORE its rename pass, so original local
+// names are the right key; frames never leak across files). A thread-local
+// rather than a threaded parameter because `lower_node`'s recursion --
+// where `box::X` paths and misuse rejections are recognized -- would
+// otherwise need a context argument through every recognizer. Lowering is
+// single-threaded; the stack is empty outside `lower_file_statements`.
+thread_local! {
+    static BOX_BINDINGS: RefCell<Vec<HashMap<String, u32>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The box bound to local `name` in the file currently being lowered, if
+/// any -- consulted by `parse::mod`'s `box::X`/`box.eval` recognizers.
+pub(super) fn current_box_binding(name: &str) -> Option<u32> {
+    BOX_BINDINGS.with(|b| b.borrow().last().and_then(|m| m.get(name).copied()))
+}
+
+/// Pushes a fresh bindings frame for one file's lowering; pops on drop
+/// (including the error path).
+struct BindingsFrame;
+impl BindingsFrame {
+    fn push() -> BindingsFrame {
+        BOX_BINDINGS.with(|b| b.borrow_mut().push(HashMap::new()));
+        BindingsFrame
+    }
+    fn bind(&self, name: String, box_id: u32) {
+        BOX_BINDINGS.with(|b| {
+            b.borrow_mut().last_mut().expect("frame pushed").insert(name, box_id);
+        });
+    }
+}
+impl Drop for BindingsFrame {
+    fn drop(&mut self) {
+        BOX_BINDINGS.with(|b| {
+            b.borrow_mut().pop();
+        });
+    }
+}
 
 /// One `spin.toml` package (Phase 14.2): a named directory contributing one
 /// or more `require` search roots. Deliberately gem-shaped (see the plan's
@@ -144,6 +185,7 @@ pub(super) fn lower_main_file(
         program.statements().body(),
         dir.as_deref(),
         None,
+        0,
     )
 }
 
@@ -160,12 +202,14 @@ impl Loader {
         body: ruby_prism::NodeList<'_>,
         dir: Option<&Path>,
         file_idx: Option<usize>,
+        current_box: u32,
     ) -> PResult<Vec<NodeId>> {
         // `combined` is the spliced statement list in document order;
         // `own` is only THIS file's statements -- the rename pass walks
         // `own` alone, so already-renamed child splices (separate roots,
         // unreachable from this file's own subtrees) are never touched
         // twice.
+        let frame = BindingsFrame::push();
         let mut combined = Vec::new();
         let mut own = Vec::new();
         for n in body.iter() {
@@ -175,8 +219,57 @@ impl Loader {
                     && matches!(name.as_str(), "require" | "require_relative" | "load")
                 {
                     combined.extend(self.lower_require_statement(
-                        hir, result, &call, &name, dir, file_idx,
+                        hir, result, &call, &name, dir, file_idx, current_box,
                     )?);
+                    continue;
+                }
+                // `box.require "f"` / `box.require_relative` / `box.load`
+                // / `box.eval "src"` at top-level statement position
+                // (Phase 18): resolve like the receiver-less forms, splice
+                // with the BOX's id, wrap in one BoxScope. Statement-
+                // position `box.eval` may define classes (real Ruby's
+                // Box#eval compiles a top-level iseq); expression-position
+                // eval is `parse::mod`'s recognizer, defs rejected there.
+                if let Some(recv) = call.receiver() {
+                    if let Some(lv) = recv.as_local_variable_read_node() {
+                        let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
+                        if let Some(bx) = current_box_binding(&lname) {
+                            if matches!(name.as_str(), "require" | "require_relative" | "load") {
+                                let spliced = self.lower_require_statement(
+                                    hir, result, &call, &name, dir, file_idx, bx,
+                                )?;
+                                combined.push(hir.push(HirNode::BoxScope {
+                                    box_id: bx,
+                                    body: spliced,
+                                }));
+                                continue;
+                            }
+                            if name == "eval" {
+                                let body = super::lower_box_eval_body(hir, result, &call)?;
+                                combined.push(hir.push(HirNode::BoxScope {
+                                    box_id: bx,
+                                    body,
+                                }));
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            // `box = Ruby::Box.new` -- allocates a fresh compile-time box,
+            // records the file-local binding, AND binds the local to the
+            // handle VALUE (the box's top-level surrogate as a Class), so
+            // `p box` works.
+            if let Some(lw) = n.as_local_variable_write_node() {
+                if super::is_ruby_box_new(&lw.value()) {
+                    let lname = String::from_utf8_lossy(lw.name().as_slice()).into_owned();
+                    hir.boxes += 1;
+                    let box_id = hir.boxes;
+                    frame.bind(lname.clone(), box_id);
+                    let handle = hir.push(HirNode::BoxHandle(box_id));
+                    let id = hir.push(HirNode::LocalWrite(lname, handle));
+                    combined.push(id);
+                    own.push(id);
                     continue;
                 }
             }
@@ -187,11 +280,15 @@ impl Loader {
         if let Some(idx) = file_idx {
             rename::isolate_file_locals(hir, &own, idx);
         }
+        drop(frame);
         Ok(combined)
     }
 
     /// One recognized require/require_relative/load statement: validate the
     /// shape, resolve the target, splice (or skip, for a deduped require).
+    #[allow(clippy::too_many_arguments)] // one context param per resolution
+    // dimension (dir/file/box) -- bundling them into a struct would obscure
+    // the loading-box propagation this fn exists to thread.
     fn lower_require_statement(
         &mut self,
         hir: &mut Hir,
@@ -200,6 +297,7 @@ impl Loader {
         name: &str,
         dir: Option<&Path>,
         file_idx: Option<usize>,
+        current_box: u32,
     ) -> PResult<Vec<NodeId>> {
         if call.block().is_some() {
             return Err(format!("`{name}` doesn't take a block"));
@@ -260,12 +358,14 @@ impl Loader {
         if name != "load" {
             // Insert BEFORE lowering (CRuby's loading-table rule): a
             // circular require splices nothing and continues, in exactly
-            // Ruby's execution order.
-            if !self.required.insert((0, canonical.clone())) {
+            // Ruby's execution order. Keyed per BOX (Phase 18): the same
+            // file `box.require`d into two boxes re-executes in each --
+            // real Ruby's per-box loaded-features tables.
+            if !self.required.insert((current_box, canonical.clone())) {
                 return Ok(Vec::new());
             }
         }
-        self.splice_file(hir, &canonical, file_idx, package)
+        self.splice_file(hir, &canonical, file_idx, package, current_box)
     }
 
     /// Parses and lowers one resolved file into the arena, recording its
@@ -278,6 +378,7 @@ impl Loader {
         canonical: &Path,
         required_from: Option<usize>,
         package: Option<String>,
+        box_id: u32,
     ) -> PResult<Vec<NodeId>> {
         if self.splicing.iter().any(|p| p == canonical) {
             return Err(format!(
@@ -292,7 +393,7 @@ impl Loader {
             canonical: canonical.to_path_buf(),
             required_from,
             package,
-            box_id: 0,
+            box_id,
         });
         let result = ruby_prism::parse(source.as_bytes());
         if let Some(err) = result.errors().next() {
@@ -314,6 +415,10 @@ impl Loader {
                 program.statements().body(),
                 canonical.parent(),
                 Some(idx),
+                // Loading-box propagation (CRuby's frame-flag walk, as a
+                // compile-time parameter): plain `require`s inside a
+                // box-required subtree stay in that box.
+                box_id,
             )
             .map_err(|e| {
                 if e.starts_with(&canonical.display().to_string()) {

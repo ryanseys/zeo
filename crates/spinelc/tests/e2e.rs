@@ -9,6 +9,7 @@
 
 mod support;
 use support::run_ruby;
+use support::run_ruby_project;
 
 #[test]
 fn hello_prints_a_symbol() {
@@ -10354,4 +10355,193 @@ fn enumerator_identity_and_resumability() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\nEnumerator\n1\n1\n3\n");
+}
+
+// -- Phase 18: Ruby::Box. Oracle: `RUBY_BOX=1 ruby -W:no-experimental`
+// (verified per the plan's research contract; where our AOT model
+// deliberately diverges -- handle inspect suffix, compile-time rejections
+// -- the expectation below states OUR documented behavior).
+
+/// The keystone: a box-required file's classes are DISTINCT from main's
+/// (same file, different class objects), builtins are SHARED
+/// (`box::String == String`), a box top-level constant is readable
+/// externally, and box gvars are invisible in main -- all per the CRuby
+/// box model.
+#[test]
+fn box_isolation_and_shared_builtins() {
+    let result = run_ruby_project(
+        &[
+            (
+                "widget.rb",
+                "class Widget\n  def hi\n    \"box widget\"\n  end\nend\nWIDGET_CONST = 99\n$box_g = 5\n",
+            ),
+            (
+                "main.rb",
+                "class Widget\n  def hi\n    \"main widget\"\n  end\nend\n\
+                 box = Ruby::Box.new\n\
+                 box.require_relative \"widget\"\n\
+                 p Widget.new.hi\n\
+                 w = box::Widget.new\n\
+                 p w.hi\n\
+                 p box::Widget == Widget\n\
+                 p box::String == String\n\
+                 p box::WIDGET_CONST\n\
+                 p $box_g\n\
+                 p box\n",
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"main widget\"\n\"box widget\"\nfalse\ntrue\n99\nnil\n#<Ruby::Box:1>\n"
+    );
+}
+
+/// Per-box re-execution (the same file `box.require`d into two boxes runs
+/// twice, with independent class-variable state per box), and per-box
+/// builtin MONKEYPATCHES: a box's `String#blank?` resolves from that box's
+/// code while main's `"foo".blank?` stays a NoMethodError -- the docs'
+/// motivating example, dispatch by DEFINING box.
+#[test]
+fn boxes_reexecute_files_and_patch_builtins_privately() {
+    let result = run_ruby_project(
+        &[
+            (
+                "blank.rb",
+                "class String\n  def blank?\n    strip.empty?\n  end\nend\n\
+                 class Foo\n  def self.blank_one?\n    \"   \".blank?\n  end\nend\n\
+                 class Counter\n  @@count = 0\n  def self.bump\n    @@count += 1\n  end\n  def self.count\n    @@count\n  end\nend\n\
+                 puts \"loaded\"\n",
+            ),
+            (
+                "main.rb",
+                "box = Ruby::Box.new\n\
+                 box.require_relative \"blank\"\n\
+                 box2 = Ruby::Box.new\n\
+                 box2.require_relative \"blank\"\n\
+                 p box::Foo.blank_one?\n\
+                 begin\n  \"foo\".blank?\nrescue NoMethodError => e\n  puts \"main: #{e.message}\"\nend\n\
+                 box::Counter.bump\n\
+                 box::Counter.bump\n\
+                 box2::Counter.bump\n\
+                 p box::Counter.count\n\
+                 p box2::Counter.count\n",
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "loaded\nloaded\ntrue\nmain: undefined method 'blank?' for an instance of String\n2\n1\n"
+    );
+}
+
+/// `Box#eval`: a statement-position eval may DEFINE classes in the box; an
+/// expression-position eval returns a value whose static type is the box's
+/// own class (Path 1 dispatch on a cross-boundary instance); two boxes
+/// eval'ing the same class name get distinct classes.
+#[test]
+fn box_eval_defines_and_returns_across_the_boundary() {
+    let result = run_ruby(
+        r#"
+        box = Ruby::Box.new
+        box.eval("class Gadget; def spin; 'spinning'; end; end")
+        g = box.eval("Gadget.new")
+        p g.spin
+        p box::Gadget.new.spin
+        box2 = Ruby::Box.new
+        box2.eval("class Gadget; def spin; 'other'; end; end")
+        p box2::Gadget.new.spin
+        p(box::Gadget == box2::Gadget)
+        p box.eval("1 + 2")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"spinning\"\n\"spinning\"\n\"other\"\nfalse\n3\n"
+    );
+}
+
+/// Exceptions cross the boundary as plain references: a box-defined
+/// `BoxError < StandardError` raised from box code is rescuable in main
+/// through the SHARED bootstrap superclass chain, and `e.class` names it.
+#[test]
+fn box_exceptions_are_rescuable_in_main() {
+    let result = run_ruby_project(
+        &[
+            (
+                "thrower.rb",
+                "class BoxError < StandardError\nend\n\
+                 class Thrower\n  def self.go\n    raise BoxError, \"from the box\"\n  end\nend\n",
+            ),
+            (
+                "main.rb",
+                "box = Ruby::Box.new\n\
+                 box.require_relative \"thrower\"\n\
+                 begin\n  box::Thrower.go\nrescue StandardError => e\n  puts \"rescued: #{e.message} (#{e.class})\"\nend\n",
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued: from the box (BoxError)\n");
+}
+
+/// Gvar isolation is BIDIRECTIONAL (separate per-box tables, no fallback):
+/// a box reads nil for main's `$g`, and a box's write never reaches main.
+#[test]
+fn box_globals_are_fully_separate() {
+    let result = run_ruby(
+        r#"
+        $g = "main value"
+        box = Ruby::Box.new
+        p box.eval("$g")
+        box.eval("$g = 'box value'")
+        p $g
+        p box.eval("$g")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\n\"main value\"\n\"box value\"\n");
+}
+
+/// The clean rejections: `Ruby::Box.current`-family reflection, box
+/// operations outside their recognized positions, and expression-position
+/// eval defining classes.
+#[test]
+fn ruby_box_rejections_are_clean_errors() {
+    let err = spinelc::compile_to_rust("p Ruby::Box.current\n").unwrap_err();
+    assert!(err.contains("no compile-time meaning"), "{err}");
+    let err = spinelc::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n")
+        .unwrap_err();
+    assert!(err.contains("top-level statement"), "{err}");
+    let err =
+        spinelc::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
+            .unwrap_err();
+    assert!(err.contains("class"), "{err}");
+    let err = spinelc::compile_to_rust("box = Ruby::Box.new\nbox.eval(1)\n").unwrap_err();
+    assert!(err.contains("non-literal"), "{err}");
+}
+
+/// A main-only class/constant is INVISIBLE inside a box (boxes dup from
+/// MASTER, not main): resolving it inside box.eval raises NameError-shaped
+/// failures rather than leaking main's definitions.
+#[test]
+fn main_definitions_are_invisible_inside_a_box() {
+    let result = run_ruby(
+        r#"
+        MAIN_ONLY = 42
+        box = Ruby::Box.new
+        box.eval("begin; p MAIN_ONLY; rescue NameError => e; puts 'invisible'; end")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "invisible\n");
 }

@@ -69,12 +69,27 @@ cargo run -p spinelc -- app/main.rb --packages vendor/packages -o /tmp/app
 cargo run -p xtask -- test
 
 # Regenerate the .expected golden files from real `ruby`
+# (a Ruby::Box example is automatically oracled with RUBY_BOX=1)
 cargo run -p xtask -- regen
 ```
 
+### Ruby::Box
+
+`Ruby::Box` (CRuby's experimental box namespaces) is a COMPILE-TIME
+construct here: `box = Ruby::Box.new` at a top-level statement allocates a
+box, `box.require`/`box.require_relative`/`box.load` splice the target
+file's compilation into that box (the same file loads once PER BOX, with
+its own classes, class variables, globals, and top-level constants), and
+`box.eval("...")` compiles a literal source string in the box -- statement
+position may define classes, expression position returns a value (statically
+typed as the box's own class where inferable). `box::Widget`/`box::CONST`
+read into the box from outside; builtins are shared (`box::String ==
+String`) but reopenable per box (a box's `class String; def blank?` is
+visible only to that box's code). See `examples/boxes.rb`.
+
 ## Status
 
-All 47 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
+All 56 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
 `cargo test --workspace` suite (`crates/spinelc/tests/e2e.rs`, in-process via
 `spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
 spawn for the compiler itself) that's now the default place to add coverage.

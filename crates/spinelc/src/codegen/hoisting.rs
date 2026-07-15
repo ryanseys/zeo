@@ -325,7 +325,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 }
             }
         }
-        HirNode::Eval(body) => {
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_locals(compiler, n, out);
             }
@@ -415,6 +415,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::SelfRef
         | HirNode::LocalRead(_)

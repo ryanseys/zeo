@@ -81,7 +81,7 @@ fn no_locals() -> HashMap<String, TyKind> {
 /// "long"; end` makes the old `length -> Int` narrowing unsound (the
 /// override's result is whatever it returns, so the call types `Poly`).
 /// Free for un-reopened builtins: their materialized method table is empty.
-fn builtin_override(compiler: &Compiler, recv_ty: TyKind, name: &str) -> bool {
+fn builtin_override(compiler: &Compiler, recv_ty: TyKind, box_id: u32, name: &str) -> bool {
     use crate::compiler::{
         ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, PROC_CLASS,
         RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
@@ -105,12 +105,27 @@ fn builtin_override(compiler: &Compiler, recv_ty: TyKind, name: &str) -> bool {
     // `register_method` time -- already sees a reopen defined earlier in
     // the file; the same defined-earlier posture the rest of the one-pass
     // analyze has).
-    compiler.method_in_chain(cid, name).is_some()
+    if compiler.method_in_chain(cid, name).is_some()
         || compiler
             .class(cid)
             .own_methods
             .iter()
             .any(|&sid| compiler.scope(sid).name == name)
+    {
+        return true;
+    }
+    // Inside a box, that box's OVERLAY patches (Phase 18) widen static
+    // narrowing exactly like a root reopen would -- the patch is invisible
+    // to every other box, so only the referencing code's own box checks.
+    box_id != 0
+        && compiler.classes.iter().any(|c| {
+            c.builtin_overlay == Some(cid)
+                && c.box_id == box_id
+                && c.own_methods
+                    .iter()
+                    .chain(&c.methods)
+                    .any(|&sid| compiler.scope(sid).name == name)
+        })
 }
 
 /// Context-free type inference: given a node, what's its static type,
@@ -122,7 +137,7 @@ fn builtin_override(compiler: &Compiler, recv_ty: TyKind, name: &str) -> bool {
 /// `analyze::locals`) -- this thin wrapper exists only for the few call
 /// sites (e.g. resolving a `New` receiver's class) that don't need one.
 pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
-    infer_type_with_locals(compiler, None, &no_locals(), id)
+    infer_type_with_locals(compiler, None, 0, &no_locals(), id)
 }
 
 /// Real (if still one-pass, non-fixpoint) type inference: given a node and
@@ -135,6 +150,7 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 pub fn infer_type_with_locals(
     compiler: &Compiler,
     defining: Option<crate::compiler::ClassId>,
+    box_id: u32,
     locals: &HashMap<String, TyKind>,
     id: NodeId,
 ) -> TyKind {
@@ -155,11 +171,18 @@ pub fn infer_type_with_locals(
         HirNode::ArrayLit(_) => TyKind::Array,
         HirNode::HashLit(_) => TyKind::Hash,
         HirNode::RangeLit { .. } => TyKind::Range,
+        // A box-scoped splice types as its last statement, RESOLVED IN THE
+        // BOX (Phase 18) -- what keeps `w = box.eval("Widget.new")`
+        // statically typed as the box's own Widget.
+        HirNode::BoxScope { box_id: bx, body } => body
+            .last()
+            .map_or(TyKind::Poly, |&s| infer_type_with_locals(compiler, defining, *bx, locals, s)),
+        HirNode::BoxHandle(_) => TyKind::Poly,
         // Resolved against the referencing method's own lexical chain
         // (Phase 15.3) -- `defining` is the AOT def->cref: a bare `Item.new`
         // inside `module Store` types as the nested `Store::Item`.
         HirNode::New { class_name, .. } => {
-            match compiler.resolve_class(class_name, &compiler.cref_of(defining), 0) {
+            match compiler.resolve_class(class_name, &compiler.cref_of(defining), box_id) {
                 // A MODULE stays Poly: `M.new` has no struct -- codegen
                 // routes it to the dynamic path, whose result is a plain
                 // `RubyValue` (well, a raised NoMethodError -- Phase 16.1).
@@ -172,14 +195,14 @@ pub fn infer_type_with_locals(
         // 16.1) is a first-class Class value; one that doesn't stays an
         // ordinary value constant (type unknown -> Poly).
         HirNode::ClassRef(name) => {
-            match compiler.resolve_class(name, &compiler.cref_of(defining), 0) {
+            match compiler.resolve_class(name, &compiler.cref_of(defining), box_id) {
                 Some(cid) => TyKind::ClassObj(cid),
                 None => TyKind::Poly,
             }
         }
         HirNode::QualifiedConstRead(scope, name) => {
             let path = format!("{scope}::{name}");
-            match compiler.resolve_class(&path, &compiler.cref_of(defining), 0) {
+            match compiler.resolve_class(&path, &compiler.cref_of(defining), box_id) {
                 Some(cid) => TyKind::ClassObj(cid),
                 None => TyKind::Poly,
             }
@@ -204,7 +227,7 @@ pub fn infer_type_with_locals(
             // does -- and must TYPE the same way, since codegen's ClassObj
             // interception emits the same unboxed `Arc<Concrete>`
             // construction.
-            _ => match infer_type_with_locals(compiler, defining, locals, *recv) {
+            _ => match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
                 TyKind::ClassObj(cid)
                     if !compiler.class(cid).is_module && !compiler.class(cid).is_builtin =>
                 {
@@ -213,7 +236,7 @@ pub fn infer_type_with_locals(
                 _ => TyKind::Poly,
             },
         },
-        HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, defining, locals, *value),
+        HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, defining, box_id, locals, *value),
         HirNode::Call {
             receiver: Some(recv),
             name,
@@ -225,8 +248,8 @@ pub fn infer_type_with_locals(
             let crate::hir::ArrayElem::Single(arg) = args[0] else {
                 unreachable!("guarded above")
             };
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
-            let arg_ty = infer_type_with_locals(compiler, defining, locals, arg);
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            let arg_ty = infer_type_with_locals(compiler, defining, box_id, locals, arg);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
                 TyKind::Int
             } else {
@@ -247,10 +270,10 @@ pub fn infer_type_with_locals(
                 ARRAY_CLASS, CLASS_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MODULE_CLASS,
                 PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
             };
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
             // A reopened builtin's `class` override defeats the fold --
             // see `builtin_override`'s docs (Phase 16.3).
-            if builtin_override(compiler, recv_ty, "class") {
+            if builtin_override(compiler, recv_ty, box_id, "class") {
                 return TyKind::Poly;
             }
             match recv_ty {
@@ -285,10 +308,10 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && (name == "length" || name == "size") => {
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
             // A reopened builtin's override may return anything (Phase
             // 16.3) -- see `builtin_override`'s docs.
-            if builtin_override(compiler, recv_ty, name) {
+            if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }
             match recv_ty {
@@ -309,8 +332,8 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && name == "freeze" => {
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
-            if builtin_override(compiler, recv_ty, name) {
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }
             match recv_ty {
@@ -329,8 +352,8 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && (name == "dup" || name == "clone") => {
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
-            if builtin_override(compiler, recv_ty, name) {
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }
             match recv_ty {
@@ -357,9 +380,9 @@ pub fn infer_type_with_locals(
             let crate::hir::ArrayElem::Single(arg) = args[0] else {
                 unreachable!("guarded above")
             };
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
-            let arg_ty = infer_type_with_locals(compiler, defining, locals, arg);
-            if builtin_override(compiler, recv_ty, name) {
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            let arg_ty = infer_type_with_locals(compiler, defining, box_id, locals, arg);
+            if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }
             match (recv_ty, arg_ty) {
@@ -379,8 +402,8 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && matches!(name.as_str(), "to_a" | "captures" | "named_captures") => {
-            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
-            if builtin_override(compiler, recv_ty, name) {
+            let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
+            if builtin_override(compiler, recv_ty, box_id, name) {
                 return TyKind::Poly;
             }
             match recv_ty {

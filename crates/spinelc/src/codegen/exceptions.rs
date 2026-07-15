@@ -352,7 +352,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_bare_loop_jump(compiler, *n),
             StrPart::Lit(_) => false,
         }),
-        HirNode::Eval(body) => body_contains_bare_loop_jump(compiler, body),
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_bare_loop_jump(compiler, body),
         HirNode::MatchPredicate { subject, .. } | HirNode::MatchRequired { subject, .. } => {
             node_contains_bare_loop_jump(compiler, *subject)
         }

@@ -169,6 +169,16 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// A child context for a `BoxScope` body (Phase 18): everything inside
+    /// resolves classes/constants/globals against the box -- the AOT
+    /// translation of CRuby's loading-box context.
+    fn in_box(&self, box_id: u32) -> Ctx<'a> {
+        Ctx {
+            box_id,
+            ..self.clone()
+        }
+    }
+
     /// A child context for a `for`-loop's own body -- see
     /// `for_var_override`'s docs.
     fn with_for_var(&self, name: &str, ty: TyKind) -> Ctx<'a> {
@@ -340,6 +350,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             let name = &class.name;
             let is_module = class.is_module;
             let ancestor_ids = class.ancestors.iter().map(|a| a.0);
+            // A per-box OVERLAY (Phase 18) never registers a class entry of
+            // its own -- instances keep the ROOT builtin's identity -- but
+            // its methods/body statements below still run (registered on
+            // the root's entry, keyed by the box).
+            let is_overlay = class.builtin_overlay.is_some();
             // A REOPENED builtin (Phase 16.3): each of its methods (own or
             // module-included, all already materialized) registers as a
             // value method so `send_value` dispatches it FIRST -- see
@@ -363,10 +378,14 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 // Rust ident -- same reasoning as `emit_class`'s
                 // `dispatch_key`.
                 let key = &scope.name;
-                let box_id = compiler.class(ClassId(id)).box_id;
+                let ci = compiler.class(ClassId(id));
+                let box_id = ci.box_id;
+                // A per-box OVERLAY's methods register on the ROOT
+                // builtin's entry, keyed by the overlay's box (Phase 18).
+                let target = ci.builtin_overlay.map_or(id, |root| root.0);
                 quote! {
                     __registry.define_value_method(
-                        spinel_rt::ClassId(#id),
+                        spinel_rt::ClassId(#target),
                         #box_id,
                         spinel_rt::Symbol::intern(#key),
                         #tramp,
@@ -374,14 +393,19 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 }
             });
             let class_body = emit_class_body_stmts(compiler, ClassId(id));
+            let register = (!is_overlay).then(|| {
+                quote! {
+                    __registry.register(
+                        spinel_rt::ClassId(#id),
+                        #name,
+                        #is_module,
+                        vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                        None,
+                    );
+                }
+            });
             quote! {
-                __registry.register(
-                    spinel_rt::ClassId(#id),
-                    #name,
-                    #is_module,
-                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
-                    None,
-                );
+                #register
                 #(#value_defs)*
                 #class_body
             }

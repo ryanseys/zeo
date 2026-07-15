@@ -35,6 +35,13 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let statements = statements.clone();
     let prelude_len = compiler.hir.prelude_len;
 
+    // One top-level surrogate per allocated box (Phase 18) -- created up
+    // front so a handle-only box (`box = Ruby::Box.new` and nothing else)
+    // still has the ClassId its `BoxHandle` value needs.
+    for b in 1..=compiler.hir.boxes {
+        compiler.ensure_box_surrogate(b);
+    }
+
     let mut main_statements = Vec::new();
     for (idx, stmt) in statements.into_iter().enumerate() {
         if let HirNode::ClassDef {
@@ -49,7 +56,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             let body = body.clone();
             let is_module = *is_module;
             let before = compiler.classes.len();
-            register_class(&mut compiler, name, superclass, is_module, &body, &[])?;
+            register_class(&mut compiler, name, superclass, is_module, &body, &[], 0)?;
             // Exception-prelude classes are BOOTSTRAP: the "defined before
             // any user program runs" set every `Ruby::Box` sees (see
             // `Compiler::resolve_class`'s fallback and `Hir::prelude_len`).
@@ -58,6 +65,30 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
                     c.is_bootstrap = true;
                 }
             }
+        } else if let HirNode::BoxScope { box_id, body } = &compiler.hir[stmt] {
+            // A top-level box splice (Phase 18): its `ClassDef`s register
+            // under the BOX (real Ruby: a class defined in a box is a
+            // distinct class object); everything else stays in the
+            // BoxScope for ordinary emission under the box context.
+            let (bx, body) = (*box_id, body.clone());
+            let mut rest = Vec::new();
+            for s in body {
+                if let HirNode::ClassDef {
+                    name,
+                    superclass,
+                    body,
+                    is_module,
+                } = &compiler.hir[s]
+                {
+                    let (name, superclass, body, is_module) =
+                        (name.clone(), superclass.clone(), body.clone(), *is_module);
+                    register_class(&mut compiler, name, superclass, is_module, &body, &[], bx)?;
+                } else {
+                    rest.push(s);
+                }
+            }
+            compiler.hir[stmt] = HirNode::BoxScope { box_id: bx, body: rest };
+            main_statements.push(stmt);
         } else {
             main_statements.push(stmt);
         }
@@ -76,6 +107,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             false,
             &[],
             &[],
+            0,
         )?;
         for c in &mut compiler.classes[before..] {
             c.is_bootstrap = true;
@@ -89,7 +121,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // resolution already enforces). See `mro`'s module docs.
     mro::materialize(&mut compiler, &main_statements)?;
 
-    let main_local_types = locals::infer_locals(&compiler, None, &main_statements);
+    let main_local_types = locals::infer_locals(&compiler, None, 0, &main_statements);
 
     Ok(Analyzed {
         compiler,
@@ -119,12 +151,13 @@ fn register_class(
     is_module: bool,
     body: &[NodeId],
     cref: &[ClassId],
+    box_id: u32,
 ) -> Result<(), String> {
     let (lexical_parent, leaf, qualified_def) = match name.strip_prefix("::") {
         Some(rest) if !rest.contains("::") => (None, rest.to_string(), true),
         _ => match name.rsplit_once("::") {
             Some((prefix, leaf)) => {
-                let parent = compiler.resolve_class(prefix, cref, 0).ok_or_else(|| {
+                let parent = compiler.resolve_class(prefix, cref, box_id).ok_or_else(|| {
                     format!(
                         "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
                     )
@@ -149,8 +182,25 @@ fn register_class(
     // the builtin MODULES (`Enumerable`/`Comparable` -- patching one would
     // need re-materialization onto every includer, including the Rust-
     // backed builtin fallbacks).
-    let existing = compiler.class_in_scope(lexical_parent, &leaf, 0);
-    if let Some(cid) = existing {
+    let existing = compiler.class_in_scope(lexical_parent, &leaf, box_id);
+    // A top-level `class String ... end` INSIDE a box (Phase 18) with no
+    // same-box definition to attach to: when the name reaches a builtin
+    // through the bootstrap fallback, this is a PER-BOX builtin reopen --
+    // an OVERLAY `ClassInfo` whose methods register as value methods under
+    // the box's id (visible only from box code; `box::String == String`
+    // stays true because instances keep the ROOT builtin's ClassId).
+    let overlay_root = if box_id != 0
+        && existing.is_none()
+        && lexical_parent.is_none()
+        && superclass.is_none()
+    {
+        compiler
+            .resolve_class(&leaf, &[], box_id)
+            .filter(|&c| compiler.class(c).is_builtin || c == OBJECT_CLASS)
+    } else {
+        None
+    };
+    if let Some(cid) = existing.or(overlay_root) {
         let ci = compiler.class(cid);
         // NOTE: the implicit `Object` root (id 0) is NOT `is_builtin` (it
         // predates the `spinel_abi::BUILTINS` placeholders -- see
@@ -193,7 +243,7 @@ fn register_class(
                 ));
             }
             if let Some(s) = &superclass {
-                let want = compiler.resolve_class(s, cref, 0).ok_or_else(|| {
+                let want = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).parent != Some(want) {
@@ -212,7 +262,7 @@ fn register_class(
                     // class being opened): real Ruby evaluates the
                     // superclass expression before the new class exists.
                     Some(s) => {
-                        let cid = compiler.resolve_class(s, cref, 0).ok_or_else(|| {
+                        let cid = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
                             format!("unknown superclass `{s}` (must be defined earlier in the file)")
                         })?;
                         // `Struct` is the ONE subclassable builtin (Phase
@@ -229,8 +279,18 @@ fn register_class(
                 })
             };
             let cid = compiler.add_class(leaf, parent, is_module);
-            compiler.classes[cid.0 as usize].lexical_parent = lexical_parent;
-            compiler.classes[cid.0 as usize].qualified_def = qualified_def;
+            let ci = &mut compiler.classes[cid.0 as usize];
+            ci.lexical_parent = lexical_parent;
+            ci.qualified_def = qualified_def;
+            ci.box_id = box_id;
+            if let Some(root) = overlay_root {
+                // The overlay carries the box's patches; instances keep
+                // the root builtin's identity. `is_builtin` makes the
+                // 16.3 machinery (operator/@ivar guards, value-method
+                // emission, `__bm_` containers) apply unchanged.
+                ci.is_builtin = true;
+                ci.builtin_overlay = Some(root);
+            }
             cid
         }
     };
@@ -287,18 +347,18 @@ fn register_class(
             } => {
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
-                register_class(compiler, name, superclass, is_module, &body, &child_cref)?;
+                register_class(compiler, name, superclass, is_module, &body, &child_cref, box_id)?;
             }
             HirNode::Include(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref)?;
+                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].includes.push(target);
             }
             HirNode::Extend(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref)?;
+                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].extends.push(target);
             }
             HirNode::Prepend(m) => {
-                let target = resolve_module_target(compiler, m, &child_cref)?;
+                let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
             }
             HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
@@ -354,9 +414,9 @@ fn add_own_method(compiler: &mut Compiler, class_id: ClassId, sid: crate::compil
     }
 }
 
-fn resolve_module_target(compiler: &Compiler, name: &str, cref: &[ClassId]) -> Result<ClassId, String> {
+fn resolve_module_target(compiler: &Compiler, name: &str, cref: &[ClassId], box_id: u32) -> Result<ClassId, String> {
     compiler
-        .resolve_class(name, cref, 0)
+        .resolve_class(name, cref, box_id)
         .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
 }
 
@@ -381,9 +441,10 @@ fn register_method(
     body: Vec<NodeId>,
     visibility: Visibility,
 ) -> Result<crate::compiler::ScopeId, String> {
-    let mut local_types = locals::infer_locals(compiler, Some(defining_class), &body);
+    let defining_box = compiler.class(defining_class).box_id;
+    let mut local_types = locals::infer_locals(compiler, Some(defining_class), defining_box, &body);
     for id in params.default_ids() {
-        locals::track_extra(compiler, Some(defining_class), &mut local_types, id);
+        locals::track_extra(compiler, Some(defining_class), defining_box, &mut local_types, id);
     }
     if let Some(Some(n)) = &params.rest {
         local_types.entry(n.clone()).or_insert(TyKind::Array);
@@ -563,7 +624,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         }
         HirNode::GlobalWrite(_, value) => scan_bare_block_use(hir, *value)?,
         HirNode::ConstWrite { value, .. } => scan_bare_block_use(hir, *value)?,
-        HirNode::Seq(body) | HirNode::Eval(body) => scan_bare_block_use_body(hir, body)?,
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => scan_bare_block_use_body(hir, body)?,
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => match v {
             Some(v) => scan_bare_block_use(hir, *v)?,
             None => false,
@@ -624,6 +685,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::SelfRef
         | HirNode::LocalRead(_)
@@ -716,7 +778,7 @@ fn body_contains_yield_or_block_given(hir: &Hir, body: &[NodeId]) -> bool {
             HirNode::Block { body, .. } => body_contains_yield_or_block_given(hir, body),
             _ => false,
         },
-        HirNode::Eval(body) => body_contains_yield_or_block_given(hir, body),
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_yield_or_block_given(hir, body),
         _ => false,
     })
 }
@@ -881,7 +943,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         }
         HirNode::GlobalWrite(_, value) => collect_ivars(hir, *value, out),
         HirNode::ConstWrite { value, .. } => collect_ivars(hir, *value, out),
-        HirNode::Seq(body) | HirNode::Eval(body) => {
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_ivars(hir, n, out);
             }
@@ -949,6 +1011,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::SelfRef
         | HirNode::LocalRead(_)

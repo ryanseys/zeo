@@ -47,6 +47,10 @@ pub struct Hir {
     /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
     /// bootstrap fallback).
     pub prelude_len: usize,
+    /// How many `Ruby::Box`es the loader allocated (Phase 18) -- box ids
+    /// run 1..=boxes (0 is the root program). `analyze` creates one
+    /// top-level surrogate `ClassInfo` per id.
+    pub boxes: u32,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -1013,6 +1017,24 @@ pub enum HirNode {
     /// see docs/EVAL_VM.md for the future embedded-interpreter design those
     /// would need.
     Eval(Vec<NodeId>),
+    /// A `Ruby::Box` context switch (Phase 18): the universal wrapper every
+    /// box-scoped splice lowers into -- a `box.require`d file's statements,
+    /// a `box.eval` body, and a `box::X` external-access expression all
+    /// carry their statically-known box id here. Emits exactly like `Eval`
+    /// (a brace-wrapped block whose value is the last statement's), except
+    /// codegen's `Ctx.box_id` is overridden for the body -- the AOT
+    /// translation of CRuby's loading-box/`cme->def->box` context.
+    /// `analyze` descends top-level `BoxScope`s to register their
+    /// `ClassDef`s under the box.
+    BoxScope { box_id: u32, body: Vec<NodeId> },
+    /// The runtime VALUE of a box handle (`box = Ruby::Box.new` binds the
+    /// local to this): a `RubyValue::Class` of the box's top-level
+    /// surrogate class, so `p box` prints `#<Ruby::Box:N>`, handle equality
+    /// works, and storing it is harmless. The four recognized OPERATION
+    /// shapes (`box.require`/`box.load`/`box.eval`/`box::X`) resolve
+    /// statically through the loader's bindings map, never through this
+    /// value.
+    BoxHandle(u32),
     /// `return` / `return value` -- explicit early return from the enclosing
     /// method. Compiles to a literal Rust `return Ok(value);` (Rust's own
     /// early return already exits arbitrarily deep nesting -- an `if`/`case`/

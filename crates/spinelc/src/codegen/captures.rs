@@ -208,7 +208,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Yield(args) | HirNode::Raise(args) => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
-        HirNode::Seq(body) | HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
         HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
@@ -268,6 +268,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
@@ -391,7 +392,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
             StrPart::Lit(_) => false,
         }),
-        HirNode::Seq(body) | HirNode::Eval(body) => body_contains_begin(compiler, body),
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_begin(compiler, body),
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
@@ -407,6 +408,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
@@ -639,7 +641,7 @@ fn walk(
             }
         }
         HirNode::Retry => {}
-        HirNode::Eval(body) => {
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps);
             }
@@ -734,6 +736,7 @@ fn walk(
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)

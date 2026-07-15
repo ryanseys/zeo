@@ -149,8 +149,27 @@ pub(super) fn class_ident(
     // (reopening it is rejected), and its ident may still be referenced by
     // pre-16.3 paths expecting the plain name.
     if ci.is_builtin && cid != crate::compiler::OBJECT_CLASS {
+        // A per-box OVERLAY (Phase 18) gets its own container module --
+        // `__bm_b2_String` -- so a root reopen and any number of box
+        // overlays of the same builtin coexist.
+        if ci.box_id != 0 {
+            return proc_macro2::Ident::new(
+                &format!("__bm_b{}_{}", ci.box_id, ci.name),
+                proc_macro2::Span::call_site(),
+            );
+        }
         return proc_macro2::Ident::new(
             &format!("__bm_{}", ci.name),
+            proc_macro2::Span::call_site(),
+        );
+    }
+    // A class DEFINED IN a box (Phase 18): `__b<box>_<leaf>` -- the box id
+    // disambiguates it from a same-named main-program class (the ClassId
+    // isn't needed: one box defines each top-level name at most once, and
+    // nested classes already took the `__c<id>_` arm above).
+    if ci.box_id != 0 {
+        return proc_macro2::Ident::new(
+            &format!("__b{}_{}", ci.box_id, ci.name),
             proc_macro2::Span::call_site(),
         );
     }

@@ -547,7 +547,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
             collect_const_refs(compiler, *value, cref, out);
             targets.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
         }
-        HirNode::Seq(body) | HirNode::Eval(body) => {
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_const_refs(compiler, n, cref, out);
             }
@@ -617,6 +617,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
@@ -771,7 +772,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         }
         HirNode::GlobalWrite(_, value) => collect_cvars(hir, *value, out),
         HirNode::ConstWrite { value, .. } => collect_cvars(hir, *value, out),
-        HirNode::Seq(body) | HirNode::Eval(body) => {
+        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_cvars(hir, n, out);
             }
@@ -841,6 +842,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
+        | HirNode::BoxHandle(_)
         | HirNode::BoolLit(_)
         | HirNode::LocalRead(_)
         | HirNode::IvarRead(_)
