@@ -35,6 +35,7 @@ pub(crate) mod hash;
 pub(crate) mod integer;
 pub(crate) mod io;
 pub(crate) mod kernel;
+pub(crate) mod method_obj;
 pub(crate) mod math;
 pub(crate) mod numeric;
 pub(crate) mod object;
@@ -80,6 +81,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup,
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS => io::lookup,
+        spinel_abi::METHOD_CLASS => method_obj::lookup,
         _ => return None,
     })
 }

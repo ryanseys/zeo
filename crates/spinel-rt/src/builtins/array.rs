@@ -327,6 +327,134 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
+    "uniq!" => fn uniq_bang(recv, args, _block) {
+        arity!(args, 0);
+        let h = recv_array!(recv);
+        let mut out: Vec<RubyValue> = Vec::new();
+        let before = h.lock().len();
+        for e in h.lock().iter() {
+            if !out.iter().any(|x| e.rb_eq(x)) {
+                out.push(e.clone());
+            }
+        }
+        if out.len() == before {
+            return Ok(RubyValue::Nil); // no change -- CRuby's nil answer
+        }
+        *h.lock() = out;
+        Ok(recv.clone())
+    }
+    "assoc" => fn assoc(recv, args, _block) {
+        arity!(args, 1);
+        for e in recv_array!(recv).lock().iter() {
+            if let RubyValue::Array(inner) = e {
+                if inner.lock().first().is_some_and(|k| k.rb_eq(&args[0])) {
+                    return Ok(e.clone());
+                }
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+    "rassoc" => fn rassoc(recv, args, _block) {
+        arity!(args, 1);
+        for e in recv_array!(recv).lock().iter() {
+            if let RubyValue::Array(inner) = e {
+                if inner.lock().get(1).is_some_and(|v| v.rb_eq(&args[0])) {
+                    return Ok(e.clone());
+                }
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+    "product" => fn product(recv, args, _block) {
+        // Cartesian product of self with every argument array, CRuby's
+        // element order (leftmost varies slowest).
+        let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().clone()];
+        for a in args {
+            let RubyValue::Array(other) = a else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into Array", a.inspect_string()),
+                ));
+            };
+            lists.push(other.lock().clone());
+        }
+        let mut out: Vec<RubyValue> = vec![RubyValue::Array(crate::array_new(Vec::new()))];
+        let mut tuples: Vec<Vec<RubyValue>> = vec![Vec::new()];
+        for list in &lists {
+            let mut next = Vec::with_capacity(tuples.len() * list.len());
+            for t in &tuples {
+                for e in list {
+                    let mut t2 = t.clone();
+                    t2.push(e.clone());
+                    next.push(t2);
+                }
+            }
+            tuples = next;
+        }
+        out.clear();
+        out.extend(tuples.into_iter().map(|t| RubyValue::Array(crate::array_new(t))));
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "transpose" => fn transpose(recv, args, _block) {
+        arity!(args, 0);
+        let rows = recv_array!(recv).lock().clone();
+        if rows.is_empty() {
+            return Ok(RubyValue::Array(crate::array_new(Vec::new())));
+        }
+        let mut cols: Vec<Vec<RubyValue>> = Vec::new();
+        for (ri, row) in rows.iter().enumerate() {
+            let RubyValue::Array(r) = row else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into Array", row.inspect_string()),
+                ));
+            };
+            let r = r.lock().clone();
+            if ri == 0 {
+                cols = vec![Vec::with_capacity(rows.len()); r.len()];
+            } else if r.len() != cols.len() {
+                return Err(crate::dispatch::raise_error(
+                    "IndexError",
+                    format!("element size differs ({} should be {})", r.len(), cols.len()),
+                ));
+            }
+            for (ci, v) in r.into_iter().enumerate() {
+                cols[ci].push(v);
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(
+            cols.into_iter().map(|c| RubyValue::Array(crate::array_new(c))).collect(),
+        )))
+    }
+    "slice!" => fn slice_bang(recv, args, _block) {
+        // `slice!(i)` / `slice!(i, len)` -- remove and return. The Range
+        // form isn't wired yet (TODO(plan G6)).
+        let h = recv_array!(recv);
+        let len = h.lock().len() as i64;
+        let i = arg_int!(args, 0);
+        let idx = if i < 0 { i + len } else { i };
+        if idx < 0 || idx > len {
+            return Ok(RubyValue::Nil);
+        }
+        match args.len() {
+            1 => {
+                if idx == len {
+                    return Ok(RubyValue::Nil);
+                }
+                Ok(h.lock().remove(idx as usize))
+            }
+            2 => {
+                let n = arg_int!(args, 1).max(0);
+                let end = ((idx + n) as usize).min(len as usize);
+                let removed: Vec<RubyValue> = h.lock().drain(idx as usize..end).collect();
+                Ok(RubyValue::Array(crate::array_new(removed)))
+            }
+            n => Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("wrong number of arguments (given {n}, expected 1..2)"),
+            )),
+        }
+    }
     "reverse" => fn reverse(recv, args, _block) {
         arity!(args, 0);
         let mut out = recv_array!(recv).lock().clone();

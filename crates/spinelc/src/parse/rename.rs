@@ -384,7 +384,8 @@ impl Walker {
             MultiTarget::Ivar(_)
             | MultiTarget::ClassVar(_)
             | MultiTarget::Global(_)
-            | MultiTarget::Const(_) => {}
+            | MultiTarget::Const(_)
+            | MultiTarget::ScopedConst { .. } => {}
         }
     }
 

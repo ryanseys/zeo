@@ -778,7 +778,10 @@ fn walk_multi_target(
                 caps.self_captured = true;
             }
         }
-        MultiTarget::ClassVar(_) | MultiTarget::Global(_) | MultiTarget::Const(_) => {}
+        MultiTarget::ClassVar(_)
+        | MultiTarget::Global(_)
+        | MultiTarget::Const(_)
+        | MultiTarget::ScopedConst { .. } => {}
         MultiTarget::Call { write_call, tmp_name } => {
             if in_escaping && !param_exclusions.contains(tmp_name) {
                 caps.locals.insert(tmp_name.clone());

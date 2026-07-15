@@ -126,6 +126,9 @@ pub const GC_CLASS: ClassId = ClassId(32);
 /// value those globals hold. Full file-backed IO is a later phase (plan
 /// P-B).
 pub const IO_CLASS: ClassId = ClassId(33);
+/// `Method` (G0/P4) -- the object `Kernel#method(:name)` answers; wraps a
+/// bound receiver + method name and dispatches `#call` through `send`.
+pub const METHOD_CLASS: ClassId = ClassId(34);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -167,6 +170,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
     BuiltinClass { id: GC_CLASS, name: "GC", is_module: true, superclass: None, includes: &[] },
     BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: METHOD_CLASS, name: "Method", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

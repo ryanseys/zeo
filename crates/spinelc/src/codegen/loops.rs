@@ -251,6 +251,9 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
             quote! { spinel_rt::global_set(#bx, #name, #value); }
         }
         MultiTarget::Const(name) => super::expr::emit_const_write_stmt(cx, None, name, value),
+        MultiTarget::ScopedConst { scope, name } => {
+            super::expr::emit_const_write_stmt(cx, Some(scope), name, value)
+        }
         MultiTarget::Call { write_call, tmp_name } => {
             let bind = super::hoisting::emit_local_write(cx, tmp_name, value);
             let call = emit_expr(cx, *write_call);
@@ -304,18 +307,26 @@ pub fn emit_multi_target_group(cx: &Ctx, group: &crate::hir::MultiTargetGroup, v
     }
 }
 
-/// The top-level entry for `a, b = 1, 2` / `a, *b, c = arr` -- checks the
-/// right-hand side is statically `Array`-typed (a clean codegen-time panic
-/// otherwise, since there's no other dispatch to fall back to, spike scope,
-/// same posture as `emit_call`'s final panic) before delegating to
-/// `emit_multi_target_group`.
+/// The top-level entry for `a, b = 1, 2` / `a, *b, c = arr`. A statically
+/// `Array`-typed right-hand side destructures directly; anything else gets
+/// real Ruby's implicit conversion at RUNTIME -- an Array passes through,
+/// every other value destructures as the single-element `[value]` (the
+/// `to_ary` rule for values with no `to_ary` of their own; a user-defined
+/// `to_ary` isn't consulted, a documented approximation).
 pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> TokenStream {
-    if infer(cx, value) != TyKind::Array {
-        panic!(
-            "multi-assignment requires an Array-typed right-hand side (spike scope), got {:?}",
-            infer(cx, value)
-        );
-    }
-    let value_expr = emit_expr(cx, value);
+    let value_expr = {
+        let e = emit_expr(cx, value);
+        super::expr::box_if_object_typed(cx, value, e)
+    };
+    let value_expr = if infer(cx, value) == TyKind::Array {
+        value_expr
+    } else {
+        quote! {
+            (match #value_expr {
+                __v @ spinel_rt::RubyValue::Array(_) => __v,
+                __v => spinel_rt::RubyValue::Array(spinel_rt::array_new(vec![__v])),
+            })
+        }
+    };
     emit_multi_target_group(cx, targets, value_expr)
 }

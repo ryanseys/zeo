@@ -1,14 +1,14 @@
 # Conformance scoreboard
 
-Suite `spinel` — **773/1819 passing** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `7f9e988`
+Suite `spinel` — **838/1819 passing** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `8c6ed5c`
 
 | verdict | count |
 |---|---|
-| FAIL_COMPILE | 459 |
-| FAIL_OUTPUT | 553 |
+| FAIL_COMPILE | 380 |
+| FAIL_OUTPUT | 570 |
 | FAIL_RUN | 1 |
-| FAIL_RUSTC | 31 |
-| PASS | 773 |
+| FAIL_RUSTC | 28 |
+| PASS | 838 |
 | TIMEOUT_RUN | 2 |
 
 ## Skipped tests

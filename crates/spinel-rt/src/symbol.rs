@@ -45,6 +45,12 @@ impl Symbol {
     }
 
     /// Mirrors `sp_sym_to_s`.
+    /// The raw interner id -- stable for the process lifetime (the basis of
+    /// `Symbol#object_id`'s derived value).
+    pub fn to_u32(self) -> u32 {
+        self.0
+    }
+
     pub fn name(&self) -> String {
         INTERNER.lock().names[self.0 as usize].clone()
     }

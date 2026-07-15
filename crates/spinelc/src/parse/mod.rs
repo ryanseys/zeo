@@ -484,9 +484,25 @@ fn lower_params(
     let Some(params) = params else {
         return Ok(Params::default());
     };
-    let block = params
-        .block()
-        .map(|b| b.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()));
+    // `def m(...)` -- bare forwarding. Prism surfaces it as a
+    // `ForwardingParameterNode` occupying the `keyword_rest` slot (with
+    // `.rest()`/`.block()` both `None`). Desugared here into three
+    // compiler-internal named params (`*__fwd_rest, **__fwd_kw,
+    // &__fwd_blk`); the call-site `n(...)` (a `ForwardingArgumentsNode`)
+    // references the same names -- no new HIR shape, no special runtime.
+    let forwarding = params
+        .keyword_rest()
+        .is_some_and(|n| n.as_forwarding_parameter_node().is_some());
+    // Anonymous `&` (`def m(&)`) forwards via the same internal-name trick
+    // (`n(&)` references it); a named `&blk` stays itself.
+    let block = match params.block() {
+        Some(b) => Some(Some(match b.name() {
+            Some(name) => String::from_utf8_lossy(name.as_slice()).into_owned(),
+            None => "__anon_blk".to_string(),
+        })),
+        None if forwarding => Some(Some("__fwd_blk".to_string())),
+        None => None,
+    };
 
     let required = params
         .requireds()
@@ -508,12 +524,18 @@ fn lower_params(
         .collect::<PResult<Vec<_>>>()?;
 
     let rest = match params.rest() {
+        None if forwarding => Some(Some("__fwd_rest".to_string())),
         None => None,
         Some(n) => {
             let r = n.as_rest_parameter_node().ok_or(
-                "`...` forwarding isn't supported yet (spike scope) -- needs a real Proc runtime, a later phase",
+                "unsupported rest-parameter form (spike scope)",
             )?;
-            Some(r.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()))
+            // Anonymous `*` (`def m(*)`) gets an internal name so `n(*)`
+            // can forward it (Ruby 3.2's anonymous-forwarding semantics).
+            Some(Some(match r.name() {
+                Some(name) => String::from_utf8_lossy(name.as_slice()).into_owned(),
+                None => "__anon_rest".to_string(),
+            }))
         }
     };
 
@@ -543,17 +565,11 @@ fn lower_params(
 
     let keyword_rest = match params.keyword_rest() {
         None => None,
-        // Bare `...` forwarding surfaces here as a `ForwardingParameterNode`
-        // occupying the `keyword_rest` slot (confirmed empirically: `.rest()`
-        // and `.block()` both come back `None` for it) -- not a real
-        // `**`/`**name`, so give the dedicated forwarding message, not the
-        // generic "unsupported keyword-rest parameter form" one below. Still
-        // unsupported even though a real Proc runtime exists now (Phase 6):
-        // `...` needs one call-site construct forwarding rest+keyword_rest+
-        // block all at once, which hasn't been built -- a narrower gap than
-        // before, not the same one.
+        // Bare `...` forwarding (a `ForwardingParameterNode` in this slot)
+        // -- desugared to `**__fwd_kw` here; `rest`/`block` above already
+        // synthesized their `__fwd_*` halves.
         Some(n) if n.as_forwarding_parameter_node().is_some() => {
-            return Err("`...` forwarding isn't supported yet (spike scope) -- it needs a dedicated call-site construct forwarding positional/keyword/block args all at once".to_string());
+            Some(Some("__fwd_kw".to_string()))
         }
         Some(n) if n.as_no_keywords_parameter_node().is_some() => {
             // `**nil` -- explicit "no extra keywords accepted". Treated the
@@ -566,7 +582,12 @@ fn lower_params(
             let r = n
                 .as_keyword_rest_parameter_node()
                 .ok_or("unsupported keyword-rest parameter form (spike scope)")?;
-            Some(r.name().map(|name| String::from_utf8_lossy(name.as_slice()).into_owned()))
+            // Anonymous `**` gets an internal name so `n(**)` can forward
+            // it, same as the anonymous-`*` rule above.
+            Some(Some(match r.name() {
+                Some(name) => String::from_utf8_lossy(name.as_slice()).into_owned(),
+                None => "__anon_kwrest".to_string(),
+            }))
         }
     };
 
@@ -1078,7 +1099,8 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let (arg_elems, kwargs, kwargs_splat) = lower_call_args(result, hir, yield_node.arguments())?;
+        let (arg_elems, kwargs, kwargs_splat, _fwd_block) =
+            lower_call_args(result, hir, yield_node.arguments())?;
         if kwargs_splat.is_some() {
             return Err("a `**h` double-splat argument isn't supported in `yield` (spike scope)".to_string());
         }
@@ -1638,21 +1660,24 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
-        let (args, kwargs, kwargs_splat) = lower_call_args(result, hir, call.arguments())?;
+        let (args, kwargs, kwargs_splat, fwd_block) =
+            lower_call_args(result, hir, call.arguments())?;
         // A call's `block()` slot is one of two distinct shapes: a literal
         // `{ }`/`do..end` (`BlockNode`), or `&existing_proc` forwarding an
         // already-built Proc value onward (`BlockArgumentNode`) -- real Ruby
         // syntax forbids a call from having both, so this is a clean
-        // either/or, not a "prefer one" choice.
+        // either/or, not a "prefer one" choice. A `...` in the argument
+        // list contributes its own block forwarding (`fwd_block`).
         let (block, block_arg) = match call.block() {
-            None => (None, None),
+            None => (None, fwd_block),
             Some(b) => {
                 if let Some(barg) = b.as_block_argument_node() {
                     let expr = match barg.expression() {
                         Some(e) => lower_node(result, hir, &e)?,
-                        None => return Err(
-                            "an anonymous `&` block-forwarding argument (forwarding the enclosing method's own `&block` onward without naming it) isn't supported yet (spike scope)".to_string(),
-                        ),
+                        // Anonymous `&` forwarding -- references the
+                        // enclosing method's internally-named `&` param
+                        // (see `lower_params`).
+                        None => hir.push(HirNode::LocalRead("__anon_blk".to_string())),
                     };
                     (None, Some(expr))
                 } else {
@@ -1937,12 +1962,36 @@ fn lower_call_args(
     result: &ParseResult,
     hir: &mut Hir,
     arguments: Option<ruby_prism::ArgumentsNode<'_>>,
-) -> PResult<(Vec<ArrayElem>, Vec<HashPair>, Option<NodeId>)> {
+) -> PResult<(Vec<ArrayElem>, Vec<HashPair>, Option<NodeId>, Option<NodeId>)> {
     let Some(arguments) = arguments else {
-        return Ok((Vec::new(), Vec::new(), None));
+        return Ok((Vec::new(), Vec::new(), None, None));
     };
     let mut list: Vec<_> = arguments.arguments().iter().collect();
     let mut kwargs_splat = None;
+    // `n(...)` inside `def m(...)` -- a `ForwardingArgumentsNode` in the
+    // list. Expands to the three internal params `lower_params`
+    // synthesized: `*__fwd_rest, **__fwd_kw, &__fwd_blk` (the block half
+    // returned separately -- a call's block slot lives outside this
+    // function).
+    let mut fwd_block = None;
+    if let Some(pos) = list.iter().position(|n| n.as_forwarding_arguments_node().is_some()) {
+        list.remove(pos);
+        kwargs_splat = Some(hir.push(HirNode::LocalRead("__fwd_kw".to_string())));
+        fwd_block = Some(hir.push(HirNode::LocalRead("__fwd_blk".to_string())));
+        // The rest-splat slots in positionally where `...` was written.
+        let rest_read = hir.push(HirNode::LocalRead("__fwd_rest".to_string()));
+        let mut args = Vec::new();
+        for (i, n) in list.iter().enumerate() {
+            if i == pos {
+                args.push(ArrayElem::Splat(rest_read));
+            }
+            args.push(lower_array_elem_or_anon(result, hir, n)?);
+        }
+        if pos >= list.len() {
+            args.push(ArrayElem::Splat(rest_read));
+        }
+        return Ok((args, Vec::new(), kwargs_splat, fwd_block));
+    }
     let kwargs = match list.last().and_then(|n| n.as_keyword_hash_node()) {
         Some(kw) => {
             list.pop();
@@ -1952,10 +2001,13 @@ fn lower_call_args(
                     if kwargs_splat.is_some() {
                         return Err("at most one `**h` double-splat is supported per call (spike scope)".to_string());
                     }
-                    let expr = splat.value().ok_or(
-                        "an anonymous `**` keyword-forwarding argument isn't supported yet (spike scope)",
-                    )?;
-                    kwargs_splat = Some(lower_node(result, hir, &expr)?);
+                    kwargs_splat = Some(match splat.value() {
+                        Some(expr) => lower_node(result, hir, &expr)?,
+                        // Anonymous `**` forwarding -- references the
+                        // enclosing method's internally-named `**` param
+                        // (see `lower_params`).
+                        None => hir.push(HirNode::LocalRead("__anon_kwrest".to_string())),
+                    });
                     continue;
                 }
                 let assoc = el
@@ -1971,9 +2023,27 @@ fn lower_call_args(
     };
     let args = list
         .iter()
-        .map(|n| lower_array_elem(result, hir, n))
+        .map(|n| lower_array_elem_or_anon(result, hir, n))
         .collect::<PResult<Vec<_>>>()?;
-    Ok((args, kwargs, kwargs_splat))
+    Ok((args, kwargs, kwargs_splat, fwd_block))
+}
+
+/// `lower_array_elem`, plus the CALL-argument-only anonymous `*` forwarding
+/// form (`n(*)` inside `def m(*)`) -- an array literal's own bare `*` stays
+/// rejected in `lower_array_elem` itself.
+fn lower_array_elem_or_anon(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+) -> PResult<ArrayElem> {
+    if let Some(splat) = node.as_splat_node() {
+        if splat.expression().is_none() {
+            return Ok(ArrayElem::Splat(
+                hir.push(HirNode::LocalRead("__anon_rest".to_string())),
+            ));
+        }
+    }
+    lower_array_elem(result, hir, node)
 }
 
 /// A class body's statement list -- like `lower_statement_list`, but
@@ -2468,10 +2538,15 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
     if let Some(t) = node.as_constant_target_node() {
         return Ok(MultiTarget::Const(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
     }
-    if node.as_constant_path_target_node().is_some() {
-        return Err(
-            "an explicit `Foo::BAR` multi-assignment target isn't supported yet (spike scope) -- only a bare, lexically-scoped constant name is".to_string(),
-        );
+    if let Some(t) = node.as_constant_path_target_node() {
+        // Same parent-path + leaf split `ConstWrite`'s own `Foo::BAR = v`
+        // lowering uses: the parent must be a static constant path.
+        let parent = match t.parent() {
+            Some(p) => constant_path_name(&p)?,
+            None => String::new(), // `::BAR` -- top-level anchored
+        };
+        let name = String::from_utf8_lossy(t.name().expect("a constant path target always has a name").as_slice()).into_owned();
+        return Ok(MultiTarget::ScopedConst { scope: parent, name });
     }
     // `obj.attr, ... = ...` -- pre-builds the `attr=` write `Call` right now,
     // with a synthetic hidden local (`tmp_name`) standing in for "the value
@@ -2556,10 +2631,13 @@ fn lower_multi_target_group(
             let splat = n
                 .as_splat_node()
                 .ok_or("expected `*name` as a multi-assignment's splat target")?;
-            let expr = splat.expression().ok_or(
-                "an anonymous `*` target in a multi-assignment isn't supported yet (spike scope)",
-            )?;
-            Some(Some(Box::new(lower_multi_target(result, hir, &expr)?)))
+            match splat.expression() {
+                // Anonymous `*` -- absorbs (and discards) the middle slice;
+                // `MultiTargetGroup::splat`'s `Some(None)` shape models
+                // exactly this.
+                None => Some(None),
+                Some(expr) => Some(Some(Box::new(lower_multi_target(result, hir, &expr)?))),
+            }
         }
     };
     let after = rights

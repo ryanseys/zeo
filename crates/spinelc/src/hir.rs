@@ -530,6 +530,9 @@ pub enum MultiTarget {
     /// A bare (lexically-scoped) constant target -- see `ConstWrite`'s docs
     /// for the same `scope: None` resolution rule.
     Const(String),
+    /// An explicit `Foo::BAR` target -- `scope` resolves like
+    /// `ConstWrite`'s `Some(class_name)`.
+    ScopedConst { scope: String, name: String },
     /// `obj.attr = tmp_name` / `arr[i] = tmp_name` -- see this enum's own
     /// docs above.
     Call { write_call: NodeId, tmp_name: String },
@@ -567,7 +570,8 @@ impl MultiTarget {
             | MultiTarget::Ivar(_)
             | MultiTarget::ClassVar(_)
             | MultiTarget::Global(_)
-            | MultiTarget::Const(_) => {}
+            | MultiTarget::Const(_)
+            | MultiTarget::ScopedConst { .. } => {}
             MultiTarget::Call { write_call, .. } => visit(*write_call),
             MultiTarget::Nested(group) => group.for_each_node(visit),
         }
@@ -586,7 +590,11 @@ impl MultiTarget {
         match self {
             MultiTarget::Local(n) => visit(n),
             MultiTarget::Call { tmp_name, .. } => visit(tmp_name),
-            MultiTarget::Ivar(_) | MultiTarget::ClassVar(_) | MultiTarget::Global(_) | MultiTarget::Const(_) => {}
+            MultiTarget::Ivar(_)
+            | MultiTarget::ClassVar(_)
+            | MultiTarget::Global(_)
+            | MultiTarget::Const(_)
+            | MultiTarget::ScopedConst { .. } => {}
             MultiTarget::Nested(group) => group.for_each_local_name(visit),
         }
     }

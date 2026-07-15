@@ -48,6 +48,27 @@ const STACK_SIZE_WORDS: usize = 1024 * 1024;
 /// `unchecked`-helper failure, etc.) is re-raised on the main thread with
 /// its original payload -- same observable behavior (message at panic time,
 /// exit 101) as the pre-coroutine `main`.
+/// `Kernel#at_exit` handlers, run in REVERSE registration order (CRuby's
+/// rule) after the top-level body finishes -- including via `exit` (see
+/// `kernel_exit`) and after an uncaught exception. An exception raised
+/// INSIDE a handler is swallowed after the remaining handlers run (CRuby
+/// reports it; a silent skip is the spike-scope approximation --
+/// TODO(plan P-A): report through the exception-message machinery).
+static AT_EXIT: parking_lot::Mutex<Vec<RubyValue>> = parking_lot::Mutex::new(Vec::new());
+
+pub fn at_exit_register(handler: RubyValue) {
+    AT_EXIT.lock().push(handler);
+}
+
+pub fn run_at_exit() {
+    loop {
+        let Some(h) = AT_EXIT.lock().pop() else { break };
+        if let RubyValue::Proc(p) = h {
+            let _ = p(&[]);
+        }
+    }
+}
+
 pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>
 where
     F: FnOnce() -> Result<RubyValue, Signal> + Send + 'static,

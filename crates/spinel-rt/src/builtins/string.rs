@@ -153,6 +153,47 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Bool(crate::string_len(recv_str!(recv)) == 0))
     }
+    // Byte accessors over the UTF-8 representation (the plan's encoding
+    // engine gives these real per-encoding semantics later; UTF-8 bytes ARE
+    // the bytes until then).
+    "bytesize" => fn bytesize(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(recv_str!(recv).lock().len() as i64))
+    }
+    "bytes" => fn bytes(recv, args, _block) {
+        arity!(args, 0);
+        let out = recv_str!(recv)
+            .lock()
+            .bytes()
+            .map(|b| RubyValue::Int(b as i64))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "each_byte" => fn each_byte(recv, args, block) {
+        arity!(args, 0);
+        let Some(RubyValue::Proc(p)) = &block else {
+            return Err(crate::dispatch::raise_error(
+                "LocalJumpError",
+                "no block given (yield)".to_string(),
+            ));
+        };
+        let bytes: Vec<u8> = recv_str!(recv).lock().bytes().collect();
+        for b in bytes {
+            p(&[RubyValue::Int(b as i64)])?;
+        }
+        Ok(recv.clone())
+    }
+    "getbyte" => fn getbyte(recv, args, _block) {
+        arity!(args, 1);
+        let i = arg_int!(args, 0);
+        let s = recv_str!(recv).lock().clone();
+        let idx = if i < 0 { i + s.len() as i64 } else { i };
+        Ok(if idx >= 0 && (idx as usize) < s.len() {
+            RubyValue::Int(s.as_bytes()[idx as usize] as i64)
+        } else {
+            RubyValue::Nil
+        })
+    }
     "include?" => fn include_p(recv, args, _block) {
         arity!(args, 1);
         let needle = arg_str!(args, 0);

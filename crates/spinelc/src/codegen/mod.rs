@@ -557,6 +557,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     #(#user_class_bodies)*
                     #main_body
                 });
+            // `at_exit` handlers (reverse order), before uncaught-exception
+            // reporting -- CRuby runs them on both the normal and the
+            // uncaught path. (`Kernel#exit` runs them itself.)
+            spinel_rt::run_at_exit();
             if let Err(__signal) = __result {
                 match __signal {
                     // An uncaught `raise` gets a real, Ruby-flavored
@@ -632,12 +636,11 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
 /// see `codegen::call`'s `ClassRef` handling), so nothing downstream needs
 /// to know which kind of container it is.
 ///
-/// **Explicit scope-cut**: only plain required parameters are supported
-/// (optional/rest/post/keyword/block are a clean rejection, in
-/// `emit_class_method_fn` below), and a class method's own body may not
-/// reference `self`/`@ivar` at all -- there's no concrete instance for
-/// `self` to mean here (a class-level ivar / `class << self` state store
-/// is real future work, not attempted this phase; see the plan's Part 6).
+/// Full `Params` support since P1 (same signature/prologue machinery as
+/// instance methods, receiverless). **Remaining scope-cut**: a class
+/// method's own body may not reference `self`/`@ivar` -- there's no
+/// concrete instance for `self` to mean here (a class-level ivar /
+/// `class << self` state store is the plan's G5(d), not attempted yet).
 fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
@@ -682,25 +685,9 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         );
     }
     let params = &scope.params;
-    if !params.optional.is_empty()
-        || params.rest.is_some()
-        || !params.post.is_empty()
-        || !params.keywords.is_empty()
-        || params.keyword_rest.is_some()
-        || params.block.is_some()
-        || scope.uses_bare_block
-    {
-        panic!(
-            "class method `{}` uses optional/rest/post/keyword parameters or a block -- only plain required parameters are supported yet for class methods (spike scope)",
-            scope.name
-        );
-    }
-
+    let needs_block = scope.needs_block_param();
     let method_ident = safe_ident(&scope.name);
-    let sig_params = params.required.iter().map(|n| {
-        let ident = safe_ident(n);
-        quote! { #ident: spinel_rt::RubyValue }
-    });
+    let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
     let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
     let cx = Ctx {
@@ -721,6 +708,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_ident: format_ident!("self"),
         in_real_proc: false,
     };
+    let prologue = params::emit_prologue(&cx, &scope.params);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
         &cx,
         &scope.body,
@@ -728,6 +716,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         &scope.params.bound_names(),
         true,
     );
+    let body = quote! { #prologue #body };
     // See the matching comment on `emit_class`'s own method-wrapping below:
     // a `begin`/`rescue` construct (or an escaping block, e.g. `arr.each { ...
     // return ... }` -- this function only rejects a class method that itself
@@ -749,7 +738,8 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         body
     };
     quote! {
-        pub fn #method_ident(#(#sig_params),*) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+        #[allow(unused_variables)]
+        pub fn #method_ident(#sig_params) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
             #body_tokens
         }
     }

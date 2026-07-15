@@ -35,9 +35,38 @@ builtin_methods! {
     "warn" => fn warn(_recv, args, _block) {
         kernel_warn(args)
     }
+    // `Kernel#method(:name)` -- a bound Method object (see
+    // `builtins::method_obj`). Reaches every receiver via the MRO walk's
+    // Kernel row, including the top-level `main` object.
+    "method" => fn method(recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::method_obj::method_new(recv, &args[0])
+    }
     "class" => fn class(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))
+    }
+    // `object_id` -- a stable per-identity Integer. Objects use their `Arc`
+    // pointer; immediates use CRuby's fixed/derived shapes (Integers
+    // `2n+1`, nil/true/false their reserved slots). Strings/Arrays/Hashes
+    // use their cell pointer -- identity, not content.
+    "object_id" | "__id__" => fn object_id(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(match recv {
+            RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
+            RubyValue::Nil => 8,
+            RubyValue::Bool(true) => 20,
+            RubyValue::Bool(false) => 0,
+            RubyValue::Object(o) => std::sync::Arc::as_ptr(o) as *const () as i64,
+            RubyValue::Str(s) => std::sync::Arc::as_ptr(s) as i64,
+            RubyValue::Array(a) => std::sync::Arc::as_ptr(a) as i64,
+            RubyValue::Hash(h) => std::sync::Arc::as_ptr(h) as i64,
+            RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
+            // The remaining kinds get a per-call address-ish value -- a
+            // documented approximation (identity comparison via object_id
+            // on them is rare).
+            _ => recv as *const _ as i64,
+        }))
     }
     "nil?" => fn nil_p(recv, args, _block) {
         arity!(args, 0);
@@ -590,6 +619,9 @@ pub fn kernel_exit(args: &[RubyValue]) -> ! {
         Some(RubyValue::Int(n)) => *n as i32,
         Some(_) => 0,
     };
+    // `at_exit` handlers run on an explicit `exit` too (CRuby's rule;
+    // `exit!` would skip them, but that maps to `abort`-family here).
+    crate::exec::run_at_exit();
     std::process::exit(code)
 }
 

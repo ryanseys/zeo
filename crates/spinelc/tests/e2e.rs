@@ -802,12 +802,22 @@ fn a_named_block_parameter_can_be_called_explicitly() {
 }
 
 #[test]
-fn forwarding_params_are_a_clean_compile_error() {
-    let err = spinelc::compile_to_rust("class Foo\n  def bar(...)\n  end\nend\n").unwrap_err();
-    assert!(
-        err.contains("forwarding"),
-        "expected the `...`-forwarding rejection, got: {err}"
+fn forwarding_params_forward_positionals_keywords_and_block() {
+    // `...` is real now (G3): it desugars to internal `*__fwd_rest,
+    // **__fwd_kw, &__fwd_blk` params referenced by the call-site `...`.
+    let result = run_ruby(
+        r##"
+        def target(a, b, mode: "m")
+          r = yield if block_given?
+          "#{a}/#{b}/#{mode}/#{r.inspect}"
+        end
+        def fwd(...)
+          target(...)
+        end
+        puts fwd(1, 2, mode: "z") { "blk" }
+        "##,
     );
+    assert_eq!(result.stdout, "1/2/z/\"blk\"\n");
 }
 
 // --- Phase 6: real escaping Proc/closures, yield, block_given?, self-capture ---
@@ -3119,15 +3129,11 @@ fn array_index_assign_out_of_range_raises_index_error_not_a_panic() {
 }
 
 #[test]
-#[should_panic(expected = "dynamic dispatch of `send` with keyword arguments isn't supported yet")]
-fn send_with_a_non_literal_target_and_keyword_args_is_a_clean_error() {
-    // Before this fix, `send`'s truly-dynamic fallback (reached because the
-    // target name isn't a literal symbol here) silently DROPPED `kwargs`
-    // and dispatched without them -- now it raises the same clear codegen
-    // error a directly-called method with keyword params already gives via
-    // `emit_dynamic_trampoline`, instead of silently
-    // diverging from that behavior.
-    let _ = spinelc::compile_to_rust(
+fn send_with_a_non_literal_target_binds_keyword_args() {
+    // The G2 trailing-kwargs-hash convention: `send`'s truly-dynamic
+    // fallback (non-literal target name) carries kwargs as one trailing
+    // Hash; the callee's trampoline pops and binds it.
+    let result = run_ruby(
         r#"
         class Foo
           def bar(x:)
@@ -3135,27 +3141,30 @@ fn send_with_a_non_literal_target_and_keyword_args_is_a_clean_error() {
           end
         end
         name = :bar
-        Foo.new.send(name, x: 1)
+        puts Foo.new.send(name, x: 41) + 1
         "#,
     );
+    assert_eq!(result.stdout, "42\n");
 }
 
 #[test]
-#[should_panic(expected = "dynamic dispatch of `foo` with keyword arguments isn't supported yet")]
-fn ordinary_call_on_a_poly_receiver_with_keyword_args_is_a_clean_error() {
-    // Same bug, the OTHER silent-drop site: an ordinary (non-`send`) call on
-    // a `Poly`-typed receiver (a rescued exception binding is never narrowed
-    // to a concrete class -- see `codegen::exceptions`'s docs) with keyword
-    // arguments used to dispatch silently without them.
-    let _ = spinelc::compile_to_rust(
+fn poly_receiver_call_with_unknown_keyword_raises_at_runtime() {
+    // The other old silent-drop site: kwargs on a Poly receiver now ride
+    // the G2 convention; an undefined method stays a real NoMethodError.
+    let result = run_ruby(
         r#"
         begin
           raise "boom"
         rescue => e
-          e.foo(bar: 1)
+          begin
+            e.foo(bar: 1)
+          rescue NoMethodError
+            puts "no method, kwargs carried"
+          end
         end
         "#,
     );
+    assert_eq!(result.stdout, "no method, kwargs carried\n");
 }
 
 #[test]
@@ -3918,23 +3927,22 @@ fn call_site_splat_on_an_implicit_self_sibling_call() {
 }
 
 #[test]
-#[should_panic(expected = "splat argument with keyword arguments isn't supported yet")]
-fn kwargs_double_splat_at_a_call_site_is_a_clean_error() {
-    // A call-site `**h` double-splat has no Path 2 (`spinel_rt::send`)
-    // keyword channel at all (matches this file's other keyword-argument
-    // dynamic-dispatch restrictions above) -- a clean codegen-time panic,
-    // not silently dropped or misdispatched.
-    let _ = spinelc::compile_to_rust(
-        r#"
+fn kwargs_double_splat_at_a_call_site_binds() {
+    // `**h` merges into the G2 trailing-kwargs Hash (literal pairs first,
+    // splat entries after, same-key replacement -- `Hash#merge`'s rule).
+    let result = run_ruby(
+        r##"
         class Greeter
-          def f(x:)
-            x
+          def f(x:, y: 0)
+            "#{x}/#{y}"
           end
         end
         h = {x: 1}
         puts Greeter.new.f(**h)
-        "#,
+        puts Greeter.new.f(y: 5, **{x: 2, y: 9})
+        "##,
     );
+    assert_eq!(result.stdout, "1/0\n2/9\n");
 }
 
 // Phase 12.6 -- a real Hash table (IndexMap-backed, structural keys for

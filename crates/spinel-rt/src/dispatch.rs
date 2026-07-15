@@ -148,6 +148,93 @@ impl RubyObject for Object {
     }
 }
 
+/// Binds a DYNAMIC call's keyword arguments for a keyword-declaring callee
+/// (the G2 trailing-kwargs-hash convention): when the last argument is a
+/// Hash, it's the keyword set; otherwise there are no keywords. Returns
+/// `(positional, required_values, optional_values, rest_pairs)` for the
+/// generated trampoline to splice into the direct call -- optional `None`s
+/// let the callee's own prologue lazily evaluate defaults, exactly like
+/// Path 1.
+///
+/// Documented approximation (plan G2): no `ruby2_keywords` flagging, so a
+/// bare trailing Hash passed positionally through `send` to a
+/// keyword-declaring method binds as keywords.
+pub fn bind_dynamic_kwargs<'a>(
+    method: &str,
+    args: &'a [RubyValue],
+    required: &[&str],
+    optional: &[&str],
+    has_kwrest: bool,
+) -> Result<
+    (
+        &'a [RubyValue],
+        Vec<RubyValue>,
+        Vec<Option<RubyValue>>,
+        Vec<(Symbol, RubyValue)>,
+    ),
+    Signal,
+> {
+    let (positional, kw_hash) = match args.split_last() {
+        Some((RubyValue::Hash(h), rest)) => (rest, Some(h.clone())),
+        _ => (args, None),
+    };
+    let mut req_values = Vec::with_capacity(required.len());
+    let mut opt_values = Vec::with_capacity(optional.len());
+    let mut rest_pairs = Vec::new();
+
+    let pairs: Vec<(RubyValue, RubyValue)> = match &kw_hash {
+        Some(h) => h.lock().values().cloned().collect(),
+        None => Vec::new(),
+    };
+    let mut lookup = |name: &str| -> Option<RubyValue> {
+        pairs.iter().find_map(|(k, v)| match k {
+            RubyValue::Symbol(s) if s.name() == name => Some(v.clone()),
+            _ => None,
+        })
+    };
+    for name in required {
+        match lookup(name) {
+            Some(v) => req_values.push(v),
+            None => {
+                return Err(raise_error(
+                    "ArgumentError",
+                    format!("missing keyword: :{name} (in `{method}')"),
+                ))
+            }
+        }
+    }
+    for name in optional {
+        opt_values.push(lookup(name));
+    }
+    for (k, v) in &pairs {
+        if let RubyValue::Symbol(s) = k {
+            let n = s.name();
+            if required.contains(&n.as_str()) || optional.contains(&n.as_str()) {
+                continue;
+            }
+            if has_kwrest {
+                rest_pairs.push((*s, v.clone()));
+                continue;
+            }
+            return Err(raise_error(
+                "ArgumentError",
+                format!("unknown keyword: :{n} (in `{method}')"),
+            ));
+        }
+        // A non-Symbol key in the trailing hash: without kwrest it can't
+        // bind anywhere -- real Ruby treats the hash as positional then,
+        // but this convention already committed it as keywords (the
+        // documented no-ruby2_keywords approximation).
+        if !has_kwrest {
+            return Err(raise_error(
+                "ArgumentError",
+                format!("wrong number of arguments (in `{method}')"),
+            ));
+        }
+    }
+    Ok((positional, req_values, opt_values, rest_pairs))
+}
+
 /// The top-level `self` -- CRuby's `main`, a plain `Object` instance.
 /// Generated code passes it as the receiver of top-level-defined methods
 /// (which live on `Object`, exactly like real Ruby's private-on-Object

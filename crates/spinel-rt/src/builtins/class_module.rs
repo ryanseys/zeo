@@ -25,6 +25,20 @@ builtin_methods! {
         let n = crate::dispatch::class_name(cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0));
         Ok(RubyValue::Str(crate::string_new(n)))
     }
+    // `Class#superclass` -- the first non-module entry after self in the
+    // linearized ancestors (prepends/includes are modules, so this lands on
+    // the real parent class); `nil` at the root (`BasicObject`).
+    "superclass" => fn superclass(recv, args, _block) {
+        arity!(args, 0);
+        let cid = recv_cid(recv);
+        let ancestors = crate::dispatch::ancestors_of_value(cid);
+        for &anc in ancestors.iter().skip_while(|&&a| a != cid).skip(1) {
+            if !crate::dispatch::class_is_module(anc).unwrap_or(false) {
+                return Ok(RubyValue::Class(anc));
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
     "ancestors" => fn ancestors(recv, args, _block) {
         arity!(args, 0);
         let chain = crate::dispatch::ancestors_of_value(recv_cid(recv))

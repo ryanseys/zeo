@@ -40,7 +40,7 @@ pub use builtins::math::math_call;
 pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
-    class_is_module, class_name, downcast_robj, install_class_registry,
+    bind_dynamic_kwargs, class_is_module, class_name, downcast_robj, install_class_registry,
     install_exception_factory, install_stop_iteration_factory, is_a, main_object,
     method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
     send, send_in, send_value, send_value_in,
@@ -53,7 +53,7 @@ pub use dispatch::{
     TRUE_CLASS, YIELDER_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
-pub use exec::run_main;
+pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
 pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};

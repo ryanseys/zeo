@@ -412,6 +412,46 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
+    // `div` -- floored integer division (what `/` already does for Ints);
+    // `fdiv` -- float division regardless of operand kinds.
+    "div" => fn floored_div(recv, args, _block) {
+        arity!(args, 1);
+        match &args[0] {
+            RubyValue::Int(0) => Err(crate::dispatch::raise_error(
+                "ZeroDivisionError",
+                "divided by 0".to_string(),
+            )),
+            RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(int_div(recv, &args[0])),
+            RubyValue::Float(f) => {
+                let a = match recv {
+                    RubyValue::Int(i) => *i as f64,
+                    _ => return Ok(int_div(recv, &args[0])),
+                };
+                Ok(RubyValue::Int((a / f).floor() as i64))
+            }
+            other => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("{} can't be coerced into Integer", crate::builtins::class_name_of(other)),
+            )),
+        }
+    }
+    "fdiv" => fn fdiv(recv, args, _block) {
+        arity!(args, 1);
+        let to_f = |v: &RubyValue| -> Option<f64> {
+            match v {
+                RubyValue::Int(i) => Some(*i as f64),
+                RubyValue::Float(f) => Some(*f),
+                _ => None,
+            }
+        };
+        match (to_f(recv), to_f(&args[0])) {
+            (Some(a), Some(b)) => Ok(RubyValue::Float(a / b)),
+            _ => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("{} can't be coerced into Integer", crate::builtins::class_name_of(&args[0])),
+            )),
+        }
+    }
     "abs" | "magnitude" => fn abs(recv, args, _block) {
         arity!(args, 0);
         Ok(match recv {

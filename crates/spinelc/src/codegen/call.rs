@@ -1243,6 +1243,30 @@ fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::
 /// Path 1 (`codegen::params::emit_call_args`, gated on `needs_block`) and
 /// Path 2 (`send`/`public_send` below, built unconditionally since the
 /// dynamic target's own needs aren't known statically).
+/// The G2 trailing-kwargs-hash convention's CALLER side: a dynamic call
+/// site's keyword arguments as one `RubyValue::Hash` expression, appended
+/// as the last element of the `send` argument slice. The receiving
+/// trampoline (`params::dynamic_kwargs_binding`) pops and binds it when
+/// the callee declares keywords; a keywordless callee sees it as an
+/// ordinary trailing Hash (real Ruby's own pre-3.0-flavored collapse --
+/// the documented no-`ruby2_keywords` approximation).
+pub(super) fn emit_kwargs_trailing_hash(cx: &Ctx, kwargs: &[HashPair]) -> Option<TokenStream> {
+    if kwargs.is_empty() {
+        return None;
+    }
+    let pairs = kwargs.iter().map(|HashPair(k, v)| {
+        let ke = emit_expr(cx, *k);
+        let ve = {
+            let e = emit_expr(cx, *v);
+            box_if_object_typed(cx, *v, e)
+        };
+        quote! { (#ke, #ve) }
+    });
+    Some(quote! {
+        spinel_rt::RubyValue::Hash(spinel_rt::hash_new(vec![#(#pairs),*]))
+    })
+}
+
 pub(super) fn emit_block_option(cx: &Ctx, block: Option<NodeId>, block_arg: Option<NodeId>) -> TokenStream {
     match (block, block_arg) {
         (Some(b), None) => {
@@ -1351,21 +1375,19 @@ pub fn emit_call(
                 {
                     return tokens;
                 }
-                if !kwargs.is_empty() {
-                    panic!(
-                        "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
-                    );
-                }
                 let arg_exprs = args.iter().map(|&a| {
                     let e = emit_expr(cx, a);
                     box_if_object_typed(cx, a, e)
                 });
+                // Keyword args ride as one trailing Hash (the G2
+                // convention) -- the callee's trampoline binds it.
+                let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
                 let block_value = emit_block_option(cx, block, block_arg);
                 let dyn_call = quote! {
                     spinel_rt::send_value_in(#__bx,
                         &#slf,
                         spinel_rt::Symbol::intern(#name),
-                        &[#(#arg_exprs),*],
+                        &[#(#arg_exprs,)* #(#kw_hash,)*],
                         #block_value,
                     )
                 };
@@ -1407,7 +1429,7 @@ pub fn emit_call(
         if cx.current_class.is_none() {
             if let Some(defining) = cx.defining_class {
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
-                    return emit_class_method_call_on(cx, defining, name, args, kwargs);
+                    return emit_class_method_call_on(cx, defining, name, args, kwargs, block, block_arg);
                 }
                 // A bare `new` inside a class method (`def self.create;
                 // new; end`) constructs the class itself -- `self` there IS
@@ -1559,6 +1581,21 @@ pub fn emit_call(
                 return Some(emit_proc_value(cx, b));
             }
         }
+        // `at_exit { ... }` -- registers the handler (run in reverse order
+        // at process exit; see `spinel_rt::exec::run_at_exit`), answering
+        // the Proc, CRuby's return value.
+        if name == "at_exit" && args.is_empty() && kwargs.is_empty() {
+            if let Some(b) = block {
+                let p = emit_proc_value(cx, b);
+                return Some(quote! {
+                    {
+                        let __h = #p;
+                        spinel_rt::at_exit_register(__h.clone());
+                        __h
+                    }
+                });
+            }
+        }
         // `__method__` -- the enclosing method's name as a Symbol, `nil` at
         // the top level (a compile-time constant here: codegen always knows
         // which method body it's emitting).
@@ -1568,7 +1605,43 @@ pub fn emit_call(
                 None => quote! { spinel_rt::RubyValue::Nil },
             });
         }
+        // `method(:name)` -- a bound Method object on the implicit self,
+        // dispatched through the Kernel row (see `builtins::method_obj`).
+        if name == "method" && args.len() == 1 && kwargs.is_empty() && block.is_none() {
+            if let Some(recv) = boxed_implicit_self(cx) {
+                let __bx = cx.box_id;
+                let arg = {
+                    let e = emit_expr(cx, args[0]);
+                    box_if_object_typed(cx, args[0], e)
+                };
+                return Some(quote! {
+                    spinel_rt::send_value_in(#__bx, &#recv, spinel_rt::Symbol::intern("method"), &[#arg], None)?
+                });
+            }
+        }
         None
+    }
+
+    /// The implicit `self` as a boxed `RubyValue` expression, in every
+    /// context that has one: an ordinary instance method (handle-boxed), a
+    /// value-backed (builtin-reopen / Object) method (`__self` as-is), a
+    /// class-method body (the class value), or the top level (the `main`
+    /// object).
+    fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
+        if let Some(cid) = cx.current_class {
+            let slf = &cx.self_ident;
+            return Some(if cx.compiler.value_backed(cid) {
+                quote! { (#slf.clone()) }
+            } else {
+                let class_ident = super::ident::class_ident(cx.compiler, cid);
+                quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+            });
+        }
+        if let Some(dcid) = cx.defining_class {
+            let id = dcid.0;
+            return Some(quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) });
+        }
+        Some(quote! { spinel_rt::main_object() })
     }
 
     /// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
@@ -1814,10 +1887,10 @@ pub fn emit_call(
                     .iter()
                     .any(|(n, _)| n == name);
             if is_static {
-                if safe || block.is_some() || block_arg.is_some() {
-                    panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+                if safe {
+                    panic!("safe-navigation on a class-method call isn't supported yet (spike scope)");
                 }
-                return emit_class_method_call_on(cx, target, name, args, kwargs);
+                return emit_class_method_call_on(cx, target, name, args, kwargs, block, block_arg);
             }
         }
     }
@@ -1838,7 +1911,7 @@ pub fn emit_call(
             }
             if cx.compiler.class_method_in_chain(target, name).is_some() {
                 let recv_expr = emit_expr(cx, recv_id);
-                let call = emit_class_method_call_on(cx, target, name, args, kwargs);
+                let call = emit_class_method_call_on(cx, target, name, args, kwargs, block, block_arg);
                 return quote! { { let _ = #recv_expr; #call } };
             }
         }
@@ -1882,9 +1955,6 @@ fn emit_splat_call(
     safe: bool,
 ) -> TokenStream {
     let __bx = cx.box_id;
-    if !kwargs.is_empty() || kwargs_splat.is_some() {
-        panic!("a call combining a `*`/`**` splat argument with keyword arguments isn't supported yet (spike scope)");
-    }
     if safe {
         panic!("safe-navigation (`&.`) on a call with a splat argument isn't supported yet (spike scope)");
     }
@@ -1913,19 +1983,32 @@ fn emit_splat_call(
             // `spinel_rt::send` at all (they have no `ClassRegistry` entry) --
             // a clean rejection here beats generating code that only fails
             // at RUNTIME with a confusing "no such method".
-            let Some(cid) = cx.current_class.filter(|&cid| cx.compiler.method_in_chain(cid, name).is_some()) else {
-                panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)");
-            };
-            let slf = &cx.self_ident;
-            // A REOPENED builtin's (or `Object`'s) `self` is already a boxed
-            // `RubyValue` (Phase 16.3) -- `send_value` dispatches its value
-            // methods directly, no `new_handle` boxing (or struct) exists
-            // for it.
-            if cx.compiler.value_backed(cid) {
-                quote! { (#slf.clone()) }
-            } else {
-                let class_ident = super::ident::class_ident(cx.compiler, cid);
-                quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+            match cx.current_class.filter(|&cid| cx.compiler.method_in_chain(cid, name).is_some()) {
+                Some(cid) => {
+                    let slf = &cx.self_ident;
+                    // A REOPENED builtin's (or `Object`'s) `self` is already
+                    // a boxed `RubyValue` (Phase 16.3) -- `send_value`
+                    // dispatches its value methods directly, no `new_handle`
+                    // boxing (or struct) exists for it.
+                    if cx.compiler.value_backed(cid) {
+                        quote! { (#slf.clone()) }
+                    } else {
+                        let class_ident = super::ident::class_ident(cx.compiler, cid);
+                        quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+                    }
+                }
+                // A TOP-LEVEL splat call to a top-level-defined method: the
+                // `main` object carries Object's value methods (G0).
+                None if cx.current_class.is_none()
+                    && cx.defining_class.is_none()
+                    && cx
+                        .compiler
+                        .method_in_chain(crate::compiler::OBJECT_CLASS, name)
+                        .is_some() =>
+                {
+                    quote! { spinel_rt::main_object() }
+                }
+                None => panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)"),
             }
         }
     };
@@ -1941,6 +2024,33 @@ fn emit_splat_call(
             quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
         }
     });
+    // Keyword args (literal and/or `**h` splat) merge into ONE trailing
+    // Hash (the G2 convention): literal pairs first, splat entries after
+    // (same-key splat entries replace, `Hash#merge`'s rule).
+    let kw_push = (!kwargs.is_empty() || kwargs_splat.is_some()).then(|| {
+        let literal_sets = kwargs.iter().map(|HashPair(k, v)| {
+            let ke = emit_expr(cx, *k);
+            let ve = {
+                let e = emit_expr(cx, *v);
+                box_if_object_typed(cx, *v, e)
+            };
+            quote! { spinel_rt::hash_set(&__kw, #ke, #ve); }
+        });
+        let splat_sets = kwargs_splat.map(|n| {
+            let e = emit_expr(cx, n);
+            quote! {
+                for (__k, __v) in (#e).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
+                    spinel_rt::hash_set(&__kw, __k, __v);
+                }
+            }
+        });
+        quote! {
+            let __kw = spinel_rt::hash_new(vec![]);
+            #(#literal_sets)*
+            #splat_sets
+            __args.push(spinel_rt::RubyValue::Hash(__kw));
+        }
+    });
     let block_value = emit_block_option(cx, block, block_arg);
     let dyn_call =
         quote! { spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &__args, #block_value) };
@@ -1949,6 +2059,7 @@ fn emit_splat_call(
         {
             let mut __args: Vec<spinel_rt::RubyValue> = Vec::new();
             #(#arg_pushes)*
+            #kw_push
             #dyn_call
         }
     }
@@ -1984,6 +2095,8 @@ fn emit_class_method_call_on(
     name: &str,
     args: &[NodeId],
     kwargs: &[HashPair],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     let target_name = &cx.compiler.class(target).name;
     // A `native_func` module function (Phase 14.3): a direct call into the
@@ -2020,32 +2133,21 @@ fn emit_class_method_call_on(
         );
     };
     let scope = cx.compiler.scope(sid);
-    if !kwargs.is_empty()
-        || !scope.params.optional.is_empty()
-        || scope.params.rest.is_some()
-        || !scope.params.post.is_empty()
-        || !scope.params.keywords.is_empty()
-        || scope.params.keyword_rest.is_some()
-        || scope.needs_block_param()
-    {
-        panic!(
-            "class method call `{target_name}.{name}` uses keyword arguments or a callee with optional/rest/post/keyword parameters or a block -- only plain required parameters are supported yet (spike scope)"
-        );
-    }
-    if args.len() != scope.params.required.len() {
-        panic!(
-            "wrong number of arguments for `{target_name}.{name}` (spike scope): expected {}, got {}",
-            scope.params.required.len(),
-            args.len()
-        );
-    }
     let target_ident = super::ident::class_ident(cx.compiler, target);
     let method_ident = safe_ident(name);
-    let arg_exprs = args.iter().map(|&a| {
-        let e = emit_expr(cx, a);
-        box_if_object_typed(cx, a, e)
-    });
-    quote! { #target_ident::#method_ident(#(#arg_exprs),*)? }
+    // Full `Params` support (P1): the same binding machinery an instance
+    // call gets, through the receiverless `Callee::Bare` shape.
+    super::params::emit_call_args_to(
+        cx,
+        &super::params::Callee::Bare(quote! { #target_ident::#method_ident }),
+        name,
+        &scope.params,
+        args,
+        kwargs,
+        block,
+        block_arg,
+        scope.needs_block_param(),
+    )
 }
 
 /// `&.` always dispatches through the runtime `ClassRegistry`/`send` path
@@ -2916,17 +3018,9 @@ fn dispatch(
                 }
             }
         }
-        // The truly dynamic fallback below has no keyword-argument channel
-        // at all (Path 2's calling convention is a bare positional
-        // `&[RubyValue]` slice) -- raise the SAME clear error a directly-
-        // called method's own trampoline already gives for this
-        // (`codegen::params::emit_dynamic_trampoline`), rather than silently
-        // dropping `kwargs` and dispatching without them.
-        if !kwargs.is_empty() {
-            panic!(
-                "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
-            );
-        }
+        // Keyword args ride as one trailing Hash (the G2 convention) --
+        // the callee's trampoline pops and binds it.
+        let kw_hash = emit_kwargs_trailing_hash(cx, kwargs);
         // A statically-known class needs boxing into an `RObj` handle first
         // (`recv_expr` is an unboxed `Arc<Concrete>` there); a `Poly` receiver
         // is ALREADY a `RubyValue::Object(...)` at runtime (e.g. a `rescue`
@@ -2949,9 +3043,10 @@ fn dispatch(
             let e = emit_expr(cx, a);
             box_if_object_typed(cx, a, e)
         });
+        let kw_hash = kw_hash.into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
         let dyn_call = quote! {
-            spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value)
+            spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &[#(#rest_args,)* #(#kw_hash,)*], #block_value)
         };
         return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     }
@@ -3148,22 +3243,19 @@ fn dispatch(
             // unknown name is a real runtime NoMethodError "for class X".
             | TyKind::ClassObj(_)
     ) {
-        if !kwargs.is_empty() {
-            panic!(
-                "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
-            );
-        }
         let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
         let arg_exprs = args.iter().map(|&a| {
             let e = emit_expr(cx, a);
             box_if_object_typed(cx, a, e)
         });
+        // Keyword args ride as one trailing Hash (the G2 convention).
+        let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
         let dyn_call = quote! {
-            spinel_rt::send_value_in(#__bx, 
+            spinel_rt::send_value_in(#__bx,
                 &(#recv_expr),
                 #name_expr,
-                &[#(#arg_exprs),*],
+                &[#(#arg_exprs,)* #(#kw_hash,)*],
                 #block_value,
             )
         };
@@ -3196,23 +3288,20 @@ fn dispatch(
                 .ancestors
                 .contains(&crate::compiler::COMPARABLE_CLASS)
         {
-            if !kwargs.is_empty() {
-                panic!(
-                    "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
-                );
-            }
             let class_ident = super::ident::class_ident(cx.compiler, cid);
             let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
             let arg_exprs = args.iter().map(|&a| {
                 let e = emit_expr(cx, a);
                 box_if_object_typed(cx, a, e)
             });
+            // Keyword args ride as one trailing Hash (the G2 convention).
+            let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
             let block_value = emit_block_option(cx, block, block_arg);
             return quote! {
-                spinel_rt::catch_break(spinel_rt::send_value_in(#__bx, 
+                spinel_rt::catch_break(spinel_rt::send_value_in(#__bx,
                     &spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
                     #name_expr,
-                    &[#(#arg_exprs),*],
+                    &[#(#arg_exprs,)* #(#kw_hash,)*],
                     #block_value,
                 ))?
             };

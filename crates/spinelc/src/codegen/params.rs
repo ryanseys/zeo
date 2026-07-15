@@ -34,38 +34,56 @@ use proc_macro2::TokenStream;
 /// `__blk: Option<RubyValue>` slot every method using `&block`/bare
 /// `yield`/`block_given?` gets.
 pub fn emit_signature_params(params: &Params, needs_block: bool) -> TokenStream {
-    let required = params.required.iter().map(|name| {
+    let items = signature_param_items(params, needs_block);
+    quote! { #(, #items)* }
+}
+
+/// `emit_signature_params` for a RECEIVERLESS free function (a class
+/// method/module function) -- the same items, comma-SEPARATED rather than
+/// comma-prefixed (nothing precedes them in the signature).
+pub fn emit_signature_params_free(params: &Params, needs_block: bool) -> TokenStream {
+    let items = signature_param_items(params, needs_block);
+    quote! { #(#items),* }
+}
+
+fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream> {
+    let mut items = Vec::new();
+    for name in &params.required {
         let ident = safe_ident(name);
-        quote! { , #ident: spinel_rt::RubyValue }
-    });
-    let optional = params.optional.iter().map(|(name, _)| {
+        items.push(quote! { #ident: spinel_rt::RubyValue });
+    }
+    for (name, _) in &params.optional {
         let ident = safe_ident(name);
-        quote! { , #ident: Option<spinel_rt::RubyValue> }
-    });
-    let rest = params.rest.iter().flatten().map(|name| {
+        items.push(quote! { #ident: Option<spinel_rt::RubyValue> });
+    }
+    if let Some(Some(name)) = &params.rest {
         let ident = safe_ident(name);
-        quote! { , #ident: Vec<spinel_rt::RubyValue> }
-    });
-    let post = params.post.iter().map(|name| {
+        items.push(quote! { #ident: Vec<spinel_rt::RubyValue> });
+    }
+    for name in &params.post {
         let ident = safe_ident(name);
-        quote! { , #ident: spinel_rt::RubyValue }
-    });
-    let keywords = params.keywords.iter().map(|kw| match kw {
-        KeywordParam::Required(name) => {
-            let ident = safe_ident(name);
-            quote! { , #ident: spinel_rt::RubyValue }
+        items.push(quote! { #ident: spinel_rt::RubyValue });
+    }
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(name) => {
+                let ident = safe_ident(name);
+                items.push(quote! { #ident: spinel_rt::RubyValue });
+            }
+            KeywordParam::Optional(name, _) => {
+                let ident = safe_ident(name);
+                items.push(quote! { #ident: Option<spinel_rt::RubyValue> });
+            }
         }
-        KeywordParam::Optional(name, _) => {
-            let ident = safe_ident(name);
-            quote! { , #ident: Option<spinel_rt::RubyValue> }
-        }
-    });
-    let keyword_rest = params.keyword_rest.iter().flatten().map(|name| {
+    }
+    if let Some(Some(name)) = &params.keyword_rest {
         let ident = safe_ident(name);
-        quote! { , #ident: Vec<(spinel_rt::Symbol, spinel_rt::RubyValue)> }
-    });
-    let block = needs_block.then(|| quote! { , __blk: Option<spinel_rt::RubyValue> });
-    quote! { #(#required)* #(#optional)* #(#rest)* #(#post)* #(#keywords)* #(#keyword_rest)* #block }
+        items.push(quote! { #ident: Vec<(spinel_rt::Symbol, spinel_rt::RubyValue)> });
+    }
+    if needs_block {
+        items.push(quote! { __blk: Option<spinel_rt::RubyValue> });
+    }
+    items
 }
 
 /// The callee's own prologue: shadows every `Option<RubyValue>`/raw
@@ -210,6 +228,9 @@ pub fn emit_call_args(
 pub enum Callee {
     Method(TokenStream),
     FreeFn { path: TokenStream, recv: TokenStream },
+    /// A receiverless free function -- a class method/module function
+    /// (`Widget::create(...)`), which has no `self`/`__self` parameter.
+    Bare(TokenStream),
 }
 
 impl Callee {
@@ -222,6 +243,7 @@ impl Callee {
             // after it is always valid call syntax, whether `arg_list` is
             // empty or not.
             Callee::FreeFn { path, recv } => quote! { #path(#recv, #arg_list) },
+            Callee::Bare(path) => quote! { #path(#arg_list) },
         }
     }
 }
@@ -274,41 +296,36 @@ pub fn emit_call_args_to(
     let has_rest = params.rest.is_some();
     let min_positional = nreq + npost;
 
-    if args.len() < min_positional {
-        panic!(
-            "too few arguments for `{method_name}` (spike scope): expected at least {min_positional}, got {}",
-            args.len()
-        );
-    }
-    let extra = args.len() - min_positional;
-    if !has_rest && extra > nopt {
-        panic!(
-            "too many arguments for `{method_name}` (spike scope): expected at most {}, got {}",
-            nreq + nopt + npost,
-            args.len()
-        );
-    }
-    let opt_bound = extra.min(nopt);
-    let rest_count = extra - opt_bound;
-
     // Every positional arg gets a temporary, in source order, regardless of
     // which bucket (required/optional/rest/post) it ends up routed to.
+    // Built BEFORE the arity/keyword checks below: a definitely-wrong call
+    // still evaluates its arguments (for side effects) and then raises a
+    // runtime ArgumentError, CRuby's exact behavior -- never a compile
+    // panic (`rescue ArgumentError` around a bad call is a corpus idiom).
     let pos_temps: Vec<syn::Ident> = (0..args.len()).map(|i| format_ident!("__a{i}")).collect();
-    let pos_lets = args.iter().zip(&pos_temps).map(|(&a, t)| {
-        let e = emit_expr(cx, a);
-        let e = box_if_object_typed(cx, a, e);
-        quote! { let #t = #e; }
-    });
+    let pos_lets: Vec<TokenStream> = args
+        .iter()
+        .zip(&pos_temps)
+        .map(|(&a, t)| {
+            let e = emit_expr(cx, a);
+            let e = box_if_object_typed(cx, a, e);
+            quote! { let #t = #e; }
+        })
+        .collect();
 
     // Every kwarg value gets a temporary too, in source order. The key must
     // be a literal symbol (guaranteed by the call-site lowering's
     // `is_symbol_keys` check -- see `parse/mod.rs::lower_call_args`).
     let kw_temps: Vec<syn::Ident> = (0..kwargs.len()).map(|i| format_ident!("__kw{i}")).collect();
-    let kw_lets = kwargs.iter().zip(&kw_temps).map(|(pair, t)| {
-        let e = emit_expr(cx, pair.1);
-        let e = box_if_object_typed(cx, pair.1, e);
-        quote! { let #t = #e; }
-    });
+    let kw_lets: Vec<TokenStream> = kwargs
+        .iter()
+        .zip(&kw_temps)
+        .map(|(pair, t)| {
+            let e = emit_expr(cx, pair.1);
+            let e = box_if_object_typed(cx, pair.1, e);
+            quote! { let #t = #e; }
+        })
+        .collect();
     let kw_names: Vec<String> = kwargs
         .iter()
         .map(|pair| match &cx.compiler.hir[pair.0] {
@@ -316,6 +333,57 @@ pub fn emit_call_args_to(
             _ => panic!("`{method_name}`: keyword argument names must be literal symbols (spike scope)"),
         })
         .collect();
+
+    // A statically-detectable argument-shape error: evaluate the arg
+    // temporaries, then raise -- see the comment above `pos_temps`.
+    let raise_argument_error = |msg: String| {
+        quote! {
+            {
+                #(#pos_lets)*
+                #(#kw_lets)*
+                return Err(spinel_rt::raise_error("ArgumentError", #msg.to_string()));
+            }
+        }
+    };
+    let expected_shape = || {
+        if has_rest {
+            format!("{min_positional}+")
+        } else if nopt > 0 {
+            format!("{min_positional}..{}", nreq + nopt + npost)
+        } else {
+            format!("{min_positional}")
+        }
+    };
+
+    if args.len() < min_positional || (!has_rest && args.len() > nreq + nopt + npost) {
+        return raise_argument_error(format!(
+            "wrong number of arguments (given {}, expected {})",
+            args.len(),
+            expected_shape()
+        ));
+    }
+    for kw in &params.keywords {
+        if let KeywordParam::Required(name) = kw {
+            if !kw_names.iter().any(|n| n == name) {
+                return raise_argument_error(format!("missing keyword: :{name}"));
+            }
+        }
+    }
+    if params.keyword_rest.is_none() {
+        let declared = |n: &String| {
+            params.keywords.iter().any(|kw| match kw {
+                KeywordParam::Required(k) | KeywordParam::Optional(k, _) => k == n,
+            })
+        };
+        if let Some(unknown) = kw_names.iter().find(|n| !declared(n)) {
+            return raise_argument_error(format!("unknown keyword: :{unknown}"));
+        }
+    }
+
+    let extra = args.len() - min_positional;
+    let opt_bound = extra.min(nopt);
+    let rest_count = extra - opt_bound;
+
     let mut kw_used = vec![false; kwargs.len()];
     let find_kw = |name: &str, used: &mut Vec<bool>| -> Option<syn::Ident> {
         kw_names.iter().position(|n| n == name).map(|i| {
@@ -363,9 +431,8 @@ pub fn emit_call_args_to(
         .iter()
         .map(|kw| match kw {
             KeywordParam::Required(name) => {
-                let t = find_kw(name, &mut kw_used).unwrap_or_else(|| {
-                    panic!("missing required keyword argument `{name}:` for `{method_name}`")
-                });
+                let t = find_kw(name, &mut kw_used)
+                    .expect("missing required keywords already raised above");
                 quote! { #t.clone() }
             }
             KeywordParam::Optional(name, _) => match find_kw(name, &mut kw_used) {
@@ -390,17 +457,8 @@ pub fn emit_call_args_to(
             quote! { vec![#(#leftover),*], }
         })
         .unwrap_or_default();
-    // Any kwarg left unmatched with nowhere to go (no keyword_rest at all)
-    // is an unknown-keyword error -- checked after the loop above so every
-    // declared keyword gets a chance to claim its match first.
-    if params.keyword_rest.is_none() {
-        if let Some(i) = kw_used.iter().position(|&used| !used) {
-            panic!(
-                "unknown keyword argument `{}:` for `{method_name}`",
-                kw_names[i]
-            );
-        }
-    }
+    // Unknown keywords already raised above (before `find_kw` ran); with a
+    // keyword_rest, every unmatched kwarg lands in `keyword_rest_arg`.
 
     // The implicit trailing block argument (see `compiler::Scope::needs_block_param`).
     // If the callee doesn't accept a block at all (`!needs_block`), nothing
@@ -456,6 +514,72 @@ pub fn emit_call_args_to(
 /// through `send`/`method_missing`/a non-literal `public_send`, mirroring
 /// this project's existing "the method is still callable explicitly"
 /// posture for other Path-2-only gaps.
+/// The G2 trailing-kwargs-hash convention's callee side: for a
+/// keyword-declaring `params`, a preamble that splits/binds the trailing
+/// Hash off `args` (via `spinel_rt::bind_dynamic_kwargs`, shadowing `args`
+/// with the remaining positionals) plus the keyword/kwrest argument tokens
+/// in DECLARED order (the Rust signature's order). Empty for a
+/// keywordless callee.
+fn dynamic_kwargs_binding(
+    method_name: &str,
+    params: &Params,
+) -> (Option<TokenStream>, Vec<TokenStream>) {
+    if params.keywords.is_empty() && params.keyword_rest.is_none() {
+        return (None, Vec::new());
+    }
+    let req_names: Vec<&str> = params
+        .keywords
+        .iter()
+        .filter_map(|kw| match kw {
+            KeywordParam::Required(n) => Some(n.as_str()),
+            KeywordParam::Optional(..) => None,
+        })
+        .collect();
+    let opt_names: Vec<&str> = params
+        .keywords
+        .iter()
+        .filter_map(|kw| match kw {
+            KeywordParam::Optional(n, _) => Some(n.as_str()),
+            KeywordParam::Required(_) => None,
+        })
+        .collect();
+    let has_kwrest = params.keyword_rest.is_some();
+    let preamble = quote! {
+        #[allow(unused_mut, unused_variables)]
+        let (args, __kw_req, __kw_opt, mut __kw_rest) = spinel_rt::bind_dynamic_kwargs(
+            #method_name,
+            args,
+            &[#(#req_names),*],
+            &[#(#opt_names),*],
+            #has_kwrest,
+        )?;
+    };
+    // Keyword arguments in DECLARED order (matching
+    // `emit_signature_params`), picking from the binder's required/optional
+    // vectors with independent counters.
+    let (mut ri, mut oi) = (0usize, 0usize);
+    let mut kw_args: Vec<TokenStream> = params
+        .keywords
+        .iter()
+        .map(|kw| match kw {
+            KeywordParam::Required(_) => {
+                let i = ri;
+                ri += 1;
+                quote! { __kw_req[#i].clone() }
+            }
+            KeywordParam::Optional(..) => {
+                let i = oi;
+                oi += 1;
+                quote! { __kw_opt[#i].clone() }
+            }
+        })
+        .collect();
+    if has_kwrest {
+        kw_args.push(quote! { std::mem::take(&mut __kw_rest) });
+    }
+    (Some(preamble), kw_args)
+}
+
 pub fn emit_dynamic_trampoline(
     class_ident: &proc_macro2::Ident,
     method_name: &str,
@@ -463,17 +587,7 @@ pub fn emit_dynamic_trampoline(
     needs_block: bool,
 ) -> TokenStream {
     let method_ident = safe_ident(method_name);
-
-    if !params.keywords.is_empty() || params.keyword_rest.is_some() {
-        return quote! {
-            |_recv: &spinel_rt::RObj, _args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-                panic!(
-                    "dynamic dispatch to `{}` isn't supported yet (spike scope): it declares keyword parameters, which `send`/`method_missing` don't bind yet -- call it directly instead",
-                    #method_name
-                )
-            }
-        };
-    }
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
 
     let nreq = params.required.len();
     let nopt = params.optional.len();
@@ -523,11 +637,12 @@ pub fn emit_dynamic_trampoline(
         |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
             let this = spinel_rt::downcast_robj::<#class_ident>(recv)
                 .expect("class_id guarantees this downcast");
+            #kw_preamble
             #arity_check
             let __opt_bound = (args.len() - #min_lit).min(#nopt);
             #class_ident::#method_ident(
                 this,
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #block_arg
+                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
             )
         }
     }
@@ -545,16 +660,7 @@ pub fn emit_value_trampoline(
     params: &Params,
     needs_block: bool,
 ) -> TokenStream {
-    if !params.keywords.is_empty() || params.keyword_rest.is_some() {
-        return quote! {
-            |_recv: &spinel_rt::RubyValue, _args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-                panic!(
-                    "dynamic dispatch to `{}` isn't supported yet (spike scope): it declares keyword parameters, which `send`/`method_missing` don't bind yet -- call it directly instead",
-                    #method_name
-                )
-            }
-        };
-    }
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
 
     let nreq = params.required.len();
     let nopt = params.optional.len();
@@ -591,12 +697,13 @@ pub fn emit_value_trampoline(
 
     quote! {
         |recv: &spinel_rt::RubyValue, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            #kw_preamble
             #arity_check
             #[allow(unused_variables)]
             let __opt_bound = (args.len() - #min_lit).min(#nopt);
             #fn_path(
                 recv.clone(),
-                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #block_arg
+                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
             )
         }
     }
