@@ -766,7 +766,7 @@ impl RubyValue {
             // Reference identity -- CRuby's `Object#==` default (an
             // enumerator never equals a structurally-identical sibling).
             (RubyValue::Enumerator(a), RubyValue::Enumerator(b)) => std::sync::Arc::ptr_eq(a, b),
-            (RubyValue::Yielder(a), RubyValue::Yielder(b)) => std::sync::Arc::ptr_eq(a, b),
+            (RubyValue::Yielder(a), RubyValue::Yielder(b)) => a.ptr_eq(b),
             _ => false,
         }
     }

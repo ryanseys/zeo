@@ -66,9 +66,12 @@ pub fn emit_range_lit(
     end: Option<NodeId>,
     exclusive: bool,
 ) -> TokenStream {
+    // Endpoints are boxed if Object-typed: they land in
+    // `RubyValue::Range`'s `Box<RubyValue>` payload.
     let start_expr = match start {
         Some(n) => {
             let e = emit_expr(cx, n);
+            let e = box_if_object_typed(cx, n, e);
             quote! { Some(Box::new(#e)) }
         }
         None => quote! { None },
@@ -76,6 +79,7 @@ pub fn emit_range_lit(
     let end_expr = match end {
         Some(n) => {
             let e = emit_expr(cx, n);
+            let e = box_if_object_typed(cx, n, e);
             quote! { Some(Box::new(#e)) }
         }
         None => quote! { None },

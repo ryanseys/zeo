@@ -1,0 +1,17 @@
+Parent(default)
+Parent(given)
+Parent(explicit)
+Parent(ADA)
+a=1 b=2 c=3 d=4
+a=1 b=9 c=3 d=4
+a=1 b=9 c=8 d=7
+a=x b=parent-default
+example.com:8080
+example.com:3000
+[1, 2, 3]
+from-child-block
+got 1
+got 2
+from-caller
+t-1 (count=1)
+RAWR

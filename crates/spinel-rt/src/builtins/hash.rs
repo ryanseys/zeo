@@ -102,9 +102,30 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "to_h" | "to_hash" => fn to_h(recv, args, _block) {
+    // Blockless `to_h` on a Hash is identity; with a block each entry is
+    // re-mapped, the block seeing the two RAW yielded values (`{ |k, v| }`).
+    // `to_hash` is the implicit-conversion protocol and never takes a block.
+    "to_h" | "to_hash" => fn to_h(recv, args, block) {
         arity!(args, 0);
-        Ok(recv.clone())
+        let Some(blk) = block else {
+            return Ok(recv.clone());
+        };
+        // Each entry yields TWO raw values (`{ |k, v| }`), so `raw` is the
+        // pair itself and the packed element is the same `[k, v]` Array.
+        let raws: Vec<Vec<RubyValue>> = recv_hash!(recv)
+            .lock()
+            .values()
+            .map(|(k, v)| vec![k.clone(), v.clone()])
+            .collect();
+        let packed: Vec<RubyValue> = raws
+            .iter()
+            .map(|kv| RubyValue::Array(crate::array_new(kv.clone())))
+            .collect();
+        let pairs = crate::builtins::enumerable::to_h_pairs(
+            raws.iter().map(|kv| kv.as_slice()).zip(packed.iter()),
+            &Some(blk),
+        )?;
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     "invert" => fn invert(recv, args, _block) {
         arity!(args, 0);

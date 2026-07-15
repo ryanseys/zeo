@@ -71,6 +71,36 @@ pub(crate) fn comparable_send(
             }
             Ok(recv.clone())
         })(),
+        // `clamp(range)` -- either bound may be absent (beginless/endless);
+        // an exclusive range is CRuby's ArgumentError.
+        ("clamp", 1) => (|| {
+            let RubyValue::Range(lo, hi, exclusive) = &args[0] else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "wrong argument type {} (expected Range)",
+                        crate::builtins::class_name_of(&args[0])
+                    ),
+                ));
+            };
+            if *exclusive && hi.is_some() {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "cannot clamp with an exclusive range".to_string(),
+                ));
+            }
+            if let Some(lo) = lo.as_deref() {
+                if cmp_or_fail(recv, lo)? < 0 {
+                    return Ok(lo.clone());
+                }
+            }
+            if let Some(hi) = hi.as_deref() {
+                if cmp_or_fail(recv, hi)? > 0 {
+                    return Ok(hi.clone());
+                }
+            }
+            Ok(recv.clone())
+        })(),
         _ => return None,
     };
     Some(result)
@@ -122,5 +152,89 @@ mod tests {
         assert!(comparable_send(&s("a"), "upcase", &[]).is_none());
         assert!(responds("between?"));
         assert!(!responds("upcase"));
+    }
+
+    fn int(v: i64) -> RubyValue {
+        RubyValue::Int(v)
+    }
+
+    fn range(lo: Option<i64>, hi: Option<i64>, exclusive: bool) -> RubyValue {
+        RubyValue::Range(
+            lo.map(|v| Box::new(RubyValue::Int(v))),
+            hi.map(|v| Box::new(RubyValue::Int(v))),
+            exclusive,
+        )
+    }
+
+    /// `clamp(range)` -- the one-argument form, alongside the long-standing
+    /// `clamp(lo, hi)`. Oracle-verified; the `comparable_clamp` coverage in
+    /// `value_obj_boxing_clamp` exercises it against a user class too.
+    #[test]
+    fn clamp_with_a_range_pins_to_either_bound() {
+        let below = comparable_send(&int(0), "clamp", &[range(Some(1), Some(5), false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(below.inspect_string(), "1");
+
+        let above = comparable_send(&int(9), "clamp", &[range(Some(1), Some(5), false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(above.inspect_string(), "5");
+
+        let inside = comparable_send(&int(3), "clamp", &[range(Some(1), Some(5), false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(inside.inspect_string(), "3");
+    }
+
+    /// A beginless/endless range clamps on one side only.
+    #[test]
+    fn clamp_with_an_open_ended_range_pins_one_side() {
+        let endless = comparable_send(&int(0), "clamp", &[range(Some(1), None, false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(endless.inspect_string(), "1");
+        let endless_high = comparable_send(&int(99), "clamp", &[range(Some(1), None, false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(endless_high.inspect_string(), "99");
+
+        let beginless = comparable_send(&int(99), "clamp", &[range(None, Some(5), false)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(beginless.inspect_string(), "5");
+    }
+
+    /// An exclusive range has no representable maximum to clamp to --
+    /// CRuby's ArgumentError. (Registry-less, it surfaces as a panic.)
+    #[test]
+    fn clamp_with_an_exclusive_range_is_an_argument_error() {
+        let r = std::panic::catch_unwind(|| {
+            comparable_send(&int(9), "clamp", &[range(Some(1), Some(5), true)])
+        });
+        assert!(r.is_err());
+    }
+
+    /// An exclusive range with NO upper bound is fine -- nothing to exclude.
+    #[test]
+    fn clamp_with_an_exclusive_endless_range_is_allowed() {
+        let out = comparable_send(&int(0), "clamp", &[range(Some(1), None, true)])
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "1");
+    }
+
+    #[test]
+    fn clamp_still_takes_the_two_argument_form() {
+        let out = comparable_send(&int(9), "clamp", &[int(1), int(5)]).unwrap().unwrap();
+        assert_eq!(out.inspect_string(), "5");
+    }
+
+    /// `clamp` is a name Comparable answers to (respond_to?'s MRO walk).
+    #[test]
+    fn responds_lists_clamp() {
+        assert!(responds("clamp"));
+        assert!(responds("between?"));
+        assert!(!responds("nope"));
     }
 }

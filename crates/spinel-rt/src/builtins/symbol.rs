@@ -17,7 +17,7 @@ fn recv_sym(recv: &RubyValue) -> Symbol {
 /// (`emit_block_option` routes every `&expr` through
 /// `block_arg_to_proc`).
 pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
-    let p: RProc = Arc::new(move |args: &[RubyValue]| {
+    let p: RProc = RProc::new(move |args: &[RubyValue]| {
         let Some((recv, rest)) = args.split_first() else {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",

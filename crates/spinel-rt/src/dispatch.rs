@@ -7,7 +7,7 @@
 
 use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 /// Identifies a Ruby class at runtime. Mirrors spinel's struct-embedded
@@ -306,6 +306,16 @@ struct ClassEntry {
     /// `(0, name)` -- the AOT translation of CRuby's `cme->def->box`
     /// stamping, root reopens visible everywhere.
     value_methods: HashMap<(u32, Symbol), ValueMethodFn>,
+    /// The names in `methods`/`value_methods` that Ruby considers PRIVATE
+    /// (`private def x`, and every top-level `def` -- which is a private
+    /// method of Object). Dispatch itself ignores this (an implicit-self
+    /// call and `send` both reach privates, and codegen enforces the
+    /// explicit-receiver rule statically where it can); it exists so
+    /// `respond_to?` can skip them, matching CRuby's "the default ignores
+    /// private methods" rule. Kernel's own C-implemented privates
+    /// (`puts`/`p`/...) aren't here -- they have no registry entry at all
+    /// and are special-cased in `responds_to`.
+    private_methods: HashSet<Symbol>,
     constructor: Option<ConstructorFn>,
 }
 
@@ -339,6 +349,7 @@ impl ClassRegistry {
                 ancestors,
                 methods: HashMap::new(),
                 value_methods: HashMap::new(),
+                private_methods: HashSet::new(),
                 constructor,
             },
         );
@@ -350,6 +361,23 @@ impl ClassRegistry {
     /// reopen was written in (Phase 18: 0 for the root program; a box's
     /// overlay methods register under its id and are visible only from that
     /// box's code). See `ValueMethodFn`'s docs for the precedence contract.
+    /// Records `name` as PRIVATE on `id` -- emitted by codegen right after
+    /// the method's own registration, for each `def` whose resolved
+    /// visibility is private. See `ClassEntry::private_methods`.
+    pub fn mark_private(&mut self, id: ClassId, name: Symbol) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before marking its methods private")
+            .private_methods
+            .insert(name);
+    }
+
+    fn is_private(&self, id: ClassId, name: Symbol) -> bool {
+        self.entries
+            .get(&id.0)
+            .is_some_and(|e| e.private_methods.contains(&name))
+    }
+
     pub fn define_value_method(&mut self, id: ClassId, box_id: u32, name: Symbol, f: ValueMethodFn) {
         self.entries
             .get_mut(&id.0)
@@ -413,12 +441,21 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
 /// name sets. Kernel PRIVATE functions (`puts`, ...) are deliberately
 /// invisible, real Ruby's rule. Doesn't consult
 /// `method_missing`/`respond_to_missing?`, which this spike doesn't model.
-pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
+/// `respond_to?`'s answer: does `recv_class` (or any ancestor) provide
+/// `name`? `include_all` is the method's own second parameter -- false (the
+/// default) skips PRIVATE methods, exactly as in CRuby.
+pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     let n = name.name();
     let n = n.as_str();
     for &anc in ancestors_of_value(recv_class) {
         if let Some(r) = REGISTRY.get() {
             if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
+                if !include_all && r.is_private(anc, name) {
+                    // A private method of this ancestor doesn't answer, but
+                    // a PUBLIC same-named one further along the chain still
+                    // could -- keep walking rather than returning early.
+                    continue;
+                }
                 return true;
             }
         }
@@ -440,7 +477,8 @@ pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
                         // reachable via implicit self and `send` (both go
                         // through the table), but invisible to
                         // `respond_to?` -- its default ignores privates.
-                        if anc == KERNEL_CLASS
+                        if !include_all
+                            && anc == KERNEL_CLASS
                             && matches!(n, "puts" | "print" | "p" | "pp" | "warn")
                         {
                             continue;

@@ -332,7 +332,7 @@ mod tests {
             &shared.as_array_unchecked()
         ));
 
-        assert!(make_shareable(&RubyValue::Proc(Arc::new(|_| Ok(RubyValue::Nil)))).is_err());
+        assert!(make_shareable(&RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)))).is_err());
     }
 
     /// Phase 15.2 cycle guards: a self-referential graph used to recurse to

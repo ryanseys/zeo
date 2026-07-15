@@ -187,7 +187,7 @@ mod tests {
     use std::sync::Arc as StdArc;
 
     fn proc_counting_yields() -> RubyValue {
-        RubyValue::Proc(StdArc::new(|args: &[RubyValue]| {
+        RubyValue::Proc(crate::RProc::new(|args: &[RubyValue]| {
             let first = args.first().cloned().unwrap_or(RubyValue::Nil);
             let second = fiber_yield(vec![first]).expect("inside a fiber");
             Ok(second)
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn multiple_yield_args_pack_into_an_array() {
-        let body = RubyValue::Proc(StdArc::new(|_args: &[RubyValue]| {
+        let body = RubyValue::Proc(crate::RProc::new(|_args: &[RubyValue]| {
             fiber_yield(vec![RubyValue::Int(1), RubyValue::Int(2)]);
             Ok(RubyValue::Nil)
         }));

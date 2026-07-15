@@ -27,6 +27,21 @@ const RUST_KEYWORDS: &[&str] = &[
 
 const UNESCAPABLE: &[&str] = &["self", "Self", "super", "crate"];
 
+/// Rust-prelude names a top-level user class must not shadow: generated code
+/// and the `ruby_class!` expansion reference these UNQUALIFIED (`Vec<RubyValue>`,
+/// `Option<...>`, `Ok(...)`, `Send + Sync` bounds, ...), so a Ruby
+/// `class Vec ... end` defining a real struct `Vec` at the crate root breaks
+/// every such reference file-wide. Ruby BUILTINS that share a name (String,
+/// Hash, ...) never reach this check -- they take `class_ident`'s `__bm_`
+/// reopen arm first.
+const RUST_PRELUDE_COLLISIONS: &[&str] = &[
+    "Option", "Some", "None", "Result", "Ok", "Err", "String", "Vec", "Box", "Clone", "Copy",
+    "Debug", "Default", "Drop", "Eq", "PartialEq", "Ord", "PartialOrd", "Hash", "Iterator",
+    "IntoIterator", "DoubleEndedIterator", "ExactSizeIterator", "Extend", "Fn", "FnMut", "FnOnce",
+    "From", "Into", "TryFrom", "TryInto", "AsRef", "AsMut", "Send", "Sync", "Sized", "Unpin",
+    "ToOwned", "ToString", "FromIterator", "Future", "IntoFuture",
+];
+
 /// A Ruby method name that's a bare operator symbol (`def +`/`def <=>`/
 /// `a + b`/`a <=> b` are the exact same method name either way -- see the
 /// plan's Phase 1 insight that operators are ordinary `Call`s) -- none of
@@ -77,6 +92,13 @@ const OPERATOR_METHOD_NAMES: &[(&str, &str)] = &[
 pub fn safe_ident(name: &str) -> Ident {
     if UNESCAPABLE.contains(&name) {
         panic!("`{name}` is not a valid Ruby identifier and can't be escaped as a Rust one");
+    }
+    // Ruby's `_` is an ordinary (readable) local; Rust's `_` is not a named
+    // binding at all (`let mut _` won't parse, macro `$x:ident` matchers
+    // reject it). Same `__`-reserved-name residual-risk posture as
+    // `__blk`/`__self`.
+    if name == "_" {
+        return Ident::new("__underscore", Span::call_site());
     }
     if let Some(&(_, escaped)) = OPERATOR_METHOD_NAMES.iter().find(|&&(op, _)| op == name) {
         return Ident::new(escaped, Span::call_site());
@@ -173,5 +195,156 @@ pub(super) fn class_ident(
             proc_macro2::Span::call_site(),
         );
     }
+    if RUST_PRELUDE_COLLISIONS.contains(&ci.name.as_str()) {
+        return proc_macro2::Ident::new(&format!("__p_{}", ci.name), proc_macro2::Span::call_site());
+    }
     safe_ident(&ci.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_name_is_itself() {
+        assert_eq!(safe_ident("foo").to_string(), "foo");
+        assert_eq!(safe_ident("some_method").to_string(), "some_method");
+    }
+
+    #[test]
+    fn a_rust_keyword_escapes_to_a_raw_identifier() {
+        // Legal Ruby names that happen to be Rust keywords -- `Ident::new`
+        // panics on these, so they must become `r#`-escaped.
+        for kw in ["type", "loop", "match", "fn", "let", "move", "ref", "impl"] {
+            assert_eq!(safe_ident(kw).to_string(), format!("r#{kw}"));
+        }
+    }
+
+    #[test]
+    fn special_method_suffixes_get_plain_ascii_markers() {
+        assert_eq!(safe_ident("empty?").to_string(), "empty_p");
+        assert_eq!(safe_ident("save!").to_string(), "save_bang");
+        assert_eq!(safe_ident("value=").to_string(), "value_set");
+    }
+
+    #[test]
+    fn a_suffixed_name_whose_base_is_a_keyword_stays_unescaped() {
+        // The `_p` marker already makes it a non-keyword, so no `r#` --
+        // this is what `safe_ident`'s recursion buys (see its comment).
+        assert_eq!(safe_ident("type?").to_string(), "type_p");
+    }
+
+    #[test]
+    fn operator_method_names_map_to_fixed_identifiers() {
+        // `def +`/`def <=>` are ordinary method names in Ruby but aren't
+        // identifier TEXT at all in Rust -- an exhaustive lookup, not an
+        // escaping rule (both the `impl` and the call site route through
+        // here, so they agree by construction).
+        assert_eq!(safe_ident("+").to_string(), "op_add");
+        assert_eq!(safe_ident("<=>").to_string(), "op_cmp");
+        assert_eq!(safe_ident("[]").to_string(), "op_index");
+        assert_eq!(safe_ident("[]=").to_string(), "op_index_set");
+        assert_eq!(safe_ident("-@").to_string(), "op_neg");
+        assert_eq!(safe_ident("==").to_string(), "op_eq");
+        assert_eq!(safe_ident("===").to_string(), "op_case_eq");
+    }
+
+    #[test]
+    fn an_operator_that_looks_suffixed_is_not_treated_as_a_suffixed_name() {
+        // `==`/`<=`/`[]=` end in `=` but have no identifier-like base --
+        // `OPERATOR_METHOD_NAMES` is consulted BEFORE the suffix rule.
+        assert_eq!(safe_ident("<=").to_string(), "op_le");
+        assert_eq!(safe_ident("!=").to_string(), "op_neq");
+    }
+
+    #[test]
+    fn ruby_underscore_local_becomes_a_named_binding() {
+        // Ruby's `_` is an ordinary readable local; Rust's `_` is not a
+        // named binding (`let mut _` doesn't parse, and a macro `$x:ident`
+        // matcher rejects it) -- the two corpus tests that surfaced this
+        // failed inside `ruby_class!`, not at `Ident::new`.
+        assert_eq!(safe_ident("_").to_string(), "__underscore");
+        // Only the BARE underscore is special -- `_foo`/`__` are ordinary.
+        assert_eq!(safe_ident("_foo").to_string(), "_foo");
+        assert_eq!(safe_ident("__").to_string(), "__");
+    }
+
+    #[test]
+    #[should_panic(expected = "not a valid Ruby identifier")]
+    fn an_unescapable_rust_path_keyword_panics_clearly() {
+        // `self`/`Self`/`super`/`crate` can't be raw identifiers at all --
+        // none is a legal Ruby identifier either, so reaching here is an
+        // internal error worth a clear message rather than invalid output.
+        safe_ident("self");
+    }
+
+    /// `class_ident` needs a real, ANALYZED `Compiler` (its arms read
+    /// `lexical_parent`/`box_id`/`is_builtin`), so these go through the
+    /// ordinary parse+analyze path rather than hand-building a `ClassInfo`.
+    mod class_ident {
+        use crate::codegen::ident::class_ident;
+        use crate::compiler::{Compiler, OBJECT_CLASS};
+
+        fn analyzed(source: &str) -> Compiler {
+            let (hir, root) = crate::parse::parse_and_lower(source).expect("parses");
+            crate::analyze::analyze(hir, root).expect("analyzes").compiler
+        }
+
+        fn ident_of(compiler: &Compiler, name: &str) -> String {
+            let cid = compiler
+                .resolve_class(name, &[], 0)
+                .unwrap_or_else(|| panic!("no class named `{name}`"));
+            class_ident(compiler, cid).to_string()
+        }
+
+        #[test]
+        fn a_plain_user_class_keeps_its_own_name() {
+            let compiler = analyzed("class Widget; end");
+            assert_eq!(ident_of(&compiler, "Widget"), "Widget");
+        }
+
+        /// A Ruby class named after a RUST PRELUDE type would otherwise
+        /// define a crate-root struct shadowing it -- and generated code
+        /// plus the `ruby_class!` expansion name `Vec`/`Option`/`Box`
+        /// UNQUALIFIED throughout, so the whole program stopped compiling
+        /// (the real corpus symptom: `struct takes 0 generic arguments but
+        /// 1 generic argument was supplied`, from a `Vec<RubyValue>` that
+        /// suddenly meant the user's own `Vec`).
+        #[test]
+        fn a_class_named_after_a_rust_prelude_type_is_mangled() {
+            for name in ["Vec", "Option", "Box", "Result", "Iterator", "Send", "Clone"] {
+                let compiler = analyzed(&format!("class {name}; end"));
+                assert_eq!(ident_of(&compiler, name), format!("__p_{name}"), "class {name}");
+            }
+        }
+
+        /// A Ruby BUILTIN sharing a prelude name (`String`, `Hash`) never
+        /// reaches the collision rule: it takes the `__bm_` reopen arm
+        /// first, which already avoids the shadowing.
+        #[test]
+        fn a_reopened_builtin_sharing_a_prelude_name_takes_the_reopen_arm() {
+            let compiler = analyzed("class String; def shout; upcase; end; end");
+            assert_eq!(ident_of(&compiler, "String"), "__bm_String");
+        }
+
+        /// Top-level `def`s live on `Object`, whose container module must
+        /// not shadow `spinel_rt::Object` either.
+        #[test]
+        fn object_takes_the_reopen_arm_too() {
+            let compiler = analyzed("def helper; 1; end");
+            assert_eq!(class_ident(&compiler, OBJECT_CLASS).to_string(), "__bm_Object");
+        }
+
+        /// A NESTED class mangles by ClassId, which is collision-free by
+        /// construction (two `Widget`s in different namespaces can't clash).
+        #[test]
+        fn a_nested_class_mangles_with_its_class_id() {
+            let compiler = analyzed("module Store; class Item; end; end");
+            let ident = ident_of(&compiler, "Store::Item");
+            assert!(
+                ident.starts_with("__c") && ident.ends_with("_Item"),
+                "expected a `__c<id>_Item` mangle, got `{ident}`"
+            );
+        }
+    }
 }

@@ -66,7 +66,39 @@ builtin_methods! {
         }
     }
     "[]=" => fn index_set(recv, args, _block) {
-        arity!(args, 2);
+        arity!(args, 2..=3);
+        // `arr[start, len] = val` / `arr[range] = val` -- CRuby's splice
+        // (rb_ary_splice): the removed span is replaced by the VALUE's
+        // `to_ary` coercion's elements (a plain Array as-is; an object
+        // without `to_ary` inserts as one element). The expression value is
+        // the object as written, never the coercion.
+        if args.len() == 3 {
+            let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
+            array_splice(recv_array!(recv), start, len, &args[2])?;
+            return Ok(args[2].clone());
+        }
+        if let RubyValue::Range(s, e, exclusive) = &args[0] {
+            let n = crate::array_len(recv_array!(recv));
+            let start = match s.as_deref() {
+                Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                None => 0,
+                _ => return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "no implicit conversion of Range into Integer".to_string(),
+                )),
+            };
+            let end = match e.as_deref() {
+                Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                None => n - 1,
+                _ => return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "no implicit conversion of Range into Integer".to_string(),
+                )),
+            };
+            let len = (end - start + if *exclusive { 0 } else { 1 }).max(0);
+            array_splice(recv_array!(recv), start, len, &args[1])?;
+            return Ok(args[1].clone());
+        }
         let i = arg_int!(args, 0);
         match crate::array_set(recv_array!(recv), i, args[1].clone()) {
             Some(v) => Ok(v),
@@ -782,29 +814,16 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(items)))
     }
-    "to_h" => fn to_h(recv, args, _block) {
+    // With a block, each element is MAPPED to its pair first -- an Array
+    // yields one value per element, so the block sees the element itself
+    // (`[[1, 2]].to_h { |pair| }` gets `[1, 2]`; `{ |a, b| }` auto-splats).
+    "to_h" => fn to_h(recv, args, block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
-        let mut pairs = Vec::with_capacity(items.len());
-        for e in items {
-            let RubyValue::Array(pair) = &e else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "wrong element type {} (expected array)",
-                        crate::builtins::class_name_of(&e)
-                    ),
-                ));
-            };
-            let pair = pair.lock().clone();
-            if pair.len() != 2 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("wrong array length (expected 2, was {})", pair.len()),
-                ));
-            }
-            pairs.push((pair[0].clone(), pair[1].clone()));
-        }
+        let pairs = crate::builtins::enumerable::to_h_pairs(
+            items.iter().map(|e| (std::slice::from_ref(e), e)),
+            &block,
+        )?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
     "each" => fn each(recv, args, block) {
@@ -821,6 +840,69 @@ builtin_methods! {
     }
 }
 
+
+/// `arr[start, len] = value` / `arr[range] = value` -- CRuby's
+/// `rb_ary_splice`: replaces the `start..start+len` span with `value`'s
+/// `to_ary` coercion (see `splice_elems`), padding with `nil` when `start`
+/// lies past the end.
+fn array_splice(
+    arr: &crate::RArray,
+    start: i64,
+    len: i64,
+    value: &RubyValue,
+) -> Result<(), crate::Signal> {
+    if len < 0 {
+        return Err(crate::dispatch::raise_error(
+            "IndexError",
+            format!("negative length ({len})"),
+        ));
+    }
+    let elems = splice_elems(value)?;
+    let mut items = arr.lock();
+    let n = items.len() as i64;
+    let start = if start < 0 { start + n } else { start };
+    if start < 0 {
+        return Err(crate::dispatch::raise_error(
+            "IndexError",
+            format!("index {} too small for array; minimum: -{n}", start - n),
+        ));
+    }
+    let start = start as usize;
+    if start > items.len() {
+        items.resize(start, RubyValue::Nil);
+    }
+    let end = (start + len as usize).min(items.len());
+    items.splice(start..end, elems);
+    Ok(())
+}
+
+/// The splice VALUE's element coercion (CRuby `rb_ary_to_ary`): a plain
+/// Array's own elements; a `to_ary`-defining object's coercion (TypeError
+/// if it answers a non-Array, non-nil value); anything else as ONE element.
+fn splice_elems(value: &RubyValue) -> Result<Vec<RubyValue>, crate::Signal> {
+    if let RubyValue::Array(a) = value {
+        return Ok(a.lock().clone());
+    }
+    let to_ary = crate::Symbol::intern("to_ary");
+    if crate::dispatch::responds_to(value.class_id(), to_ary, false) {
+        match crate::dispatch::send_value(value, to_ary, &[], None)? {
+            RubyValue::Array(a) => return Ok(a.lock().clone()),
+            RubyValue::Nil => {}
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "can't convert {} to Array ({}#to_ary gives {})",
+                        crate::builtins::class_name_of(value),
+                        crate::builtins::class_name_of(value),
+                        crate::builtins::class_name_of(&other)
+                    ),
+                ))
+            }
+        }
+    }
+    Ok(vec![value.clone()])
+}
 
 /// `index_only` -- `dig`'s per-level `[]` (Int index).
 fn index_only(recv: &RubyValue, key: &RubyValue) -> Result<RubyValue, crate::Signal> {
@@ -935,6 +1017,136 @@ mod tests {
         assert_eq!(inner.lock().len(), 3);
     }
 
+    fn items_of(v: &RubyValue) -> Vec<String> {
+        let RubyValue::Array(inner) = v else { panic!("expected an Array") };
+        let out = inner.lock().iter().map(|e| e.inspect_string()).collect();
+        out
+    }
+
+    /// `a[start, len] = v` replaces the SPAN with `v`'s elements -- not the
+    /// one-index store `a[i] = v`. Oracle-verified shapes; the
+    /// `array_splice` example covers them end to end.
+    #[test]
+    fn index_set_splices_a_start_length_span() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let repl = arr(vec![RubyValue::Int(8), RubyValue::Int(9)]);
+        index_set(&a, &[RubyValue::Int(1), RubyValue::Int(2), repl], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "8", "9", "4"]);
+    }
+
+    #[test]
+    fn index_set_with_a_zero_length_inserts_without_removing() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2)]);
+        let repl = arr(vec![RubyValue::Int(9)]);
+        index_set(&a, &[RubyValue::Int(1), RubyValue::Int(0), repl], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "9", "2"]);
+    }
+
+    #[test]
+    fn index_set_splice_shrinks_when_the_replacement_is_shorter() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let repl = arr(vec![RubyValue::Int(9)]);
+        index_set(&a, &[RubyValue::Int(0), RubyValue::Int(3), repl], None).unwrap();
+        assert_eq!(items_of(&a), ["9"]);
+    }
+
+    /// A non-Array value inserts as ONE element (no to_ary here).
+    #[test]
+    fn index_set_splice_inserts_a_scalar_as_one_element() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        index_set(&a, &[RubyValue::Int(0), RubyValue::Int(2), RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&a), ["9", "3"]);
+    }
+
+    #[test]
+    fn index_set_splice_past_the_end_nil_pads_first() {
+        let a = arr(vec![RubyValue::Int(1)]);
+        let repl = arr(vec![RubyValue::Int(9)]);
+        index_set(&a, &[RubyValue::Int(3), RubyValue::Int(0), repl], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "nil", "nil", "9"]);
+    }
+
+    /// The expression VALUE is the right-hand side as written -- never the
+    /// coercion, never the receiver.
+    #[test]
+    fn index_set_splice_answers_the_value_as_written() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2)]);
+        let repl = arr(vec![RubyValue::Int(9)]);
+        let out = index_set(&a, &[RubyValue::Int(0), RubyValue::Int(1), repl], None).unwrap();
+        assert_eq!(out.inspect_string(), "[9]");
+    }
+
+    #[test]
+    fn index_set_splices_an_inclusive_range() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let range = RubyValue::Range(
+            Some(Box::new(RubyValue::Int(1))),
+            Some(Box::new(RubyValue::Int(2))),
+            false,
+        );
+        index_set(&a, &[range, RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "9", "4"]);
+    }
+
+    #[test]
+    fn index_set_splices_an_exclusive_range() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let range = RubyValue::Range(
+            Some(Box::new(RubyValue::Int(1))),
+            Some(Box::new(RubyValue::Int(3))),
+            true,
+        );
+        index_set(&a, &[range, RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "9", "4"]);
+    }
+
+    /// An endless range splices to the end; a beginless one from the start.
+    #[test]
+    fn index_set_splices_open_ended_ranges() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let endless = RubyValue::Range(Some(Box::new(RubyValue::Int(1))), None, false);
+        index_set(&a, &[endless, RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&a), ["1", "9"]);
+
+        let b = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let beginless = RubyValue::Range(None, Some(Box::new(RubyValue::Int(1))), false);
+        index_set(&b, &[beginless, RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&b), ["9", "3"]);
+    }
+
+    /// The plain one-index store still stores (no splice).
+    #[test]
+    fn index_set_with_two_args_and_an_int_index_stores_one_element() {
+        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2)]);
+        index_set(&a, &[RubyValue::Int(0), RubyValue::Int(9)], None).unwrap();
+        assert_eq!(items_of(&a), ["9", "2"]);
+    }
+
+    #[test]
+    fn to_h_maps_each_element_through_a_block() {
+        let a = arr(vec![
+            RubyValue::Array(crate::array_new(vec![RubyValue::Int(1), RubyValue::Int(2)])),
+        ]);
+        // `{ |pair| [pair[1], pair[0]] }` -- an Array yields ONE value per
+        // element, so the block sees the element itself.
+        let p: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
+            let RubyValue::Array(pair) = &args[0] else { panic!("expected the element") };
+            let pair = pair.lock().clone();
+            Ok(RubyValue::Array(crate::array_new(vec![pair[1].clone(), pair[0].clone()])))
+        });
+        let out = to_h(&a, &[], Some(RubyValue::Proc(p))).unwrap();
+        assert_eq!(out.inspect_string(), "{2 => 1}");
+    }
+
+    #[test]
+    fn to_h_without_a_block_requires_pair_shaped_elements() {
+        let a = arr(vec![
+            RubyValue::Array(crate::array_new(vec![RubyValue::Int(1), RubyValue::Int(2)])),
+        ]);
+        let out = to_h(&a, &[], None).unwrap();
+        assert_eq!(out.inspect_string(), "{1 => 2}");
+    }
+
     #[test]
     fn index_rejects_a_symbol_with_a_type_error_shape() {
         let a = arr(vec![RubyValue::Int(1)]);
@@ -948,7 +1160,7 @@ mod tests {
         let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2)]);
         let seen = std::sync::Arc::new(parking_lot::Mutex::new(0i64));
         let seen2 = std::sync::Arc::clone(&seen);
-        let p: crate::RProc = std::sync::Arc::new(move |args: &[RubyValue]| {
+        let p: crate::RProc = crate::RProc::new(move |args: &[RubyValue]| {
             if let RubyValue::Int(i) = &args[0] {
                 *seen2.lock() += i;
             }

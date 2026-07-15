@@ -1,0 +1,26 @@
+[1, 9, 3]
+[1, 9, 3, nil, nil, 7]
+[1, 9, 3, nil, nil, 0]
+[1, :x, :y, :z, 4]
+[1, :only]
+[1, :a, :b, 2, 3]
+[1, :end]
+[1, 2, :x]
+[1, nil, nil, :y]
+[:single, 3]
+[1, 2, :last]
+[1, :a, 4]
+[1, :b, 4]
+[1, 2, :tail]
+[:head, 3, 4]
+[1, 2, :z]
+[:v]
+[1, 7, 8, 3]
+[1, 9, 9, 4]
+true
+[1, 6, 6, 3]
+2
+3
+IndexError: negative length (-1)
+IndexError: index -9 too small for array; minimum: -3
+[1, 4, 5, 3]

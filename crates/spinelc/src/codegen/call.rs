@@ -233,9 +233,14 @@ fn try_collection_dispatch(
             let idx = emit_expr(cx, args[0]);
             quote! { spinel_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
         }
-        (TyKind::Array, "[]=", 2) => {
+        // Only for a statically-Int index -- a Range index is a SPLICE with
+        // different semantics (to_ary coercion), served by the dynamic row.
+        (TyKind::Array, "[]=", 2) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             let val = emit_expr(cx, args[1]);
+            // Boxed if Object-typed, same as Hash's `[]=` value below: the
+            // stored element must be a real `RubyValue`.
+            let val = super::expr::box_if_object_typed(cx, args[1], val);
             // A negative index still out of range after counting from the
             // end raises a real `IndexError` -- constructed
             // here, not inside `spinel_rt::array_set` itself, since only
@@ -737,6 +742,29 @@ fn bind_new_args(
     final_args
 }
 
+/// The value `self` has in the context currently being emitted, as a boxed
+/// `RubyValue` ready for runtime dispatch: the concrete receiver inside an
+/// instance method, the CLASS OBJECT inside a class method or class body
+/// (both have no `self: Arc<Self>` binding), and the shared `main` object
+/// at the top level. Every implicit-self dynamic-dispatch site routes
+/// through this rather than re-deriving the rule.
+fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
+    if let Some(cid) = cx.current_class {
+        let slf = &cx.self_ident;
+        return Some(if cx.compiler.value_backed(cid) {
+            quote! { (#slf.clone()) }
+        } else {
+            let class_ident = super::ident::class_ident(cx.compiler, cid);
+            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+        });
+    }
+    if let Some(dcid) = cx.defining_class {
+        let id = dcid.0;
+        return Some(quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) });
+    }
+    Some(quote! { spinel_rt::main_object() })
+}
+
 /// `super` always resolves against the receiver's REAL, full linearized
 /// `ancestors` -- never through the dynamic dispatch table (mirrors
 /// `emit_super`, `codegen.c:3262`) -- searching FORWARD (toward the root)
@@ -760,7 +788,12 @@ fn bind_new_args(
 /// sidesteps that entirely -- and is a real spinel mechanism too, just used
 /// there as an optimization (`emit_super_inline`, reached when the parent
 /// yields) rather than the default.
-pub fn emit_super_inline(cx: &Ctx, args: &[NodeId], zsuper: bool) -> TokenStream {
+pub fn emit_super_inline(
+    cx: &Ctx,
+    args: &[NodeId],
+    zsuper: bool,
+    block: Option<NodeId>,
+) -> TokenStream {
     let receiver_class = cx.current_class.expect("`super` outside a method");
     let defining_class = cx.defining_class.expect("`super` outside a method");
     let mname = cx
@@ -824,6 +857,7 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId], zsuper: bool) -> TokenStream
         cx.compiler,
         &defining_scope.body,
         &defining_scope.params,
+        Some(receiver_class),
     );
     let inline_cx = Ctx {
         compiler: cx.compiler,
@@ -855,6 +889,16 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId], zsuper: bool) -> TokenStream
     // spliced body just referenced its param names directly with nothing
     // ever binding them. See `emit_super_arg_bindings`'s docs.
     let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args, zsuper);
+    // A literal block at the `super` site becomes the spliced body's
+    // `__blk` (its `yield` runs this block) -- built as a real Proc in the
+    // CALLING scope (`cx`: captures resolve against the child method's own
+    // locals), shadowing the child's `__blk` only inside the splice braces.
+    // With no literal block, real Ruby forwards the current method's block
+    // -- which the splice sees for free, `__blk` already being in scope.
+    let blk_binding = block.map(|b| {
+        let proc_value = emit_proc_value(cx, b);
+        quote! { let __blk: Option<spinel_rt::RubyValue> = Some(#proc_value); }
+    });
     // A fresh hoisting prelude of its own: the parent method's local
     // variables are a genuinely separate Ruby scope from the calling
     // (sub)method's, even though inlining splices their statements into the
@@ -870,7 +914,7 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId], zsuper: bool) -> TokenStream
         &defining_scope.params.bound_names(),
         false,
     );
-    quote! { { #bindings #inlined } }
+    quote! { { #bindings #blk_binding #inlined } }
 }
 
 /// Binds the parent method's (`parent_params`) own parameter names, right
@@ -893,23 +937,83 @@ fn emit_super_arg_bindings(
     zsuper: bool,
 ) -> TokenStream {
     if zsuper {
-        return emit_super_forwarding_bindings(parent_params, current_params);
+        return emit_super_forwarding_bindings(inline_cx, parent_params, current_params);
     }
     emit_super_explicit_bindings(cx, inline_cx, parent_params, args)
 }
 
-/// Bare `super`: bind each of the parent's own required/optional/rest/post
-/// parameter names to the CURRENT method's own already-bound parameter of
-/// the SAME POSITION within that bucket (i.e. current values, not a
-/// positional re-evaluation of anything) -- a keyword param is matched by
-/// NAME instead, since "position" isn't meaningful there. Any parent
-/// parameter with no corresponding current one (arities/shapes genuinely
-/// differ between parent and child) is simply left unbound, keeping its own
-/// `nil`/lazy-default codegen (a narrow, documented approximation of Ruby's
-/// full forwarding semantics -- most real overrides share a compatible
-/// shape).
-fn emit_super_forwarding_bindings(parent_params: &Params, current_params: &Params) -> TokenStream {
+/// Bare `super`: forwards the CURRENT method's own already-bound positional
+/// parameter VALUES, flattened in declaration order (required, optional,
+/// post), to the parent's own positional slots -- the same bucket
+/// arithmetic as an explicit `super(...)`, just with already-bound idents
+/// instead of freshly evaluated argument expressions. This is what makes a
+/// child `def initialize(m = "def"); super; end` feed its optional `m` into
+/// a parent whose same-position parameter is REQUIRED (bucket-by-bucket
+/// matching left the parent's name unbound there, and the spliced body then
+/// referenced a name nothing had ever bound). A parent optional beyond what
+/// the child supplies evaluates its own default (in the PARENT's scope,
+/// `inline_cx`). Rest params fall back to whole-array aliasing when both
+/// sides have one (dynamic length -- the static flattening can't cover it);
+/// keyword params are matched by NAME, since "position" isn't meaningful
+/// there.
+fn emit_super_forwarding_bindings(
+    inline_cx: &Ctx,
+    parent_params: &Params,
+    current_params: &Params,
+) -> TokenStream {
     let mut lets = Vec::new();
+    if current_params.rest.is_none() && parent_params.rest.is_none() {
+        // Fully static shapes: flatten and bind positionally. Source values
+        // are snapshotted into temporaries FIRST -- a parent param may share
+        // a child param's name at a different position (`def m(a, b)` over
+        // `def m(b, a)`), and sequential `let a = b; let b = a;` would read
+        // the first rebinding.
+        let src: Vec<syn::Ident> = current_params
+            .required
+            .iter()
+            .chain(current_params.optional.iter().map(|(n, _)| n))
+            .chain(current_params.post.iter())
+            .map(|n| safe_ident(n))
+            .collect();
+        let temps: Vec<syn::Ident> =
+            (0..src.len()).map(|i| format_ident!("__super_fwd{i}")).collect();
+        for (t, s) in temps.iter().zip(&src) {
+            lets.push(quote! { let #t = #s.clone(); });
+        }
+        let nreq = parent_params.required.len();
+        if src.len() < nreq + parent_params.post.len() {
+            panic!(
+                "bare `super`: child forwards {} positional(s) but the parent requires {} (spike scope)",
+                src.len(),
+                nreq + parent_params.post.len()
+            );
+        }
+        let opt_bound = (src.len() - nreq - parent_params.post.len()).min(parent_params.optional.len());
+        for (i, name) in parent_params.required.iter().enumerate() {
+            let dst = safe_ident(name);
+            let t = &temps[i];
+            lets.push(quote! { let #dst: spinel_rt::RubyValue = #t; });
+        }
+        for (i, (name, default)) in parent_params.optional.iter().enumerate() {
+            let dst = safe_ident(name);
+            if i < opt_bound {
+                let t = &temps[nreq + i];
+                lets.push(quote! { let #dst: spinel_rt::RubyValue = #t; });
+            } else {
+                let default_expr = super::expr::emit_expr(inline_cx, *default);
+                lets.push(quote! { let #dst: spinel_rt::RubyValue = #default_expr; });
+            }
+        }
+        for (i, name) in parent_params.post.iter().enumerate() {
+            let dst = safe_ident(name);
+            let t = &temps[nreq + opt_bound + i];
+            lets.push(quote! { let #dst: spinel_rt::RubyValue = #t; });
+        }
+        let kw_lets = emit_super_forwarding_keyword_bindings(parent_params, current_params);
+        return quote! { #(#lets)* #kw_lets };
+    }
+    // A rest param on either side makes the positional split dynamic --
+    // keep the older same-bucket-same-position aliasing for those shapes.
     for (i, name) in parent_params.required.iter().enumerate() {
         if let Some(src) = current_params.required.get(i) {
             let dst = safe_ident(name);
@@ -938,6 +1042,15 @@ fn emit_super_forwarding_bindings(parent_params: &Params, current_params: &Param
             lets.push(quote! { let #dst: spinel_rt::RubyValue = #src_ident.clone(); });
         }
     }
+    let kw_lets = emit_super_forwarding_keyword_bindings(parent_params, current_params);
+    quote! { #(#lets)* #kw_lets }
+}
+
+fn emit_super_forwarding_keyword_bindings(
+    parent_params: &Params,
+    current_params: &Params,
+) -> TokenStream {
+    let mut lets = Vec::new();
     for kw in &parent_params.keywords {
         let dst_name = match kw {
             KeywordParam::Required(n) | KeywordParam::Optional(n, _) => n,
@@ -948,7 +1061,7 @@ fn emit_super_forwarding_bindings(parent_params: &Params, current_params: &Param
         if has_match {
             // Same name already bound in the current method's own scope --
             // re-binding it to itself is a harmless no-op, kept only for
-            // uniformity with the other buckets above.
+            // uniformity with the positional buckets.
             let dst = safe_ident(dst_name);
             lets.push(quote! { let #dst: spinel_rt::RubyValue = #dst.clone(); });
         }
@@ -1085,7 +1198,7 @@ pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStr
 }
 
 fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool) -> TokenStream {
-    let block_caps = super::captures::block_captures(cx.compiler, params, body);
+    let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
 
     let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
     genuine.sort();
@@ -1122,6 +1235,18 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
         }
     }
 
+    // A `yield`/`block_given?` anywhere in this block's body (nested blocks
+    // included) targets the enclosing METHOD's implicit block -- clone its
+    // `__blk: Option<RubyValue>` into the closure so the spliced yield
+    // codegen (`expr.rs`'s `HirNode::Yield`) finds it. Composes through
+    // nesting: an outer closure whose inner block yields captures `__blk`
+    // itself first (the scan is transitive), so each closure clones from
+    // its lexical parent. The enclosing method is guaranteed to HAVE
+    // `__blk`: the same transitive scan sets its `uses_bare_block`
+    // (`analyze::scan_bare_block_use`).
+    let blk_clone = crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body)
+        .then(|| quote! { let __blk = __blk.clone(); });
+
     let needs_self = block_caps.self_captured;
     let self_clone = needs_self.then(|| {
         let slf = &cx.self_ident;
@@ -1148,7 +1273,7 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
     let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =
-        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"));
+        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda);
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
     // this block references (including the genuine captures above) and
     // declare them AGAIN, shadowing the shared `Arc::clone`s just captured
@@ -1172,11 +1297,15 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
         quote! { other => break #redo_label other, }
     };
 
+    // `Proc#arity`/`#lambda?`/`#curry` read these -- a Rust closure can't
+    // answer them about itself (see `spinel_rt::ProcData`).
+    let arity = super::params::proc_arity(params, is_lambda);
     quote! {
         {
             #(#capture_clones)*
+            #blk_clone
             #self_clone
-            spinel_rt::RubyValue::Proc(::std::sync::Arc::new(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            spinel_rt::RubyValue::Proc(spinel_rt::RProc::with_meta(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 #redo_label: loop {
                     let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                         #arity_check
@@ -1190,7 +1319,7 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
                         #terminal_arm
                     }
                 }
-            }))
+            }, #arity, #is_lambda))
         }
     }
 }
@@ -1275,6 +1404,9 @@ pub(super) fn emit_block_option(cx: &Ctx, block: Option<NodeId>, block_arg: Opti
         }
         (None, Some(e)) => {
             let v = emit_expr(cx, e);
+            // Boxed if Object-typed: `&obj` duck-types through `to_proc`,
+            // and the converter takes a real `RubyValue`.
+            let v = box_if_object_typed(cx, e, v);
             // `&expr` converts like real Ruby: Proc passes, Symbol becomes
             // `Symbol#to_proc` (`map(&:to_s)`), nil means no block.
             quote! { spinel_rt::block_arg_to_proc(#v)? }
@@ -1554,7 +1686,35 @@ pub fn emit_call(
                 };
             }
         }
-        panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
+        // Nothing static matched: sibling methods, top-level defs, the
+        // Kernel functions and the `proc`/`at_exit`/`__method__`/`method`
+        // forms have all been tried. Rather than rejecting at compile time,
+        // dispatch on the implicit receiver through the runtime -- which is
+        // both what real Ruby does and strictly more faithful than a
+        // panic: it resolves the Kernel/Object methods that have no static
+        // form here (`send`, `respond_to?`, `instance_variable_get`,
+        // `freeze`, `tap`, ...), and a genuinely undefined name raises
+        // NoMethodError at the moment the call runs -- so, as in CRuby,
+        // an unreachable bad call stays silent.
+        let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+        let mut arg_exprs: Vec<TokenStream> = args
+            .iter()
+            .map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            })
+            .collect();
+        // Keyword arguments ride the G2 trailing-Hash convention.
+        arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
+        let blk = emit_block_option(cx, block, block_arg);
+        return quote! {
+            spinel_rt::send_value_in(#__bx,
+                &#recv,
+                spinel_rt::Symbol::intern(#name),
+                &[#(#arg_exprs),*],
+                #blk,
+            )?
+        };
     };
 
     /// The universal implicit-self forms every method-body context shares:
@@ -1627,22 +1787,6 @@ pub fn emit_call(
     /// value-backed (builtin-reopen / Object) method (`__self` as-is), a
     /// class-method body (the class value), or the top level (the `main`
     /// object).
-    fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
-        if let Some(cid) = cx.current_class {
-            let slf = &cx.self_ident;
-            return Some(if cx.compiler.value_backed(cid) {
-                quote! { (#slf.clone()) }
-            } else {
-                let class_ident = super::ident::class_ident(cx.compiler, cid);
-                quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
-            });
-        }
-        if let Some(dcid) = cx.defining_class {
-            let id = dcid.0;
-            return Some(quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) });
-        }
-        Some(quote! { spinel_rt::main_object() })
-    }
 
     /// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
     /// conversions, rand/srand, throw, sleep, exit/abort -- consulted after
@@ -1744,6 +1888,15 @@ pub fn emit_call(
     if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
         if !safe && kwargs.is_empty() {
             match (target_name.as_str(), name) {
+                // `Proc.new { ... }` IS its block (CRuby: `proc_new` just
+                // wraps the given block) -- the same value `proc { ... }`
+                // builds, so it routes to the same emitter and carries the
+                // same arity/lambda? metadata. Blockless `Proc.new` is an
+                // ArgumentError in real Ruby; it falls through to the
+                // builtin-`.new` rejection below rather than miscompiling.
+                ("Proc", "new") if block.is_some() && args.is_empty() => {
+                    return emit_proc_value(cx, block.expect("checked is_some"));
+                }
                 ("Fiber", "new") => {
                     let Some(block_id) = block else {
                         panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
@@ -1803,7 +1956,7 @@ pub fn emit_call(
                     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
                         panic!("a Block should only be reached via the Call that invokes it");
                     };
-                    let block_caps = super::captures::block_captures(cx.compiler, params, body);
+                    let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
                     // `block_captures` reports every referenced non-param
                     // name, INCLUDING the block's own locals (`msg =
                     // Ractor.receive` -- found the hard way). An outer-scope
@@ -1983,33 +2136,13 @@ fn emit_splat_call(
             // `spinel_rt::send` at all (they have no `ClassRegistry` entry) --
             // a clean rejection here beats generating code that only fails
             // at RUNTIME with a confusing "no such method".
-            match cx.current_class.filter(|&cid| cx.compiler.method_in_chain(cid, name).is_some()) {
-                Some(cid) => {
-                    let slf = &cx.self_ident;
-                    // A REOPENED builtin's (or `Object`'s) `self` is already
-                    // a boxed `RubyValue` (Phase 16.3) -- `send_value`
-                    // dispatches its value methods directly, no `new_handle`
-                    // boxing (or struct) exists for it.
-                    if cx.compiler.value_backed(cid) {
-                        quote! { (#slf.clone()) }
-                    } else {
-                        let class_ident = super::ident::class_ident(cx.compiler, cid);
-                        quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
-                    }
-                }
-                // A TOP-LEVEL splat call to a top-level-defined method: the
-                // `main` object carries Object's value methods (G0).
-                None if cx.current_class.is_none()
-                    && cx.defining_class.is_none()
-                    && cx
-                        .compiler
-                        .method_in_chain(crate::compiler::OBJECT_CLASS, name)
-                        .is_some() =>
-                {
-                    quote! { spinel_rt::main_object() }
-                }
-                None => panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)"),
-            }
+            // The implicit receiver for THIS context -- a concrete `self`
+            // inside an instance method, the class object inside a class
+            // method/body, the `main` object at the top level (which
+            // carries Object's value methods, so top-level defs dispatch).
+            // Kernel functions with no registry entry (`puts`) can't be
+            // reached this way, but they're intercepted well before here.
+            boxed_implicit_self(cx).expect("every context has an implicit self")
         }
     };
     let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
@@ -2027,6 +2160,18 @@ fn emit_splat_call(
     // Keyword args (literal and/or `**h` splat) merge into ONE trailing
     // Hash (the G2 convention): literal pairs first, splat entries after
     // (same-key splat entries replace, `Hash#merge`'s rule).
+    //
+    // TODO(plan G3): the resulting Hash's KEY ORDER is wrong when a `**h`
+    // splat is written BEFORE a literal pair -- `f(**h, c: 1)` builds
+    // `{c: 1, <h...>}` where real Ruby builds `{<h...>, c: 1}` (Hash is
+    // insertion-ordered, so this is observable). `HirNode::Call` keeps
+    // `kwargs: Vec<HashPair>` and `kwargs_splat: Option<NodeId>` in
+    // SEPARATE fields, so the source-order interleaving is already lost by
+    // the time codegen runs -- and `f(**a, **b)` (two splats) can't be
+    // represented at all. Both need the plan's `KwArg { Pair | DoubleSplat }`
+    // single ordered list replacing the two fields (~53 sites across parse,
+    // codegen and every HIR walker). Splat-last -- the common shape -- is
+    // correct today.
     let kw_push = (!kwargs.is_empty() || kwargs_splat.is_some()).then(|| {
         let literal_sets = kwargs.iter().map(|HashPair(k, v)| {
             let ke = emit_expr(cx, *k);
@@ -2038,8 +2183,13 @@ fn emit_splat_call(
         });
         let splat_sets = kwargs_splat.map(|n| {
             let e = emit_expr(cx, n);
+            // `**obj` converts through `to_hash` like CRuby, so a non-Hash
+            // converter object splats (and a non-converter raises a real
+            // TypeError); boxed first, since the coercion takes a
+            // `RubyValue`.
+            let e = box_if_object_typed(cx, n, e);
             quote! {
-                for (__k, __v) in (#e).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
+                for (__k, __v) in spinel_rt::to_hash_coerce(&(#e))?.lock().values().cloned().collect::<Vec<_>>() {
                     spinel_rt::hash_set(&__kw, __k, __v);
                 }
             }
@@ -2207,14 +2357,17 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
 /// against a receiver whose class isn't statically known) doesn't enforce
 /// this at all yet -- a documented, narrow gap, matching this codebase's
 /// existing posture on other Path-1-only guarantees (e.g. keyword args).
-fn enforce_visibility(cx: &Ctx, recv_id: NodeId, scope: &crate::compiler::Scope, method_name: &str) {
+fn enforce_visibility(
+    cx: &Ctx,
+    recv_id: NodeId,
+    scope: &crate::compiler::Scope,
+    method_name: &str,
+) -> Option<TokenStream> {
     match scope.visibility {
         Visibility::Public => {}
         Visibility::Private => {
             if !matches!(cx.compiler.hir[recv_id], HirNode::SelfRef) {
-                panic!(
-                    "private method `{method_name}` called with an explicit receiver (spike scope: only a literal `self` receiver or no receiver at all is allowed, matching real Ruby)"
-                );
+                return Some(emit_visibility_error(cx, recv_id, "private", method_name));
             }
         }
         Visibility::Protected => {
@@ -2225,11 +2378,31 @@ fn enforce_visibility(cx: &Ctx, recv_id: NodeId, scope: &crate::compiler::Scope,
                     || cx.compiler.class(owner).ancestors.contains(&caller_cid)
             });
             if !related {
-                panic!(
-                    "protected method `{method_name}` called from outside a related class (spike scope)"
-                );
+                return Some(emit_visibility_error(cx, recv_id, "protected", method_name));
             }
         }
+    }
+    None
+}
+
+/// A visibility violation is RUNTIME behavior in Ruby, not a syntax error:
+/// `obj.priv_method` raises `NoMethodError` when it actually runs, so an
+/// unreachable bad call stays silent and a `rescue NoMethodError` around a
+/// deliberate one works. Message shape verbatim from CRuby
+/// ("private method 'x' called for an instance of Foo").
+fn emit_visibility_error(
+    cx: &Ctx,
+    recv_id: NodeId,
+    kind: &str,
+    method_name: &str,
+) -> TokenStream {
+    let describe = match infer_any_class(cx, recv_id) {
+        Some(cid) => format!("an instance of {}", cx.compiler.class(cid).name),
+        None => "an instance of Object".to_string(),
+    };
+    let msg = format!("{kind} method '{method_name}' called for {describe}");
+    quote! {
+        return Err(spinel_rt::raise_error("NoMethodError", #msg.to_string()))
     }
 }
 
@@ -2406,8 +2579,17 @@ fn dispatch(
     // there's no compile-time constant-fold here (a name could still resolve
     // differently at runtime for a `define_method`-extended class), so this
     // always calls into the registry.
-    if no_kwargs && name == "respond_to?" && args.len() == 1 {
+    if no_kwargs && name == "respond_to?" && (args.len() == 1 || args.len() == 2) {
         let sym_expr = emit_symbol_expr(cx, args[0]);
+        // The optional second argument (`include_all`) opts private methods
+        // back in -- absent means false, CRuby's default.
+        let include_all = match args.get(1) {
+            Some(&a) => {
+                let e = emit_expr(cx, a);
+                quote! { (#e).truthy() }
+            }
+            None => quote! { false },
+        };
         let class_id_expr = match infer_any_class(cx, recv_id) {
             Some(cid) => {
                 let id = cid.0;
@@ -2419,7 +2601,7 @@ fn dispatch(
             None => quote! { (#recv_expr).class_id() },
         };
         return quote! {
-            spinel_rt::RubyValue::Bool(spinel_rt::responds_to(#class_id_expr, #sym_expr))
+            spinel_rt::RubyValue::Bool(spinel_rt::responds_to(#class_id_expr, #sym_expr, #include_all))
         };
     }
 
@@ -2912,7 +3094,9 @@ fn dispatch(
             if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                 let scope = cx.compiler.scope(sid);
                 if !bypass_visibility {
-                    enforce_visibility(cx, recv_id, scope, name);
+                    if let Some(err) = enforce_visibility(cx, recv_id, scope, name) {
+                        return err;
+                    }
                 }
                 let mod_ident = super::ident::class_ident(cx.compiler, cid);
                 let method_ident = safe_ident(name);
@@ -3058,7 +3242,9 @@ fn dispatch(
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
             let scope = cx.compiler.scope(sid);
             if !bypass_visibility {
-                enforce_visibility(cx, recv_id, scope, name);
+                if let Some(err) = enforce_visibility(cx, recv_id, scope, name) {
+                    return err;
+                }
             }
             return super::params::emit_call_args(
                 cx,
@@ -3308,5 +3494,28 @@ fn dispatch(
         }
     }
 
-    panic!("unsupported call `{name}` (spike scope, or receiver's class isn't statically known)");
+    // No static form matched. Dispatch through the runtime rather than
+    // rejecting: the receiver's class may still provide the method via an
+    // ancestor the static tables don't mirror (every user object inherits
+    // Kernel/Object -- `method(:x)`, `tap`, `frozen?`,
+    // `instance_variable_get`, ...), and a name that genuinely resolves
+    // nowhere raises NoMethodError at the moment the call runs, which is
+    // what real Ruby does anyway.
+    let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+    let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
+    let arg_exprs = args.iter().map(|&a| {
+        let e = emit_expr(cx, a);
+        box_if_object_typed(cx, a, e)
+    });
+    // Keyword args ride as one trailing Hash (the G2 convention).
+    let kw_hash = emit_kwargs_trailing_hash(cx, kwargs).into_iter();
+    let block_value = emit_block_option(cx, block, block_arg);
+    quote! {
+        spinel_rt::catch_break(spinel_rt::send_value_in(#__bx,
+            &#recv_boxed,
+            #name_expr,
+            &[#(#arg_exprs,)* #(#kw_hash,)*],
+            #block_value,
+        ))?
+    }
 }

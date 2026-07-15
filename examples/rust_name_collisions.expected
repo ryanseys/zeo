@@ -1,0 +1,33 @@
+Vec(11, 22)
+11
+Vec
+"Vec"
+true
+true
+false
+:fallback
+:got
+"boxed"
+true
+[1, 2]
+true
+:vector
+["Vec(0, 0)", "Vec(1, 1)"]
+"a type"
+"a match"
+"a loop"
+"an fn"
+"an impl"
+"a type"
+true
+false
+true
+42
+10
+15
+1
+2
+:a
+:second
+:first
+3

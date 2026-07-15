@@ -43,14 +43,14 @@ type PResult<T> = Result<T, String>;
 /// class's own `initialize` needs real optional-param support via `.new`).
 const EXCEPTION_PRELUDE: &str = r#"
 class Exception
-  def initialize(msg)
+  def initialize(msg = nil)
     @message = msg
   end
   def message
-    @message
+    to_s
   end
   def to_s
-    @message
+    @message || self.class.name
   end
 end
 class ScriptError < Exception
@@ -1231,7 +1231,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .map(|n| lower_node(result, hir, &n))
                 .collect::<PResult<Vec<_>>>()?,
         };
-        return Ok(hir.push(HirNode::SuperCall { args, zsuper: false }));
+        let block = match sup.block() {
+            None => None,
+            Some(b) => Some(lower_block(result, hir, &b)?),
+        };
+        return Ok(hir.push(HirNode::SuperCall { args, zsuper: false, block }));
     }
 
     // Bare `super` (no parens) -- a distinct prism node from `super(...)`
@@ -1239,10 +1243,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // currently bound, including reassignments -- oracle-verified). The
     // `zsuper` flag carries that distinction to codegen's
     // `emit_super_arg_bindings`; see `HirNode::SuperCall`'s docs.
-    if node.as_forwarding_super_node().is_some() {
+    if let Some(fsup) = node.as_forwarding_super_node() {
+        let block = match fsup.block() {
+            None => None,
+            Some(b) => Some(lower_block(result, hir, &b.as_node())?),
+        };
         return Ok(hir.push(HirNode::SuperCall {
             args: Vec::new(),
             zsuper: true,
+            block,
         }));
     }
 
@@ -1369,8 +1378,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // `Enumerator.new { |y| ... }` joins the block-keeping set
                 // (Phase 17.2): it falls through to the generic `Call`
                 // lowering so the block reaches the runtime allocator via
-                // the dynamic Class#new arm.
-                if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator") {
+                // the dynamic Class#new arm. `Proc.new { ... }` is in the
+                // set for the same reason -- its block IS the value it
+                // answers, and `HirNode::New` has no slot to carry one.
+                if !matches!(
+                    class_name.as_str(),
+                    "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc"
+                ) {
                     let args = match call.arguments() {
                         None => Vec::new(),
                         Some(a) => a

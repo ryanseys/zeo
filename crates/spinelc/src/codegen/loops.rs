@@ -321,11 +321,17 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
     let value_expr = if infer(cx, value) == TyKind::Array {
         value_expr
     } else {
+        // A non-Array right-hand side destructures through `to_ary` when it
+        // defines one (`x, y = pair_object`), and otherwise binds as a
+        // single value with the remaining targets nil-filled (`c, d = 5` ->
+        // `[5, nil]`) -- CRuby's `rb_check_array_type` rule, the same one
+        // block auto-splat uses, so `block_auto_splat` is the shared
+        // implementation (it answers the input unchanged when no coercion
+        // applies, which is exactly the one-element case here).
         quote! {
-            (match #value_expr {
-                __v @ spinel_rt::RubyValue::Array(_) => __v,
-                __v => spinel_rt::RubyValue::Array(spinel_rt::array_new(vec![__v])),
-            })
+            spinel_rt::RubyValue::Array(spinel_rt::array_new(
+                spinel_rt::block_auto_splat(vec![#value_expr])?
+            ))
         }
     };
     emit_multi_target_group(cx, targets, value_expr)

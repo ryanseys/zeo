@@ -23,11 +23,10 @@ pub struct Captures {
     /// see `walk`'s `param_exclusions`, which is what makes this
     /// exclusion correct even for a name shadowed two levels deep).
     pub locals: HashSet<String>,
-    /// Whether any escaping block references `@ivar`/an instance variable --
-    /// the only way `self` is reachable in this spike's surface syntax
-    /// today (see `parse/mod.rs`: there's no explicit-`self`/implicit-self-
-    /// call HIR node at all yet), so this is the complete self-capture
-    /// condition, not an approximation of a larger one.
+    /// Whether any escaping block needs the receiver captured: an
+    /// `@ivar` reference, a bare/explicit `self`, or a receiverless call
+    /// resolving to a method on the enclosing class (`walk`'s `self_class`
+    /// -- an implicit-self dispatch).
     pub self_captured: bool,
 }
 
@@ -79,10 +78,15 @@ pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
 /// making its result exactly "names used outside any escaping block").
 /// `self` has no such distinction (an ivar always means the same object),
 /// so `self_captured` is passed through unfiltered.
-pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId], params: &Params) -> Captures {
+pub fn collect_escaping_captures(
+    compiler: &Compiler,
+    body: &[NodeId],
+    params: &Params,
+    self_class: Option<crate::compiler::ClassId>,
+) -> Captures {
     let mut raw = Captures::default();
     for &n in body {
-        walk(compiler, n, false, &HashSet::new(), &mut raw);
+        walk(compiler, n, false, &HashSet::new(), &mut raw, self_class);
     }
     let mut outer_names = Vec::new();
     for &n in body {
@@ -104,11 +108,16 @@ pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId], params: &
 /// names THIS closure must clone-capture, so it doesn't clone names it
 /// never references (which would otherwise show up as unused-variable
 /// warnings in the generated program).
-pub fn block_captures(compiler: &Compiler, params: &Params, body: &[NodeId]) -> Captures {
+pub fn block_captures(
+    compiler: &Compiler,
+    params: &Params,
+    body: &[NodeId],
+    self_class: Option<crate::compiler::ClassId>,
+) -> Captures {
     let mut caps = Captures::default();
     let own = own_param_names(params);
     for &n in body {
-        walk(compiler, n, true, &own, &mut caps);
+        walk(compiler, n, true, &own, &mut caps, self_class);
     }
     caps
 }
@@ -209,8 +218,13 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
-        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
+        HirNode::New { args, .. } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+        }
+        // A literal `super { ... }` block always escapes (see `walk`'s
+        // `SuperCall` arm).
+        HirNode::SuperCall { args, block, .. } => {
+            block.is_some() || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
@@ -377,7 +391,14 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::GlobalWrite(_, value) => node_contains_begin(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_begin(compiler, *value),
         HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
-        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::SuperCall { args, block, .. } => {
+            args.iter().any(|&a| node_contains_begin(compiler, a))
+                || block.is_some_and(|b| match &compiler.hir[b] {
+                    HirNode::Block { body, .. } => body_contains_begin(compiler, body),
+                    _ => false,
+                })
+        }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_begin(compiler, *n)
@@ -446,6 +467,7 @@ fn walk(
     in_escaping: bool,
     param_exclusions: &HashSet<String>,
     caps: &mut Captures,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     match &compiler.hir[id] {
         HirNode::LocalRead(name) => {
@@ -457,7 +479,7 @@ fn walk(
             if in_escaping && !param_exclusions.contains(name) {
                 caps.locals.insert(name.clone());
             }
-            walk(compiler, *value, in_escaping, param_exclusions, caps);
+            walk(compiler, *value, in_escaping, param_exclusions, caps, self_class);
         }
         HirNode::IvarRead(_) => {
             if in_escaping {
@@ -468,7 +490,7 @@ fn walk(
             if in_escaping {
                 caps.self_captured = true;
             }
-            walk(compiler, *value, in_escaping, param_exclusions, caps);
+            walk(compiler, *value, in_escaping, param_exclusions, caps, self_class);
         }
         // A bare/explicit `self` reference is another way an escaping block
         // needs the receiver captured -- same flag `IvarRead`/`IvarWrite`
@@ -483,7 +505,7 @@ fn walk(
         // `self` -- unlike an ivar, referencing `@@x` inside an escaping
         // block needs no `self` capture at all.
         HirNode::ClassVarRead(_) => {}
-        HirNode::ClassVarWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::ClassVarWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
         // A lambda literal ALWAYS escapes (never an inline fast path, unlike
         // `.times`'s block) -- same shape as an escaping `Call.block` below,
         // minus the `is_inline` branch. Nested inside another escaping
@@ -496,81 +518,81 @@ fn walk(
             let next_exclusions: HashSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {
-                walk(compiler, n, true, &next_exclusions, caps);
+                walk(compiler, n, true, &next_exclusions, caps, self_class);
             }
         }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
-            walk(compiler, *l, in_escaping, param_exclusions, caps);
-            walk(compiler, *r, in_escaping, param_exclusions, caps);
+            walk(compiler, *l, in_escaping, param_exclusions, caps, self_class);
+            walk(compiler, *r, in_escaping, param_exclusions, caps, self_class);
         }
-        HirNode::Defined(v) => walk(compiler, *v, in_escaping, param_exclusions, caps),
+        HirNode::Defined(v) => walk(compiler, *v, in_escaping, param_exclusions, caps, self_class),
         HirNode::If { cond, then_body, else_body } => {
-            walk(compiler, *cond, in_escaping, param_exclusions, caps);
+            walk(compiler, *cond, in_escaping, param_exclusions, caps, self_class);
             for &n in then_body.iter().chain(else_body) {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::CaseWhen { subject, arms, else_body } => {
             if let Some(s) = subject {
-                walk(compiler, *s, in_escaping, param_exclusions, caps);
+                walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
             }
             for (values, body) in arms {
                 for &v in values {
-                    walk(compiler, v, in_escaping, param_exclusions, caps);
+                    walk(compiler, v, in_escaping, param_exclusions, caps, self_class);
                 }
                 for &n in body {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
             for &n in else_body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::While { cond, body, .. } => {
-            walk(compiler, *cond, in_escaping, param_exclusions, caps);
+            walk(compiler, *cond, in_escaping, param_exclusions, caps, self_class);
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::Loop { body } => {
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::For { target, iterable, body } => {
-            walk_multi_target(compiler, target, in_escaping, param_exclusions, caps);
-            walk(compiler, *iterable, in_escaping, param_exclusions, caps);
+            walk_multi_target(compiler, target, in_escaping, param_exclusions, caps, self_class);
+            walk(compiler, *iterable, in_escaping, param_exclusions, caps, self_class);
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
-                walk(compiler, *v, in_escaping, param_exclusions, caps);
+                walk(compiler, *v, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::Redo | HirNode::BlockGiven => {}
         HirNode::MultiWrite { targets, value } => {
-            walk_multi_target_group(compiler, targets, in_escaping, param_exclusions, caps);
-            walk(compiler, *value, in_escaping, param_exclusions, caps);
+            walk_multi_target_group(compiler, targets, in_escaping, param_exclusions, caps, self_class);
+            walk(compiler, *value, in_escaping, param_exclusions, caps, self_class);
         }
         // A global/constant's storage doesn't depend on `self`/enclosing
         // locals at all -- no capture registration needed, same posture as
         // `ClassVarWrite` just above.
-        HirNode::GlobalWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps),
-        HirNode::ConstWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps),
+        HirNode::GlobalWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
+        HirNode::ConstWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
         HirNode::Seq(body) => {
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
-                walk(compiler, a, in_escaping, param_exclusions, caps);
+                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::CaseIn { subject, arms, else_body } => {
-            walk(compiler, *subject, in_escaping, param_exclusions, caps);
+            walk(compiler, *subject, in_escaping, param_exclusions, caps, self_class);
             for arm in arms {
                 // A pattern's bound names are a fresh binding, same
                 // treatment as `LocalWrite` just above -- only registered
@@ -586,22 +608,22 @@ fn walk(
                     });
                 }
                 arm.pattern
-                    .for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps));
+                    .for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps, self_class));
                 if let Some((g, _)) = arm.guard {
-                    walk(compiler, g, in_escaping, param_exclusions, caps);
+                    walk(compiler, g, in_escaping, param_exclusions, caps, self_class);
                 }
                 for &n in &arm.body {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
             if let Some(body) = else_body {
                 for &n in body {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
         }
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            walk(compiler, *subject, in_escaping, param_exclusions, caps);
+            walk(compiler, *subject, in_escaping, param_exclusions, caps, self_class);
             if in_escaping {
                 pattern.for_each_bound_name(&mut |n| {
                     if !param_exclusions.contains(n) {
@@ -609,11 +631,11 @@ fn walk(
                     }
                 });
             }
-            pattern.for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps));
+            pattern.for_each_node(&mut |n| walk(compiler, n, in_escaping, param_exclusions, caps, self_class));
         }
         HirNode::Begin { body, rescues, else_body, ensure_body } => {
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
             for r in rescues {
                 // A rescue binding is a fresh name, same treatment as
@@ -626,75 +648,105 @@ fn walk(
                     }
                 }
                 for &n in &r.body {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
             if let Some(b) = else_body {
                 for &n in b {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
             if let Some(b) = ensure_body {
                 for &n in b {
-                    walk(compiler, n, in_escaping, param_exclusions, caps);
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
         }
         HirNode::Retry => {}
         HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
-                walk(compiler, n, in_escaping, param_exclusions, caps);
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
+        HirNode::New { args, .. } => {
             for &a in args {
-                walk(compiler, a, in_escaping, param_exclusions, caps);
+                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+        }
+        HirNode::SuperCall { args, block, .. } => {
+            for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+            // A literal `super { ... }` block is always a real, escaping
+            // Proc (no `.times`-style inline fast path exists for `super`)
+            // -- same treatment as `Call`'s escaping-block arm above.
+            if let Some(b) = block {
+                if let HirNode::Block { params, body } = &compiler.hir[*b] {
+                    let next_exclusions: HashSet<String> =
+                        param_exclusions.union(&own_param_names(params)).cloned().collect();
+                    for &n in body {
+                        walk(compiler, n, true, &next_exclusions, caps, self_class);
+                    }
+                }
             }
         }
         HirNode::ArrayLit(elems) => {
             for e in elems {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                walk(compiler, *n, in_escaping, param_exclusions, caps);
+                walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::HashLit(pairs) => {
             for pair in pairs {
-                walk(compiler, pair.0, in_escaping, param_exclusions, caps);
-                walk(compiler, pair.1, in_escaping, param_exclusions, caps);
+                walk(compiler, pair.0, in_escaping, param_exclusions, caps, self_class);
+                walk(compiler, pair.1, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
             if let Some(s) = start {
-                walk(compiler, *s, in_escaping, param_exclusions, caps);
+                walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
             }
             if let Some(e) = end {
-                walk(compiler, *e, in_escaping, param_exclusions, caps);
+                walk(compiler, *e, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
-                    walk(compiler, *n, in_escaping, param_exclusions, caps);
+                    walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
                 }
             }
         }
         HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+            // A receiverless call that resolves to a method on the enclosing
+            // class (`self_class`) dispatches on `self` (see `emit_call`'s
+            // implicit-self branch) -- inside an escaping block that's a
+            // `self` capture exactly like an ivar reference, otherwise the
+            // closure `move`s the method's own `self` binding out from under
+            // the code after it (E0382).
+            if receiver.is_none() && in_escaping {
+                if let Some(cls) = self_class {
+                    if compiler.method_in_chain(cls, name).is_some() {
+                        caps.self_captured = true;
+                    }
+                }
+            }
             if let Some(r) = receiver {
-                walk(compiler, *r, in_escaping, param_exclusions, caps);
+                walk(compiler, *r, in_escaping, param_exclusions, caps, self_class);
             }
             for a in args {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                walk(compiler, *n, in_escaping, param_exclusions, caps);
+                walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
             }
             for pair in kwargs {
-                walk(compiler, pair.0, in_escaping, param_exclusions, caps);
-                walk(compiler, pair.1, in_escaping, param_exclusions, caps);
+                walk(compiler, pair.0, in_escaping, param_exclusions, caps, self_class);
+                walk(compiler, pair.1, in_escaping, param_exclusions, caps, self_class);
             }
             if let Some(s) = kwargs_splat {
-                walk(compiler, *s, in_escaping, param_exclusions, caps);
+                walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
             }
             if let Some(b) = block_arg {
-                walk(compiler, *b, in_escaping, param_exclusions, caps);
+                walk(compiler, *b, in_escaping, param_exclusions, caps, self_class);
             }
             if let Some(b) = block {
                 let HirNode::Block { params, body } = &compiler.hir[*b] else {
@@ -719,7 +771,7 @@ fn walk(
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 let next_in_escaping = in_escaping || !is_inline;
                 for &n in body {
-                    walk(compiler, n, next_in_escaping, &next_exclusions, caps);
+                    walk(compiler, n, next_in_escaping, &next_exclusions, caps, self_class);
                 }
             }
         }
@@ -765,6 +817,7 @@ fn walk_multi_target(
     in_escaping: bool,
     param_exclusions: &HashSet<String>,
     caps: &mut Captures,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     use crate::hir::MultiTarget;
     match target {
@@ -786,9 +839,9 @@ fn walk_multi_target(
             if in_escaping && !param_exclusions.contains(tmp_name) {
                 caps.locals.insert(tmp_name.clone());
             }
-            walk(compiler, *write_call, in_escaping, param_exclusions, caps);
+            walk(compiler, *write_call, in_escaping, param_exclusions, caps, self_class);
         }
-        MultiTarget::Nested(group) => walk_multi_target_group(compiler, group, in_escaping, param_exclusions, caps),
+        MultiTarget::Nested(group) => walk_multi_target_group(compiler, group, in_escaping, param_exclusions, caps, self_class),
     }
 }
 
@@ -798,11 +851,12 @@ fn walk_multi_target_group(
     in_escaping: bool,
     param_exclusions: &HashSet<String>,
     caps: &mut Captures,
+    self_class: Option<crate::compiler::ClassId>,
 ) {
     for t in group.before.iter().chain(&group.after) {
-        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps);
+        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps, self_class);
     }
     if let Some(Some(t)) = &group.splat {
-        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps);
+        walk_multi_target(compiler, t, in_escaping, param_exclusions, caps, self_class);
     }
 }

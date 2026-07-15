@@ -858,6 +858,13 @@ pub enum HirNode {
     SuperCall {
         args: Vec<NodeId>,
         zsuper: bool,
+        /// A literal block written at the `super` site (`super { ... }` /
+        /// `super(x) { ... }`) -- a `HirNode::Block`, bound as the spliced
+        /// parent body's `__blk` so its `yield` runs this block. `None`
+        /// means the parent implicitly sees the CURRENT method's own block
+        /// (real Ruby forwards it), which the splice gets for free since
+        /// `__blk` is already in scope there.
+        block: Option<NodeId>,
     },
     Block {
         params: Params,

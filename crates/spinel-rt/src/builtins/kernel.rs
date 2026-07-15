@@ -144,8 +144,10 @@ builtin_methods! {
         };
         Ok(RubyValue::Bool(recv.class_id() == *target))
     }
+    // `respond_to?(name, include_all = false)` -- the second parameter
+    // opts private methods back in (CRuby's default ignores them).
     "respond_to?" => fn respond_to_p(recv, args, _block) {
-        arity!(args, 1);
+        arity!(args, 1..=2);
         let sym = match &args[0] {
             RubyValue::Symbol(s) => *s,
             RubyValue::Str(s) => Symbol::intern(&s.lock()),
@@ -156,7 +158,8 @@ builtin_methods! {
                 ))
             }
         };
-        Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym)))
+        let include_all = args.get(1).is_some_and(|v| v.truthy());
+        Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym, include_all)))
     }
     "tap" => fn tap(recv, args, block) {
         arity!(args, 0);

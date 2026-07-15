@@ -261,12 +261,15 @@ pub fn emit_call_args_to(
     block_arg: Option<NodeId>,
     needs_block: bool,
 ) -> TokenStream {
-    // Fast path: a plain required-only callee with no call-site kwargs and
-    // no block channel -- by far the common case, and everything Path 1
-    // ever supported before `Params` existed. Emit the exact same simple
-    // shape as before (no temporaries, no explicit arity check -- Rust's
-    // own fixed-arity call already catches a mismatch) rather than paying
-    // for the general machinery's temporaries/clones on every call.
+    // Fast path: a plain required-only callee called with the RIGHT number
+    // of arguments, no call-site kwargs and no block channel -- by far the
+    // common case, and everything Path 1 ever supported before `Params`
+    // existed. Emit the exact same simple shape as before (no temporaries,
+    // no explicit arity check). A wrong-arity call deliberately FALLS
+    // THROUGH to the general machinery below, whose count check raises a
+    // runtime ArgumentError -- CRuby's behavior (dead wrong-arity code
+    // stays silent); letting Rust's own fixed-arity call catch it would be
+    // a rustc error on the whole generated program instead.
     if params.optional.is_empty()
         && params.rest.is_none()
         && params.post.is_empty()
@@ -274,6 +277,7 @@ pub fn emit_call_args_to(
         && params.keyword_rest.is_none()
         && kwargs.is_empty()
         && !needs_block
+        && args.len() == params.required.len()
     {
         // Boxed via `box_if_object_typed`: the callee's own Rust parameter
         // type is always plain `RubyValue` (an ordinary parameter is never
@@ -709,6 +713,68 @@ pub fn emit_value_trampoline(
     }
 }
 
+/// `Proc#arity` for a block/lambda with these parameters -- CRuby's
+/// `rb_proc_arity`/`rb_iseq_min_max_arity` (proc.c), evaluated at compile
+/// time and baked into the constructed `RProc` (a Rust closure can't
+/// answer this about itself; see `spinel_rt::ProcData`).
+///
+/// ```text
+/// min = required + post + (1 if any REQUIRED keyword)
+/// max = UNLIMITED if *rest, else required + optional + post + (1 if any keyword/**kwrest)
+/// arity = min             when (lambda ? min == max : max != UNLIMITED)
+///       = -min - 1        otherwise
+/// ```
+///
+/// Verified against ruby 4.0.5 across 24 signatures -- including the two
+/// shapes that make the lambda/proc distinction visible:
+/// `->(a, b = 1) {}.arity == -2` but `proc { |a, b = 1| }.arity == 1`.
+pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
+    let lead = params.required.len() as i32;
+    let opt = params.optional.len() as i32;
+    let post = params.post.len() as i32;
+    let has_rest = params.rest.is_some();
+    let has_kw = !params.keywords.is_empty();
+    let has_kwrest = params.keyword_rest.is_some();
+    let any_required_kw = params
+        .keywords
+        .iter()
+        .any(|k| matches!(k, KeywordParam::Required(_)));
+
+    let min = lead + post + i32::from(any_required_kw);
+    let max = (!has_rest).then(|| lead + opt + post + i32::from(has_kw || has_kwrest));
+    let positive = match max {
+        Some(max) if is_lambda => min == max,
+        Some(_) => true,
+        None => false,
+    };
+    if positive {
+        min
+    } else {
+        -min - 1
+    }
+}
+
+/// Whether a (non-lambda) block with these parameters auto-splats a lone
+/// Array argument across its positional slots -- CRuby's `has_lead &&
+/// !ambiguous_param0` rule, verified against ruby 4.0.5 for every shape:
+///
+/// ```text
+/// |a|            -> no    (ambiguous_param0: the one-param case is exempt)
+/// |a, **k|       -> no    (still ONE positional slot)
+/// |*a|           -> no    (no leading required param)
+/// |*a, **k|      -> no
+/// |a, b|         -> yes
+/// |a, b, **k|    -> yes
+/// |a, *b|        -> yes
+/// |a, b = 5|     -> yes
+/// |a, *b, c|     -> yes
+/// ```
+fn auto_splats(params: &Params) -> bool {
+    let nreq = params.required.len();
+    let slots = nreq + params.optional.len() + params.post.len();
+    nreq >= 1 && (slots > 1 || params.rest.is_some())
+}
+
 /// A real escaping block's OWN parameter binding, given its `Params` and the
 /// closure's own runtime `&[RubyValue]` argument slice (`args_ident`) --
 /// used by `codegen::call`'s Proc-construction site (decision 4: a block
@@ -728,7 +794,19 @@ pub fn emit_value_trampoline(
 /// key exist" is approximated as "is its value non-nil" (`hash_get` has no
 /// separate presence check), a documented imprecision, same posture as this
 /// codebase's other narrower-than-real-Ruby approximations.
-pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_macro2::Ident) -> TokenStream {
+///
+/// AUTO-SPLAT (`is_lambda: false` only -- see `auto_splats`): decided here,
+/// statically, from the block's own parameter shape; performed by
+/// `spinel_rt::block_auto_splat` at invocation time. The split of a
+/// trailing Hash into `__kw_source` happens BEFORE it, matching CRuby: a
+/// block `|a, b, **k|` yielded one `[1, {x: 9}]` array binds `b = {x: 9}`
+/// (Ruby 3 has no implicit hash-to-keywords conversion), not `k = {x: 9}`.
+pub fn emit_proc_param_bindings(
+    cx: &Ctx,
+    params: &Params,
+    args_ident: &proc_macro2::Ident,
+    is_lambda: bool,
+) -> TokenStream {
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
@@ -750,6 +828,11 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
             let __positional: Vec<spinel_rt::RubyValue> = #args_ident.to_vec();
         }
     };
+    let auto_splat = (!is_lambda && auto_splats(params)).then(|| {
+        quote! {
+            let __positional = spinel_rt::block_auto_splat(__positional)?;
+        }
+    });
 
     let required_lets = params.required.iter().enumerate().map(|(i, name)| {
         let ident = safe_ident(name);
@@ -824,14 +907,17 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
             let #ident: spinel_rt::RubyValue = match &__kw_source {
                 Some(spinel_rt::RubyValue::Hash(__h)) => {
                     let __declared: &[&str] = &[#(#kw_names),*];
+                    // The locked map yields `(&HashKey, &(key, value))` --
+                    // the ORIGINAL key/value pair is the stored tuple, the
+                    // `HashKey` projection is only the map's own index.
                     spinel_rt::RubyValue::Hash(spinel_rt::hash_new(
                         __h.lock()
                             .iter()
-                            .filter(|(k, _)| match k {
+                            .map(|(_, __kv)| __kv.clone())
+                            .filter(|(__k, _)| match __k {
                                 spinel_rt::RubyValue::Symbol(__s) => !__declared.contains(&__s.name().as_str()),
                                 _ => true,
                             })
-                            .cloned()
                             .collect()
                     ))
                 }
@@ -847,6 +933,7 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
     // nor rest is declared, `#[allow(unused_variables)]` covers it).
     quote! {
         #positional_and_kw_source
+        #auto_splat
         #[allow(unused_variables)]
         let __n = __positional.len();
         #[allow(unused_variables)]
@@ -863,5 +950,211 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
         #(#post_lets)*
         #(#keyword_lets)*
         #(#keyword_rest_let)*
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::{Hir, HirNode};
+
+    /// A throwaway default-value expression -- `proc_arity`/`auto_splats`
+    /// only ever count parameters, never look at what a default evaluates
+    /// to, so one shared `nil` node serves every optional slot.
+    fn nil_default(hir: &mut Hir) -> crate::hir::NodeId {
+        hir.push(HirNode::NilLit)
+    }
+
+    /// Builds a `Params` from a compact spec: `req`, `opt`, `post` counts,
+    /// plus rest/kwrest flags and keyword kinds.
+    struct Spec {
+        req: usize,
+        opt: usize,
+        post: usize,
+        rest: bool,
+        kw_required: usize,
+        kw_optional: usize,
+        kwrest: bool,
+        block: bool,
+    }
+
+    impl Default for Spec {
+        fn default() -> Self {
+            Spec {
+                req: 0,
+                opt: 0,
+                post: 0,
+                rest: false,
+                kw_required: 0,
+                kw_optional: 0,
+                kwrest: false,
+                block: false,
+            }
+        }
+    }
+
+    fn params(hir: &mut Hir, spec: Spec) -> Params {
+        let mut p = Params::default();
+        for i in 0..spec.req {
+            p.required.push(format!("r{i}"));
+        }
+        for i in 0..spec.opt {
+            let d = nil_default(hir);
+            p.optional.push((format!("o{i}"), d));
+        }
+        if spec.rest {
+            p.rest = Some(Some("rest".to_string()));
+        }
+        for i in 0..spec.post {
+            p.post.push(format!("p{i}"));
+        }
+        for i in 0..spec.kw_required {
+            p.keywords.push(KeywordParam::Required(format!("kr{i}")));
+        }
+        for i in 0..spec.kw_optional {
+            let d = nil_default(hir);
+            p.keywords.push(KeywordParam::Optional(format!("ko{i}"), d));
+        }
+        if spec.kwrest {
+            p.keyword_rest = Some(Some("kwrest".to_string()));
+        }
+        if spec.block {
+            p.block = Some(Some("blk".to_string()));
+        }
+        p
+    }
+
+    /// Every case here was READ OFF ruby 4.0.5 (`p ->(...) {}.arity` /
+    /// `p proc { |...| }.arity`), not derived from our own implementation --
+    /// this table IS the specification. See `proc_arity`'s docs for the
+    /// formula it encodes.
+    #[test]
+    fn proc_arity_matches_the_ruby_oracle_for_every_signature_shape() {
+        let hir = &mut Hir::default();
+        // (spec, is_lambda, expected) -- the Ruby source each row mirrors
+        // is named in the comment.
+        let cases: Vec<(Spec, bool, i32, &str)> = vec![
+            (Spec { ..Default::default() }, false, 0, "proc {}"),
+            (Spec { req: 1, ..Default::default() }, false, 1, "proc { |a| }"),
+            (Spec { req: 2, ..Default::default() }, false, 2, "proc { |a, b| }"),
+            (Spec { req: 2, ..Default::default() }, true, 2, "->(a, b) {}"),
+            (Spec { ..Default::default() }, true, 0, "->() {}"),
+            (Spec { block: true, ..Default::default() }, true, 0, "->(&b) {}"),
+            // An optional/rest param makes a LAMBDA negative...
+            (Spec { req: 1, opt: 1, ..Default::default() }, true, -2, "->(a, b = 1) {}"),
+            (Spec { req: 1, opt: 2, ..Default::default() }, true, -2, "lambda { |a, b = 1, c = 2| }"),
+            // ...but a plain proc reports its MINIMUM instead (max is still
+            // bounded, so no negation) -- the shape that makes the
+            // lambda/proc distinction visible.
+            (Spec { req: 1, opt: 1, ..Default::default() }, false, 1, "proc { |a, b = 1| }"),
+            // A rest param is unbounded: negative for proc AND lambda.
+            (Spec { req: 1, rest: true, ..Default::default() }, false, -2, "proc { |a, *b| }"),
+            (Spec { rest: true, ..Default::default() }, false, -1, "proc { |*a| }"),
+            (Spec { req: 1, rest: true, ..Default::default() }, true, -2, "->(a, *b) {}"),
+            (Spec { req: 2, rest: true, ..Default::default() }, false, -3, "proc { |a, b, *c| }"),
+            // Post params are required: they count toward the minimum.
+            (Spec { req: 1, rest: true, post: 1, ..Default::default() }, true, -3, "->(a, *b, c) {}"),
+            (Spec { req: 1, rest: true, post: 2, ..Default::default() }, true, -4, "->(a, *b, c, d) {}"),
+            // A REQUIRED keyword adds exactly one mandatory slot, however
+            // many there are -- and keeps the count positive.
+            (Spec { req: 1, kw_required: 1, ..Default::default() }, true, 2, "->(a, b:) {}"),
+            (Spec { kw_required: 1, ..Default::default() }, true, 1, "->(b:) {}"),
+            (Spec { req: 1, kw_required: 2, ..Default::default() }, true, 2, "->(a, b:, c:) {}"),
+            (Spec { req: 1, kw_required: 1, kw_optional: 1, ..Default::default() }, true, 2, "->(a, b:, c: 1) {}"),
+            (Spec { req: 1, kw_required: 1, kwrest: true, ..Default::default() }, true, 2, "->(a, e:, **g) {}"),
+            (Spec { req: 1, kw_required: 1, ..Default::default() }, false, 2, "proc { |a, b:| }"),
+            // An OPTIONAL keyword / **kwrest alone widens the maximum, so a
+            // lambda goes negative while a proc reports its minimum.
+            (Spec { req: 1, kw_optional: 1, ..Default::default() }, true, -2, "->(a, b: 1) {}"),
+            (Spec { req: 1, kwrest: true, ..Default::default() }, true, -2, "->(a, **k) {}"),
+            (Spec { req: 1, kw_optional: 1, ..Default::default() }, false, 1, "proc { |a, b: 1| }"),
+            (Spec { req: 1, kwrest: true, ..Default::default() }, false, 1, "proc { |a, **k| }"),
+            // Everything at once.
+            (
+                Spec { req: 1, opt: 1, rest: true, post: 1, kw_required: 1, kw_optional: 1, kwrest: true, block: true },
+                true,
+                -4,
+                "->(a, b = 1, *c, d, e:, f: 2, **g, &h) {}",
+            ),
+        ];
+        for (spec, is_lambda, expected, source) in cases {
+            let p = params(hir, spec);
+            assert_eq!(
+                proc_arity(&p, is_lambda),
+                expected,
+                "arity of `{source}` (is_lambda: {is_lambda})"
+            );
+        }
+    }
+
+    /// Also oracle-read: `def m(a); yield a; end; m([1, 2]) { |...| }` and
+    /// checking whether the array arrived splatted. See `auto_splats`.
+    #[test]
+    fn auto_splats_matches_the_ruby_oracle_for_every_block_param_shape() {
+        let hir = &mut Hir::default();
+        let cases: Vec<(Spec, bool, &str)> = vec![
+            // No leading required param -> never splats.
+            (Spec { ..Default::default() }, false, "{ }"),
+            (Spec { rest: true, ..Default::default() }, false, "{ |*a| }"),
+            (Spec { rest: true, kwrest: true, ..Default::default() }, false, "{ |*a, **k| }"),
+            (Spec { kw_required: 1, ..Default::default() }, false, "{ |a:| }"),
+            // Exactly ONE positional slot -> the ambiguous-param0 exemption.
+            (Spec { req: 1, ..Default::default() }, false, "{ |a| }"),
+            (Spec { req: 1, kwrest: true, ..Default::default() }, false, "{ |a, **k| }"),
+            (Spec { req: 1, kw_required: 1, ..Default::default() }, false, "{ |a, b:| }"),
+            // A lead param plus ANY second positional slot -> splats.
+            (Spec { req: 2, ..Default::default() }, true, "{ |a, b| }"),
+            (Spec { req: 2, kwrest: true, ..Default::default() }, true, "{ |a, b, **k| }"),
+            (Spec { req: 1, rest: true, ..Default::default() }, true, "{ |a, *b| }"),
+            (Spec { req: 1, opt: 1, ..Default::default() }, true, "{ |a, b = 5| }"),
+            (Spec { req: 1, rest: true, post: 1, ..Default::default() }, true, "{ |a, *b, c| }"),
+            (Spec { req: 1, post: 1, ..Default::default() }, true, "{ |a, (b)| }-shaped post"),
+        ];
+        for (spec, expected, source) in cases {
+            let p = params(hir, spec);
+            assert_eq!(auto_splats(&p), expected, "auto-splat of a block `{source}`");
+        }
+    }
+
+    /// A lambda's parameters never auto-splat, whatever their shape (real
+    /// Ruby: a lambda is strict, `->(a, b) {}.call([1, 2])` is an
+    /// ArgumentError, not a destructure) -- enforced at the CALLER, which
+    /// consults `is_lambda` before ever asking `auto_splats`.
+    #[test]
+    fn auto_splats_is_only_consulted_for_non_lambdas() {
+        let hir = &mut Hir::default();
+        let p = params(hir, Spec { req: 2, ..Default::default() });
+        // The shape itself says "splat"...
+        assert!(auto_splats(&p));
+        // ...and `emit_proc_param_bindings` gates on `!is_lambda`, so the
+        // emitted lambda body carries no auto-splat call at all.
+        let cx_free = emit_proc_param_bindings_probe(&p, true);
+        assert!(!cx_free.contains("block_auto_splat"), "lambda body: {cx_free}");
+        let proc_body = emit_proc_param_bindings_probe(&p, false);
+        assert!(proc_body.contains("block_auto_splat"), "proc body: {proc_body}");
+    }
+
+    /// `emit_proc_param_bindings` needs a `Ctx` (for default-value
+    /// expressions); this probe builds the minimal one a param list with no
+    /// defaults requires.
+    fn emit_proc_param_bindings_probe(params: &Params, is_lambda: bool) -> String {
+        let compiler = crate::compiler::Compiler::new(Hir::default());
+        let label_counter = std::cell::Cell::new(0u32);
+        let empty = std::collections::HashSet::new();
+        let cx = Ctx {
+            compiler: &compiler,
+            box_id: 0,
+            current_class: None,
+            defining_class: None,
+            current_method: None,
+            local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
+            label_counter: &label_counter,
+            loop_labels: None,
+            for_var_override: None,
+            captured_locals: &empty,
+            self_ident: quote::format_ident!("__self"),
+            in_real_proc: false,
+        };
+        emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda).to_string()
     }
 }

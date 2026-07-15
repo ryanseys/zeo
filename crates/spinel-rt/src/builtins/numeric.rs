@@ -506,7 +506,7 @@ mod tests {
         {
             let cell = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
             let c2 = std::sync::Arc::clone(&cell);
-            let p: crate::RProc = std::sync::Arc::new(move |args: &[RubyValue]| {
+            let p: crate::RProc = crate::RProc::new(move |args: &[RubyValue]| {
                 c2.lock().push(args[0].inspect_string());
                 Ok(RubyValue::Nil)
             });

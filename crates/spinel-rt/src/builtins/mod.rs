@@ -42,6 +42,7 @@ pub(crate) mod object;
 pub(crate) mod range;
 pub(crate) mod rational;
 pub(crate) mod regexp;
+pub(crate) mod fiber;
 pub(crate) mod rproc;
 pub(crate) mod string;
 pub(crate) mod symbol;
@@ -82,6 +83,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS => io::lookup,
         spinel_abi::METHOD_CLASS => method_obj::lookup,
+        spinel_abi::FIBER_CLASS => fiber::lookup,
         _ => return None,
     })
 }

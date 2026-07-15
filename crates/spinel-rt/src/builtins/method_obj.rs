@@ -39,10 +39,11 @@ impl RubyObject for RMethod {
 }
 
 /// Constructs the `Method` value for `recv.method(name_arg)` -- shared by
-/// the Kernel table row and any codegen fast path. Real Ruby raises
-/// `NameError` for an unknown method at CONSTRUCTION time; this defers the
-/// check to `#call` (a documented approximation -- `respond_to?`-style
-/// pre-validation over every dispatch tier isn't wired here yet).
+/// the Kernel table row and any codegen fast path. An unknown method is a
+/// `NameError` at CONSTRUCTION time, as in CRuby: `method(:nope)` raises
+/// immediately rather than deferring to `#call`. The lookup is
+/// `respond_to?`'s, with `include_all` -- `method(:private_helper)` is
+/// legal (privacy limits CALL sites, not reflection).
 pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = match name_arg {
         RubyValue::Symbol(s) => *s,
@@ -54,6 +55,19 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
             ))
         }
     };
+    if !crate::dispatch::responds_to(recv.class_id(), name, true) {
+        // CRuby's phrasing names the receiver's CLASS, not the receiver
+        // ("undefined method 'nope' for class 'String'").
+        return Err(raise_error(
+            "NameError",
+            format!(
+                "undefined method '{}' for class '{}'",
+                name.name(),
+                crate::dispatch::class_name(recv.class_id())
+                    .unwrap_or_else(|| "Object".to_string())
+            ),
+        ));
+    }
     Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
 }
 
@@ -82,7 +96,7 @@ fn m_receiver(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) ->
 fn m_to_proc(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     let (target, name) = (m.recv.clone(), m.name);
-    Ok(RubyValue::Proc(Arc::new(move |args: &[RubyValue]| {
+    Ok(RubyValue::Proc(crate::RProc::new(move |args: &[RubyValue]| {
         crate::dispatch::send_value(&target, name, args, None)
     })))
 }
@@ -106,7 +120,7 @@ fn m_inspect(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
 
 pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
-        "call" | "()" | "===" => m_call,
+        "call" | "()" | "[]" | "===" => m_call,
         "name" => m_name,
         "receiver" => m_receiver,
         "to_proc" => m_to_proc,

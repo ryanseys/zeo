@@ -1,0 +1,25 @@
+"def"
+"x"
+"def"
+"y"
+"wrapped: dd"
+"wrapped: given"
+"G"
+"explicit"
+"base-def"
+["oops", 42]
+["boom", 7]
+"StandardError"
+"boom"
+"ArgumentError"
+"bad arg"
+"built"
+"def"
+"def"
+E
+"E"
+true
+["custom-to-s", "custom-to-s"]
+["invalid email", "email"]
+["invalid name", "name"]
+"def"

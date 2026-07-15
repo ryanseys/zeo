@@ -539,7 +539,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
-        HirNode::SuperCall { args, zsuper } => super::call::emit_super_inline(cx, args, *zsuper),
+        HirNode::SuperCall { args, zsuper, block } => {
+            super::call::emit_super_inline(cx, args, *zsuper, *block)
+        }
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
         HirNode::For { target, iterable, body } => emit_for(cx, target, *iterable, body),
@@ -801,9 +803,12 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         return emit_boxed_new(cx, &class_name, vec![msg_expr]);
     }
     if let Some(class_name) = class_path {
-        let default_msg =
-            quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#class_name.to_string())) };
-        return emit_boxed_new(cx, &class_name, vec![default_msg]);
+        // `raise SomeError` (no message) constructs via `SomeError.new` with
+        // NO arguments -- running any custom `initialize` (its own defaults
+        // and `super` chain included), exactly like CRuby's `exc.exception`
+        // path. The class-name-as-message default lives in the prelude's
+        // `Exception#to_s` (`@message || self.class.name`), not here.
+        return emit_boxed_new(cx, &class_name, vec![]);
     }
     match infer(cx, node) {
         TyKind::Str => {

@@ -154,7 +154,7 @@ fn hash_key(v: &RubyValue) -> HashKey {
             ),
             None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
         },
-        RubyValue::Proc(p) => HashKey::Identity(Arc::as_ptr(p) as *const () as usize),
+        RubyValue::Proc(p) => HashKey::Identity(&**p as *const _ as *const () as usize),
         // Same identity-only fallback as `Object`/`Proc` above -- neither has
         // a user-overridable `#hash`/`#eql?` protocol yet (see `HashKey`'s
         // own docs on this documented, narrow scope-cut).
@@ -162,7 +162,7 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::MatchData(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
         RubyValue::Fiber(f) => HashKey::Identity(Arc::as_ptr(f) as *const () as usize),
         RubyValue::Enumerator(e) => HashKey::Identity(Arc::as_ptr(e) as *const () as usize),
-        RubyValue::Yielder(y) => HashKey::Identity(Arc::as_ptr(y) as *const () as usize),
+        RubyValue::Yielder(y) => HashKey::Identity(&**y as *const _ as *const () as usize),
         RubyValue::Thread(t) => HashKey::Identity(Arc::as_ptr(t) as *const () as usize),
         RubyValue::Mutex(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
         RubyValue::Queue(q) => HashKey::Identity(Arc::as_ptr(q) as *const () as usize),

@@ -340,6 +340,25 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             quote! { #ident::__register(&mut __registry); }
         };
         registrations.push(register);
+        // Each PRIVATE method materialized onto this class -- its own
+        // `private def x`, plus every top-level `def` (a private method of
+        // Object, which materialization copies onto every class) -- is
+        // recorded so `respond_to?` skips it. Emitted next to the class's
+        // registration rather than inside `ruby_class!`, which has no
+        // visibility channel of its own. See `ClassRegistry::mark_private`.
+        let id = idx as u32;
+        for &sid in &compiler.class(ClassId(id)).methods {
+            let scope = compiler.scope(sid);
+            if matches!(scope.visibility, crate::hir::Visibility::Private) {
+                let key = &scope.name;
+                registrations.push(quote! {
+                    __registry.mark_private(
+                        spinel_rt::ClassId(#id),
+                        spinel_rt::Symbol::intern(#key),
+                    );
+                });
+            }
+        }
         user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
     }
 
@@ -397,6 +416,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 // A per-box OVERLAY's methods register on the ROOT
                 // builtin's entry, keyed by the overlay's box (Phase 18).
                 let target = ci.builtin_overlay.map_or(id, |root| root.0);
+                // A PRIVATE `def` (every top-level def, and an explicit
+                // `private def x`) is recorded so `respond_to?` skips it --
+                // see `ClassRegistry::mark_private`.
+                let mark_private = matches!(scope.visibility, crate::hir::Visibility::Private)
+                    .then(|| {
+                        quote! {
+                            __registry.mark_private(
+                                spinel_rt::ClassId(#target),
+                                spinel_rt::Symbol::intern(#key),
+                            );
+                        }
+                    });
                 quote! {
                     __registry.define_value_method(
                         spinel_rt::ClassId(#target),
@@ -404,6 +435,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         spinel_rt::Symbol::intern(#key),
                         #tramp,
                     );
+                    #mark_private
                 }
             });
             builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
@@ -425,10 +457,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     }
 
     let main_label_counter = Cell::new(0u32);
+    // Top-level implicit-self calls dispatch on the global `main_object()`
+    // (no capture needed), so no `self_class` here.
     let main_captures = captures::collect_escaping_captures(
         compiler,
         &analyzed.main_statements,
         &crate::hir::Params::default(),
+        None,
     );
     let cx = Ctx {
         compiler,
@@ -454,22 +489,39 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // class info rather than hardcoding it here), wrapped to absorb
     // `initialize`'s `?` (an Exception constructor can't signal). An
     // unknown name is a bug in spinel-rt, not user error -- a loud panic.
-    let exception_arms = [
-        "NoMethodError",
-        "ArgumentError",
-        "TypeError",
-        "ZeroDivisionError",
-        "RangeError",
-        "IndexError",
-        "KeyError",
-        "FrozenError",
-        "RuntimeError",
-        "LocalJumpError",
-        "StopIteration",
-        "FloatDomainError",
-        "Math::DomainError",
-    ]
-    .map(|exc_name| {
+    // Every BOOTSTRAP Exception descendant gets an arm, derived from the
+    // class table rather than a hand-maintained list: `spinel-rt` raises by
+    // NAME (`raise_error("NameError", ...)`), so every name it can produce
+    // must be constructible here or the program dies with "unknown class"
+    // -- exactly how a missing `NameError` arm surfaced.
+    //
+    // Bootstrap-only (the exception prelude plus `Math::DomainError`) is
+    // both necessary and sufficient: those are precisely the classes the
+    // runtime names, they all take the prelude's `initialize(msg = nil)`,
+    // and they're all in box 0. A USER subclass must be excluded -- its
+    // `initialize` may take any arguments at all (a 2-parameter one made
+    // this a compile error), and the runtime never asks for it by name.
+    let exception_cid = cx
+        .resolve_class("Exception")
+        .expect("the exception prelude always defines Exception");
+    let mut exception_names: Vec<String> = compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(idx, ci)| {
+            ci.is_bootstrap
+                && !ci.is_module
+                && !ci.is_builtin
+                && (ClassId(*idx as u32) == exception_cid || ci.ancestors.contains(&exception_cid))
+        })
+        .map(|(idx, _)| compiler.fq_name(ClassId(idx as u32)))
+        .collect();
+    exception_names.sort();
+    exception_names.dedup();
+    let exception_arms = exception_names
+        .iter()
+        .map(|exc_name| {
+        let exc_name = exc_name.as_str();
         let ctor = expr::emit_boxed_new(
             &cx,
             exc_name,
@@ -479,7 +531,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             #exc_name => (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#ctor) })()
                 .expect("Exception#initialize can't signal"),
         }
-    });
+    })
+    .collect::<Vec<_>>();
 
     let stop_iteration_ctor = {
         let ctor = expr::emit_boxed_new(
@@ -612,7 +665,13 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let cx = Ctx {
         compiler,
         box_id: compiler.class(cid).box_id,
-        current_class: Some(cid),
+        // NOT `Some(cid)`: `current_class` means "there is a concrete
+        // `self: Arc<Self>` receiver in scope", and a class body has none
+        // -- it runs from `main()`. `self` in a class body is the CLASS
+        // OBJECT, which is exactly what `defining_class` alone encodes
+        // (see `codegen::call::boxed_implicit_self`, which then yields
+        // `RubyValue::Class(cid)` rather than an invalid `self.clone()`).
+        current_class: None,
         defining_class: Some(cid),
         current_method: None,
         local_types: std::borrow::Cow::Borrowed(&no_locals),
@@ -689,7 +748,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let method_ident = safe_ident(&scope.name);
     let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
-    let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
+    let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -804,7 +863,7 @@ fn emit_builtin_method_fn(
     let needs_block = scope.needs_block_param();
     let sig_params = params::emit_signature_params(&scope.params, needs_block);
     let label_counter = Cell::new(0u32);
-    let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
+    let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -884,7 +943,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_block = scope.needs_block_param();
         let sig_params = params::emit_signature_params(&scope.params, needs_block);
         let method_label_counter = Cell::new(0u32);
-        let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
+        let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
         let method_cx = Ctx {
             compiler,
             box_id: compiler.class(scope.defining_class).box_id,

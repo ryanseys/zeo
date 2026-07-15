@@ -223,7 +223,7 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     let id = NEXT_ITER_ID.fetch_add(1, Ordering::Relaxed);
     let source = e.source.clone();
     let coro: EnumCoro = spinel_fiber::new_fiber(move |_: Vec<RubyValue>| {
-        let shuttle: RProc = Arc::new(|raw: &[RubyValue]| {
+        let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             spinel_fiber::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
                 array_new(raw.to_vec()),
             ));
@@ -407,7 +407,7 @@ fn drive_with_index(
 ) -> Result<RubyValue, Signal> {
     let blk = block.as_proc_unchecked();
     let counter = Arc::new(Mutex::new(offset));
-    let wrapper: RProc = Arc::new(move |raw: &[RubyValue]| {
+    let wrapper: RProc = RProc::new(move |raw: &[RubyValue]| {
         let el = pack(raw);
         let i = {
             let mut c = counter.lock();
@@ -437,7 +437,7 @@ fn drive_with_object(
     let memo = args[0].clone();
     let memo_for_block = memo.clone();
     let wrapper: RProc =
-        Arc::new(move |raw: &[RubyValue]| blk(&[pack(raw), memo_for_block.clone()]));
+        RProc::new(move |raw: &[RubyValue]| blk(&[pack(raw), memo_for_block.clone()]));
     internal_each(&e.source, RubyValue::Proc(wrapper))?;
     Ok(memo)
 }
@@ -588,7 +588,7 @@ mod tests {
     fn collecting_block() -> (RubyValue, Arc<Mutex<Vec<RubyValue>>>) {
         let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = out.clone();
-        let blk: RProc = Arc::new(move |raw: &[RubyValue]| {
+        let blk: RProc = RProc::new(move |raw: &[RubyValue]| {
             sink.lock().push(pack(raw));
             Ok(RubyValue::Nil)
         });
@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn generator_yielder_preserves_arity_for_next_values() {
         // Enumerator.new { |y| y.yield; y.yield nil; y.yield 1, 2 }
-        let gen: RProc = Arc::new(|args: &[RubyValue]| {
+        let gen: RProc = RProc::new(|args: &[RubyValue]| {
             let y = &args[0];
             let RubyValue::Yielder(f) = y else { panic!("expected a Yielder") };
             f(&[])?;
@@ -663,7 +663,7 @@ mod tests {
     fn a_failed_iteration_propagates_then_restarts() {
         // Enumerator.new { |y| y << 1; raise } -- next -> 1, next -> the
         // error, next again -> a fresh fiber restarting at 1 (oracle).
-        let gen: RProc = Arc::new(|args: &[RubyValue]| {
+        let gen: RProc = RProc::new(|args: &[RubyValue]| {
             let RubyValue::Yielder(f) = &args[0] else { panic!() };
             f(&[RubyValue::Int(1)])?;
             Err(Signal::Raise(RubyValue::Int(99)))
@@ -704,7 +704,7 @@ mod tests {
             RubyValue::Int(2)
         ));
         // Generator without a hint: nil; with one: the hint.
-        let gen: RProc = Arc::new(|_| Ok(RubyValue::Nil));
+        let gen: RProc = RProc::new(|_| Ok(RubyValue::Nil));
         let bare = enumerator_new(&[], Some(RubyValue::Proc(gen.clone()))).unwrap();
         assert!(matches!(size(&bare, &[], None).unwrap(), RubyValue::Nil));
         let hinted =
@@ -727,7 +727,7 @@ mod tests {
         let e = enumerator_for(&ints(&[10, 20]), "each", &[]);
         let out: Arc<Mutex<Vec<(i64, i64)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = out.clone();
-        let blk: RProc = Arc::new(move |raw: &[RubyValue]| {
+        let blk: RProc = RProc::new(move |raw: &[RubyValue]| {
             let (RubyValue::Int(v), RubyValue::Int(i)) = (&raw[0], &raw[1]) else {
                 panic!("expected (value, index)");
             };
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn yielder_push_chains_and_yield_returns_the_block_value() {
-        let blk: RProc = Arc::new(|_raw| Ok(RubyValue::Int(42)));
+        let blk: RProc = RProc::new(|_raw| Ok(RubyValue::Int(42)));
         let y = RubyValue::Yielder(blk);
         let back = yielder_push(&y, &[RubyValue::Int(1)], None).unwrap();
         assert!(matches!(back, RubyValue::Yielder(_)));

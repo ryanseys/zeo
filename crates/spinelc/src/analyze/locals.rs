@@ -52,7 +52,18 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         HirNode::LocalWrite(name, value) => {
             track_node(compiler, defining, box_id, locals, *value);
             let ty = infer_type_with_locals(compiler, defining, box_id, locals, *value);
-            locals.insert(name.clone(), ty);
+            // JOINED with any earlier assignment's type, not overwritten:
+            // codegen reads this map flow-INsensitively (one entry per
+            // local for the whole scope), so a local reassigned to a
+            // DIFFERENT type -- two different concrete classes, an Int
+            // then a String -- can only soundly be `Poly` everywhere
+            // (the overwrite miscompiled reads occurring BEFORE the later
+            // assignment, e.g. boxing an `Arc<P>` with class Q's ident).
+            let joined = match locals.get(name) {
+                Some(prev) if *prev != ty => TyKind::Poly,
+                _ => ty,
+            };
+            locals.insert(name.clone(), joined);
         }
         HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
             track_node(compiler, defining, box_id, locals, *value)
@@ -88,9 +99,17 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
             branches.push(else_body);
             *locals = join_branches(compiler, defining, box_id, locals, &branches);
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
+        HirNode::New { args, .. } => {
             for &a in args {
                 track_node(compiler, defining, box_id, locals, a);
+            }
+        }
+        HirNode::SuperCall { args, block, .. } => {
+            for &a in args {
+                track_node(compiler, defining, box_id, locals, a);
+            }
+            if let Some(b) = block {
+                track_node(compiler, defining, box_id, locals, *b);
             }
         }
         HirNode::ArrayLit(elems) => {
@@ -408,4 +427,88 @@ fn join_loop(
         track_node(compiler, defining, box_id, &mut ran, n);
     }
     merge_locals(vec![ran, before.clone()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs the real parse+analyze pipeline and reports the TOP-LEVEL
+    /// scope's inferred type for one local.
+    fn ty_of(source: &str, local: &str) -> TyKind {
+        let (hir, root) = crate::parse::parse_and_lower(source).expect("parses");
+        let analyzed = crate::analyze::analyze(hir, root).expect("analyzes");
+        analyzed
+            .main_local_types
+            .get(local)
+            .copied()
+            .unwrap_or_else(|| panic!("no local named `{local}`"))
+    }
+
+    #[test]
+    fn a_local_assigned_once_keeps_that_type() {
+        assert_eq!(ty_of("x = 1", "x"), TyKind::Int);
+        assert_eq!(ty_of("s = \"a\"", "s"), TyKind::Str);
+        assert_eq!(ty_of("a = [1]", "a"), TyKind::Array);
+    }
+
+    #[test]
+    fn a_local_reassigned_to_the_same_type_keeps_it() {
+        assert_eq!(ty_of("x = 1\nx = 2", "x"), TyKind::Int);
+    }
+
+    /// `local_types` is read FLOW-INSENSITIVELY by codegen (one entry per
+    /// local for the whole scope), so a local assigned two DIFFERENT types
+    /// can only soundly be `Poly` everywhere. Overwriting instead
+    /// miscompiled every read before the second assignment -- the corpus
+    /// symptom was an `Arc<P>` boxed with class Q's identifier, an E0308 on
+    /// the whole generated program.
+    #[test]
+    fn a_local_reassigned_to_a_different_type_widens_to_poly() {
+        assert_eq!(ty_of("x = 1\nx = \"s\"", "x"), TyKind::Poly);
+        assert_eq!(ty_of("x = \"s\"\nx = 1", "x"), TyKind::Poly);
+        assert_eq!(ty_of("x = [1]\nx = {a: 1}", "x"), TyKind::Poly);
+    }
+
+    /// Two different CLASSES are different types for this purpose -- the
+    /// exact shape that broke: each has its own generated Rust struct, so a
+    /// single `Object(cid)` entry can't describe both.
+    #[test]
+    fn a_local_reassigned_to_a_different_class_widens_to_poly() {
+        let source = "class A; end\nclass B; end\nx = A.new\nx = B.new";
+        assert_eq!(ty_of(source, "x"), TyKind::Poly);
+    }
+
+    #[test]
+    fn a_local_reassigned_to_the_same_class_keeps_that_class() {
+        let source = "class A; end\nx = A.new\nx = A.new";
+        assert!(matches!(ty_of(source, "x"), TyKind::Object(_)));
+    }
+
+    /// Widening is one-way: once Poly, a later same-type assignment doesn't
+    /// narrow it back (the whole-scope entry must stay sound for the reads
+    /// between the two assignments).
+    #[test]
+    fn widening_to_poly_is_not_undone_by_a_later_assignment() {
+        assert_eq!(ty_of("x = 1\nx = \"s\"\nx = 2", "x"), TyKind::Poly);
+    }
+
+    /// Pre-existing behavior this must not disturb: a local assigned
+    /// different types in different BRANCHES already widened via
+    /// `join_branches`.
+    #[test]
+    fn branch_disagreement_still_widens_to_poly() {
+        assert_eq!(ty_of("if true\n  x = 1\nelse\n  x = \"s\"\nend", "x"), TyKind::Poly);
+    }
+
+    #[test]
+    fn branch_agreement_still_keeps_the_type() {
+        assert_eq!(ty_of("if true\n  x = 1\nelse\n  x = 2\nend", "x"), TyKind::Int);
+    }
+
+    /// An assignment nested inside a call's arguments still registers.
+    #[test]
+    fn a_nested_assignment_is_tracked() {
+        assert_eq!(ty_of("puts(y = 1)", "y"), TyKind::Int);
+    }
 }

@@ -62,7 +62,7 @@ pub use ractor::{
     RRactor, RactorData,
 };
 pub use regexp::*;
-pub use rproc::{block_arg_to_proc, RProc};
+pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, RProc};
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use thread::{
@@ -751,8 +751,29 @@ mod tests {
         let len = send_value(&a, Symbol::intern("length"), &[], None).unwrap();
         assert_eq!(len.to_display_string(), "42");
 
-        assert!(responds_to(ARRAY_CLASS, Symbol::intern("shout")));
-        assert!(!responds_to(ARRAY_CLASS, Symbol::intern("whisper")));
+        assert!(responds_to(ARRAY_CLASS, Symbol::intern("shout"), false));
+        assert!(!responds_to(ARRAY_CLASS, Symbol::intern("whisper"), false));
+    }
+
+    /// `respond_to?`'s default skips PRIVATE methods (CRuby's rule), and
+    /// its `include_all` second argument opts them back in. Kernel's own
+    /// C-implemented privates (`puts`/`p`/...) follow the same rule without
+    /// a registry entry of their own.
+    #[test]
+    fn responds_to_skips_private_methods_unless_include_all() {
+        install();
+        // A public reopen method answers either way.
+        let shout = Symbol::intern("shout");
+        assert!(responds_to(ARRAY_CLASS, shout, false));
+        assert!(responds_to(ARRAY_CLASS, shout, true));
+
+        // Kernel's print family is private: invisible by default, visible
+        // with `include_all` -- the same rule `mark_private`-recorded user
+        // methods (every top-level `def`) get, which the `top_level_defs`
+        // example covers end to end against the ruby oracle.
+        let puts = Symbol::intern("puts");
+        assert!(!responds_to(ARRAY_CLASS, puts, false));
+        assert!(responds_to(ARRAY_CLASS, puts, true));
     }
 
     /// Phase 16.3: `display_with`'s value-method probe -- a builtin `to_s`

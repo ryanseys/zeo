@@ -1150,12 +1150,13 @@ fn a_nested_block_capturing_the_outer_blocks_own_local_is_a_clean_compile_error(
 }
 
 #[test]
-fn yield_inside_a_nested_block_literal_is_a_clean_compile_error() {
-    // `yield`/`block_given?` lexically inside a block passed elsewhere
-    // refers to a DIFFERENT enclosing method's block in real Ruby -- a
-    // documented spike-scope rejection (see `analyze::scan_bare_block_use`),
-    // checked during `register_class`, before codegen ever runs.
-    let err = spinelc::compile_to_rust(
+fn yield_inside_a_nested_block_literal_drives_the_enclosing_methods_block() {
+    // `yield`/`block_given?` lexically inside a block literal refers to the
+    // ENCLOSING METHOD's own block (a block has no implicit block of its
+    // own): `analyze::scan_bare_block_use` counts it, so the method gets its
+    // `__blk` parameter, and the emitted closure clone-captures it (see
+    // `codegen::call::emit_proc_or_lambda_value`). Oracle-verified.
+    let result = run_ruby(
         r#"
         class Foo
           def helper(x)
@@ -1164,14 +1165,21 @@ fn yield_inside_a_nested_block_literal_is_a_clean_compile_error() {
           def bar
             helper(1) { yield }
           end
+          def baz
+            [1, 2].map { |v| yield v }
+          end
+          def has_block
+            [1].each { return block_given? }
+          end
         end
+        p(Foo.new.bar { "from-outer" })
+        p(Foo.new.baz { |v| v * 10 })
+        p Foo.new.has_block
+        p(Foo.new.has_block {})
         "#,
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("nested block"),
-        "expected the nested-yield rejection, got: {err}"
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"from-outer\"\n[10, 20]\nfalse\ntrue\n");
 }
 
 // --- Phase 7: full MRO (include/extend/prepend), inherited ivars, class
@@ -3369,9 +3377,12 @@ fn self_inside_a_class_method_is_a_clean_compile_error() {
 }
 
 #[test]
-#[should_panic(expected = "private method `helper` called with an explicit receiver")]
-fn private_method_called_with_an_explicit_receiver_is_a_clean_compile_error() {
-    let _ = spinelc::compile_to_rust(
+fn private_method_called_with_an_explicit_receiver_raises_at_runtime() {
+    // A visibility violation is RUNTIME behavior in Ruby, not a syntax
+    // error: it raises NoMethodError when the call actually runs, so it can
+    // be rescued and an unreachable one stays silent. Message shape and
+    // both behaviors oracle-verified.
+    let result = run_ruby(
         r#"
         class Box
           def initialize
@@ -3386,8 +3397,24 @@ fn private_method_called_with_an_explicit_receiver_is_a_clean_compile_error() {
         end
 
         b = Box.new
-        puts b.helper
+        begin
+          b.helper
+        rescue NoMethodError => e
+          puts e.message
+        end
+
+        def never_runs(b)
+          b.helper
+        end
+        puts "still here"
         "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "private method 'helper' called for an instance of Box
+still here
+"
     );
 }
 
@@ -3484,9 +3511,9 @@ fn protected_method_callable_from_a_related_classs_own_method() {
 }
 
 #[test]
-#[should_panic(expected = "protected method `amount` called from outside a related class")]
-fn protected_method_called_from_outside_any_related_class_is_a_clean_compile_error() {
-    let _ = spinelc::compile_to_rust(
+fn protected_method_called_from_outside_any_related_class_raises_at_runtime() {
+    // Same rule as the private case above -- a runtime NoMethodError.
+    let result = run_ruby(
         r#"
         class Money
           def initialize(amount)
@@ -3501,8 +3528,18 @@ fn protected_method_called_from_outside_any_related_class_is_a_clean_compile_err
         end
 
         a = Money.new(10)
-        puts a.amount
+        begin
+          a.amount
+        rescue NoMethodError => e
+          puts e.message
+        end
         "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "protected method 'amount' called for an instance of Money
+"
     );
 }
 
@@ -10937,4 +10974,615 @@ fn stdout_stderr_constants_and_globals() {
     );
     assert_eq!(result.stdout, "via const\nvia global\nabc\n4\nback\n#<IO:<STDOUT>>\n");
     assert_eq!(result.stderr, "err const\nerr global\nredirected\n");
+}
+
+// --- This session's correctness fixes. Each covers a behavior the
+// `examples/*.rb` fixtures also exercise end to end against ruby 4.0.5;
+// these pin the specific shape that was broken, so a regression names
+// itself rather than showing up as an example-wide diff.
+
+#[test]
+fn a_block_auto_splats_a_lone_array_across_its_positional_params() {
+    // CRuby's `has_lead && !ambiguous_param0` rule -- see
+    // `codegen::params::auto_splats`, whose unit tests cover every shape.
+    let result = run_ruby(
+        r#"
+        def one(v)
+          yield v
+        end
+        p(one([1, 2]) { |a, b| [a, b] })
+        p(one([1, 2]) { |a| a })
+        p(one([1, 2]) { |*a| a })
+        p(one([1, 2]) { |a, *b| [a, b] })
+        p(one([1, 2]) { |a, **k| [a, k] })
+        p [[1, 2], [3, 4]].map { |a, b| a + b }
+        p({ x: 1 }.map { |k, v| [k, v] })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[1, 2]\n[[1, 2]]\n[1, [2]]\n[[1, 2], {}]\n[3, 7]\n[[:x, 1]]\n"
+    );
+}
+
+#[test]
+fn a_lambda_never_auto_splats_and_checks_its_arity() {
+    let result = run_ruby(
+        r#"
+        strict = ->(a, b) { [a, b] }
+        p strict.call(1, 2)
+        begin
+          strict.call([1, 2])
+        rescue ArgumentError => e
+          puts "ArgumentError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2]\nArgumentError\n");
+}
+
+#[test]
+fn proc_arity_and_lambda_p_report_the_blocks_own_signature() {
+    let result = run_ruby(
+        r#"
+        p ->(a, b) {}.arity
+        p ->(a, b = 1) {}.arity
+        p proc { |a, b = 1| }.arity
+        p proc { |a, *b| }.arity
+        p ->(a, b:) {}.arity
+        p ->(a, **k) {}.arity
+        p ->() {}.lambda?
+        p proc {}.lambda?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n-2\n1\n-2\n2\n-2\ntrue\nfalse\n");
+}
+
+#[test]
+fn proc_curry_collects_arguments_and_each_step_is_reusable() {
+    let result = run_ruby(
+        r#"
+        add = ->(a, b, c) { a + b + c }
+        p add.curry[1][2][3]
+        p add.curry[1, 2][3]
+        step = add.curry[10]
+        p step[1][2]
+        p step[3][4]
+        p add.curry.arity
+        p add.curry.lambda?
+        p proc { |a, b| a * b }.curry[3][4]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n6\n13\n17\n-1\ntrue\n12\n");
+}
+
+#[test]
+fn proc_new_with_a_block_is_that_block() {
+    let result = run_ruby(
+        r#"
+        p Proc.new { |x| x * 2 }.call(4)
+        p Proc.new { |a, b| [a, b] }.arity
+        p Proc.new {}.lambda?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "8\n2\nfalse\n");
+}
+
+#[test]
+fn array_index_assign_splices_start_length_and_range_spans() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3, 4]
+        a[1, 2] = [:x, :y, :z]
+        p a
+        b = [1, 2, 3]
+        b[1, 0] = [:ins]
+        p b
+        c = [1, 2, 3, 4]
+        c[1..2] = [:r]
+        p c
+        d = [1, 2, 3, 4]
+        d[1...3] = [:e]
+        p d
+        e = [1, 2, 3]
+        e[0, 2] = :scalar
+        p e
+        f = [1, 2, 3]
+        p(f[0, 1] = [:v])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, :x, :y, :z, 4]\n[1, :ins, 2, 3]\n[1, :r, 4]\n[1, :e, 4]\n[:scalar, 3]\n[:v]\n"
+    );
+}
+
+#[test]
+fn implicit_conversions_are_duck_typed_through_to_ary_to_hash_and_to_proc() {
+    let result = run_ruby(
+        r#"
+        class Pair
+          def initialize(a, b)
+            @a = a
+            @b = b
+          end
+          def to_ary = [@a, @b]
+        end
+        class Opts
+          def to_hash = { a: 1, b: 2 }
+        end
+        class Dbl
+          def to_proc = ->(x) { x * 2 }
+        end
+
+        # to_ary: block auto-splat, multi-assign, and a splice RHS.
+        def one(v)
+          yield v
+        end
+        p(one(Pair.new(1, 2)) { |a, b| [a, b] })
+        x, y = Pair.new(3, 4)
+        p [x, y]
+        arr = [1, 2, 3]
+        arr[1, 1] = Pair.new(7, 8)
+        p arr
+
+        # to_hash: a `**` splat.
+        def take(a:, b:) = [a, b]
+        p take(**Opts.new)
+
+        # to_proc: an `&` block argument.
+        p [1, 2].map(&Dbl.new)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[3, 4]\n[1, 7, 8, 3]\n[1, 2]\n[2, 4]\n"
+    );
+}
+
+#[test]
+fn a_multi_assign_from_a_non_array_binds_one_value_and_nil_fills() {
+    let result = run_ruby(
+        r#"
+        a, b = 5
+        p [a, b]
+        c, d = [1, 2]
+        p [c, d]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[5, nil]\n[1, 2]\n");
+}
+
+#[test]
+fn bare_super_forwards_a_child_optional_into_a_parent_required_slot() {
+    // The child's and parent's parameter SHAPES differ, so the forwarding
+    // must flatten positionally rather than match bucket-for-bucket.
+    let result = run_ruby(
+        r##"
+        class Parent
+          def greet(name)
+            "Parent(#{name})"
+          end
+        end
+        class Child < Parent
+          def greet(name = "default")
+            super
+          end
+        end
+        puts Child.new.greet
+        puts Child.new.greet("given")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Parent(default)\nParent(given)\n");
+}
+
+#[test]
+fn super_with_a_literal_block_drives_the_parents_yield() {
+    let result = run_ruby(
+        r##"
+        class Parent
+          def run
+            yield
+          end
+          def each_twice
+            yield 1
+            yield 2
+          end
+        end
+        class Child < Parent
+          def run
+            super { "from-child" }
+          end
+          def each_twice
+            super { |v| puts "got #{v}" }
+          end
+        end
+        puts Child.new.run
+        Child.new.each_twice
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from-child\ngot 1\ngot 2\n");
+}
+
+#[test]
+fn super_with_no_literal_block_forwards_the_callers_block() {
+    let result = run_ruby(
+        r#"
+        class Parent
+          def run
+            yield
+          end
+        end
+        class Child < Parent
+          def run
+            super
+          end
+        end
+        puts(Child.new.run { "from-caller" })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from-caller\n");
+}
+
+#[test]
+fn raise_with_a_bare_class_runs_the_classs_own_initialize() {
+    // `raise E` must CONSTRUCT via `E.new` -- running defaults and `super`
+    // -- rather than short-cutting the message to the class name. The
+    // class-name default lives in the prelude's `Exception#to_s`.
+    let result = run_ruby(
+        r##"
+        class E < StandardError
+          def initialize(m = "def")
+            super
+          end
+        end
+        class F < StandardError
+          def initialize(m = "dd")
+            super("wrapped: #{m}")
+          end
+        end
+        class G < StandardError; end
+
+        begin; raise E; rescue => e; p e.message; end
+        begin; raise E, "x"; rescue => e; p e.message; end
+        begin; raise E.new; rescue => e; p e.message; end
+        begin; raise F; rescue => e; p e.message; end
+        begin; raise G; rescue => e; p e.message; end
+        begin; raise StandardError; rescue => e; p e.message; end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"def\"\n\"x\"\n\"def\"\n\"wrapped: dd\"\n\"G\"\n\"StandardError\"\n"
+    );
+}
+
+#[test]
+fn an_exception_ivar_set_by_a_custom_initialize_survives_the_raise() {
+    let result = run_ruby(
+        r##"
+        class Detailed < StandardError
+          def initialize(field)
+            @field = field
+            super("invalid #{field}")
+          end
+          attr_reader :field
+        end
+        begin
+          raise Detailed.new("email")
+        rescue Detailed => e
+          p [e.message, e.field]
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"invalid email\", \"email\"]\n");
+}
+
+#[test]
+fn a_top_level_def_is_a_private_method_of_object() {
+    // Callable by implicit self everywhere, invisible to `respond_to?`,
+    // reachable via `send`, and a NoMethodError with an explicit receiver.
+    let result = run_ruby(
+        r##"
+        def greet(name)
+          "Hello, #{name}!"
+        end
+        class Speaker
+          def speak
+            greet("instance")
+          end
+        end
+        puts greet("top")
+        puts Speaker.new.speak
+        p self.respond_to?(:greet)
+        p self.respond_to?(:greet, true)
+        p Speaker.new.respond_to?(:greet)
+        p send(:greet, "send")
+        p Speaker.new.send(:greet, "on-instance")
+        begin
+          Speaker.new.greet("explicit")
+        rescue NoMethodError
+          puts "NoMethodError"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Hello, top!\nHello, instance!\nfalse\ntrue\nfalse\n\"Hello, send!\"\n\"Hello, on-instance!\"\nNoMethodError\n"
+    );
+}
+
+#[test]
+fn a_top_level_def_is_callable_from_a_class_body_and_a_class_method() {
+    // `self` in a class body/class method is the CLASS OBJECT -- there's no
+    // concrete receiver to clone, so implicit-self dispatch must go through
+    // `RubyValue::Class`, not an invalid `self.clone()`.
+    let result = run_ruby(
+        r##"
+        def helper(tag)
+          "helped-#{tag}"
+        end
+        class AtBody
+          RESULT = helper("body")
+        end
+        class Factory
+          def self.build
+            helper("class-method")
+          end
+        end
+        puts AtBody::RESULT
+        puts Factory.build
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "helped-body\nhelped-class-method\n");
+}
+
+#[test]
+fn a_class_named_after_a_rust_prelude_type_compiles_and_behaves() {
+    // `class Vec` would otherwise define a crate-root `Vec` struct shadowing
+    // Rust's own, breaking every `Vec<RubyValue>` in the generated program.
+    let result = run_ruby(
+        r##"
+        class Vec
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+          attr_reader :x, :y
+          def +(other) = Vec.new(@x + other.x, @y + other.y)
+          def to_s = "Vec(#{@x}, #{@y})"
+        end
+        class Option
+          def initialize(v) = @v = v
+          def some? = !@v.nil?
+        end
+        class Box
+          def initialize(v) = @v = v
+          def get = @v
+        end
+        puts(Vec.new(1, 2) + Vec.new(10, 20))
+        p Vec.new(1, 2).class.name
+        p Option.new(nil).some?
+        p Box.new(:b).get
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Vec(11, 22)\n\"Vec\"\nfalse\n:b\n");
+}
+
+#[test]
+fn ruby_underscore_is_an_ordinary_readable_local() {
+    // Rust's `_` isn't a named binding at all (`let mut _` doesn't parse,
+    // and a macro `$x:ident` matcher rejects it), so it must be mangled.
+    let result = run_ruby(
+        r#"
+        _ = 10
+        p _
+        _ = _ + 5
+        p _
+        [[1, :a]].each { |n, _| p n }
+        [[1, :a]].each { |_, sym| p sym }
+        _, second = [:first, :second]
+        p [second, _]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n15\n1\n:a\n[:second, :first]\n");
+}
+
+#[test]
+fn a_statically_wrong_arity_call_raises_at_runtime_and_dead_code_stays_silent() {
+    // CRuby's behavior: the error belongs to the CALL, not the program.
+    let result = run_ruby(
+        r##"
+        module M
+          def self.run!(a, b, c, d)
+            "#{a}#{b}#{c}#{d}"
+          end
+        end
+        begin
+          M.run!(1, 2, false)
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        puts M.run!(1, 2, 3, 4)
+        def never_called
+          M.run!(1)
+        end
+        puts "done"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ArgumentError: wrong number of arguments (given 3, expected 4)\n1234\ndone\n"
+    );
+}
+
+#[test]
+fn method_objects_bind_a_receiver_and_convert_to_procs() {
+    let result = run_ruby(
+        r##"
+        def double(x) = x * 2
+        m = method(:double)
+        p m.call(21)
+        p m.(21)
+        p m[21]
+        p m.name
+        p [1, 2].map(&method(:double))
+
+        class Greeter
+          def initialize(g) = @g = g
+          def greet(name) = "#{@g}, #{name}!"
+        end
+        g = Greeter.new("Hello")
+        gm = g.method(:greet)
+        p gm.call("Ada")
+        p gm.receiver.equal?(g)
+        p "hello".method(:upcase).call
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "42\n42\n42\n:double\n[2, 4]\n\"Hello, Ada!\"\ntrue\n\"HELLO\"\n"
+    );
+}
+
+#[test]
+fn method_of_an_unknown_name_raises_name_error_at_construction() {
+    let result = run_ruby(
+        r#"
+        begin
+          "str".method(:definitely_not_defined)
+        rescue NameError => e
+          puts e.message
+        end
+        class WithPrivate
+          private
+          def secret = "shh"
+        end
+        p WithPrivate.new.method(:secret).call
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "undefined method 'definitely_not_defined' for class 'String'\n\"shh\"\n"
+    );
+}
+
+#[test]
+fn a_fiber_reached_through_a_dynamic_receiver_still_resumes() {
+    // The static fast path emits `fiber_resume` directly; a fiber held in a
+    // collection/ivar dispatches through the runtime's Fiber table instead.
+    let result = run_ruby(
+        r#"
+        holder = [Fiber.new { Fiber.yield 1; 2 }]
+        p holder[0].resume
+        p holder[0].alive?
+        p holder[0].resume
+        p holder[0].alive?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\ntrue\n2\nfalse\n");
+}
+
+#[test]
+fn a_local_reassigned_to_a_different_class_still_compiles() {
+    // `local_types` is read flow-insensitively, so a retyped local must
+    // widen to Poly rather than let a later class's identifier describe an
+    // earlier read.
+    let result = run_ruby(
+        r#"
+        class A
+          def who = "A"
+        end
+        class B
+          def who = "B"
+        end
+        x = A.new
+        puts x.who
+        x = B.new
+        puts x.who
+        y = 1
+        y = "str"
+        puts y
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "A\nB\nstr\n");
+}
+
+#[test]
+fn clamp_accepts_a_range_as_well_as_two_bounds() {
+    let result = run_ruby(
+        r#"
+        p 0.clamp(1..5)
+        p 9.clamp(1..5)
+        p 3.clamp(1..5)
+        p 0.clamp(1..)
+        p 99.clamp(..5)
+        p 9.clamp(1, 5)
+        begin
+          9.clamp(1...5)
+        rescue ArgumentError => e
+          puts "ArgumentError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n5\n3\n1\n5\n5\nArgumentError\n");
+}
+
+#[test]
+fn enumerable_min_and_max_take_a_count() {
+    let result = run_ruby(
+        r#"
+        p (1..10).min(3)
+        p (1..10).max(3)
+        p [5, 1, 4, 2].min(2)
+        p [5, 1, 4, 2].max(2)
+        p [1, 2].min(9)
+        p [1, 2].min(0)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3]\n[10, 9, 8]\n[1, 2]\n[5, 4]\n[1, 2]\n[]\n"
+    );
+}
+
+#[test]
+fn to_h_maps_elements_through_its_block() {
+    let result = run_ruby(
+        r#"
+        p [[1, 2], [3, 4]].to_h
+        p [[1, 2], [3, 4]].to_h { |a, b| [b, a] }
+        p({ a: 1, b: 2 }.to_h { |k, v| [v, k] })
+        p (1..3).to_h { |i| [i, i * i] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{1 => 2, 3 => 4}\n{2 => 1, 4 => 3}\n{1 => :a, 2 => :b}\n{1 => 1, 2 => 4, 3 => 9}\n"
+    );
 }

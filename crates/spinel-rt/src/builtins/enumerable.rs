@@ -104,7 +104,7 @@ pub(crate) fn enumerable_send(
         "find_index" => enum_find_index(recv, args, block),
         "tally" => tally(recv, args),
         "uniq" => uniq(recv, args),
-        "to_h" => enum_to_h(recv, args),
+        "to_h" => enum_to_h(recv, args, block),
         "reverse_each" => reverse_each(recv, args, block),
         _ => return None,
     })
@@ -160,7 +160,7 @@ fn for_each(
     recv: &RubyValue,
     f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
 ) -> Result<(), Signal> {
-    let proc_: RProc = Arc::new(f);
+    let proc_: RProc = RProc::new(f);
     match send_value(
         recv,
         Symbol::intern("each"),
@@ -622,7 +622,40 @@ fn min_max(
     want_min: bool,
 ) -> Result<RubyValue, Signal> {
     let method = if want_min { "min" } else { "max" };
-    reject_args(args, method, "an `n` argument");
+    // `min(n)`/`max(n)`: the n smallest/largest, as an Array -- sorted
+    // ascending for `min`, descending for `max` (CRuby's nsmallest/
+    // nlargest). Collect-then-sort (not a bounded heap): honest for the
+    // corpus's enumerable sizes.
+    if let Some(n_arg) = args.first() {
+        let RubyValue::Int(n) = n_arg else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::class_name_of(n_arg)
+                ),
+            ));
+        };
+        if *n < 0 {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("negative size ({n})"),
+            ));
+        }
+        let items: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+        let items2 = items.clone();
+        for_each(recv, move |yielded| {
+            items2.lock().push(pack(yielded));
+            Ok(RubyValue::Nil)
+        })?;
+        let mut items = std::mem::take(&mut *items.lock());
+        crate::builtins::array::sort_items(&mut items, &block)?;
+        if !want_min {
+            items.reverse();
+        }
+        items.truncate(*n as usize);
+        return Ok(RubyValue::Array(array_new(items)));
+    }
     let blk = match block {
         Some(RubyValue::Proc(p)) => Some(p),
         _ => None,
@@ -979,16 +1012,35 @@ fn uniq(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Array(array_new(out)))
 }
 
-fn enum_to_h(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+fn enum_to_h(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "to_h", "arguments");
-    let items = collect_packed(recv)?;
-    let mut pairs = Vec::with_capacity(items.len());
-    for e in items {
+    let items = collect_elements(recv)?;
+    let pairs = to_h_pairs(items.iter().map(|e| (e.raw.as_slice(), &e.packed)), &block)?;
+    Ok(RubyValue::Hash(crate::hash_new(pairs)))
+}
+
+/// The shared back half of every `to_h` (Enumerable's, `Array`'s and
+/// `Hash`'s rows all route here): each element must BE a two-element Array,
+/// or -- with a block -- must be MAPPED to one by it. The block receives the
+/// RAW yielded values (`rb_yield_values2`: `{a: 1}.to_h { |pair| }` sees
+/// just the key, while `{ |k, v| }` sees both), so a Hash's pair-shaped
+/// element and an Array's array-shaped element behave exactly as in CRuby.
+/// Both failure messages carry the element's index, matching enum.c.
+pub(crate) fn to_h_pairs<'a>(
+    elements: impl Iterator<Item = (&'a [RubyValue], &'a RubyValue)>,
+    block: &Option<RubyValue>,
+) -> Result<Vec<(RubyValue, RubyValue)>, Signal> {
+    let mut pairs = Vec::new();
+    for (i, (raw, packed)) in elements.enumerate() {
+        let e = match block {
+            Some(RubyValue::Proc(p)) => p(raw)?,
+            _ => packed.clone(),
+        };
         let RubyValue::Array(pair) = &e else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(
-                    "wrong element type {} (expected array)",
+                    "wrong element type {} at {i} (expected array)",
                     crate::builtins::class_name_of(&e)
                 ),
             ));
@@ -997,12 +1049,12 @@ fn enum_to_h(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> 
         if pair.len() != 2 {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
-                format!("wrong array length (expected 2, was {})", pair.len()),
+                format!("wrong array length at {i} (expected 2, was {})", pair.len()),
             ));
         }
         pairs.push((pair[0].clone(), pair[1].clone()));
     }
-    Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    Ok(pairs)
 }
 
 fn reverse_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -1039,4 +1091,112 @@ fn enum_find_index(
         }
     }
     Ok(RubyValue::Nil)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collections::array_new;
+
+    fn ints(vals: &[i64]) -> RubyValue {
+        RubyValue::Array(array_new(vals.iter().map(|v| RubyValue::Int(*v)).collect()))
+    }
+
+    /// `min(n)`/`max(n)` answer the n smallest/largest as an Array --
+    /// ascending for `min`, DESCENDING for `max` (CRuby's nsmallest/
+    /// nlargest). Oracle-verified.
+    #[test]
+    fn min_with_a_count_answers_the_n_smallest_ascending() {
+        let out = enumerable_send(&ints(&[5, 1, 4, 2, 3]), "min", &[RubyValue::Int(3)], None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn max_with_a_count_answers_the_n_largest_descending() {
+        let out = enumerable_send(&ints(&[5, 1, 4, 2, 3]), "max", &[RubyValue::Int(3)], None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[5, 4, 3]");
+    }
+
+    /// A count larger than the collection just yields everything.
+    #[test]
+    fn min_max_with_a_count_past_the_end_yields_everything() {
+        let out = enumerable_send(&ints(&[2, 1]), "min", &[RubyValue::Int(9)], None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[1, 2]");
+    }
+
+    #[test]
+    fn min_with_a_zero_count_is_empty() {
+        let out = enumerable_send(&ints(&[3, 1]), "min", &[RubyValue::Int(0)], None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[]");
+    }
+
+    /// The blockless no-count forms are unaffected.
+    #[test]
+    fn min_max_without_a_count_still_answer_a_single_element() {
+        let min = enumerable_send(&ints(&[5, 1, 4]), "min", &[], None).unwrap().unwrap();
+        assert_eq!(min.inspect_string(), "1");
+        let max = enumerable_send(&ints(&[5, 1, 4]), "max", &[], None).unwrap().unwrap();
+        assert_eq!(max.inspect_string(), "5");
+    }
+
+    /// A comparison block drives the ordering for the n-form too.
+    #[test]
+    fn min_with_a_count_and_a_comparison_block() {
+        // Reverse the comparison, so "min" picks the largest.
+        let cmp: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
+            let (RubyValue::Int(a), RubyValue::Int(b)) = (&args[0], &args[1]) else {
+                panic!("ints only")
+            };
+            Ok(RubyValue::Int((b - a).signum()))
+        });
+        let out = enumerable_send(&ints(&[5, 1, 4]), "min", &[RubyValue::Int(2)], Some(RubyValue::Proc(cmp)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[5, 4]");
+    }
+
+    /// A negative count is CRuby's ArgumentError (registry-less: a panic).
+    #[test]
+    fn min_with_a_negative_count_is_an_argument_error() {
+        let r = std::panic::catch_unwind(|| {
+            enumerable_send(&ints(&[1]), "min", &[RubyValue::Int(-1)], None)
+        });
+        assert!(r.is_err());
+    }
+
+    /// `to_h`'s block maps each element to its pair; the block sees the RAW
+    /// yielded values (an Array yields one value per element).
+    #[test]
+    fn to_h_maps_elements_through_a_block() {
+        let blk: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
+            let RubyValue::Int(i) = &args[0] else { panic!("ints only") };
+            Ok(RubyValue::Array(array_new(vec![
+                RubyValue::Int(*i),
+                RubyValue::Int(i * i),
+            ])))
+        });
+        let out = enumerable_send(&ints(&[1, 2, 3]), "to_h", &[], Some(RubyValue::Proc(blk)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "{1 => 1, 2 => 4, 3 => 9}");
+    }
+
+    /// A block answering a non-pair is a TypeError/ArgumentError citing the
+    /// element's INDEX, matching enum.c.
+    #[test]
+    fn to_h_rejects_a_non_pair_block_result() {
+        let blk: crate::RProc = crate::RProc::new(|_| Ok(RubyValue::Int(1)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            enumerable_send(&ints(&[1]), "to_h", &[], Some(RubyValue::Proc(blk)))
+        }));
+        assert!(r.is_err());
+    }
 }
