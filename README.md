@@ -23,7 +23,19 @@ doubles as a low-friction path for porting fixtures from spinel's own
 - `crates/spinel-rt` -- the runtime every generated program links against:
   `RubyValue`, `Symbol`, the `ruby_class!` macro, and the `ClassRegistry`/
   `send` dynamic dispatch table.
+- `crates/spinelc-base64` -- the native half of the `base64` package: plain
+  Rust free functions linked (as a prebuilt rlib, like `spinel-rt`) only
+  into programs that actually `require "base64"`.
 - `crates/xtask` -- test automation (`cargo run -p xtask -- test`/`regen`).
+- `packages/` -- compiler-bundled `spin.toml` packages resolvable by
+  `require` (see Usage); `base64` is the worked native example (its
+  Ruby-visible surface declared via `native_crate`/`native_func` in
+  `packages/base64/lib/base64.rb`), and `set` is the worked PURE-RUBY
+  example -- a stdlib-shaped `Set` written in plain Ruby (`include
+  Enumerable` and all) and compiled by the same whole-program pipeline as
+  user code. `Enumerable` itself is core-language infrastructure,
+  implemented in Rust in `spinel-rt` (the `enum.c` approach: each method
+  drives the receiver's own `#each` through dynamic dispatch).
 - `examples/*.rb` + `.expected` -- golden-file fixtures, oracle-verified
   against real `ruby`.
 
@@ -56,7 +68,7 @@ cargo run -p xtask -- regen
 
 ## Status
 
-All 45 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
+All 47 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
 `cargo test --workspace` suite (`crates/spinelc/tests/e2e.rs`, in-process via
 `spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
 spawn for the compiler itself) that's now the default place to add coverage.

@@ -7370,3 +7370,393 @@ fn a_module_function_can_call_another_modules_function() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "42\n");
 }
+
+// ---- Phase 14.3: base64 native-Rust package ----
+
+/// The compiler repo's own bundled packages/ dir, as the test-project
+/// harness's package-dir argument (absolute, so the temp-dir join is a
+/// no-op replacement).
+const REPO_PACKAGES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages");
+
+#[test]
+fn base64_package_matches_real_ruby() {
+    // Oracle: real ruby's own bundled base64 gem (all expectations below
+    // are its literal outputs, incl. encode64's 60-char line wrapping).
+    let result = support::run_ruby_packages(
+        &[(
+            "main.rb",
+            r#"
+                require "base64"
+                puts Base64.encode64("hello world")
+                puts Base64.encode64("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                puts Base64.strict_encode64("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                puts Base64.decode64(Base64.encode64("round trip"))
+                puts Base64.urlsafe_encode64("ab")
+                puts Base64.urlsafe_decode64("YWI")
+                puts Base64.strict_decode64("aGVsbG8=")
+            "#,
+        )],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "aGVsbG8gd29ybGQ=\n\
+         YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh\nYWFhYWE=\n\
+         YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=\n\
+         round trip\n\
+         YWI=\n\
+         ab\n\
+         hello\n"
+    );
+}
+
+#[test]
+fn native_crate_is_linked_only_when_its_package_is_required() {
+    // The reference project's ".o rule": the [native] crate appears in the
+    // link manifest iff the require actually fired.
+    let (with_require, dir) = support::compile_packages(
+        &[("main.rb", "require \"base64\"\nputs Base64.strict_encode64(\"x\")\n")],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    )
+    .expect("compiles");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(with_require.native_deps, vec!["spinelc-base64".to_string()]);
+
+    let (without_require, dir) = support::compile_packages(
+        &[("main.rb", "puts :no_base64\n")],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    )
+    .expect("compiles");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(without_require.native_deps.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "wrong number of arguments for native `Base64.encode64`")]
+fn native_func_arity_is_checked_at_compile_time() {
+    let _ = support::compile_packages(
+        &[("main.rb", "require \"base64\"\nputs Base64.encode64(\"a\", \"b\")\n")],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    );
+}
+
+#[test]
+fn native_dsl_misuse_is_a_clean_compile_error() {
+    // native_func without a native_crate naming the backing crate.
+    let err = spinelc::compile_to_rust(
+        "module M\n  native_func :f, [String], String\nend\n",
+    )
+    .unwrap_err();
+    assert!(err.contains("no `native_crate`"), "unexpected error: {err}");
+
+    // Malformed native_func shapes.
+    let err = spinelc::compile_to_rust("module M\n  native_func :f\nend\n").unwrap_err();
+    assert!(err.contains("`native_func` takes"), "unexpected error: {err}");
+    let err = spinelc::compile_to_rust("module M\n  native_crate :not_a_string\nend\n").unwrap_err();
+    assert!(err.contains("`native_crate` takes"), "unexpected error: {err}");
+}
+
+// ---- Phase 14.4: the set pure-Ruby package + the dispatch fixes it forced ----
+
+#[test]
+fn set_package_matches_real_rubys_core_set() {
+    // The flagship acceptance: every expectation below is real ruby's core
+    // Set's literal output for the same program (oracle-verified) --
+    // exercising include+MRO through a package, &blk forwarding through
+    // nested escaping Procs, operator-method definitions, and the dynamic
+    // builtin dispatch layer end to end.
+    let result = support::run_ruby_packages(
+        &[(
+            "main.rb",
+            r#"
+                require "set"
+                s = Set.new([1, 2, 3, 2, 1])
+                puts s.size
+                puts s.include?(2)
+                s.add(4)
+                s << 5
+                s.delete(3)
+                puts s.to_a.length
+                puts s.member?(3)
+                a = Set.new([1, 2, 3])
+                b = Set.new([3, 4])
+                puts (a | b).size
+                puts (a & b).to_a.length
+                puts (a - b).size
+                puts (a ^ b).size
+                puts a.subset?(Set.new([1, 2, 3, 9]))
+                puts Set.new([3, 2, 1]) == Set.new([1, 2, 3])
+                puts a == b
+                doubled = a.map { |x| x * 2 }
+                puts doubled.length
+                puts a.select { |x| x > 1 }.length
+                puts a.any? { |x| x > 2 }
+                puts a.all? { |x| x > 0 }
+                puts a.count
+                puts Set.new.empty?
+                copy = Set.new(a)
+                puts copy.size
+            "#,
+        )],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3\ntrue\n4\nfalse\n4\n1\n2\n3\ntrue\ntrue\nfalse\n3\n2\ntrue\ntrue\n3\ntrue\n3\n"
+    );
+}
+
+#[test]
+fn a_param_referenced_only_inside_an_escaping_block_is_captured() {
+    // The Phase 14.4 capture fix: `n` (a method param) appears ONLY inside
+    // the escaping block -- previously misclassified as a block-own local
+    // and silently re-declared Nil. Oracle: 11, 12.
+    let result = run_ruby(
+        r#"
+            class Pair
+              def each(&blk)
+                blk.call(1)
+                blk.call(2)
+                self
+              end
+              def add_all(n)
+                each { |x| puts x + n }
+              end
+              def mapped(&blk)
+                result = []
+                each { |x| result << blk.call(x) }
+                result
+              end
+            end
+            Pair.new.add_all(10)
+            puts Pair.new.mapped { |x| x * 3 }.length
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "11\n12\n2\n");
+}
+
+#[test]
+fn builtin_receivers_dispatch_dynamically() {
+    // send_value's builtin table (oracle-verified): Array#each on a
+    // literal, Hash#each, send(:length) on an Array, hash/array ops on a
+    // Poly ivar, and a rescuable NoMethodError from a builtin receiver.
+    let result = support::run_ruby_packages(
+        &[(
+            "main.rb",
+            r##"
+                [10, 20, 30].each { |x| puts x }
+                { a: 1, b: 2 }.each { |k, v| puts "#{k}=#{v}" }
+                puts [1, 2].send(:length)
+                class Box
+                  def initialize
+                    @hash = {}
+                    @items = []
+                  end
+                  def put(k, v)
+                    @hash[k] = v
+                    @items << k
+                    self
+                  end
+                  def get(k)
+                    @hash[k]
+                  end
+                  def order
+                    @items
+                  end
+                end
+                b = Box.new
+                b.put(:x, 1).put(:y, 2)
+                puts b.get(:y)
+                puts b.order.length
+                begin
+                  [1, 2].no_such_method
+                rescue NoMethodError
+                  puts "caught NoMethodError"
+                end
+            "##,
+        )],
+        "main.rb",
+        &[],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "10\n20\n30\na=1\nb=2\n2\n2\n2\ncaught NoMethodError\n"
+    );
+}
+
+#[test]
+fn operators_on_dynamic_operands_fall_through_to_dispatch() {
+    // The old "isn't supported yet for non-Int/Float operands" panic is now
+    // dynamic dispatch: String#+ via send_value's table, and a user class's
+    // own operator method chained through a Poly intermediate (`a << 1`
+    // returns self as Poly; the second `<<` dispatches dynamically).
+    let result = run_ruby(
+        r#"
+            module Cat
+              def self.concat2(a, b)
+                a + b
+              end
+            end
+            puts Cat.concat2("foo", "bar")
+            class Acc
+              def initialize
+                @items = []
+              end
+              def <<(item)
+                @items << item
+                self
+              end
+              def size
+                @items.length
+              end
+            end
+            a = Acc.new
+            a << 1 << 2 << 3
+            puts a.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "foobar\n3\n");
+}
+
+#[test]
+fn new_binds_optional_initialize_params() {
+    // The emit_new fix: one `initialize(items = nil)` serving both
+    // `Bag.new` and `Bag.new([1])` (oracle: 0, 1).
+    let result = run_ruby(
+        r#"
+            class Bag
+              def initialize(items = nil)
+                @n = items.nil? ? 0 : 1
+              end
+              def n
+                @n
+              end
+            end
+            puts Bag.new.n
+            puts Bag.new([1]).n
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n1\n");
+}
+
+#[test]
+#[should_panic(expected = "wrong number of arguments for `Bag.new`")]
+fn new_arity_is_still_checked() {
+    let _ = spinelc::compile_to_rust(
+        "class Bag\n  def initialize(a, b = 1)\n  end\nend\nBag.new(1, 2, 3)\n",
+    );
+}
+
+// ---- Phase 14.4 rev.2: Enumerable implemented in Rust (spinel_rt::enumerable) ----
+
+#[test]
+fn rust_enumerable_matches_real_ruby_across_all_receiver_kinds() {
+    // One oracle-verified sweep (real ruby 4.0.5, byte-for-byte) covering
+    // the Rust Enumerable against every receiver kind: Array/Hash/Range
+    // literals (the builtin `include Enumerable` set), and a user class
+    // (Set) reached through `send`'s ancestor-checked fallback -- plus
+    // reduce's all three CRuby forms, empty-collection edge cases
+    // ([].all? true, [].reduce nil), each_with_index's (elem, index)
+    // 2-arg yield + returns-self, count's size-vs-block split, min/max
+    // seeding, sum's Int->Float ladder, and is_a?(Enumerable).
+    let result = support::run_ruby_packages(
+        &[(
+            "main.rb",
+            r##"
+                require "set"
+                puts [1, 2, 3, 4].map { |x| x * x }.to_a.length
+                puts [1, 2, 3, 4].select { |x| x > 2 }.first
+                puts [1, 2, 3].reduce { |a, b| a + b }
+                puts [1, 2, 3].reduce(10) { |a, b| a + b }
+                puts [1, 2, 3].reduce(:+)
+                puts [1, 2, 3].reduce(100, :+)
+                puts [].reduce { |a, b| a + b }.nil?
+                puts [1, 2, 3].sum
+                puts [1, 2.5].sum
+                puts [5, 1, 9].min
+                puts [5, 1, 9].max
+                puts ["b", "a", "c"].max
+                puts [1, 2, 3].find { |x| x > 1 }
+                puts [1, 2, 3].first
+                puts [1, 2, 3].first(2).length
+                puts [1, 2, 3].count { |x| x > 1 }
+                puts [1, 2, 2, 3].count(2)
+                puts [].all?
+                puts [].any?
+                puts [].none?
+                puts [nil, false].any?
+                puts [1, false].one?
+                [10, 20].each_with_index { |v, i| puts "#{i}:#{v}" }
+                puts({ a: 1, b: 2 }.map { |k, v| v }.sum)
+                puts({ a: 1, b: 2 }.to_a.length)
+                puts({ a: 1 }.any?)
+                puts (1..4).to_a.length
+                puts (1...4).to_a.length
+                puts (1..10).select { |x| x > 7 }.length
+                puts (1..5).reduce(:+)
+                puts (1..5).include?(3)
+                s = Set.new([4, 5, 6])
+                puts s.find { |x| x > 4 }
+                puts s.reduce(:+)
+                puts s.first
+                puts s.each_with_index { |v, i| }.size
+                puts s.min
+                puts s.max
+                puts [].is_a?(Enumerable)
+                puts({}.is_a?(Enumerable))
+                puts (1..2).is_a?(Enumerable)
+                puts s.is_a?(Enumerable)
+                puts 5.is_a?(Enumerable)
+            "##,
+        )],
+        "main.rb",
+        &[],
+        &[REPO_PACKAGES],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "4\n3\n6\n16\n6\n106\ntrue\n6\n3.5\n1\n9\nc\n2\n1\n2\n2\n2\ntrue\nfalse\ntrue\nfalse\ntrue\n0:10\n1:20\n3\n2\ntrue\n4\n3\n3\n15\ntrue\n5\n15\n4\n3\n4\n6\ntrue\ntrue\ntrue\ntrue\nfalse\n"
+    );
+}
+
+#[test]
+fn blockless_enumerator_forms_panic_clearly() {
+    // Enumerator doesn't exist yet: a blockless map would return one in
+    // real Ruby; here it's a loud runtime panic naming the gap.
+    let result = run_ruby("[1, 2].map\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("Enumerator"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn redefining_enumerable_in_ruby_is_rejected() {
+    // Enumerable is a RUST-implemented builtin now (the whole point of
+    // rev.2) -- a Ruby-source redefinition is the builtin-reopen error.
+    let err = spinelc::compile_to_rust("module Enumerable\n  def map\n  end\nend\n").unwrap_err();
+    assert!(
+        err.contains("built-in class `Enumerable`"),
+        "unexpected error: {err}"
+    );
+}

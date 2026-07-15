@@ -55,41 +55,71 @@ fn target_dir() -> PathBuf {
     }
 }
 
-static SPINEL_RT_BUILT: OnceLock<Result<(), String>> = OnceLock::new();
+static CRATES_BUILT: OnceLock<std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>> =
+    OnceLock::new();
 
-/// Builds `spinel-rt` (debug profile) into the shared workspace `target/`
-/// exactly once per process -- see this module's docs for why this can't
-/// just be assumed already done. Every subsequent call in the same process
-/// (the common case: a test binary making hundreds of `build_binary` calls)
-/// skips straight past the `OnceLock`, at no cost.
-fn ensure_spinel_rt_built() -> Result<(), String> {
-    SPINEL_RT_BUILT
-        .get_or_init(|| {
-            let result = std::process::Command::new("cargo")
-                .args(["build", "--quiet", "-p", "spinel-rt"])
-                .current_dir(workspace_root())
-                .status();
-            match result {
-                Ok(status) if status.success() => Ok(()),
-                Ok(status) => Err(format!("`cargo build -p spinel-rt` exited with {status}")),
-                Err(e) => Err(format!("running `cargo build -p spinel-rt`: {e}")),
-            }
-        })
-        .clone()
+/// Builds one workspace crate (debug profile) into the shared workspace
+/// `target/` exactly once per process per crate -- see this module's docs
+/// for why this can't just be assumed already done. `spinel-rt` always goes
+/// through here; a native package's `[native]` crate (Phase 14.3) does too,
+/// the first time a program requiring it is built. Every subsequent call in
+/// the same process (the common case: a test binary making hundreds of
+/// `build_binary` calls) is a cached map hit.
+fn ensure_crate_built(name: &str) -> Result<(), String> {
+    let map = CRATES_BUILT.get_or_init(Default::default);
+    let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cached) = map.get(name) {
+        return cached.clone();
+    }
+    let result = match std::process::Command::new("cargo")
+        .args(["build", "--quiet", "-p", name])
+        .current_dir(workspace_root())
+        .status()
+    {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("`cargo build -p {name}` exited with {status}")),
+        Err(e) => Err(format!("running `cargo build -p {name}`: {e}")),
+    };
+    map.insert(name.to_string(), result.clone());
+    result
 }
 
-pub fn build_binary(rust_source: &str, output: &Path) -> Result<(), String> {
-    ensure_spinel_rt_built()?;
-
-    let debug_dir = target_dir().join("debug");
-    let rlib = debug_dir.join("libspinel_rt.rlib");
+/// The built rlib for a workspace lib crate, erroring loudly if it isn't
+/// where the shared target dir says it should be.
+fn rlib_for(crate_name: &str) -> Result<PathBuf, String> {
+    let underscored = crate_name.replace('-', "_");
+    let rlib = target_dir()
+        .join("debug")
+        .join(format!("lib{underscored}.rlib"));
     if !rlib.exists() {
         return Err(format!(
-            "expected {} to exist after building spinel-rt -- was it built into a different target directory?",
+            "expected {} to exist after building {crate_name} -- was it built into a different target directory?",
             rlib.display()
         ));
     }
-    let deps_dir = debug_dir.join("deps");
+    Ok(rlib)
+}
+
+pub fn build_binary(rust_source: &str, output: &Path) -> Result<(), String> {
+    build_binary_with_deps(rust_source, &[], output)
+}
+
+/// `build_binary` plus the extra workspace lib crates (`native_deps`, cargo
+/// package names -- see `spinelc::CompileOutput`) the generated program
+/// references: each is `cargo build`-built once and linked with its own
+/// `--extern`, exactly the shape `spinel-rt` itself uses.
+pub fn build_binary_with_deps(
+    rust_source: &str,
+    native_deps: &[String],
+    output: &Path,
+) -> Result<(), String> {
+    ensure_crate_built("spinel-rt")?;
+    for dep in native_deps {
+        ensure_crate_built(dep)?;
+    }
+
+    let rlib = rlib_for("spinel-rt")?;
+    let deps_dir = target_dir().join("debug").join("deps");
 
     let src_path = std::env::temp_dir().join(format!(
         "spinelc-gen-{}-{}.rs",
@@ -98,8 +128,8 @@ pub fn build_binary(rust_source: &str, output: &Path) -> Result<(), String> {
     ));
     std::fs::write(&src_path, rust_source).map_err(|e| e.to_string())?;
 
-    let status = std::process::Command::new("rustc")
-        .arg("--edition")
+    let mut cmd = std::process::Command::new("rustc");
+    cmd.arg("--edition")
         .arg("2021")
         .arg(&src_path)
         .arg("-o")
@@ -107,9 +137,13 @@ pub fn build_binary(rust_source: &str, output: &Path) -> Result<(), String> {
         .arg("--extern")
         .arg(format!("spinel_rt={}", rlib.display()))
         .arg("-L")
-        .arg(format!("dependency={}", deps_dir.display()))
-        .status()
-        .map_err(|e| format!("running rustc: {e}"))?;
+        .arg(format!("dependency={}", deps_dir.display()));
+    for dep in native_deps {
+        let dep_rlib = rlib_for(dep)?;
+        cmd.arg("--extern")
+            .arg(format!("{}={}", dep.replace('-', "_"), dep_rlib.display()));
+    }
+    let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
         return Err(format!(

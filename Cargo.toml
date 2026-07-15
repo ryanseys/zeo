@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/spinelc", "crates/spinel-rt", "crates/spinel-fiber", "crates/xtask"]
+members = [
+    "crates/spinelc",
+    "crates/spinel-rt",
+    "crates/spinel-fiber",
+    "crates/spinelc-base64",
+    "crates/xtask",
+]
 
 [workspace.package]
 edition = "2021"

@@ -320,6 +320,8 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

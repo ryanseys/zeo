@@ -422,6 +422,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

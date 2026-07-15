@@ -518,6 +518,10 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
     let required_lets = params.required.iter().enumerate().map(|(i, name)| {
         let ident = safe_ident(name);
         quote! {
+            // `allow(unused_variables)`: a block legitimately declares a
+            // param its body never reads (`each { |x| n += 1 }` counting
+            // elements) -- rustc's lint isn't a Ruby-visible concern.
+            #[allow(unused_variables)]
             let #ident: spinel_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(spinel_rt::RubyValue::Nil);
         }
     });

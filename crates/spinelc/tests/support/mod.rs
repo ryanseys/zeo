@@ -38,19 +38,21 @@ pub fn run_ruby_packages(
     package_dirs: &[&str],
 ) -> RunResult {
     let result = compile_packages(files, entry, roots, package_dirs);
-    let (rust_source, dir) = match result {
+    let (compiled, dir) = match result {
         Ok(v) => v,
         Err(e) => panic!("compile_to_rust_with failed: {e}"),
     };
+    let rust_source = &compiled.rust_source;
 
     let bin = std::env::temp_dir().join(format!(
         "spinelc-test-bin-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::build_binary(&rust_source, &bin).unwrap_or_else(|e| {
-        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
-    });
+    spinelc::build::build_binary_with_deps(rust_source, &compiled.native_deps, &bin)
+        .unwrap_or_else(|e| {
+            panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
+        });
     let out = std::process::Command::new(&bin)
         .output()
         .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
@@ -73,7 +75,7 @@ pub fn compile_project(
     files: &[(&str, &str)],
     entry: &str,
     roots: &[&str],
-) -> Result<(String, std::path::PathBuf), String> {
+) -> Result<(spinelc::CompileOutput, std::path::PathBuf), String> {
     compile_packages(files, entry, roots, &[])
 }
 
@@ -84,7 +86,7 @@ pub fn compile_packages(
     entry: &str,
     roots: &[&str],
     package_dirs: &[&str],
-) -> Result<(String, std::path::PathBuf), String> {
+) -> Result<(spinelc::CompileOutput, std::path::PathBuf), String> {
     let dir = std::env::temp_dir().join(format!(
         "spinelc-test-proj-{}-{:?}",
         std::process::id(),

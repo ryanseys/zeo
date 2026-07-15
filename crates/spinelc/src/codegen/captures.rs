@@ -63,16 +63,23 @@ pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
 
 /// Scans a WHOLE scope's body (a method's or the top level's) for every
 /// escaping block, unioning their capture requirements -- but ONLY names
-/// genuinely shared with code OUTSIDE the block(s) that reference them
-/// (verified against real Ruby: `proc { |x| tmp ||= 0; tmp += x }.call`
-/// resets `tmp` on every separate `.call()` -- it is NOT a capture at all
-/// when nothing outside the block ever uses that name, just a fresh local
-/// owned by the block itself; see `hoisting::collect_locals`'s `Call` arm,
-/// which -- as of Phase 6 -- no longer descends into an escaping block's
-/// body, making its result exactly "names used outside any escaping
-/// block"). `self` has no such distinction (an ivar always means the same
-/// object), so `self_captured` is passed through unfiltered.
-pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId]) -> Captures {
+/// genuinely shared with the enclosing scope: assigned somewhere outside
+/// the block(s), OR one of the enclosing method's OWN PARAMETERS
+/// (`params`). The params half was missing until Phase 14.4's `set`
+/// package surfaced it: a parameter referenced ONLY inside an escaping
+/// block (`def add_all(n); each { |x| puts x + n }; end`, or an
+/// Enumerable-shaped `&blk` forwarded into an inner block) failed the
+/// assigned-outside filter and was misclassified as a block-OWN local --
+/// silently re-declared `Nil` inside the closure, shadowing the real
+/// argument. Verified against real Ruby both ways: the parameter IS shared
+/// enclosing-scope state, while `proc { |x| tmp ||= 0; tmp += x }.call`
+/// genuinely resets `tmp` per call (NOT a capture when nothing outside the
+/// block uses the name; see `hoisting::collect_locals`'s `Call` arm, which
+/// -- as of Phase 6 -- no longer descends into an escaping block's body,
+/// making its result exactly "names used outside any escaping block").
+/// `self` has no such distinction (an ivar always means the same object),
+/// so `self_captured` is passed through unfiltered.
+pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId], params: &Params) -> Captures {
     let mut raw = Captures::default();
     for &n in body {
         walk(compiler, n, false, &HashSet::new(), &mut raw);
@@ -81,7 +88,8 @@ pub fn collect_escaping_captures(compiler: &Compiler, body: &[NodeId]) -> Captur
     for &n in body {
         super::hoisting::collect_locals(compiler, n, &mut outer_names);
     }
-    let outer: HashSet<String> = outer_names.into_iter().collect();
+    let mut outer: HashSet<String> = outer_names.into_iter().collect();
+    outer.extend(own_param_names(params));
     Captures {
         locals: raw.locals.into_iter().filter(|n| outer.contains(n)).collect(),
         self_captured: raw.self_captured,
@@ -266,6 +274,8 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -398,6 +408,8 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -715,6 +727,8 @@ fn walk(
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

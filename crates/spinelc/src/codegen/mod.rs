@@ -282,7 +282,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         });
 
     let main_label_counter = Cell::new(0u32);
-    let main_captures = captures::collect_escaping_captures(compiler, &analyzed.main_statements);
+    let main_captures = captures::collect_escaping_captures(
+        compiler,
+        &analyzed.main_statements,
+        &crate::hir::Params::default(),
+    );
     let cx = Ctx {
         compiler,
         current_class: None,
@@ -482,7 +486,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         quote! { #ident: spinel_rt::RubyValue }
     });
     let label_counter = Cell::new(0u32);
-    let no_captures = captures::collect_escaping_captures(compiler, &scope.body);
+    let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
     let cx = Ctx {
         compiler,
         // No concrete receiver exists for a class method (no `self:
@@ -548,7 +552,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_block = scope.needs_block_param();
         let sig_params = params::emit_signature_params(&scope.params, needs_block);
         let method_label_counter = Cell::new(0u32);
-        let method_captures = captures::collect_escaping_captures(compiler, &scope.body);
+        let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
         let method_cx = Ctx {
             compiler,
             current_class: Some(cid),

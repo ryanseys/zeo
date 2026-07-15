@@ -565,6 +565,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }
@@ -782,6 +784,8 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

@@ -91,10 +91,10 @@ fn run() -> Result<(), String> {
         load_roots: args.load_roots.clone(),
         package_dirs,
     };
-    let rust_source = spinelc::compile_to_rust_with(&source, &opts)?;
+    let compiled = spinelc::compile_to_rust_with(&source, &opts)?;
 
     if args.print_rust {
-        println!("{rust_source}");
+        println!("{}", compiled.rust_source);
         return Ok(());
     }
 
@@ -103,7 +103,7 @@ fn run() -> Result<(), String> {
         p.set_extension("");
         p
     });
-    spinelc::build::build_binary(&rust_source, &output)
+    spinelc::build::build_binary_with_deps(&compiled.rust_source, &compiled.native_deps, &output)
 }
 
 fn main() -> ExitCode {

@@ -581,12 +581,62 @@ pub fn emit_new_with_arg_tokens(
     let ctor = quote! { std::sync::Arc::new(#class_ident { #fields }) };
 
     match cx.compiler.method_in_chain(cid, "initialize") {
-        Some(_) => {
+        Some((_, sid)) => {
+            let params = &cx.compiler.scope(sid).params;
+            // Bind `initialize`'s REQUIRED + OPTIONAL parameters the way a
+            // Path 1 call does (Phase 14.4, closing the "no
+            // optional-argument Some-wrapping smarts" gap that previously
+            // made `Set.new` vs `Set.new(arr)` on one `initialize(items =
+            // nil)` a rustc arity error): required args 1:1, each optional
+            // slot `Some(expr)` when provided else `None` (the callee's own
+            // prologue lazily evaluates the default). Splat/post/keyword
+            // params on `initialize` remain out of scope, matching this
+            // function's original posture.
+            let nreq = params.required.len();
+            let nopt = params.optional.len();
+            if params.rest.is_some()
+                || !params.post.is_empty()
+                || !params.keywords.is_empty()
+                || params.keyword_rest.is_some()
+            {
+                panic!(
+                    "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (spike scope)"
+                );
+            }
+            if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {
+                panic!(
+                    "wrong number of arguments for `{class_name}.new` (given {}, expected {})",
+                    arg_exprs.len(),
+                    if nopt == 0 {
+                        nreq.to_string()
+                    } else {
+                        format!("{nreq}..{}", nreq + nopt)
+                    }
+                );
+            }
+            let mut final_args: Vec<TokenStream> = Vec::with_capacity(nreq + nopt);
+            let mut provided = arg_exprs.into_iter();
+            for _ in 0..nreq {
+                let e = provided.next().expect("bounds checked above");
+                final_args.push(e);
+            }
+            for _ in 0..nopt {
+                final_args.push(match provided.next() {
+                    Some(e) => quote! { Some(#e) },
+                    None => quote! { None },
+                });
+            }
+            // An `initialize` that uses `yield`/`&blk` still gets its block
+            // slot (always `None` -- `.new` doesn't forward a block yet, a
+            // narrower, pre-existing gap).
+            if cx.compiler.scope(sid).needs_block_param() {
+                final_args.push(quote! { None });
+            }
             // `initialize` takes `self: Arc<Self>` BY VALUE now (see
             // `ruby_class!`'s docs), so calling it on `__obj` directly would
             // move it -- clone the `Arc` handle first (a cheap refcount bump,
             // not a deep copy) so `__obj` is still available to return.
-            quote! { { let __obj = #ctor; __obj.clone().initialize(#(#arg_exprs),*)?; __obj } }
+            quote! { { let __obj = #ctor; __obj.clone().initialize(#(#final_args),*)?; __obj } }
         }
         None => ctor,
     }
@@ -675,7 +725,11 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId]) -> TokenStream {
     // inside it must still target whatever loop lexically encloses the
     // `super` call, exactly as if that code were written there directly (see
     // `Ctx::loop_labels`'s docs).
-    let defining_captures = super::captures::collect_escaping_captures(cx.compiler, &defining_scope.body);
+    let defining_captures = super::captures::collect_escaping_captures(
+        cx.compiler,
+        &defining_scope.body,
+        &defining_scope.params,
+    );
     let inline_cx = Ctx {
         compiler: cx.compiler,
         // UNCHANGED across the splice -- `self` is still the SAME concrete
@@ -1404,9 +1458,9 @@ fn emit_splat_call(
             match infer_class(cx, recv_id) {
                 Some(cid) => {
                     let class_ident = safe_ident(&cx.compiler.class(cid).name);
-                    quote! { #class_ident::new_handle(#recv_expr) }
+                    quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
                 }
-                None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr).as_object_unchecked() },
+                None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr) },
                 None => panic!("a splat argument call on a receiver whose class isn't statically known (and isn't a `rescue` binding) isn't supported yet (spike scope)"),
             }
         }
@@ -1420,7 +1474,7 @@ fn emit_splat_call(
             };
             let slf = &cx.self_ident;
             let class_ident = safe_ident(&cx.compiler.class(cid).name);
-            quote! { #class_ident::new_handle(#slf.clone()) }
+            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
         }
     };
     let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
@@ -1440,7 +1494,7 @@ fn emit_splat_call(
         {
             let mut __args: Vec<spinel_rt::RubyValue> = Vec::new();
             #(#arg_pushes)*
-            spinel_rt::catch_break(spinel_rt::send(&#recv_obj_expr, #name_expr, &__args, #block_value))?
+            spinel_rt::catch_break(spinel_rt::send_value(&#recv_obj_expr, #name_expr, &__args, #block_value))?
         }
     }
 }
@@ -1485,6 +1539,34 @@ fn emit_class_method_call_on(
     kwargs: &[HashPair],
 ) -> TokenStream {
     let target_name = &cx.compiler.class(target).name;
+    // A `native_func` module function (Phase 14.3): a direct call into the
+    // backing Rust crate's free function -- `spinelc_base64::encode64(arg)?`
+    // -- linked only when the declaring package was `require`d (see
+    // `Hir::native_deps`). Same Path-1-only posture as every other module
+    // function; only the ARITY is checked here (the native fn itself
+    // runtime-checks its `RubyValue` argument kinds).
+    {
+        let ci = cx.compiler.class(target);
+        if let Some(&(_, arity)) = ci.native_methods.iter().find(|(n, _)| n == name) {
+            let crate_path = ci
+                .native_crate
+                .as_ref()
+                .expect("validated in analyze::register_class");
+            if !kwargs.is_empty() || args.len() != arity {
+                panic!(
+                    "wrong number of arguments for native `{target_name}.{name}`: expected {arity}, got {} (keyword arguments unsupported)",
+                    args.len()
+                );
+            }
+            let crate_ident = safe_ident(crate_path);
+            let method_ident = safe_ident(name);
+            let arg_exprs = args.iter().map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            });
+            return quote! { #crate_ident::#method_ident(#(#arg_exprs),*)? };
+        }
+    }
     let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
         panic!(
             "unsupported call `{target_name}.{name}` (spike scope, or no such class method is defined)"
@@ -1550,17 +1632,12 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
             if __safe_recv.is_nil() {
                 spinel_rt::RubyValue::Nil
             } else {
-                match &__safe_recv {
-                    spinel_rt::RubyValue::Object(__robj) => {
-                        // `&.` doesn't accept a block yet (spike scope,
-                        // unrelated to Phase 6 -- narrower than real Ruby,
-                        // matches this call's existing kwargs restriction).
-                        spinel_rt::send(__robj, #name_expr, &[#(#arg_exprs),*], None)?
-                    }
-                    _ => panic!(
-                        "safe navigation on a non-Object receiver isn't supported yet (spike scope)"
-                    ),
-                }
+                // `&.` doesn't accept a block yet (spike scope,
+                // unrelated to Phase 6 -- narrower than real Ruby, matches
+                // this call's existing kwargs restriction). `send_value`
+                // (Phase 14.4) handles Object AND builtin receivers
+                // uniformly, so the old non-Object panic is gone.
+                spinel_rt::send_value(&__safe_recv, #name_expr, &[#(#arg_exprs),*], None)?
             }
         }
     }
@@ -2230,9 +2307,12 @@ fn dispatch(
         let recv_obj_expr = match recv_class {
             Some(cid) => {
                 let class_ident = safe_ident(&cx.compiler.class(cid).name);
-                quote! { #class_ident::new_handle(#recv_expr) }
+                quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
             }
-            None => quote! { (#recv_expr).as_object_unchecked() },
+            // Any non-Object receiver (a builtin collection, or genuinely
+            // Poly) dispatches through `send_value`'s builtin table --
+            // `[1,2].send(:length)` works now, not just Object receivers.
+            None => quote! { (#recv_expr) },
         };
         let name_expr = emit_symbol_expr(cx, args[0]);
         let rest_args = args[1..].iter().map(|&a| {
@@ -2246,7 +2326,7 @@ fn dispatch(
         // whether it might invoke a block -- the match is a cheap no-op
         // when no `Signal::Break` was actually raised.
         return quote! {
-            spinel_rt::catch_break(spinel_rt::send(&#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value))?
+            spinel_rt::catch_break(spinel_rt::send_value(&#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value))?
         };
     }
 
@@ -2352,12 +2432,22 @@ fn dispatch(
                         }
                     }
                 });
+                // Non-numeric operands fall through to DYNAMIC dispatch
+                // (Phase 14.4): a user class's own operator method (`def
+                // <<`), or `send_value`'s builtin table (`Array#<<`,
+                // `String#+`, universal `==`) -- replacing the old
+                // unconditional panic.
                 return quote! {
                     match (&(#recv_expr), &(#arg_expr)) {
                         #int_arm
                         #float_arm
                         #cmp_arm
-                        _ => panic!("`{}` isn't supported yet for non-Int/Float operands at runtime (spike scope)", #name),
+                        (__dyn_recv, __dyn_arg) => spinel_rt::catch_break(spinel_rt::send_value(
+                            __dyn_recv,
+                            spinel_rt::Symbol::intern(#name),
+                            &[(*__dyn_arg).clone()],
+                            None,
+                        ))?,
                     }
                 };
             }
@@ -2382,7 +2472,12 @@ fn dispatch(
                     match &(#recv_expr) {
                         #int_arm
                         #float_arm
-                        _ => panic!("`{}` isn't supported yet for non-Int/Float operands at runtime (spike scope)", #name),
+                        __dyn_recv => spinel_rt::catch_break(spinel_rt::send_value(
+                            __dyn_recv,
+                            spinel_rt::Symbol::intern(#name),
+                            &[],
+                            None,
+                        ))?,
                     }
                 };
             }
@@ -2405,21 +2500,29 @@ fn dispatch(
     // narrower than plain `recv_class.is_none()`: an `Array`/`Hash`/`Range`/
     // `Str`/`Proc`-typed receiver ALSO has no `recv_class` (that's only ever
     // `Some` for `TyKind::Object`), but calling an unimplemented method on
-    // one of those (e.g. `Array#each`, genuinely unsupported -- see the
-    // plan's Phase 3 scope-cut on Enumerable) should still hit the ordinary
-    // "unsupported call" panic below, not attempt `.as_object_unchecked()`
-    // on a value that was never an `Object` in the first place (confirmed
-    // the hard way: an earlier, broader version of this check based on
-    // `recv_class.is_none()` alone turned a clean "unsupported call" panic
-    // for `[1,2,3].each { ... }` into a confusing "expected an Object, got
-    // 1\n2\n3" one instead). `kwargs` has no Path 2 channel at all -- raise
-    // the same clear error the `send`/`public_send` case above does, rather
-    // than silently dropping it and dispatching without it. Found necessary
-    // as a direct, small extension while building Phase 9 --
-    // before this, ANY method call on a Poly-typed value was an
-    // unconditional panic, which would have made a rescued exception's own
-    // `message`/`to_s` uncallable via ordinary syntax.
-    if infer(cx, recv_id) == TyKind::Poly {
+    // one of those falls through to `send_value`'s DYNAMIC dispatch (Phase
+    // 14.4): its builtin method table handles the supported operations
+    // (`[1,2,3].each { ... }` works now), and anything else raises a real,
+    // rescuable `NoMethodError` at runtime with the builtin class's actual
+    // name -- Ruby's own behavior, replacing the old compile-time
+    // "unsupported call" panic for statically-collection-typed receivers.
+    // The kinds listed are exactly the ones whose static repr is already a
+    // boxed `RubyValue` (see `types.rs`'s module docs: only `Int` -- and
+    // `Object`, as `Arc<Concrete>` -- get unboxed native representations,
+    // so those two MUST NOT route through a `&RubyValue` call). `kwargs`
+    // has no Path 2 channel at all -- raise the same clear error the
+    // `send`/`public_send` case above does, rather than silently dropping
+    // it and dispatching without it.
+    if matches!(
+        infer(cx, recv_id),
+        TyKind::Poly
+            | TyKind::Str
+            | TyKind::Array
+            | TyKind::Hash
+            | TyKind::Range
+            | TyKind::Regexp
+            | TyKind::MatchData
+    ) {
         if !kwargs.is_empty() {
             panic!(
                 "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
@@ -2432,13 +2535,57 @@ fn dispatch(
         });
         let block_value = emit_block_option(cx, block, block_arg);
         return quote! {
-            spinel_rt::catch_break(spinel_rt::send(
-                &(#recv_expr).as_object_unchecked(),
+            spinel_rt::catch_break(spinel_rt::send_value(
+                &(#recv_expr),
                 #name_expr,
                 &[#(#arg_exprs),*],
                 #block_value,
             ))?
         };
+    }
+
+    // A statically-known class that `include Enumerable` (the RUST-backed
+    // builtin module, Phase 14.4 rev.2) with no own/materialized definition
+    // for this name: dispatch dynamically -- `send`'s Enumerable fallback
+    // reaches `spinel_rt::enumerable`, which drives this receiver's own
+    // `each`. Deliberately NO compile-time list of Enumerable method names
+    // here: the runtime match in `spinel_rt::enumerable::enumerable_send`
+    // is the single source of truth, and a name it doesn't recognize
+    // raises a real, rescuable `NoMethodError` at runtime -- exactly real
+    // Ruby's behavior, and the same compile-time-strictness-for-runtime-
+    // faithfulness trade this phase already made for builtin receivers
+    // (see the widened dynamic fallback above). The cost is that a TYPO'd
+    // method on an Enumerable-including class surfaces at runtime instead
+    // of compile time -- scoped to exactly the classes that opted into an
+    // open-ended mixin.
+    if let Some(cid) = recv_class {
+        if cx
+            .compiler
+            .class(cid)
+            .ancestors
+            .contains(&crate::compiler::ENUMERABLE_CLASS)
+        {
+            if !kwargs.is_empty() {
+                panic!(
+                    "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
+                );
+            }
+            let class_ident = safe_ident(&cx.compiler.class(cid).name);
+            let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
+            let arg_exprs = args.iter().map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            });
+            let block_value = emit_block_option(cx, block, block_arg);
+            return quote! {
+                spinel_rt::catch_break(spinel_rt::send_value(
+                    &spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
+                    #name_expr,
+                    &[#(#arg_exprs),*],
+                    #block_value,
+                ))?
+            };
+        }
     }
 
     panic!("unsupported call `{name}` (spike scope, or receiver's class isn't statically known)");

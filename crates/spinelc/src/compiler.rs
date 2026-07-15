@@ -55,6 +55,16 @@ pub const MUTEX_CLASS: ClassId = ClassId(16);
 pub const QUEUE_CLASS: ClassId = ClassId(17);
 /// A `Ractor` (Phase 13.8) -- see `spinel_rt::ractor`'s docs.
 pub const RACTOR_CLASS: ClassId = ClassId(18);
+/// `Enumerable` -- a builtin MODULE (Phase 14.4 rev.2: implemented in RUST
+/// in `spinel_rt::enumerable`, per the resolved decision that
+/// Enumerable/Enumerator are core-language infrastructure, not package
+/// content). `include Enumerable` on a user class linearizes this id into
+/// its `ancestors` exactly like a user module (nothing materializes -- the
+/// builtin has no `own_methods`; dispatch reaches the Rust implementation
+/// through `send`/`send_value`'s Enumerable fallback instead), and
+/// `Array`/`Hash`/`Range` carry it in their `includes` from construction,
+/// matching real Ruby's own `include Enumerable` on those classes.
+pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
 
 /// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
 /// registration order -- the SINGLE source of truth `Compiler::new` seeds
@@ -80,6 +90,7 @@ const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
     (MUTEX_CLASS, "Mutex"),
     (QUEUE_CLASS, "Queue"),
     (RACTOR_CLASS, "Ractor"),
+    (ENUMERABLE_CLASS, "Enumerable"),
 ];
 
 pub struct ClassInfo {
@@ -156,6 +167,16 @@ pub struct ClassInfo {
     /// once from generated `main()` right after this class's own
     /// `__register()` call (see `codegen::mod::codegen`).
     pub class_body_stmts: Vec<NodeId>,
+    /// The Rust crate path (underscored, e.g. `spinelc_base64`) backing
+    /// this module's `native_func`s -- from a `native_crate "..."`
+    /// declaration in the module body (Phase 14.3). `None` for every
+    /// ordinary class/module.
+    pub native_crate: Option<String>,
+    /// `(ruby_name, arity)` per `native_func` declaration -- dispatched by
+    /// `codegen::call::emit_class_method_call_on` as a direct
+    /// `<native_crate>::<name>(...)` call (Path 1 only, like every other
+    /// module function).
+    pub native_methods: Vec<(String, usize)>,
     /// The full linearized ancestor chain (this class/module first,
     /// prepends before it, includes/superclass after -- see
     /// `analyze::mro::compute_ancestors`), computed once. Empty until
@@ -238,18 +259,32 @@ impl Compiler {
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
+                native_crate: None,
+                native_methods: Vec::new(),
                 ancestors: Vec::new(),
                 is_builtin: false,
             }],
             scopes: Vec::new(),
         };
         for &(expected_id, name) in BUILTIN_CLASSES {
-            let id = compiler.add_class(name.to_string(), Some(OBJECT_CLASS), false);
+            // `Enumerable` is the one builtin MODULE (no superclass, never
+            // instantiated); everything else is a class under `Object`.
+            let is_module = expected_id == ENUMERABLE_CLASS;
+            let parent = if is_module { None } else { Some(OBJECT_CLASS) };
+            let id = compiler.add_class(name.to_string(), parent, is_module);
             debug_assert_eq!(
                 id, expected_id,
                 "BUILTIN_CLASSES order must match its own reserved ClassId constants"
             );
             compiler.classes[id.0 as usize].is_builtin = true;
+        }
+        // Real Ruby's own mixins on the builtin collections: linearization
+        // puts ENUMERABLE_CLASS into their `ancestors`, so both compile-time
+        // `is_a?` folding and the runtime-registered ancestor chains (which
+        // `send_value`'s Enumerable fallback and `[].is_a?(Enumerable)`
+        // consult) get it uniformly.
+        for cid in [ARRAY_CLASS, HASH_CLASS, RANGE_CLASS] {
+            compiler.classes[cid.0 as usize].includes.push(ENUMERABLE_CLASS);
         }
         compiler
     }
@@ -281,6 +316,8 @@ impl Compiler {
             cvar_owners: HashMap::new(),
             const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
+            native_crate: None,
+            native_methods: Vec::new(),
             ancestors: Vec::new(),
             is_builtin: false,
         });

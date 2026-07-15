@@ -1890,6 +1890,61 @@ fn lower_class_body_statement(
                     }
                 }
             }
+            // The native-package DSL (Phase 14.3) -- `native_crate "path"`
+            // and `native_func :name, [ArgTypes...], ReturnType`, recognized
+            // by name at module-body top level exactly like `attr_accessor`
+            // above. UNCONDITIONAL (an error, never a fall-through to a
+            // generic `Call`): there is no runtime definition of either, so
+            // falling through would only fail later and further from the
+            // cause. Meaningful only inside a package whose `spin.toml`
+            // declares the matching `[native]` crate -- using the DSL
+            // outside one leaves the generated `crate_path::fn` reference
+            // unresolvable, a loud (if Rust-level) build error.
+            if name == "native_crate" {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if arg_list.len() != 1 || arg_list[0].as_string_node().is_none() {
+                    return Err(
+                        "`native_crate` takes exactly one string literal (the backing Rust crate's path, e.g. `native_crate \"spinelc_base64\"`)"
+                            .to_string(),
+                    );
+                }
+                let crate_path = String::from_utf8_lossy(
+                    arg_list[0].as_string_node().expect("checked above").unescaped(),
+                )
+                .into_owned();
+                out.push(hir.push(HirNode::NativeCrate(crate_path)));
+                return Ok(());
+            }
+            if name == "native_func" {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                let shape_err = || {
+                    "`native_func` takes a symbol, an array of argument type constants, and a return type constant, e.g. `native_func :encode64, [String], String`"
+                        .to_string()
+                };
+                if arg_list.len() != 3 {
+                    return Err(shape_err());
+                }
+                let Some(sym) = arg_list[0].as_symbol_node() else {
+                    return Err(shape_err());
+                };
+                let Some(arg_types) = arg_list[1].as_array_node() else {
+                    return Err(shape_err());
+                };
+                if arg_list[2].as_constant_read_node().is_none() {
+                    return Err(shape_err());
+                }
+                out.push(hir.push(HirNode::NativeFunc {
+                    name: String::from_utf8_lossy(sym.unescaped()).into_owned(),
+                    arity: arg_types.elements().iter().count(),
+                }));
+                return Ok(());
+            }
             if matches!(name.as_str(), "attr_reader" | "attr_writer" | "attr_accessor") {
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();

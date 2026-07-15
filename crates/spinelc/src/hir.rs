@@ -33,6 +33,12 @@ pub struct Hir {
     /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
     /// loader rework (see `parse::loader`).
     pub loaded_files: Vec<LoadedFile>,
+    /// Workspace lib crates the compiled program must link (`--extern`),
+    /// recorded when a `require` resolves into a package whose `spin.toml`
+    /// declares `[native] crate = "..."` (Phase 14.3) -- "only link the
+    /// crate when the feature actually fired", the reference project's own
+    /// `.o`-linking rule. See `add_native_dep`.
+    pub native_deps: Vec<String>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -55,6 +61,19 @@ pub struct LoadedFile {
     pub package: Option<String>,
     /// Always 0 (the root box) until Phase 14.5 -- see `Hir::loaded_files`.
     pub box_id: u32,
+}
+
+impl Hir {
+    /// Records that the compiled program must link `crate_name` (a
+    /// workspace lib crate named by a required package's `[native]` table,
+    /// Phase 14.3) -- deduped; consumed by `compile_to_rust_with` into
+    /// `CompileOutput::native_deps` and ultimately `build::
+    /// build_binary_with_deps`'s extra `--extern`s.
+    pub fn add_native_dep(&mut self, crate_name: &str) {
+        if !self.native_deps.iter().any(|d| d == crate_name) {
+            self.native_deps.push(crate_name.to_string());
+        }
+    }
 }
 
 impl std::ops::Index<NodeId> for Hir {
@@ -826,6 +845,24 @@ pub enum HirNode {
     /// the class itself in the linearized `ancestors` list, so its methods
     /// take precedence over the class's own (reachable via `super`).
     Prepend(String),
+    /// `native_crate "rust_crate_path"` -- a module-body-only declaration
+    /// (Phase 14.3, the native-package DSL) naming the Rust path (crate
+    /// name with underscores) whose free functions back this module's
+    /// `native_func`s. Recognized by name during class-body lowering,
+    /// exactly like `attr_accessor` (see `parse::lower_class_body_statement`);
+    /// consumed by `analyze::register_class` into `ClassInfo::native_crate`,
+    /// never reaching codegen as an expression. The crate itself is linked
+    /// only when the declaring package was actually `require`d -- see
+    /// `Hir::native_deps`.
+    NativeCrate(String),
+    /// `native_func :name, [ArgType, ...], ReturnType` -- declares one
+    /// Ruby-visible module function implemented as
+    /// `<native_crate>::<name>(RubyValue, ...) -> Result<RubyValue, Signal>`
+    /// in the backing Rust crate. Only the ARITY is load-bearing (checked
+    /// at each call site at compile time); the type constants are
+    /// declaration-file documentation, matching the reference project's
+    /// `native_func` DSL shape. See `NativeCrate`.
+    NativeFunc { name: String, arity: usize },
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
     /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
     /// `negate: true`, exactly like `unless` folds into `If` by swapping

@@ -235,6 +235,40 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
     h.lock().contains_key(&hash_key(key))
 }
 
+/// `Hash#delete`: removes the entry, returning its value (`nil` when the
+/// key was absent -- the no-default-block scope-cut, same as `hash_get`).
+/// `shift_remove` (not plain `swap_remove`) preserves the remaining
+/// entries' insertion order, Ruby's own guarantee.
+pub fn hash_delete(h: &RHash, key: &RubyValue) -> RubyValue {
+    h.lock()
+        .shift_remove(&hash_key(key))
+        .map(|(_, v)| v)
+        .unwrap_or(RubyValue::Nil)
+}
+
+/// `Hash#keys` -- the ORIGINAL key values, in insertion order.
+pub fn hash_keys(h: &RHash) -> RubyValue {
+    RubyValue::Array(array_new(h.lock().values().map(|(k, _)| k.clone()).collect()))
+}
+
+/// `Hash#values`, in insertion order.
+pub fn hash_values(h: &RHash) -> RubyValue {
+    RubyValue::Array(array_new(h.lock().values().map(|(_, v)| v.clone()).collect()))
+}
+
+/// `Array#<<`/`#push` -- returns the array itself (Ruby's chaining
+/// contract), as an already-boxed value for dynamic-dispatch callers.
+pub fn array_push(arr: &RArray, value: RubyValue) -> RubyValue {
+    arr.lock().push(value);
+    RubyValue::Array(arr.clone())
+}
+
+/// `Array#include?` -- `==`-based membership (`RubyValue::rb_eq`), matching
+/// real Ruby's `==` (not `eql?`) rule for `include?`.
+pub fn array_include(arr: &RArray, value: &RubyValue) -> bool {
+    arr.lock().iter().any(|e| e.rb_eq(value))
+}
+
 /// A new Hash containing every pair from `h` whose key ISN'T in `keys` --
 /// backs a hash pattern's `**rest` binding (the leftover key/value pairs not
 /// matched by any explicit `key:` entry).

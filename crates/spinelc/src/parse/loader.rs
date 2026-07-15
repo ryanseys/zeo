@@ -72,6 +72,13 @@ pub(super) struct Package {
     name: String,
     /// Absolute, existence-checked root directories, in manifest order.
     roots: Vec<PathBuf>,
+    /// `[native] crate = "..."` (Phase 14.3): the WORKSPACE lib crate the
+    /// compiled program must link when this package is `require`d --
+    /// recorded into `Hir::native_deps` at first resolution into this
+    /// package, consumed by `build::build_binary_with_deps` as an extra
+    /// `--extern` against the shared `target/` (the same pre-built-rlib
+    /// shape `spinel-rt` itself is linked with).
+    native_crate: Option<String>,
 }
 
 pub(super) struct Loader {
@@ -233,6 +240,19 @@ impl Loader {
             "require_relative" => (resolve_require_relative(&feature, dir)?, inherited),
             _ => (self.resolve_load(&feature, dir)?, inherited),
         };
+        // "Only link the crate when the feature actually fired" (the
+        // reference project's `.o` rule): a resolved-into-native-package
+        // require records its `[native]` crate as a link dependency.
+        if let Some(pkg_name) = &package {
+            if let Some(nc) = self
+                .packages
+                .iter()
+                .find(|p| p.name == *pkg_name)
+                .and_then(|p| p.native_crate.as_deref())
+            {
+                hir.add_native_dep(nc);
+            }
+        }
         let canonical = path
             .canonicalize()
             .map_err(|e| format!("resolving {}: {e}", path.display()))?;
@@ -541,9 +561,30 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Package> {
             }
         })
         .collect::<PResult<Vec<PathBuf>>>()?;
+    let native_crate = match table.get("native") {
+        None => None,
+        Some(v) => {
+            let native = v.as_table().ok_or_else(|| {
+                format!("{}: [native] must be a table", manifest_path.display())
+            })?;
+            Some(
+                native
+                    .get("crate")
+                    .and_then(|c| c.as_str())
+                    .ok_or_else(|| {
+                        format!(
+                            "{}: [native] needs a string `crate` (the workspace lib crate to link)",
+                            manifest_path.display()
+                        )
+                    })?
+                    .to_string(),
+            )
+        }
+    };
     Ok(Package {
         name: name.to_string(),
         roots,
+        native_crate,
     })
 }
 

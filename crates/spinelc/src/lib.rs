@@ -37,21 +37,38 @@ pub struct CompileOptions {
     pub package_dirs: Vec<std::path::PathBuf>,
 }
 
+/// A compiled program: the generated Rust source plus the workspace lib
+/// crates it must link (`--extern`) beyond `spinel-rt` itself -- one per
+/// `require`d package with a `[native]` crate (Phase 14.3). Feed both to
+/// `build::build_binary_with_deps`.
+#[derive(Debug)]
+pub struct CompileOutput {
+    pub rust_source: String,
+    pub native_deps: Vec<String>,
+}
+
 /// The full parse -> analyze -> codegen pipeline: Ruby source in, formatted
 /// Rust source text out. Both `main.rs` (the CLI) and the test harness call
 /// this directly.
 pub fn compile_to_rust(source: &str) -> Result<String, String> {
-    compile_to_rust_with(source, &CompileOptions::default())
+    // Pathless compiles can't resolve packages, so no native deps exist to
+    // drop here.
+    compile_to_rust_with(source, &CompileOptions::default()).map(|out| out.rust_source)
 }
 
-/// `compile_to_rust` plus the require-resolution context (Phase 14.1).
-pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<String, String> {
+/// `compile_to_rust` plus the require-resolution context (Phase 14.1) and
+/// the native-link manifest of the result (Phase 14.3).
+pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<CompileOutput, String> {
     let (hir, root) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
         &opts.load_roots,
         &opts.package_dirs,
     )?;
+    let native_deps = hir.native_deps.clone();
     let analyzed = analyze::analyze(hir, root)?;
-    codegen::codegen_to_string(&analyzed)
+    Ok(CompileOutput {
+        rust_source: codegen::codegen_to_string(&analyzed)?,
+        native_deps,
+    })
 }

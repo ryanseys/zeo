@@ -153,7 +153,26 @@ fn register_class(
                     .class_body_stmts
                     .push(stmt);
             }
+            // The native-package DSL (Phase 14.3) -- consumed here into
+            // `ClassInfo` bookkeeping, never emitted as code.
+            HirNode::NativeCrate(crate_path) => {
+                compiler.classes[class_id.0 as usize].native_crate = Some(crate_path.clone());
+            }
+            HirNode::NativeFunc { name, arity } => {
+                compiler.classes[class_id.0 as usize]
+                    .native_methods
+                    .push((name.clone(), *arity));
+            }
             _ => {}
+        }
+    }
+    {
+        let ci = &compiler.classes[class_id.0 as usize];
+        if !ci.native_methods.is_empty() && ci.native_crate.is_none() {
+            return Err(format!(
+                "module `{}` declares `native_func`s but no `native_crate` naming the backing Rust crate",
+                ci.name
+            ));
         }
     }
     Ok(())
@@ -436,6 +455,8 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     })
@@ -752,7 +773,9 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
         | HirNode::Extend(_)
-        | HirNode::Prepend(_) => {}
+        | HirNode::Prepend(_)
+        | HirNode::NativeCrate(_)
+        | HirNode::NativeFunc { .. } => {}
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {}
     }
 }

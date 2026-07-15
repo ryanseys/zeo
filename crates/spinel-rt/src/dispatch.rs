@@ -110,6 +110,11 @@ pub const THREAD_CLASS: ClassId = ClassId(15);
 pub const MUTEX_CLASS: ClassId = ClassId(16);
 pub const QUEUE_CLASS: ClassId = ClassId(17);
 pub const RACTOR_CLASS: ClassId = ClassId(18);
+/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- mirrored by
+/// `spinelc::compiler::ENUMERABLE_CLASS`; consulted by `send`'s Enumerable
+/// fallback (an Object whose registered ancestors contain this id
+/// dispatches unresolved Enumerable-method names to `crate::enumerable`).
+pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
@@ -279,6 +284,255 @@ pub fn install_no_method_error_factory(factory: fn(String) -> RubyValue) {
 /// `block` is threaded through to whichever `MethodFn` is actually found --
 /// including the `method_missing` fallback, matching real Ruby's own
 /// `method_missing(name, *args, &block)` protocol.
+/// Dynamic dispatch against ANY `RubyValue` receiver (Phase 14.4, closing
+/// the long-standing "Poly-dispatch gap"): an `Object` goes through `send`'s
+/// registry exactly as before; a BUILT-IN receiver (Array/Hash/String/...)
+/// dispatches against a curated method table over the existing collection
+/// helpers -- what makes `@items << x`, `@hash[k] = v`, `ks.length` work on
+/// ivars/params/any dynamically-typed value. Codegen's every Poly-receiver
+/// fallback (ordinary calls, `send`/`public_send`, safe-nav, and the
+/// runtime OPERATOR fallback's non-numeric case) routes here.
+///
+/// The table is deliberately curated, not exhaustive: entries exist for the
+/// operations the static `try_collection_dispatch` fast path also supports
+/// (extended as packages need them); anything else raises the same real,
+/// rescuable `NoMethodError` an unknown Object method does -- with the
+/// builtin class's REAL name in the message (better than `send`'s
+/// documented class-id approximation, since builtin names are known here).
+pub fn send_value(
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    if let RubyValue::Object(o) = recv {
+        return send(o, name, args, block);
+    }
+    let n = name.name();
+    let n = n.as_str();
+    // Universal builtin methods first: `==`/`!=` via `rb_eq` (Ruby's own
+    // cross-numeric-tower `==`), for every non-Object receiver.
+    match (n, args.len()) {
+        ("==", 1) => return Ok(RubyValue::Bool(recv.rb_eq(&args[0]))),
+        ("!=", 1) => return Ok(RubyValue::Bool(!recv.rb_eq(&args[0]))),
+        _ => {}
+    }
+    match recv {
+        RubyValue::Array(arr) => match (n, args.len()) {
+            ("[]", 1) => {
+                if let RubyValue::Int(i) = &args[0] {
+                    return Ok(crate::array_get(arr, *i));
+                }
+            }
+            ("[]=", 2) => {
+                if let RubyValue::Int(i) = &args[0] {
+                    // Same silent-out-of-range posture as the static path's
+                    // `array_set` call sites: `None` (a raise) is the
+                    // codegen-built `IndexError`'s job on the static path;
+                    // dynamically we panic loudly instead of building one.
+                    return match crate::array_set(arr, *i, args[1].clone()) {
+                        Some(v) => Ok(v),
+                        None => panic!("index {} too small for array (IndexError; spike scope: raised as a panic on the dynamic path)", match &args[0] { RubyValue::Int(i) => *i, _ => unreachable!() }),
+                    };
+                }
+            }
+            ("<<" | "push", 1) => return Ok(crate::array_push(arr, args[0].clone())),
+            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::array_len(arr))),
+            ("include?" | "member?", 1) => {
+                return Ok(RubyValue::Bool(crate::array_include(arr, &args[0])))
+            }
+            ("empty?", 0) => return Ok(RubyValue::Bool(crate::array_len(arr) == 0)),
+            ("first", 0) => return Ok(crate::array_get(arr, 0)),
+            ("last", 0) => return Ok(crate::array_get(arr, -1)),
+            ("to_a", 0) => return Ok(recv.clone()),
+            ("each", 0) => {
+                let Some(RubyValue::Proc(p)) = &block else {
+                    panic!("Array#each without a block isn't supported (no Enumerator; spike scope)");
+                };
+                // Snapshot: mutating the array from inside the block
+                // iterates the original elements (a deliberate, simpler
+                // rule than CRuby's live-view semantics).
+                let elems: Vec<RubyValue> = arr.lock().clone();
+                for e in elems {
+                    p(&[e])?;
+                }
+                return Ok(recv.clone());
+            }
+            _ => {}
+        },
+        RubyValue::Hash(h) => match (n, args.len()) {
+            ("[]", 1) => return Ok(crate::hash_get(h, &args[0])),
+            ("[]=", 2) => return Ok(crate::hash_set(h, args[0].clone(), args[1].clone())),
+            ("delete", 1) => return Ok(crate::hash_delete(h, &args[0])),
+            ("key?" | "has_key?" | "include?" | "member?", 1) => {
+                return Ok(RubyValue::Bool(crate::hash_has_key(h, &args[0])))
+            }
+            ("keys", 0) => return Ok(crate::hash_keys(h)),
+            ("values", 0) => return Ok(crate::hash_values(h)),
+            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::hash_len(h))),
+            ("empty?", 0) => return Ok(RubyValue::Bool(crate::hash_len(h) == 0)),
+            ("each", 0) => {
+                let Some(RubyValue::Proc(p)) = &block else {
+                    panic!("Hash#each without a block isn't supported (no Enumerator; spike scope)");
+                };
+                let pairs: Vec<(RubyValue, RubyValue)> =
+                    h.lock().values().cloned().collect();
+                for (k, v) in pairs {
+                    p(&[k, v])?;
+                }
+                return Ok(recv.clone());
+            }
+            _ => {}
+        },
+        RubyValue::Str(s) => match (n, args.len()) {
+            ("length" | "size", 0) => return Ok(RubyValue::Int(crate::string_len(s))),
+            ("empty?", 0) => return Ok(RubyValue::Bool(crate::string_len(s) == 0)),
+            ("include?", 1) => {
+                if let RubyValue::Str(needle) = &args[0] {
+                    let found = s.lock().contains(&*needle.lock());
+                    return Ok(RubyValue::Bool(found));
+                }
+            }
+            ("+", 1) => {
+                if let RubyValue::Str(other) = &args[0] {
+                    let joined = format!("{}{}", s.lock(), other.lock());
+                    return Ok(RubyValue::Str(crate::string_new(joined)));
+                }
+            }
+            ("to_s", 0) => return Ok(recv.clone()),
+            _ => {}
+        },
+        _ => {}
+    }
+    // Numeric receivers: the binary operators, so `5.send(:+, 2)` and --
+    // the motivating case -- `reduce(:+)`'s per-element
+    // `send_value(acc, op, [elem])` dispatch work (real Ruby supports
+    // both; codegen's static/runtime-checked arithmetic normally handles
+    // these without ever reaching dynamic dispatch). Mixed Int/Float
+    // promotes to Float, the same numeric-tower rule the static fallback
+    // uses.
+    {
+        let nums = match (recv, args.first()) {
+            (RubyValue::Int(a), Some(RubyValue::Int(b))) if args.len() == 1 => {
+                Some((None, Some((*a, *b))))
+            }
+            (RubyValue::Int(a), Some(RubyValue::Float(b))) if args.len() == 1 => {
+                Some((Some((*a as f64, *b)), None))
+            }
+            (RubyValue::Float(a), Some(RubyValue::Int(b))) if args.len() == 1 => {
+                Some((Some((*a, *b as f64)), None))
+            }
+            (RubyValue::Float(a), Some(RubyValue::Float(b))) if args.len() == 1 => {
+                Some((Some((*a, *b)), None))
+            }
+            _ => None,
+        };
+        if let Some((float_pair, int_pair)) = nums {
+            if let Some((a, b)) = int_pair {
+                let r = match n {
+                    "+" => Some(RubyValue::Int(crate::int_add(a, b))),
+                    "-" => Some(RubyValue::Int(crate::int_sub(a, b))),
+                    "*" => Some(RubyValue::Int(crate::int_mul(a, b))),
+                    "/" => Some(RubyValue::Int(crate::int_div(a, b))),
+                    "%" => Some(RubyValue::Int(crate::int_mod(a, b))),
+                    "**" => Some(RubyValue::Int(crate::int_pow(a, b))),
+                    "<=>" => Some(RubyValue::Int(crate::int_cmp(a, b))),
+                    "<" => Some(RubyValue::Bool(crate::int_lt(a, b))),
+                    ">" => Some(RubyValue::Bool(crate::int_gt(a, b))),
+                    "<=" => Some(RubyValue::Bool(crate::int_le(a, b))),
+                    ">=" => Some(RubyValue::Bool(crate::int_ge(a, b))),
+                    _ => None,
+                };
+                if let Some(r) = r {
+                    return Ok(r);
+                }
+            }
+            if let Some((a, b)) = float_pair {
+                let r = match n {
+                    "+" => Some(RubyValue::Float(crate::float_add(a, b))),
+                    "-" => Some(RubyValue::Float(crate::float_sub(a, b))),
+                    "*" => Some(RubyValue::Float(crate::float_mul(a, b))),
+                    "/" => Some(RubyValue::Float(crate::float_div(a, b))),
+                    "%" => Some(RubyValue::Float(crate::float_mod(a, b))),
+                    "**" => Some(RubyValue::Float(crate::float_pow(a, b))),
+                    "<" => Some(RubyValue::Bool(a < b)),
+                    ">" => Some(RubyValue::Bool(a > b)),
+                    "<=" => Some(RubyValue::Bool(a <= b)),
+                    ">=" => Some(RubyValue::Bool(a >= b)),
+                    "<=>" => Some(match crate::float_cmp(a, b) {
+                        Some(o) => RubyValue::Int(o),
+                        None => RubyValue::Nil,
+                    }),
+                    _ => None,
+                };
+                if let Some(r) = r {
+                    return Ok(r);
+                }
+            }
+        }
+    }
+    // The builtin `include Enumerable` set (Array/Hash/Range -- real
+    // Ruby's own), hardcoded rather than registry-consulted so this works
+    // registry-less too (this crate's own unit tests): an unresolved name
+    // on one of these tries the Rust Enumerable implementation before the
+    // NoMethodError below. `Range#each` itself lives here (the one Range
+    // iteration primitive Enumerable needs).
+    if let RubyValue::Range(start, end, exclusive) = recv {
+        if n == "each" {
+            let Some(RubyValue::Proc(p)) = &block else {
+                panic!("Range#each without a block isn't supported (no Enumerator; spike scope)");
+            };
+            let (Some(s), Some(e)) = (start.as_deref(), end.as_deref()) else {
+                panic!("can't iterate from a beginless/endless Range (spike scope)");
+            };
+            let (RubyValue::Int(s), RubyValue::Int(e)) = (s, e) else {
+                panic!("can't iterate a non-Integer Range (spike scope)");
+            };
+            let last = if *exclusive { *e - 1 } else { *e };
+            let mut i = *s;
+            while i <= last {
+                p(&[RubyValue::Int(i)])?;
+                i += 1;
+            }
+            return Ok(recv.clone());
+        }
+    }
+    if matches!(
+        recv,
+        RubyValue::Array(_) | RubyValue::Hash(_) | RubyValue::Range(..)
+    ) {
+        if let Some(r) = crate::enumerable::enumerable_send(recv, n, args, block.clone()) {
+            return r;
+        }
+    }
+    let class_name = match recv {
+        RubyValue::Nil => "NilClass",
+        RubyValue::Bool(true) => "TrueClass",
+        RubyValue::Bool(false) => "FalseClass",
+        RubyValue::Int(_) => "Integer",
+        RubyValue::Float(_) => "Float",
+        RubyValue::Symbol(_) => "Symbol",
+        RubyValue::Str(_) => "String",
+        RubyValue::Array(_) => "Array",
+        RubyValue::Hash(_) => "Hash",
+        RubyValue::Range(..) => "Range",
+        RubyValue::Proc(_) => "Proc",
+        RubyValue::Regexp(_) => "Regexp",
+        RubyValue::MatchData(_) => "MatchData",
+        RubyValue::Fiber(_) => "Fiber",
+        RubyValue::Thread(_) => "Thread",
+        RubyValue::Mutex(_) => "Mutex",
+        RubyValue::Queue(_) => "Queue",
+        RubyValue::Ractor(_) => "Ractor",
+        RubyValue::Object(_) => unreachable!("handled above"),
+    };
+    let msg = format!("undefined method '{name}' for an instance of {class_name}");
+    match NO_METHOD_ERROR_FACTORY.get() {
+        Some(factory) => Err(Signal::Raise(factory(msg))),
+        None => panic!("{msg}"),
+    }
+}
+
 pub fn send(
     recv: &RObj,
     name: Symbol,
@@ -308,6 +562,21 @@ pub fn send(
     // bad dispatch in one Thread was never right once real threads existed.
     // The class-ID-in-the-message (vs. real Ruby's class NAME) is the
     // pre-existing, documented no-runtime-class-name-table approximation.
+    // A user class that `include Enumerable` (its registered ancestors
+    // carry ENUMERABLE_CLASS): unresolved names try the Rust Enumerable
+    // implementation (which drives this object's own `each` back through
+    // dynamic dispatch) before raising.
+    if is_a(id, ENUMERABLE_CLASS) {
+        if let Some(r) = crate::enumerable::enumerable_send(
+            &RubyValue::Object(recv.clone()),
+            &name.name(),
+            args,
+            block,
+        ) {
+            return r;
+        }
+    }
+
     let msg = format!(
         "undefined method '{name}' for an instance of class {}",
         recv.class_id().0

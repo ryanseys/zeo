@@ -8,6 +8,7 @@ mod collections;
 mod constants;
 mod cvars;
 mod dispatch;
+mod enumerable;
 mod exec;
 mod fiber;
 mod globals;
@@ -25,10 +26,10 @@ pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, install_no_method_error_factory, is_a, responds_to,
-    send, ClassId, ClassRegistry,
+    send, send_value, ClassId, ClassRegistry,
     MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
     HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    ENUMERABLE_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
     THREAD_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
