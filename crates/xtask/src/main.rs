@@ -10,6 +10,10 @@
 //! - `xtask regen`: re-runs real `ruby` over every `examples/*.rb` and
 //!   overwrites the matching `.expected` file (mirrors
 //!   `spinel-regen-expected-from-ruby`).
+//! - `xtask conformance <run|triage|show|oracle-verify>`: the external-corpus
+//!   conformance harness (see `conformance/mod.rs`).
+
+mod conformance;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -118,11 +122,13 @@ fn test(root: &Path) -> ExitCode {
 
 fn main() -> ExitCode {
     let root = workspace_root();
+    let args: Vec<String> = std::env::args().skip(2).collect();
     match std::env::args().nth(1).as_deref() {
         Some("test") => test(&root),
         Some("regen") => regen(&root),
+        Some("conformance") => conformance::main(&root, &args),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- <test|regen>");
+            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance>");
             ExitCode::FAILURE
         }
     }

@@ -1,0 +1,6 @@
+# Conformance skip list: suite<TAB>pattern<TAB>reason (patterns are test-id
+# globs). A skip is visible debt -- skipped tests appear in the scoreboard
+# with the reason. Stale patterns (matching no test) fail the run.
+#
+# Note: test/rbs* (RBS extraction, deferred by plan decision) is never
+# discovered by the spinel suite adapter, so it needs no entry here.
