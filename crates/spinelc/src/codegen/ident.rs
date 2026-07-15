@@ -145,10 +145,10 @@ pub(super) fn class_ident(
     // prefix-mangled: a bare `pub mod String` would shadow the prelude
     // `String` TYPE at the crate root (Rust modules and types share a
     // namespace), breaking every generated body that names `String`.
-    // `Object` stays un-mangled -- it never gets generated items at all
-    // (reopening it is rejected), and its ident may still be referenced by
-    // pre-16.3 paths expecting the plain name.
-    if ci.is_builtin && cid != crate::compiler::OBJECT_CLASS {
+    // `Object` mangles the same way (`__bm_Object`) since top-level `def`
+    // support: its methods live in a reopen-style container too, and a
+    // bare `pub mod Object` would shadow `spinel_rt::Object`.
+    if compiler.value_backed(cid) {
         // A per-box OVERLAY (Phase 18) gets its own container module --
         // `__bm_b2_String` -- so a root reopen and any number of box
         // overlays of the same builtin coexist.

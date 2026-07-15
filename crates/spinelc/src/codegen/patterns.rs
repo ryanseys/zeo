@@ -50,8 +50,10 @@ pub fn emit_case_in(
     let subject_expr = emit_expr(cx, subject);
     let subject_ty = infer(cx, subject);
 
+    // Boxed arms, same reasoning as `emit_if` (the whole `case/in` types
+    // `Poly`; every arm must agree on `RubyValue`).
     let mut chain = match else_body {
-        Some(body) => super::stmt::emit_body(cx, body, false),
+        Some(body) => super::stmt::emit_body_boxed(cx, body),
         None => emit_no_matching_pattern_raise(cx),
     };
 
@@ -61,7 +63,10 @@ pub fn emit_case_in(
         let full_cond = match &arm.guard {
             None => cond,
             Some((g, is_unless)) => {
-                let g_expr = emit_expr(&arm_cx, *g);
+                let g_expr = {
+                    let e = emit_expr(&arm_cx, *g);
+                    super::expr::box_if_object_typed(&arm_cx, *g, e)
+                };
                 let g_check = if *is_unless {
                     quote! { !(#g_expr).truthy() }
                 } else {
@@ -70,7 +75,7 @@ pub fn emit_case_in(
                 quote! { (#cond) && (#g_check) }
             }
         };
-        let body_val = super::stmt::emit_body(&arm_cx, &arm.body, false);
+        let body_val = super::stmt::emit_body_boxed(&arm_cx, &arm.body);
         chain = quote! {
             if #full_cond { #body_val } else { #chain }
         };
@@ -220,9 +225,14 @@ fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &Toke
             quote! { #result }
         }
         TyKind::Poly => {
-            let class_ident = super::ident::class_ident(cx.compiler, cid);
+            // The raw baked id, and `RubyValue::class_id()` (total over
+            // every variant) rather than `as_object_unchecked()`: the
+            // pattern may name a BUILTIN class/module with no generated
+            // container (`in Float`, `in Comparable`), and a Poly
+            // scrutinee may hold a primitive at runtime.
+            let id = cid.0;
             quote! {
-                spinel_rt::is_a((#scrutinee).as_object_unchecked().class_id(), #class_ident::CLASS_ID)
+                spinel_rt::is_a((#scrutinee).class_id(), spinel_rt::ClassId(#id))
             }
         }
         // A statically-known BUILT-IN-typed scrutinee (Int/Str/Symbol/Array/
@@ -241,6 +251,7 @@ fn emit_builtin_class_check(name: &str, scrutinee_ty: TyKind, scrutinee: &TokenS
         "Integer" => (quote! { spinel_rt::RubyValue::Int(_) }, Some(TyKind::Int)),
         "String" => (quote! { spinel_rt::RubyValue::Str(_) }, Some(TyKind::Str)),
         "Symbol" => (quote! { spinel_rt::RubyValue::Symbol(_) }, Some(TyKind::Symbol)),
+        "Float" => (quote! { spinel_rt::RubyValue::Float(_) }, Some(TyKind::Float)),
         "Array" => (quote! { spinel_rt::RubyValue::Array(_) }, Some(TyKind::Array)),
         "Hash" => (quote! { spinel_rt::RubyValue::Hash(_) }, Some(TyKind::Hash)),
         "Range" => (quote! { spinel_rt::RubyValue::Range(..) }, Some(TyKind::Range)),

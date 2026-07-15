@@ -186,7 +186,15 @@ pub fn infer_type_with_locals(
                 // A MODULE stays Poly: `M.new` has no struct -- codegen
                 // routes it to the dynamic path, whose result is a plain
                 // `RubyValue` (well, a raised NoMethodError -- Phase 16.1).
-                Some(cid) if !compiler.class(cid).is_module => TyKind::Object(cid),
+                // `Object.new` (the sentinel idiom) is Poly too: it
+                // constructs a boxed `spinel_rt::Object`, not a generated
+                // struct (see `emit_new_with_arg_tokens`'s Object arm).
+                Some(cid)
+                    if !compiler.class(cid).is_module
+                        && cid != crate::compiler::OBJECT_CLASS =>
+                {
+                    TyKind::Object(cid)
+                }
                 _ => TyKind::Poly,
             }
         }
@@ -229,7 +237,9 @@ pub fn infer_type_with_locals(
             // construction.
             _ => match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
                 TyKind::ClassObj(cid)
-                    if !compiler.class(cid).is_module && !compiler.class(cid).is_builtin =>
+                    if !compiler.class(cid).is_module
+                        && !compiler.class(cid).is_builtin
+                        && cid != crate::compiler::OBJECT_CLASS =>
                 {
                     TyKind::Object(cid)
                 }

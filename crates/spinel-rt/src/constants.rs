@@ -27,3 +27,16 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     CONSTANTS.lock().insert((owner_class_id, name.to_string()), value);
 }
+
+/// Installs `ARGV` (the program's arguments, minus the binary name, as an
+/// Array of Strings) as a top-level constant -- called once from generated
+/// `main()`, mirroring CRuby's own startup. Reads resolve through the
+/// ordinary runtime `const_get` fallback, so the compiler needs no
+/// special-casing.
+pub fn seed_argv() {
+    let args: Vec<RubyValue> = std::env::args()
+        .skip(1)
+        .map(|a| RubyValue::Str(crate::collections::string_new(a)))
+        .collect();
+    const_set(0, "ARGV", RubyValue::Array(crate::collections::array_new(args)));
+}

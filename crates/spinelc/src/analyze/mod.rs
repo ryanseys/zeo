@@ -89,6 +89,40 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             }
             compiler.hir[stmt] = HirNode::BoxScope { box_id: bx, body: rest };
             main_statements.push(stmt);
+        } else if let HirNode::DefMethod {
+            name,
+            params,
+            body,
+            is_class_method,
+            ..
+        } = &compiler.hir[stmt]
+        {
+            // A TOP-LEVEL `def` (regular or endless): real Ruby defines it
+            // as a PRIVATE instance method of `Object` -- registered here on
+            // the arena's slot 0 exactly like a `class Object` reopen would,
+            // so `mro::materialize` spreads it into every class (any method
+            // body can call it via implicit self) and codegen emits
+            // `Object`'s own copy through the builtin-reopen container
+            // (`__bm_Object`), dispatched on the runtime `main` object at
+            // top-level call sites.
+            if *is_class_method {
+                return Err(
+                    "`def self.name` at the top level isn't supported yet (spike scope: it \
+                     defines a singleton method on the `main` object)"
+                        .to_string(),
+                );
+            }
+            let (name, params, body) = (name.clone(), params.clone(), body.clone());
+            let sid = register_method(
+                &mut compiler,
+                OBJECT_CLASS,
+                OBJECT_CLASS,
+                name,
+                params,
+                body,
+                crate::hir::Visibility::Private,
+            )?;
+            add_own_method(&mut compiler, OBJECT_CLASS, sid, false);
         } else {
             main_statements.push(stmt);
         }
@@ -210,8 +244,12 @@ fn register_class(
             // A KIND mismatch (`module String`) falls through to the
             // ordinary reopen guard below instead, which produces real
             // Ruby's own TypeError message shape ("String is not a module").
+            // `Object` is NOT in this reject list (since top-level `def`
+            // support): reopening it merges into arena slot 0 exactly like
+            // any builtin-class reopen -- an Object reopen is top-level
+            // `def` by another name.
             if ci.is_module == is_module
-                && (cid == OBJECT_CLASS || cid == CLASS_CLASS || cid == MODULE_CLASS || ci.is_module)
+                && (cid == CLASS_CLASS || cid == MODULE_CLASS || ci.is_module)
             {
                 return Err(format!(
                     "reopening the built-in {} `{name}` isn't supported yet (spike scope)",
@@ -1212,9 +1250,11 @@ mod builtin_reopen_tests {
     }
 
     #[test]
-    fn object_class_module_and_builtin_modules_stay_rejected() {
+    fn class_module_and_builtin_modules_stay_rejected() {
+        // `Object` is no longer in this list: reopening it is top-level
+        // `def` by another name, supported since G0 (see the top_level_
+        // e2e tests).
         for src in [
-            "class Object\n  def probe\n    1\n  end\nend\n",
             "class Class\n  def probe\n    1\n  end\nend\n",
             "class Module\n  def probe\n    1\n  end\nend\n",
             "module Comparable\n  def probe\n    1\n  end\nend\n",

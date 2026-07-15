@@ -47,7 +47,9 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             // `Object(cid)`, whose repr is an unboxed `Arc<Concrete>` no
             // builtin has. That keeps `self.length`/`self + other` on the
             // same static fast paths any other builtin-typed receiver gets.
-            if cx.compiler.class(cid).is_builtin {
+            // (`Object` -- top-level defs -- types as `Poly`: its `__self`
+            // can be any value at all once dispatch reaches the MRO tail.)
+            if cx.compiler.value_backed(cid) {
                 return builtin_self_ty(cid);
             }
             return TyKind::Object(cid);
@@ -263,9 +265,17 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
 /// body, just a value nested inside the enclosing one), matching every
 /// other `emit_expr` fragment's contract.
 fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -> TokenStream {
-    let cond_expr = emit_expr(cx, cond);
-    let then_val = super::stmt::emit_body(cx, then_body, false);
-    let else_val = super::stmt::emit_body(cx, else_body, false);
+    // Boxed: an Object-typed condition is an unboxed `Arc<Concrete>` with
+    // no `truthy()` (always truthy in Ruby, but the boxing keeps one code
+    // shape).
+    let cond_expr = box_if_object_typed(cx, cond, emit_expr(cx, cond));
+    // Boxed arms: the if-expression itself types as `Poly` (no `If` arm in
+    // `types.rs`), so both arms must agree on `RubyValue` -- an
+    // Object-typed arm tail would otherwise be an unboxed `Arc<Concrete>`
+    // (a real rustc E0308 whenever the arms' classes differ, found by the
+    // conformance corpus).
+    let then_val = super::stmt::emit_body_boxed(cx, then_body);
+    let else_val = super::stmt::emit_body_boxed(cx, else_body);
     quote! {
         if (#cond_expr).truthy() { #then_val } else { #else_val }
     }
@@ -288,13 +298,15 @@ fn emit_case_when(
     else_body: &[NodeId],
 ) -> TokenStream {
     let has_subject = subject.is_some();
-    let mut chain = super::stmt::emit_body(cx, else_body, false);
+    // Boxed arms, same reasoning as `emit_if` (the whole `case` types
+    // `Poly`; every arm must agree on `RubyValue`).
+    let mut chain = super::stmt::emit_body_boxed(cx, else_body);
 
     for (values, body) in arms.iter().rev() {
-        let body_val = super::stmt::emit_body(cx, body, false);
+        let body_val = super::stmt::emit_body_boxed(cx, body);
         let mut check: Option<TokenStream> = None;
         for &v in values {
-            let v_expr = emit_expr(cx, v);
+            let v_expr = box_if_object_typed(cx, v, emit_expr(cx, v));
             let this_check = if has_subject {
                 // `rb_case_eq`, not plain `rb_eq`: a strict superset that
                 // additionally gives `when /regex/` real `Regexp#===`
@@ -369,6 +381,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // at codegen time, rather than letting `rustc` fail on the
             // GENERATED program with a confusing "cannot find value `self`".
             if cx.current_class.is_none() {
+                // At the true TOP LEVEL (not inside any method), `self` is
+                // CRuby's `main` object -- a shared runtime `Object`
+                // instance. Safe inside escaping blocks too: it's a global
+                // lookup, not a captured binding.
+                if cx.defining_class.is_none() {
+                    return quote! { spinel_rt::main_object() };
+                }
                 panic!("`self` isn't supported inside a class method/module function body yet (spike scope, no first-class Class/Module value exists)");
             }
             // Unboxed `Arc<Concrete>` -- exactly what an Object-typed local
@@ -387,15 +406,18 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `false && anything` is `false`, but `1 && 2` is `2`, not
             // `true`. A literal Rust `&&` is bool-typed and can't express
             // this, so short-circuit via an explicit `if` on `.truthy()`.
-            let lhs = emit_expr(cx, *l);
-            let rhs = emit_expr(cx, *r);
+            // Operands box first: an Object-typed operand is an unboxed
+            // `Arc<Concrete>` with no `truthy()`, and the two arms must
+            // agree on one `RubyValue` result type anyway.
+            let lhs = box_if_object_typed(cx, *l, emit_expr(cx, *l));
+            let rhs = box_if_object_typed(cx, *r, emit_expr(cx, *r));
             quote! {
                 { let __lhs = #lhs; if __lhs.truthy() { #rhs } else { __lhs } }
             }
         }
         HirNode::Or(l, r) => {
-            let lhs = emit_expr(cx, *l);
-            let rhs = emit_expr(cx, *r);
+            let lhs = box_if_object_typed(cx, *l, emit_expr(cx, *l));
+            let rhs = box_if_object_typed(cx, *r, emit_expr(cx, *r));
             quote! {
                 { let __lhs = #lhs; if __lhs.truthy() { __lhs } else { #rhs } }
             }
@@ -637,8 +659,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#cid)) }
         }
         HirNode::Return(v) => {
+            // Boxed: `return Widget.new` leaves the method as a
+            // `RubyValue` (methods return `Result<RubyValue, Signal>`).
             let value = match v {
-                Some(id) => emit_expr(cx, *id),
+                Some(id) => box_if_object_typed(cx, *id, emit_expr(cx, *id)),
                 None => quote! { spinel_rt::RubyValue::Nil },
             };
             if cx.in_real_proc {
@@ -665,7 +689,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // an `Option<RubyValue>`, `None` when the call passed no block.
             // Panics with a clear "no block given" message otherwise,
             // mirroring real Ruby's `LocalJumpError`.
-            let arg_exprs = args.iter().map(|&a| emit_expr(cx, a));
+            // Boxed: `yield self` (or any Object-typed value) crosses the
+            // Proc boundary as a `RubyValue` slice element.
+            let arg_exprs = args
+                .iter()
+                .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
             quote! {
                 (__blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked())(&[#(#arg_exprs),*])?
             }

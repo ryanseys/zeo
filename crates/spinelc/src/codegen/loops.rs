@@ -67,7 +67,10 @@ pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool) -> Toke
     let outer = fresh_label(cx, "while");
     let redo = fresh_label(cx, "while_body");
     let loop_cx = cx.in_loop(redo.clone(), outer.clone());
-    let cond_expr = emit_expr(&loop_cx, cond);
+    let cond_expr = {
+        let e = emit_expr(&loop_cx, cond);
+        super::expr::box_if_object_typed(&loop_cx, cond, e)
+    };
     let inner = emit_redo_wrapped_body(&loop_cx, body, &redo);
     let test = if negate {
         quote! { !(#cond_expr).truthy() }

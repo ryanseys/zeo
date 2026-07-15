@@ -225,8 +225,12 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
         let cid = cx
             .resolve_class(name)
             .unwrap_or_else(|| panic!("unknown class `{name}` in a `rescue` clause (must be defined earlier in the file)"));
-        let ident = super::ident::class_ident(cx.compiler, cid);
-        quote! { spinel_rt::is_a(__exc.as_object_unchecked().class_id(), #ident::CLASS_ID) }
+        // The raw baked id, not `#ident::CLASS_ID`: a rescue target may be
+        // a MODULE (`rescue Alertable => e` -- real Ruby matches any
+        // exception whose class includes it), which has no generated
+        // struct to hang a const off.
+        let id = cid.0;
+        quote! { spinel_rt::is_a(__exc.as_object_unchecked().class_id(), spinel_rt::ClassId(#id)) }
     });
     quote! { #(#checks)||* }
 }

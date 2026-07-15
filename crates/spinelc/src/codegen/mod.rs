@@ -287,8 +287,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(_, class)| {
-            class.is_builtin && (!class.methods.is_empty() || !class.class_methods.is_empty())
+        .filter(|&(idx, class)| {
+            // `Object` (idx 0) rides the same machinery since top-level
+            // `def` support: its methods emit into `__bm_Object` and
+            // register as value methods, dispatched on the `main` object
+            // at top-level call sites.
+            (class.is_builtin || idx == 0)
+                && (!class.methods.is_empty() || !class.class_methods.is_empty())
         })
         .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)));
 
@@ -298,37 +303,45 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // top-level `@@x = expr` statements -- including a MODULE's own, which
     // still needs to run even though a module never gets a `__register()`
     // call of its own (see `ClassInfo::class_body_stmts`'s docs).
-    let registrations = compiler
-        .classes
-        .iter()
-        .enumerate()
-        .filter(|&(idx, class)| idx != 0 && !class.is_builtin)
-        .map(|(idx, class)| {
-            let register = if class.is_module {
-                // A module has no generated struct/`__register`, but it
-                // still needs a registry entry (Phase 16.1) so its
-                // first-class value answers `name`/`.class`/`ancestors`
-                // and `puts M` prints its name. No constructor: `M.new`
-                // is a real NoMethodError (see `send_value`'s Class arm).
-                let id = idx as u32;
-                let fq_name = compiler.fq_name(ClassId(id));
-                let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
-                quote! {
-                    __registry.register(
-                        spinel_rt::ClassId(#id),
-                        #fq_name,
-                        true,
-                        vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
-                        None,
-                    );
-                }
-            } else {
-                let ident = ident::class_ident(compiler, ClassId(idx as u32));
-                quote! { #ident::__register(&mut __registry); }
-            };
-            let class_body = emit_class_body_stmts(compiler, ClassId(idx as u32));
-            quote! { #register #class_body }
-        });
+    // Class-body statements (`@@x = expr` / `CONST = expr`) are collected
+    // separately from the registry calls: they can be FALLIBLE (`CONST =
+    // some_call?`), so they run at the head of `run_main`'s closure (where
+    // `?` propagates as a Signal) rather than in plain `fn main()`. Still
+    // before every top-level statement, and now after the registry install
+    // -- both orderings the previous in-main splice already implied.
+    let mut user_class_bodies: Vec<TokenStream> = Vec::new();
+    let mut builtin_class_bodies: Vec<TokenStream> = Vec::new();
+
+    let mut registrations: Vec<TokenStream> = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if idx == 0 || class.is_builtin {
+            continue;
+        }
+        let register = if class.is_module {
+            // A module has no generated struct/`__register`, but it
+            // still needs a registry entry (Phase 16.1) so its
+            // first-class value answers `name`/`.class`/`ancestors`
+            // and `puts M` prints its name. No constructor: `M.new`
+            // is a real NoMethodError (see `send_value`'s Class arm).
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                __registry.register(
+                    spinel_rt::ClassId(#id),
+                    #fq_name,
+                    true,
+                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                    None,
+                );
+            }
+        } else {
+            let ident = ident::class_ident(compiler, ClassId(idx as u32));
+            quote! { #ident::__register(&mut __registry); }
+        };
+        registrations.push(register);
+        user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
+    }
 
     // A built-in placeholder has no generated `__register` function to call
     // (see the `classes` filter above) -- it still needs a `ClassRegistry`
@@ -336,7 +349,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // class gets (computed by `analyze::mro::materialize` uniformly, no
     // special-casing needed there), so `is_a?`/`respond_to?` against a
     // built-in-typed receiver resolve correctly instead of finding nothing.
-    let builtin_registrations = compiler
+    let mut builtin_registrations: Vec<TokenStream> = Vec::new();
+    for (idx, class) in compiler
         .classes
         .iter()
         .enumerate()
@@ -345,7 +359,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // (`[Object, Kernel, BasicObject]`), no longer a hardcoded
         // `vec![Object]` in `main()`.
         .filter(|&(idx, class)| class.is_builtin || idx == 0)
-        .map(|(idx, class)| {
+    {
             let id = idx as u32;
             let name = &class.name;
             let is_module = class.is_module;
@@ -392,7 +406,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     );
                 }
             });
-            let class_body = emit_class_body_stmts(compiler, ClassId(id));
+            builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
             let register = (!is_overlay).then(|| {
                 quote! {
                     __registry.register(
@@ -404,12 +418,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     );
                 }
             });
-            quote! {
+            builtin_registrations.push(quote! {
                 #register
                 #(#value_defs)*
-                #class_body
-            }
-        });
+            });
+    }
 
     let main_label_counter = Cell::new(0u32);
     let main_captures = captures::collect_escaping_captures(
@@ -494,6 +507,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // -- the 15.3 const machinery resolves the OWNERS at compile
             // time; only the values need seeding.
             spinel_rt::seed_numeric_constants();
+            // `ARGV` (CRuby startup parity) -- reads resolve through the
+            // runtime const_get fallback, no compile-time registration.
+            spinel_rt::seed_argv();
             // Lets the runtime raise real, catchable exceptions
             // (NoMethodError since Phase 13.7; the whole ArgumentError/
             // TypeError/... set since 17.1) -- spinel-rt can't construct
@@ -530,6 +546,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // (Part 9).
             let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> =
                 spinel_rt::run_main(move || {
+                    // Class-body statements (`@@x = expr` / `CONST = expr`)
+                    // run first, inside the fallible closure (they may
+                    // `?`), builtins before user classes -- the same
+                    // "before every top-level statement" order the old
+                    // in-`main()` splice had.
+                    #(#builtin_class_bodies)*
+                    #(#user_class_bodies)*
                     #main_body
                 });
             if let Err(__signal) = __result {

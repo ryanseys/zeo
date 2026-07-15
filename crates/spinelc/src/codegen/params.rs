@@ -139,10 +139,21 @@ pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
 
 fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStream {
     let ident = safe_ident(name);
-    let default_expr = emit_expr(cx, default);
+    let default_expr = {
+        let e = emit_expr(cx, default);
+        // A default may itself be Object-typed (`def m(o = Widget.new)`).
+        super::expr::box_if_object_typed(cx, default, e)
+    };
+    // `match`, not `unwrap_or_else(|| ...)`: a fallible default expression
+    // (`def m(a = some_call)`) contains a `?`, which must propagate through
+    // the ENCLOSING method body, not a helper closure that returns a plain
+    // `RubyValue` (a real rustc E0277 found by the conformance corpus).
     quote! {
         #[allow(unused_mut)]
-        let mut #ident: spinel_rt::RubyValue = #ident.unwrap_or_else(|| #default_expr);
+        let mut #ident: spinel_rt::RubyValue = match #ident {
+            Some(__v) => __v,
+            None => #default_expr,
+        };
     }
 }
 
@@ -639,15 +650,18 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
             // `allow(unused_variables)`: a block legitimately declares a
             // param its body never reads (`each { |x| n += 1 }` counting
             // elements) -- rustc's lint isn't a Ruby-visible concern.
-            #[allow(unused_variables)]
-            let #ident: spinel_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(spinel_rt::RubyValue::Nil);
+            // `mut`: a Ruby block param is an ordinary reassignable local
+            // (`upto(3) { |n| n = n + 1 }`).
+            #[allow(unused_variables, unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(spinel_rt::RubyValue::Nil);
         }
     });
     let optional_lets = params.optional.iter().enumerate().map(|(i, (name, default))| {
         let ident = safe_ident(name);
         let default_expr = emit_expr(cx, *default);
         quote! {
-            let #ident: spinel_rt::RubyValue = if #i < __opt_bound {
+            #[allow(unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = if #i < __opt_bound {
                 __positional.get(#nreq + #i).cloned().unwrap_or(spinel_rt::RubyValue::Nil)
             } else {
                 #default_expr
@@ -667,7 +681,8 @@ pub fn emit_proc_param_bindings(cx: &Ctx, params: &Params, args_ident: &proc_mac
     let post_lets = params.post.iter().enumerate().map(|(i, name)| {
         let ident = safe_ident(name);
         quote! {
-            let #ident: spinel_rt::RubyValue = {
+            #[allow(unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = {
                 let __idx = __n.saturating_sub(#npost) + #i;
                 __positional.get(__idx).cloned().unwrap_or(spinel_rt::RubyValue::Nil)
             };

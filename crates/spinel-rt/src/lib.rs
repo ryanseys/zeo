@@ -23,7 +23,7 @@ mod value;
 
 pub use arith::*;
 pub use collections::*;
-pub use constants::{const_get, const_set};
+pub use constants::{const_get, const_set, seed_argv};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
@@ -39,9 +39,9 @@ pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     class_is_module, class_name, downcast_robj, install_class_registry,
-    install_exception_factory, install_stop_iteration_factory, is_a, method_name_symbol,
-    raise_error, raise_stop_iteration, responds_to, run_initialize, send, send_in,
-    send_value, send_value_in,
+    install_exception_factory, install_stop_iteration_factory, is_a, main_object,
+    method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
+    send, send_in, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,

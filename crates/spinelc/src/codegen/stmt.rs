@@ -29,6 +29,28 @@ pub fn emit_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
     quote! { #(#stmts)* }
 }
 
+/// `emit_body(.., false)` whose VALUE is always a boxed `RubyValue` -- for
+/// alternative bodies that must agree on one Rust type (if/ternary/case/
+/// pattern arms; `infer` types those expressions `Poly`, so consumers
+/// always expect `RubyValue`). Only an Object-typed tail expression needs
+/// the boxing; every other tail already produces `RubyValue`.
+pub fn emit_body_boxed(cx: &Ctx, body: &[NodeId]) -> TokenStream {
+    if body.is_empty() {
+        return tail_nil(false);
+    }
+    let (init, last) = body.split_at(body.len() - 1);
+    let init_stmts = init.iter().map(|&s| emit_statement(cx, s, false, false));
+    let tail_id = last[0];
+    let tail = emit_statement(cx, tail_id, true, false);
+    // A tail assignment appends its own trailing-nil value (already a
+    // `RubyValue`, and the tokens aren't a single boxable expression).
+    let tail = match &cx.compiler.hir[tail_id] {
+        HirNode::LocalWrite(..) | HirNode::MultiWrite { .. } => tail,
+        _ => super::expr::box_if_object_typed(cx, tail_id, tail),
+    };
+    quote! { #(#init_stmts)* #tail }
+}
+
 fn tail_nil(wrap_ok: bool) -> TokenStream {
     if wrap_ok {
         quote! { Ok(spinel_rt::RubyValue::Nil) }

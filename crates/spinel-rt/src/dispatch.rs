@@ -148,6 +148,17 @@ impl RubyObject for Object {
     }
 }
 
+/// The top-level `self` -- CRuby's `main`, a plain `Object` instance.
+/// Generated code passes it as the receiver of top-level-defined methods
+/// (which live on `Object`, exactly like real Ruby's private-on-Object
+/// rule) and as the value of a top-level `self` expression. One shared
+/// instance so identity is stable across the program, lazily built since
+/// most programs never touch it.
+pub fn main_object() -> RubyValue {
+    static MAIN: std::sync::OnceLock<RubyValue> = std::sync::OnceLock::new();
+    MAIN.get_or_init(|| RubyValue::Object(Arc::new(Object))).clone()
+}
+
 /// Downcasts an erased `RObj` to an owned `Arc<T>` -- the Path 2 trampoline
 /// counterpart to `as_any().downcast_ref()`, needed because every generated
 /// method takes `self: Arc<Self>` now (see `ruby_class!`'s docs). Cloning

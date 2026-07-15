@@ -613,6 +613,43 @@ pub fn emit_new_with_arg_tokens(
             )?
         };
     }
+    // `Object.new` -- a bare sentinel instance of the runtime root
+    // (`spinel_rt::Object`), boxed: no generated struct exists (Object's
+    // container holds top-level defs as free functions), and its static
+    // type is `Poly` (see `types.rs`'s New/ClassObj exclusions), so the
+    // whole expression is a plain `RubyValue`. Each call makes a fresh
+    // `Arc` -- distinct identity, the sentinel idiom's whole point. A
+    // user-defined `initialize` (top-level `def initialize` / `class
+    // Object` reopen) is honored through its `__bm_Object` copy.
+    if cid == crate::compiler::OBJECT_CLASS {
+        let ctor = quote! {
+            spinel_rt::RubyValue::Object(std::sync::Arc::new(spinel_rt::Object))
+        };
+        return match cx.compiler.method_in_chain(cid, "initialize") {
+            Some((_, sid)) => {
+                let final_args = bind_new_args(cx, sid, class_name, arg_exprs);
+                let needs_block = cx.compiler.scope(sid).needs_block_param();
+                let block_slot = needs_block.then(|| quote! { , None });
+                let mod_ident = super::ident::class_ident(cx.compiler, cid);
+                quote! {
+                    {
+                        let __obj = #ctor;
+                        #mod_ident::initialize(__obj.clone() #(, #final_args)* #block_slot)?;
+                        __obj
+                    }
+                }
+            }
+            None => {
+                if !arg_exprs.is_empty() {
+                    panic!(
+                        "wrong number of arguments for `Object.new` (given {}, expected 0)",
+                        arg_exprs.len()
+                    );
+                }
+                ctor
+            }
+        };
+    }
     let ci = cx.compiler.class(cid);
     let class_ident = super::ident::class_ident(cx.compiler, cid);
 
@@ -634,50 +671,7 @@ pub fn emit_new_with_arg_tokens(
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some((_, sid)) => {
-            let params = &cx.compiler.scope(sid).params;
-            // Bind `initialize`'s REQUIRED + OPTIONAL parameters the way a
-            // Path 1 call does (Phase 14.4, closing the "no
-            // optional-argument Some-wrapping smarts" gap that previously
-            // made `Set.new` vs `Set.new(arr)` on one `initialize(items =
-            // nil)` a rustc arity error): required args 1:1, each optional
-            // slot `Some(expr)` when provided else `None` (the callee's own
-            // prologue lazily evaluates the default). Splat/post/keyword
-            // params on `initialize` remain out of scope, matching this
-            // function's original posture.
-            let nreq = params.required.len();
-            let nopt = params.optional.len();
-            if params.rest.is_some()
-                || !params.post.is_empty()
-                || !params.keywords.is_empty()
-                || params.keyword_rest.is_some()
-            {
-                panic!(
-                    "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (spike scope)"
-                );
-            }
-            if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {
-                panic!(
-                    "wrong number of arguments for `{class_name}.new` (given {}, expected {})",
-                    arg_exprs.len(),
-                    if nopt == 0 {
-                        nreq.to_string()
-                    } else {
-                        format!("{nreq}..{}", nreq + nopt)
-                    }
-                );
-            }
-            let mut final_args: Vec<TokenStream> = Vec::with_capacity(nreq + nopt);
-            let mut provided = arg_exprs.into_iter();
-            for _ in 0..nreq {
-                let e = provided.next().expect("bounds checked above");
-                final_args.push(e);
-            }
-            for _ in 0..nopt {
-                final_args.push(match provided.next() {
-                    Some(e) => quote! { Some(#e) },
-                    None => quote! { None },
-                });
-            }
+            let mut final_args = bind_new_args(cx, sid, class_name, arg_exprs);
             // An `initialize` that uses `yield`/`&blk` still gets its block
             // slot (always `None` -- `.new` doesn't forward a block yet, a
             // narrower, pre-existing gap).
@@ -692,6 +686,55 @@ pub fn emit_new_with_arg_tokens(
         }
         None => ctor,
     }
+}
+
+/// Binds `initialize`'s REQUIRED + OPTIONAL parameters the way a Path 1
+/// call does (Phase 14.4): required args 1:1, each optional slot
+/// `Some(expr)` when provided else `None` (the callee's own prologue lazily
+/// evaluates the default). Splat/post/keyword params on `initialize` remain
+/// out of scope, matching `emit_new_with_arg_tokens`'s original posture.
+fn bind_new_args(
+    cx: &Ctx,
+    sid: crate::compiler::ScopeId,
+    class_name: &str,
+    arg_exprs: Vec<TokenStream>,
+) -> Vec<TokenStream> {
+    let params = &cx.compiler.scope(sid).params;
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    if params.rest.is_some()
+        || !params.post.is_empty()
+        || !params.keywords.is_empty()
+        || params.keyword_rest.is_some()
+    {
+        panic!(
+            "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (spike scope)"
+        );
+    }
+    if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {
+        panic!(
+            "wrong number of arguments for `{class_name}.new` (given {}, expected {})",
+            arg_exprs.len(),
+            if nopt == 0 {
+                nreq.to_string()
+            } else {
+                format!("{nreq}..{}", nreq + nopt)
+            }
+        );
+    }
+    let mut final_args: Vec<TokenStream> = Vec::with_capacity(nreq + nopt);
+    let mut provided = arg_exprs.into_iter();
+    for _ in 0..nreq {
+        let e = provided.next().expect("bounds checked above");
+        final_args.push(e);
+    }
+    for _ in 0..nopt {
+        final_args.push(match provided.next() {
+            Some(e) => quote! { Some(#e) },
+            None => quote! { None },
+        });
+    }
+    final_args
 }
 
 /// `super` always resolves against the receiver's REAL, full linearized
@@ -1082,14 +1125,18 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
     let needs_self = block_caps.self_captured;
     let self_clone = needs_self.then(|| {
         let slf = &cx.self_ident;
-        // Inside a REOPENED builtin's method (Phase 16.3), `self` is the
-        // `__self: RubyValue` parameter -- a plain `RubyValue::clone`, not
-        // an `Arc<Concrete>` (`Arc::clone(&__self)` wouldn't typecheck).
-        // The alias deliberately shadows: the closure captures the fresh
-        // `__self` binding by move either way.
-        if cx
+        // Inside a REOPENED builtin's (or `Object`'s) method (Phase 16.3),
+        // `self` is the `__self: RubyValue` parameter -- a plain
+        // `RubyValue::clone`, not an `Arc<Concrete>` (`Arc::clone(&__self)`
+        // wouldn't typecheck). The alias deliberately shadows: the closure
+        // captures the fresh `__self` binding by move either way.
+        if cx.current_class.is_none() && cx.defining_class.is_none() {
+            // The TOP LEVEL has no `self` binding at all -- `self` there is
+            // the shared runtime `main` object.
+            quote! { let __self = spinel_rt::main_object(); }
+        } else if cx
             .current_class
-            .is_some_and(|c| cx.compiler.class(c).is_builtin)
+            .is_some_and(|c| cx.compiler.value_backed(c))
         {
             quote! { let __self = (#slf).clone(); }
         } else {
@@ -1273,7 +1320,7 @@ pub fn emit_call(
             // dispatches dynamically on `__self` through `send_value`, whose
             // value-methods-then-curated-tables order resolves it exactly
             // like an explicit `self.length` would.
-            if cx.compiler.class(cid).is_builtin {
+            if cx.compiler.value_backed(cid) {
                 let slf = &cx.self_ident;
                 if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                     let scope = cx.compiler.scope(sid);
@@ -1294,6 +1341,15 @@ pub fn emit_call(
                         scope.needs_block_param(),
                     );
                 }
+                // The Kernel functions resolve here too -- `puts` inside a
+                // reopened builtin's (or a top-level) method body is a
+                // Kernel call, not a method of the receiver, and the
+                // dynamic fallback below would miss it at runtime.
+                if let Some(tokens) =
+                    emit_kernel_function(cx, name, args, kwargs, block, block_arg)
+                {
+                    return tokens;
+                }
                 if !kwargs.is_empty() {
                     panic!(
                         "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
@@ -1305,7 +1361,7 @@ pub fn emit_call(
                 });
                 let block_value = emit_block_option(cx, block, block_arg);
                 let dyn_call = quote! {
-                    spinel_rt::send_value_in(#__bx, 
+                    spinel_rt::send_value_in(#__bx,
                         &#slf,
                         spinel_rt::Symbol::intern(#name),
                         &[#(#arg_exprs),*],
@@ -1354,6 +1410,48 @@ pub fn emit_call(
                 }
             }
         }
+        // A TOP-LEVEL-defined method -- a private instance method on
+        // `Object`, real Ruby's rule. Reachable via implicit self from the
+        // top level (receiver: the runtime `main` object) and from a class
+        // method's body (receiver: the class value -- a class object is
+        // itself an Object instance, so Object's methods are genuinely in
+        // its chain). Inside ordinary INSTANCE methods this branch never
+        // fires: `mro::materialize` spread the same method into the class
+        // itself, so the `current_class` branch above already resolved it
+        // (with `@ivar`s correctly landing on that class's own struct).
+        // Checked BEFORE the Kernel functions below so a top-level
+        // `def puts` overrides the built-in, same as a sibling method would.
+        if cx.current_class.is_none() {
+            if let Some((_, sid)) =
+                cx.compiler.method_in_chain(crate::compiler::OBJECT_CLASS, name)
+            {
+                let scope = cx.compiler.scope(sid);
+                let mod_ident =
+                    super::ident::class_ident(cx.compiler, crate::compiler::OBJECT_CLASS);
+                let method_ident = safe_ident(name);
+                let recv = match cx.defining_class {
+                    None => quote! { spinel_rt::main_object() },
+                    Some(dcid) => {
+                        let id = dcid.0;
+                        quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
+                    }
+                };
+                return super::params::emit_call_args_to(
+                    cx,
+                    &super::params::Callee::FreeFn {
+                        path: quote! { #mod_ident::#method_ident },
+                        recv,
+                    },
+                    name,
+                    &scope.params,
+                    args,
+                    kwargs,
+                    block,
+                    block_arg,
+                    scope.needs_block_param(),
+                );
+            }
+        }
         // The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg
         // now), conversions, rand/srand, throw, sleep, exit/abort --
         // checked AFTER sibling method resolution (a user `def puts`/`def
@@ -1361,57 +1459,8 @@ pub fn emit_call(
         // ordering was a latent bug this stage fixed). Capitalized-name
         // conversion calls WITH arguments parse as ordinary CallNodes, so
         // there's no ClassRef ambiguity.
-        if kwargs.is_empty() && block.is_none() && block_arg.is_none() {
-            // Infallible print family (any arity, incl. zero).
-            let plain_fn = match name {
-                "puts" => Some("kernel_puts"),
-                "p" => Some("kernel_p"),
-                "pp" => Some("kernel_pp"),
-                "print" => Some("kernel_print"),
-                _ => None,
-            };
-            // Fallible functions (`?`); the conversions require >= 1 arg
-            // (a bare `Integer` parses as a ClassRef, never reaches here).
-            let fallible_fn = match name {
-                "Integer" if !args.is_empty() => Some("kernel_integer"),
-                "Float" if !args.is_empty() => Some("kernel_float"),
-                "Rational" if !args.is_empty() => Some("kernel_rational"),
-                "Complex" if !args.is_empty() => Some("kernel_complex"),
-                "String" if !args.is_empty() => Some("kernel_string"),
-                "Array" if !args.is_empty() => Some("kernel_array"),
-                "Hash" if !args.is_empty() => Some("kernel_hash"),
-                "format" | "sprintf" => Some("kernel_format"),
-                "printf" => Some("kernel_printf"),
-                "rand" => Some("kernel_rand"),
-                "srand" => Some("kernel_srand"),
-                "throw" if !args.is_empty() => Some("kernel_throw"),
-                "sleep" => Some("kernel_sleep"),
-                _ => None,
-            };
-            let never_fn = match name {
-                "exit" => Some("kernel_exit"),
-                "abort" => Some("kernel_abort"),
-                _ => None,
-            };
-            if plain_fn.is_some() || fallible_fn.is_some() || never_fn.is_some() {
-                let arg_exprs: Vec<TokenStream> = args
-                    .iter()
-                    .map(|&a| {
-                        let e = emit_expr(cx, a);
-                        box_if_object_typed(cx, a, e)
-                    })
-                    .collect();
-                if let Some(f) = plain_fn {
-                    let func = format_ident!("{f}");
-                    return quote! { spinel_rt::#func(&[#(#arg_exprs),*]) };
-                }
-                if let Some(f) = fallible_fn {
-                    let func = format_ident!("{f}");
-                    return quote! { spinel_rt::#func(&[#(#arg_exprs),*])? };
-                }
-                let func = format_ident!("{}", never_fn.expect("one of the three sets matched"));
-                return quote! { spinel_rt::#func(&[#(#arg_exprs),*]) };
-            }
+        if let Some(tokens) = emit_kernel_function(cx, name, args, kwargs, block, block_arg) {
+            return tokens;
         }
         // `catch(:tag) { ... }` -- the one Kernel function that takes its
         // block as a first-class value.
@@ -1434,9 +1483,9 @@ pub fn emit_call(
         {
             if let Some(cid) = cx.current_class {
                 let slf = &cx.self_ident;
-                // A reopened builtin's `self` is already a boxed
-                // `RubyValue` (Phase 16.3).
-                let boxed = if cx.compiler.class(cid).is_builtin {
+                // A reopened builtin's (or `Object`'s) `self` is already a
+                // boxed `RubyValue` (Phase 16.3).
+                let boxed = if cx.compiler.value_backed(cid) {
                     quote! { (#slf.clone()) }
                 } else {
                     let class_ident = super::ident::class_ident(cx.compiler, cid);
@@ -1461,6 +1510,78 @@ pub fn emit_call(
         }
         panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
     };
+
+    /// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
+    /// conversions, rand/srand, throw, sleep, exit/abort -- consulted after
+    /// sibling method resolution (a user `def puts`/`def Integer` wins,
+    /// real Ruby's rule) from both the ordinary implicit-self path and the
+    /// value-backed (builtin-reopen / top-level) method-body path.
+    /// Capitalized-name conversion calls WITH arguments parse as ordinary
+    /// CallNodes, so there's no ClassRef ambiguity. `None` when the name
+    /// (or call shape) isn't a Kernel function.
+    fn emit_kernel_function(
+        cx: &Ctx,
+        name: &str,
+        args: &[NodeId],
+        kwargs: &[crate::hir::HashPair],
+        block: Option<NodeId>,
+        block_arg: Option<NodeId>,
+    ) -> Option<TokenStream> {
+        if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
+            return None;
+        }
+        // Infallible print family (any arity, incl. zero).
+        let plain_fn = match name {
+            "puts" => Some("kernel_puts"),
+            "p" => Some("kernel_p"),
+            "pp" => Some("kernel_pp"),
+            "print" => Some("kernel_print"),
+            _ => None,
+        };
+        // Fallible functions (`?`); the conversions require >= 1 arg
+        // (a bare `Integer` parses as a ClassRef, never reaches here).
+        let fallible_fn = match name {
+            "Integer" if !args.is_empty() => Some("kernel_integer"),
+            "Float" if !args.is_empty() => Some("kernel_float"),
+            "Rational" if !args.is_empty() => Some("kernel_rational"),
+            "Complex" if !args.is_empty() => Some("kernel_complex"),
+            "String" if !args.is_empty() => Some("kernel_string"),
+            "Array" if !args.is_empty() => Some("kernel_array"),
+            "Hash" if !args.is_empty() => Some("kernel_hash"),
+            "format" | "sprintf" => Some("kernel_format"),
+            "printf" => Some("kernel_printf"),
+            "rand" => Some("kernel_rand"),
+            "srand" => Some("kernel_srand"),
+            "throw" if !args.is_empty() => Some("kernel_throw"),
+            "sleep" => Some("kernel_sleep"),
+            _ => None,
+        };
+        let never_fn = match name {
+            "exit" => Some("kernel_exit"),
+            "abort" => Some("kernel_abort"),
+            _ => None,
+        };
+        if plain_fn.is_none() && fallible_fn.is_none() && never_fn.is_none() {
+            return None;
+        }
+        let arg_exprs: Vec<TokenStream> = args
+            .iter()
+            .map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            })
+            .collect();
+        if let Some(f) = plain_fn {
+            let func = format_ident!("{f}");
+            return Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*]) });
+        }
+        if let Some(f) = fallible_fn {
+            let func = format_ident!("{f}");
+            return Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*])? });
+        }
+        let func = format_ident!("{}", never_fn.expect("one of the three sets matched"));
+        Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*]) })
+    }
 
     // `ClassName.foo(...)` / `ModuleName.foo(...)` -- a call on the
     // class/module itself, not an instance (see `HirNode::ClassRef`'s
@@ -1738,10 +1859,11 @@ fn emit_splat_call(
                 panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)");
             };
             let slf = &cx.self_ident;
-            // A REOPENED builtin's `self` is already a boxed `RubyValue`
-            // (Phase 16.3) -- `send_value` dispatches its value methods
-            // directly, no `new_handle` boxing (or struct) exists for it.
-            if cx.compiler.class(cid).is_builtin {
+            // A REOPENED builtin's (or `Object`'s) `self` is already a boxed
+            // `RubyValue` (Phase 16.3) -- `send_value` dispatches its value
+            // methods directly, no `new_handle` boxing (or struct) exists
+            // for it.
+            if cx.compiler.value_backed(cid) {
                 quote! { (#slf.clone()) }
             } else {
                 let class_ident = super::ident::class_ident(cx.compiler, cid);
@@ -1988,7 +2110,8 @@ fn dispatch(
     // operator (`!0`, `!""`, `!nil` are all valid and not equivalent),
     // so this is handled separately from the numeric tables below.
     if no_kwargs && name == "!" && args.is_empty() {
-        return quote! { spinel_rt::RubyValue::Bool(!(#recv_expr).truthy()) };
+        let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+        return quote! { spinel_rt::RubyValue::Bool(!(#recv_boxed).truthy()) };
     }
 
     // `is_a?`/`kind_of?` against a literal class/module constant -- a real
@@ -2683,7 +2806,8 @@ fn dispatch(
             let loop_cx = cx.in_loop(redo.clone(), outer.clone());
             let bind = params.required.first().map(|p| {
                 let ident = safe_ident(p);
-                quote! { let #ident = spinel_rt::RubyValue::Int(__i); }
+                // `mut`: a block param is an ordinary reassignable local.
+                quote! { #[allow(unused_mut)] let mut #ident = spinel_rt::RubyValue::Int(__i); }
             });
             let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
             return quote! {
@@ -2825,7 +2949,14 @@ fn dispatch(
                 || FLOAT_BINARY_OPS.iter().any(|(op, _, _)| *op == name)
                 || name == "<=>";
             if is_numeric_op {
-                let arg_expr = emit_expr(cx, args[0]);
+                // An Object-typed argument is an unboxed `Arc<Concrete>` --
+                // box it so the match scrutinee (and the `send_value`
+                // fallback's `(*__dyn_arg).clone()`) is a `RubyValue`
+                // (`junk << Trash.new(j)` on a Poly receiver hits this).
+                let arg_expr = {
+                    let e = emit_expr(cx, args[0]);
+                    box_if_object_typed(cx, args[0], e)
+                };
                 // One inline Int-Int fast arm (the hot `def add(a, b); a +
                 // b; end` case); EVERY other operand shape -- Float pairs,
                 // mixed promotion, Bignum/Rational/Complex lanes, user

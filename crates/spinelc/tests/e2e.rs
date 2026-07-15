@@ -4058,22 +4058,28 @@ fn subclassing_a_built_in_type_is_a_clean_error() {
 }
 
 #[test]
-fn reopening_object_is_a_clean_error() {
-    // Reopening builtin VALUE classes became real in Phase 16.3 (see the
-    // builtin_reopen tests at the bottom of this file); `Object` stays
-    // cleanly rejected -- an Object reopen is top-level `def` by another
-    // name, which is Phase 18's per-box top-level-methods job.
-    let err = spinelc::compile_to_rust(
+fn reopening_object_defines_methods_reachable_everywhere() {
+    // An Object reopen is top-level `def` by another name: its methods
+    // land on arena slot 0, materialize into every user class, and
+    // dispatch on the runtime `main` object at top-level call sites.
+    let result = run_ruby(
         r#"
         class Object
-          def foo
-            1
+          def double(x)
+            x * 2
           end
         end
+        puts double(21)
+        class Widget
+          def go
+            double(4)
+          end
+        end
+        puts Widget.new.go
         "#,
-    )
-    .unwrap_err();
-    assert!(err.contains("reopening the built-in class `Object`"), "{err}");
+    );
+    assert_eq!(result.stdout, "42\n8\n");
+    assert_eq!(result.stderr, "");
 }
 
 // --- Phase 12.7: Regexp -----------------------------------------------
@@ -10544,4 +10550,339 @@ fn main_definitions_are_invisible_inside_a_box() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "invisible\n");
+}
+
+// --- Top-level method definitions (G0) ---------------------------------
+//
+// A top-level `def` is a PRIVATE instance method on `Object` (real Ruby's
+// rule): registered on arena slot 0, materialized by `analyze::mro` into
+// every user class (so any method body reaches it via implicit self, with
+// `@ivar`s landing on the calling class's own struct), and emitted through
+// the builtin-reopen container (`__bm_Object`) whose copies dispatch on
+// the runtime `main` object at top-level call sites.
+
+#[test]
+fn top_level_def_defines_and_calls() {
+    let result = run_ruby(
+        r#"
+        def greet(name, punct = "!")
+          "hi #{name}#{punct}"
+        end
+        puts greet("world")
+        puts greet("you", "?")
+        "#,
+    );
+    assert_eq!(result.stdout, "hi world!\nhi you?\n");
+    assert_eq!(result.stderr, "");
+}
+
+#[test]
+fn top_level_endless_def() {
+    let result = run_ruby("def double(x) = x * 2\nputs double(21)\n");
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn top_level_def_recursion_and_mutual_calls() {
+    let result = run_ruby(
+        r#"
+        def fib(n)
+          n < 2 ? n : fib(n - 1) + fib(n - 2)
+        end
+        def announce(n)
+          puts "fib(#{n}) = #{fib(n)}"
+        end
+        announce(10)
+        "#,
+    );
+    assert_eq!(result.stdout, "fib(10) = 55\n");
+}
+
+#[test]
+fn top_level_def_reachable_from_instance_and_class_methods() {
+    let result = run_ruby(
+        r#"
+        def helper(x)
+          x + 1
+        end
+        class Widget
+          def go
+            helper(4)
+          end
+          def self.direct
+            helper(10)
+          end
+        end
+        puts Widget.new.go
+        puts Widget.direct
+        "#,
+    );
+    assert_eq!(result.stdout, "5\n11\n");
+    assert_eq!(result.stderr, "");
+}
+
+#[test]
+fn top_level_def_with_block_and_yield() {
+    let result = run_ruby(
+        r#"
+        def twice
+          yield 1
+          yield 2
+        end
+        twice { |i| puts "got #{i}" }
+        "#,
+    );
+    assert_eq!(result.stdout, "got 1\ngot 2\n");
+}
+
+#[test]
+fn top_level_def_called_from_a_lambda() {
+    let result = run_ruby(
+        r#"
+        def base
+          40
+        end
+        f = ->(x) { base + x }
+        puts f.call(2)
+        "#,
+    );
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn top_level_def_overrides_a_kernel_function() {
+    // Sibling/top-level resolution runs BEFORE the Kernel function set --
+    // real Ruby's rule (a user `def rand` wins over Kernel#rand).
+    let result = run_ruby(
+        r#"
+        def rand
+          7
+        end
+        puts rand
+        "#,
+    );
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn top_level_def_last_def_wins() {
+    let result = run_ruby(
+        r#"
+        def v
+          1
+        end
+        def v
+          2
+        end
+        puts v
+        "#,
+    );
+    assert_eq!(result.stdout, "2\n");
+}
+
+#[test]
+fn top_level_self_is_the_main_object() {
+    let result = run_ruby("puts self.is_a?(Object)\n");
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn top_level_def_self_is_a_clean_error() {
+    let err = spinelc::compile_to_rust("def self.x\n  1\nend\n").unwrap_err();
+    assert!(err.contains("`def self.name` at the top level"), "{err}");
+}
+
+#[test]
+fn top_level_def_with_ivar_is_a_clean_error() {
+    // `Object`'s own copy dispatches on the ivar-less `main` object; the
+    // clean rejection names the top-level shape (spike scope).
+    let err = spinelc::compile_to_rust("def bump\n  @count = 1\nend\nbump\n").unwrap_err();
+    assert!(err.contains("top-level method"), "{err}");
+}
+
+#[test]
+fn shift_operator_boxes_an_object_typed_argument() {
+    // `junk << Trash.new(1)` on a Poly receiver: the numeric-op fallback's
+    // match scrutinee must box the unboxed `Arc<Concrete>` argument
+    // (found by the conformance corpus's argv_gc as a FAIL_RUSTC).
+    let result = run_ruby(
+        r#"
+        class Trash
+          def initialize(n)
+            @n = n
+          end
+          attr_reader :n
+        end
+        def build
+          junk = []
+          junk << Trash.new(7)
+          junk
+        end
+        puts build.length
+        puts build[0].n
+        "#,
+    );
+    assert_eq!(result.stdout, "1\n7\n");
+    assert_eq!(result.stderr, "");
+}
+
+#[test]
+fn argv_is_seeded_from_the_command_line() {
+    // No args in this harness: ARGV exists and is empty (CRuby startup
+    // parity; argv-carrying coverage lives in the conformance corpus).
+    let result = run_ruby("p ARGV\nputs ARGV.length\n");
+    assert_eq!(result.stdout, "[]\n0\n");
+}
+
+// --- G0 FAIL_RUSTC sweep: Object-boxing + emission fixes ---------------
+//
+// Each of these reproduces a generated-Rust compile failure (FAIL_RUSTC)
+// found by the conformance corpus: spinelc accepted the program but
+// emitted ill-typed Rust.
+
+#[test]
+fn if_arms_with_different_object_classes_box_to_ruby_value() {
+    let result = run_ruby(
+        r#"
+        class A
+          def tag = "a"
+        end
+        class B
+          def tag = "b"
+        end
+        pick = true
+        x = pick ? A.new : B.new
+        puts x.send(:tag)
+        "#,
+    );
+    assert_eq!(result.stdout, "a\n");
+}
+
+#[test]
+fn return_of_an_object_typed_value_boxes() {
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(tag)
+            @tag = tag
+          end
+          attr_reader :tag
+        end
+        def find_or_nil(want)
+          if want == "yes"
+            return Box.new("found")
+          end
+          nil
+        end
+        r = find_or_nil("yes")
+        puts r.send(:tag)
+        puts find_or_nil("no").inspect
+        "#,
+    );
+    assert_eq!(result.stdout, "found\nnil\n");
+}
+
+#[test]
+fn boolean_operators_box_object_typed_operands() {
+    let result = run_ruby(
+        r#"
+        class Flag; end
+        f = Flag.new
+        puts (f && 1).inspect
+        puts (nil || Flag.new).class
+        puts f ? "truthy" : "falsy"
+        puts (!f).inspect
+        "#,
+    );
+    assert_eq!(result.stdout, "1\nFlag\ntruthy\nfalse\n");
+}
+
+#[test]
+fn yield_boxes_an_object_typed_argument() {
+    let result = run_ruby(
+        r#"
+        class Builder
+          def initialize
+            yield self if block_given?
+          end
+          def ping = "pong"
+        end
+        Builder.new { |b| puts b.send(:ping) }
+        "#,
+    );
+    assert_eq!(result.stdout, "pong\n");
+}
+
+#[test]
+fn block_params_are_reassignable() {
+    let result = run_ruby(
+        r#"
+        1.upto(2) { |n| n = n + 10; puts n }
+        3.times { |i| i = i * 2; print i }
+        puts
+        "#,
+    );
+    assert_eq!(result.stdout, "11\n12\n024\n");
+}
+
+#[test]
+fn rescue_matches_an_included_module() {
+    let result = run_ruby(
+        r#"
+        module Alertable; end
+        class AppError < StandardError
+          include Alertable
+        end
+        begin
+          raise AppError, "direct"
+        rescue Alertable => e
+          puts "alertable: #{e.message}"
+        end
+        "#,
+    );
+    assert_eq!(result.stdout, "alertable: direct\n");
+}
+
+#[test]
+fn case_in_matches_float_and_builtin_classes_on_poly_values() {
+    let result = run_ruby(
+        r#"
+        def describe(val)
+          case val
+          in Integer then "int"
+          in Float then "float"
+          in String then "str"
+          else "other"
+          end
+        end
+        puts describe(1)
+        puts describe(2.5)
+        puts describe("s")
+        puts describe(:sym)
+        "#,
+    );
+    assert_eq!(result.stdout, "int\nfloat\nstr\nother\n");
+}
+
+#[test]
+fn fallible_class_body_constant_and_method_default_args() {
+    // `CONST = <fallible expr>` in a class body and `def m(a = <fallible>)`
+    // both previously emitted `?` outside a Result context.
+    let result = run_ruby(
+        r#"
+        def source
+          41
+        end
+        class Config
+          LIMIT = [1, 2, 3].sum
+        end
+        def bump(a = source + 1)
+          a
+        end
+        puts Config::LIMIT
+        puts bump
+        puts bump(5)
+        "#,
+    );
+    assert_eq!(result.stdout, "6\n42\n5\n");
 }

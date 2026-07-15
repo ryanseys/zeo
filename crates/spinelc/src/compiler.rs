@@ -465,6 +465,17 @@ impl Compiler {
         &self.classes[id.0 as usize]
     }
 
+    /// Whether this class's methods emit as free functions over a boxed
+    /// `__self: RubyValue` receiver (the Phase 16.3 builtin-reopen shape)
+    /// rather than `self: Arc<Concrete>` struct methods. True for every
+    /// builtin placeholder AND for `Object` itself: top-level `def`s live
+    /// on `Object` (real Ruby's private-on-Object rule), whose instances --
+    /// the `main` object, and any value at all once dispatch reaches the
+    /// MRO tail -- are `RubyValue`s, never a generated struct.
+    pub fn value_backed(&self, cid: ClassId) -> bool {
+        self.class(cid).is_builtin || cid == OBJECT_CLASS
+    }
+
     /// A flat lookup into the receiver class's own MATERIALIZED `methods`
     /// list -- no ancestor walk needed at call-resolution time at all,
     /// since `analyze::mro::materialize` already resolved every reachable

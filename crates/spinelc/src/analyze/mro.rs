@@ -104,6 +104,18 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     let mut seen: HashSet<String> = HashSet::new();
     let mut materialized: Vec<_> = Vec::new();
     for &anc_id in &ancestors {
+        // A BUILTIN class never materializes `Object`'s methods (top-level
+        // `def`s / `Object` reopens): re-emitting each body per builtin
+        // would multiply generated code ~30x and re-type `self` as every
+        // builtin kind (a body fine on the class it's actually called on
+        // could fail rustc when typed as, say, `Str`). Dynamic dispatch
+        // still finds them -- `send_value_in`/`send_in`'s MRO walk probes
+        // `value_method(ancestor)` per ancestor, and Object's methods are
+        // registered as value methods on `ClassId(0)`, the tail every
+        // chain ends with.
+        if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
+            continue;
+        }
         let own = compiler.class(anc_id).own_methods.clone();
         for sid in own {
             let name = compiler.scope(sid).name.clone();
@@ -155,6 +167,19 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // confusing `rustc` failure on the generated free functions. Real Ruby
     // allows generic ivars on (unfrozen) builtin instances; documented
     // divergence, spike scope.
+    //
+    // `Object` itself (top-level `def`s / `class Object` reopens) is
+    // value-backed the same way: its own `__bm_Object` copies dispatch on
+    // the ivar-less runtime `main` object. The ivar is only a problem for
+    // OBJECT'S OWN copy -- the same method materialized into a user class
+    // stores the ivar on that class's struct, which is real Ruby's behavior
+    // -- so the rejection names the top-level shape specifically.
+    if class_id == crate::compiler::OBJECT_CLASS && !ivars.is_empty() {
+        return Err(format!(
+            "instance variable `@{}` in a top-level method (or `Object` reopen) isn't supported yet (spike scope: the `main` object has no ivar storage)",
+            ivars[0]
+        ));
+    }
     if compiler.class(class_id).is_builtin && !ivars.is_empty() {
         return Err(format!(
             "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (spike scope: built-in values have no ivar storage)",
