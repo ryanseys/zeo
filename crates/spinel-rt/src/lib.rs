@@ -25,11 +25,12 @@ pub use arith::*;
 pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use dispatch::{
-    downcast_robj, install_class_registry, install_no_method_error_factory, is_a, responds_to,
-    send, send_value, ClassId, ClassRegistry,
-    MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
-    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    ENUMERABLE_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    class_is_module, class_name, downcast_robj, install_class_registry,
+    install_no_method_error_factory, is_a, responds_to, run_initialize, send, send_value,
+    ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ARRAY_CLASS,
+    CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, ENUMERABLE_CLASS,
+    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
     THREAD_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
@@ -81,6 +82,15 @@ pub fn puts(value: RubyValue) {
     }
 }
 
+/// `Kernel#p`, single-argument form (Phase 16.1): prints the INSPECT
+/// rendering (`p [1, "x"]` -> `[1, "x"]`, `p Widget` -> `Widget`) and
+/// returns its argument (real Ruby's contract; `puts` returns nil).
+/// Multi-argument/zero-argument forms are Phase 17.1 breadth.
+pub fn p(value: RubyValue) -> RubyValue {
+    println!("{}", value.inspect_string());
+    value
+}
+
 /// One declarative macro absorbs the struct/trait-impl/registration ceremony
 /// spinel's codegen hand-emits as raw C text per class (`emit_class_struct`,
 /// `emit_class_new`, etc.) -- see the plan's "The `ruby_class!` macro"
@@ -124,12 +134,17 @@ macro_rules! ruby_class {
     (
         class $name:ident : $super:path {
             id: $id:expr;
+            name: $rname:literal;
             ancestors: [ $($anc:expr),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
             $( def $method:ident ( $slf:tt : std::sync::Arc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
             dispatch { $( $dname:literal => $tramp:expr ),* $(,)? }
         }
     ) => {
+        // A NESTED class's mangled Rust name (`__c46_Item` -- see
+        // `spinelc`'s `codegen::ident::class_ident`) is deliberately not
+        // CamelCase; a top-level class's plain name already is.
+        #[allow(non_camel_case_types)]
         pub struct $name {
             /// `.freeze`'s per-object flag (Phase 13.1) -- read through
             /// `RubyObject::is_frozen` and by the guard codegen emits before
@@ -165,6 +180,25 @@ macro_rules! ruby_class {
                 inner
             }
 
+            /// The dynamic constructor (Phase 16.1) -- registered into the
+            /// `ClassRegistry` so `x = Widget; x.new(...)` (a class known
+            /// only at runtime as a `RubyValue::Class`) can allocate a
+            /// fresh instance and run `initialize` through the SAME
+            /// dispatch trampoline an explicit `send(:initialize)` would
+            /// use (see `$crate::run_initialize` for the no-initialize
+            /// rule). Static `Widget.new(...)` call sites never come here.
+            pub fn __construct(
+                args: &[$crate::RubyValue],
+                block: Option<$crate::RubyValue>,
+            ) -> Result<$crate::RubyValue, $crate::Signal> {
+                let handle: $crate::RObj = std::sync::Arc::new($name {
+                    __frozen: std::sync::atomic::AtomicBool::new(false),
+                    $( $ivar: $crate::parking_lot::Mutex::new($crate::RubyValue::Nil), )*
+                });
+                $crate::run_initialize(Self::CLASS_ID, &handle, args, block)?;
+                Ok($crate::RubyValue::Object(handle))
+            }
+
             $(
                 // Return type is always `Result<RubyValue, Signal>`, never
                 // omitted or bare `RubyValue`: Ruby methods always implicitly
@@ -186,6 +220,18 @@ macro_rules! ruby_class {
             fn set_frozen(&self) { self.__frozen.store(true, std::sync::atomic::Ordering::Relaxed) }
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
                 vec![ $( self.$ivar.lock().clone() ),* ]
+            }
+            // `Kernel#dup`/`#clone`'s shallow copy (see the trait method's
+            // docs): fresh struct, each ivar's CURRENT value cloned (a
+            // handle clone -- nested objects stay shared), frozen flag
+            // carried over only for `clone` (`copy_frozen`).
+            fn dup_object(&self, copy_frozen: bool) -> $crate::RObj {
+                std::sync::Arc::new($name {
+                    __frozen: std::sync::atomic::AtomicBool::new(
+                        copy_frozen && $crate::RubyObject::is_frozen(self),
+                    ),
+                    $( $ivar: $crate::parking_lot::Mutex::new(self.$ivar.lock().clone()), )*
+                })
             }
         }
 
@@ -216,7 +262,13 @@ macro_rules! ruby_class {
             /// own re-raise-then-`.send(:tag=, ...)` for any method whose
             /// name needed escaping at all.
             pub fn __register(registry: &mut $crate::ClassRegistry) {
-                registry.register(Self::CLASS_ID, vec![$($crate::ClassId($anc)),*]);
+                registry.register(
+                    Self::CLASS_ID,
+                    $rname,
+                    false,
+                    vec![$($crate::ClassId($anc)),*],
+                    Some(Self::__construct as $crate::ConstructorFn),
+                );
                 $(
                     registry.define_method(
                         Self::CLASS_ID,
@@ -236,6 +288,7 @@ mod tests {
     ruby_class! {
         class Point : Object {
             id: 1;
+            name: "Point";
             ancestors: [1, 0];
             ivars { x }
             def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = x; Ok(RubyValue::Nil) }
@@ -262,6 +315,7 @@ mod tests {
     ruby_class! {
         class Greeter : Object {
             id: 2;
+            name: "Greeter";
             ancestors: [2, 0];
             ivars { }
             def hello(self: std::sync::Arc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
@@ -300,7 +354,7 @@ mod tests {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             let mut registry = ClassRegistry::new();
-            registry.register(Object::CLASS_ID, vec![Object::CLASS_ID]);
+            registry.register(Object::CLASS_ID, "Object", false, vec![Object::CLASS_ID], None);
             Point::__register(&mut registry);
             Greeter::__register(&mut registry);
             install_class_registry(registry);
@@ -383,6 +437,138 @@ mod tests {
         let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default() }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
+    }
+
+    /// Phase 15.2: `ruby_class!`-generated `dup_object` -- fresh instance,
+    /// ivars copied by value-handle (mutating the copy's ivar leaves the
+    /// original untouched), frozen flag copied only by `clone`.
+    #[test]
+    fn dup_object_copies_ivars_into_a_fresh_instance() {
+        let p = std::sync::Arc::new(Point {
+            __frozen: Default::default(),
+            x: parking_lot::Mutex::new(RubyValue::Int(1)),
+        });
+
+        let copy = RubyObject::dup_object(&*p, false);
+        let concrete = downcast_robj::<Point>(&copy).expect("same concrete class");
+        *concrete.x.lock() = RubyValue::Int(99);
+
+        assert_eq!(p.x.lock().to_display_string(), "1");
+        assert_eq!(concrete.x.lock().to_display_string(), "99");
+    }
+
+    #[test]
+    fn dup_object_frozen_flag_follows_the_copy_frozen_rule() {
+        let p = std::sync::Arc::new(Point {
+            __frozen: Default::default(),
+            x: parking_lot::Mutex::new(RubyValue::Nil),
+        });
+        RubyObject::set_frozen(&*p);
+
+        assert!(!RubyObject::dup_object(&*p, false).is_frozen(), "dup: unfrozen");
+        assert!(RubyObject::dup_object(&*p, true).is_frozen(), "clone: frozen");
+    }
+
+    /// Placement regression: universal `Kernel#dup` must be found BEFORE
+    /// the `method_missing` fallback (real Ruby's lookup order) -- Greeter
+    /// defines `method_missing`, which must NOT swallow `dup`.
+    #[test]
+    fn dynamic_send_dup_wins_over_method_missing() {
+        install();
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default() }));
+        let result = send(&g, Symbol::intern("dup"), &[], None).unwrap();
+        let RubyValue::Object(copy) = result else {
+            panic!("dup must produce an Object, not a method_missing string")
+        };
+        assert_eq!(copy.class_id(), Greeter::CLASS_ID);
+    }
+
+    /// `send_value`'s universal `dup`/`clone` arm over a builtin receiver.
+    #[test]
+    fn send_value_dup_copies_a_builtin_value() {
+        let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
+        let copy = send_value(&arr, Symbol::intern("dup"), &[], None).unwrap();
+        send_value(&copy, Symbol::intern("push"), &[RubyValue::Int(2)], None).unwrap();
+
+        assert_eq!(arr.inspect_string(), "[1]");
+        assert_eq!(copy.inspect_string(), "[1, 2]");
+
+        arr.freeze_value();
+        let cloned = send_value(&arr, Symbol::intern("clone"), &[], None).unwrap();
+        assert!(cloned.is_frozen());
+    }
+
+    /// Phase 16.1: first-class Class values -- identity equality, the
+    /// universal `.class` reflection through both dispatchers, and the
+    /// registry-backed name/ancestors surface.
+    #[test]
+    fn class_values_reflect_through_the_registry() {
+        install();
+        let point = RubyValue::Class(Point::CLASS_ID);
+
+        assert!(point.rb_eq(&RubyValue::Class(Point::CLASS_ID)));
+        assert!(!point.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
+        assert_eq!(point.to_display_string(), "Point");
+        assert_eq!(point.inspect_string(), "Point");
+
+        let name = send_value(&point, Symbol::intern("name"), &[], None).unwrap();
+        assert_eq!(name.to_display_string(), "Point");
+
+        let ancestors = send_value(&point, Symbol::intern("ancestors"), &[], None).unwrap();
+        assert_eq!(ancestors.inspect_string(), "[Point, Object]");
+
+        // `.class` on a builtin value, and on an Object through `send`.
+        let five_class = send_value(&RubyValue::Int(5), Symbol::intern("class"), &[], None).unwrap();
+        assert!(five_class.rb_eq(&RubyValue::Class(INTEGER_CLASS)));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default() }));
+        let g_class = send(&g, Symbol::intern("class"), &[], None).unwrap();
+        assert!(g_class.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
+    }
+
+    /// The registry constructor: `x = Point; x.new(5)` -- allocation plus
+    /// the `initialize` dispatch trampoline, driven entirely dynamically.
+    #[test]
+    fn class_value_new_constructs_through_the_registry() {
+        install();
+        let point = RubyValue::Class(Point::CLASS_ID);
+        let obj = send_value(&point, Symbol::intern("new"), &[RubyValue::Int(9)], None).unwrap();
+
+        let RubyValue::Object(o) = &obj else {
+            panic!("constructor must produce an Object")
+        };
+        assert_eq!(o.class_id(), Point::CLASS_ID);
+        let x = send(o, Symbol::intern("x"), &[], None).unwrap();
+        assert_eq!(x.to_display_string(), "9");
+    }
+
+    /// `Module#===` (`rb_case_eq` with a Class candidate): instance-of
+    /// ancestry, NOT equality -- a class never `===`-matches itself.
+    #[test]
+    fn case_eq_on_a_class_candidate_checks_instance_ancestry() {
+        install();
+        let point_class = RubyValue::Class(Point::CLASS_ID);
+        let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
+            __frozen: Default::default(),
+            x: parking_lot::Mutex::new(RubyValue::Nil),
+        })));
+
+        assert!(point_class.rb_case_eq(&instance));
+        assert!(RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance), "ancestry, not identity");
+        assert!(!point_class.rb_case_eq(&point_class), "Widget === Widget is false");
+    }
+
+    /// The NoMethodError message cites the registered class NAME (Phase
+    /// 16.1, retiring the class-id approximation). No factory installed in
+    /// unit tests, so the miss surfaces as the documented loud panic.
+    #[test]
+    #[should_panic(expected = "undefined method 'nope' for an instance of Point")]
+    fn no_method_error_names_the_real_class() {
+        install();
+        let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
+            __frozen: Default::default(),
+            x: parking_lot::Mutex::new(RubyValue::Nil),
+        }));
+        let _ = send(&p, Symbol::intern("nope"), &[], None);
     }
 
     /// Part 9 (Send+Sync migration) regression guard: fails to compile if

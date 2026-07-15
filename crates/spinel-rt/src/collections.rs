@@ -92,6 +92,10 @@ pub enum HashKey {
     Str(String),
     Array(Vec<HashKey>),
     Range(Option<Box<HashKey>>, Option<Box<HashKey>>, bool),
+    /// A first-class class/module value (Phase 16.1): keyed by class
+    /// identity, exactly real Ruby's `Class#hash`/`#eql?` (two references
+    /// to the same class are one key).
+    Class(u32),
     Identity(usize),
 }
 
@@ -103,6 +107,7 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::Float(f) => HashKey::Float(f.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
         RubyValue::Str(s) => HashKey::Str(s.lock().clone()),
+        RubyValue::Class(cid) => HashKey::Class(cid.0),
         RubyValue::Array(a) => HashKey::Array(a.lock().iter().map(hash_key).collect()),
         RubyValue::Range(start, end, exclusive) => HashKey::Range(
             start.as_ref().map(|b| Box::new(hash_key(b))),

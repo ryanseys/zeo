@@ -43,7 +43,7 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return TyKind::Object(cid);
         }
     }
-    infer_type_with_locals(cx.compiler, &cx.local_types, id)
+    infer_type_with_locals(cx.compiler, cx.defining_class, &cx.local_types, id)
 }
 
 /// The receiver's statically-known class, if any -- the entire input to the
@@ -68,9 +68,9 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 /// (`is_a?`/`kind_of?`/`respond_to?`), not a constructible struct.
 pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     use crate::compiler::{
-        ARRAY_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS,
-        MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS,
-        STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+        ARRAY_CLASS, CLASS_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+        MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
+        RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     };
     match infer(cx, id) {
         TyKind::Object(cid) => Some(cid),
@@ -89,6 +89,13 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         TyKind::Mutex => Some(MUTEX_CLASS),
         TyKind::Queue => Some(QUEUE_CLASS),
         TyKind::Ractor => Some(RACTOR_CLASS),
+        // A class VALUE's own class is `Class` (or `Module` for a module
+        // value) -- what `Widget.is_a?(Class)`/`.respond_to?` consult.
+        TyKind::ClassObj(cid) => Some(if cx.compiler.class(cid).is_module {
+            MODULE_CLASS
+        } else {
+            CLASS_CLASS
+        }),
         TyKind::Poly => None,
     }
 }
@@ -263,6 +270,11 @@ fn emit_case_when(
     match subject {
         Some(s) => {
             let subject_expr = emit_expr(cx, s);
+            // Boxed if Object-typed (Phase 16.1): `case w when Widget` --
+            // an unboxed `Arc<Concrete>` subject can't feed `rb_case_eq`'s
+            // `&RubyValue` (unexercised before class candidates existed:
+            // they were a compile-time rejection).
+            let subject_expr = box_if_object_typed(cx, s, subject_expr);
             quote! { { let __subject = #subject_expr; #chain } }
         }
         None => chain,
@@ -416,14 +428,27 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // class `Class`/`Module` runtime value exists -- see the plan's Part
         // 6 scope-cut -- a clean rejection) or, when `name` isn't actually a
         // registered class, an ordinary lexically-scoped constant READ.
-        HirNode::ClassRef(name) => {
-            if cx.resolve_class(name).is_some() {
-                panic!("a bare class/module name used as a value isn't supported yet (spike scope, no first-class Class/Module value exists) -- did you mean to call a class method, e.g. `{name}.foo`?");
+        // A bare/qualified constant naming a class or module used as a
+        // VALUE is a first-class `RubyValue::Class` handle (Phase 16.1,
+        // retiring the long-standing "no first-class Class/Module value"
+        // rejection); one that names no class stays an ordinary
+        // lexically-scoped constant READ.
+        HirNode::ClassRef(name) => match cx.resolve_class(name) {
+            Some(cid) => {
+                let id = cid.0;
+                quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
             }
-            emit_const_read(cx, None, name)
+            None => emit_const_read(cx, None, name),
+        },
+        HirNode::QualifiedConstRead(scope, name) if cx.resolve_class(&format!("{scope}::{name}")).is_some() => {
+            let id = cx
+                .resolve_class(&format!("{scope}::{name}"))
+                .expect("guarded above")
+                .0;
+            quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
         }
         HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
-        HirNode::SuperCall { args } => super::call::emit_super_inline(cx, args),
+        HirNode::SuperCall { args, zsuper } => super::call::emit_super_inline(cx, args, *zsuper),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
         HirNode::For { target, iterable, body } => emit_for(cx, target, *iterable, body),
@@ -638,17 +663,23 @@ fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
 /// `RubyValue::Object` the same way `emit_safe_call` already does for its
 /// own uniform-representation needs.
 fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> TokenStream {
+    // A literal class reference -- bare (`raise NotFound`) or qualified
+    // (`raise Store::Errors::NotFound` -- Phase 15.3) -- when the path
+    // actually resolves to a class; a constant-shaped node that DOESN'T
+    // resolve falls through to the value cases below (a constant can
+    // legitimately hold a pre-built exception).
+    let class_path = const_path_of(cx, node).filter(|p| cx.resolve_class(p).is_some());
     if let Some(msg_id) = explicit_msg {
-        let HirNode::ClassRef(class_name) = &cx.compiler.hir[node] else {
+        let Some(class_name) = class_path else {
             panic!("`raise Class, message` requires a literal class name (spike scope)");
         };
         let msg_expr = emit_expr(cx, msg_id);
-        return emit_boxed_new(cx, class_name, vec![msg_expr]);
+        return emit_boxed_new(cx, &class_name, vec![msg_expr]);
     }
-    if let HirNode::ClassRef(class_name) = &cx.compiler.hir[node] {
+    if let Some(class_name) = class_path {
         let default_msg =
             quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#class_name.to_string())) };
-        return emit_boxed_new(cx, class_name, vec![default_msg]);
+        return emit_boxed_new(cx, &class_name, vec![default_msg]);
     }
     match infer(cx, node) {
         TyKind::Str => {
@@ -675,6 +706,20 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
 /// see that function's docs); `Signal::Raise` needs a real `RubyValue`, so
 /// this boxes it the same way `emit_safe_call` already does for its own
 /// uniform-representation needs.
+/// The class/module PATH a node names, when it has a constant-reference
+/// SHAPE at all: a bare `ClassRef` or a qualified `Foo::Bar`
+/// (`QualifiedConstRead` -- Phase 15.3). Whether the path actually NAMES a
+/// registered class (vs. an ordinary value constant) is the caller's
+/// `resolve_class` check, same as the long-standing bare-`ClassRef` rule
+/// (see `emit_call`'s class-method interception docs).
+pub(super) fn const_path_of(cx: &Ctx, id: NodeId) -> Option<String> {
+    match &cx.compiler.hir[id] {
+        HirNode::ClassRef(n) => Some(n.clone()),
+        HirNode::QualifiedConstRead(scope, n) => Some(format!("{scope}::{n}")),
+        _ => None,
+    }
+}
+
 pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
     let cid = cx
         .resolve_class(class_name)
@@ -841,9 +886,15 @@ fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
 /// `nil`" (`Some(RubyValue::Nil)`).
 fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     let owner = const_owner_id(cx, scope, name);
-    let qualified = match scope {
-        Some(s) => format!("{s}::{name}"),
-        None => name.to_string(),
+    // The `NameError` message mirrors real Ruby's: an explicit path prints
+    // as written (`uninitialized constant Store::MISSING`); a bare miss
+    // inside a class/module body is qualified by the cref head's
+    // fully-qualified name (`uninitialized constant Store::Cart::DEFAULT`
+    // -- oracle-verified); a bare top-level miss stays bare.
+    let qualified = match (scope, cx.defining_class) {
+        (Some(s), _) => format!("{s}::{name}"),
+        (None, Some(d)) => format!("{}::{name}", cx.compiler.fq_name(d)),
+        (None, None) => name.to_string(),
     };
     let err = emit_boxed_new(
         cx,

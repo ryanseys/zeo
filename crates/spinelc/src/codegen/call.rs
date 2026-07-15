@@ -560,6 +560,21 @@ pub fn emit_new_with_arg_tokens(
             "`{class_name}.new` isn't supported yet -- built-in types are constructed via their own literal syntax, not `.new` (spike scope)"
         );
     }
+    // `SomeModule.new` -- no struct exists to construct; route through the
+    // dynamic path so it raises real Ruby's NoMethodError ("undefined
+    // method 'new' for module M", oracle-verified) at runtime via
+    // `send_value`'s Class arm instead of failing inside rustc.
+    if cx.compiler.class(cid).is_module {
+        let id = cid.0;
+        return quote! {
+            spinel_rt::send_value(
+                &spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)),
+                spinel_rt::Symbol::intern("new"),
+                &[#(#arg_exprs),*],
+                None,
+            )?
+        };
+    }
     let ci = cx.compiler.class(cid);
     let class_ident = super::ident::class_ident(cx.compiler, cid);
 
@@ -664,7 +679,7 @@ pub fn emit_new_with_arg_tokens(
 /// sidesteps that entirely -- and is a real spinel mechanism too, just used
 /// there as an optimization (`emit_super_inline`, reached when the parent
 /// yields) rather than the default.
-pub fn emit_super_inline(cx: &Ctx, args: &[NodeId]) -> TokenStream {
+pub fn emit_super_inline(cx: &Ctx, args: &[NodeId], zsuper: bool) -> TokenStream {
     let receiver_class = cx.current_class.expect("`super` outside a method");
     let defining_class = cx.defining_class.expect("`super` outside a method");
     let mname = cx
@@ -758,15 +773,20 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId]) -> TokenStream {
     // happening to share names with the calling method's own, since the
     // spliced body just referenced its param names directly with nothing
     // ever binding them. See `emit_super_arg_bindings`'s docs.
-    let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args);
+    let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args, zsuper);
     // A fresh hoisting prelude of its own: the parent method's local
     // variables are a genuinely separate Ruby scope from the calling
     // (sub)method's, even though inlining splices their statements into the
     // same Rust expression position (see `hoisting`'s docs).
+    // The parent's own params count as ALREADY BOUND for the hoisting
+    // prelude (bound just above by `bindings`), so a parent body that
+    // reassigns one rebinds the forwarded value instead of nil-shadowing
+    // it -- same rule as an ordinary method's own prelude.
     let inlined = super::hoisting::emit_hoisted_body_with_extra_roots(
         &inline_cx,
         &body,
         &defining_scope.params.default_ids(),
+        &defining_scope.params.bound_names(),
         false,
     );
     quote! { { #bindings #inlined } }
@@ -775,24 +795,23 @@ pub fn emit_super_inline(cx: &Ctx, args: &[NodeId]) -> TokenStream {
 /// Binds the parent method's (`parent_params`) own parameter names, right
 /// before its body is spliced in -- either from EXPLICIT `super(expr, ...)`
 /// arguments (evaluated in the CALLING scope, `cx`), or, for bare `super`
-/// (forwarding), from the CURRENTLY-EXECUTING method's (`current_params`)
-/// own already-bound parameter of the same position within each bucket
-/// (required/optional/rest/post; keywords matched by NAME instead, since
-/// position isn't meaningful there). `args.is_empty()` is treated as the
-/// forwarding case -- this also (harmlessly) covers a literal `super()`,
-/// which real Ruby treats as "no arguments at all" rather than forwarding;
-/// `HirNode::SuperCall` doesn't distinguish the two shapes (see
-/// `parse/mod.rs`'s lowering, a pre-existing, documented, narrow
-/// simplification this fix doesn't change), so this collapses to the more
-/// common (forwarding) case, same as before this fix.
+/// (`zsuper`, forwarding), from the CURRENTLY-EXECUTING method's
+/// (`current_params`) own already-bound parameter of the same position
+/// within each bucket (required/optional/rest/post; keywords matched by
+/// NAME instead, since position isn't meaningful there). A literal
+/// `super()` (`zsuper: false`, `args` empty) takes the explicit path with
+/// zero arguments -- real Ruby's "no arguments at all", so the parent's
+/// optionals evaluate their own defaults instead of forwarding (the two
+/// shapes mean opposite things; see `HirNode::SuperCall`'s docs).
 fn emit_super_arg_bindings(
     cx: &Ctx,
     inline_cx: &Ctx,
     parent_params: &Params,
     current_params: &Params,
     args: &[NodeId],
+    zsuper: bool,
 ) -> TokenStream {
-    if args.is_empty() {
+    if zsuper {
         return emit_super_forwarding_bindings(parent_params, current_params);
     }
     emit_super_explicit_bindings(cx, inline_cx, parent_params, args)
@@ -1186,6 +1205,14 @@ pub fn emit_call(
             let arg = emit_expr(cx, args[0]);
             return quote! { { spinel_rt::puts(#arg); spinel_rt::RubyValue::Nil } };
         }
+        // `Kernel#p`, single-argument form (Phase 16.1, wanted for
+        // `p Widget`): prints the INSPECT rendering and returns the value
+        // itself (real Ruby's contract, unlike `puts`'s nil).
+        if name == "p" && args.len() == 1 && kwargs.is_empty() {
+            let arg = emit_expr(cx, args[0]);
+            let arg = super::expr::box_if_object_typed(cx, args[0], arg);
+            return quote! { spinel_rt::p(#arg) };
+        }
         // A no-receiver call to a sibling method on the CURRENT class (`foo(x)`
         // inside a method body, calling another method on the same object) --
         // composes directly onto the existing `self: Arc<Self>` receiver:
@@ -1395,12 +1422,51 @@ pub fn emit_call(
         }
     }
 
-    if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-        if cx.resolve_class(target_name).is_some() {
-            if safe || block.is_some() || block_arg.is_some() {
-                panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+    if let Some(target_path) = super::expr::const_path_of(cx, recv_id) {
+        if let Some(target) = cx.resolve_class(&target_path) {
+            // Path 1 only when the class actually DEFINES a matching class
+            // method (or native function). Anything else falls through to
+            // the generic dynamic path with the receiver as a first-class
+            // Class VALUE (Phase 16.1): `Widget == Widget`, `Widget.name`,
+            // `Widget.ancestors` resolve in `send_value`'s Class arm, and
+            // a genuinely unknown method is a real runtime NoMethodError
+            // ("for class Widget") -- real Ruby's behavior, replacing the
+            // old compile-time rejection.
+            let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
+                || cx
+                    .compiler
+                    .class(target)
+                    .native_methods
+                    .iter()
+                    .any(|(n, _)| n == name);
+            if is_static {
+                if safe || block.is_some() || block_arg.is_some() {
+                    panic!("safe-navigation or a block on a class-method call isn't supported yet (spike scope)");
+                }
+                return emit_class_method_call_on(cx, target, name, args, kwargs);
             }
-            return emit_class_method_call(cx, target_name, name, args, kwargs);
+        }
+    }
+
+    // A receiver STATICALLY TYPED as a class value (`x = Widget;
+    // x.new(...)` / `x.some_class_method` -- Phase 16.1): same Path 1
+    // dispatch a literal `Widget.` receiver gets, via the tracked
+    // `TyKind::ClassObj`. The receiver expression is still evaluated for
+    // side effects (a `let _ =` binding, like `is_a?`'s fold); anything
+    // not statically resolvable falls through to the dynamic path
+    // (`send_value`'s Class arm, including the registry constructor).
+    if let TyKind::ClassObj(target) = infer(cx, recv_id) {
+        if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
+            if name == "new" && !cx.compiler.class(target).is_module && !cx.compiler.class(target).is_builtin {
+                let recv_expr = emit_expr(cx, recv_id);
+                let ctor = emit_new(cx, &cx.compiler.fq_name(target), args);
+                return quote! { { let _ = #recv_expr; #ctor } };
+            }
+            if cx.compiler.class_method_in_chain(target, name).is_some() {
+                let recv_expr = emit_expr(cx, recv_id);
+                let call = emit_class_method_call_on(cx, target, name, args, kwargs);
+                return quote! { { let _ = #recv_expr; #call } };
+            }
         }
     }
 
@@ -1450,9 +1516,10 @@ fn emit_splat_call(
     let recv_obj_expr = match receiver {
         Some(recv_id) => {
             // Same "only an ACTUALLY-registered class/module" guard as
-            // `emit_call`'s own `ClassRef` interception -- see its docs.
-            if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-                if cx.resolve_class(target_name).is_some() {
+            // `emit_call`'s own constant-receiver interception -- see its
+            // docs.
+            if let Some(target_path) = super::expr::const_path_of(cx, recv_id) {
+                if cx.resolve_class(&target_path).is_some() {
                     panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
                 }
             }
@@ -1501,32 +1568,9 @@ fn emit_splat_call(
     }
 }
 
-/// `ClassName.foo(...)` -- looked up in the target's MRO-resolved
-/// `class_methods` (see `Compiler::class_method_in_chain`) and called as a
-/// plain Rust associated-function/free-function path (`Target::foo(...)`),
-/// never through `send`/the dynamic dispatch table at all (no runtime
-/// `Class`/`Module` value exists to dispatch through dynamically -- see the
-/// plan's Part 6 scope-cut). Only plain required parameters are supported
-/// (see `codegen::mod::emit_class_method_fn`'s matching rejection) -- kept
-/// deliberately narrow since call-site binding for optional/rest/keyword
-/// params would duplicate `params::emit_call_args`'s machinery for a
-/// second, self-less calling convention (`Target::method(...)` instead of
-/// `(recv).method(...)`) that class methods don't yet need.
-fn emit_class_method_call(
-    cx: &Ctx,
-    target_name: &str,
-    name: &str,
-    args: &[NodeId],
-    kwargs: &[HashPair],
-) -> TokenStream {
-    let target = cx
-        .resolve_class(target_name)
-        .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
-    emit_class_method_call_on(cx, target, name, args, kwargs)
-}
-
-/// The shared core behind `emit_class_method_call` (`ClassName.foo(...)`,
-/// `target` resolved from a literal constant name) AND an implicit-self call
+/// The shared core behind `ClassName.foo(...)` (`emit_call`'s
+/// constant-receiver interception, `target` resolved from the literal
+/// path) AND an implicit-self call
 /// made FROM WITHIN another class method's own body (`emit_call`'s
 /// no-receiver branch, `target` already known as `cx.defining_class` --
 /// no name to look up at all). Same "plain required parameters only, no
@@ -1593,7 +1637,7 @@ fn emit_class_method_call_on(
             args.len()
         );
     }
-    let target_ident = safe_ident(target_name);
+    let target_ident = super::ident::class_ident(cx.compiler, target);
     let method_ident = safe_ident(name);
     let arg_exprs = args.iter().map(|&a| {
         let e = emit_expr(cx, a);
@@ -1732,9 +1776,9 @@ fn dispatch(
     // otherwise falls back to a runtime `spinel_rt::is_a` check against the
     // receiver's actual runtime `class_id()`.
     if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
-        if let HirNode::ClassRef(target_name) = &cx.compiler.hir[args[0]] {
+        if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
             let target = cx
-                .resolve_class(target_name)
+                .resolve_class(&target_name)
                 .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
             let target_id = target.0;
             // `infer_any_class` (not `infer_class`): a statically-known
@@ -1767,6 +1811,52 @@ fn dispatch(
                         spinel_rt::ClassId(#target_id),
                     ))
                 },
+            };
+        }
+    }
+
+    // `instance_of?` against a literal class/module constant (Phase 16.1)
+    // -- EXACT class identity, not ancestry (`w.instance_of?(Object)` is
+    // false for a Widget); same static-fold-else-runtime shape as
+    // `is_a?`/`kind_of?` above. A non-constant argument falls through to
+    // the dynamic path (`send`/`send_value`'s Class-argument arms).
+    if no_kwargs && name == "instance_of?" && args.len() == 1 {
+        if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
+            let target = cx
+                .resolve_class(&target_name)
+                .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+            let target_id = target.0;
+            return match infer_any_class(cx, recv_id) {
+                Some(recv_class) => {
+                    let result = recv_class == target;
+                    quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Bool(#result) } }
+                }
+                None => quote! {
+                    spinel_rt::RubyValue::Bool(
+                        (#recv_expr).class_id() == spinel_rt::ClassId(#target_id),
+                    )
+                },
+            };
+        }
+    }
+
+    // `.class` -- universal (Phase 16.1), same override-respecting shape
+    // as `freeze`/`dup` below (`class` is an ordinary overridable method
+    // in real Ruby). Statically-known receivers fold to a Class literal
+    // (still evaluating the receiver for side effects); Poly receivers ask
+    // the value at runtime.
+    if no_kwargs && name == "class" && args.is_empty() && block.is_none() && block_arg.is_none() {
+        let user_defined = matches!(
+            infer(cx, recv_id),
+            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
+        );
+        if !user_defined {
+            return match infer_any_class(cx, recv_id) {
+                Some(cid) => {
+                    let id = cid.0;
+                    quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) } }
+                }
+                None => quote! { spinel_rt::RubyValue::Class((#recv_expr).class_id()) },
             };
         }
     }
@@ -1862,6 +1952,38 @@ fn dispatch(
                         quote! { spinel_rt::RubyValue::Bool((#recv_expr).is_frozen()) }
                     }
                 }
+            };
+        }
+    }
+
+    // `.dup`/`.clone` -- universal `Kernel` methods (Phase 15.2), same
+    // override-respecting shape as `freeze`/`frozen?` above (they're
+    // ordinary overridable `Kernel` methods in real Ruby). The single
+    // semantic difference between the two -- `clone` copies the frozen
+    // flag, `dup` doesn't -- is the `copy_frozen` flag threaded to
+    // `RubyObject::dup_object` (statically-known Object receiver, a bare
+    // `Arc<Concrete>`) or `RubyValue::dup_value` (builtins and Poly).
+    // `clone(freeze: false)` keyword form: not supported (kwargs fall
+    // through to the ordinary rejection paths).
+    if no_kwargs && (name == "dup" || name == "clone") && args.is_empty() {
+        let user_defined = matches!(
+            infer(cx, recv_id),
+            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
+        );
+        if !user_defined {
+            let copy_frozen = name == "clone";
+            return match infer(cx, recv_id) {
+                TyKind::Object(_) => {
+                    // Boxed result, like `freeze`'s -- the copy's static
+                    // class is knowable, but `dup` results flow into
+                    // Poly-typed positions downstream (see `types.rs`).
+                    quote! {
+                        spinel_rt::RubyValue::Object(
+                            spinel_rt::RubyObject::dup_object(&*(#recv_expr), #copy_frozen),
+                        )
+                    }
+                }
+                _ => quote! { (#recv_expr).dup_value(#copy_frozen) },
             };
         }
     }
@@ -2522,6 +2644,12 @@ fn dispatch(
             | TyKind::Range
             | TyKind::Regexp
             | TyKind::MatchData
+            // A class VALUE receiver (Phase 16.1) whose method isn't a
+            // statically-defined class method (that case returned above):
+            // `send_value`'s Class arm handles the reflection set
+            // (`name`/`ancestors`/`==`/the registry constructor), and an
+            // unknown name is a real runtime NoMethodError "for class X".
+            | TyKind::ClassObj(_)
     ) {
         if !kwargs.is_empty() {
             panic!(

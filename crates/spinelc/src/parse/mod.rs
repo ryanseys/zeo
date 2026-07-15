@@ -228,6 +228,31 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(cr.name().as_slice()).into_owned())
 }
 
+/// A constant PATH wherever a class/module is being NAMED (Phase 15.3):
+/// definitions (`class Store::Item`), superclasses, include/extend/prepend
+/// targets, `.new` receivers, `rescue` lists, and pattern constants.
+/// Produces the joined `"A::B::C"` form `Compiler::resolve_class` takes
+/// apart again; a top-level-anchored `::Foo` keeps its leading `::` (the
+/// anchor skips the lexical chain at resolution time). A dynamic parent
+/// (`something::Foo` where `something` isn't itself a constant) stays a
+/// clean rejection.
+fn constant_path_name(node: &Node<'_>) -> PResult<String> {
+    if node.as_constant_read_node().is_some() {
+        return constant_name(node);
+    }
+    let cp = node
+        .as_constant_path_node()
+        .ok_or("expected a constant name or path (e.g. `Foo` or `Foo::Bar`)")?;
+    let name = cp
+        .name()
+        .ok_or("a `::` constant path with a dynamic/computed name isn't supported (spike scope)")?;
+    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+    Ok(match cp.parent() {
+        None => format!("::{name}"),
+        Some(p) => format!("{}::{}", constant_path_name(&p)?, name),
+    })
+}
+
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
@@ -239,14 +264,14 @@ fn alias_target_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(sym.unescaped()).into_owned())
 }
 
-/// `Foo::BAR` (`ConstantPathNode`) -- resolves to `(scope, name)` for a
-/// `HirNode::ConstWrite`/`QualifiedConstRead`'s fields. Only a single level
-/// of explicit namespacing is supported (`parent`, if present, must itself
-/// be a plain `Foo` -- matching this spike's flat, non-nested class/module
-/// model, same restriction `constant_name` already enforces elsewhere);
-/// `::Foo` (no `parent` at all -- an explicit top-level anchor) resolves
-/// against `Object` directly, mirroring real Ruby's own representation of
-/// top-level constants as living on `Object`.
+/// `Foo::BAR` / `Foo::Bar::BAZ` (`ConstantPathNode`) -- resolves to
+/// `(scope path, name)` for a `HirNode::ConstWrite`/`QualifiedConstRead`'s
+/// fields: the LAST segment is the constant being read/written, everything
+/// before it is the owning class/module path (multi-segment since Phase
+/// 15.3, resolved by `Compiler::resolve_class`). `::FOO` (no `parent` at
+/// all -- an explicit top-level anchor) resolves against `Object` directly,
+/// mirroring real Ruby's own representation of top-level constants as
+/// living on `Object`.
 fn constant_path_scope_and_name(node: &ruby_prism::ConstantPathNode<'_>) -> PResult<(String, String)> {
     let name = node
         .name()
@@ -254,7 +279,7 @@ fn constant_path_scope_and_name(node: &ruby_prism::ConstantPathNode<'_>) -> PRes
     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
     let scope = match node.parent() {
         None => "Object".to_string(),
-        Some(p) => constant_name(&p)?,
+        Some(p) => constant_path_name(&p)?,
     };
     Ok((scope, name))
 }
@@ -1039,23 +1064,26 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .map(|n| lower_node(result, hir, &n))
                 .collect::<PResult<Vec<_>>>()?,
         };
-        return Ok(hir.push(HirNode::SuperCall { args }));
+        return Ok(hir.push(HirNode::SuperCall { args, zsuper: false }));
     }
 
     // Bare `super` (no parens) -- a distinct prism node from `super(...)`
-    // since it forwards the enclosing method's arguments implicitly. None of
-    // the spike's examples pass args through a bare `super`, so it lowers to
-    // the same `SuperCall { args: [] }` shape; forwarding real arguments is
-    // deferred (see docs/PORTING_ANALYSIS.md).
+    // since it forwards the enclosing method's arguments implicitly (as
+    // currently bound, including reassignments -- oracle-verified). The
+    // `zsuper` flag carries that distinction to codegen's
+    // `emit_super_arg_bindings`; see `HirNode::SuperCall`'s docs.
     if node.as_forwarding_super_node().is_some() {
-        return Ok(hir.push(HirNode::SuperCall { args: Vec::new() }));
+        return Ok(hir.push(HirNode::SuperCall {
+            args: Vec::new(),
+            zsuper: true,
+        }));
     }
 
     if let Some(class) = node.as_class_node() {
-        let name = constant_name(&class.constant_path())?;
+        let name = constant_path_name(&class.constant_path())?;
         let superclass = match class.superclass() {
             None => None,
-            Some(sc) => Some(constant_name(&sc)?),
+            Some(sc) => Some(constant_path_name(&sc)?),
         };
         let body = lower_class_body(result, hir, class.body())?;
         return Ok(hir.push(HirNode::ClassDef {
@@ -1072,7 +1100,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // today's existing top-level-only class restriction) -- `constant_name`
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
-        let name = constant_name(&module.constant_path())?;
+        let name = constant_path_name(&module.constant_path())?;
         let body = lower_class_body(result, hir, module.body())?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
@@ -1149,8 +1177,16 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // `ClassRef(name)`) and are intercepted by
         // `codegen::call::emit_call`'s builtin-constructor dispatch.
         if name == "new" {
-            if let Some(recv) = call.receiver() {
-                let class_name = constant_name(&recv)?;
+            if let Some(recv) = call
+                .receiver()
+                // Only a LITERAL constant/path receiver is a static `New`;
+                // any other receiver (`x.new` on a local holding a class
+                // value -- Phase 16.1) falls through to the generic `Call`
+                // lowering and dispatches via `TyKind::ClassObj`/the
+                // runtime constructor.
+                .filter(|r| r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some())
+            {
+                let class_name = constant_path_name(&recv)?;
                 if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor") {
                     let args = match call.arguments() {
                         None => Vec::new(),
@@ -1878,7 +1914,7 @@ fn lower_class_body_statement(
                     if !arg_list.is_empty() {
                         let names = arg_list
                             .iter()
-                            .map(constant_name)
+                            .map(constant_path_name)
                             .collect::<PResult<Vec<_>>>()?;
                         out.extend(names.into_iter().map(|n| {
                             hir.push(match name.as_str() {
@@ -2294,7 +2330,7 @@ fn lower_begin(result: &ParseResult, hir: &mut Hir, begin: &ruby_prism::BeginNod
         let classes = r
             .exceptions()
             .iter()
-            .map(|n| constant_name(&n))
+            .map(|n| constant_path_name(&n))
             .collect::<PResult<Vec<_>>>()?;
         let binding = match r.reference() {
             None => None,
@@ -2404,7 +2440,7 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
         return Ok(Pattern::Pin(expr));
     }
     if let Some(arr) = node.as_array_pattern_node() {
-        let constant = arr.constant().map(|c| constant_name(&c)).transpose()?;
+        let constant = arr.constant().map(|c| constant_path_name(&c)).transpose()?;
         let pre = arr
             .requireds()
             .iter()
@@ -2419,7 +2455,7 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
         return Ok(Pattern::Array { constant, pre, rest, post });
     }
     if let Some(find) = node.as_find_pattern_node() {
-        let constant = find.constant().map(|c| constant_name(&c)).transpose()?;
+        let constant = find.constant().map(|c| constant_path_name(&c)).transpose()?;
         // `left()` is already typed as `SplatNode` by `ruby-prism`; `right()`
         // (asymmetrically) comes back as a generic `Node` that must still be
         // cast -- confirmed against the actual generated bindings, not
@@ -2439,7 +2475,7 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
         });
     }
     if let Some(hp) = node.as_hash_pattern_node() {
-        let constant = hp.constant().map(|c| constant_name(&c)).transpose()?;
+        let constant = hp.constant().map(|c| constant_path_name(&c)).transpose()?;
         let mut pairs = Vec::new();
         for el in hp.elements().iter() {
             let assoc = el
@@ -2476,12 +2512,16 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
             exclusive: range.is_exclude_end(),
         });
     }
-    // A bare constant with no capture (`in Integer`, `in SomeClass`) -- an
-    // `is_a?`-style check, resolved (built-in tag vs. user-class ancestry)
-    // entirely in `codegen::patterns::emit_class_check`.
+    // A bare constant with no capture (`in Integer`, `in SomeClass`, or a
+    // qualified `in Store::Item` -- Phase 15.3) -- an `is_a?`-style check,
+    // resolved (built-in tag vs. user-class ancestry) entirely in
+    // `codegen::patterns::emit_class_check`.
     if let Some(c) = node.as_constant_read_node() {
         let name = String::from_utf8_lossy(c.name().as_slice()).into_owned();
         return Ok(Pattern::ClassCheck(name));
+    }
+    if node.as_constant_path_node().is_some() {
+        return Ok(Pattern::ClassCheck(constant_path_name(node)?));
     }
     // Fallback: an ordinary expression (literal or otherwise), matched via
     // `rb_eq` -- see `Pattern::Value`'s docs. Lowering this through the

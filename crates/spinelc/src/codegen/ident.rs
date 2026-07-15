@@ -121,14 +121,24 @@ fn escape_special_suffix(name: &str) -> Option<String> {
 /// The Rust identifier for a class/module's generated struct/`mod`/`impl`
 /// -- the ONE place a resolved `ClassId` becomes a Rust name (Phase 15.1;
 /// previously ~11 call sites each derived it from `ClassInfo.name`
-/// independently). Today it is exactly `safe_ident(name)`; Phase 15.3
-/// (nested definitions) and Phase 18 (per-box classes) give it real work:
-/// distinct classes sharing one Ruby-visible NAME need mangled,
-/// collision-free RUST names, and this is the single choke point that
-/// decides them.
+/// independently). A top-level class keeps the plain `safe_ident(name)`
+/// (generated code for flat programs stays byte-identical); a NESTED class
+/// (Phase 15.3) mangles to `__c<id>_<leaf>` -- the `ClassId` makes it
+/// collision-free by construction (two `Widget`s in different namespaces,
+/// or a namespace path whose `_`-join would be ambiguous, can never
+/// collide), the leaf keeps it readable, and the `__` prefix can't collide
+/// with any top-level class (Ruby constants start with an uppercase
+/// letter). Phase 18 adds the box dimension here the same way.
 pub(super) fn class_ident(
     compiler: &crate::compiler::Compiler,
     cid: crate::compiler::ClassId,
 ) -> proc_macro2::Ident {
-    safe_ident(&compiler.class(cid).name)
+    let ci = compiler.class(cid);
+    if ci.lexical_parent.is_some() {
+        return proc_macro2::Ident::new(
+            &format!("__c{}_{}", cid.0, ci.name),
+            proc_macro2::Span::call_site(),
+        );
+    }
+    safe_ident(&ci.name)
 }

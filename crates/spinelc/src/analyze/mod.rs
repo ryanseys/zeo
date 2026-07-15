@@ -49,7 +49,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             let body = body.clone();
             let is_module = *is_module;
             let before = compiler.classes.len();
-            register_class(&mut compiler, name, superclass, is_module, &body)?;
+            register_class(&mut compiler, name, superclass, is_module, &body, &[])?;
             // Exception-prelude classes are BOOTSTRAP: the "defined before
             // any user program runs" set every `Ruby::Box` sees (see
             // `Compiler::resolve_class`'s fallback and `Hir::prelude_len`).
@@ -70,7 +70,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     // resolution already enforces). See `mro`'s module docs.
     mro::materialize(&mut compiler, &main_statements)?;
 
-    let main_local_types = locals::infer_locals(&compiler, &main_statements);
+    let main_local_types = locals::infer_locals(&compiler, None, &main_statements);
 
     Ok(Analyzed {
         compiler,
@@ -79,47 +79,119 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     })
 }
 
+/// Registers one `class`/`module` definition (or REOPENING -- Phase 15.2)
+/// into the `Compiler`, recursively descending nested `ClassDef`s (Phase
+/// 15.3). `cref` is the ENCLOSING lexical chain (outermost first,
+/// `Compiler::cref_of`'s order) -- empty at the top level -- used to
+/// resolve the qualified-form prefix, the superclass, and
+/// include/extend/prepend targets, exactly as real Ruby resolves each of
+/// those in the scope ENCLOSING the definition.
+///
+/// `name` may be a qualified path (`"Store::Item"` -- the `class
+/// Store::Item ... end` form): the prefix must already resolve (real
+/// Ruby's own NameError posture), the leaf registers under it as
+/// namespace parent, and the class is marked `qualified_def` so its cref
+/// is just itself (see `ClassInfo::qualified_def`'s docs). A leading `::`
+/// anchors the definition at the top level from any nesting depth.
 fn register_class(
     compiler: &mut Compiler,
     name: String,
     superclass: Option<String>,
     is_module: bool,
     body: &[NodeId],
+    cref: &[ClassId],
 ) -> Result<(), String> {
+    let (lexical_parent, leaf, qualified_def) = match name.strip_prefix("::") {
+        Some(rest) if !rest.contains("::") => (None, rest.to_string(), true),
+        _ => match name.rsplit_once("::") {
+            Some((prefix, leaf)) => {
+                let parent = compiler.resolve_class(prefix, cref, 0).ok_or_else(|| {
+                    format!(
+                        "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
+                    )
+                })?;
+                (Some(parent), leaf.to_string(), true)
+            }
+            None => (cref.last().copied(), name.clone(), false),
+        },
+    };
     // A built-in placeholder (`Integer`/`Array`/etc. -- see
-    // `compiler::BUILTIN_CLASSES`) has no generated Rust struct to reopen or
-    // add methods onto; a real user class sharing its name would silently
-    // shadow it in `resolve_class` (which always resolves the FIRST match)
-    // without actually being reachable through any of the ordinary
-    // is_a?/dispatch machinery. Reject cleanly here rather than let this
-    // surface later as a confusing generated-`rustc`-compile failure or
-    // silently-wrong dispatch.
-    if let Some(existing) = compiler.resolve_class(&name, &[], 0) {
-        if compiler.class(existing).is_builtin {
+    // `spinel_abi::BUILTINS`) has no generated Rust struct to reopen or
+    // add methods onto; reopening one is Phase 16.3's job. Reject cleanly
+    // here rather than let this surface later as a confusing
+    // generated-`rustc`-compile failure or silently-wrong dispatch. Only a
+    // TOP-LEVEL name can collide: `module Store; class String; end; end`
+    // defines a fresh, unrelated `Store::String` (real Ruby's rule), which
+    // then lexically shadows the builtin inside `Store` -- also real
+    // Ruby's rule, falling out of `resolve_class`'s scope walk.
+    let existing = compiler.class_in_scope(lexical_parent, &leaf, 0);
+    if let Some(cid) = existing {
+        if compiler.class(cid).is_builtin {
             return Err(format!(
                 "reopening/redefining the built-in class `{name}` isn't supported yet (spike scope)"
             ));
         }
     }
-    let parent = if is_module {
-        None
-    } else {
-        Some(match &superclass {
-            None => OBJECT_CLASS,
-            Some(s) => {
-                let cid = compiler.resolve_class(s, &[], 0).ok_or_else(|| {
+    let class_id = match existing {
+        // REOPENING (Phase 15.2, replacing the old silent-no-op duplicate
+        // registration): a second `class Foo`/`module Foo` MERGES into the
+        // existing `ClassInfo` -- the body loop below appends
+        // includes/body-statements and registers methods with real Ruby's
+        // last-`def`-wins rule (see the method arm). Guards mirror CRuby's
+        // own (all oracle-verified): the definition KIND must match
+        // (`TypeError: Foo is not a module`), and a superclass clause, if
+        // written at all, must resolve to the original parent
+        // (`TypeError: superclass mismatch for class Foo`).
+        Some(cid) => {
+            if compiler.class(cid).is_module != is_module {
+                return Err(format!(
+                    "{name} is not a {}",
+                    if is_module { "module" } else { "class" }
+                ));
+            }
+            if let Some(s) = &superclass {
+                let want = compiler.resolve_class(s, cref, 0).ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
-                if compiler.class(cid).is_builtin {
-                    return Err(format!(
-                        "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
-                    ));
+                if compiler.class(cid).parent != Some(want) {
+                    return Err(format!("superclass mismatch for class {name}"));
                 }
-                cid
             }
-        })
+            cid
+        }
+        None => {
+            let parent = if is_module {
+                None
+            } else {
+                Some(match &superclass {
+                    None => OBJECT_CLASS,
+                    // Resolved in the ENCLOSING scope (`cref`, not the
+                    // class being opened): real Ruby evaluates the
+                    // superclass expression before the new class exists.
+                    Some(s) => {
+                        let cid = compiler.resolve_class(s, cref, 0).ok_or_else(|| {
+                            format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                        })?;
+                        if compiler.class(cid).is_builtin {
+                            return Err(format!(
+                                "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
+                            ));
+                        }
+                        cid
+                    }
+                })
+            };
+            let cid = compiler.add_class(leaf, parent, is_module);
+            compiler.classes[cid.0 as usize].lexical_parent = lexical_parent;
+            compiler.classes[cid.0 as usize].qualified_def = qualified_def;
+            cid
+        }
     };
-    let class_id = compiler.add_class(name, parent, is_module);
+    // The chain this class's OWN body resolves names against -- what nested
+    // definitions and include/extend/prepend targets see. Derived from the
+    // registered class (not `cref` + push) so a qualified-def class
+    // correctly contributes a cut chain.
+    let child_cref = compiler.cref_of(Some(class_id));
 
     for &stmt in body {
         match &compiler.hir[stmt] {
@@ -138,24 +210,33 @@ fn register_class(
                     *visibility,
                 );
                 let sid = register_method(compiler, class_id, class_id, name, params, body, visibility)?;
-                if is_class_method {
-                    compiler.classes[class_id.0 as usize]
-                        .own_class_methods
-                        .push(sid);
-                } else {
-                    compiler.classes[class_id.0 as usize].own_methods.push(sid);
-                }
+                add_own_method(compiler, class_id, sid, is_class_method);
+            }
+            // A nested `class`/`module` definition (Phase 15.3) --
+            // registered recursively under this class's own cref; the
+            // `ClassDef` node itself never lands in `class_body_stmts`
+            // (nested classes are ordinary `ClassInfo`s emitted from the
+            // global class list, not statements to re-execute).
+            HirNode::ClassDef {
+                name,
+                superclass,
+                body,
+                is_module,
+            } => {
+                let (name, superclass, body, is_module) =
+                    (name.clone(), superclass.clone(), body.clone(), *is_module);
+                register_class(compiler, name, superclass, is_module, &body, &child_cref)?;
             }
             HirNode::Include(m) => {
-                let target = resolve_module_target(compiler, m)?;
+                let target = resolve_module_target(compiler, m, &child_cref)?;
                 compiler.classes[class_id.0 as usize].includes.push(target);
             }
             HirNode::Extend(m) => {
-                let target = resolve_module_target(compiler, m)?;
+                let target = resolve_module_target(compiler, m, &child_cref)?;
                 compiler.classes[class_id.0 as usize].extends.push(target);
             }
             HirNode::Prepend(m) => {
-                let target = resolve_module_target(compiler, m)?;
+                let target = resolve_module_target(compiler, m, &child_cref)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
             }
             HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
@@ -188,9 +269,32 @@ fn register_class(
     Ok(())
 }
 
-fn resolve_module_target(compiler: &Compiler, name: &str) -> Result<ClassId, String> {
+/// Files one registered method `Scope` under its class's own-method list --
+/// REPLACING any earlier same-name entry rather than appending a shadowed
+/// duplicate: real Ruby's last-`def`-wins rule (oracle-verified), which
+/// applies identically to a redefinition within one class body and to one
+/// arriving via reopening (`method_in_chain` resolves the FIRST name match,
+/// so append-only registration would silently keep dispatching the OLD
+/// body). Instance and class methods are separate namespaces, hence the
+/// separate lists.
+fn add_own_method(compiler: &mut Compiler, class_id: ClassId, sid: crate::compiler::ScopeId, is_class_method: bool) {
+    let mname = compiler.scope(sid).name.clone();
+    let ci = &compiler.classes[class_id.0 as usize];
+    let list = if is_class_method { &ci.own_class_methods } else { &ci.own_methods };
+    let replaced = list
+        .iter()
+        .position(|&s| compiler.scope(s).name == mname);
+    let ci = &mut compiler.classes[class_id.0 as usize];
+    let list = if is_class_method { &mut ci.own_class_methods } else { &mut ci.own_methods };
+    match replaced {
+        Some(i) => list[i] = sid,
+        None => list.push(sid),
+    }
+}
+
+fn resolve_module_target(compiler: &Compiler, name: &str, cref: &[ClassId]) -> Result<ClassId, String> {
     compiler
-        .resolve_class(name, &[], 0)
+        .resolve_class(name, cref, 0)
         .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
 }
 
@@ -215,9 +319,9 @@ fn register_method(
     body: Vec<NodeId>,
     visibility: Visibility,
 ) -> Result<crate::compiler::ScopeId, String> {
-    let mut local_types = locals::infer_locals(compiler, &body);
+    let mut local_types = locals::infer_locals(compiler, Some(defining_class), &body);
     for id in params.default_ids() {
-        locals::track_extra(compiler, &mut local_types, id);
+        locals::track_extra(compiler, Some(defining_class), &mut local_types, id);
     }
     if let Some(Some(n)) = &params.rest {
         local_types.entry(n.clone()).or_insert(TyKind::Array);
@@ -344,7 +448,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
             }
             found
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } | HirNode::Raise(args) => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } | HirNode::Raise(args) => {
             let mut found = false;
             for &a in args {
                 found |= scan_bare_block_use(hir, a)?;
@@ -643,7 +747,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, a, out);
             }
         }
-        HirNode::SuperCall { args } => {
+        HirNode::SuperCall { args, .. } => {
             for &a in args {
                 collect_ivars(hir, a, out);
             }
@@ -787,5 +891,286 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::NativeCrate(_)
         | HirNode::NativeFunc { .. } => {}
         HirNode::ClassDef { .. } | HirNode::DefMethod { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(super) fn analyze_src(src: &str) -> Analyzed {
+        let (hir, root) = crate::parse::parse_and_lower(src).expect("parse");
+        analyze(hir, root).expect("analyze")
+    }
+
+    pub(super) fn analyze_err(src: &str) -> String {
+        let (hir, root) = crate::parse::parse_and_lower(src).expect("parse");
+        match analyze(hir, root) {
+            Ok(_) => panic!("expected an analyze error"),
+            Err(e) => e,
+        }
+    }
+
+    pub(super) fn class_named(a: &Analyzed, name: &str) -> ClassId {
+        a.compiler
+            .resolve_class(name, &[], 0)
+            .unwrap_or_else(|| panic!("class `{name}` not registered"))
+    }
+
+    /// Phase 15.2: reopening merges into ONE `ClassInfo` (the pre-15.2
+    /// behavior pushed a shadowed duplicate whose members never dispatched).
+    #[test]
+    fn reopening_merges_into_the_existing_class() {
+        let a = analyze_src(
+            "class Foo\n  def a\n    1\n  end\nend\nclass Foo\n  def b\n    2\n  end\nend\n",
+        );
+
+        let dupes = a
+            .compiler
+            .classes
+            .iter()
+            .filter(|c| c.name == "Foo")
+            .count();
+        assert_eq!(dupes, 1, "one merged registration, not a shadowed pair");
+
+        let ci = a.compiler.class(class_named(&a, "Foo"));
+        let mut names: Vec<&str> = ci
+            .own_methods
+            .iter()
+            .map(|&s| a.compiler.scope(s).name.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, ["a", "b"]);
+    }
+
+    /// Real Ruby's last-`def`-wins rule (oracle-verified), across reopen
+    /// AND within a single class body: the retained scope must be the
+    /// LATER definition, distinguishable here by its parameter shape.
+    #[test]
+    fn redefinition_keeps_the_later_body() {
+        for src in [
+            // Across a reopen...
+            "class Foo\n  def a\n    1\n  end\nend\nclass Foo\n  def a(x)\n    x\n  end\nend\n",
+            // ...and within one body.
+            "class Foo\n  def a\n    1\n  end\n  def a(x)\n    x\n  end\nend\n",
+        ] {
+            let a = analyze_src(src);
+            let ci = a.compiler.class(class_named(&a, "Foo"));
+            let sids: Vec<_> = ci
+                .own_methods
+                .iter()
+                .filter(|&&s| a.compiler.scope(s).name == "a")
+                .collect();
+            assert_eq!(sids.len(), 1, "no shadowed duplicate entry");
+            assert_eq!(
+                a.compiler.scope(*sids[0]).params.required.len(),
+                1,
+                "the LATER def (the one taking a param) won"
+            );
+        }
+    }
+
+    /// Instance and class methods are separate namespaces: a class method
+    /// must never replace a same-named instance method.
+    #[test]
+    fn class_and_instance_methods_do_not_replace_each_other() {
+        let a = analyze_src(
+            "class Foo\n  def a\n    1\n  end\n  def self.a\n    2\n  end\nend\n",
+        );
+        let ci = a.compiler.class(class_named(&a, "Foo"));
+        assert_eq!(ci.own_methods.len(), 1);
+        assert_eq!(ci.own_class_methods.len(), 1);
+    }
+
+    #[test]
+    fn reopening_appends_includes() {
+        let a = analyze_src(
+            "module M1\nend\nmodule M2\nend\nclass Foo\n  include M1\nend\nclass Foo\n  include M2\nend\n",
+        );
+        let ci = a.compiler.class(class_named(&a, "Foo"));
+        assert_eq!(ci.includes.len(), 2);
+    }
+
+    /// The reopen guards, each mirroring CRuby's own TypeError
+    /// (oracle-verified messages).
+    #[test]
+    fn reopen_guards_mirror_ruby_type_errors() {
+        assert!(analyze_err(
+            "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n"
+        )
+        .contains("superclass mismatch for class Sub"));
+
+        assert!(analyze_err("class Foo\nend\nmodule Foo\nend\n").contains("Foo is not a module"));
+        assert!(analyze_err("module Bar\nend\nclass Bar\nend\n").contains("Bar is not a class"));
+    }
+
+    /// A reopen may RESTATE the original superclass (real Ruby allows it).
+    #[test]
+    fn reopen_with_matching_superclass_is_allowed() {
+        let a = analyze_src(
+            "class Base\nend\nclass Sub < Base\nend\nclass Sub < Base\n  def ok\n    1\n  end\nend\n",
+        );
+        let ci = a.compiler.class(class_named(&a, "Sub"));
+        assert_eq!(ci.own_methods.len(), 1);
+    }
+
+    /// Builtins stay un-reopenable until Phase 16.3 (loud, not silent).
+    #[test]
+    fn reopening_a_builtin_is_still_rejected() {
+        assert!(analyze_err("class Integer\n  def double\n    self\n  end\nend\n")
+            .contains("isn't supported yet (spike scope)"));
+    }
+}
+
+#[cfg(test)]
+mod namespacing_tests {
+    use super::tests::{analyze_err, analyze_src, class_named};
+
+    /// Phase 15.3: nested definitions register with `lexical_parent`,
+    /// resolve scope-exactly, and display fully qualified.
+    #[test]
+    fn nested_definition_registers_under_its_namespace() {
+        let a = analyze_src(
+            "module Store\n  class Item\n    def price\n      1\n    end\n  end\nend\n",
+        );
+        let store = class_named(&a, "Store");
+        let item = a
+            .compiler
+            .resolve_class("Store::Item", &[], 0)
+            .expect("qualified path resolves");
+
+        assert_eq!(a.compiler.class(item).lexical_parent, Some(store));
+        assert_eq!(a.compiler.fq_name(item), "Store::Item");
+        assert_eq!(
+            a.compiler.resolve_class("Item", &[], 0),
+            None,
+            "a nested class is invisible at the top level by bare name"
+        );
+        assert_eq!(
+            a.compiler.resolve_class("Item", &[store], 0),
+            Some(item),
+            "...but resolves lexically from inside its namespace"
+        );
+    }
+
+    /// The two definition forms differ in CREF only: textual nesting sees
+    /// the enclosing scope, the qualified form does not (oracle-verified
+    /// NameError in real Ruby).
+    #[test]
+    fn qualified_definition_form_cuts_the_cref_chain() {
+        let a = analyze_src(
+            "module Store\n  class Inner\n  end\nend\nclass Store::Cart\nend\n",
+        );
+        let store = class_named(&a, "Store");
+        let inner = a.compiler.resolve_class("Store::Inner", &[], 0).unwrap();
+        let cart = a.compiler.resolve_class("Store::Cart", &[], 0).unwrap();
+
+        assert!(!a.compiler.class(inner).qualified_def);
+        assert_eq!(a.compiler.cref_of(Some(inner)), vec![store, inner]);
+
+        assert!(a.compiler.class(cart).qualified_def);
+        assert_eq!(
+            a.compiler.cref_of(Some(cart)),
+            vec![cart],
+            "the qualified form's body does not see `Store` lexically"
+        );
+        assert_eq!(a.compiler.fq_name(cart), "Store::Cart", "naming still qualifies");
+    }
+
+    #[test]
+    fn same_leaf_name_in_two_namespaces_stays_distinct() {
+        let a = analyze_src(
+            "module A1\n  class Widget\n  end\nend\nmodule B1\n  class Widget\n  end\nend\n",
+        );
+        let wa = a.compiler.resolve_class("A1::Widget", &[], 0).unwrap();
+        let wb = a.compiler.resolve_class("B1::Widget", &[], 0).unwrap();
+        assert_ne!(wa, wb);
+    }
+
+    /// Reopening composes with nesting (Phase 15.2 + 15.3): both the
+    /// textual and the qualified reopen merge into the one registration.
+    #[test]
+    fn nested_class_reopens_through_both_forms() {
+        let a = analyze_src(
+            "module Store\n  class Item\n    def a\n      1\n    end\n  end\nend\nmodule Store\n  class Item\n    def b\n      2\n    end\n  end\nend\nclass Store::Item\n  def c\n    3\n  end\nend\n",
+        );
+        let item = a.compiler.resolve_class("Store::Item", &[], 0).unwrap();
+        let count = a
+            .compiler
+            .classes
+            .iter()
+            .filter(|c| c.name == "Item")
+            .count();
+        assert_eq!(count, 1, "one merged registration across all three bodies");
+        assert_eq!(a.compiler.class(item).own_methods.len(), 3);
+    }
+
+    #[test]
+    fn qualified_definition_with_unknown_prefix_is_an_error() {
+        assert!(analyze_err("class Nowhere::Item\nend\n")
+            .contains("unknown class/module `Nowhere`"));
+    }
+
+    /// `module Store; class String; end; end` defines a fresh, unrelated
+    /// nested class (real Ruby) -- it shadows the builtin lexically inside
+    /// `Store` and nowhere else.
+    #[test]
+    fn a_nested_class_may_shadow_a_builtin_lexically() {
+        let a = analyze_src("module Store\n  class String\n  end\nend\n");
+        let store = class_named(&a, "Store");
+        let nested = a.compiler.resolve_class("Store::String", &[], 0).unwrap();
+
+        assert!(!a.compiler.class(nested).is_builtin);
+        assert_eq!(
+            a.compiler.resolve_class("String", &[], 0),
+            Some(crate::compiler::STRING_CLASS),
+            "top-level `String` is still the builtin"
+        );
+        assert_eq!(a.compiler.resolve_class("String", &[store], 0), Some(nested));
+    }
+
+    /// A leading `::` anchors a definition at the top level from any depth.
+    #[test]
+    fn top_anchored_definition_escapes_its_namespace() {
+        let a = analyze_src("module M\n  class ::Escaped\n  end\nend\n");
+        let escaped = class_named(&a, "Escaped");
+        assert_eq!(a.compiler.class(escaped).lexical_parent, None);
+        assert_eq!(a.compiler.fq_name(escaped), "Escaped");
+    }
+}
+
+#[cfg(test)]
+mod class_value_tests {
+    use super::tests::analyze_src;
+    use crate::compiler::{CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS};
+    use crate::types::TyKind;
+
+    /// Phase 16.1: a local assigned a bare class name is statically typed
+    /// as a class VALUE of that class -- what keeps `x.new`/class-method
+    /// calls through the variable on Path 1.
+    #[test]
+    fn a_class_assigned_to_a_local_types_as_class_obj() {
+        let a = analyze_src("class Widget\nend\nx = Widget\n");
+        let widget = a.compiler.resolve_class("Widget", &[], 0).unwrap();
+        assert_eq!(a.main_local_types.get("x"), Some(&TyKind::ClassObj(widget)));
+    }
+
+    /// `x.new` through the class-value-typed local types exactly like a
+    /// literal `Widget.new` (both emit the same unboxed construction).
+    #[test]
+    fn new_through_a_class_value_types_as_the_instance() {
+        let a = analyze_src("class Widget\nend\nx = Widget\ny = x.new\n");
+        let widget = a.compiler.resolve_class("Widget", &[], 0).unwrap();
+        assert_eq!(a.main_local_types.get("y"), Some(&TyKind::Object(widget)));
+    }
+
+    /// `Class < Module < Object` -- the special-cased parent seed, so
+    /// `Widget.is_a?(Module)` answers true through the ordinary ancestry
+    /// machinery.
+    #[test]
+    fn class_class_linearizes_under_module() {
+        let a = analyze_src("");
+        let ancestors = &a.compiler.class(CLASS_CLASS).ancestors;
+        assert_eq!(ancestors, &vec![CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS]);
     }
 }

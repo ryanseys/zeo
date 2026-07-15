@@ -209,7 +209,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::Seq(body) | HirNode::Eval(body) => body_contains_escaping_block(compiler, body),
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
@@ -371,7 +371,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::GlobalWrite(_, value) => node_contains_begin(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_begin(compiler, *value),
         HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_begin(compiler, *n)
@@ -634,7 +634,7 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps);
             }

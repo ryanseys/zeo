@@ -19,9 +19,10 @@ use std::collections::HashMap;
 /// what makes `5.is_a?(Integer)`-style checks work uniformly through the
 /// same `classes`/`ancestors` system as user classes.
 pub use spinel_abi::{
-    ClassId, ARRAY_CLASS, ENUMERABLE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, MUTEX_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
-    RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    ClassId, ARRAY_CLASS, CLASS_CLASS, ENUMERABLE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, OBJECT_CLASS, PROC_CLASS,
+    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    THREAD_CLASS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -37,11 +38,22 @@ pub struct ClassInfo {
     /// 15.1) so every consumer is already box-shaped -- see
     /// `Compiler::resolve_class`.
     pub box_id: u32,
-    /// The class/module this one is LEXICALLY nested inside (`class Item`
-    /// written within `class Store`'s body -> `Some(Store)`), or `None` for
-    /// a top-level definition. Always `None` until Phase 15.3 lands nested
-    /// definitions; part of `resolve_class`'s key from day one.
+    /// The class/module this one is namespace-nested inside (`class Item`
+    /// written within `class Store`'s body, or the qualified form `class
+    /// Store::Item` -> `Some(Store)`), or `None` for a top-level
+    /// definition. Drives both name resolution (`resolve_class`'s
+    /// scope-exact lookup) and fully-qualified display names (`fq_name`).
     pub lexical_parent: Option<ClassId>,
+    /// `true` when this class/module was defined via the QUALIFIED form
+    /// (`class Store::Item ... end`) rather than textual nesting -- real
+    /// Ruby gives that form a cref of just `[Item]` (its body does NOT see
+    /// `Store`'s constants lexically; oracle-verified NameError), so
+    /// `cref_of` cuts the chain here while `fq_name`/resolution keep the
+    /// `lexical_parent` link. One documented approximation: the flag is
+    /// per-CLASS, not per-body-occurrence, so a nested-form class REOPENED
+    /// via the qualified form (or vice versa) keeps its original cref for
+    /// all bodies.
+    pub qualified_def: bool,
     /// `true` for classes from the built-in exception prelude
     /// (`parse::EXCEPTION_PRELUDE`) -- together with `is_builtin`, the
     /// "defined before any user program runs" set that stays visible inside
@@ -201,6 +213,7 @@ impl Compiler {
                 name: "Object".to_string(),
                 box_id: 0,
                 lexical_parent: None,
+                qualified_def: false,
                 is_bootstrap: false,
                 parent: None,
                 prepends: Vec::new(),
@@ -224,8 +237,17 @@ impl Compiler {
         };
         for b in spinel_abi::BUILTINS {
             // A builtin MODULE (`Enumerable`) has no superclass and is never
-            // instantiated; every builtin CLASS sits under `Object`.
-            let parent = if b.is_module { None } else { Some(OBJECT_CLASS) };
+            // instantiated; every builtin CLASS sits under `Object` --
+            // except `Class`, whose superclass is `Module` in real Ruby
+            // (`Widget.is_a?(Module)` is true; Phase 16.1), giving its
+            // linearized ancestors the [Class, Module, Object] chain.
+            let parent = if b.is_module {
+                None
+            } else if b.id == CLASS_CLASS {
+                Some(MODULE_CLASS)
+            } else {
+                Some(OBJECT_CLASS)
+            };
             let id = compiler.add_class(b.name.to_string(), parent, b.is_module);
             debug_assert_eq!(
                 id, b.id,
@@ -245,20 +267,50 @@ impl Compiler {
     }
 
     /// THE name-resolution primitive (Phase 15.1) -- every "which class does
-    /// this name mean HERE" question goes through this one function, keyed
-    /// by the full resolution context real Ruby uses: the lexical cref chain
-    /// (innermost scope last; empty until Phase 15.3 lands nested
-    /// definitions), and the box the referencing code is defined in (always
-    /// `0` until Phase 18). Resolution order mirrors CRuby: the lexical
-    /// chain innermost-outward, then the box's own top level, then the
-    /// BOOTSTRAP set (builtins + the exception prelude -- the
-    /// "defined before any user program runs" classes every box sees; a
-    /// box's own definition of the same name shadows it, exactly like
-    /// CRuby's per-box constant overlay). First-registered wins within one
-    /// scope, same as the old flat `class_by_name` (reopening semantics --
-    /// Phase 15.2 -- attach to that first registration rather than adding
-    /// duplicates).
-    pub fn resolve_class(&self, name: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
+    /// this name/path mean HERE" question goes through this one function,
+    /// keyed by the full resolution context real Ruby uses: the lexical
+    /// cref chain (innermost scope LAST -- `cref_of`'s order), and the box
+    /// the referencing code is defined in (always `0` until Phase 18).
+    ///
+    /// `path` may be a multi-segment constant path (Phase 15.3):
+    /// `"Store::Errors::NotFound"` resolves its FIRST segment through the
+    /// full unqualified rule below, then descends the remaining segments as
+    /// direct namespace children only (no lexical/bootstrap fallback past
+    /// the first segment -- real Ruby's own `::` rule). A leading `::`
+    /// (`"::Foo"`) anchors the first segment at the top level, skipping the
+    /// cref chain.
+    ///
+    /// Unqualified rule, mirroring CRuby: the lexical chain
+    /// innermost-outward, then the box's own top level, then the BOOTSTRAP
+    /// set (builtins + the exception prelude -- the "defined before any
+    /// user program runs" classes every box sees; a box's own definition of
+    /// the same name shadows it, exactly like CRuby's per-box constant
+    /// overlay). First-registered wins within one scope, same as the old
+    /// flat `class_by_name` (reopening semantics -- Phase 15.2 -- attach to
+    /// that first registration rather than adding duplicates). One
+    /// documented approximation: the cref head's ANCESTORS are not searched
+    /// (real Ruby checks them between the lexical chain and the top level
+    /// -- a class nested inside a SUPERCLASS referenced by bare name from a
+    /// subclass misses here, loudly, rather than resolving wrong).
+    pub fn resolve_class(&self, path: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
+        let (path, anchored) = match path.strip_prefix("::") {
+            Some(rest) => (rest, true),
+            None => (path, false),
+        };
+        let mut segments = path.split("::");
+        let first = segments.next()?;
+        let mut cur = self.resolve_unqualified(first, if anchored { &[] } else { cref }, box_id)?;
+        for seg in segments {
+            // Descend within the resolved parent's OWN box (the parent may
+            // itself have resolved through the bootstrap fallback into box
+            // 0 even when `box_id` differs).
+            cur = self.class_in_scope(Some(cur), seg, self.class(cur).box_id)?;
+        }
+        Some(cur)
+    }
+
+    /// `resolve_class`'s single-segment core -- see its docs for the rule.
+    fn resolve_unqualified(&self, name: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
         for &scope in cref.iter().rev() {
             if let Some(cid) = self.class_in_scope(Some(scope), name, box_id) {
                 return Some(cid);
@@ -284,7 +336,11 @@ impl Compiler {
 
     /// First class/module named `name` defined directly inside
     /// `lexical_parent` (or at the top level for `None`) in `box_id`.
-    fn class_in_scope(
+    /// `pub(crate)` since Phase 15.3: `analyze::register_class`'s
+    /// reopening-detection must be SCOPE-EXACT (a nested `Store::Item` must
+    /// never be mistaken for a top-level `Item`, or vice versa), which the
+    /// lexical-fallback walk `resolve_class` does would get wrong.
+    pub(crate) fn class_in_scope(
         &self,
         lexical_parent: Option<ClassId>,
         name: &str,
@@ -296,6 +352,38 @@ impl Compiler {
             .map(|i| ClassId(i as u32))
     }
 
+    /// The lexical cref chain enclosing (and including) `defining`,
+    /// OUTERMOST FIRST -- exactly the `cref` argument `resolve_class`
+    /// takes. Walks `lexical_parent` links, stopping above a
+    /// `qualified_def` class (the `class Store::Item` form's body does not
+    /// see `Store` lexically -- see `ClassInfo::qualified_def`).
+    pub fn cref_of(&self, defining: Option<ClassId>) -> Vec<ClassId> {
+        let mut chain = Vec::new();
+        let mut cur = defining;
+        while let Some(cid) = cur {
+            chain.push(cid);
+            let ci = self.class(cid);
+            cur = if ci.qualified_def { None } else { ci.lexical_parent };
+        }
+        chain.reverse();
+        chain
+    }
+
+    /// The fully-qualified display name (`"Store::Errors::NotFound"`) --
+    /// joins the `lexical_parent` chain regardless of `qualified_def`
+    /// (naming is a namespace property, cref cutting is not). Used for
+    /// error messages wherever real Ruby prints the qualified path.
+    pub fn fq_name(&self, cid: ClassId) -> String {
+        let mut segments = vec![self.class(cid).name.clone()];
+        let mut cur = self.class(cid).lexical_parent;
+        while let Some(p) = cur {
+            segments.push(self.class(p).name.clone());
+            cur = self.class(p).lexical_parent;
+        }
+        segments.reverse();
+        segments.join("::")
+    }
+
     /// `parent: None` for a module (no superclass at all) or a fresh root;
     /// `Some(_)` for an ordinary class (`register_class` always resolves a
     /// concrete `Some(OBJECT_CLASS)` default when no `< Super` was
@@ -305,6 +393,7 @@ impl Compiler {
             name,
             box_id: 0,
             lexical_parent: None,
+            qualified_def: false,
             is_bootstrap: false,
             parent,
             prepends: Vec::new(),

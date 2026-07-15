@@ -237,6 +237,35 @@ impl Params {
         }
         ids
     }
+
+    /// Every NAME this `Params` binds in the method's scope (required,
+    /// optional, named rest/kwrest/block, post, keywords) -- what
+    /// `codegen::hoisting` consults so a REASSIGNED parameter is rebound
+    /// from its already-bound value (`let mut x = x;`) instead of shadowed
+    /// by the nil-defaulted hoisting declaration (Phase 15.2: pre-existing
+    /// silent wrongness surfaced by bare-`super` forwarding, where
+    /// `def f(name); name = name.upcase; super; end` must forward the
+    /// reassigned value).
+    pub fn bound_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.required.clone();
+        names.extend(self.optional.iter().map(|(n, _)| n.clone()));
+        if let Some(Some(n)) = &self.rest {
+            names.push(n.clone());
+        }
+        names.extend(self.post.iter().cloned());
+        for kw in &self.keywords {
+            match kw {
+                KeywordParam::Required(n) | KeywordParam::Optional(n, _) => names.push(n.clone()),
+            }
+        }
+        if let Some(Some(n)) = &self.keyword_rest {
+            names.push(n.clone());
+        }
+        if let Some(Some(n)) = &self.block {
+            names.push(n.clone());
+        }
+        names
+    }
 }
 
 /// One `key => value` / `key: value` pair inside a `{ }` literal.
@@ -787,8 +816,17 @@ pub enum HirNode {
     /// superclass, never through the dynamic dispatch table. See codegen's
     /// handling -- the spike implements this via statement inlining rather
     /// than a cross-type function call (see docs/PORTING_ANALYSIS.md).
+    ///
+    /// `zsuper` distinguishes real Ruby's two zero-written-argument shapes,
+    /// which mean OPPOSITE things: bare `super` (prism's
+    /// `ForwardingSuperNode`, `zsuper: true`) forwards the current method's
+    /// own parameters as currently bound, while `super()` (a `SuperNode`
+    /// with no arguments, `zsuper: false`) passes NO arguments at all, so
+    /// the parent's optionals take their defaults. `args` is always empty
+    /// when `zsuper` is true.
     SuperCall {
         args: Vec<NodeId>,
+        zsuper: bool,
     },
     Block {
         params: Params,

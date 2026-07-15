@@ -22,10 +22,11 @@
 //! parameters in real Ruby (`3.times { |i| ... }`'s `i` never leaks out,
 //! unlike `for`'s index variable), so those stay ordinary, freshly-scoped
 //! `let` bindings at their one `codegen::call`/`codegen::loops` emission
-//! site, untouched by this pass. A method's own parameters are similarly
-//! left alone (bound via the Rust function signature, not this prelude) --
-//! reassigning a parameter itself is a narrower, pre-existing gap this
-//! doesn't attempt to fix (nothing exercises it yet).
+//! site, untouched by this pass. A method's own parameters are bound via
+//! the Rust function signature/`params::emit_prologue`, not this prelude
+//! -- but a REASSIGNED parameter is rebound here from that existing value
+//! rather than nil-shadowed (Phase 15.2; see
+//! `emit_hoisted_body_with_extra_roots`'s `param_names` docs).
 
 use super::ident::safe_ident;
 use super::stmt::emit_body;
@@ -286,7 +287,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *b, out);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             for &a in args {
                 collect_locals(compiler, a, out);
             }
@@ -436,7 +437,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
 /// enclosing scope's locals -- re-hoisting there would just reintroduce the
 /// same shadowing bug this exists to fix, one level down).
 pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
-    emit_hoisted_body_with_extra_roots(cx, body, &[], wrap_ok)
+    emit_hoisted_body_with_extra_roots(cx, body, &[], &[], wrap_ok)
 }
 
 /// Same as `emit_hoisted_body`, but additionally scans `extra_roots` (a
@@ -445,10 +446,22 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
 /// codegen still happens separately, inside `codegen::params::emit_prologue`
 /// -- `extra_roots` here only feeds the NAME-COLLECTION pass, so a local a
 /// default assigns (e.g. `def f(x: (y = 1; y))`) gets hoisted correctly too.
+///
+/// `param_names` (the method's own `Params::bound_names()`) marks names
+/// that are ALREADY BOUND when this prelude runs -- via the Rust function
+/// signature, `params::emit_prologue`, or a `super` splice's argument
+/// bindings. An assigned name that's also a parameter is REBOUND from that
+/// existing value (`let mut x = x;` / a cell seeded with `x`) instead of
+/// nil-defaulted -- the nil default would SHADOW the parameter, making
+/// `def f(name); name = name.upcase; ...` read `nil` (Phase 15.2,
+/// retiring the module docs' old "reassigning a parameter" gap). A
+/// never-assigned parameter isn't collected at all and keeps its plain
+/// signature binding.
 pub fn emit_hoisted_body_with_extra_roots(
     cx: &Ctx,
     body: &[NodeId],
     extra_roots: &[NodeId],
+    param_names: &[String],
     wrap_ok: bool,
 ) -> TokenStream {
     let mut names = Vec::new();
@@ -460,15 +473,24 @@ pub fn emit_hoisted_body_with_extra_roots(
     }
     let decls = names.iter().filter_map(|n| {
         let ident = safe_ident(n);
+        let is_param = param_names.iter().any(|p| p == n);
         match local_storage(cx, n) {
             // `#[allow(unused_assignments)]`: the `Nil` default is
             // frequently overwritten before ever being read (e.g. a local's
             // very first assignment happens unconditionally right after
             // this) -- that's the intended, Ruby-faithful shape, not a
             // mistake to warn about.
+            LocalStorage::Hoisted if is_param => Some(quote! {
+                #[allow(unused_assignments)]
+                let mut #ident: spinel_rt::RubyValue = #ident;
+            }),
             LocalStorage::Hoisted => Some(quote! {
                 #[allow(unused_assignments)]
                 let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+            }),
+            LocalStorage::Captured if is_param => Some(quote! {
+                let #ident: std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                    std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(#ident));
             }),
             LocalStorage::Captured => Some(quote! {
                 let #ident: std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =

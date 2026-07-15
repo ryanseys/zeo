@@ -15,15 +15,15 @@
 //! Loops (Phase 4) will reuse the same join, treating "loop body ran zero
 //! times" as one more branch to agree with.
 
-use crate::compiler::Compiler;
+use crate::compiler::{ClassId, Compiler};
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::{infer_type_with_locals, TyKind};
 use std::collections::{HashMap, HashSet};
 
-pub fn infer_locals(compiler: &Compiler, body: &[NodeId]) -> HashMap<String, TyKind> {
+pub fn infer_locals(compiler: &Compiler, defining: Option<ClassId>, body: &[NodeId]) -> HashMap<String, TyKind> {
     let mut locals = HashMap::new();
     for &stmt in body {
-        track_node(compiler, &mut locals, stmt);
+        track_node(compiler, defining, &mut locals, stmt);
     }
     locals
 }
@@ -33,8 +33,8 @@ pub fn infer_locals(compiler: &Compiler, body: &[NodeId]) -> HashMap<String, TyK
 /// `hir::Params`'s docs: a default can reference/assign a
 /// local exactly like an ordinary body statement can, and `infer_locals`
 /// alone never sees it (defaults aren't part of `body`).
-pub fn track_extra(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: NodeId) {
-    track_node(compiler, locals, id);
+pub fn track_extra(compiler: &Compiler, defining: Option<ClassId>, locals: &mut HashMap<String, TyKind>, id: NodeId) {
+    track_node(compiler, defining, locals, id);
 }
 
 /// Recurses into every sub-expression position a `LocalWrite` could appear
@@ -42,7 +42,7 @@ pub fn track_extra(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id
 /// assignment nested inside a call's receiver/args/block -- not just a
 /// bare top-level statement -- still updates the map before later
 /// statements read it.
-fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: NodeId) {
+fn track_node(compiler: &Compiler, defining: Option<ClassId>, locals: &mut HashMap<String, TyKind>, id: NodeId) {
     match &compiler.hir[id] {
         // A lambda's own body is a fresh, independent scope for local-
         // variable TYPE tracking purposes -- same treatment a non-`.times`
@@ -50,25 +50,25 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
         // (simply never recursed into).
         HirNode::Lambda { .. } => {}
         HirNode::LocalWrite(name, value) => {
-            track_node(compiler, locals, *value);
-            let ty = infer_type_with_locals(compiler, locals, *value);
+            track_node(compiler, defining, locals, *value);
+            let ty = infer_type_with_locals(compiler, defining, locals, *value);
             locals.insert(name.clone(), ty);
         }
         HirNode::IvarWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
-            track_node(compiler, locals, *value)
+            track_node(compiler, defining, locals, *value)
         }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
-            track_node(compiler, locals, *l);
-            track_node(compiler, locals, *r);
+            track_node(compiler, defining, locals, *l);
+            track_node(compiler, defining, locals, *r);
         }
-        HirNode::Defined(v) => track_node(compiler, locals, *v),
+        HirNode::Defined(v) => track_node(compiler, defining, locals, *v),
         HirNode::If {
             cond,
             then_body,
             else_body,
         } => {
-            track_node(compiler, locals, *cond);
-            *locals = join_branches(compiler, locals, &[then_body, else_body]);
+            track_node(compiler, defining, locals, *cond);
+            *locals = join_branches(compiler, defining, locals, &[then_body, else_body]);
         }
         HirNode::CaseWhen {
             subject,
@@ -76,47 +76,47 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             else_body,
         } => {
             if let Some(s) = subject {
-                track_node(compiler, locals, *s);
+                track_node(compiler, defining, locals, *s);
             }
             let mut branches: Vec<&[NodeId]> = Vec::with_capacity(arms.len() + 1);
             for (values, body) in arms {
                 for &v in values {
-                    track_node(compiler, locals, v);
+                    track_node(compiler, defining, locals, v);
                 }
                 branches.push(body);
             }
             branches.push(else_body);
-            *locals = join_branches(compiler, locals, &branches);
+            *locals = join_branches(compiler, defining, locals, &branches);
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             for &a in args {
-                track_node(compiler, locals, a);
+                track_node(compiler, defining, locals, a);
             }
         }
         HirNode::ArrayLit(elems) => {
             for e in elems {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                track_node(compiler, locals, *n);
+                track_node(compiler, defining, locals, *n);
             }
         }
         HirNode::HashLit(pairs) => {
             for pair in pairs {
-                track_node(compiler, locals, pair.0);
-                track_node(compiler, locals, pair.1);
+                track_node(compiler, defining, locals, pair.0);
+                track_node(compiler, defining, locals, pair.1);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
             if let Some(s) = start {
-                track_node(compiler, locals, *s);
+                track_node(compiler, defining, locals, *s);
             }
             if let Some(e) = end {
-                track_node(compiler, locals, *e);
+                track_node(compiler, defining, locals, *e);
             }
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
-                    track_node(compiler, locals, *n);
+                    track_node(compiler, defining, locals, *n);
                 }
             }
         }
@@ -130,61 +130,61 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             ..
         } => {
             if let Some(r) = receiver {
-                track_node(compiler, locals, *r);
+                track_node(compiler, defining, locals, *r);
             }
             for a in args {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                track_node(compiler, locals, *n);
+                track_node(compiler, defining, locals, *n);
             }
             for pair in kwargs {
-                track_node(compiler, locals, pair.0);
-                track_node(compiler, locals, pair.1);
+                track_node(compiler, defining, locals, pair.0);
+                track_node(compiler, defining, locals, pair.1);
             }
             if let Some(s) = kwargs_splat {
-                track_node(compiler, locals, *s);
+                track_node(compiler, defining, locals, *s);
             }
             if let Some(b) = block {
-                track_node(compiler, locals, *b);
+                track_node(compiler, defining, locals, *b);
             }
             if let Some(b) = block_arg {
-                track_node(compiler, locals, *b);
+                track_node(compiler, defining, locals, *b);
             }
         }
         HirNode::Block { body, .. } => {
             for &n in body {
-                track_node(compiler, locals, n);
+                track_node(compiler, defining, locals, n);
             }
         }
         HirNode::While { cond, body, .. } => {
-            track_node(compiler, locals, *cond);
-            *locals = join_loop(compiler, locals, body, None);
+            track_node(compiler, defining, locals, *cond);
+            *locals = join_loop(compiler, defining, locals, body, None);
         }
         HirNode::Loop { body } => {
-            *locals = join_loop(compiler, locals, body, None);
+            *locals = join_loop(compiler, defining, locals, body, None);
         }
         HirNode::For { target, iterable, body } => {
-            track_node(compiler, locals, *iterable);
+            track_node(compiler, defining, locals, *iterable);
             // A `for`-in-`Range` variable is provably always `Int` (the only
             // element type `Range` iteration supports -- see
             // `codegen::loops::emit_for`) when the target is a single plain
             // local; an `Array`'s element type isn't tracked per-element (nor
             // is a destructured `for a, b in ...`'s), so those widen to
             // `Poly`.
-            let elem_ty = match (target, infer_type_with_locals(compiler, locals, *iterable)) {
+            let elem_ty = match (target, infer_type_with_locals(compiler, defining, locals, *iterable)) {
                 (crate::hir::MultiTarget::Local(_), TyKind::Range) => TyKind::Int,
                 _ => TyKind::Poly,
             };
-            *locals = join_loop(compiler, locals, body, Some((target, elem_ty)));
+            *locals = join_loop(compiler, defining, locals, body, Some((target, elem_ty)));
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
-                track_node(compiler, locals, *v);
+                track_node(compiler, defining, locals, *v);
             }
         }
         HirNode::Redo | HirNode::BlockGiven | HirNode::SelfRef => {}
         HirNode::MultiWrite { targets, value } => {
-            track_node(compiler, locals, *value);
-            targets.for_each_node(&mut |n| track_node(compiler, locals, n));
+            track_node(compiler, defining, locals, *value);
+            targets.for_each_node(&mut |n| track_node(compiler, defining, locals, n));
             // Destructured targets' element types aren't tracked precisely
             // (spike scope) -- an arbitrary Array's element types are
             // unknown -- so each local-like target widens to `Poly`, same as
@@ -193,25 +193,25 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                 locals.insert(n.to_string(), TyKind::Poly);
             });
         }
-        HirNode::GlobalWrite(_, value) => track_node(compiler, locals, *value),
-        HirNode::ConstWrite { value, .. } => track_node(compiler, locals, *value),
+        HirNode::GlobalWrite(_, value) => track_node(compiler, defining, locals, *value),
+        HirNode::ConstWrite { value, .. } => track_node(compiler, defining, locals, *value),
         HirNode::Seq(body) => {
             for &n in body {
-                track_node(compiler, locals, n);
+                track_node(compiler, defining, locals, n);
             }
         }
         HirNode::Eval(body) => {
             for &n in body {
-                track_node(compiler, locals, n);
+                track_node(compiler, defining, locals, n);
             }
         }
         HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
-                track_node(compiler, locals, a);
+                track_node(compiler, defining, locals, a);
             }
         }
         HirNode::CaseIn { subject, arms, else_body } => {
-            track_node(compiler, locals, *subject);
+            track_node(compiler, defining, locals, *subject);
             let mut branch_locals: Vec<HashMap<String, TyKind>> = Vec::new();
             for arm in arms {
                 let mut b = locals.clone();
@@ -225,17 +225,17 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                     b.entry(n.to_string()).or_insert(TyKind::Poly);
                 });
                 if let Some((g, _)) = arm.guard {
-                    track_node(compiler, &mut b, g);
+                    track_node(compiler, defining, &mut b, g);
                 }
                 for &n in &arm.body {
-                    track_node(compiler, &mut b, n);
+                    track_node(compiler, defining, &mut b, n);
                 }
                 branch_locals.push(b);
             }
             if let Some(body) = else_body {
                 let mut b = locals.clone();
                 for &n in body {
-                    track_node(compiler, &mut b, n);
+                    track_node(compiler, defining, &mut b, n);
                 }
                 branch_locals.push(b);
             }
@@ -253,7 +253,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             }
         }
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            track_node(compiler, locals, *subject);
+            track_node(compiler, defining, locals, *subject);
             let mut matched = locals.clone();
             pattern.for_each_bound_name(&mut |n| {
                 matched.insert(n.to_string(), TyKind::Poly);
@@ -274,12 +274,12 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             // optionally further refined by an `else`).
             let before = locals.clone();
             for &n in body {
-                track_node(compiler, locals, n);
+                track_node(compiler, defining, locals, n);
             }
             let mut success = locals.clone();
             if let Some(b) = else_body {
                 for &n in b {
-                    track_node(compiler, &mut success, n);
+                    track_node(compiler, defining, &mut success, n);
                 }
             }
             let mut branches = vec![success];
@@ -289,7 +289,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
                     b.entry(name.clone()).or_insert(TyKind::Poly);
                 }
                 for &n in &r.body {
-                    track_node(compiler, &mut b, n);
+                    track_node(compiler, defining, &mut b, n);
                 }
                 branches.push(b);
             }
@@ -299,7 +299,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
             // continuation of whichever state the merge above produced.
             if let Some(b) = ensure_body {
                 for &n in b {
-                    track_node(compiler, locals, n);
+                    track_node(compiler, defining, locals, n);
                 }
             }
         }
@@ -336,6 +336,7 @@ fn track_node(compiler: &Compiler, locals: &mut HashMap<String, TyKind>, id: Nod
 /// one branch actually runs at runtime and the compiler can't know which.
 fn join_branches(
     compiler: &Compiler,
+    defining: Option<ClassId>,
     before: &HashMap<String, TyKind>,
     branches: &[&[NodeId]],
 ) -> HashMap<String, TyKind> {
@@ -344,7 +345,7 @@ fn join_branches(
         .map(|&body| {
             let mut b = before.clone();
             for &n in body {
-                track_node(compiler, &mut b, n);
+                track_node(compiler, defining, &mut b, n);
             }
             b
         })
@@ -378,19 +379,20 @@ fn merge_locals(maps: Vec<HashMap<String, TyKind>>) -> HashMap<String, TyKind> {
 /// 'loop body ran zero times' as one more branch to agree with".
 fn join_loop(
     compiler: &Compiler,
+    defining: Option<ClassId>,
     before: &HashMap<String, TyKind>,
     body: &[NodeId],
     seed: Option<(&crate::hir::MultiTarget, TyKind)>,
 ) -> HashMap<String, TyKind> {
     let mut ran = before.clone();
     if let Some((target, elem_ty)) = seed {
-        target.for_each_node(&mut |n| track_node(compiler, &mut ran, n));
+        target.for_each_node(&mut |n| track_node(compiler, defining, &mut ran, n));
         target.for_each_local_name(&mut |n| {
             ran.insert(n.to_string(), elem_ty);
         });
     }
     for &n in body {
-        track_node(compiler, &mut ran, n);
+        track_node(compiler, defining, &mut ran, n);
     }
     merge_locals(vec![ran, before.clone()])
 }

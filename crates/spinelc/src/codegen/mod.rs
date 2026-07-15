@@ -152,19 +152,12 @@ impl<'a> Ctx<'a> {
     }
 
     /// The lexical scope chain enclosing the current code, outermost first
-    /// (`resolve_class` walks it back-to-front, i.e. innermost-outward):
-    /// `defining_class` itself plus its `lexical_parent` links. Empty at the
-    /// top level; at most one entry until Phase 15.3 lands nested
-    /// class/module definitions.
+    /// (`resolve_class` walks it back-to-front, i.e. innermost-outward) --
+    /// `Compiler::cref_of`'s rule (Phase 15.3), which also honors the
+    /// qualified-definition cut (see `ClassInfo::qualified_def`). Empty at
+    /// the top level.
     fn cref_chain(&self) -> Vec<ClassId> {
-        let mut chain = Vec::new();
-        let mut cur = self.defining_class;
-        while let Some(c) = cur {
-            chain.push(c);
-            cur = self.compiler.class(c).lexical_parent;
-        }
-        chain.reverse();
-        chain
+        self.compiler.cref_of(self.defining_class)
     }
 
     /// A child context for a native loop's own body -- see `loop_labels`'s
@@ -287,7 +280,23 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .filter(|&(idx, class)| idx != 0 && !class.is_builtin)
         .map(|(idx, class)| {
             let register = if class.is_module {
-                quote! {}
+                // A module has no generated struct/`__register`, but it
+                // still needs a registry entry (Phase 16.1) so its
+                // first-class value answers `name`/`.class`/`ancestors`
+                // and `puts M` prints its name. No constructor: `M.new`
+                // is a real NoMethodError (see `send_value`'s Class arm).
+                let id = idx as u32;
+                let fq_name = compiler.fq_name(ClassId(id));
+                let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+                quote! {
+                    __registry.register(
+                        spinel_rt::ClassId(#id),
+                        #fq_name,
+                        true,
+                        vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                        None,
+                    );
+                }
             } else {
                 let ident = ident::class_ident(compiler, ClassId(idx as u32));
                 quote! { #ident::__register(&mut __registry); }
@@ -309,9 +318,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .filter(|&(_, class)| class.is_builtin)
         .map(|(idx, class)| {
             let id = idx as u32;
+            let name = &class.name;
+            let is_module = class.is_module;
             let ancestor_ids = class.ancestors.iter().map(|a| a.0);
             quote! {
-                __registry.register(spinel_rt::ClassId(#id), vec![#(spinel_rt::ClassId(#ancestor_ids)),*]);
+                __registry.register(
+                    spinel_rt::ClassId(#id),
+                    #name,
+                    #is_module,
+                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                    None,
+                );
             }
         });
 
@@ -354,7 +371,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
-            __registry.register(spinel_rt::Object::CLASS_ID, vec![spinel_rt::Object::CLASS_ID]);
+            __registry.register(spinel_rt::Object::CLASS_ID, "Object", false, vec![spinel_rt::Object::CLASS_ID], None);
             #(#builtin_registrations)*
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
@@ -541,7 +558,13 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_ident: format_ident!("self"),
         in_real_proc: false,
     };
-    let body = hoisting::emit_hoisted_body_with_extra_roots(&cx, &scope.body, &scope.params.default_ids(), true);
+    let body = hoisting::emit_hoisted_body_with_extra_roots(
+        &cx,
+        &scope.body,
+        &scope.params.default_ids(),
+        &scope.params.bound_names(),
+        true,
+    );
     // See the matching comment on `emit_class`'s own method-wrapping below:
     // a `begin`/`rescue` construct (or an escaping block, e.g. `arr.each { ...
     // return ... }` -- this function only rejects a class method that itself
@@ -572,6 +595,9 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
 fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
+    // The registry's Ruby-visible name (Phase 16.1): fully qualified, so
+    // `puts Store::Item` and NoMethodError messages print the real path.
+    let fq_name = compiler.fq_name(cid);
     let parent = ci.parent.unwrap_or(OBJECT_CLASS);
     let parent_ty = if parent == OBJECT_CLASS {
         quote! { spinel_rt::Object }
@@ -609,6 +635,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             &method_cx,
             &scope.body,
             &scope.params.default_ids(),
+            &scope.params.bound_names(),
             true,
         );
         // The `Signal::Return` catch is needed ONLY when this method's OWN
@@ -672,6 +699,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         spinel_rt::ruby_class! {
             class #name_ident : #parent_ty {
                 id: #id;
+                name: #fq_name;
                 ancestors: [ #(#ancestor_ids),* ];
                 ivars { #(#ivar_idents),* }
                 #(#methods)*

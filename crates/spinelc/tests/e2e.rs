@@ -7760,3 +7760,810 @@ fn redefining_enumerable_in_ruby_is_rejected() {
         "unexpected error: {err}"
     );
 }
+
+// -- Phase 15.2: correctness fixes (reopening, bare-super forwarding, cycle
+// guards, dup/clone). Every positive expectation below is oracle-verified
+// against real ruby 4.0.5.
+
+#[test]
+fn reopening_a_user_class_adds_and_replaces_methods() {
+    // Pre-15.2 this was the codebase's one SILENT-wrongness bug: the second
+    // `class Foo` registered a shadowed duplicate, so `b` never dispatched
+    // and the original `a` kept winning.
+    let result = support::run_ruby(
+        r#"
+        class Foo
+          def a
+            "first"
+          end
+        end
+
+        class Foo
+          def b
+            "added"
+          end
+
+          def a
+            "replaced"
+          end
+        end
+
+        puts Foo.new.a
+        puts Foo.new.b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "replaced\nadded\n");
+}
+
+#[test]
+fn redefining_a_method_in_one_class_body_last_def_wins() {
+    let result = support::run_ruby(
+        r#"
+        class Foo
+          def a
+            "first"
+          end
+
+          def a
+            "second"
+          end
+        end
+
+        puts Foo.new.a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "second\n");
+}
+
+#[test]
+fn reopening_via_load_twice_merges_cleanly() {
+    let result = support::run_ruby_project(
+        &[
+            (
+                "counter.rb",
+                r#"
+                    class Counter
+                      def bump
+                        1
+                      end
+                    end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    load "./counter.rb"
+                    load "./counter.rb"
+                    puts Counter.new.bump
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[test]
+fn reopen_guards_mirror_rubys_type_errors() {
+    // `TypeError: superclass mismatch for class Sub` in real Ruby.
+    let err = spinelc::compile_to_rust(
+        "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("superclass mismatch for class Sub"),
+        "unexpected error: {err}"
+    );
+
+    // Restating the ORIGINAL superclass is allowed (real Ruby).
+    let result = support::run_ruby(
+        r#"
+        class Base
+        end
+
+        class Sub < Base
+        end
+
+        class Sub < Base
+          def ok
+            "explicit matching superclass ok"
+          end
+        end
+
+        puts Sub.new.ok
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "explicit matching superclass ok\n");
+
+    // `TypeError: Foo is not a module` / `Bar is not a class` in real Ruby.
+    let err = spinelc::compile_to_rust("class Foo\nend\nmodule Foo\nend\n").unwrap_err();
+    assert!(err.contains("Foo is not a module"), "unexpected error: {err}");
+    let err = spinelc::compile_to_rust("module Bar\nend\nclass Bar\nend\n").unwrap_err();
+    assert!(err.contains("Bar is not a class"), "unexpected error: {err}");
+}
+
+#[test]
+fn bare_super_forwards_current_arguments() {
+    // Forwards the CURRENT bindings (the reassigned `name`), through
+    // required and optional params alike.
+    let result = support::run_ruby(
+        r#"
+        class A
+          def greet(name, punct = ".")
+            "hi #{name}#{punct}"
+          end
+        end
+
+        class B < A
+          def greet(name, punct = ".")
+            name = name + "!"
+            super
+          end
+        end
+
+        puts B.new.greet("bob")
+        puts B.new.greet("bob", "?")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi bob!.\nhi bob!?\n");
+}
+
+#[test]
+fn bare_super_forwards_rest_and_keyword_params() {
+    let result = support::run_ruby(
+        r#"
+        class C
+          def count(*nums)
+            nums.length
+          end
+        end
+
+        class D < C
+          def count(*nums)
+            super * 10
+          end
+        end
+
+        puts D.new.count(1, 2, 3)
+
+        class E
+          def kw(a:, b: 2)
+            "a=#{a} b=#{b}"
+          end
+        end
+
+        class F < E
+          def kw(a:, b: 2)
+            "got " + super
+          end
+        end
+
+        puts F.new.kw(a: 1, b: 9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "30\ngot a=1 b=9\n");
+}
+
+#[test]
+fn super_with_empty_parens_passes_no_arguments() {
+    // `super()` and bare `super` mean OPPOSITE things: the parens form
+    // passes nothing, so the parent's optional takes its default.
+    let result = support::run_ruby(
+        r#"
+        class G
+          def greet(name = "anon")
+            "hi #{name}"
+          end
+        end
+
+        class H < G
+          def greet(name)
+            super() + "!"
+          end
+        end
+
+        puts H.new.greet("bob")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi anon!\n");
+}
+
+#[test]
+fn self_referential_collections_print_recursion_markers() {
+    // Pre-15.2 both of these self-deadlocked on the collection's own
+    // non-reentrant payload Mutex.
+    let result = support::run_ruby(
+        r#"
+        a = [1, 2]
+        a << a
+        puts a
+
+        h = { k: 1 }
+        h[:me] = h
+        puts h
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n[...]\n{k: 1, me: {...}}\n");
+}
+
+#[test]
+fn dup_and_clone_on_collections_follow_the_frozen_rule() {
+    // dup: fresh unfrozen payload (mutable even when the source is
+    // frozen, and mutating it leaves the source untouched); clone:
+    // carries the frozen flag.
+    let result = support::run_ruby(
+        r#"
+        arr = [1].freeze
+        d = arr.dup
+        d << 2
+        puts d.length
+        puts arr.length
+        puts d.frozen?
+        puts arr.clone.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n1\nfalse\ntrue\n");
+}
+
+#[test]
+fn dup_and_clone_on_user_objects_copy_ivars_shallowly() {
+    let result = support::run_ruby(
+        r#"
+        class Point
+          attr_accessor :x, :y
+
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+        end
+
+        p1 = Point.new(1, 2)
+        p2 = p1.dup
+        p2.x = 99
+        puts p1.x
+        puts p2.x
+        puts p2.y
+        p1.freeze
+        puts p1.clone.frozen?
+        puts p1.dup.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n99\n2\ntrue\nfalse\n");
+}
+
+#[test]
+fn a_user_defined_dup_override_wins() {
+    // `dup`/`clone` are ordinary overridable Kernel methods in real Ruby --
+    // the static arm must fall through to Path 1 dispatch when the
+    // receiver's class defines its own.
+    let result = support::run_ruby(
+        r#"
+        class W
+          def dup
+            "custom"
+          end
+        end
+
+        puts W.new.dup
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "custom\n");
+}
+
+#[test]
+fn dup_dispatches_dynamically_through_send() {
+    let result = support::run_ruby(
+        r#"
+        puts [1, 2].send(:dup).length
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n");
+}
+
+// -- Phase 15.3: nested classes/modules + constant paths (namespacing).
+// Every positive expectation oracle-verified against real ruby 4.0.5.
+
+#[test]
+fn nested_classes_define_dispatch_and_resolve_lexical_constants() {
+    let result = support::run_ruby(
+        r#"
+        module Store
+          DEFAULT = 10
+
+          class Item
+            def price
+              DEFAULT
+            end
+          end
+
+          class Errors
+            class NotFound
+              def msg
+                "not found"
+              end
+            end
+          end
+        end
+
+        puts Store::Item.new.price
+        puts Store::Errors::NotFound.new.msg
+        puts Store::DEFAULT
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\nnot found\n10\n");
+}
+
+#[test]
+fn same_leaf_class_name_in_two_namespaces_stays_distinct() {
+    let result = support::run_ruby(
+        r#"
+        module A1
+          class Widget
+            def tag
+              "a"
+            end
+          end
+        end
+
+        module B1
+          class Widget
+            def tag
+              "b"
+            end
+          end
+        end
+
+        puts A1::Widget.new.tag
+        puts B1::Widget.new.tag
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\nb\n");
+}
+
+#[test]
+fn bare_constant_resolution_walks_the_lexical_chain_innermost_first() {
+    let result = support::run_ruby(
+        r#"
+        X = "top"
+        module Outer
+          X = "outer"
+          module Inner
+            X = "inner"
+            def self.probe
+              X
+            end
+          end
+          def self.probe
+            X
+          end
+        end
+        puts Outer::Inner.probe
+        puts Outer.probe
+        puts X
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "inner\nouter\ntop\n");
+}
+
+#[test]
+fn qualified_definition_form_does_not_see_the_namespace_lexically() {
+    // `class Store::Cart`'s cref is just [Cart] -- real Ruby raises
+    // NameError for `DEFAULT`, naming the cref head's qualified path.
+    let result = support::run_ruby(
+        r#"
+        module Store
+          DEFAULT = 10
+        end
+
+        class Store::Cart
+          def d
+            DEFAULT
+          rescue NameError => e
+            "NameError: #{e.message}"
+          end
+        end
+
+        puts Store::Cart.new.d
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "NameError: uninitialized constant Store::Cart::DEFAULT\n"
+    );
+}
+
+#[test]
+fn constants_resolve_through_the_superclass_chain() {
+    let result = support::run_ruby(
+        r#"
+        class Base2
+          LIMIT = 5
+        end
+
+        class Sub2 < Base2
+          def l
+            LIMIT
+          end
+        end
+
+        puts Sub2.new.l
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n");
+}
+
+#[test]
+fn missing_qualified_constant_raises_name_error_with_the_full_path() {
+    let result = support::run_ruby(
+        r#"
+        module Store
+        end
+
+        begin
+          puts Store::MISSING
+        rescue NameError => e
+          puts "NameError: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "NameError: uninitialized constant Store::MISSING\n"
+    );
+}
+
+#[test]
+fn nested_classes_reopen_through_both_definition_forms() {
+    let result = support::run_ruby(
+        r#"
+        module Store
+          class Item
+            def tag
+              "tagged"
+            end
+          end
+        end
+
+        module Store
+          class Item
+            def more
+              "reopened nested"
+            end
+          end
+        end
+
+        class Store::Item
+          def qual
+            "qualified reopen"
+          end
+        end
+
+        i = Store::Item.new
+        puts i.tag
+        puts i.more
+        puts i.qual
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "tagged\nreopened nested\nqualified reopen\n");
+}
+
+#[test]
+fn exception_classes_work_across_namespaces() {
+    // Subclassing a nested error class from outside, raising with a
+    // qualified path, and rescue-matching through the shared ancestor.
+    let result = support::run_ruby(
+        r#"
+        module Errs
+          class Base3 < StandardError
+          end
+        end
+
+        class Deep < Errs::Base3
+        end
+
+        begin
+          raise Deep, "boom"
+        rescue Errs::Base3 => e
+          puts "caught #{e.message}"
+        end
+
+        begin
+          raise Errs::Base3, "direct"
+        rescue StandardError => e
+          puts "caught #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught boom\ncaught direct\n");
+}
+
+#[test]
+fn qualified_class_paths_work_in_patterns_and_is_a() {
+    let result = support::run_ruby(
+        r#"
+        module Store
+          class Item
+            def initialize(n)
+              @n = n
+            end
+
+            def deconstruct_keys(keys)
+              { n: @n }
+            end
+          end
+        end
+
+        case Store::Item.new(5)
+        in Store::Item
+          puts "matched class pattern"
+        end
+
+        case Store::Item.new(7)
+        in Store::Item(n:)
+          puts "matched with capture #{n}"
+        end
+
+        puts Store::Item.new(1).is_a?(Store::Item)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "matched class pattern\nmatched with capture 7\ntrue\n"
+    );
+}
+
+#[test]
+fn including_a_nested_module_materializes_its_methods() {
+    let result = support::run_ruby(
+        r#"
+        module Util
+          module Greet
+            def hello
+              "hello from nested module"
+            end
+          end
+        end
+
+        class Greeter2
+          include Util::Greet
+        end
+
+        puts Greeter2.new.hello
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello from nested module\n");
+}
+
+#[test]
+fn qualified_constant_writes_target_the_named_namespace() {
+    let result = support::run_ruby(
+        r#"
+        module Cfg
+        end
+
+        Cfg::LIMIT = 99
+        puts Cfg::LIMIT
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "99\n");
+}
+
+// -- Phase 16.1: first-class Class/Module values. Every expectation
+// oracle-verified against real ruby 4.0.5.
+
+#[test]
+fn class_values_print_and_compare_by_identity() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+
+        module Store
+          class Item
+          end
+        end
+
+        puts Widget
+        p Widget
+        puts Store::Item
+        puts Widget == Widget
+        puts Widget == Store::Item
+        puts Widget != Store::Item
+        arr = [Widget, Store::Item]
+        puts arr.include?(Widget)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Widget\nWidget\nStore::Item\ntrue\nfalse\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn a_class_stored_in_a_variable_constructs_and_dispatches() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+          def initialize(n)
+            @n = n
+          end
+
+          def n
+            @n
+          end
+        end
+
+        x = Widget
+        puts x.new(5).n
+        puts x.name
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\nWidget\n");
+}
+
+#[test]
+fn dot_class_reflects_every_receiver_kind() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+        module Helper
+        end
+
+        w = Widget.new
+        puts w.class
+        puts w.class == Widget
+        puts w.class.name
+        puts 5.class
+        puts "s".class
+        puts [].class
+        puts nil.class
+        puts true.class
+        puts 1.5.class
+        puts :sym.class
+        puts (1..2).class
+        puts({}.class)
+        puts Helper.class
+        puts Widget.class
+        puts Class.class
+        puts Widget.class == Class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Widget\ntrue\nWidget\nInteger\nString\nArray\nNilClass\nTrueClass\nFloat\nSymbol\nRange\nHash\nModule\nClass\nClass\ntrue\n"
+    );
+}
+
+#[test]
+fn dot_class_works_on_rescue_bindings_and_poly_receivers() {
+    let result = support::run_ruby(
+        r#"
+        begin
+          raise "boom"
+        rescue => e
+          puts e.class
+        end
+
+        mixed = [1, "two", nil]
+        mixed.each do |v|
+          puts v.class
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "RuntimeError\nInteger\nString\nNilClass\n"
+    );
+}
+
+#[test]
+fn no_method_error_messages_name_the_real_class() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+
+        w = [Widget.new].first
+        begin
+          w.nope
+        rescue NoMethodError => e
+          puts e.message
+        end
+
+        module Helper
+        end
+
+        begin
+          Helper.new
+        rescue NoMethodError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "undefined method 'nope' for an instance of Widget\nundefined method 'new' for module Helper\n"
+    );
+}
+
+#[test]
+fn is_a_and_instance_of_answer_through_class_values() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+        module Helper
+        end
+
+        w = Widget.new
+        puts w.instance_of?(Widget)
+        puts w.instance_of?(Object)
+        puts 5.instance_of?(Integer)
+        puts Widget.is_a?(Class)
+        puts Widget.is_a?(Module)
+        puts Helper.is_a?(Module)
+        puts Helper.is_a?(Class)
+        puts Widget.ancestors.first == Widget
+        puts Widget.ancestors.include?(Object)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn case_when_with_class_candidates_checks_instance_ancestry() {
+    // `Module#===` -- previously a compile-time rejection (`when Integer`
+    // never worked); now real Ruby's instance-of check.
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+
+        [5, "s", Widget.new, nil].each do |v|
+          case v
+          when Integer then puts "int"
+          when String then puts "str"
+          when Widget then puts "widget"
+          else puts "other"
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "int\nstr\nwidget\nother\n");
+}

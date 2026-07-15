@@ -20,6 +20,12 @@ pub enum TyKind {
     Hash,
     Range,
     Object(ClassId),
+    /// A first-class class/module VALUE (Phase 16.1): `x = Widget` -- the
+    /// payload is the class the value REFERS to (its own class is
+    /// `Class`/`Module`). What keeps `x.new(...)`/`x.some_class_method`
+    /// on the static Path 1 (see `codegen::call`'s ClassObj interception)
+    /// and `.class` results statically foldable.
+    ClassObj(ClassId),
     /// A real `Proc` (Phase 6) -- only ever seeded for a named `&block`
     /// parameter (see `analyze::register_class`'s seeding, mirroring how a
     /// named `*rest`/`**kwrest` param seeds `Array`/`Hash`); nothing else
@@ -74,7 +80,7 @@ fn no_locals() -> HashMap<String, TyKind> {
 /// `analyze::locals`) -- this thin wrapper exists only for the few call
 /// sites (e.g. resolving a `New` receiver's class) that don't need one.
 pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
-    infer_type_with_locals(compiler, &no_locals(), id)
+    infer_type_with_locals(compiler, None, &no_locals(), id)
 }
 
 /// Real (if still one-pass, non-fixpoint) type inference: given a node and
@@ -86,6 +92,7 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 /// literal-`+`-on-`IntegerLit` fast path.
 pub fn infer_type_with_locals(
     compiler: &Compiler,
+    defining: Option<crate::compiler::ClassId>,
     locals: &HashMap<String, TyKind>,
     id: NodeId,
 ) -> TyKind {
@@ -99,11 +106,35 @@ pub fn infer_type_with_locals(
         HirNode::ArrayLit(_) => TyKind::Array,
         HirNode::HashLit(_) => TyKind::Hash,
         HirNode::RangeLit { .. } => TyKind::Range,
-        HirNode::New { class_name, .. } => match compiler.resolve_class(class_name, &[], 0) {
-            Some(cid) => TyKind::Object(cid),
-            None => TyKind::Poly,
-        },
+        // Resolved against the referencing method's own lexical chain
+        // (Phase 15.3) -- `defining` is the AOT def->cref: a bare `Item.new`
+        // inside `module Store` types as the nested `Store::Item`.
+        HirNode::New { class_name, .. } => {
+            match compiler.resolve_class(class_name, &compiler.cref_of(defining), 0) {
+                // A MODULE stays Poly: `M.new` has no struct -- codegen
+                // routes it to the dynamic path, whose result is a plain
+                // `RubyValue` (well, a raised NoMethodError -- Phase 16.1).
+                Some(cid) if !compiler.class(cid).is_module => TyKind::Object(cid),
+                _ => TyKind::Poly,
+            }
+        }
         HirNode::LocalRead(name) => locals.get(name).copied().unwrap_or(TyKind::Poly),
+        // A bare/qualified constant that names a class or module (Phase
+        // 16.1) is a first-class Class value; one that doesn't stays an
+        // ordinary value constant (type unknown -> Poly).
+        HirNode::ClassRef(name) => {
+            match compiler.resolve_class(name, &compiler.cref_of(defining), 0) {
+                Some(cid) => TyKind::ClassObj(cid),
+                None => TyKind::Poly,
+            }
+        }
+        HirNode::QualifiedConstRead(scope, name) => {
+            let path = format!("{scope}::{name}");
+            match compiler.resolve_class(&path, &compiler.cref_of(defining), 0) {
+                Some(cid) => TyKind::ClassObj(cid),
+                None => TyKind::Poly,
+            }
+        }
         // `Fiber.new { }` / `Thread.new { }` / `Mutex.new` / `Queue.new` --
         // the only constructors of these values. (All four are BUILTIN
         // classes kept OUT of `HirNode::New` by parse -- see the `.new`
@@ -119,9 +150,21 @@ pub fn infer_type_with_locals(
             HirNode::ClassRef(n) if n == "Mutex" => TyKind::Mutex,
             HirNode::ClassRef(n) if n == "Queue" => TyKind::Queue,
             HirNode::ClassRef(n) if n == "Ractor" => TyKind::Ractor,
-            _ => TyKind::Poly,
+            // `x.new(...)` through a class-value-typed receiver (Phase
+            // 16.1) constructs exactly what a literal `Widget.new(...)`
+            // does -- and must TYPE the same way, since codegen's ClassObj
+            // interception emits the same unboxed `Arc<Concrete>`
+            // construction.
+            _ => match infer_type_with_locals(compiler, defining, locals, *recv) {
+                TyKind::ClassObj(cid)
+                    if !compiler.class(cid).is_module && !compiler.class(cid).is_builtin =>
+                {
+                    TyKind::Object(cid)
+                }
+                _ => TyKind::Poly,
+            },
         },
-        HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, locals, *value),
+        HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, defining, locals, *value),
         HirNode::Call {
             receiver: Some(recv),
             name,
@@ -133,12 +176,47 @@ pub fn infer_type_with_locals(
             let crate::hir::ArrayElem::Single(arg) = args[0] else {
                 unreachable!("guarded above")
             };
-            let recv_ty = infer_type_with_locals(compiler, locals, *recv);
-            let arg_ty = infer_type_with_locals(compiler, locals, arg);
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            let arg_ty = infer_type_with_locals(compiler, defining, locals, arg);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
                 TyKind::Int
             } else {
                 TyKind::Poly
+            }
+        }
+        // `.class` on a receiver whose class is statically known (Phase
+        // 16.1) is a statically-known Class value -- mirrors codegen's
+        // `.class` fold; the Object arm respects a user-defined `class`
+        // override by NOT narrowing (same guard the emission site has).
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && name == "class" => {
+            use crate::compiler::{
+                ARRAY_CLASS, CLASS_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MODULE_CLASS,
+                PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+            };
+            match infer_type_with_locals(compiler, defining, locals, *recv) {
+                TyKind::Object(cid) if compiler.method_in_chain(cid, "class").is_none() => {
+                    TyKind::ClassObj(cid)
+                }
+                TyKind::Int => TyKind::ClassObj(INTEGER_CLASS),
+                TyKind::Float => TyKind::ClassObj(FLOAT_CLASS),
+                TyKind::Str => TyKind::ClassObj(STRING_CLASS),
+                TyKind::Symbol => TyKind::ClassObj(SYMBOL_CLASS),
+                TyKind::Array => TyKind::ClassObj(ARRAY_CLASS),
+                TyKind::Hash => TyKind::ClassObj(HASH_CLASS),
+                TyKind::Range => TyKind::ClassObj(RANGE_CLASS),
+                TyKind::Proc => TyKind::ClassObj(PROC_CLASS),
+                TyKind::Regexp => TyKind::ClassObj(REGEXP_CLASS),
+                TyKind::ClassObj(cid) => TyKind::ClassObj(if compiler.class(cid).is_module {
+                    MODULE_CLASS
+                } else {
+                    CLASS_CLASS
+                }),
+                _ => TyKind::Poly,
             }
         }
         // `.length`/`.size` on any of the built-in collection types always
@@ -152,7 +230,7 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && (name == "length" || name == "size") => {
-            match infer_type_with_locals(compiler, locals, *recv) {
+            match infer_type_with_locals(compiler, defining, locals, *recv) {
                 TyKind::Array | TyKind::Hash | TyKind::Str => TyKind::Int,
                 _ => TyKind::Poly,
             }
@@ -170,7 +248,23 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && name == "freeze" => {
-            match infer_type_with_locals(compiler, locals, *recv) {
+            match infer_type_with_locals(compiler, defining, locals, *recv) {
+                t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
+                _ => TyKind::Poly,
+            }
+        }
+        // `.dup`/`.clone` on a built-in collection returns a fresh value of
+        // the SAME kind (`RubyValue::dup_value` is per-variant), so the copy
+        // keeps the receiver's static type and its later accesses stay on
+        // the static fast paths -- same soundness reasoning (and same
+        // Object-receiver exclusion) as the `freeze` arm above.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && (name == "dup" || name == "clone") => {
+            match infer_type_with_locals(compiler, defining, locals, *recv) {
                 t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
                 _ => TyKind::Poly,
             }
@@ -194,8 +288,8 @@ pub fn infer_type_with_locals(
             let crate::hir::ArrayElem::Single(arg) = args[0] else {
                 unreachable!("guarded above")
             };
-            let recv_ty = infer_type_with_locals(compiler, locals, *recv);
-            let arg_ty = infer_type_with_locals(compiler, locals, arg);
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            let arg_ty = infer_type_with_locals(compiler, defining, locals, arg);
             match (recv_ty, arg_ty) {
                 (TyKind::Regexp, TyKind::Str) | (TyKind::Str, TyKind::Regexp) => TyKind::MatchData,
                 _ => TyKind::Poly,
@@ -213,7 +307,7 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && matches!(name.as_str(), "to_a" | "captures" | "named_captures") => {
-            match infer_type_with_locals(compiler, locals, *recv) {
+            match infer_type_with_locals(compiler, defining, locals, *recv) {
                 TyKind::MatchData if name == "named_captures" => TyKind::Hash,
                 TyKind::MatchData => TyKind::Array,
                 _ => TyKind::Poly,

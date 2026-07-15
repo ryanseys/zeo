@@ -334,7 +334,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::ConstWrite { value, .. } => node_contains_bare_loop_jump(compiler, *value),
         HirNode::Seq(body) => body_contains_bare_loop_jump(compiler, body),
         HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a)),
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {

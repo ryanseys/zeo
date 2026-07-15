@@ -135,8 +135,23 @@ pub fn ractor_outcome(r: &RRactor) -> Result<RubyValue, Signal> {
 
 /// `Ractor.shareable?` -- the recursive predicate (CRuby's rule: frozen AND
 /// everything reachable shareable; immediates/Symbols/Ractors inherently
-/// shareable; `Regexp` immutable here so always shareable).
+/// shareable; `Regexp` immutable here so always shareable). Cycle-guarded
+/// (Phase 15.2) via the same visited-set mechanism as `inspect_string`'s
+/// (`value::container_identity`): a container already under examination
+/// contributes `true` at its re-entry point -- the cycle itself never makes
+/// a graph unshareable, only an unfrozen/unshareable NODE does, and every
+/// node is still visited exactly once.
 pub fn shareable(v: &RubyValue) -> bool {
+    shareable_guarded(v, &mut Vec::new())
+}
+
+fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
+    if let Some(ptr) = crate::value::container_identity(v) {
+        if seen.contains(&ptr) {
+            return true;
+        }
+        seen.push(ptr);
+    }
     match v {
         RubyValue::Nil
         | RubyValue::Bool(_)
@@ -144,16 +159,25 @@ pub fn shareable(v: &RubyValue) -> bool {
         | RubyValue::Float(_)
         | RubyValue::Symbol(_)
         | RubyValue::Regexp(_)
-        | RubyValue::Ractor(_) => true,
+        | RubyValue::Ractor(_)
+        // A class handle is inherently shareable (Phase 16.1): classes are
+        // process-wide in real Ruby too.
+        | RubyValue::Class(_) => true,
         RubyValue::Range(start, end, _) => {
-            start.as_deref().is_none_or(shareable) && end.as_deref().is_none_or(shareable)
+            start.as_deref().is_none_or(|s| shareable_guarded(s, seen))
+                && end.as_deref().is_none_or(|e| shareable_guarded(e, seen))
         }
         RubyValue::Str(s) => s.is_frozen(),
-        RubyValue::Array(a) => a.is_frozen() && a.lock().iter().all(shareable),
+        RubyValue::Array(a) => a.is_frozen() && a.lock().iter().all(|e| shareable_guarded(e, seen)),
         RubyValue::Hash(h) => {
-            h.is_frozen() && h.lock().values().all(|(k, val)| shareable(k) && shareable(val))
+            h.is_frozen()
+                && h.lock()
+                    .values()
+                    .all(|(k, val)| shareable_guarded(k, seen) && shareable_guarded(val, seen))
         }
-        RubyValue::Object(o) => o.is_frozen() && o.ivar_values().iter().all(shareable),
+        RubyValue::Object(o) => {
+            o.is_frozen() && o.ivar_values().iter().all(|iv| shareable_guarded(iv, seen))
+        }
         RubyValue::Proc(_)
         | RubyValue::Fiber(_)
         | RubyValue::Thread(_)
@@ -166,10 +190,24 @@ pub fn shareable(v: &RubyValue) -> bool {
 /// `Ractor.make_shareable(obj)` -- the deep-freeze traversal (CRuby's
 /// `rb_ractor_make_shareable`: walk the reachable subgraph, freeze each
 /// node). Returns the (now shareable) value itself; `Err` when the graph
-/// contains something that can never be shareable. No cycle guard (a
-/// self-referential graph recurses to stack overflow) -- same documented
-/// narrow gap as `inspect_string`'s.
+/// contains something that can never be shareable. Cycle-guarded (Phase
+/// 15.2, retiring the documented stack-overflow gap): an already-visited
+/// container is already frozen-and-being-walked, so its re-entry is a
+/// no-op. Note `seen` here is a PERMANENT visited set, not `display_with`'s
+/// pop-on-exit stack -- freezing is idempotent and each node needs walking
+/// only once, and (unlike printing) there's no output that would differ.
 pub fn make_shareable(v: &RubyValue) -> Result<RubyValue, String> {
+    make_shareable_guarded(v, &mut Vec::new())?;
+    Ok(v.clone())
+}
+
+fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), String> {
+    if let Some(ptr) = crate::value::container_identity(v) {
+        if seen.contains(&ptr) {
+            return Ok(());
+        }
+        seen.push(ptr);
+    }
     match v {
         RubyValue::Nil
         | RubyValue::Bool(_)
@@ -177,33 +215,34 @@ pub fn make_shareable(v: &RubyValue) -> Result<RubyValue, String> {
         | RubyValue::Float(_)
         | RubyValue::Symbol(_)
         | RubyValue::Regexp(_)
-        | RubyValue::Ractor(_) => {}
+        | RubyValue::Ractor(_)
+        | RubyValue::Class(_) => {}
         RubyValue::Range(start, end, _) => {
             if let Some(s) = start.as_deref() {
-                make_shareable(s)?;
+                make_shareable_guarded(s, seen)?;
             }
             if let Some(e) = end.as_deref() {
-                make_shareable(e)?;
+                make_shareable_guarded(e, seen)?;
             }
         }
         RubyValue::Str(s) => s.set_frozen(),
         RubyValue::Array(a) => {
             a.set_frozen();
             for elem in a.lock().iter() {
-                make_shareable(elem)?;
+                make_shareable_guarded(elem, seen)?;
             }
         }
         RubyValue::Hash(h) => {
             h.set_frozen();
             for (k, val) in h.lock().values() {
-                make_shareable(k)?;
-                make_shareable(val)?;
+                make_shareable_guarded(k, seen)?;
+                make_shareable_guarded(val, seen)?;
             }
         }
         RubyValue::Object(o) => {
             o.set_frozen();
             for iv in o.ivar_values() {
-                make_shareable(&iv)?;
+                make_shareable_guarded(&iv, seen)?;
             }
         }
         other => {
@@ -213,7 +252,7 @@ pub fn make_shareable(v: &RubyValue) -> Result<RubyValue, String> {
             ))
         }
     }
-    Ok(v.clone())
+    Ok(())
 }
 
 /// By reference when shareable, deep copy otherwise -- see module docs for
@@ -286,5 +325,64 @@ mod tests {
         ));
 
         assert!(make_shareable(&RubyValue::Proc(Arc::new(|_| Ok(RubyValue::Nil)))).is_err());
+    }
+
+    /// Phase 15.2 cycle guards: a self-referential graph used to recurse to
+    /// stack overflow in both traversals; now every node is visited once.
+    #[test]
+    fn make_shareable_handles_a_self_referential_array() {
+        let arr = crate::array_new(vec![RubyValue::Int(1)]);
+        crate::array_push(&arr, RubyValue::Array(arr.clone()));
+        let v = RubyValue::Array(arr.clone());
+
+        make_shareable(&v).unwrap();
+        assert!(arr.is_frozen());
+        assert!(shareable(&v), "a frozen cycle is shareable (every node frozen)");
+    }
+
+    #[test]
+    fn make_shareable_handles_a_self_referential_hash() {
+        let h = crate::hash_new(vec![(
+            RubyValue::Symbol(crate::Symbol::intern("k")),
+            RubyValue::Int(1),
+        )]);
+        crate::hash_set(
+            &h,
+            RubyValue::Symbol(crate::Symbol::intern("me")),
+            RubyValue::Hash(h.clone()),
+        );
+        let v = RubyValue::Hash(h.clone());
+
+        make_shareable(&v).unwrap();
+        assert!(h.is_frozen());
+        assert!(shareable(&v));
+    }
+
+    /// The predicate must also TERMINATE (not just avoid wrong answers) on
+    /// an unfrozen cycle -- and answer false, since the nodes are unfrozen.
+    #[test]
+    fn shareable_terminates_and_rejects_an_unfrozen_cycle() {
+        let arr = crate::array_new(vec![RubyValue::Int(1)]);
+        crate::array_push(&arr, RubyValue::Array(arr.clone()));
+
+        assert!(!shareable(&RubyValue::Array(arr)));
+    }
+
+    /// A cycle that runs THROUGH two containers (array -> hash -> array),
+    /// not just direct self-reference.
+    #[test]
+    fn make_shareable_handles_a_cross_container_cycle() {
+        let arr = crate::array_new(vec![RubyValue::Int(1)]);
+        let h = crate::hash_new(vec![(
+            RubyValue::Symbol(crate::Symbol::intern("back")),
+            RubyValue::Array(arr.clone()),
+        )]);
+        crate::array_push(&arr, RubyValue::Hash(h.clone()));
+        let v = RubyValue::Array(arr.clone());
+
+        make_shareable(&v).unwrap();
+        assert!(arr.is_frozen());
+        assert!(h.is_frozen());
+        assert!(shareable(&v));
     }
 }

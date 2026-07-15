@@ -281,7 +281,7 @@ fn owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
 fn resolve_consts(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
     let mut top_level_names = Vec::new();
     for &n in main_statements {
-        collect_const_refs(compiler, n, &mut top_level_names);
+        collect_const_refs(compiler, n, &[], &mut top_level_names);
     }
     for name in top_level_names {
         compiler.classes[OBJECT_CLASS.0 as usize]
@@ -311,36 +311,80 @@ fn resolve_consts(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result
 /// and merely READ (never written) by `class_id` would silently resolve to
 /// `class_id` itself instead of the ancestor that actually owns it.
 fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
+    // Class-reference-vs-constant classification inside this class's bodies
+    // resolves against ITS lexical chain (Phase 15.3): a bare `Item` inside
+    // `module Store` naming the nested `Store::Item` class must not be
+    // misclassified as a value-constant reference.
+    let cref = compiler.cref_of(Some(class_id));
     let mut names = Vec::new();
     for &n in &compiler.class(class_id).class_body_stmts.clone() {
-        collect_const_refs(compiler, n, &mut names);
+        collect_const_refs(compiler, n, &cref, &mut names);
     }
     let own_methods = compiler.class(class_id).own_methods.clone();
     let own_class_methods = compiler.class(class_id).own_class_methods.clone();
     for sid in own_methods.into_iter().chain(own_class_methods) {
         let body = compiler.scope(sid).body.clone();
         for &n in &body {
-            collect_const_refs(compiler, n, &mut names);
+            collect_const_refs(compiler, n, &cref, &mut names);
         }
     }
     names
 }
 
+/// Does `class_id`'s own literal class body assign `NAME = ...` (bare) at
+/// statement level -- real Ruby's "defined in this scope's own const
+/// table"? Statement-level only: a constant assignment nested under
+/// control flow inside a class body (`X = 1 if cond`) isn't discovered
+/// here (a narrow, documented approximation; a bare assignment inside a
+/// METHOD body is a Ruby SyntaxError -- "dynamic constant assignment" --
+/// so class bodies are genuinely the only place to look).
+fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) -> bool {
+    compiler.class(class_id).class_body_stmts.iter().any(|&n| {
+        matches!(&compiler.hir[n], HirNode::ConstWrite { scope: None, name: w, .. } if w == name)
+    })
+}
+
 /// Resolves (and memoizes onto `ClassInfo::const_owners`) which class/module
-/// owns a bare constant `name` as referenced from `class_id` -- identical
-/// rule to `owner_of` (cvars): reuse an already-resolved owner if `class_id`
-/// itself has one, else search `ancestors` (nearest first) for the first
-/// ancestor that claims it, else `class_id` becomes the new owner.
+/// owns a bare constant `name` as referenced from `class_id` -- real Ruby's
+/// resolution order (Phase 15.3, oracle-verified): the referencing scope's
+/// OWN definition first, then the ENCLOSING lexical scopes (innermost
+/// first, each checked for a DIRECT definition -- never their inherited/
+/// memoized claims, which is what real Ruby's per-scope const-table check
+/// means), then `ancestors` (nearest first, memo-based like `owner_of`),
+/// then `Object` (real Ruby's final stop -- reachable through `ancestors`
+/// for a class, but a MODULE's ancestors don't include `Object`, so it
+/// needs its own step), else `class_id` self-claims (the runtime lookup
+/// then correctly reports unset as `NameError`).
 fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> ClassId {
     if let Some(&owner) = compiler.class(class_id).const_owners.get(name) {
         return owner;
     }
-    let ancestors = compiler.class(class_id).ancestors.clone();
-    let owner = ancestors
-        .iter()
-        .skip(1)
-        .find_map(|&anc| compiler.class(anc).const_owners.get(name).copied())
-        .unwrap_or(class_id);
+    let owner = if directly_defines_const(compiler, class_id, name) {
+        class_id
+    } else {
+        let mut lexical = compiler.cref_of(Some(class_id));
+        lexical.pop(); // the last entry is class_id itself, checked above
+        lexical
+            .iter()
+            .rev()
+            .copied()
+            .find(|&scope| directly_defines_const(compiler, scope, name))
+            .or_else(|| {
+                let ancestors = compiler.class(class_id).ancestors.clone();
+                ancestors
+                    .iter()
+                    .skip(1)
+                    .find_map(|&anc| compiler.class(anc).const_owners.get(name).copied())
+            })
+            .or_else(|| {
+                compiler
+                    .class(OBJECT_CLASS)
+                    .const_owners
+                    .get(name)
+                    .copied()
+            })
+            .unwrap_or(class_id)
+    };
     compiler.classes[class_id.0 as usize]
         .const_owners
         .insert(name.to_string(), owner);
@@ -354,12 +398,12 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
 /// see `HirNode::ClassRef`'s dual reuse, `codegen::expr`'s docs), and a bare
 /// `ConstWrite { scope: None, .. }` always counts (an explicit `Foo::NAME`
 /// write needs no ownership DISCOVERY, its target is already named).
-fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec<String>) {
+fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[ClassId], out: &mut Vec<String>) {
     use crate::hir::{ArrayElem, StrPart};
     let hir = &compiler.hir;
     match &hir[id] {
         HirNode::ClassRef(name) => {
-            if compiler.resolve_class(name, &[], 0).is_none() && !out.contains(name) {
+            if compiler.resolve_class(name, cref, 0).is_none() && !out.contains(name) {
                 out.push(name.clone());
             }
         }
@@ -367,159 +411,159 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec
             if !out.contains(name) {
                 out.push(name.clone());
             }
-            collect_const_refs(compiler, *value, out);
+            collect_const_refs(compiler, *value, cref, out);
         }
-        HirNode::ConstWrite { scope: Some(_), value, .. } => collect_const_refs(compiler, *value, out),
+        HirNode::ConstWrite { scope: Some(_), value, .. } => collect_const_refs(compiler, *value, cref, out),
         HirNode::IvarWrite(_, value) | HirNode::LocalWrite(_, value) | HirNode::ClassVarWrite(_, value) => {
-            collect_const_refs(compiler, *value, out)
+            collect_const_refs(compiler, *value, cref, out)
         }
-        HirNode::GlobalWrite(_, value) => collect_const_refs(compiler, *value, out),
+        HirNode::GlobalWrite(_, value) => collect_const_refs(compiler, *value, cref, out),
         HirNode::And(l, r) | HirNode::Or(l, r) => {
-            collect_const_refs(compiler, *l, out);
-            collect_const_refs(compiler, *r, out);
+            collect_const_refs(compiler, *l, cref, out);
+            collect_const_refs(compiler, *r, cref, out);
         }
-        HirNode::Defined(v) => collect_const_refs(compiler, *v, out),
+        HirNode::Defined(v) => collect_const_refs(compiler, *v, cref, out),
         HirNode::If { cond, then_body, else_body } => {
-            collect_const_refs(compiler, *cond, out);
+            collect_const_refs(compiler, *cond, cref, out);
             for &n in then_body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
             for &n in else_body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::CaseWhen { subject, arms, else_body } => {
             if let Some(s) = subject {
-                collect_const_refs(compiler, *s, out);
+                collect_const_refs(compiler, *s, cref, out);
             }
             for (values, body) in arms {
                 for &v in values {
-                    collect_const_refs(compiler, v, out);
+                    collect_const_refs(compiler, v, cref, out);
                 }
                 for &n in body {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
             for &n in else_body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::Call { receiver, args, kwargs, kwargs_splat, block, block_arg, .. } => {
             if let Some(r) = receiver {
-                collect_const_refs(compiler, *r, out);
+                collect_const_refs(compiler, *r, cref, out);
             }
             for a in args {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                collect_const_refs(compiler, *n, out);
+                collect_const_refs(compiler, *n, cref, out);
             }
             for pair in kwargs {
-                collect_const_refs(compiler, pair.0, out);
-                collect_const_refs(compiler, pair.1, out);
+                collect_const_refs(compiler, pair.0, cref, out);
+                collect_const_refs(compiler, pair.1, cref, out);
             }
             if let Some(s) = kwargs_splat {
-                collect_const_refs(compiler, *s, out);
+                collect_const_refs(compiler, *s, cref, out);
             }
             if let Some(b) = block {
-                collect_const_refs(compiler, *b, out);
+                collect_const_refs(compiler, *b, cref, out);
             }
             if let Some(b) = block_arg {
-                collect_const_refs(compiler, *b, out);
+                collect_const_refs(compiler, *b, cref, out);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             for &a in args {
-                collect_const_refs(compiler, a, out);
+                collect_const_refs(compiler, a, cref, out);
             }
         }
         HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::ArrayLit(elems) => {
             for e in elems {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-                collect_const_refs(compiler, *n, out);
+                collect_const_refs(compiler, *n, cref, out);
             }
         }
         HirNode::HashLit(pairs) => {
             for pair in pairs {
-                collect_const_refs(compiler, pair.0, out);
-                collect_const_refs(compiler, pair.1, out);
+                collect_const_refs(compiler, pair.0, cref, out);
+                collect_const_refs(compiler, pair.1, cref, out);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
             if let Some(s) = start {
-                collect_const_refs(compiler, *s, out);
+                collect_const_refs(compiler, *s, cref, out);
             }
             if let Some(e) = end {
-                collect_const_refs(compiler, *e, out);
+                collect_const_refs(compiler, *e, cref, out);
             }
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => {
             for p in parts {
                 if let StrPart::Interp(n) = p {
-                    collect_const_refs(compiler, *n, out);
+                    collect_const_refs(compiler, *n, cref, out);
                 }
             }
         }
         HirNode::While { cond, body, .. } => {
-            collect_const_refs(compiler, *cond, out);
+            collect_const_refs(compiler, *cond, cref, out);
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::Loop { body } => {
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::For { target, iterable, body } => {
-            target.for_each_node(&mut |n| collect_const_refs(compiler, n, out));
-            collect_const_refs(compiler, *iterable, out);
+            target.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
+            collect_const_refs(compiler, *iterable, cref, out);
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
             if let Some(v) = v {
-                collect_const_refs(compiler, *v, out);
+                collect_const_refs(compiler, *v, cref, out);
             }
         }
         HirNode::MultiWrite { targets, value } => {
-            collect_const_refs(compiler, *value, out);
-            targets.for_each_node(&mut |n| collect_const_refs(compiler, n, out));
+            collect_const_refs(compiler, *value, cref, out);
+            targets.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
         }
         HirNode::Seq(body) | HirNode::Eval(body) => {
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::Yield(args) | HirNode::Raise(args) => {
             for &a in args {
-                collect_const_refs(compiler, a, out);
+                collect_const_refs(compiler, a, cref, out);
             }
         }
         HirNode::CaseIn { subject, arms, else_body } => {
-            collect_const_refs(compiler, *subject, out);
+            collect_const_refs(compiler, *subject, cref, out);
             for arm in arms {
-                arm.pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, out));
+                arm.pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
                 if let Some((g, _)) = arm.guard {
-                    collect_const_refs(compiler, g, out);
+                    collect_const_refs(compiler, g, cref, out);
                 }
                 for &n in &arm.body {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
             if let Some(body) = else_body {
                 for &n in body {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
         }
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            collect_const_refs(compiler, *subject, out);
-            pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, out));
+            collect_const_refs(compiler, *subject, cref, out);
+            pattern.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
         }
         HirNode::Begin {
             body,
@@ -528,21 +572,21 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, out: &mut Vec
             ensure_body,
         } => {
             for &n in body {
-                collect_const_refs(compiler, n, out);
+                collect_const_refs(compiler, n, cref, out);
             }
             for r in rescues {
                 for &n in &r.body {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
             if let Some(b) = else_body {
                 for &n in b {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
             if let Some(b) = ensure_body {
                 for &n in b {
-                    collect_const_refs(compiler, n, out);
+                    collect_const_refs(compiler, n, cref, out);
                 }
             }
         }
@@ -643,7 +687,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, *b, out);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args } => {
+        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
             for &a in args {
                 collect_cvars(hir, a, out);
             }

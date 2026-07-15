@@ -7,9 +7,10 @@
 
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
-    ClassId, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
-    RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
+    ClassId, ARRAY_CLASS, CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
+    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    THREAD_CLASS, TRUE_CLASS,
 };
 use crate::fiber::RFiber;
 use crate::ractor::RRactor;
@@ -55,6 +56,15 @@ pub enum RubyValue {
     /// A `Ractor` (Phase 13.8) -- a real OS thread with a frozen-or-copy
     /// message boundary; see `ractor`'s module docs.
     Ractor(RRactor),
+    /// A first-class class/module VALUE (Phase 16.1) -- `x = Widget`,
+    /// `w.class`, a rescue binding's `.class`, classes stored in
+    /// collections. `Copy` payload, always frozen (like the immediates);
+    /// its Ruby-visible name/module-ness live in the `ClassRegistry`
+    /// (`dispatch::class_name`/`class_is_module`), installed before any
+    /// generated statement runs. `Class.new`-style runtime class CREATION
+    /// is a permanent AOT exclusion; this value is a handle to a
+    /// compile-time-known class, never a way to mint one.
+    Class(ClassId),
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -89,9 +99,42 @@ fn float_to_display_string(f: f64) -> String {
     }
 }
 
+/// The pointer identity of a shared, potentially SELF-REFERENTIAL container
+/// -- the one visited-set key every recursive `RubyValue` traversal in this
+/// runtime uses (`to_display_string`/`inspect_string` here,
+/// `ractor::shareable`/`make_shareable` -- Phase 15.2's cycle guards). `Arc`
+/// identity is exactly Ruby's object identity for these types (aliasing a
+/// collection clones the `Arc`, never the payload -- see `collections`'s
+/// module docs), so "this address is already on the traversal stack" is
+/// precisely "this OBJECT is its own ancestor", CRuby's own
+/// `rb_exec_recursive` test. `Str` never contains values and the immediates
+/// have no identity, so only the three genuinely recursive kinds answer.
+pub(crate) fn container_identity(v: &RubyValue) -> Option<usize> {
+    match v {
+        RubyValue::Array(a) => Some(std::sync::Arc::as_ptr(a) as usize),
+        RubyValue::Hash(h) => Some(std::sync::Arc::as_ptr(h) as usize),
+        // A fat `*const dyn RubyObject` -- casting to `*const ()` keeps the
+        // data half, which is the identity (the vtable half only varies by
+        // concrete type, never between two handles to the same object).
+        RubyValue::Object(o) => Some(std::sync::Arc::as_ptr(o) as *const () as usize),
+        _ => None,
+    }
+}
+
 impl RubyValue {
     /// Mirrors `sp_*_to_s`/CRuby's `Kernel#puts` argument stringification.
     pub fn to_display_string(&self) -> String {
+        self.display_with(&mut Vec::new())
+    }
+
+    /// `to_display_string`'s recursive worker: `seen` is the traversal
+    /// STACK of container identities (pushed on entry, popped on exit --
+    /// not a permanent "already printed" set: a DAG that shares one array
+    /// twice still prints it twice, like CRuby; only a genuine cycle hits
+    /// the guard). A self-referential `Array`/`Hash` prints CRuby's own
+    /// recursion markers (`[...]`/`{...}`) instead of deadlocking on its
+    /// own non-reentrant payload `Mutex` (the pre-15.2 behavior).
+    fn display_with(&self, seen: &mut Vec<usize>) -> String {
         match self {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
@@ -103,12 +146,21 @@ impl RubyValue {
             // element on its own line (not `[1, 2, 3]`, which is `inspect`'s
             // job, not `to_s`'s) -- real, verified CRuby behavior, not a
             // simplification.
-            RubyValue::Array(a) => a
-                .lock()
-                .iter()
-                .map(RubyValue::to_display_string)
-                .collect::<Vec<_>>()
-                .join("\n"),
+            RubyValue::Array(a) => {
+                let ptr = container_identity(self).expect("Array is a container");
+                if seen.contains(&ptr) {
+                    return "[...]".to_string();
+                }
+                seen.push(ptr);
+                let out = a
+                    .lock()
+                    .iter()
+                    .map(|e| e.display_with(seen))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                seen.pop();
+                out
+            }
             // An approximation of `Hash#inspect` (symbol keys as `key:
             // value`, everything else as `key => value`) -- good enough for
             // the `Int`/`Symbol`-keyed hashes the spike's examples use, but
@@ -116,20 +168,26 @@ impl RubyValue {
             // Same posture as `Object`'s "#<Object>" placeholder above: a
             // documented simplification, not silent wrongness.
             RubyValue::Hash(h) => {
+                let ptr = container_identity(self).expect("Hash is a container");
+                if seen.contains(&ptr) {
+                    return "{...}".to_string();
+                }
+                seen.push(ptr);
                 let body = h
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.to_display_string()),
-                        _ => format!("{} => {}", k.to_display_string(), v.to_display_string()),
+                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.display_with(seen)),
+                        _ => format!("{} => {}", k.display_with(seen), v.display_with(seen)),
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
+                seen.pop();
                 format!("{{{body}}}")
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start.as_ref().map(|b| b.to_display_string()).unwrap_or_default();
-                let e = end.as_ref().map(|b| b.to_display_string()).unwrap_or_default();
+                let s = start.as_ref().map(|b| b.display_with(seen)).unwrap_or_default();
+                let e = end.as_ref().map(|b| b.display_with(seen)).unwrap_or_default();
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
@@ -147,6 +205,11 @@ impl RubyValue {
             RubyValue::Mutex(_) => "#<Mutex>".to_string(),
             RubyValue::Queue(_) => "#<Thread::Queue>".to_string(),
             RubyValue::Ractor(_) => "#<Ractor>".to_string(),
+            // The registered fully-qualified name (`puts Widget` ->
+            // "Widget", `puts Store::Item` -> "Store::Item"); the id form
+            // is only reachable registry-less (this crate's unit tests).
+            RubyValue::Class(cid) => crate::dispatch::class_name(*cid)
+                .unwrap_or_else(|| format!("#<Class:{}>", cid.0)),
         }
     }
 
@@ -160,40 +223,61 @@ impl RubyValue {
     /// quoting uses Rust's `{:?}` escaping (matches Ruby for ordinary
     /// ASCII/UTF-8 content, diverges on exotic escapes); `Object` renders as
     /// `#<Object>` with no class name/ivars (the runtime has no class-name
-    /// table); and a SELF-REFERENTIAL `Array`/`Hash` (`a = [1]; a[0] = a`)
-    /// self-deadlocks on its own non-reentrant `Mutex` rather than printing
-    /// CRuby's recursion-guarded `[...]` -- a narrow, documented gap.
+    /// table). A SELF-REFERENTIAL `Array`/`Hash` prints CRuby's own
+    /// recursion markers (`[1, [...]]` / `{k: {...}}`, oracle-verified) via
+    /// the shared visited-stack guard -- see `container_identity`.
     pub fn inspect_string(&self) -> String {
+        self.inspect_with(&mut Vec::new())
+    }
+
+    /// `inspect_string`'s recursive worker -- same visited-STACK discipline
+    /// as `display_with` (its docs explain the push/pop shape). The marker
+    /// is chosen by the RECURRING container's own kind, so a cycle that
+    /// enters through a Hash back into an outer Array prints `[...]` at the
+    /// Array's re-entry point (`[1, {x: [...]}]`, oracle-verified).
+    fn inspect_with(&self, seen: &mut Vec<usize>) -> String {
         match self {
             RubyValue::Nil => "nil".to_string(),
             RubyValue::Symbol(s) => format!(":{}", s.name()),
             RubyValue::Str(s) => format!("{:?}", &*s.lock()),
             RubyValue::Array(a) => {
+                let ptr = container_identity(self).expect("Array is a container");
+                if seen.contains(&ptr) {
+                    return "[...]".to_string();
+                }
+                seen.push(ptr);
                 let body = a
                     .lock()
                     .iter()
-                    .map(RubyValue::inspect_string)
+                    .map(|e| e.inspect_with(seen))
                     .collect::<Vec<_>>()
                     .join(", ");
+                seen.pop();
                 format!("[{body}]")
             }
             // Ruby 3.4+ `Hash#inspect` format: `{a: 1, "k" => 2}` -- symbol
             // keys as `name: value` with no braces-padding spaces.
             RubyValue::Hash(h) => {
+                let ptr = container_identity(self).expect("Hash is a container");
+                if seen.contains(&ptr) {
+                    return "{...}".to_string();
+                }
+                seen.push(ptr);
                 let body = h
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.inspect_string()),
-                        _ => format!("{} => {}", k.inspect_string(), v.inspect_string()),
+                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.inspect_with(seen)),
+                        _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
+                seen.pop();
                 format!("{{{body}}}")
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start.as_ref().map(|b| b.inspect_string()).unwrap_or_default();
-                let e = end.as_ref().map(|b| b.inspect_string()).unwrap_or_default();
+                let s = start.as_ref().map(|b| b.inspect_with(seen)).unwrap_or_default();
+                let e = end.as_ref().map(|b| b.inspect_with(seen)).unwrap_or_default();
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
@@ -201,7 +285,7 @@ impl RubyValue {
             RubyValue::MatchData(_) => "#<MatchData>".to_string(),
             // `Bool`/`Int`/`Float`/`Object`/`Proc`: `#inspect` and `#to_s`
             // agree (or share the same placeholder approximation).
-            other => other.to_display_string(),
+            other => other.display_with(seen),
         }
     }
 
@@ -235,6 +319,17 @@ impl RubyValue {
             RubyValue::Mutex(_) => MUTEX_CLASS,
             RubyValue::Queue(_) => QUEUE_CLASS,
             RubyValue::Ractor(_) => RACTOR_CLASS,
+            // `Widget.class` -> `Class`, `Enumerable.class` -> `Module`
+            // (real Ruby; `Class < Module` handled by the registered
+            // ancestor chain). Outside a generated program (no registry --
+            // this crate's own unit tests) the class case is assumed.
+            RubyValue::Class(cid) => {
+                if crate::dispatch::class_is_module(*cid).unwrap_or(false) {
+                    MODULE_CLASS
+                } else {
+                    CLASS_CLASS
+                }
+            }
         }
     }
 
@@ -435,6 +530,9 @@ impl RubyValue {
                 *a as f64 == *b
             }
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
+            // Class identity (Phase 16.1): `Widget == Widget`, and what
+            // `Array#include?` on an array of classes consults.
+            (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
             (RubyValue::Str(a), RubyValue::Str(b)) => *a.lock() == *b.lock(),
             // Real Ruby `Regexp#==`: same source pattern AND same flags.
             (RubyValue::Regexp(a), RubyValue::Regexp(b)) => {
@@ -467,7 +565,11 @@ impl RubyValue {
             | RubyValue::Int(_)
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
-            | RubyValue::Range(..) => true,
+            | RubyValue::Range(..)
+            // Real Ruby classes aren't frozen by default, but the only
+            // mutations (reopening) happen at compile time in this AOT
+            // model -- reporting frozen matches what the value can DO.
+            | RubyValue::Class(_) => true,
             RubyValue::Str(s) => s.is_frozen(),
             RubyValue::Array(a) => a.is_frozen(),
             RubyValue::Hash(h) => h.is_frozen(),
@@ -501,6 +603,80 @@ impl RubyValue {
         self.clone()
     }
 
+    /// `Kernel#dup`/`#clone` -- the per-kind SHALLOW copy (Phase 15.2), the
+    /// one semantic difference between the two being the frozen flag:
+    /// `clone` (`copy_frozen: true`) carries it over, `dup` never does
+    /// (oracle-verified: `"abc".freeze.dup.frozen?` is `false`,
+    /// `.clone.frozen?` is `true`). Copies are shallow exactly like CRuby's
+    /// `rb_obj_dup`: a nested element/value/ivar is SHARED with the
+    /// original (`arr.dup[1].equal?(arr[1])`, oracle-verified), only the
+    /// top-level container is fresh.
+    ///
+    /// Per-kind rules (each oracle-verified against ruby 4.0.5):
+    /// - Immediates/`Symbol`: `dup`/`clone` return self (real Ruby).
+    /// - `Str`/`Array`/`Hash`: fresh payload, fresh (or copied) flag.
+    /// - `Range`: immutable here and in Ruby -- self suffices (the fresh
+    ///   object identity real Ruby mints is unobservable in this runtime).
+    /// - `Object`: per-class `RubyObject::dup_object` (see `ruby_class!`).
+    /// - `Proc`/`Regexp`/`MatchData`: real Ruby allocates a fresh object;
+    ///   all three are immutable in this runtime with no exposed object
+    ///   identity, so a reference copy is indistinguishable -- a documented
+    ///   approximation, not silent wrongness.
+    /// - `Mutex`: a fresh, unlocked mutex (real Ruby's `Mutex#dup` gives
+    ///   exactly that -- allocate + no state ivars).
+    /// - `Thread`/`Queue`/`Ractor`: raise in real Ruby (`TypeError:
+    ///   allocator undefined` / `NoMethodError: initialize_copy`) -- a loud
+    ///   panic here (spike scope: no exception-raising channel from this
+    ///   method). `Fiber#dup` succeeds in real Ruby but would need a copied
+    ///   coroutine we can't build -- rejected loudly rather than aliased
+    ///   silently.
+    pub fn dup_value(&self, copy_frozen: bool) -> RubyValue {
+        let keep_frozen = copy_frozen && self.is_frozen();
+        match self {
+            RubyValue::Nil
+            | RubyValue::Bool(_)
+            | RubyValue::Int(_)
+            | RubyValue::Float(_)
+            | RubyValue::Symbol(_)
+            | RubyValue::Range(..)
+            | RubyValue::Proc(_)
+            | RubyValue::Regexp(_)
+            | RubyValue::MatchData(_)
+            // Real `Class#dup` mints an anonymous class copy -- impossible
+            // in this AOT model; the handle is returned instead (documented
+            // divergence, same posture as Proc/Regexp above).
+            | RubyValue::Class(_) => self.clone(),
+            RubyValue::Str(s) => {
+                let fresh = crate::string_new(s.lock().clone());
+                if keep_frozen {
+                    fresh.set_frozen();
+                }
+                RubyValue::Str(fresh)
+            }
+            RubyValue::Array(a) => {
+                let fresh = crate::array_new(a.lock().clone());
+                if keep_frozen {
+                    fresh.set_frozen();
+                }
+                RubyValue::Array(fresh)
+            }
+            RubyValue::Hash(h) => {
+                let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
+                let fresh = crate::hash_new(pairs);
+                if keep_frozen {
+                    fresh.set_frozen();
+                }
+                RubyValue::Hash(fresh)
+            }
+            RubyValue::Object(o) => RubyValue::Object(o.dup_object(copy_frozen)),
+            RubyValue::Mutex(_) => crate::mutex_new(),
+            RubyValue::Fiber(_) => panic!("Fiber#dup/clone isn't supported yet (spike scope: the backing coroutine can't be copied)"),
+            RubyValue::Thread(_) => panic!("can't dup/clone a Thread (TypeError: allocator undefined for Thread; spike scope: raised as a panic)"),
+            RubyValue::Queue(_) => panic!("can't dup/clone a Queue (NoMethodError: undefined method 'initialize_copy'; spike scope: raised as a panic)"),
+            RubyValue::Ractor(_) => panic!("can't dup/clone a Ractor (TypeError: allocator undefined for Ractor; spike scope: raised as a panic)"),
+        }
+    }
+
     /// `case`/`when`'s and `case`/`in`'s value-pattern matching escape hatch
     /// -- a strict superset of `rb_eq` (falls back to it for every value
     /// shape that isn't a `Regexp` pattern against a `Str` subject), adding
@@ -516,6 +692,168 @@ impl RubyValue {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
             return re.compiled.is_match(&s.lock());
         }
+        // `Module#===` (Phase 16.1): `case x when Integer` / `when Widget`
+        // is an instance-of-ancestry check, NOT equality (`Widget ===
+        // Widget` is false in real Ruby -- a class is not an instance of
+        // itself). Registry-backed; only reachable in generated programs,
+        // which always install one.
+        if let RubyValue::Class(cid) = self {
+            return crate::dispatch::is_a(subject.class_id(), *cid);
+        }
         self.rb_eq(subject)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{array_new, array_push, hash_new, hash_set, string_new, Symbol};
+
+    fn sym(name: &str) -> RubyValue {
+        RubyValue::Symbol(Symbol::intern(name))
+    }
+
+    /// Phase 15.2: every expected string below is oracle-verified against
+    /// real ruby 4.0.5 (`p`/`puts` on the same graphs).
+    #[test]
+    fn inspect_marks_a_self_referential_array() {
+        let a = array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]);
+        array_push(&a, RubyValue::Array(a.clone()));
+
+        assert_eq!(RubyValue::Array(a).inspect_string(), "[1, 2, [...]]");
+    }
+
+    #[test]
+    fn inspect_marks_a_self_referential_hash() {
+        let h = hash_new(vec![(sym("k"), RubyValue::Int(1))]);
+        hash_set(&h, sym("me"), RubyValue::Hash(h.clone()));
+
+        assert_eq!(RubyValue::Hash(h).inspect_string(), "{k: 1, me: {...}}");
+    }
+
+    /// The marker follows the RECURRING container's kind: an array cycle
+    /// re-entered through a nested hash still prints `[...]`.
+    #[test]
+    fn inspect_marks_a_cross_container_cycle_by_the_recurring_kind() {
+        let b = array_new(vec![RubyValue::Int(1)]);
+        let h = hash_new(vec![(sym("x"), RubyValue::Nil)]);
+        array_push(&b, RubyValue::Hash(h.clone()));
+        hash_set(&h, sym("x"), RubyValue::Array(b.clone()));
+
+        assert_eq!(RubyValue::Array(b).inspect_string(), "[1, {x: [...]}]");
+    }
+
+    /// `puts`'s display path shares the guard: one line per element, the
+    /// cycle rendered as its marker.
+    #[test]
+    fn display_marks_a_self_referential_array() {
+        let a = array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]);
+        array_push(&a, RubyValue::Array(a.clone()));
+
+        assert_eq!(RubyValue::Array(a).to_display_string(), "1\n2\n[...]");
+    }
+
+    /// The visited set is a traversal STACK, not a permanent "seen" set: a
+    /// DAG sharing one array twice (no cycle) prints it in full both times,
+    /// like real Ruby.
+    #[test]
+    fn inspect_prints_a_shared_but_acyclic_child_twice() {
+        let inner = array_new(vec![RubyValue::Int(7)]);
+        let outer = array_new(vec![
+            RubyValue::Array(inner.clone()),
+            RubyValue::Array(inner),
+        ]);
+
+        assert_eq!(RubyValue::Array(outer).inspect_string(), "[[7], [7]]");
+    }
+
+    /// `dup` never copies the frozen flag; `clone` always does
+    /// (oracle-verified for Str/Array/Hash and objects alike).
+    #[test]
+    fn dup_starts_unfrozen_and_clone_copies_the_flag() {
+        let s = RubyValue::Str(string_new("abc".to_string()));
+        s.freeze_value();
+
+        assert!(!s.dup_value(false).is_frozen(), "dup of frozen is unfrozen");
+        assert!(s.dup_value(true).is_frozen(), "clone of frozen stays frozen");
+
+        let unfrozen = RubyValue::Str(string_new("abc".to_string()));
+        assert!(!unfrozen.dup_value(true).is_frozen(), "clone of unfrozen stays unfrozen");
+    }
+
+    /// The copy's top-level payload is FRESH (mutating it leaves the
+    /// original untouched)...
+    #[test]
+    fn dup_copies_the_top_level_payload() {
+        let a = array_new(vec![RubyValue::Int(1)]);
+        let copy = RubyValue::Array(a.clone()).dup_value(false);
+        array_push(&copy.as_array_unchecked(), RubyValue::Int(2));
+
+        assert_eq!(a.lock().len(), 1);
+        assert_eq!(copy.as_array_unchecked().lock().len(), 2);
+
+        let h = hash_new(vec![(sym("a"), RubyValue::Int(1))]);
+        let hcopy = RubyValue::Hash(h.clone()).dup_value(false);
+        hash_set(&hcopy.as_hash_unchecked(), sym("b"), RubyValue::Int(2));
+
+        assert_eq!(h.lock().len(), 1);
+        assert_eq!(hcopy.as_hash_unchecked().lock().len(), 2);
+        assert_eq!(
+            hcopy.inspect_string(),
+            "{a: 1, b: 2}",
+            "insertion order survives the copy"
+        );
+    }
+
+    /// ...but nested elements are SHARED -- CRuby's shallow rule
+    /// (`arr.dup[1].equal?(arr[1])` is true, oracle-verified).
+    #[test]
+    fn dup_is_shallow_nested_values_are_shared() {
+        let inner = array_new(vec![RubyValue::Int(9)]);
+        let outer = array_new(vec![RubyValue::Array(inner.clone())]);
+        let copy = RubyValue::Array(outer).dup_value(false);
+
+        let copied_inner = copy.as_array_unchecked().lock()[0].as_array_unchecked();
+        assert!(std::sync::Arc::ptr_eq(&inner, &copied_inner));
+    }
+
+    /// Immediates and Symbols: `dup`/`clone` return self (real Ruby).
+    #[test]
+    fn dup_of_immediates_returns_the_same_value() {
+        for v in [
+            RubyValue::Nil,
+            RubyValue::Bool(true),
+            RubyValue::Int(5),
+            RubyValue::Float(1.5),
+            sym("s"),
+        ] {
+            assert!(v.dup_value(false).rb_eq(&v));
+            assert!(v.dup_value(true).rb_eq(&v));
+        }
+        let r = RubyValue::Range(
+            Some(Box::new(RubyValue::Int(1))),
+            Some(Box::new(RubyValue::Int(3))),
+            false,
+        );
+        assert_eq!(r.dup_value(false).inspect_string(), "1..3");
+    }
+
+    /// One representative of the rejected tier (Thread/Queue/Ractor/Fiber
+    /// all take the same loud-panic arm; Queue is the only one
+    /// constructible without a running `may`/coroutine context).
+    #[test]
+    #[should_panic(expected = "can't dup/clone a Queue")]
+    fn dup_of_a_queue_panics_loudly() {
+        crate::queue_new().dup_value(false);
+    }
+
+    #[test]
+    fn dup_of_a_mutex_makes_a_fresh_unlocked_mutex() {
+        let m = crate::mutex_new();
+        let copy = m.dup_value(false);
+        let (RubyValue::Mutex(a), RubyValue::Mutex(b)) = (&m, &copy) else {
+            panic!("expected two mutexes")
+        };
+        assert!(!std::sync::Arc::ptr_eq(a, b), "fresh mutex, not an alias");
     }
 }

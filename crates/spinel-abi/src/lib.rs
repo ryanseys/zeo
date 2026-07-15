@@ -61,6 +61,14 @@ pub const RACTOR_CLASS: ClassId = ClassId(18);
 /// linearizes this id into a class's `ancestors` exactly like a user
 /// module.
 pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
+/// `Class` and `Module` (Phase 16.1) -- the classes a first-class
+/// class/module VALUE (`RubyValue::Class`) answers `.class` with:
+/// `Widget.class == Class`, `Enumerable.class == Module`. Both are
+/// themselves CLASSES (`Class.class == Class` in real Ruby); `Class`'s
+/// superclass is `Module` (`Widget.is_a?(Module)` is true), which the
+/// compiler special-cases when seeding parents.
+pub const CLASS_CLASS: ClassId = ClassId(20);
+pub const MODULE_CLASS: ClassId = ClassId(21);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -86,6 +94,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: QUEUE_CLASS, name: "Queue", is_module: false },
     BuiltinClass { id: RACTOR_CLASS, name: "Ractor", is_module: false },
     BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true },
+    BuiltinClass { id: CLASS_CLASS, name: "Class", is_module: false },
+    BuiltinClass { id: MODULE_CLASS, name: "Module", is_module: false },
 ];
 
 #[cfg(test)]
