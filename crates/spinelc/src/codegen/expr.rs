@@ -544,13 +544,20 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
-        HirNode::GlobalRead(name) => quote! { spinel_rt::global_get(#name) },
+        HirNode::GlobalRead(name) => {
+            // Globals are per-box tables (Phase 18) -- the statement's own
+            // defining box picks the table, no fallback layer (the CRuby
+            // box model, verified in the plan's research contract).
+            let bx = cx.box_id;
+            quote! { spinel_rt::global_get(#bx, #name) }
+        }
         HirNode::GlobalWrite(name, value) => {
             let v = emit_expr(cx, *value);
             // See `IvarWrite`'s docs: global storage is likewise always
             // `RubyValue` (`spinel_rt::global_set`'s own signature).
             let v = box_if_object_typed(cx, *value, v);
-            quote! { { let __v = #v; spinel_rt::global_set(#name, __v.clone()); __v } }
+            let bx = cx.box_id;
+            quote! { { let __v = #v; spinel_rt::global_set(#bx, #name, __v.clone()); __v } }
         }
         HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
         HirNode::ConstReadOrNil(scope, name) => {

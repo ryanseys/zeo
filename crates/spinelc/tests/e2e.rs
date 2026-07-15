@@ -7746,15 +7746,21 @@ fn rust_enumerable_matches_real_ruby_across_all_receiver_kinds() {
 }
 
 #[test]
-fn blockless_enumerator_forms_panic_clearly() {
-    // Enumerator doesn't exist yet: a blockless map would return one in
-    // real Ruby; here it's a loud runtime panic naming the gap.
-    let result = run_ruby("[1, 2].map\n");
-    assert!(!result.status.success());
-    assert!(
-        result.stderr.contains("Enumerator"),
-        "stderr: {}",
-        result.stderr
+fn blockless_forms_return_real_enumerators() {
+    // The Phase 14.4 "no Enumerator (spike scope)" posture retired by
+    // Phase 17.2: a blockless map returns a real Enumerator whose `each`
+    // re-invokes the captured method. Oracle-verified.
+    let result = run_ruby(
+        "e = [1, 2].map\n\
+         p e.class\n\
+         p e\n\
+         p e.each { |x| x * 3 }\n\
+         p e.size\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Enumerator\n#<Enumerator: [1, 2]:map>\n[3, 6]\n2\n"
     );
 }
 
@@ -10054,4 +10060,298 @@ fn struct_new_rejections_are_clean_errors() {
     assert!(err.contains("outside a constant assignment"), "{err}");
     let err = spinelc::compile_to_rust("P = Struct.new(\"Name\", :a)\n").unwrap_err();
     assert!(err.contains("must be literal symbols"), "{err}");
+}
+
+// -- Phase 17.2: the fiber-backed Enumerator (per CRuby's enumerator.c).
+// Every positive expectation below is oracle-verified against ruby 4.0.5.
+
+/// The keystone: external iteration over a method-backed enumerator --
+/// `next` advances a real fiber, `peek` caches without consuming, the
+/// classic `loop { e.next }` idiom terminates via StopIteration and
+/// returns the underlying `each`'s result, and a rescued StopIteration
+/// exposes `message`/`result`.
+#[test]
+fn external_iteration_drives_a_real_fiber() {
+    let result = run_ruby(
+        r#"
+        e = [10, 20, 30].each
+        r = loop do
+          puts e.next
+        end
+        p r
+        e2 = [1].each
+        e2.next
+        begin
+          e2.next
+        rescue StopIteration => ex
+          puts "rescued: #{ex.message}"
+          p ex.result
+        end
+        g = [7, 8].each
+        p g.peek
+        p g.peek
+        p g.next
+        p g.next
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "10\n20\n30\n[10, 20, 30]\nrescued: iteration reached an end\n[1]\n7\n7\n7\n8\n"
+    );
+}
+
+/// `loop`'s full StopIteration contract (CRuby kernel.rb:151): a manual
+/// `raise StopIteration` returns nil (no result set), `break value` still
+/// carries its value out, and every OTHER exception propagates.
+#[test]
+fn loop_swallows_stop_iteration_and_returns_its_result() {
+    let result = run_ruby(
+        r#"
+        p(loop { raise StopIteration })
+        p(loop { break 42 })
+        begin
+          loop { raise ArgumentError, "boom" }
+        rescue ArgumentError => e
+          puts "arg: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\n42\narg: boom\n");
+}
+
+/// `Enumerator.new { |y| ... }` -- the generator/Yielder pair, and the
+/// packing truth table: `next_values` preserves yield arity exactly,
+/// `next` collapses through ary2sv (`yield`->nil, `yield nil`->nil,
+/// `yield 1,2`->[1,2], `yield [3,4]`->[3,4]); the block's return value is
+/// the StopIteration result; `rewind` restarts from the top.
+#[test]
+fn enumerator_new_yields_through_a_yielder_with_cruby_packing() {
+    let result = run_ruby(
+        r#"
+        g = Enumerator.new do |y|
+          y.yield
+          y.yield nil
+          y.yield 1, 2
+          y << [3, 4]
+          :fin
+        end
+        p g.next_values
+        p g.next_values
+        p g.next_values
+        p g.next_values
+        g.rewind
+        p g.next
+        p g.next
+        p g.next
+        p g.next
+        begin
+          g.next
+        rescue StopIteration => e
+          p e.result
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[]\n[nil]\n[1, 2]\n[[3, 4]]\nnil\nnil\n[1, 2]\n[3, 4]\n:fin\n"
+    );
+}
+
+/// An INFINITE generator proves the fiber suspend is real: `next`/`peek`
+/// advance lazily, and `take`/`first` terminate via the Break-based early
+/// exit (internal iteration restarts from scratch each time -- CRuby).
+#[test]
+fn infinite_generators_iterate_lazily() {
+    let result = run_ruby(
+        r#"
+        inf = Enumerator.new do |y|
+          n = 0
+          loop do
+            y << n
+            n += 1
+          end
+        end
+        p inf.next
+        p inf.next
+        p inf.peek
+        p inf.next
+        p inf.take(3)
+        p inf.first(2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\n1\n2\n2\n[0, 1, 2]\n[0, 1]\n");
+}
+
+/// A mid-iteration exception propagates out of `next`; the NEXT `next`
+/// re-inits the dead fiber and RESTARTS the iteration (CRuby's
+/// get_next_values rule, oracle-verified).
+#[test]
+fn a_failed_iteration_propagates_then_restarts() {
+    let result = run_ruby(
+        r#"
+        e = Enumerator.new do |y|
+          y << 1
+          raise ArgumentError, "mid"
+        end
+        p e.next
+        begin
+          e.next
+        rescue ArgumentError => ex
+          puts "propagated: #{ex.message}"
+        end
+        p e.next
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\npropagated: mid\n1\n");
+}
+
+/// The blockless breadth: iteration methods across
+/// Integer/Range/Hash/String/Array answer real Enumerators (inspect shows
+/// the captured receiver/method/args; `each` re-invokes the source).
+#[test]
+fn blockless_breadth_returns_enumerators_everywhere() {
+    let result = run_ruby(
+        r#"
+        p 5.times.to_a
+        p 2.upto(5).to_a
+        p 5.downto(2).inspect
+        p (1..10).step(3).to_a
+        p({ a: 1, b: 2 }.each_value.to_a)
+        p "hey".each_char.to_a
+        p [3, 1].sort_by
+        p 1.step(2.0, 0.5).to_a
+        p 5.then.next
+        p({ x: 1 }.each.next)
+        p [1, 2, 3].each_slice(2).to_a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[0, 1, 2, 3, 4]\n[2, 3, 4, 5]\n\"#<Enumerator: 5:downto(2)>\"\n[1, 4, 7, 10]\n\
+         [1, 2]\n[\"h\", \"e\", \"y\"]\n#<Enumerator: [3, 1]:sort_by>\n[1.0, 1.5, 2.0]\n\
+         5\n[:x, 1]\n[[1, 2], [3]]\n"
+    );
+}
+
+/// Chaining: with_index/each_with_index wrap (blockless) and drive
+/// (block-given), an Enumerator is itself Enumerable (reduce/sort/select
+/// arrive via the real ancestor chain), and with_object threads its memo.
+#[test]
+fn enumerators_chain_and_are_enumerable() {
+    let result = run_ruby(
+        r#"
+        e = ["a", "b", "c"].each_with_index
+        p e.class
+        p e.to_a
+        p [10, 20].map.with_index { |x, i| x * i }
+        p [10, 20].each.with_index(5).to_a
+        p [4, 2, 6].each.reduce { |a, b| a + b }
+        p [4, 2, 6].each.sort
+        p [1, 2, 3, 4].each.select { |x| x.even? }
+        p [1, 2].each.with_object([]) { |x, memo| memo << x * 2 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Enumerator\n[[\"a\", 0], [\"b\", 1], [\"c\", 2]]\n[0, 20]\n\
+         [[10, 5], [20, 6]]\n12\n[2, 4, 6]\n[2, 4]\n[2, 4]\n"
+    );
+}
+
+/// `size` never iterates: receiver-derived for the same-size set, computed
+/// for times/upto/each_slice, the stored hint for Enumerator.new, nil when
+/// unknowable.
+#[test]
+fn enumerator_size_is_lazy_and_oracle_faithful() {
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].each.size
+        p [1, 2, 3].select.size
+        p 5.times.size
+        p 2.upto(9).size
+        p [1, 2, 3].each_slice(2).size
+        p "abc".each_char.size
+        p Enumerator.new { |y| y << 1 }.size
+        p Enumerator.new(4) { |y| y << 1 }.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n3\n5\n8\n2\n3\nnil\n4\n");
+}
+
+/// `to_enum`/`enum_for` on a user class -- the real-Ruby
+/// `return to_enum(:each) unless block_given?` pattern -- and the
+/// synthesized Struct `each` using exactly that pattern.
+#[test]
+fn to_enum_works_on_user_classes_and_structs() {
+    let result = run_ruby(
+        r##"
+        class Deck
+          include Enumerable
+          def initialize(cards)
+            @cards = cards
+          end
+          def each
+            return to_enum(:each) unless block_given?
+            i = 0
+            while i < @cards.length
+              yield @cards[i]
+              i += 1
+            end
+            self
+          end
+        end
+        d = Deck.new([5, 3, 9])
+        e = d.each
+        p e.class
+        p e.next
+        p d.each.sort
+        p d.map.with_index { |c, i| "#{i}:#{c}" }
+        p 7.to_enum(:upto, 9).to_a
+        P17 = Struct.new(:x, :y)
+        pt = P17.new(1, 2)
+        en = pt.each
+        p en.class
+        p en.next
+        p en.to_a
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Enumerator\n5\n[3, 5, 9]\n[\"0:5\", \"1:3\", \"2:9\"]\n[7, 8, 9]\n\
+         Enumerator\n1\n[1, 2]\n"
+    );
+}
+
+/// Enumerator identity/copy semantics: blockless `each` returns SELF,
+/// pre-iteration dup is a fresh enumerator over the same source, breaking
+/// out of an external loop leaves the enumerator resumable.
+#[test]
+fn enumerator_identity_and_resumability() {
+    let result = run_ruby(
+        r#"
+        e = [1, 2].each
+        p e.each.equal?(e)
+        d = e.dup
+        p d.class
+        p e.next
+        p d.next
+        g = [1, 2, 3].each
+        loop do
+          v = g.next
+          break if v == 2
+        end
+        p g.next
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nEnumerator\n1\n1\n3\n");
 }

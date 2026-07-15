@@ -52,6 +52,12 @@ builtin_methods! {
     // edge cases) raises real Ruby's NoMethodError shape for its kind.
     "new" => fn new_m(recv, args, block) {
         let cid = recv_cid(recv);
+        // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
+        // runtime allocator (Phase 17.2); parse deliberately skips the
+        // static `New` node for it so the block arrives here.
+        if cid == spinel_abi::ENUMERATOR_CLASS {
+            return crate::builtins::enumerator::enumerator_new(args, block);
+        }
         match crate::dispatch::constructor_of(cid) {
             Some(ctor) => ctor(args, block),
             None => {

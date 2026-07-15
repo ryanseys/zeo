@@ -25,6 +25,7 @@ pub use arith::*;
 pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
+pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
 pub use builtins::kernel::{
     kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_float,
@@ -38,15 +39,16 @@ pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     class_is_module, class_name, downcast_robj, install_class_registry,
-    install_exception_factory, is_a, method_name_symbol, raise_error, responds_to,
-    run_initialize, send, send_value,
+    install_exception_factory, install_stop_iteration_factory, is_a, method_name_symbol,
+    raise_error, raise_stop_iteration, responds_to, run_initialize, send, send_in,
+    send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
     INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS,
     NIL_CLASS, NUMERIC_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS,
     RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
-    TRUE_CLASS,
+    TRUE_CLASS, YIELDER_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use exec::run_main;
@@ -455,13 +457,13 @@ mod tests {
                 vec![QUEUE_CLASS, Object::CLASS_ID, KERNEL_CLASS, BASIC_OBJECT_CLASS],
                 None,
             );
-            registry.define_value_method(ARRAY_CLASS, Symbol::intern("shout"), |recv, _args, _blk| {
+            registry.define_value_method(ARRAY_CLASS, 0, Symbol::intern("shout"), |recv, _args, _blk| {
                 Ok(RubyValue::Str(string_new(format!("{}!", recv.inspect_string()))))
             });
-            registry.define_value_method(ARRAY_CLASS, Symbol::intern("length"), |_recv, _args, _blk| {
+            registry.define_value_method(ARRAY_CLASS, 0, Symbol::intern("length"), |_recv, _args, _blk| {
                 Ok(RubyValue::Int(42))
             });
-            registry.define_value_method(QUEUE_CLASS, Symbol::intern("to_s"), |_recv, _args, _blk| {
+            registry.define_value_method(QUEUE_CLASS, 0, Symbol::intern("to_s"), |_recv, _args, _blk| {
                 Ok(RubyValue::Str(string_new("#<a queue, reopened>".to_string())))
             });
             install_class_registry(registry);

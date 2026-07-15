@@ -176,6 +176,22 @@ fn emit_ractor_error(cx: &Ctx) -> TokenStream {
     )
 }
 
+/// Finishes a dynamic-dispatch (`send_value`) emission: `catch_break`
+/// wraps the call ONLY when the call site itself carries a block -- a
+/// `Signal::Break` can only ever target a block attached to THIS call, so
+/// on a blockless call any arriving Break belongs to an OUTER block and
+/// must keep propagating. (The unconditional wrap this replaced silently
+/// ate a consumer's iteration-terminating break as it crossed a
+/// `Yielder#<<` call inside an `Enumerator.new` generator -- turning
+/// `infinite_enum.take(3)` into a hang. Phase 17.2.)
+fn wrap_dynamic_result(has_block: bool, call: TokenStream) -> TokenStream {
+    if has_block {
+        quote! { spinel_rt::catch_break(#call)? }
+    } else {
+        quote! { (#call)? }
+    }
+}
+
 /// A `FiberError` with a fixed message -- CRuby's own wording, passed
 /// verbatim from the dispatch sites (Phase 13.3).
 fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
@@ -573,6 +589,7 @@ pub fn emit_new_with_arg_tokens(
     class_name: &str,
     arg_exprs: Vec<TokenStream>,
 ) -> TokenStream {
+    let __bx = cx.box_id;
     let cid = cx
         .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
@@ -588,7 +605,7 @@ pub fn emit_new_with_arg_tokens(
     if cx.compiler.class(cid).is_module {
         let id = cid.0;
         return quote! {
-            spinel_rt::send_value(
+            spinel_rt::send_value_in(#__bx, 
                 &spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)),
                 spinel_rt::Symbol::intern("new"),
                 &[#(#arg_exprs),*],
@@ -1214,6 +1231,7 @@ pub fn emit_call(
     block_arg: Option<NodeId>,
     safe: bool,
 ) -> TokenStream {
+    let __bx = cx.box_id;
     // A call-site `*expr`/`**h` splat can't take any of the arity-checked
     // static paths below (the flattened argument COUNT isn't known until
     // runtime) -- see `emit_splat_call`'s docs for the always-dynamic
@@ -1286,14 +1304,15 @@ pub fn emit_call(
                     box_if_object_typed(cx, a, e)
                 });
                 let block_value = emit_block_option(cx, block, block_arg);
-                return quote! {
-                    spinel_rt::catch_break(spinel_rt::send_value(
+                let dyn_call = quote! {
+                    spinel_rt::send_value_in(#__bx, 
                         &#slf,
                         spinel_rt::Symbol::intern(#name),
                         &[#(#arg_exprs),*],
                         #block_value,
-                    ))?
+                    )
                 };
+                return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
             }
             if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                 let scope = cx.compiler.scope(sid);
@@ -1401,6 +1420,43 @@ pub fn emit_call(
                 let tag = emit_expr(cx, args[0]);
                 let blk = emit_proc_value(cx, b);
                 return quote! { spinel_rt::kernel_catch(#tag, #blk)? };
+            }
+        }
+        // `to_enum(:meth, *args)` / `enum_for` on the implicit self (Phase
+        // 17.2): routed through dynamic dispatch, whose Kernel row builds
+        // the Enumerator over the boxed receiver -- what the Struct
+        // template's `return to_enum(:each) unless block_given?` compiles
+        // to.
+        if (name == "to_enum" || name == "enum_for")
+            && kwargs.is_empty()
+            && block.is_none()
+            && block_arg.is_none()
+        {
+            if let Some(cid) = cx.current_class {
+                let slf = &cx.self_ident;
+                // A reopened builtin's `self` is already a boxed
+                // `RubyValue` (Phase 16.3).
+                let boxed = if cx.compiler.class(cid).is_builtin {
+                    quote! { (#slf.clone()) }
+                } else {
+                    let class_ident = super::ident::class_ident(cx.compiler, cid);
+                    quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+                };
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                return quote! {
+                    spinel_rt::send_value_in(#__bx, 
+                        &#boxed,
+                        spinel_rt::Symbol::intern(#name),
+                        &[#(#arg_exprs),*],
+                        None,
+                    )?
+                };
             }
         }
         panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
@@ -1646,6 +1702,7 @@ fn emit_splat_call(
     block_arg: Option<NodeId>,
     safe: bool,
 ) -> TokenStream {
+    let __bx = cx.box_id;
     if !kwargs.is_empty() || kwargs_splat.is_some() {
         panic!("a call combining a `*`/`**` splat argument with keyword arguments isn't supported yet (spike scope)");
     }
@@ -1705,11 +1762,14 @@ fn emit_splat_call(
         }
     });
     let block_value = emit_block_option(cx, block, block_arg);
+    let dyn_call =
+        quote! { spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &__args, #block_value) };
+    let dyn_call = wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     quote! {
         {
             let mut __args: Vec<spinel_rt::RubyValue> = Vec::new();
             #(#arg_pushes)*
-            spinel_rt::catch_break(spinel_rt::send_value(&#recv_obj_expr, #name_expr, &__args, #block_value))?
+            #dyn_call
         }
     }
 }
@@ -1820,6 +1880,7 @@ fn emit_class_method_call_on(
 /// allocation this specific call site pays for `&.`'s uniformity) before the
 /// same nil-check-then-`send` logic runs regardless of which case it was.
 fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> TokenStream {
+    let __bx = cx.box_id;
     let boxed_recv = match infer_class(cx, recv_id) {
         Some(cid) => {
             let class_ident = super::ident::class_ident(cx.compiler, cid);
@@ -1844,7 +1905,7 @@ fn emit_safe_call(cx: &Ctx, recv_id: NodeId, name: &str, args: &[NodeId]) -> Tok
                 // this call's existing kwargs restriction). `send_value`
                 // (Phase 14.4) handles Object AND builtin receivers
                 // uniformly, so the old non-Object panic is gone.
-                spinel_rt::send_value(&__safe_recv, #name_expr, &[#(#arg_exprs),*], None)?
+                spinel_rt::send_value_in(#__bx, &__safe_recv, #name_expr, &[#(#arg_exprs),*], None)?
             }
         }
     }
@@ -1914,6 +1975,7 @@ fn dispatch(
     recv_expr: &TokenStream,
     bypass_visibility: bool,
 ) -> TokenStream {
+    let __bx = cx.box_id;
     // Every fast path below (operators, collection `[]`/`length`, `.times`)
     // is a fixed, positional-only shape that has nowhere to put a keyword
     // argument -- gated on `kwargs.is_empty()` so a call that actually
@@ -2607,10 +2669,12 @@ fn dispatch(
     // `codegen::loops`' redo-wrapping machinery with `while`/`until`/`loop`/
     // `for`, so `break`/`next`/`redo` inside a `.times` block work exactly
     // the same way.
-    if is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs) {
+    // Blockless `5.times` falls through to the dynamic row, which answers
+    // an Enumerator (Phase 17.2) -- the inline splice below is only for the
+    // block form.
+    if let Some(block_id) = block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs)) {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
-            let block_id = block.unwrap_or_else(|| panic!("`times` requires a block"));
             let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
                 panic!("`times`'s argument must be a block");
             };
@@ -2704,14 +2768,10 @@ fn dispatch(
             box_if_object_typed(cx, a, e)
         });
         let block_value = emit_block_option(cx, block, block_arg);
-        // `catch_break` applied unconditionally on this fully-dynamic path
-        // (unlike Path 1's `needs_block`-gated version): `send`'s target
-        // isn't statically known here, so there's no way to tell in advance
-        // whether it might invoke a block -- the match is a cheap no-op
-        // when no `Signal::Break` was actually raised.
-        return quote! {
-            spinel_rt::catch_break(spinel_rt::send_value(&#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value))?
+        let dyn_call = quote! {
+            spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &[#(#rest_args),*], #block_value)
         };
+        return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     }
 
     // Ordinary call with a statically known receiver class: direct call
@@ -2803,12 +2863,12 @@ fn dispatch(
                 return quote! {
                     match (&(#recv_expr), &(#arg_expr)) {
                         #int_arm
-                        (__dyn_recv, __dyn_arg) => spinel_rt::catch_break(spinel_rt::send_value(
+                        (__dyn_recv, __dyn_arg) => spinel_rt::send_value_in(#__bx, 
                             __dyn_recv,
                             spinel_rt::Symbol::intern(#name),
                             &[(*__dyn_arg).clone()],
                             None,
-                        ))?,
+                        )?,
                     }
                 };
             }
@@ -2828,12 +2888,12 @@ fn dispatch(
                 return quote! {
                     match &(#recv_expr) {
                         #int_arm
-                        __dyn_recv => spinel_rt::catch_break(spinel_rt::send_value(
+                        __dyn_recv => spinel_rt::send_value_in(#__bx, 
                             __dyn_recv,
                             spinel_rt::Symbol::intern(#name),
                             &[],
                             None,
-                        ))?,
+                        )?,
                     }
                 };
             }
@@ -2910,14 +2970,15 @@ fn dispatch(
             box_if_object_typed(cx, a, e)
         });
         let block_value = emit_block_option(cx, block, block_arg);
-        return quote! {
-            spinel_rt::catch_break(spinel_rt::send_value(
+        let dyn_call = quote! {
+            spinel_rt::send_value_in(#__bx, 
                 &(#recv_expr),
                 #name_expr,
                 &[#(#arg_exprs),*],
                 #block_value,
-            ))?
+            )
         };
+        return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     }
 
     // A statically-known class that `include Enumerable` (the RUST-backed
@@ -2959,7 +3020,7 @@ fn dispatch(
             });
             let block_value = emit_block_option(cx, block, block_arg);
             return quote! {
-                spinel_rt::catch_break(spinel_rt::send_value(
+                spinel_rt::catch_break(spinel_rt::send_value_in(#__bx, 
                     &spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)),
                     #name_expr,
                     &[#(#arg_exprs),*],

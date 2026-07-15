@@ -161,6 +161,8 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::Regexp(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
         RubyValue::MatchData(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
         RubyValue::Fiber(f) => HashKey::Identity(Arc::as_ptr(f) as *const () as usize),
+        RubyValue::Enumerator(e) => HashKey::Identity(Arc::as_ptr(e) as *const () as usize),
+        RubyValue::Yielder(y) => HashKey::Identity(Arc::as_ptr(y) as *const () as usize),
         RubyValue::Thread(t) => HashKey::Identity(Arc::as_ptr(t) as *const () as usize),
         RubyValue::Mutex(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
         RubyValue::Queue(q) => HashKey::Identity(Arc::as_ptr(q) as *const () as usize),

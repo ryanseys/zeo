@@ -5,7 +5,7 @@
 //! modern CRuby); the bytes/encoding surface is Tier C, documented in the
 //! plan.
 
-use crate::builtins::{arg_int, arg_str, arity, builtin_methods, recv_str};
+use crate::builtins::{arg_int, arg_str, arity, block_or_enum, builtin_methods, recv_str};
 use crate::{RubyValue, Signal};
 
 /// `capitalize`'s rule: first char upcased, the REST downcased.
@@ -270,9 +270,7 @@ builtin_methods! {
     }
     "each_char" => fn each_char(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("String#each_char without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each_char", args, block);
         let cs: Vec<char> = recv_str!(recv).lock().chars().collect();
         for c in cs {
             p(&[str_value(c.to_string())])?;
@@ -281,9 +279,7 @@ builtin_methods! {
     }
     "each_line" => fn each_line(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("String#each_line without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each_line", args, block);
         let ls = split_lines(&recv_str!(recv).lock());
         for l in ls {
             p(&[l])?;

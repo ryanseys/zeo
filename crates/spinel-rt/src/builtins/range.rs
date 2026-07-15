@@ -3,7 +3,7 @@
 //! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
 //! The remaining Tier A rows land in stage E.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::RubyValue;
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
@@ -18,9 +18,7 @@ builtin_methods! {
 
     "each" => fn each(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Range#each without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each", args, block);
         let (start, end, exclusive) = range_parts(recv);
         let (Some(s), Some(e)) = (start, end) else {
             panic!("can't iterate from a beginless/endless Range (spike scope)");
@@ -104,12 +102,10 @@ builtin_methods! {
         let last = if exclusive { e - 1 } else { *e };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
-    // `step(n)` with a block (the Enumerator-returning form is 17.2).
+    // `step(n)`: the blockless form returns an Enumerator (Phase 17.2).
     "step" | "%" => fn step(recv, args, block) {
         arity!(args, 1);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Range#step without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "step", args, block);
         let (start, end, exclusive) = range_parts(recv);
         let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
             panic!("Range#step on a non-Integer range isn't supported (spike scope)");

@@ -363,9 +363,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 // Rust ident -- same reasoning as `emit_class`'s
                 // `dispatch_key`.
                 let key = &scope.name;
+                let box_id = compiler.class(ClassId(id)).box_id;
                 quote! {
                     __registry.define_value_method(
                         spinel_rt::ClassId(#id),
+                        #box_id,
                         spinel_rt::Symbol::intern(#key),
                         #tramp,
                     );
@@ -442,6 +444,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
     });
 
+    let stop_iteration_ctor = {
+        let ctor = expr::emit_boxed_new(
+            &cx,
+            "StopIteration",
+            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
+        );
+        quote! {
+            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#ctor) })()
+                .expect("Exception#initialize can't signal")
+        }
+    };
+
     quote! {
         #(#classes)*
         #(#class_method_containers)*
@@ -465,6 +479,22 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     #(#exception_arms)*
                     other => panic!("exception factory: spinel-rt raised an unknown class {other}"),
                 }
+            });
+            // StopIteration's dedicated builder (Phase 17.2): the instance
+            // an exhausted `Enumerator#next` raises carries the underlying
+            // `each`'s return value as `#result` -- what a `loop`'s rescue
+            // returns. Built like the arms above, then stamped through the
+            // prelude class's own `__set_result`.
+            spinel_rt::install_stop_iteration_factory(|__msg, __result| {
+                let __exc = #stop_iteration_ctor;
+                spinel_rt::send(
+                    &__exc.as_object_unchecked(),
+                    spinel_rt::Symbol::intern("__set_result"),
+                    std::slice::from_ref(&__result),
+                    None,
+                )
+                .expect("StopIteration#__set_result can't signal");
+                __exc
             });
 
             // The whole top level runs as `may`'s first coroutine (Phase

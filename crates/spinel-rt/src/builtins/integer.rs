@@ -10,7 +10,7 @@
 //! result that fits back into `Int`, so a big payload never aliases a
 //! fixnum value (equality/hashing/matching stay canonical).
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -624,13 +624,11 @@ builtin_methods! {
     "truncate" => fn truncate(recv, args, _block) {
         int_round_family(recv, args, RoundMode::Trunc)
     }
-    // Iteration primitives, block form (blockless Enumerator forms are
-    // Phase 17.2). Counts beyond i64 are physically unrunnable -- loud.
+    // Iteration primitives; blockless forms return Enumerators (Phase
+    // 17.2). Counts beyond i64 are physically unrunnable -- loud.
     "times" => fn times(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Integer#times without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "times", args, block);
         let RubyValue::Int(n) = recv else {
             panic!("Integer#times receiver exceeds i64 (unrunnable iteration count)");
         };
@@ -641,9 +639,7 @@ builtin_methods! {
     }
     "upto" => fn upto(recv, args, block) {
         arity!(args, 1);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Integer#upto without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "upto", args, block);
         let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) else {
             panic!("Integer#upto beyond i64 isn't supported (unrunnable iteration count)");
         };
@@ -654,9 +650,7 @@ builtin_methods! {
     }
     "downto" => fn downto(recv, args, block) {
         arity!(args, 1);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Integer#downto without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "downto", args, block);
         let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) else {
             panic!("Integer#downto beyond i64 isn't supported (unrunnable iteration count)");
         };

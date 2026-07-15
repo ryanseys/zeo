@@ -11,7 +11,7 @@
 //! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
 //! would shadow the post-walk numeric `<=>` today.
 
-use crate::builtins::{arity, builtin_methods, need_block};
+use crate::builtins::{arity, block_or_enum, builtin_methods, need_block};
 use crate::{RubyValue, Signal, Symbol};
 
 builtin_methods! {
@@ -119,10 +119,27 @@ builtin_methods! {
     }
     "then" | "yield_self" => fn then_m(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Kernel#then without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "then", args, block);
         p(std::slice::from_ref(recv))
+    }
+    // `x.to_enum(:meth, *args)` -- captures exactly (receiver, method,
+    // args), CRuby's obj_to_enum (Phase 17.2). The block-as-size-proc
+    // form is Tier B (rare; the stored-size Enumerator.new form covers
+    // the practical cases).
+    "to_enum" | "enum_for" => fn to_enum(recv, args, _block) {
+        let meth = match args.first() {
+            None => "each".to_string(),
+            Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
+            Some(RubyValue::Str(s)) => s.lock().clone(),
+            Some(other) => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("{} is not a symbol nor a string", other.inspect_string()),
+                ))
+            }
+        };
+        let rest = if args.is_empty() { &[] } else { &args[1..] };
+        Ok(crate::builtins::enumerator::enumerator_for(recv, &meth, rest))
     }
 }
 

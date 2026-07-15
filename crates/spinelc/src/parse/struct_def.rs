@@ -240,10 +240,12 @@ fn struct_template(name: &str, members: &[String], keyword_init: bool) -> String
     other.is_a?({name}) && other.to_a == to_a
   end
   def each
+    return to_enum(:each) unless block_given?
 {each_yields}
     self
   end
   def each_pair
+    return to_enum(:each_pair) unless block_given?
 {each_pair_yields}
     self
   end

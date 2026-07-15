@@ -2,7 +2,7 @@
 //! old curated table (arg-type mismatches upgraded from silent fall-through
 //! to CRuby's real TypeError); the Tier A breadth lands in stage E.
 
-use crate::builtins::{arg_int, arity, builtin_methods, recv_array};
+use crate::builtins::{arg_int, arity, block_or_enum, builtin_methods, recv_array};
 use crate::RubyValue;
 
 builtin_methods! {
@@ -596,9 +596,7 @@ builtin_methods! {
     }
     "map!" | "collect!" => fn map_bang(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Array#map! without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "map!", args, block);
         let items = recv_array!(recv).lock().clone();
         let mut out = Vec::with_capacity(items.len());
         for e in items {
@@ -611,20 +609,28 @@ builtin_methods! {
     // Ruby's contract).
     "select!" | "filter!" => fn select_bang(recv, args, block) {
         arity!(args, 0);
-        in_place_filter(recv, block, true)
+        in_place_filter(recv, "select!", block, true)
     }
     "reject!" => fn reject_bang(recv, args, block) {
         arity!(args, 0);
-        in_place_filter(recv, block, false)
+        in_place_filter(recv, "reject!", block, false)
     }
+    // keep_if/delete_if return SELF (not self-or-nil), so their blockless
+    // Enumerator must short-circuit before the self return.
     "keep_if" => fn keep_if(recv, args, block) {
         arity!(args, 0);
-        in_place_filter(recv, block, true)?;
+        if !matches!(block, Some(RubyValue::Proc(_))) {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "keep_if", args));
+        }
+        in_place_filter(recv, "keep_if", block, true)?;
         Ok(recv.clone())
     }
     "delete_if" => fn delete_if(recv, args, block) {
         arity!(args, 0);
-        in_place_filter(recv, block, false)?;
+        if !matches!(block, Some(RubyValue::Proc(_))) {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "delete_if", args));
+        }
+        in_place_filter(recv, "delete_if", block, false)?;
         Ok(recv.clone())
     }
     "sample" => fn sample(recv, args, _block) {
@@ -675,9 +681,7 @@ builtin_methods! {
     }
     "each" => fn each(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Array#each without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each", args, block);
         // Snapshot: mutating the array from inside the block iterates the
         // original elements (a deliberate, simpler rule than CRuby's
         // live-view semantics).
@@ -767,15 +771,14 @@ pub(crate) fn sort_items(
 /// otherwise.
 fn in_place_filter(
     recv: &RubyValue,
+    meth: &str,
     block: Option<RubyValue>,
     keep: bool,
 ) -> Result<RubyValue, crate::Signal> {
     let RubyValue::Array(handle) = recv else {
         unreachable!("Array table row dispatched on a non-Array receiver");
     };
-    let Some(RubyValue::Proc(p)) = &block else {
-        panic!("Array in-place filter without a block isn't supported (no Enumerator; spike scope)");
-    };
+    let p = block_or_enum!(recv, meth, &[], block);
     let items = handle.lock().clone();
     let mut out = Vec::with_capacity(items.len());
     for e in items.iter() {

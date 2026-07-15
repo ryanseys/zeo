@@ -60,6 +60,15 @@ pub enum RubyValue {
     /// coroutine is thread-pinned in `fiber::FIBERS` (see that module's
     /// docs for why it can't live here).
     Fiber(RFiber),
+    /// An `Enumerator` (Phase 17.2) -- captures `(receiver, method, args)`
+    /// or an `Enumerator.new` generator block; external iteration state is
+    /// a thread-pinned fiber, same split as `Fiber` (see
+    /// `builtins::enumerator`'s module docs).
+    Enumerator(crate::builtins::enumerator::REnumerator),
+    /// An `Enumerator::Yielder` (Phase 17.2) -- the `y` in
+    /// `Enumerator.new { |y| y << 1 }`, wrapping the each-block currently
+    /// being driven (`y << v` / `y.yield v` forward to it).
+    Yielder(RProc),
     /// A `Thread` (Phase 13.5) -- a `may` green coroutine; see
     /// `thread`'s module docs for the cooperative-scheduling divergence.
     Thread(RThread),
@@ -179,7 +188,7 @@ impl RubyValue {
         // for an identity-shaped `to_s`).
         if !matches!(self, RubyValue::Object(_)) {
             if let Some(f) =
-                crate::dispatch::value_method(self.class_id(), crate::Symbol::intern("to_s"))
+                crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("to_s"))
             {
                 return match f(self, &[], None) {
                     Ok(RubyValue::Str(s)) => s.lock().clone(),
@@ -278,6 +287,10 @@ impl RubyValue {
             RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).to_display_string(),
             // Same placeholder posture as `Object`/`Proc` above.
             RubyValue::Fiber(_) => "#<Fiber>".to_string(),
+            // The real CRuby shape (`#<Enumerator: [1, 2]:each>`) -- to_s
+            // and inspect agree for enumerators.
+            RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_inspect(e),
+            RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
             RubyValue::Thread(_) => "#<Thread>".to_string(),
             RubyValue::Mutex(_) => "#<Mutex>".to_string(),
             RubyValue::Queue(_) => "#<Thread::Queue>".to_string(),
@@ -321,7 +334,7 @@ impl RubyValue {
         // `Str`-payload shortcut as `display_with`'s probe.
         if !matches!(self, RubyValue::Object(_)) {
             if let Some(f) =
-                crate::dispatch::value_method(self.class_id(), crate::Symbol::intern("inspect"))
+                crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("inspect"))
             {
                 return match f(self, &[], None) {
                     Ok(RubyValue::Str(s)) => s.lock().clone(),
@@ -437,6 +450,8 @@ impl RubyValue {
             RubyValue::Regexp(_) => REGEXP_CLASS,
             RubyValue::MatchData(_) => MATCH_DATA_CLASS,
             RubyValue::Fiber(_) => FIBER_CLASS,
+            RubyValue::Enumerator(_) => crate::dispatch::ENUMERATOR_CLASS,
+            RubyValue::Yielder(_) => crate::dispatch::YIELDER_CLASS,
             RubyValue::Thread(_) => THREAD_CLASS,
             RubyValue::Mutex(_) => MUTEX_CLASS,
             RubyValue::Queue(_) => QUEUE_CLASS,
@@ -748,6 +763,10 @@ impl RubyValue {
                     },
                 }
             }
+            // Reference identity -- CRuby's `Object#==` default (an
+            // enumerator never equals a structurally-identical sibling).
+            (RubyValue::Enumerator(a), RubyValue::Enumerator(b)) => std::sync::Arc::ptr_eq(a, b),
+            (RubyValue::Yielder(a), RubyValue::Yielder(b)) => std::sync::Arc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -820,6 +839,8 @@ impl RubyValue {
             | RubyValue::Regexp(_)
             | RubyValue::MatchData(_)
             | RubyValue::Fiber(_)
+            | RubyValue::Enumerator(_)
+            | RubyValue::Yielder(_)
             | RubyValue::Thread(_)
             | RubyValue::Mutex(_)
             | RubyValue::Queue(_)
@@ -915,6 +936,18 @@ impl RubyValue {
             }
             RubyValue::Object(o) => RubyValue::Object(o.dup_object(copy_frozen)),
             RubyValue::Mutex(_) => crate::mutex_new(),
+            // A never-iterated (or finished) enumerator copies as a fresh
+            // one over the same source; a LIVE iteration can't be copied
+            // (CRuby raises "can't copy execution context").
+            RubyValue::Enumerator(e) => {
+                if e.iteration_live() {
+                    panic!("can't copy execution context (an Enumerator mid external iteration; CRuby raises TypeError)");
+                }
+                RubyValue::Enumerator(e.fresh_copy())
+            }
+            // A yielder is just a handle onto the driving block -- the
+            // reference copy is indistinguishable (the Proc posture above).
+            RubyValue::Yielder(_) => self.clone(),
             RubyValue::Fiber(_) => panic!("Fiber#dup/clone isn't supported yet (spike scope: the backing coroutine can't be copied)"),
             RubyValue::Thread(_) => panic!("can't dup/clone a Thread (TypeError: allocator undefined for Thread; spike scope: raised as a panic)"),
             RubyValue::Queue(_) => panic!("can't dup/clone a Queue (NoMethodError: undefined method 'initialize_copy'; spike scope: raised as a panic)"),

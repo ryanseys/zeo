@@ -69,6 +69,8 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
         (RubyValue::Array(x), RubyValue::Array(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Hash(x), RubyValue::Hash(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Proc(x), RubyValue::Proc(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Enumerator(x), RubyValue::Enumerator(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Yielder(x), RubyValue::Yielder(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Regexp(x), RubyValue::Regexp(y)) => Arc::ptr_eq(x, y),
         (RubyValue::MatchData(x), RubyValue::MatchData(y)) => Arc::ptr_eq(x, y),
         (RubyValue::Object(x), RubyValue::Object(y)) => {

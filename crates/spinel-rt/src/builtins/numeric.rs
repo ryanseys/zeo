@@ -15,7 +15,7 @@
 //! fallback re-dispatches through `send_value`).
 
 use crate::builtins::complex::{cpx_add, cpx_div, cpx_eq, cpx_mul, cpx_pow, cpx_sub};
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_pow, int_sub};
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
@@ -379,18 +379,24 @@ builtin_methods! {
             }
         }
     }
-    // `step(limit, step = 1)` with a block (the Enumerator-returning
-    // blockless form is Phase 17.2). Drives the tower generically, so
-    // `1.step(2.0, 0.5)` works too.
+    // `step(limit, step = 1)`; the blockless form returns an Enumerator
+    // (Phase 17.2). Drives the tower generically, so `1.step(2.0, 0.5)`
+    // works too.
     "step" => fn step(recv, args, block) {
         arity!(args, 1..=2);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Numeric#step without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "step", args, block);
         let limit = &args[0];
         let step = args.get(1).cloned().unwrap_or(RubyValue::Int(1));
         let descending = matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(-1)));
-        let mut cur = recv.clone();
+        // CRuby's rule: a Float limit OR step moves the WHOLE iteration
+        // into the Float domain (`1.step(2.0, 0.5)` yields 1.0 first).
+        let mut cur = if matches!(limit, RubyValue::Float(_))
+            || matches!(step, RubyValue::Float(_))
+        {
+            RubyValue::Float(num_to_f64_unchecked(recv))
+        } else {
+            recv.clone()
+        };
         loop {
             match num_cmp(&cur, limit) {
                 Some(Some(c)) if (!descending && c > 0) || (descending && c < 0) => break,

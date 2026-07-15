@@ -32,13 +32,11 @@
 //! no-auto-splat approximation this runtime's block binding already makes
 //! everywhere else).
 //!
-//! **Enumerator is deliberately absent** (each blockless form that returns
-//! an Enumerator in real Ruby panics with a clear message): external
-//! iteration is fiber-backed in CRuby (`enumerator.c`'s `next_i` runs the
-//! full internal iteration inside `rb_fiber_new`, shuttling each yield out
-//! via `rb_fiber_yield` and parking a `StopIteration` at the end) -- our
-//! corosensei substrate (`spinel-fiber`, Phase 13.3) is exactly the right
-//! foundation for that design when something needs it; nothing does yet.
+//! **Blockless forms return real Enumerators** (Phase 17.2, via the
+//! `block_or_enum!` early return): each captures `(recv, method, args)`
+//! and re-invokes the method when iterated -- see
+//! `builtins::enumerator`'s module docs for the fiber-backed external
+//! iteration behind `#next`/`#peek`.
 //!
 //! Documented divergences beyond the block-splat note above: `find`'s
 //! optional `if_none` callable, `any?`/`all?`/`none?`/`one?`'s pattern-arg
@@ -48,6 +46,7 @@
 //! Kahan-Babuska-compensated like CRuby's, but the Rational leg of its
 //! numeric tower doesn't exist here.
 
+use crate::builtins::block_or_enum;
 use crate::collections::array_new;
 use crate::dispatch::send_value;
 use crate::signal::Signal;
@@ -141,8 +140,9 @@ pub(crate) fn responds(name: &str) -> bool {
     )
 }
 
-/// CRuby's `rb_enum_values_pack` rule -- see the module docs.
-fn pack(args: &[RubyValue]) -> RubyValue {
+/// CRuby's `rb_enum_values_pack` rule -- see the module docs. Shared
+/// with `enumerator`'s with_index/with_object wrappers (Phase 17.2).
+pub(crate) fn pack(args: &[RubyValue]) -> RubyValue {
     match args.len() {
         0 => RubyValue::Nil,
         1 => args[0].clone(),
@@ -173,15 +173,6 @@ fn for_each(
     }
 }
 
-fn require_block(block: Option<RubyValue>, method: &str) -> RProc {
-    match block {
-        Some(RubyValue::Proc(p)) => p,
-        _ => panic!(
-            "Enumerable#{method} without a block would return an Enumerator, which isn't supported yet (spike scope) -- pass a block"
-        ),
-    }
-}
-
 fn reject_args(args: &[RubyValue], method: &str, what: &str) {
     if !args.is_empty() {
         panic!("Enumerable#{method} with {what} isn't supported yet (spike scope)");
@@ -192,7 +183,7 @@ fn reject_args(args: &[RubyValue], method: &str, what: &str) {
 /// (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
 fn map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "map", "arguments");
-    let blk = require_block(block, "map");
+    let blk = block_or_enum!(recv, "map", args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     for_each(recv, move |yielded| {
@@ -216,7 +207,7 @@ fn select(
 ) -> Result<RubyValue, Signal> {
     let method = if keep { "select" } else { "reject" };
     reject_args(args, method, "arguments");
-    let blk = require_block(block, method);
+    let blk = block_or_enum!(recv, method, args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     for_each(recv, move |yielded| {
@@ -394,7 +385,7 @@ fn any_all(
 /// rejected (spike scope).
 fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "find", "an `if_none` argument");
-    let blk = require_block(block, "find");
+    let blk = block_or_enum!(recv, "find", args, block);
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let hit2 = hit.clone();
     for_each(recv, move |yielded| {
@@ -512,7 +503,7 @@ fn each_with_index(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     reject_args(args, "each_with_index", "arguments (forwarding them to #each)");
-    let blk = require_block(block, "each_with_index");
+    let blk = block_or_enum!(recv, "each_with_index", args, block);
     let idx = Arc::new(Mutex::new(0i64));
     let idx2 = idx.clone();
     for_each(recv, move |yielded| {
@@ -725,7 +716,7 @@ fn sort(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resul
 
 fn sort_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "sort_by", "arguments");
-    let blk = require_block(block, "sort_by");
+    let blk = block_or_enum!(recv, "sort_by", args, block);
     let items = collect_elements(recv)?;
     // Decorate-sort-undecorate, keys ordered by rb_cmp.
     let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
@@ -759,7 +750,7 @@ fn min_max_by(
     min: bool,
 ) -> Result<RubyValue, Signal> {
     reject_args(args, if min { "min_by" } else { "max_by" }, "arguments");
-    let blk = require_block(block, if min { "min_by" } else { "max_by" });
+    let blk = block_or_enum!(recv, if min { "min_by" } else { "max_by" }, args, block);
     let items = collect_elements(recv)?;
     let mut best: Option<(RubyValue, RubyValue)> = None;
     for e in items {
@@ -788,7 +779,7 @@ fn minmax(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
 
 fn group_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "group_by", "arguments");
-    let blk = require_block(block, "group_by");
+    let blk = block_or_enum!(recv, "group_by", args, block);
     let items = collect_elements(recv)?;
     let groups = crate::hash_new(Vec::new());
     for e in items {
@@ -809,7 +800,7 @@ fn group_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
 
 fn partition(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "partition", "arguments");
-    let blk = require_block(block, "partition");
+    let blk = block_or_enum!(recv, "partition", args, block);
     let items = collect_elements(recv)?;
     let (mut yes, mut no) = (Vec::new(), Vec::new());
     for e in items {
@@ -827,7 +818,7 @@ fn partition(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
 
 fn flat_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "flat_map", "arguments");
-    let blk = require_block(block, "flat_map");
+    let blk = block_or_enum!(recv, "flat_map", args, block);
     let items = collect_elements(recv)?;
     let mut out = Vec::new();
     for e in items {
@@ -842,7 +833,7 @@ fn flat_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
 
 fn filter_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "filter_map", "arguments");
-    let blk = require_block(block, "filter_map");
+    let blk = block_or_enum!(recv, "filter_map", args, block);
     let items = collect_elements(recv)?;
     let mut out = Vec::new();
     for e in items {
@@ -869,7 +860,7 @@ fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
 
 fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let n = slice_size(args, "each_slice")?;
-    let blk = require_block(block, "each_slice");
+    let blk = block_or_enum!(recv, "each_slice", args, block);
     let items = collect_packed(recv)?;
     for chunk in items.chunks(n) {
         blk(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
@@ -879,7 +870,7 @@ fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
 
 fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let n = slice_size(args, "each_cons")?;
-    let blk = require_block(block, "each_cons");
+    let blk = block_or_enum!(recv, "each_cons", args, block);
     let items = collect_packed(recv)?;
     if items.len() >= n {
         for window in items.windows(n) {
@@ -893,7 +884,7 @@ fn each_with_object(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValu
     if args.len() != 1 {
         panic!("Enumerable#each_with_object takes exactly one argument");
     }
-    let blk = require_block(block, "each_with_object");
+    let blk = block_or_enum!(recv, "each_with_object", args, block);
     let memo = args[0].clone();
     let items = collect_packed(recv)?;
     for e in items {
@@ -912,13 +903,30 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
             "attempt to take negative size".to_string(),
         ));
     }
+    if take {
+        // Early termination once n elements are in (CRuby's take_i breaks
+        // via rb_iter_break) -- what makes `take` on an INFINITE
+        // Enumerator.new generator terminate (Phase 17.2).
+        let cap = *n as usize;
+        if cap == 0 {
+            return Ok(RubyValue::Array(array_new(Vec::new())));
+        }
+        let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+        let out2 = out.clone();
+        for_each(recv, move |yielded| {
+            let mut o = out2.lock();
+            o.push(pack(yielded));
+            if o.len() >= cap {
+                return Err(Signal::Break(RubyValue::Nil));
+            }
+            Ok(RubyValue::Nil)
+        })?;
+        let items = std::mem::take(&mut *out.lock());
+        return Ok(RubyValue::Array(array_new(items)));
+    }
     let items = collect_packed(recv)?;
     let n = (*n as usize).min(items.len());
-    Ok(RubyValue::Array(array_new(if take {
-        items[..n].to_vec()
-    } else {
-        items[n..].to_vec()
-    })))
+    Ok(RubyValue::Array(array_new(items[n..].to_vec())))
 }
 
 fn take_drop_while(
@@ -928,7 +936,7 @@ fn take_drop_while(
     take: bool,
 ) -> Result<RubyValue, Signal> {
     reject_args(args, if take { "take_while" } else { "drop_while" }, "arguments");
-    let blk = require_block(block, if take { "take_while" } else { "drop_while" });
+    let blk = block_or_enum!(recv, if take { "take_while" } else { "drop_while" }, args, block);
     let items = collect_elements(recv)?;
     let mut boundary = items.len();
     for (i, e) in items.iter().enumerate() {
@@ -999,7 +1007,7 @@ fn enum_to_h(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> 
 
 fn reverse_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     reject_args(args, "reverse_each", "arguments");
-    let blk = require_block(block, "reverse_each");
+    let blk = block_or_enum!(recv, "reverse_each", args, block);
     let items = collect_elements(recv)?;
     for e in items.iter().rev() {
         blk(&e.raw)?;

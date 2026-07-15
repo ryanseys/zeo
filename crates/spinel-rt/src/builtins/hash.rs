@@ -1,7 +1,7 @@
 //! `Hash` (CRuby hash.c) -- stage B carries the rows migrated from the old
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
-use crate::builtins::{arity, builtin_methods, recv_hash};
+use crate::builtins::{arity, block_or_enum, builtin_methods, recv_hash};
 use crate::RubyValue;
 
 builtin_methods! {
@@ -134,9 +134,7 @@ builtin_methods! {
     }
     "each_key" => fn each_key(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Hash#each_key without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each_key", args, block);
         let keys: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(k, _)| k.clone()).collect();
         for k in keys {
@@ -146,9 +144,7 @@ builtin_methods! {
     }
     "each_value" => fn each_value(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Hash#each_value without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each_value", args, block);
         let vals: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(_, v)| v.clone()).collect();
         for v in vals {
@@ -160,17 +156,15 @@ builtin_methods! {
     // are shadowed by these, real Ruby's rule).
     "select" | "filter" => fn select(recv, args, block) {
         arity!(args, 0);
-        hash_filter(recv, block, true)
+        hash_filter(recv, args, block, true)
     }
     "reject" => fn reject(recv, args, block) {
         arity!(args, 0);
-        hash_filter(recv, block, false)
+        hash_filter(recv, args, block, false)
     }
     "transform_values" => fn transform_values(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Hash#transform_values without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "transform_values", args, block);
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
@@ -181,9 +175,7 @@ builtin_methods! {
     }
     "transform_keys" => fn transform_keys(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Hash#transform_keys without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "transform_keys", args, block);
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
@@ -205,9 +197,7 @@ builtin_methods! {
     }
     "each" | "each_pair" => fn each(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            panic!("Hash#each without a block isn't supported (no Enumerator; spike scope)");
-        };
+        let p = block_or_enum!(recv, "each", args, block);
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         for (k, v) in pairs {
@@ -256,15 +246,14 @@ fn merge_into(
 /// Hash-returning select/reject core.
 fn hash_filter(
     recv: &RubyValue,
+    args: &[RubyValue],
     block: Option<RubyValue>,
     keep: bool,
 ) -> Result<RubyValue, crate::Signal> {
     let RubyValue::Hash(handle) = recv else {
         unreachable!("Hash table row dispatched on a non-Hash receiver");
     };
-    let Some(RubyValue::Proc(p)) = &block else {
-        panic!("Hash#select/reject without a block isn't supported (no Enumerator; spike scope)");
-    };
+    let p = block_or_enum!(recv, if keep { "select" } else { "reject" }, args, block);
     let pairs: Vec<(RubyValue, RubyValue)> = handle.lock().values().cloned().collect();
     let mut out = Vec::new();
     for (k, v) in pairs {

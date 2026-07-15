@@ -28,6 +28,7 @@ pub(crate) mod class_module;
 pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod enumerable;
+pub(crate) mod enumerator;
 pub(crate) mod float;
 pub(crate) mod format;
 pub(crate) mod hash;
@@ -75,6 +76,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::TRUE_CLASS | spinel_abi::FALSE_CLASS => object::lookup_bool,
         spinel_abi::KERNEL_CLASS => kernel::lookup,
         spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
+        spinel_abi::ENUMERATOR_CLASS => enumerator::lookup,
+        spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         _ => return None,
     })
 }
@@ -251,6 +254,23 @@ macro_rules! arg_str {
     };
 }
 pub(crate) use arg_str;
+
+/// The block -- or, blockless, an early return with the ENUMERATOR every
+/// iteration method answers in real Ruby (Phase 17.2, retiring the
+/// "would return an Enumerator (spike scope)" panics): the enumerator
+/// captures `(recv, method-name, args)` and re-invokes the method when
+/// iterated (`rb_enumeratorize`'s rule).
+macro_rules! block_or_enum {
+    ($recv:expr, $meth:expr, $args:expr, $block:expr) => {
+        match $block {
+            Some(crate::RubyValue::Proc(p)) => p,
+            _ => {
+                return Ok(crate::builtins::enumerator::enumerator_for($recv, $meth, $args))
+            }
+        }
+    };
+}
+pub(crate) use block_or_enum;
 
 /// The block, or CRuby's `LocalJumpError` (what a bare `yield` with no
 /// block raises -- `5.tap` reproduces it, oracle-verified).

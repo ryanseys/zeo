@@ -109,6 +109,13 @@ pub const MATH_CLASS: ClassId = ClassId(29);
 /// `Struct` -- superclass of every compile-time-synthesized
 /// `Name = Struct.new(...)` class; includes `Enumerable` (CRuby).
 pub const STRUCT_CLASS: ClassId = ClassId(30);
+/// `Enumerator::Yielder` (Phase 17.2) -- the `y` in
+/// `Enumerator.new { |y| y << 1 }`. Registered under its FLAT
+/// fully-qualified name (this table has no nesting edges); user code
+/// resolving the `Enumerator::Yielder` path lexically gets a loud
+/// NameError -- documented, since yielders are only ever OBTAINED, never
+/// named.
+pub const YIELDER_CLASS: ClassId = ClassId(31);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -147,6 +154,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: COMPLEX_CLASS, name: "Complex", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[] },
     BuiltinClass { id: MATH_CLASS, name: "Math", is_module: true, superclass: None, includes: &[] },
     BuiltinClass { id: STRUCT_CLASS, name: "Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
+    BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

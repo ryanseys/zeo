@@ -111,6 +111,7 @@ pub use spinel_abi::{
     KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS,
     NUMERIC_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
     REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
+    YIELDER_CLASS,
 };
 /// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
 /// `send`'s Enumerable fallback (an Object whose registered ancestors
@@ -201,8 +202,12 @@ struct ClassEntry {
     /// the receiver's `class_id()` with no ancestor walk needed (the only
     /// reopenable builtins are leaf value classes; Object/module reopens are
     /// rejected at spinelc compile time). Empty for every user class, whose
-    /// methods live in `methods` above.
-    value_methods: HashMap<Symbol, ValueMethodFn>,
+    /// methods live in `methods` above. Keyed `(box_id, name)` since Phase
+    /// 18: a builtin reopened INSIDE a `Ruby::Box` registers its methods
+    /// under that box's id, and dispatch probes `(caller's box, name)` then
+    /// `(0, name)` -- the AOT translation of CRuby's `cme->def->box`
+    /// stamping, root reopens visible everywhere.
+    value_methods: HashMap<(u32, Symbol), ValueMethodFn>,
     constructor: Option<ConstructorFn>,
 }
 
@@ -243,14 +248,16 @@ impl ClassRegistry {
 
     /// Registers a builtin-reopen method (Phase 16.3) -- called from
     /// generated `main()` right after the builtin's own `register`, one call
-    /// per `def` in a `class String ... end` reopen. See `ValueMethodFn`'s
-    /// docs for the dispatch-precedence contract.
-    pub fn define_value_method(&mut self, id: ClassId, name: Symbol, f: ValueMethodFn) {
+    /// per `def` in a `class String ... end` reopen. `box_id` is the box the
+    /// reopen was written in (Phase 18: 0 for the root program; a box's
+    /// overlay methods register under its id and are visible only from that
+    /// box's code). See `ValueMethodFn`'s docs for the precedence contract.
+    pub fn define_value_method(&mut self, id: ClassId, box_id: u32, name: Symbol, f: ValueMethodFn) {
         self.entries
             .get_mut(&id.0)
             .expect("class must be registered before defining value methods on it")
             .value_methods
-            .insert(name, f);
+            .insert((box_id, name), f);
     }
 
     /// The runtime-mutable path `define_method`/`define_singleton_method`
@@ -269,8 +276,17 @@ impl ClassRegistry {
         self.entries.get(&id.0)?.methods.get(&name).copied()
     }
 
-    fn lookup_value_method(&self, id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
-        self.entries.get(&id.0)?.value_methods.get(&name).copied()
+    /// The `(caller's box, name)` probe with the root fallback -- CRuby's
+    /// def->box resolution rule: a box's own patch wins inside the box,
+    /// root patches are visible everywhere, and nothing else is.
+    fn lookup_value_method(&self, id: ClassId, box_id: u32, name: Symbol) -> Option<ValueMethodFn> {
+        let entry = self.entries.get(&id.0)?;
+        if box_id != 0 {
+            if let Some(f) = entry.value_methods.get(&(box_id, name)) {
+                return Some(*f);
+            }
+        }
+        entry.value_methods.get(&(0, name)).copied()
     }
 
     fn ancestors_of(&self, id: ClassId) -> &[ClassId] {
@@ -304,7 +320,7 @@ pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
     let n = n.as_str();
     for &anc in ancestors_of_value(recv_class) {
         if let Some(r) = REGISTRY.get() {
-            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, name).is_some() {
+            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
                 return true;
             }
         }
@@ -374,8 +390,8 @@ pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
 /// `class_id()`; see `ValueMethodFn`'s docs for why no ancestor walk is
 /// needed. Used by `send_value`'s override-first stage and by
 /// `display_with`/`inspect_with`'s `to_s`/`inspect` probes in `value.rs`.
-pub(crate) fn value_method(id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
-    REGISTRY.get()?.lookup_value_method(id, name)
+pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<ValueMethodFn> {
+    REGISTRY.get()?.lookup_value_method(id, box_id, name)
 }
 
 /// The registered Ruby-visible (fully-qualified) name of `id` -- `None`
@@ -496,6 +512,32 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// `StopIteration` needs its own factory shape (Phase 17.2): the instance
+/// an exhausted `Enumerator#next` raises carries the underlying `each`'s
+/// return value as `#result` -- what `Kernel#loop` returns after
+/// swallowing it (CRuby kernel.rb:151). The general factory above can't
+/// thread that value, so generated `main()` installs this second builder
+/// (constructs `StopIteration.new(msg)` then `__set_result`s it).
+static STOP_ITERATION_FACTORY: OnceLock<fn(String, RubyValue) -> RubyValue> = OnceLock::new();
+
+pub fn install_stop_iteration_factory(factory: fn(String, RubyValue) -> RubyValue) {
+    STOP_ITERATION_FACTORY
+        .set(factory)
+        .unwrap_or_else(|_| panic!("StopIteration factory installed twice"));
+}
+
+/// The exhausted-iteration raise: a rescuable `StopIteration` whose
+/// `result` is `result` (a fresh instance per raise -- CRuby rebuilds one
+/// from `stop_exc` each time too). Loud panic registry-less (unit tests).
+pub fn raise_stop_iteration(result: RubyValue) -> Signal {
+    match STOP_ITERATION_FACTORY.get() {
+        Some(factory) => {
+            Signal::Raise(factory("iteration reached an end".to_string(), result))
+        }
+        None => panic!("StopIteration: iteration reached an end"),
+    }
+}
+
 
 /// The general dispatcher -- reached only on Path 2 (see module docs).
 /// Since every reachable method (own, inherited, or mixed-in) is already
@@ -529,8 +571,26 @@ pub fn send_value(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    send_value_in(0, recv, name, args, block)
+}
+
+/// `send_value` with the CALLER's box (Phase 18) -- the statically-known
+/// defining box every codegen dynamic-dispatch site passes, the AOT
+/// translation of CRuby's `cme->def->box` (no frame walk). Only the
+/// per-ancestor value-method probe consumes it: a box's builtin patches
+/// resolve from that box's code, root patches everywhere. This crate's own
+/// internal callers (Enumerable driving `each`, Comparable driving `<=>`,
+/// ...) go through the box-0 wrapper above -- builtins run in ROOT, which
+/// is CRuby's own documented builtins-call-builtins leak, faithfully.
+pub fn send_value_in(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     if let RubyValue::Object(o) = recv {
-        return send(o, name, args, block);
+        return send_in(box_id, o, name, args, block);
     }
     let n = name.name();
     let n = n.as_str();
@@ -557,7 +617,7 @@ pub fn send_value(
     // universal arms, curated tables, `to_s`-after-tables hack, hardcoded
     // Array|Hash|Range Enumerable set) dissolved into this one loop.
     for &anc in ancestors_of_value(recv.class_id()) {
-        if let Some(f) = value_method(anc, name) {
+        if let Some(f) = value_method(anc, box_id, name) {
             return f(recv, args, block);
         }
         match anc {
@@ -610,6 +670,17 @@ pub fn send(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    send_in(0, recv, name, args, block)
+}
+
+/// `send` with the caller's box -- see `send_value_in`'s docs.
+pub fn send_in(
+    box_id: u32,
+    recv: &RObj,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     if let Some(f) = registry().lookup(id, name) {
         return f(recv, args, block);
@@ -625,7 +696,7 @@ pub fn send(
     let n = name.name();
     let n = n.as_str();
     for &anc in ancestors_of_value(id) {
-        if let Some(f) = value_method(anc, name) {
+        if let Some(f) = value_method(anc, box_id, name) {
             return f(&boxed, args, block);
         }
         match anc {

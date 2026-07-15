@@ -74,6 +74,12 @@ end
 class KeyError < IndexError
 end
 class StopIteration < IndexError
+  def __set_result(v)
+    @result = v
+  end
+  def result
+    @result
+  end
 end
 class NameError < StandardError
 end
@@ -1254,7 +1260,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             .to_string(),
                     );
                 }
-                if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor") {
+                // `Enumerator.new { |y| ... }` joins the block-keeping set
+                // (Phase 17.2): it falls through to the generic `Call`
+                // lowering so the block reaches the runtime allocator via
+                // the dynamic Class#new arm.
+                if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator") {
                     let args = match call.arguments() {
                         None => Vec::new(),
                         Some(a) => a
@@ -1349,7 +1359,36 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             .is_some_and(|p| p.as_block_parameters_node().is_some());
                         if !has_params {
                             let body = lower_body(result, hir, block.body())?;
-                            return Ok(hir.push(HirNode::Loop { body }));
+                            // `Kernel#loop`'s REAL definition (CRuby
+                            // kernel.rb:151) rescues StopIteration and
+                            // returns its `result` -- desugared here into
+                            // the ordinary Begin/rescue machinery (Phase
+                            // 17.2), so `loop { e.next }` terminates
+                            // cleanly with the enumeration's result and a
+                            // manual `raise StopIteration` returns nil.
+                            let native_loop = hir.push(HirNode::Loop { body });
+                            let exc_read =
+                                hir.push(HirNode::LocalRead("__loop_stop".to_string()));
+                            let result_call = hir.push(HirNode::Call {
+                                receiver: Some(exc_read),
+                                name: "result".to_string(),
+                                args: Vec::new(),
+                                kwargs: Vec::new(),
+                                kwargs_splat: None,
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            });
+                            return Ok(hir.push(HirNode::Begin {
+                                body: vec![native_loop],
+                                rescues: vec![crate::hir::RescueClause {
+                                    classes: vec!["StopIteration".to_string()],
+                                    binding: Some("__loop_stop".to_string()),
+                                    body: vec![result_call],
+                                }],
+                                else_body: None,
+                                ensure_body: None,
+                            }));
                         }
                     }
                 }

@@ -183,6 +183,8 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
         }
         RubyValue::Proc(_)
         | RubyValue::Fiber(_)
+        | RubyValue::Enumerator(_)
+        | RubyValue::Yielder(_)
         | RubyValue::Thread(_)
         | RubyValue::Mutex(_)
         | RubyValue::Queue(_)
