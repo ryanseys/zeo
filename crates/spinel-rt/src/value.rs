@@ -23,7 +23,22 @@ pub enum RubyValue {
     Nil,
     Bool(bool),
     Int(i64),
+    /// An `Integer` beyond `i64` (Phase 17.1's full-bignum decision).
+    /// INVARIANT: never holds an i64-range value -- every construction
+    /// funnels through `builtins::integer::int_value`, which demotes to
+    /// `Int` whenever the value fits, keeping equality/hashing/matching
+    /// canonical (a `BigInt(5)` can never exist alongside `Int(5)`).
+    /// `class_id()` is `INTEGER_CLASS` -- one Ruby class, two payloads.
+    /// Always-frozen immediate tier, like `Int`.
+    BigInt(std::sync::Arc<num_bigint::BigInt>),
     Float(f64),
+    /// A `Rational` (Phase 17.1) -- always reduced, `den > 0`, bignum
+    /// components; see `builtins::rational`. Always-frozen immediate tier.
+    Rational(crate::builtins::rational::RRational),
+    /// A `Complex` (Phase 17.1) -- two components that keep their own
+    /// numeric class (Integer|Float|Rational); see `builtins::complex`.
+    /// Always-frozen immediate tier.
+    Complex(crate::builtins::complex::RComplex),
     Symbol(Symbol),
     Str(RStr),
     Array(RArray),
@@ -91,8 +106,28 @@ fn float_to_display_string(f: f64) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
     }
+    // Ruby switches to scientific notation when the decimal exponent
+    // leaves [-4, 16) (`1e16.to_s == "1.0e+16"`, `Float::EPSILON ==
+    // "2.220446049250313e-16"`); Rust's positional `{}` never does, so the
+    // threshold is applied here. Mantissas keep at least one fractional
+    // digit and positive exponents an explicit `+`, both Ruby's shapes.
+    let abs = f.abs();
+    if abs != 0.0 && !(1e-4..1e16).contains(&abs) {
+        let sci = format!("{f:e}");
+        let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
+        let mantissa = if mantissa.contains('.') {
+            mantissa.to_string()
+        } else {
+            format!("{mantissa}.0")
+        };
+        return if let Some(neg) = exp.strip_prefix('-') {
+            format!("{mantissa}e-{neg}")
+        } else {
+            format!("{mantissa}e+{exp}")
+        };
+    }
     let s = f.to_string();
-    if s.contains('.') || s.contains('e') || s.contains('E') {
+    if s.contains('.') {
         s
     } else {
         format!("{s}.0")
@@ -159,6 +194,11 @@ impl RubyValue {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
             RubyValue::Int(i) => i.to_string(),
+            RubyValue::BigInt(b) => b.to_string(),
+            // `Rational#to_s` is "3/4"; `Complex#to_s` is "1+2i" -- the
+            // parenthesized forms are inspect's (oracle-verified).
+            RubyValue::Rational(r) => crate::builtins::rational::rat_to_s(r),
+            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, false),
             RubyValue::Float(f) => float_to_display_string(*f),
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().clone(),
@@ -294,6 +334,12 @@ impl RubyValue {
         }
         match self {
             RubyValue::Nil => "nil".to_string(),
+            // The parenthesized inspect forms (`(3/4)` / `(1+2i)`) vs the
+            // bare `to_s` ones -- oracle-verified.
+            RubyValue::Rational(r) => {
+                format!("({})", crate::builtins::rational::rat_to_s(r))
+            }
+            RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true),
             RubyValue::Symbol(s) => format!(":{}", s.name()),
             RubyValue::Str(s) => format!("{:?}", &*s.lock()),
             RubyValue::Array(a) => {
@@ -377,7 +423,9 @@ impl RubyValue {
             RubyValue::Nil => NIL_CLASS,
             RubyValue::Bool(true) => TRUE_CLASS,
             RubyValue::Bool(false) => FALSE_CLASS,
-            RubyValue::Int(_) => INTEGER_CLASS,
+            RubyValue::Int(_) | RubyValue::BigInt(_) => INTEGER_CLASS,
+            RubyValue::Rational(_) => crate::dispatch::RATIONAL_CLASS,
+            RubyValue::Complex(_) => crate::dispatch::COMPLEX_CLASS,
             RubyValue::Float(_) => FLOAT_CLASS,
             RubyValue::Symbol(_) => SYMBOL_CLASS,
             RubyValue::Str(_) => STRING_CLASS,
@@ -600,17 +648,19 @@ impl RubyValue {
     /// (element clones are cheap handle bumps) so no lock is held across a
     /// nested comparison.
     fn rb_eq_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
+        // Real Ruby: `1 == 1.0`, `Rational(2,1) == 2`, `Complex(2,0) == 2`
+        // -- every numeric pair compares through the ONE tower matrix
+        // (Phase 17.1), including the Bignum/Rational/Complex lanes. The
+        // (Int, Int) arm below stays as the hot exact fast path.
+        if let (RubyValue::Int(a), RubyValue::Int(b)) = (self, other) {
+            return a == b;
+        }
+        if let Some(eq) = crate::builtins::numeric::num_eq(self, other) {
+            return eq;
+        }
         match (self, other) {
             (RubyValue::Nil, RubyValue::Nil) => true,
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
-            (RubyValue::Int(a), RubyValue::Int(b)) => a == b,
-            (RubyValue::Float(a), RubyValue::Float(b)) => a == b,
-            // Real Ruby: `1 == 1.0` is `true` -- Int/Float compare
-            // numerically across the mixed numeric tower, not just
-            // same-variant pairs.
-            (RubyValue::Int(a), RubyValue::Float(b)) | (RubyValue::Float(b), RubyValue::Int(a)) => {
-                *a as f64 == *b
-            }
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
             // Class identity (Phase 16.1): `Widget == Widget`, and what
             // `Array#include?` on an array of classes consults.
@@ -708,15 +758,13 @@ impl RubyValue {
     /// anything else is incomparable. Consumed by `Enumerable#min`/`#max`
     /// and `comparable::comparable_send` (and Phase 17.1's `sort` family).
     pub fn rb_cmp(&self, other: &RubyValue) -> Option<i64> {
+        // Every numeric pair orders through the ONE tower matrix (Phase
+        // 17.1): exact Int/Bignum/Rational lanes, Float promotion,
+        // NaN -> nil, Complex -> nil.
+        if let Some(ord) = crate::builtins::numeric::num_cmp(self, other) {
+            return ord;
+        }
         match (self, other) {
-            (RubyValue::Int(a), RubyValue::Int(b)) => Some(a.cmp(b) as i64),
-            (RubyValue::Float(a), RubyValue::Float(b)) => a.partial_cmp(b).map(|o| o as i64),
-            (RubyValue::Int(a), RubyValue::Float(b)) => {
-                (*a as f64).partial_cmp(b).map(|o| o as i64)
-            }
-            (RubyValue::Float(a), RubyValue::Int(b)) => {
-                a.partial_cmp(&(*b as f64)).map(|o| o as i64)
-            }
             (RubyValue::Str(a), RubyValue::Str(b)) => {
                 let a = a.lock().clone();
                 let b = b.lock().clone();
@@ -754,6 +802,9 @@ impl RubyValue {
             RubyValue::Nil
             | RubyValue::Bool(_)
             | RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Rational(_)
+            | RubyValue::Complex(_)
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
             | RubyValue::Range(..)
@@ -827,6 +878,9 @@ impl RubyValue {
             RubyValue::Nil
             | RubyValue::Bool(_)
             | RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Rational(_)
+            | RubyValue::Complex(_)
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
             | RubyValue::Range(..)
@@ -883,6 +937,15 @@ impl RubyValue {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
             return re.compiled.is_match(&s.lock());
         }
+        // `Range#===` is `#cover?` (Phase 17.1, fixing `when 1..5` -- which
+        // previously fell to `rb_eq` and silently never matched): each
+        // present endpoint compares via `rb_cmp` (numeric tower, strings,
+        // user `<=>`), and an incomparable subject is `false`, real Ruby's
+        // rule (`(1..5) === "x"` is false, not an error; oracle-verified,
+        // incl. `(1..6) === 5.5` true and `(1...5) === 5` false).
+        if let RubyValue::Range(start, end, exclusive) = self {
+            return range_covers(start.as_deref(), end.as_deref(), *exclusive, subject);
+        }
         // `Module#===` (Phase 16.1): `case x when Integer` / `when Widget`
         // is an instance-of-ancestry check, NOT equality (`Widget ===
         // Widget` is false in real Ruby -- a class is not an instance of
@@ -892,6 +955,33 @@ impl RubyValue {
             return crate::dispatch::is_a(subject.class_id(), *cid);
         }
         self.rb_eq(subject)
+    }
+}
+
+/// `Range#cover?`'s core (also `Range#===`/`case when 1..5`): begin <=
+/// subject (< or <=) end, via `rb_cmp` (numeric tower, strings, user
+/// `<=>`); a `nil` comparison (incomparable) is `false`, real Ruby's rule.
+/// Beginless/endless sides are unbounded.
+pub(crate) fn range_covers(
+    start: Option<&RubyValue>,
+    end: Option<&RubyValue>,
+    exclusive: bool,
+    subject: &RubyValue,
+) -> bool {
+    let lower_ok = match start {
+        Some(s) => matches!(subject.rb_cmp(s), Some(c) if c >= 0),
+        None => true,
+    };
+    if !lower_ok {
+        return false;
+    }
+    match end {
+        Some(e) => match subject.rb_cmp(e) {
+            Some(c) if exclusive => c < 0,
+            Some(c) => c <= 0,
+            None => false,
+        },
+        None => true,
     }
 }
 

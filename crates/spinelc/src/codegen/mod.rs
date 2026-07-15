@@ -330,7 +330,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(_, class)| class.is_builtin)
+        // `Object` (index 0, not `is_builtin`) registers through the same
+        // mapping since Phase 17.1: its ancestors are COMPUTED
+        // (`[Object, Kernel, BasicObject]`), no longer a hardcoded
+        // `vec![Object]` in `main()`.
+        .filter(|&(idx, class)| class.is_builtin || idx == 0)
         .map(|(idx, class)| {
             let id = idx as u32;
             let name = &class.name;
@@ -403,16 +407,40 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
-    // The NoMethodError factory's construction expression -- built by the
-    // SAME `emit_boxed_new` chokepoint every other codegen-raised exception
-    // uses (deriving the ivar layout from the class info rather than
-    // hardcoding it here), just wrapped to absorb `initialize`'s `?` (an
-    // Exception constructor can't signal).
-    let nme_ctor = expr::emit_boxed_new(
-        &cx,
+    // The exception factory's construction arms (Phase 17.1, generalizing
+    // 13.7's NoMethodError-only factory): one match arm per exception class
+    // the RUNTIME can raise (`spinel_rt::raise_error`'s reachable set) --
+    // each built by the SAME `emit_boxed_new` chokepoint every other
+    // codegen-raised exception uses (deriving the ivar layout from the
+    // class info rather than hardcoding it here), wrapped to absorb
+    // `initialize`'s `?` (an Exception constructor can't signal). An
+    // unknown name is a bug in spinel-rt, not user error -- a loud panic.
+    let exception_arms = [
         "NoMethodError",
-        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
-    );
+        "ArgumentError",
+        "TypeError",
+        "ZeroDivisionError",
+        "RangeError",
+        "IndexError",
+        "KeyError",
+        "FrozenError",
+        "RuntimeError",
+        "LocalJumpError",
+        "StopIteration",
+        "FloatDomainError",
+        "Math::DomainError",
+    ]
+    .map(|exc_name| {
+        let ctor = expr::emit_boxed_new(
+            &cx,
+            exc_name,
+            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
+        );
+        quote! {
+            #exc_name => (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#ctor) })()
+                .expect("Exception#initialize can't signal"),
+        }
+    });
 
     quote! {
         #(#classes)*
@@ -421,16 +449,22 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
-            __registry.register(spinel_rt::Object::CLASS_ID, "Object", false, vec![spinel_rt::Object::CLASS_ID], None);
             #(#builtin_registrations)*
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
-            // Lets `send`'s missing-method fallback raise a real, catchable
-            // NoMethodError (Phase 13.7) -- spinel-rt can't construct
-            // exception objects itself (see the factory's docs).
-            spinel_rt::install_no_method_error_factory(|__msg| {
-                (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#nme_ctor) })()
-                    .expect("Exception#initialize can't signal")
+            // Float::INFINITY/NAN/EPSILON/... and Math::PI/E (Phase 17.1)
+            // -- the 15.3 const machinery resolves the OWNERS at compile
+            // time; only the values need seeding.
+            spinel_rt::seed_numeric_constants();
+            // Lets the runtime raise real, catchable exceptions
+            // (NoMethodError since Phase 13.7; the whole ArgumentError/
+            // TypeError/... set since 17.1) -- spinel-rt can't construct
+            // exception objects itself (see `raise_error`'s docs).
+            spinel_rt::install_exception_factory(|__class, __msg| {
+                match __class {
+                    #(#exception_arms)*
+                    other => panic!("exception factory: spinel-rt raised an unknown class {other}"),
+                }
             });
 
             // The whole top level runs as `may`'s first coroutine (Phase
@@ -762,7 +796,10 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     // `puts Store::Item` and NoMethodError messages print the real path.
     let fq_name = compiler.fq_name(cid);
     let parent = ci.parent.unwrap_or(OBJECT_CLASS);
-    let parent_ty = if parent == OBJECT_CLASS {
+    // A BUILTIN parent (`< Struct`, Phase 17.1-H) has no generated Rust
+    // struct -- structurally the class sits on `Object`; the SEMANTIC
+    // chain (ancestors, is_a?, rescue) carries the real parent.
+    let parent_ty = if parent == OBJECT_CLASS || compiler.class(parent).is_builtin {
         quote! { spinel_rt::Object }
     } else {
         let parent_ident = ident::class_ident(compiler, parent);

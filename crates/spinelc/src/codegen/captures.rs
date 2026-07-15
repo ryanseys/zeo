@@ -260,6 +260,11 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -394,6 +399,11 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -716,6 +726,11 @@ fn walk(
         }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit

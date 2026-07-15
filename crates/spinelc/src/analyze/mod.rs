@@ -63,6 +63,25 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         }
     }
 
+    // `Math::DomainError` (Phase 17.1) -- the one exception class nested
+    // under a BUILTIN module, registered programmatically (the exception
+    // prelude is ordinary Ruby source and `module Math` reopens are
+    // rejected). Bootstrap like the prelude classes: visible in every box.
+    {
+        let before = compiler.classes.len();
+        register_class(
+            &mut compiler,
+            "Math::DomainError".to_string(),
+            Some("StandardError".to_string()),
+            false,
+            &[],
+            &[],
+        )?;
+        for c in &mut compiler.classes[before..] {
+            c.is_bootstrap = true;
+        }
+    }
+
     // Ancestor linearization + method/class-method materialization + class
     // variable ownership -- must run AFTER every `ClassDef` above has been
     // registered, since `include`/`extend`/`prepend`/`< Super` targets must
@@ -196,7 +215,11 @@ fn register_class(
                         let cid = compiler.resolve_class(s, cref, 0).ok_or_else(|| {
                             format!("unknown superclass `{s}` (must be defined earlier in the file)")
                         })?;
-                        if compiler.class(cid).is_builtin {
+                        // `Struct` is the ONE subclassable builtin (Phase
+                        // 17.1-H): a Struct subclass's instances are
+                        // ordinary ivar-carrying objects, so the generated
+                        // Rust struct machinery fits them exactly.
+                        if compiler.class(cid).is_builtin && cid != crate::compiler::STRUCT_CLASS {
                             return Err(format!(
                                 "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
                             ));
@@ -593,6 +616,11 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> Result<bool, String> {
         | HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -913,6 +941,11 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -1287,7 +1320,11 @@ mod namespacing_tests {
 #[cfg(test)]
 mod class_value_tests {
     use super::tests::analyze_src;
-    use crate::compiler::{CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS};
+    use crate::compiler::{
+        BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, ClassId, ENUMERABLE_CLASS,
+        INTEGER_CLASS, KERNEL_CLASS, MODULE_CLASS, NUMERIC_CLASS, OBJECT_CLASS, RATIONAL_CLASS,
+        STRING_CLASS, STRUCT_CLASS,
+    };
     use crate::types::TyKind;
 
     /// Phase 16.1: a local assigned a bare class name is statically typed
@@ -1309,13 +1346,45 @@ mod class_value_tests {
         assert_eq!(a.main_local_types.get("y"), Some(&TyKind::Object(widget)));
     }
 
-    /// `Class < Module < Object` -- the special-cased parent seed, so
+    /// `Class < Module < Object` (the ABI's declarative parent edges), so
     /// `Widget.is_a?(Module)` answers true through the ordinary ancestry
-    /// machinery.
+    /// machinery -- and since Phase 17.1 the chain carries real Ruby's
+    /// universal tail: `..., Object, Kernel, BasicObject`.
     #[test]
     fn class_class_linearizes_under_module() {
         let a = analyze_src("");
         let ancestors = &a.compiler.class(CLASS_CLASS).ancestors;
-        assert_eq!(ancestors, &vec![CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS]);
+        assert_eq!(
+            ancestors,
+            &vec![CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]
+        );
+    }
+
+    /// The full CRuby-exact chains for the classes whose hierarchy Phase
+    /// 17.1 corrected (oracle: ruby 4.0.5 `.ancestors`).
+    #[test]
+    fn builtin_ancestors_match_cruby() {
+        let a = analyze_src("");
+        let chain = |cid: ClassId| a.compiler.class(cid).ancestors.clone();
+        let tail = [OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS];
+        assert_eq!(
+            chain(INTEGER_CLASS),
+            [[INTEGER_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(), &tail].concat()
+        );
+        assert_eq!(
+            chain(RATIONAL_CLASS),
+            [[RATIONAL_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(), &tail].concat()
+        );
+        assert_eq!(
+            chain(STRING_CLASS),
+            [[STRING_CLASS, COMPARABLE_CLASS].as_slice(), &tail].concat()
+        );
+        assert_eq!(
+            chain(STRUCT_CLASS),
+            [[STRUCT_CLASS, ENUMERABLE_CLASS].as_slice(), &tail].concat()
+        );
+        assert_eq!(chain(OBJECT_CLASS), vec![OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]);
+        assert_eq!(chain(BASIC_OBJECT_CLASS), vec![BASIC_OBJECT_CLASS]);
+        assert_eq!(chain(KERNEL_CLASS), vec![KERNEL_CLASS]);
     }
 }

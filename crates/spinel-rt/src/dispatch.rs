@@ -106,10 +106,11 @@ impl Object {
 /// mechanism, and the prerequisite for eventually `include`ing a plain-Ruby
 /// `Enumerable`/`Comparable` into these types via ordinary materialization.
 pub use spinel_abi::{
-    ARRAY_CLASS, CLASS_CLASS, COMPARABLE_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
-    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS,
-    PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS,
-    THREAD_CLASS, TRUE_CLASS, SYMBOL_CLASS,
+    ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
+    ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS,
+    NUMERIC_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
+    REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
 };
 /// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
 /// `send`'s Enumerable fallback (an Object whose registered ancestors
@@ -287,18 +288,84 @@ impl ClassRegistry {
 /// a variable or reflected on generally), just this narrow "is this concrete
 /// class id ancestor-compatible with that one" check.
 pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
-    registry().ancestors_of(recv_class).contains(&target)
+    ancestors_of_value(recv_class).contains(&target)
 }
 
-/// `recv.respond_to?(:name)` -- a flat lookup on the receiver's own
-/// already-materialized method table (every reachable method -- own,
-/// inherited, or mixed-in -- is already present there, so no ancestor walk
-/// is needed, mirroring `send`'s own dispatch below). Matches real Ruby's
-/// default behavior (doesn't consult `method_missing`/`respond_to_missing?`,
-/// which this spike doesn't model).
+/// `recv.respond_to?(:name)` -- MRO-faithful since Phase 17.1: walks the
+/// receiver's real ancestor chain probing, per ancestor, the registry
+/// (materialized user methods live flat on the OWN class -- the first
+/// ancestor -- and builtin reopens hang off whichever ancestor was
+/// reopened), the builtin method tables, and the Enumerable/Comparable
+/// name sets. Kernel PRIVATE functions (`puts`, ...) are deliberately
+/// invisible, real Ruby's rule. Doesn't consult
+/// `method_missing`/`respond_to_missing?`, which this spike doesn't model.
 pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
-    let r = registry();
-    r.lookup(recv_class, name).is_some() || r.lookup_value_method(recv_class, name).is_some()
+    let n = name.name();
+    let n = n.as_str();
+    for &anc in ancestors_of_value(recv_class) {
+        if let Some(r) = REGISTRY.get() {
+            if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, name).is_some() {
+                return true;
+            }
+        }
+        match anc {
+            ENUMERABLE_CLASS => {
+                if crate::builtins::enumerable::responds(n) {
+                    return true;
+                }
+            }
+            COMPARABLE_CLASS => {
+                if crate::builtins::comparable::responds(n) {
+                    return true;
+                }
+            }
+            _ => {
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if table(n).is_some() {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// The ancestor chain the MRO walk runs over: the registry's (richer --
+/// user classes, and reopens may have `include`d user modules into a
+/// builtin) when installed and populated for `id`, else the ABI-derived
+/// fallback chain (this crate's own unit tests; identical for builtins by
+/// construction -- both derive from `spinel_abi::BUILTINS`).
+pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
+    // `REGISTRY` is a `static OnceLock`, so `get()` hands out `&'static`
+    // borrows directly -- no lifetime gymnastics needed.
+    if let Some(r) = REGISTRY.get() {
+        let chain = r.ancestors_of(id);
+        if !chain.is_empty() {
+            return chain;
+        }
+    }
+    crate::builtins::fallback_ancestors(id)
+}
+
+/// The registry's dynamic constructor for `id` (`Class#new`'s row) --
+/// `None` for modules, builtins without allocators, or a missing registry.
+pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
+    REGISTRY.get()?.entries.get(&id.0)?.constructor
+}
+
+/// Coerces a dynamic method-name value the way `send`/`__send__` do:
+/// Symbol or String (real Ruby accepts both), anything else raising
+/// CRuby's exact TypeError shape.
+pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(*s),
+        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock())),
+        other => Err(raise_error(
+            "TypeError",
+            format!("{} is not a symbol nor a string", other.inspect_string()),
+        )),
+    }
 }
 
 /// A registry-OPTIONAL probe for a builtin-reopen method (Phase 16.3) --
@@ -401,55 +468,34 @@ pub fn install_class_registry(registry: ClassRegistry) {
         .unwrap_or_else(|_| panic!("class registry installed twice"));
 }
 
-/// Builds a `NoMethodError` exception value from a message -- installed once
+/// Builds an exception value from a class NAME + message -- installed once
 /// from generated `main()` (alongside the registry), because this crate
 /// cannot construct exception OBJECTS itself: the exception classes are
 /// ordinary generated `ruby_class!` structs living in the generated
 /// program's own crate (the same division of labor as `array_set`'s
-/// `IndexError` contract). What lets `send`'s missing-method fallback raise
-/// a real, catchable, thread-join-propagating Ruby exception (Phase 13.7)
-/// instead of the old `process::exit(1)` -- which killed every OTHER
-/// running Thread over one bad dispatch.
-static NO_METHOD_ERROR_FACTORY: OnceLock<fn(String) -> RubyValue> = OnceLock::new();
+/// `IndexError` contract). Began life as a `NoMethodError`-only factory
+/// (Phase 13.7, replacing a whole-process `exit(1)` over one bad dispatch);
+/// generalized in Phase 17.1 so the builtin method tables can raise real,
+/// rescuable `ArgumentError`/`TypeError`/`ZeroDivisionError`/... with
+/// CRuby's own message shapes instead of panicking.
+static EXCEPTION_FACTORY: OnceLock<fn(&str, String) -> RubyValue> = OnceLock::new();
 
-pub fn install_no_method_error_factory(factory: fn(String) -> RubyValue) {
-    NO_METHOD_ERROR_FACTORY
+pub fn install_exception_factory(factory: fn(&str, String) -> RubyValue) {
+    EXCEPTION_FACTORY
         .set(factory)
-        .unwrap_or_else(|_| panic!("NoMethodError factory installed twice"));
+        .unwrap_or_else(|_| panic!("exception factory installed twice"));
 }
 
-/// The declarative table of dynamically-dispatchable BUILTIN methods
-/// (Phase 15.1): one block per receiver kind, one row per
-/// `(method name(s), arity) => body`, expanded into `send_value`'s match.
-/// Before this macro the same surface was a hand-grown nest of match arms;
-/// as a table it is ONE place to add a builtin method (Phase 17.1's breadth
-/// lands as rows here), one place the user-override layer (Phase 16.3)
-/// hooks in front of, and one place Phase 18's per-box overlay lookup keys.
-///
-/// Row contract: a row's body must `return` to ANSWER the call. Falling off
-/// the end of a body (e.g. an argument-TYPE guard that didn't match, like
-/// `Array#[]` with a non-Int index) falls through past the whole table to
-/// the numeric-operator/Enumerable/NoMethodError stages after it, exactly
-/// like an unlisted name does -- so partial rows degrade to Ruby's own
-/// NoMethodError behavior, never to silent wrongness.
-macro_rules! builtin_methods {
-    (
-        ($recv:ident, $name:ident, $args:ident);
-        $( $variant:ident ( $($payload:pat),+ ) { $( $row:pat => $body:block )* } )*
-    ) => {
-        match $recv {
-            $(
-                RubyValue::$variant($($payload),+) => {
-                    match ($name, $args.len()) {
-                        $( $row => $body )*
-                        _ => {}
-                    }
-                }
-            )*
-            _ => {}
-        }
-    };
+/// THE runtime raise channel: a rescuable `Signal::Raise` carrying a
+/// `class_name` exception when the factory is installed (every generated
+/// program), a loud panic otherwise (this crate's own unit tests).
+pub fn raise_error(class_name: &str, msg: String) -> Signal {
+    match EXCEPTION_FACTORY.get() {
+        Some(factory) => Signal::Raise(factory(class_name, msg)),
+        None => panic!("{class_name}: {msg}"),
+    }
 }
+
 
 /// The general dispatcher -- reached only on Path 2 (see module docs).
 /// Since every reachable method (own, inherited, or mixed-in) is already
@@ -488,286 +534,52 @@ pub fn send_value(
     }
     let n = name.name();
     let n = n.as_str();
-    // A builtin-reopen method wins over EVERYTHING below (Phase 16.3):
-    // the universal arms, the curated tables, the numeric operators, and
-    // the Enumerable/NoMethodError stages -- real Ruby's rule (a user
-    // `def length` on `class String` overrides the native one, and a user
-    // `def dup`/`to_s` overrides the Kernel default; both oracle-verified).
-    if let Some(f) = value_method(recv.class_id(), name) {
-        return f(recv, args, block);
-    }
-    // Universal builtin methods next: `==`/`!=` via `rb_eq` (Ruby's own
-    // cross-numeric-tower `==`), `dup`/`clone` via `dup_value` (Phase
-    // 15.2), and the reflection set (Phase 16.1: `.class` on everything;
-    // `is_a?`/`kind_of?`/`instance_of?` against a runtime Class value) --
-    // for every non-Object receiver.
-    match (n, args.len()) {
-        ("==", 1) => return Ok(RubyValue::Bool(recv.rb_eq(&args[0]))),
-        ("!=", 1) => return Ok(RubyValue::Bool(!recv.rb_eq(&args[0]))),
-        ("dup", 0) => return Ok(recv.dup_value(false)),
-        ("clone", 0) => return Ok(recv.dup_value(true)),
-        ("class", 0) => return Ok(RubyValue::Class(recv.class_id())),
-        // `Object#hash`, universally (Phase 16.2) -- what a user-defined
-        // `hash` typically delegates to (`def hash; k.hash; end`).
-        ("hash", 0) => return Ok(RubyValue::Int(crate::value_hash_code(recv))),
-        ("is_a?" | "kind_of?", 1) => {
-            if let RubyValue::Class(target) = &args[0] {
-                return Ok(RubyValue::Bool(is_a(recv.class_id(), *target)));
-            }
-        }
-        ("instance_of?", 1) => {
-            if let RubyValue::Class(target) = &args[0] {
-                return Ok(RubyValue::Bool(recv.class_id() == *target));
-            }
-        }
-        _ => {}
-    }
-    // A first-class Class/Module receiver (Phase 16.1): the reflection set
-    // plus the dynamic constructor -- `x = Widget; x.new(...)`.
+    // `Math.sqrt(...)`-style MODULE FUNCTIONS (Phase 17.1): our model has
+    // no singleton-method tables, so the Math module value gets one
+    // dedicated probe ahead of the walk (whose chains describe INSTANCE
+    // methods -- a Class value's walk runs over Class/Module, not Math).
     if let RubyValue::Class(cid) = recv {
-        let entry_name = class_name(*cid);
-        match (n, args.len()) {
-            ("new", _) => {
-                let ctor = registry().entries.get(&cid.0).and_then(|e| e.constructor);
-                match ctor {
-                    Some(ctor) => return ctor(args, block),
-                    // Modules (and builtins) have no allocator -- real
-                    // Ruby's NoMethodError for a module, TypeError for a
-                    // builtin without one; both surface through the same
-                    // NoMethodError channel here (documented spike-scope
-                    // flattening for the builtin case).
-                    None => {
-                        let msg = format!(
-                            "undefined method 'new' for module {}",
-                            entry_name.as_deref().unwrap_or("<anonymous>")
-                        );
-                        match NO_METHOD_ERROR_FACTORY.get() {
-                            Some(factory) => return Err(Signal::Raise(factory(msg))),
-                            None => panic!("{msg}"),
-                        }
+        if *cid == MATH_CLASS {
+            if let Some(r) = crate::builtins::math::math_call(n, args) {
+                return r;
+            }
+        }
+    }
+    // THE MRO WALK (Phase 17.1) -- the receiver's real ancestor chain, most
+    // derived first. Per ancestor: user reopens (Phase 16.3's value
+    // methods) beat that ancestor's builtin table -- real Ruby's placement
+    // rule (a `class Numeric; def foo` reopen is found on `5`, but a
+    // builtin `Integer#foo` row would beat it). `Enumerable`/`Comparable`
+    // dispatch through their dedicated drivers (`enumerable_send` drives
+    // the receiver's own `each`, `comparable_send` its `<=>`); everything
+    // else -- including the Kernel universals and BasicObject's `==` --
+    // is an ordinary table hit. The old hand-ordered ladder (reopen probe,
+    // universal arms, curated tables, `to_s`-after-tables hack, hardcoded
+    // Array|Hash|Range Enumerable set) dissolved into this one loop.
+    for &anc in ancestors_of_value(recv.class_id()) {
+        if let Some(f) = value_method(anc, name) {
+            return f(recv, args, block);
+        }
+        match anc {
+            ENUMERABLE_CLASS => {
+                if let Some(r) =
+                    crate::builtins::enumerable::enumerable_send(recv, n, args, block.clone())
+                {
+                    return r;
+                }
+            }
+            COMPARABLE_CLASS => {
+                if let Some(r) = crate::builtins::comparable::comparable_send(recv, n, args) {
+                    return r;
+                }
+            }
+            _ => {
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if let Some(f) = table(n) {
+                        return f(recv, args, block);
                     }
                 }
             }
-            ("name" | "to_s" | "inspect", 0) => {
-                let name = entry_name
-                    .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-                return Ok(RubyValue::Str(crate::string_new(name)));
-            }
-            ("ancestors", 0) => {
-                let ancestors = registry()
-                    .ancestors_of(*cid)
-                    .iter()
-                    .map(|&a| RubyValue::Class(a))
-                    .collect();
-                return Ok(RubyValue::Array(crate::array_new(ancestors)));
-            }
-            // Explicit `Module#===` (Phase 16.2) -- the same instance-of
-            // ancestry check `case`/`when` desugars to via `rb_case_eq`.
-            ("===", 1) => {
-                return Ok(RubyValue::Bool(is_a(args[0].class_id(), *cid)));
-            }
-            _ => {}
-        }
-    }
-    builtin_methods! {
-        (recv, n, args);
-        Array(arr) {
-            ("[]", 1) => {
-                if let RubyValue::Int(i) = &args[0] {
-                    return Ok(crate::array_get(arr, *i));
-                }
-            }
-            ("[]=", 2) => {
-                if let RubyValue::Int(i) = &args[0] {
-                    // Same silent-out-of-range posture as the static path's
-                    // `array_set` call sites: `None` (a raise) is the
-                    // codegen-built `IndexError`'s job on the static path;
-                    // dynamically we panic loudly instead of building one.
-                    return match crate::array_set(arr, *i, args[1].clone()) {
-                        Some(v) => Ok(v),
-                        None => panic!("index {} too small for array (IndexError; spike scope: raised as a panic on the dynamic path)", match &args[0] { RubyValue::Int(i) => *i, _ => unreachable!() }),
-                    };
-                }
-            }
-            ("<<" | "push", 1) => { return Ok(crate::array_push(arr, args[0].clone())); }
-            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::array_len(arr))); }
-            ("include?" | "member?", 1) => {
-                return Ok(RubyValue::Bool(crate::array_include(arr, &args[0])));
-            }
-            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::array_len(arr) == 0)); }
-            ("first", 0) => { return Ok(crate::array_get(arr, 0)); }
-            ("last", 0) => { return Ok(crate::array_get(arr, -1)); }
-            ("to_a", 0) => { return Ok(recv.clone()); }
-            ("each", 0) => {
-                let Some(RubyValue::Proc(p)) = &block else {
-                    panic!("Array#each without a block isn't supported (no Enumerator; spike scope)");
-                };
-                // Snapshot: mutating the array from inside the block
-                // iterates the original elements (a deliberate, simpler
-                // rule than CRuby's live-view semantics).
-                let elems: Vec<RubyValue> = arr.lock().clone();
-                for e in elems {
-                    p(&[e])?;
-                }
-                return Ok(recv.clone());
-            }
-        }
-        Hash(h) {
-            ("[]", 1) => { return Ok(crate::hash_get(h, &args[0])); }
-            ("[]=", 2) => { return Ok(crate::hash_set(h, args[0].clone(), args[1].clone())); }
-            ("delete", 1) => { return Ok(crate::hash_delete(h, &args[0])); }
-            ("key?" | "has_key?" | "include?" | "member?", 1) => {
-                return Ok(RubyValue::Bool(crate::hash_has_key(h, &args[0])));
-            }
-            ("keys", 0) => { return Ok(crate::hash_keys(h)); }
-            ("values", 0) => { return Ok(crate::hash_values(h)); }
-            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::hash_len(h))); }
-            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::hash_len(h) == 0)); }
-            ("each", 0) => {
-                let Some(RubyValue::Proc(p)) = &block else {
-                    panic!("Hash#each without a block isn't supported (no Enumerator; spike scope)");
-                };
-                let pairs: Vec<(RubyValue, RubyValue)> =
-                    h.lock().values().cloned().collect();
-                for (k, v) in pairs {
-                    p(&[k, v])?;
-                }
-                return Ok(recv.clone());
-            }
-        }
-        Str(s) {
-            ("length" | "size", 0) => { return Ok(RubyValue::Int(crate::string_len(s))); }
-            ("empty?", 0) => { return Ok(RubyValue::Bool(crate::string_len(s) == 0)); }
-            ("include?", 1) => {
-                if let RubyValue::Str(needle) = &args[0] {
-                    let found = s.lock().contains(&*needle.lock());
-                    return Ok(RubyValue::Bool(found));
-                }
-            }
-            ("+", 1) => {
-                if let RubyValue::Str(other) = &args[0] {
-                    let joined = format!("{}{}", s.lock(), other.lock());
-                    return Ok(RubyValue::Str(crate::string_new(joined)));
-                }
-            }
-            ("to_s", 0) => { return Ok(recv.clone()); }
-        }
-        // The one Range iteration primitive Enumerable needs -- Array/Hash/
-        // Range are the builtin `include Enumerable` set (real Ruby's own),
-        // and an unresolved name on any of them tries the Rust Enumerable
-        // implementation below before NoMethodError.
-        Range(start, end, exclusive) {
-            ("each", 0) => {
-                let Some(RubyValue::Proc(p)) = &block else {
-                    panic!("Range#each without a block isn't supported (no Enumerator; spike scope)");
-                };
-                let (Some(s), Some(e)) = (start.as_deref(), end.as_deref()) else {
-                    panic!("can't iterate from a beginless/endless Range (spike scope)");
-                };
-                let (RubyValue::Int(s), RubyValue::Int(e)) = (s, e) else {
-                    panic!("can't iterate a non-Integer Range (spike scope)");
-                };
-                let last = if *exclusive { *e - 1 } else { *e };
-                let mut i = *s;
-                while i <= last {
-                    p(&[RubyValue::Int(i)])?;
-                    i += 1;
-                }
-                return Ok(recv.clone());
-            }
-        }
-    }
-    // Universal `to_s`/`inspect` (Phase 16.2), placed AFTER the curated
-    // tables so `String#to_s`'s identity-preserving row still wins:
-    // `nil.inspect` -> "nil", `5.to_s` -> "5", `[1, 2].inspect` ->
-    // "[1, 2]" -- the same rendering `puts`/`p` already print.
-    match (n, args.len()) {
-        ("to_s", 0) => {
-            return Ok(RubyValue::Str(crate::string_new(recv.to_display_string())))
-        }
-        ("inspect", 0) => {
-            return Ok(RubyValue::Str(crate::string_new(recv.inspect_string())))
-        }
-        _ => {}
-    }
-    // Numeric receivers: the binary operators, so `5.send(:+, 2)` and --
-    // the motivating case -- `reduce(:+)`'s per-element
-    // `send_value(acc, op, [elem])` dispatch work (real Ruby supports
-    // both; codegen's static/runtime-checked arithmetic normally handles
-    // these without ever reaching dynamic dispatch). Mixed Int/Float
-    // promotes to Float, the same numeric-tower rule the static fallback
-    // uses.
-    {
-        let nums = match (recv, args.first()) {
-            (RubyValue::Int(a), Some(RubyValue::Int(b))) if args.len() == 1 => {
-                Some((None, Some((*a, *b))))
-            }
-            (RubyValue::Int(a), Some(RubyValue::Float(b))) if args.len() == 1 => {
-                Some((Some((*a as f64, *b)), None))
-            }
-            (RubyValue::Float(a), Some(RubyValue::Int(b))) if args.len() == 1 => {
-                Some((Some((*a, *b as f64)), None))
-            }
-            (RubyValue::Float(a), Some(RubyValue::Float(b))) if args.len() == 1 => {
-                Some((Some((*a, *b)), None))
-            }
-            _ => None,
-        };
-        if let Some((float_pair, int_pair)) = nums {
-            if let Some((a, b)) = int_pair {
-                let r = match n {
-                    "+" => Some(RubyValue::Int(crate::int_add(a, b))),
-                    "-" => Some(RubyValue::Int(crate::int_sub(a, b))),
-                    "*" => Some(RubyValue::Int(crate::int_mul(a, b))),
-                    "/" => Some(RubyValue::Int(crate::int_div(a, b))),
-                    "%" => Some(RubyValue::Int(crate::int_mod(a, b))),
-                    "**" => Some(RubyValue::Int(crate::int_pow(a, b))),
-                    "<=>" => Some(RubyValue::Int(crate::int_cmp(a, b))),
-                    "<" => Some(RubyValue::Bool(crate::int_lt(a, b))),
-                    ">" => Some(RubyValue::Bool(crate::int_gt(a, b))),
-                    "<=" => Some(RubyValue::Bool(crate::int_le(a, b))),
-                    ">=" => Some(RubyValue::Bool(crate::int_ge(a, b))),
-                    _ => None,
-                };
-                if let Some(r) = r {
-                    return Ok(r);
-                }
-            }
-            if let Some((a, b)) = float_pair {
-                let r = match n {
-                    "+" => Some(RubyValue::Float(crate::float_add(a, b))),
-                    "-" => Some(RubyValue::Float(crate::float_sub(a, b))),
-                    "*" => Some(RubyValue::Float(crate::float_mul(a, b))),
-                    "/" => Some(RubyValue::Float(crate::float_div(a, b))),
-                    "%" => Some(RubyValue::Float(crate::float_mod(a, b))),
-                    "**" => Some(RubyValue::Float(crate::float_pow(a, b))),
-                    "<" => Some(RubyValue::Bool(a < b)),
-                    ">" => Some(RubyValue::Bool(a > b)),
-                    "<=" => Some(RubyValue::Bool(a <= b)),
-                    ">=" => Some(RubyValue::Bool(a >= b)),
-                    "<=>" => Some(match crate::float_cmp(a, b) {
-                        Some(o) => RubyValue::Int(o),
-                        None => RubyValue::Nil,
-                    }),
-                    _ => None,
-                };
-                if let Some(r) = r {
-                    return Ok(r);
-                }
-            }
-        }
-    }
-    // The builtin `include Enumerable` set (Array/Hash/Range -- real
-    // Ruby's own), hardcoded rather than registry-consulted so this works
-    // registry-less too (this crate's own unit tests): an unresolved name
-    // on one of these tries the Rust Enumerable implementation before the
-    // NoMethodError below.
-    if matches!(
-        recv,
-        RubyValue::Array(_) | RubyValue::Hash(_) | RubyValue::Range(..)
-    ) {
-        if let Some(r) = crate::enumerable::enumerable_send(recv, n, args, block.clone()) {
-            return r;
         }
     }
     // A class/module receiver gets real Ruby's own distinct message shape
@@ -779,37 +591,17 @@ pub fn send_value(
             "undefined method '{name}' for {kind} {}",
             class_name(*cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0))
         );
-        match NO_METHOD_ERROR_FACTORY.get() {
-            Some(factory) => return Err(Signal::Raise(factory(msg))),
-            None => panic!("{msg}"),
-        }
+        return Err(raise_error("NoMethodError", msg));
     }
-    let class_name = match recv {
-        RubyValue::Nil => "NilClass",
-        RubyValue::Bool(true) => "TrueClass",
-        RubyValue::Bool(false) => "FalseClass",
-        RubyValue::Int(_) => "Integer",
-        RubyValue::Float(_) => "Float",
-        RubyValue::Symbol(_) => "Symbol",
-        RubyValue::Str(_) => "String",
-        RubyValue::Array(_) => "Array",
-        RubyValue::Hash(_) => "Hash",
-        RubyValue::Range(..) => "Range",
-        RubyValue::Proc(_) => "Proc",
-        RubyValue::Regexp(_) => "Regexp",
-        RubyValue::MatchData(_) => "MatchData",
-        RubyValue::Fiber(_) => "Fiber",
-        RubyValue::Thread(_) => "Thread",
-        RubyValue::Mutex(_) => "Mutex",
-        RubyValue::Queue(_) => "Queue",
-        RubyValue::Ractor(_) => "Ractor",
-        RubyValue::Object(_) | RubyValue::Class(_) => unreachable!("handled above"),
-    };
-    let msg = format!("undefined method '{name}' for an instance of {class_name}");
-    match NO_METHOD_ERROR_FACTORY.get() {
-        Some(factory) => Err(Signal::Raise(factory(msg))),
-        None => panic!("{msg}"),
-    }
+    // The receiver's Ruby class name comes straight from the ABI table
+    // (`class_id()` -> `builtin_name`) -- the hand-maintained variant->name
+    // match this replaced was one more list to keep in sync.
+    let class_name = spinel_abi::builtin_name(recv.class_id())
+        .expect("every non-Object/non-Class RubyValue variant maps to a builtin ClassId");
+    Err(raise_error(
+        "NoMethodError",
+        format!("undefined method '{name}' for an instance of {class_name}"),
+    ))
 }
 
 pub fn send(
@@ -823,69 +615,44 @@ pub fn send(
         return f(recv, args, block);
     }
 
-    // Universal `Kernel#dup`/`#clone` (Phase 15.2) and the reflection set
-    // (Phase 16.1). Placement mirrors real Ruby's lookup order exactly: an
-    // ordinary ancestor-chain method (the registry lookup above) wins over
-    // Kernel's, and Kernel's wins over `method_missing` (a real method is
-    // always found before the missing-method fallback fires).
-    if args.is_empty() {
-        match name.name().as_str() {
-            "dup" => return Ok(RubyValue::Object(recv.dup_object(false))),
-            "clone" => return Ok(RubyValue::Object(recv.dup_object(true))),
-            "class" => return Ok(RubyValue::Class(id)),
-            // Identity-based when no user `hash` exists (the registry
-            // lookup above already missed); `value_hash_code` re-probes,
-            // finds none, and digests by identity.
-            "hash" => {
-                return Ok(RubyValue::Int(crate::value_hash_code(
-                    &RubyValue::Object(recv.clone()),
-                )))
-            }
-            // Default `Object#to_s`/`#inspect` (the user-defined form was
-            // the registry lookup above): the `#<FQName>` rendering
-            // `display_with`/`inspect_with` produce.
-            "to_s" => {
-                return Ok(RubyValue::Str(crate::string_new(
-                    RubyValue::Object(recv.clone()).to_display_string(),
-                )))
-            }
-            "inspect" => {
-                return Ok(RubyValue::Str(crate::string_new(
-                    RubyValue::Object(recv.clone()).inspect_string(),
-                )))
-            }
-            _ => {}
+    // The SAME MRO walk `send_value` runs (Phase 17.1), over a boxed
+    // handle: Kernel's universals, BasicObject's `==`, and the
+    // Enumerable/Comparable drivers all resolve as real ancestor methods
+    // -- which also fixes a fidelity bug: `method_missing` used to fire
+    // BEFORE the Enumerable/Comparable fallbacks, but real Ruby finds a
+    // real (module) method first, always.
+    let boxed = RubyValue::Object(recv.clone());
+    let n = name.name();
+    let n = n.as_str();
+    for &anc in ancestors_of_value(id) {
+        if let Some(f) = value_method(anc, name) {
+            return f(&boxed, args, block);
         }
-    }
-    if args.len() == 1 {
-        if let RubyValue::Class(target) = &args[0] {
-            match name.name().as_str() {
-                "is_a?" | "kind_of?" => return Ok(RubyValue::Bool(is_a(id, *target))),
-                "instance_of?" => return Ok(RubyValue::Bool(id == *target)),
-                _ => {}
+        match anc {
+            ENUMERABLE_CLASS => {
+                if let Some(r) =
+                    crate::builtins::enumerable::enumerable_send(&boxed, n, args, block.clone())
+                {
+                    return r;
+                }
             }
-        }
-        // `Object#==`'s reference-identity default (Phase 16.2) -- reached
-        // only when the class defines no `==` of its own (the registry
-        // lookup above wins otherwise), before `method_missing` like every
-        // real Kernel/Object method.
-        match name.name().as_str() {
-            "==" => {
-                return Ok(RubyValue::Bool(
-                    RubyValue::Object(recv.clone()).rb_eq(&args[0]),
-                ))
+            COMPARABLE_CLASS => {
+                if let Some(r) = crate::builtins::comparable::comparable_send(&boxed, n, args) {
+                    return r;
+                }
             }
-            "!=" => {
-                return Ok(RubyValue::Bool(
-                    !RubyValue::Object(recv.clone()).rb_eq(&args[0]),
-                ))
+            _ => {
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if let Some(f) = table(n) {
+                        return f(&boxed, args, block);
+                    }
+                }
             }
-            _ => {}
         }
     }
 
     // method_missing fallback, with `name` prepended to args (mirrors
-    // CRuby's own protocol).
+    // CRuby's own protocol) -- AFTER every real method, per real Ruby.
     let mm = Symbol::intern("method_missing");
     if let Some(f) = registry().lookup(id, mm) {
         let mut full_args = Vec::with_capacity(args.len() + 1);
@@ -898,43 +665,13 @@ pub fn send(
     // eprintln-and-`process::exit(1)` shortcut): propagates like any other
     // raised exception -- rescuable at the call site, re-raised at a
     // Thread's `join`/`value` if uncaught there, and printed by the
-    // top-level uncaught handler otherwise. A whole-process kill over one
-    // bad dispatch in one Thread was never right once real threads existed.
-    // The class-ID-in-the-message (vs. real Ruby's class NAME) is the
-    // pre-existing, documented no-runtime-class-name-table approximation.
-    // A user class that `include Enumerable` (its registered ancestors
-    // carry ENUMERABLE_CLASS): unresolved names try the Rust Enumerable
-    // implementation (which drives this object's own `each` back through
-    // dynamic dispatch) before raising.
-    if is_a(id, ENUMERABLE_CLASS) {
-        if let Some(r) = crate::enumerable::enumerable_send(
-            &RubyValue::Object(recv.clone()),
-            &name.name(),
-            args,
-            block,
-        ) {
-            return r;
-        }
-    }
-    // Same architecture for `include Comparable` (Phase 16.2): unresolved
-    // names try the Rust Comparable implementation, which drives this
-    // object's own `<=>` -- the compar.c pattern.
-    if is_a(id, COMPARABLE_CLASS) {
-        if let Some(r) = crate::comparable::comparable_send(recv, &name.name(), args) {
-            return r;
-        }
-    }
-
-    // The registered class NAME (Phase 16.1, retiring the documented
-    // class-id approximation) -- real Ruby's exact message shape.
-    let msg = format!(
-        "undefined method '{name}' for an instance of {}",
-        class_name(id).unwrap_or_else(|| format!("class {}", id.0))
-    );
-    match NO_METHOD_ERROR_FACTORY.get() {
-        Some(factory) => Err(Signal::Raise(factory(msg))),
-        // Only reachable outside a generated program (this crate's own unit
-        // tests, which install no factory) -- a loud panic, not silent.
-        None => panic!("{msg}"),
-    }
+    // top-level uncaught handler otherwise. Real Ruby's exact message
+    // shape, with the registered class NAME (Phase 16.1).
+    Err(raise_error(
+        "NoMethodError",
+        format!(
+            "undefined method '{name}' for an instance of {}",
+            class_name(id).unwrap_or_else(|| format!("class {}", id.0))
+        ),
+    ))
 }

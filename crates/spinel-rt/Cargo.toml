@@ -11,3 +11,11 @@ indexmap = "2"
 regex = "1"
 spinel-fiber = { path = "../spinel-fiber" }
 may = "0.3"
+# The numeric tower (Phase 17.1): arbitrary-precision Integer. num-bigint
+# over malachite (LGPL) / ibig (unmaintained); pure Rust, MIT/Apache, and
+# BigInt's bitwise ops already implement Ruby's infinite-two's-complement
+# semantics. num-integer supplies floored div/mod + gcd/lcm; num-traits the
+# to_i64/to_f64 demotion probes.
+num-bigint = "0.5"
+num-integer = "0.1"
+num-traits = "0.2"

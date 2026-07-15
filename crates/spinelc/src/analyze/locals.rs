@@ -306,6 +306,11 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, locals: &mut HashM
         HirNode::Retry => {}
         HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit

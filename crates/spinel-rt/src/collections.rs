@@ -106,6 +106,12 @@ pub enum HashKey {
     /// consistently.
     Computed(Box<HashKey>),
     Identity(usize),
+    /// The numeric-tower keys (Phase 17.1) -- `BigInt` never overlaps
+    /// `Int` (demotion invariant), `Rational` is always reduced, `Complex`
+    /// keys by its component keys.
+    BigInt(num_bigint::BigInt),
+    Rational(num_bigint::BigInt, num_bigint::BigInt),
+    Complex(Box<(HashKey, HashKey)>),
 }
 
 fn hash_key(v: &RubyValue) -> HashKey {
@@ -113,6 +119,13 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::Nil => HashKey::Nil,
         RubyValue::Bool(b) => HashKey::Bool(*b),
         RubyValue::Int(i) => HashKey::Int(*i),
+        // Canonical thanks to the demotion/reduction invariants: a BigInt
+        // never aliases an Int value, a Rational is always reduced.
+        RubyValue::BigInt(b) => HashKey::BigInt((**b).clone()),
+        RubyValue::Rational(r) => HashKey::Rational(r.num.clone(), r.den.clone()),
+        RubyValue::Complex(c) => {
+            HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag))))
+        }
         RubyValue::Float(f) => HashKey::Float(f.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
         RubyValue::Str(s) => HashKey::Str(s.lock().clone()),

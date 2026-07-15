@@ -19,10 +19,11 @@ use std::collections::HashMap;
 /// what makes `5.is_a?(Integer)`-style checks work uniformly through the
 /// same `classes`/`ancestors` system as user classes.
 pub use spinel_abi::{
-    ClassId, ARRAY_CLASS, CLASS_CLASS, COMPARABLE_CLASS, ENUMERABLE_CLASS, FIBER_CLASS,
-    FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS,
-    OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS,
-    STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    ClassId, ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
+    ENUMERABLE_CLASS, ENUMERATOR_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
+    KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, NUMERIC_CLASS,
+    OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS,
+    REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -235,34 +236,28 @@ impl Compiler {
             }],
             scopes: Vec::new(),
         };
+        // The CRuby-exact hierarchy is DECLARED in the ABI table (Phase
+        // 17.1): superclass edges (`Integer < Numeric`, `Class < Module`,
+        // `BasicObject` as the parentless root) and real mixins (`Numeric`/
+        // `String`/`Symbol` include `Comparable`; `Array`/`Hash`/`Range`/
+        // `Struct`/`Enumerator` include `Enumerable`). Forward id refs are
+        // fine: `parent`/`includes` are only linearized by
+        // `mro::materialize` after every class exists.
         for b in spinel_abi::BUILTINS {
-            // A builtin MODULE (`Enumerable`) has no superclass and is never
-            // instantiated; every builtin CLASS sits under `Object` --
-            // except `Class`, whose superclass is `Module` in real Ruby
-            // (`Widget.is_a?(Module)` is true; Phase 16.1), giving its
-            // linearized ancestors the [Class, Module, Object] chain.
-            let parent = if b.is_module {
-                None
-            } else if b.id == CLASS_CLASS {
-                Some(MODULE_CLASS)
-            } else {
-                Some(OBJECT_CLASS)
-            };
-            let id = compiler.add_class(b.name.to_string(), parent, b.is_module);
+            let id = compiler.add_class(b.name.to_string(), b.superclass, b.is_module);
             debug_assert_eq!(
                 id, b.id,
                 "spinel_abi::BUILTINS must stay contiguous from ClassId(1)"
             );
-            compiler.classes[id.0 as usize].is_builtin = true;
+            let ci = &mut compiler.classes[id.0 as usize];
+            ci.is_builtin = true;
+            ci.includes = b.includes.to_vec();
         }
-        // Real Ruby's own mixins on the builtin collections: linearization
-        // puts ENUMERABLE_CLASS into their `ancestors`, so both compile-time
-        // `is_a?` folding and the runtime-registered ancestor chains (which
-        // `send_value`'s Enumerable fallback and `[].is_a?(Enumerable)`
-        // consult) get it uniformly.
-        for cid in [ARRAY_CLASS, HASH_CLASS, RANGE_CLASS] {
-            compiler.classes[cid.0 as usize].includes.push(ENUMERABLE_CLASS);
-        }
+        // Object's own slot in the chain (it isn't a BUILTINS row):
+        // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends
+        // `..., Object, Kernel, BasicObject`, the real Ruby tail.
+        compiler.classes[0].parent = Some(spinel_abi::OBJECT_SUPERCLASS);
+        compiler.classes[0].includes = spinel_abi::OBJECT_INCLUDES.to_vec();
         compiler
     }
 

@@ -4493,16 +4493,20 @@ fn named_capture_auto_binding_via_match_write_is_a_clean_lowering_error() {
     assert!(err.contains("auto-binding"), "{err}");
 }
 
+/// SEMANTICS FLIP (Phase 17.1-D): String patterns to split/gsub used to be
+/// compile-time rejections ("pass a Regexp literal instead"); the String
+/// table rows now implement them for real, so the static regexp path falls
+/// through to dynamic dispatch instead. Oracle-verified.
 #[test]
-#[should_panic(expected = "a String pattern argument to String#split isn't supported yet")]
-fn a_string_pattern_argument_to_split_is_a_clean_compile_error() {
-    let _ = spinelc::compile_to_rust(r#"puts "a,b".split(",")"#);
-}
-
-#[test]
-#[should_panic(expected = "a String pattern argument to String#gsub isn't supported yet")]
-fn a_string_pattern_argument_to_gsub_is_a_clean_compile_error() {
-    let _ = spinelc::compile_to_rust(r#"puts "a,b".gsub(",", ";")"#);
+fn string_patterns_to_split_and_gsub_now_work() {
+    let result = support::run_ruby(
+        r#"
+        puts "a,b".split(",").inspect
+        puts "a,b".gsub(",", ";")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"a\", \"b\"]\na;b\n");
 }
 
 // --- Phase 12.8: alias / class << self ---------------------------------
@@ -9058,4 +9062,996 @@ fn builtin_reopen_methods_reachable_via_send() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "12s\n98s\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-A -- the CRuby-exact builtin hierarchy (BasicObject/Kernel/
+// Numeric/Rational/Complex/Math/Struct/Enumerator in the ABI; declarative
+// superclass/includes seeding). Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+/// THE keystone parity test: `.ancestors` for every core class, byte-
+/// identical to real ruby. (Mutex/Queue excluded: real Ruby names them
+/// `Thread::Mutex`/`Thread::Queue` -- a documented naming divergence.)
+#[test]
+fn builtin_ancestors_are_cruby_exact() {
+    let result = support::run_ruby(
+        r##"
+        [BasicObject, Object, Kernel, Comparable, Enumerable,
+         Numeric, Integer, Float, Rational, Complex,
+         String, Symbol, Array, Hash, Range,
+         NilClass, TrueClass, FalseClass,
+         Proc, Regexp, MatchData, Struct, Enumerator,
+         Class, Module, Math, Fiber, Thread, Ractor].each do |c|
+          puts "#{c}: #{c.ancestors.inspect}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "BasicObject: [BasicObject]\n\
+         Object: [Object, Kernel, BasicObject]\n\
+         Kernel: [Kernel]\n\
+         Comparable: [Comparable]\n\
+         Enumerable: [Enumerable]\n\
+         Numeric: [Numeric, Comparable, Object, Kernel, BasicObject]\n\
+         Integer: [Integer, Numeric, Comparable, Object, Kernel, BasicObject]\n\
+         Float: [Float, Numeric, Comparable, Object, Kernel, BasicObject]\n\
+         Rational: [Rational, Numeric, Comparable, Object, Kernel, BasicObject]\n\
+         Complex: [Complex, Numeric, Comparable, Object, Kernel, BasicObject]\n\
+         String: [String, Comparable, Object, Kernel, BasicObject]\n\
+         Symbol: [Symbol, Comparable, Object, Kernel, BasicObject]\n\
+         Array: [Array, Enumerable, Object, Kernel, BasicObject]\n\
+         Hash: [Hash, Enumerable, Object, Kernel, BasicObject]\n\
+         Range: [Range, Enumerable, Object, Kernel, BasicObject]\n\
+         NilClass: [NilClass, Object, Kernel, BasicObject]\n\
+         TrueClass: [TrueClass, Object, Kernel, BasicObject]\n\
+         FalseClass: [FalseClass, Object, Kernel, BasicObject]\n\
+         Proc: [Proc, Object, Kernel, BasicObject]\n\
+         Regexp: [Regexp, Object, Kernel, BasicObject]\n\
+         MatchData: [MatchData, Object, Kernel, BasicObject]\n\
+         Struct: [Struct, Enumerable, Object, Kernel, BasicObject]\n\
+         Enumerator: [Enumerator, Enumerable, Object, Kernel, BasicObject]\n\
+         Class: [Class, Module, Object, Kernel, BasicObject]\n\
+         Module: [Module, Object, Kernel, BasicObject]\n\
+         Math: [Math]\n\
+         Fiber: [Fiber, Object, Kernel, BasicObject]\n\
+         Thread: [Thread, Object, Kernel, BasicObject]\n\
+         Ractor: [Ractor, Object, Kernel, BasicObject]\n"
+    );
+}
+
+/// The hierarchy is live in `is_a?`/`kind_of?`/`instance_of?` -- statically
+/// folded sites AND the runtime path through a Poly receiver, plus a user
+/// class inheriting the full Object tail. Every line oracle-verified.
+#[test]
+fn is_a_walks_the_cruby_chains() {
+    let result = support::run_ruby(
+        r#"
+        class Widget; end
+
+        puts 5.is_a?(Comparable)
+        puts 5.is_a?(Numeric)
+        puts 5.is_a?(BasicObject)
+        puts 3.14.is_a?(Numeric)
+        puts "s".is_a?(Comparable)
+        puts [].is_a?(Kernel)
+        puts nil.is_a?(BasicObject)
+        puts 5.kind_of?(Comparable)
+        puts 5.instance_of?(Numeric)
+        puts [5].first.is_a?(Numeric)
+        puts Widget.new.is_a?(Kernel)
+        puts Widget.ancestors.inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\ntrue\n[Widget, Object, Kernel, BasicObject]\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-B -- the MRO-walking builtin method tables: Kernel/BasicObject/
+// Comparable resolve as real ancestors on VALUE receivers, reopens are found
+// per-ancestor, Range#=== is real, and arg-type mismatches raise CRuby's
+// TypeError/ArgumentError shapes. Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+/// Comparable's operators and Kernel's universals reach builtin values
+/// dynamically: `"abc" < "abd"` resolves String(no `<`) -> Comparable(`<`
+/// drives `<=>`) -> `String#<=>`; itself/tap/then/frozen?/eql?/equal? are
+/// Kernel/BasicObject rows found through every value's chain.
+#[test]
+fn comparable_and_kernel_rows_reach_builtin_values() {
+    let result = support::run_ruby(
+        r##"
+        x = "abc"
+        puts x < "abd"
+        puts x.between?("aaa", "b")
+        puts "m".clamp("a", "f")
+        puts 5.itself
+        r = 5.tap { |v| puts "saw #{v}" }
+        puts r
+        puts 5.then { |v| v + 1 }
+        puts 5.equal?(5)
+        puts 5.send("itself")
+        puts 5.frozen?
+        puts "x".frozen?
+        puts 5.eql?(5.0)
+        puts 5.eql?(5)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\nf\n5\nsaw 5\n5\n6\ntrue\n5\ntrue\nfalse\nfalse\ntrue\n"
+    );
+}
+
+/// A `class Numeric` reopen materializes onto Integer AND Float (the mro
+/// machinery) and is found on both static receivers and dynamic Poly ones
+/// (the per-ancestor value-method walk).
+#[test]
+fn numeric_reopen_resolves_down_the_mro() {
+    let result = support::run_ruby(
+        r#"
+        class Numeric
+          def double
+            self * 2
+          end
+        end
+
+        puts 5.double
+        puts 2.5.double
+        puts [7].first.double
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n5.0\n14\n");
+}
+
+/// `Range#===` IS `#cover?` -- what makes `case x when 1..50` actually
+/// match (previously it fell to structural equality and silently never
+/// did). Endpoint semantics oracle-verified incl. exclusive ends, floats,
+/// and incomparable-subject false.
+#[test]
+fn range_case_equality_is_real() {
+    let result = support::run_ruby(
+        r#"
+        case 42
+        when 1..50 then puts "hit"
+        else puts "miss"
+        end
+
+        x = [5.5].first
+        puts (1..5) === x
+        puts (1..6) === x
+        puts (1...5) === 5
+        puts (1..5).cover?(3)
+        puts (1..5).include?("x")
+        case "c"
+        when "a".."f" then puts "letter"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hit\nfalse\ntrue\nfalse\ntrue\nfalse\nletter\n"
+    );
+}
+
+/// The table rows validate argument TYPES with CRuby's exact TypeError/
+/// ArgumentError messages (previously an arg-type mismatch degraded to
+/// NoMethodError) -- all real, rescuable exceptions now.
+#[test]
+fn builtin_arg_mismatches_raise_cruby_error_shapes() {
+    let result = support::run_ruby(
+        r##"
+        a = ["a"].first
+        begin
+          a + 1
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        arr = [[1]].first
+        begin
+          arr[:x]
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        one = [1].first
+        begin
+          one < "a"
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "TypeError: no implicit conversion of Integer into String\n\
+         TypeError: no implicit conversion of Symbol into Integer\n\
+         ArgumentError: comparison of Integer with String failed\n"
+    );
+}
+
+/// The send-ladder fidelity fix: a REAL module method (Enumerable's `map`,
+/// via `include Enumerable` + `each`) resolves BEFORE `method_missing` --
+/// previously method_missing fired first, the opposite of real Ruby.
+#[test]
+fn enumerable_resolves_before_method_missing() {
+    let result = support::run_ruby(
+        r#"
+        class Sack
+          include Enumerable
+          def initialize(items)
+            @items = items
+          end
+          def each(&b)
+            @items.each(&b)
+            self
+          end
+          def method_missing(name, *a)
+            "mm:#{name}"
+          end
+        end
+
+        s = Sack.new([1, 2, 3])
+        puts s.map { |x| x * 10 }.inspect
+        puts s.nope
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[10, 20, 30]\nmm:nope\n");
+}
+
+/// `respond_to?` walks the real MRO now: Enumerable names answer true on
+/// arrays, Comparable names on strings, and Kernel privates stay invisible.
+#[test]
+fn respond_to_walks_the_mro() {
+    let result = support::run_ruby(
+        r#"
+        puts [1, 2].respond_to?(:map)
+        puts "s".respond_to?(:between?)
+        puts 5.respond_to?(:puts)
+        puts 5.respond_to?(:itself)
+        puts "s".respond_to?(:nope)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\ntrue\nfalse\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-C -- the numeric tower: full-bignum Integer, Rational, Complex,
+// the coercion matrix, literals, Math, Kernel conversions, Float/Math
+// constants. Oracle: ruby 4.0.5, byte-identical.
+// ---------------------------------------------------------------------------
+
+/// Bignum end-to-end: overflow promotion + demotion round trips, big
+/// literals (decimal/hex/binary/underscored), interpolation, hash keys,
+/// Enumerable, is_a?, and the i64::MIN / -1 overflow edge.
+#[test]
+fn bignum_integers_promote_demote_and_interoperate() {
+    let result = support::run_ruby(
+        r##"
+        r = 1
+        i = 2
+        while i <= 25
+          r = r * i
+          i += 1
+        end
+        puts r
+        puts 2 ** 100
+        puts 100000000000000000000 + 1
+        puts 0xff
+        puts 0b1010
+        puts 1_000_000
+        big = 9_223_372_036_854_775_807
+        puts big + 1
+        puts big + 1 - 1
+        puts (big + 1) > big
+        puts (big + 1).class
+        puts "v=#{2 ** 70}"
+        h = { 2 ** 70 => :big }
+        puts h[2 ** 70]
+        puts [2 ** 70, 1, 2 ** 65].min
+        puts (2 ** 70).is_a?(Numeric)
+        puts 2 ** 70 == 2 ** 70
+        puts(-9223372036854775808 / -1)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "15511210043330985984000000\n\
+         1267650600228229401496703205376\n\
+         100000000000000000001\n\
+         255\n10\n1000000\n\
+         9223372036854775808\n\
+         9223372036854775807\n\
+         true\n\
+         Integer\n\
+         v=1180591620717411303424\n\
+         big\n1\ntrue\ntrue\n\
+         9223372036854775808\n"
+    );
+}
+
+/// Rational: literals, reduction, exact arithmetic across the Int lane,
+/// `2 ** -2`, `quo`, Float promotion, rounding family, and the
+/// ZeroDivisionError channel.
+#[test]
+fn rationals_are_exact_and_oracle_faithful() {
+    let result = support::run_ruby(
+        r##"
+        r = 3r
+        puts r.class
+        p r
+        puts r
+        p 1.5r
+        p Rational(4, 8)
+        p Rational(1, 2) + Rational(1, 3)
+        p Rational(1, 2) * 3
+        p Rational(1, 2) / Rational(3, 4)
+        p Rational(3, 4) ** 2
+        p 2 ** -2
+        p 1.quo(3)
+        p Rational(1, 2) + 0.5
+        puts Rational(1, 2) < Rational(2, 3)
+        puts Rational(1, 2) == 0.5
+        puts Rational(1, 3).to_f
+        puts Rational(7, 2).to_i
+        p Rational(-7, 2).floor
+        p Rational(-7, 2).ceil
+        p Rational(7, 2).round
+        p Rational(3, 4).numerator
+        p Rational(3, 4).denominator
+        begin
+          Rational(1, 0)
+        rescue ZeroDivisionError => e
+          puts "ZeroDivisionError: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Rational\n(3/1)\n3/1\n(3/2)\n(1/2)\n(5/6)\n(3/2)\n(2/3)\n(9/16)\n(1/4)\n(1/3)\n1.0\n\
+         true\ntrue\n0.3333333333333333\n3\n-4\n-3\n4\n3\n4\n\
+         ZeroDivisionError: divided by 0\n"
+    );
+}
+
+/// Complex: imaginary literals, component-class preservation (exact
+/// Integer/Rational components incl. the den==1 demotion inside complex
+/// division), formatting (`(2/25)*i`), polar surface, and coercion errors.
+#[test]
+fn complexes_keep_component_classes() {
+    let result = support::run_ruby(
+        r##"
+        c = 4i
+        puts c.class
+        p c
+        p 3 + 4i
+        p Complex(1, 2) * Complex(3, 4)
+        p Complex(1, 2) / Complex(3, 4)
+        p Complex(1, 2) / 2
+        p Complex(1, 2) ** 2
+        p Complex(1.5, -2.5)
+        puts Complex(1.5, -2.5)
+        puts Complex(3, 4).abs
+        p Complex(3, 4).abs2
+        p Complex(3, 4).rect
+        p Complex(1, -2).conjugate
+        p Complex(2, 0) == 2
+        p Complex(1, 2).real
+        p Complex(1, 2).imaginary
+        p 5.to_c
+        begin
+          Complex(1, 2) + "x"
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Complex\n(0+4i)\n(3+4i)\n(-5+10i)\n((11/25)+(2/25)*i)\n((1/2)+1i)\n(-3+4i)\n\
+         (1.5-2.5i)\n1.5-2.5i\n5.0\n25\n[3, 4]\n(1+2i)\ntrue\n1\n2\n(5+0i)\n\
+         TypeError: String can't be coerced into Complex\n"
+    );
+}
+
+/// The Numeric/Integer/Float Tier A breadth: divmod matrices, the rounding
+/// families, gcd/lcm/digits/chr/ord, predicates, step/times/upto/downto,
+/// exact Float#to_r, and bignum-capable Float#to_i.
+#[test]
+fn numeric_breadth_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        puts 7.divmod(3).inspect
+        puts (-7).divmod(3).inspect
+        puts 7.divmod(2.5).inspect
+        puts (-7).abs
+        puts 2.5.abs
+        puts 4.even?
+        puts 3.odd?
+        puts 5.succ
+        puts 5.pred
+        puts 65.chr
+        puts "A".ord
+        puts 10.digits.inspect
+        puts 255.digits(16).inspect
+        puts 4.gcd(6)
+        puts 4.lcm(6)
+        puts 4.gcdlcm(6).inspect
+        puts 255.to_s(16)
+        puts 10.to_s(2)
+        puts 25.round(-1)
+        puts 1234.round(-2)
+        puts (-15).round(-1)
+        puts 1234.floor(-2)
+        puts 1234.ceil(-2)
+        puts 7.fdiv(2)
+        puts 3.7.round
+        puts 3.14159.round(2)
+        puts (-2.7).floor
+        puts 2.2.ceil
+        puts 5.9.truncate
+        puts 1e20.to_i
+        puts 0.125.to_r.inspect
+        puts (1.0 / 0).infinite?
+        puts 1.5.nan?
+        puts 2.5.finite?
+        puts 5.zero?
+        puts 0.zero?
+        puts 5.positive?
+        puts (-5).negative?
+        puts 5.numerator
+        puts 5.denominator
+        puts 0.5.numerator
+        puts 0.5.denominator
+        puts (-7).remainder(3)
+        acc = []
+        1.step(10, 3) { |i| acc << i }
+        puts acc.inspect
+        acc2 = []
+        3.times { |i| acc2 << i }
+        2.upto(4) { |i| acc2 << i }
+        3.downto(1) { |i| acc2 << i }
+        puts acc2.inspect
+        puts 255.bit_length
+        puts 5.to_f
+        puts 5.to_r.inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[2, 1]\n[-3, 2]\n[2, 2.0]\n7\n2.5\ntrue\ntrue\n6\n4\nA\n65\n\
+         [0, 1]\n[15, 15]\n2\n12\n[2, 12]\nff\n1010\n\
+         30\n1200\n-20\n1200\n1300\n3.5\n4\n3.14\n-3\n3\n5\n\
+         100000000000000000000\n(1/8)\n1\nfalse\ntrue\n\
+         false\ntrue\ntrue\ntrue\n5\n1\n1\n2\n-1\n\
+         [1, 4, 7, 10]\n[0, 1, 2, 2, 3, 4, 3, 2, 1]\n8\n5.0\n(5/1)\n"
+    );
+}
+
+/// Math module functions + Math::DomainError + the Float constants, and
+/// the Kernel conversion functions with CRuby's exact failure shapes.
+#[test]
+fn math_constants_and_kernel_conversions() {
+    let result = support::run_ruby(
+        r##"
+        puts Math::PI
+        puts Math::E
+        puts Math.sqrt(16)
+        puts Math.sqrt(2)
+        puts Math.cbrt(27)
+        puts Math.log2(8)
+        puts Math.log(Math::E)
+        puts Math.log(8, 2)
+        puts Math.hypot(3, 4)
+        puts Math.atan2(1, 1)
+        begin
+          Math.sqrt(-1)
+        rescue Math::DomainError => e
+          puts "Math::DomainError: #{e.message}"
+        end
+        puts Float::INFINITY
+        puts Float::EPSILON
+        puts Float::MAX
+        puts Float::DIG
+        puts Float::RADIX
+        puts Integer("42")
+        puts Integer("ff", 16)
+        puts Integer("0x1A")
+        puts Integer(" -4_2 ")
+        puts Integer(3.9)
+        puts Float("1.5e3")
+        puts Float(2)
+        puts String(42)
+        puts Array(nil).inspect
+        puts Array(1..3).inspect
+        puts Array(5).inspect
+        puts Hash(nil).inspect
+        p Rational(3, 4)
+        p Complex(1, 2)
+        begin
+          Integer("nope")
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        begin
+          Integer(nil)
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        begin
+          Float("x")
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3.141592653589793\n2.718281828459045\n4.0\n1.4142135623730951\n3.0\n3.0\n1.0\n3.0\n\
+         5.0\n0.7853981633974483\nMath::DomainError: Numerical argument is out of domain - sqrt\n\
+         Infinity\n2.220446049250313e-16\n1.7976931348623157e+308\n15\n2\n\
+         42\n255\n26\n-42\n3\n1500.0\n2.0\n42\n[]\n[1, 2, 3]\n[5]\n{}\n(3/4)\n(1+2i)\n\
+         ArgumentError: invalid value for Integer(): \"nope\"\n\
+         TypeError: can't convert nil into Integer\n\
+         ArgumentError: invalid value for Float(): \"x\"\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-D -- String + Symbol Tier A breadth. Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+/// The String Tier A surface: case/strip families, split shapes, chomp,
+/// indexing forms, sub/gsub (String + block), tr/delete/squeeze/count,
+/// lenient conversions, succ carry, padding, and `%` formatting.
+#[test]
+fn string_breadth_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        p "hello world".capitalize
+        p "HeLLo".swapcase
+        p "hello".upcase
+        p "HELLO".downcase
+        p "  hi  ".strip
+        p "  hi".lstrip
+        p "hi  ".rstrip
+        p "hello".chars
+        p "a,b,,c".split(",")
+        p "a b  c".split
+        p "hello".split("l")
+        p "hello".chomp("lo")
+        p "hello".chop
+        p "abc" * 3
+        p "abc".reverse
+        p "hello".index("l")
+        p "hello".rindex("l")
+        p "hello".index("x")
+        p "hello"[1]
+        p "hello"[1, 3]
+        p "hello"[1..3]
+        p "hello".sub("l", "L")
+        p "hello".gsub("l", "L")
+        p "hello".gsub("l") { |m| m.upcase }
+        p "hello".start_with?("he")
+        p "hello".end_with?("lo", "x")
+        p "hello".tr("el", "ip")
+        p "hello".tr("a-y", "b-z")
+        p "42abc".to_i
+        p "abc".to_i
+        p "ff".to_i(16)
+        p "42.5xyz".to_f
+        p "hello".to_sym
+        p "az".succ
+        p "zz".succ
+        p "a\nb\nc".lines
+        p "Hello %s, you are %d" % ["Bob", 42]
+        p "%05.1f|%x|%o|%b|%e|%g|%%" % [3.14159, 255, 8, 5, 12345.678, 0.00001]
+        p "hi".center(7, "*")
+        p "hi".ljust(5, ".")
+        p "hi".rjust(5, ".")
+        p "hello".delete("l")
+        p "aabbcc".squeeze
+        p "aabbcc".squeeze("a")
+        p "hello world".count("lo")
+        s = "orig"
+        s.replace("xyz")
+        p s
+        s << "!"
+        p s
+        s.prepend("ab")
+        p s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"Hello world\"\n\"hEllO\"\n\"HELLO\"\n\"hello\"\n\"hi\"\n\"hi\"\n\"hi\"\n\
+         [\"h\", \"e\", \"l\", \"l\", \"o\"]\n[\"a\", \"b\", \"\", \"c\"]\n[\"a\", \"b\", \"c\"]\n\
+         [\"he\", \"\", \"o\"]\n\"hel\"\n\"hell\"\n\"abcabcabc\"\n\"cba\"\n2\n3\nnil\n\
+         \"e\"\n\"ell\"\n\"ell\"\n\"heLlo\"\n\"heLLo\"\n\"heLLo\"\ntrue\ntrue\n\
+         \"hippo\"\n\"ifmmp\"\n42\n0\n255\n42.5\n:hello\n\"ba\"\n\"aaa\"\n\
+         [\"a\\n\", \"b\\n\", \"c\"]\n\"Hello Bob, you are 42\"\n\
+         \"003.1|ff|10|101|1.234568e+04|1e-05|%\"\n\"**hi***\"\n\"hi...\"\n\"...hi\"\n\
+         \"heo\"\n\"abc\"\n\"abbcc\"\n5\n\"xyz\"\n\"xyz!\"\n\"abxyz!\"\n"
+    );
+}
+
+/// Symbol Tier A + the `&:sym` block-argument conversion
+/// (`Symbol#to_proc`), previously unsupported.
+#[test]
+fn symbol_breadth_and_to_proc() {
+    let result = support::run_ruby(
+        r#"
+        p :b <=> :a
+        p :hello.length
+        p :a.succ
+        p :HeLLo.downcase
+        p :he.to_s
+        p :he.inspect
+        p :he.upcase
+        p :he.capitalize
+        p :he.empty?
+        p :upcase.to_proc.call("hi")
+        p [3, 1, 2].map(&:to_s)
+        p ["b", "a"].map(&:upcase)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n5\n:b\n:hello\n\"he\"\n\":he\"\n:HE\n:He\nfalse\n\"HI\"\n\
+         [\"3\", \"1\", \"2\"]\n[\"B\", \"A\"]\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-E -- Array/Hash/Range Tier A breadth. Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+/// The Array Tier A surface: set ops, mutators, sort family, flatten/
+/// compact/uniq, join/to_h, fetch/dig/zip/rotate/values_at, and the
+/// in-place filters' self-or-nil contract.
+#[test]
+fn array_breadth_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        p [1, 2] + [3]
+        p [1, 2, 3] - [2]
+        p [1, 2] * 2
+        p [1, 2] * ","
+        p([1, 2, 3] & [2, 3, 4])
+        p([1, 2] | [2, 3])
+        p([1, 2, 3] <=> [1, 2, 4])
+        p [3, 1, 2].sort
+        p [3, 1, 2].sort { |a, b| b <=> a }
+        a = [1, 2, 3]
+        p a.pop
+        p a.shift
+        a.unshift(9)
+        a.push(8, 7)
+        p a
+        p [1, [2, [3]]].flatten
+        p [1, [2, [3]]].flatten(1)
+        p [1, nil, 2, nil].compact
+        p [1, 2, 2, 3, 1].uniq
+        p [1, 2, 3].reverse
+        p [[1, :a], [2, :b]].to_h
+        p [1, 2, 3].join
+        p [1, 2, 3].join("-")
+        p [1, 2, 3].index(2)
+        p [1, 2, 3].index(9)
+        p [1, 2, 1].rindex(1)
+        p [[1, [2, 3]]].dig(0, 1, 0)
+        p [1, 2].fetch(0)
+        p [1, 2].fetch(9, :fallback)
+        begin
+          [1, 2].fetch(9)
+        rescue IndexError => e
+          puts "IndexError"
+        end
+        p [1, 2, 3, 4].take(2)
+        p [1, 2, 3, 4].drop(2)
+        p [1, 2, 3].zip([4, 5, 6], [7, 8, 9])
+        p [1, 2, 3].rotate
+        p [1, 2, 3].rotate(2)
+        p [1, 2, 3, 4, 5].values_at(0, 2, 4)
+        p [1, 2, 3].at(-1)
+        p [0, 1, 2, 3, 4][1..3]
+        p [1, 2, 3].delete(2)
+        p [1, 2, 3].delete_at(0)
+        p [1, 2, 3].insert(1, :x)
+        p [1, 2].concat([3, 4])
+        p [1, 2, 3].fill(0)
+        p [1, 2, 3].clear
+        b = [3, 1, 2]
+        b.sort!
+        p b
+        c = [1, 2, 3]
+        c.map! { |x| x * 10 }
+        p c
+        p [1, 2, 3, 4].select! { |x| x > 2 }
+        p [1, 2, 3, 4].reject! { |x| x > 2 }
+        p [1, 2].select! { |x| x > 0 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3]\n[1, 3]\n[1, 2, 1, 2]\n\"1,2\"\n[2, 3]\n[1, 2, 3]\n-1\n\
+         [1, 2, 3]\n[3, 2, 1]\n3\n1\n[9, 2, 8, 7]\n\
+         [1, 2, 3]\n[1, 2, [3]]\n[1, 2]\n[1, 2, 3]\n[3, 2, 1]\n\
+         {1 => :a, 2 => :b}\n\"123\"\n\"1-2-3\"\n1\nnil\n2\n2\n1\n:fallback\nIndexError\n\
+         [1, 2]\n[3, 4]\n[[1, 4, 7], [2, 5, 8], [3, 6, 9]]\n[2, 3, 1]\n[3, 1, 2]\n\
+         [1, 3, 5]\n3\n[1, 2, 3]\n2\n1\n[1, :x, 2, 3]\n[1, 2, 3, 4]\n[0, 0, 0]\n[]\n\
+         [1, 2, 3]\n[10, 20, 30]\n[3, 4]\n[1, 2]\nnil\n"
+    );
+}
+
+/// The Hash + Range Tier A surface: merge (with conflict block), fetch
+/// shapes, dig, invert/key/value?, filters + transforms, each_key/value,
+/// Range size/step/last(n), and String-range iteration via succ.
+#[test]
+fn hash_and_range_breadth_match_the_oracle() {
+    let result = support::run_ruby(
+        r##"
+        h = { a: 1, b: 2 }
+        p h.merge({ c: 3 })
+        p h.merge({ a: 9 }) { |k, old, new| old + new }
+        p h.to_a
+        p h.invert
+        p h.key(2)
+        p h.key(9)
+        p h.fetch(:a)
+        p h.fetch(:x, 0)
+        begin
+          h.fetch(:x)
+        rescue KeyError => e
+          puts "KeyError: #{e.message}"
+        end
+        p(h.fetch(:x) { |k| "no #{k}" })
+        p(h.select { |k, v| v > 1 })
+        p(h.reject { |k, v| v > 1 })
+        p(h.transform_values { |v| v * 10 })
+        p(h.any? { |k, v| v > 1 })
+        p h.count
+        p(h.min_by { |k, v| v })
+        p h.value?(2)
+        p h.value?(9)
+        p({ x: { y: 5 } }.dig(:x, :y))
+        h2 = { a: 1 }
+        h2.update({ b: 2 })
+        p h2
+        acc = []
+        h.each_key { |k| acc << k }
+        h.each_value { |v| acc << v }
+        p acc
+        p h == { b: 2, a: 1 }
+        p h == { a: 1 }
+        r = (1..10)
+        p r.sum
+        p r.min
+        p r.max
+        p r.count
+        p r.size
+        p r.first(3)
+        p r.last(3)
+        p (1...5).size
+        acc2 = []
+        (1..10).step(3) { |i| acc2 << i }
+        p acc2
+        p ("a".."e").to_a
+        p ("a".."e").include?("c")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{a: 1, b: 2, c: 3}\n{a: 10, b: 2}\n[[:a, 1], [:b, 2]]\n{1 => :a, 2 => :b}\n\
+         :b\nnil\n1\n0\nKeyError: key not found: :x\n\"no x\"\n\
+         {b: 2}\n{a: 1}\n{a: 10, b: 20}\ntrue\n2\n[:a, 1]\ntrue\nfalse\n5\n\
+         {a: 1, b: 2}\n[:a, :b, 1, 2]\ntrue\nfalse\n\
+         55\n1\n10\n10\n10\n[1, 2, 3]\n[8, 9, 10]\n4\n[1, 4, 7, 10]\n\
+         [\"a\", \"b\", \"c\", \"d\", \"e\"]\ntrue\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-F -- Enumerable Tier A breadth (the enum.c architecture: every
+// method drives the receiver's own #each). Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn enumerable_breadth_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        p [3, 1, 2].sort_by { |x| -x }
+        p [1, 2, 3, 4].min_by { |x| (x - 3).abs }
+        p [1, 2, 3, 4].max_by { |x| (x % 3) }
+        p [3, 1, 2].minmax
+        p (1..6).group_by { |x| x % 3 }
+        p [1, 2, 3, 4].partition { |x| x.even? }
+        p [[1, 2], [3, 4]].flat_map { |a| a }
+        p [1, 2, 3, 4, 5].filter_map { |x| x * 2 if x.odd? }
+        acc = []
+        (1..7).each_slice(3) { |s| acc << s }
+        p acc
+        acc2 = []
+        (1..4).each_cons(2) { |c| acc2 << c }
+        p acc2
+        p [1, 2, 3].each_with_object([]) { |x, memo| memo << x * 10 }
+        p [1, 2, 3, 4].take_while { |x| x < 3 }
+        p [1, 2, 3, 4].drop_while { |x| x < 3 }
+        p ["a", "b", "a", "c", "a"].tally
+        p [1, 2, 2, 3].uniq
+        p({ a: 1, b: 2 }.sort_by { |k, v| -v })
+        acc3 = []
+        [1, 2, 3].reverse_each { |x| acc3 << x }
+        p acc3
+        p [[:a, 1], [:b, 2]].to_h
+        p({ a: 1 }.flat_map { |k, v| [k, v] })
+        p (1..4).find_index { |x| x > 2 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[3, 2, 1]\n3\n2\n[1, 3]\n{1 => [1, 4], 2 => [2, 5], 0 => [3, 6]}\n\
+         [[2, 4], [1, 3]]\n[1, 2, 3, 4]\n[2, 6, 10]\n\
+         [[1, 2, 3], [4, 5, 6], [7]]\n[[1, 2], [2, 3], [3, 4]]\n[10, 20, 30]\n\
+         [1, 2]\n[3, 4]\n{\"a\" => 3, \"b\" => 1, \"c\" => 1}\n[1, 2, 3]\n\
+         [[:b, 2], [:a, 1]]\n[3, 2, 1]\n{a: 1, b: 2}\n[:a, 1]\n2\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-G -- Kernel breadth: the multi-arg print family, the sprintf
+// engine, rand/srand (property-asserted: our PRNG is deliberately not
+// MT19937), catch/throw, and the user-def-wins interception order fix.
+// Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn kernel_breadth_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        puts [1, [2, nil]], "x"
+        puts
+        r = p 1, "two"
+        p r
+        r2 = p 5
+        p r2
+        print "a", 1, "\n"
+        puts format("%s scored %05.1f%%", "Bob", 92.5)
+        printf("%d-%x\n", 255, 255)
+        srand(42)
+        v = rand(10)
+        puts v.between?(0, 9)
+        puts rand.between?(0.0, 1.0)
+        puts rand(10).class
+        old = srand(7)
+        puts old
+        caught = catch(:done) do
+          [1, 2, 3].each { |i| throw :done, i * 10 if i == 2 }
+          :never
+        end
+        p caught
+        p(catch(:t) { 5 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n2\n\nx\n\n1\n\"two\"\n[1, \"two\"]\n5\n5\na1\n\
+         Bob scored 092.5%\n255-ff\n\
+         true\ntrue\nInteger\n42\n20\n5\n"
+    );
+}
+
+/// The interception-order fix: a user-defined sibling `puts` now WINS over
+/// the Kernel function (real Ruby's rule; the old intercept-first order
+/// was a latent bug).
+#[test]
+fn a_user_defined_puts_wins_over_the_kernel_function() {
+    let result = support::run_ruby(
+        r#"
+        class Logger
+          def puts(msg)
+            $stdout_lines = 1
+            "logged: #{msg}"
+          end
+          def run
+            puts("hi")
+          end
+        end
+
+        v = Logger.new.run
+        p v
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"logged: hi\"\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.1-H -- Struct: compile-time class synthesis. Oracle: ruby 4.0.5.
+// ---------------------------------------------------------------------------
+
+/// `Point = Struct.new(:x, :y)` synthesizes an ordinary `class Point <
+/// Struct` at lowering time: accessors, positional init (nil-filled),
+/// members/to_a/to_h/==/[]/[]=/each_pair/inspect, and Enumerable through
+/// the real ancestor chain. Plus keyword_init and the block-with-methods
+/// form.
+#[test]
+fn struct_synthesis_matches_the_oracle() {
+    let result = support::run_ruby(
+        r#"
+        Point = Struct.new(:x, :y)
+        pt = Point.new(1, 2)
+        p pt
+        puts pt.x
+        pt.y = 9
+        p pt.to_a
+        p pt.to_h
+        p pt.members
+        p pt == Point.new(1, 9)
+        p pt == Point.new(1, 2)
+        p pt[0]
+        p pt[:y]
+        p pt["x"]
+        p pt[-1]
+        pt[1] = 20
+        p pt.y
+        p pt.length
+        p pt.map { |v| v }
+        p pt.select { |v| v.is_a?(Integer) }
+        acc = []
+        pt.each_pair { |k, v| acc << [k, v] }
+        p acc
+        p Point.ancestors.include?(Struct)
+        p Point.ancestors.include?(Enumerable)
+        Label = Struct.new(:text, keyword_init: true)
+        l = Label.new(text: "hi")
+        p l
+        Pair = Struct.new(:a, :b) do
+          def total
+            a + b
+          end
+        end
+        p Pair.new(3, 4).total
+        p Point.new(5).y
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<struct Point x=1, y=2>\n1\n[1, 9]\n{x: 1, y: 9}\n[:x, :y]\ntrue\nfalse\n\
+         1\n9\n1\n9\n20\n2\n[1, 20]\n[1, 20]\n[[:x, 1], [:y, 20]]\ntrue\ntrue\n\
+         #<struct Label text=\"hi\">\n7\nnil\n"
+    );
+}
+
+/// The clean rejections: `Struct.new` outside a constant assignment, and
+/// non-symbol members (both surface as lowering errors).
+#[test]
+fn struct_new_rejections_are_clean_errors() {
+    let err = spinelc::compile_to_rust("s = Struct.new(:a)\n").unwrap_err();
+    assert!(err.contains("outside a constant assignment"), "{err}");
+    let err = spinelc::compile_to_rust("P = Struct.new(\"Name\", :a)\n").unwrap_err();
+    assert!(err.contains("must be literal symbols"), "{err}");
 }

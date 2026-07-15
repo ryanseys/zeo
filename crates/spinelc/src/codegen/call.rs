@@ -41,26 +41,48 @@ pub fn is_times_fast_path(compiler: &Compiler, receiver: Option<NodeId>, name: &
 /// anything else falls through to ordinary Path 1/Path 2 method dispatch
 /// below, which is what makes a user class's own `def <=>`/`def +` etc.
 /// dispatch correctly instead of needing special-casing here.
-const INT_BINARY_OPS: &[(&str, &str, &str)] = &[
-    ("+", "int_add", "Int"),
-    ("-", "int_sub", "Int"),
-    ("*", "int_mul", "Int"),
-    ("/", "int_div", "Int"),
-    ("%", "int_mod", "Int"),
-    ("**", "int_pow", "Int"),
-    ("&", "int_band", "Int"),
-    ("|", "int_bor", "Int"),
-    ("^", "int_bxor", "Int"),
-    ("<<", "int_shl", "Int"),
-    (">>", "int_shr", "Int"),
-    ("==", "int_eq", "Bool"),
-    ("!=", "int_neq", "Bool"),
-    ("<", "int_lt", "Bool"),
-    (">", "int_gt", "Bool"),
-    ("<=", "int_le", "Bool"),
-    (">=", "int_ge", "Bool"),
-    ("<=>", "int_cmp", "Int"),
+const INT_BINARY_OPS: &[(&str, &str, IntOpKind)] = &[
+    ("+", "int_add", IntOpKind::Value),
+    ("-", "int_sub", IntOpKind::Value),
+    ("*", "int_mul", IntOpKind::Value),
+    ("/", "int_div", IntOpKind::DivMod),
+    ("%", "int_mod", IntOpKind::DivMod),
+    // `**` is FALLIBLE since the bignum migration: a negative exponent is
+    // a Rational result, `0 ** -n` raises ZeroDivisionError.
+    ("**", "int_pow", IntOpKind::Fallible),
+    ("&", "int_band", IntOpKind::Value),
+    ("|", "int_bor", IntOpKind::Value),
+    ("^", "int_bxor", IntOpKind::Value),
+    // Shifts are fallible too: a beyond-u32 width raises RangeError.
+    ("<<", "int_shl", IntOpKind::Fallible),
+    (">>", "int_shr", IntOpKind::Fallible),
+    ("==", "int_eq", IntOpKind::Bool),
+    ("!=", "int_neq", IntOpKind::Bool),
+    ("<", "int_lt", IntOpKind::Bool),
+    (">", "int_gt", IntOpKind::Bool),
+    ("<=", "int_le", IntOpKind::Bool),
+    (">=", "int_ge", IntOpKind::Bool),
+    ("<=>", "int_cmp", IntOpKind::Cmp),
 ];
+
+/// How an `INT_BINARY_OPS` row's runtime fn shapes into an emitted
+/// expression (Phase 17.1's bignum migration: the `int_*` family takes
+/// `&RubyValue` pairs -- an `Int`-typed value may carry either payload --
+/// and arithmetic returns `RubyValue` directly, promoting on overflow).
+#[derive(Clone, Copy, PartialEq)]
+enum IntOpKind {
+    /// `fn(&RubyValue, &RubyValue) -> RubyValue` -- infallible arithmetic.
+    Value,
+    /// `fn(..) -> Result<RubyValue, Signal>` -- emitted with `?`.
+    Fallible,
+    /// Like `Value`, but wrapped in the ZeroDivisionError guard.
+    DivMod,
+    /// `fn(..) -> bool` -- wrapped in `RubyValue::Bool`.
+    Bool,
+    /// `fn(..) -> i64` (`<=>`, never nil for Int pairs) -- wrapped in
+    /// `RubyValue::Int`.
+    Cmp,
+}
 
 const INT_UNARY_OPS: &[(&str, &str)] = &[
     ("-@", "int_neg"),
@@ -82,13 +104,9 @@ const INT_UNARY_OPS: &[(&str, &str)] = &[
 fn emit_int_div_or_mod_checked(
     cx: &Ctx,
     rt_fn: &str,
-    recv_i64: TokenStream,
-    arg_i64: TokenStream,
+    recv_expr: TokenStream,
+    arg_expr: TokenStream,
 ) -> TokenStream {
-    if rt_fn != "int_div" && rt_fn != "int_mod" {
-        let func = format_ident!("{rt_fn}");
-        return quote! { spinel_rt::#func(#recv_i64, #arg_i64) };
-    }
     let func = format_ident!("{rt_fn}");
     let err = super::expr::emit_boxed_new(
         cx,
@@ -97,11 +115,11 @@ fn emit_int_div_or_mod_checked(
     );
     quote! {
         {
-            let __divisor = #arg_i64;
-            if __divisor == 0 {
+            let __divisor = #arg_expr;
+            if spinel_rt::int_is_zero(&__divisor) {
                 return Err(spinel_rt::Signal::Raise(#err));
             }
-            spinel_rt::#func(#recv_i64, __divisor)
+            spinel_rt::#func(&(#recv_expr), &__divisor)
         }
     }
 }
@@ -193,7 +211,9 @@ fn try_collection_dispatch(
 ) -> Option<TokenStream> {
     let ty = infer(cx, recv_id);
     let tokens = match (ty, name, args.len()) {
-        (TyKind::Array, "[]", 1) => {
+        // Only for a statically-Int index -- Range/other index shapes
+        // fall through to the dynamic rows (Phase 17.1).
+        (TyKind::Array, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             quote! { spinel_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
         }
@@ -271,7 +291,7 @@ fn try_collection_dispatch(
         (TyKind::Hash, "length" | "size", 0) => {
             quote! { spinel_rt::RubyValue::Int(spinel_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
         }
-        (TyKind::Str, "[]", 1) => {
+        (TyKind::Str, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             quote! { spinel_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
         }
@@ -396,14 +416,10 @@ fn try_regexp_dispatch(
 
     if ty == TyKind::Str && !args.is_empty() {
         let pattern_is_regexp = infer(cx, args[0]) == TyKind::Regexp;
-        let pattern_is_str = infer(cx, args[0]) == TyKind::Str;
-        let is_regexp_shaped_method = matches!(name, "match" | "match?" | "=~" | "!~" | "scan" | "split" | "sub" | "gsub");
-
-        if is_regexp_shaped_method && pattern_is_str {
-            panic!(
-                "a String pattern argument to String#{name} isn't supported yet (spike scope) -- pass a Regexp literal instead"
-            );
-        }
+        // A non-Regexp pattern (String, or dynamically typed) falls
+        // through to `send_value`, whose String rows handle String
+        // patterns for split/sub/gsub/match/match? (Phase 17.1 -- the old
+        // compile-time "pass a Regexp literal instead" rejection retired).
 
         if pattern_is_regexp {
             let re_expr = emit_expr(cx, args[0]);
@@ -1171,7 +1187,9 @@ pub(super) fn emit_block_option(cx: &Ctx, block: Option<NodeId>, block_arg: Opti
         }
         (None, Some(e)) => {
             let v = emit_expr(cx, e);
-            quote! { Some(#v) }
+            // `&expr` converts like real Ruby: Proc passes, Symbol becomes
+            // `Symbol#to_proc` (`map(&:to_s)`), nil means no block.
+            quote! { spinel_rt::block_arg_to_proc(#v)? }
         }
         (None, None) => quote! { None },
         (Some(_), Some(_)) => {
@@ -1218,22 +1236,6 @@ pub fn emit_call(
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
-        if name == "puts" && args.len() == 1 && kwargs.is_empty() {
-            let arg = emit_expr(cx, args[0]);
-            // Boxed if Object-typed (Phase 16.2): `puts w` must reach the
-            // uniform `RubyValue` display path, which now dispatches a
-            // user-defined `to_s`.
-            let arg = super::expr::box_if_object_typed(cx, args[0], arg);
-            return quote! { { spinel_rt::puts(#arg); spinel_rt::RubyValue::Nil } };
-        }
-        // `Kernel#p`, single-argument form (Phase 16.1, wanted for
-        // `p Widget`): prints the INSPECT rendering and returns the value
-        // itself (real Ruby's contract, unlike `puts`'s nil).
-        if name == "p" && args.len() == 1 && kwargs.is_empty() {
-            let arg = emit_expr(cx, args[0]);
-            let arg = super::expr::box_if_object_typed(cx, args[0], arg);
-            return quote! { spinel_rt::p(#arg) };
-        }
         // A no-receiver call to a sibling method on the CURRENT class (`foo(x)`
         // inside a method body, calling another method on the same object) --
         // composes directly onto the existing `self: Arc<Self>` receiver:
@@ -1331,6 +1333,74 @@ pub fn emit_call(
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
                     return emit_class_method_call_on(cx, defining, name, args, kwargs);
                 }
+            }
+        }
+        // The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg
+        // now), conversions, rand/srand, throw, sleep, exit/abort --
+        // checked AFTER sibling method resolution (a user `def puts`/`def
+        // Integer` wins, real Ruby's rule; the old intercept-first
+        // ordering was a latent bug this stage fixed). Capitalized-name
+        // conversion calls WITH arguments parse as ordinary CallNodes, so
+        // there's no ClassRef ambiguity.
+        if kwargs.is_empty() && block.is_none() && block_arg.is_none() {
+            // Infallible print family (any arity, incl. zero).
+            let plain_fn = match name {
+                "puts" => Some("kernel_puts"),
+                "p" => Some("kernel_p"),
+                "pp" => Some("kernel_pp"),
+                "print" => Some("kernel_print"),
+                _ => None,
+            };
+            // Fallible functions (`?`); the conversions require >= 1 arg
+            // (a bare `Integer` parses as a ClassRef, never reaches here).
+            let fallible_fn = match name {
+                "Integer" if !args.is_empty() => Some("kernel_integer"),
+                "Float" if !args.is_empty() => Some("kernel_float"),
+                "Rational" if !args.is_empty() => Some("kernel_rational"),
+                "Complex" if !args.is_empty() => Some("kernel_complex"),
+                "String" if !args.is_empty() => Some("kernel_string"),
+                "Array" if !args.is_empty() => Some("kernel_array"),
+                "Hash" if !args.is_empty() => Some("kernel_hash"),
+                "format" | "sprintf" => Some("kernel_format"),
+                "printf" => Some("kernel_printf"),
+                "rand" => Some("kernel_rand"),
+                "srand" => Some("kernel_srand"),
+                "throw" if !args.is_empty() => Some("kernel_throw"),
+                "sleep" => Some("kernel_sleep"),
+                _ => None,
+            };
+            let never_fn = match name {
+                "exit" => Some("kernel_exit"),
+                "abort" => Some("kernel_abort"),
+                _ => None,
+            };
+            if plain_fn.is_some() || fallible_fn.is_some() || never_fn.is_some() {
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                if let Some(f) = plain_fn {
+                    let func = format_ident!("{f}");
+                    return quote! { spinel_rt::#func(&[#(#arg_exprs),*]) };
+                }
+                if let Some(f) = fallible_fn {
+                    let func = format_ident!("{f}");
+                    return quote! { spinel_rt::#func(&[#(#arg_exprs),*])? };
+                }
+                let func = format_ident!("{}", never_fn.expect("one of the three sets matched"));
+                return quote! { spinel_rt::#func(&[#(#arg_exprs),*]) };
+            }
+        }
+        // `catch(:tag) { ... }` -- the one Kernel function that takes its
+        // block as a first-class value.
+        if name == "catch" && args.len() == 1 && kwargs.is_empty() {
+            if let Some(b) = block {
+                let tag = emit_expr(cx, args[0]);
+                let blk = emit_proc_value(cx, b);
+                return quote! { spinel_rt::kernel_catch(#tag, #blk)? };
             }
         }
         panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
@@ -2384,35 +2454,45 @@ fn dispatch(
     }
 
     // Native `Int` arithmetic/comparison/bitwise ops: both operands must be
-    // statically known `Int` (see `INT_BINARY_OPS`'s docs above).
+    // statically known `Int` (see `INT_BINARY_OPS`'s docs above). The
+    // operands stay boxed `&RubyValue`s since the bignum migration -- the
+    // `int_*` family's inline small-small fast half keeps the hot path
+    // cheap, and overflow promotes instead of panicking.
     if no_kwargs && args.len() == 1 {
-        if let Some(&(_, rt_fn, result_ty)) =
-            INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
-        {
+        if let Some(&(_, rt_fn, kind)) = INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
             let recv_ty = infer(cx, recv_id);
             let arg_ty = infer(cx, args[0]);
             if recv_ty == TyKind::Int && arg_ty == TyKind::Int {
                 let arg_expr = emit_expr(cx, args[0]);
-                let wrapper = format_ident!("{result_ty}");
-                let call = emit_int_div_or_mod_checked(
-                    cx,
-                    rt_fn,
-                    quote! { (#recv_expr).as_int_unchecked() },
-                    quote! { (#arg_expr).as_int_unchecked() },
-                );
-                return quote! { spinel_rt::RubyValue::#wrapper(#call) };
+                let func = format_ident!("{rt_fn}");
+                return match kind {
+                    IntOpKind::Value => {
+                        quote! { spinel_rt::#func(&(#recv_expr), &(#arg_expr)) }
+                    }
+                    IntOpKind::Fallible => {
+                        quote! { spinel_rt::#func(&(#recv_expr), &(#arg_expr))? }
+                    }
+                    IntOpKind::DivMod => {
+                        emit_int_div_or_mod_checked(cx, rt_fn, recv_expr.clone(), arg_expr)
+                    }
+                    IntOpKind::Bool => quote! {
+                        spinel_rt::RubyValue::Bool(spinel_rt::#func(&(#recv_expr), &(#arg_expr)))
+                    },
+                    IntOpKind::Cmp => quote! {
+                        spinel_rt::RubyValue::Int(spinel_rt::#func(&(#recv_expr), &(#arg_expr)))
+                    },
+                };
             }
         }
     }
 
-    // Native `Int` unary operators (`-@`/`+@`/`~`), same eligibility rule.
+    // Native `Int` unary operators (`-@`/`+@`/`~`), same eligibility rule
+    // (all three return `RubyValue` -- negation can promote `-i64::MIN`).
     if no_kwargs && args.is_empty() {
         if let Some(&(_, rt_fn)) = INT_UNARY_OPS.iter().find(|(op, _)| *op == name) {
             if infer(cx, recv_id) == TyKind::Int {
                 let func = format_ident!("{rt_fn}");
-                return quote! {
-                    spinel_rt::RubyValue::Int(spinel_rt::#func((#recv_expr).as_int_unchecked()))
-                };
+                return quote! { spinel_rt::#func(&(#recv_expr)) };
             }
         }
     }
@@ -2434,11 +2514,11 @@ fn dispatch(
             let arg_expr = emit_expr(cx, args[0]);
             let recv_f = match recv_ty {
                 TyKind::Float => quote! { (#recv_expr).as_float_unchecked() },
-                _ => quote! { (#recv_expr).as_int_unchecked() as f64 },
+                _ => quote! { spinel_rt::num_to_f64_unchecked(&(#recv_expr)) },
             };
             let arg_f = match arg_ty {
                 TyKind::Float => quote! { (#arg_expr).as_float_unchecked() },
-                _ => quote! { (#arg_expr).as_int_unchecked() as f64 },
+                _ => quote! { spinel_rt::num_to_f64_unchecked(&(#arg_expr)) },
             };
             // `<=>` isn't in `FLOAT_BINARY_OPS` (see its docs) -- a `NaN`
             // comparison returns `nil`, not an `Int`.
@@ -2681,71 +2761,48 @@ fn dispatch(
     if no_kwargs && recv_class.is_none() {
         if args.len() == 1 {
             let int_entry = INT_BINARY_OPS.iter().find(|(op, _, _)| *op == name);
-            let float_entry = FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name);
-            if int_entry.is_some() || float_entry.is_some() || name == "<=>" {
+            let is_numeric_op = int_entry.is_some()
+                || FLOAT_BINARY_OPS.iter().any(|(op, _, _)| *op == name)
+                || name == "<=>";
+            if is_numeric_op {
                 let arg_expr = emit_expr(cx, args[0]);
-                let int_arm = int_entry.map(|&(_, rt_fn, result_ty)| {
-                    let wrapper = format_ident!("{result_ty}");
-                    let call = emit_int_div_or_mod_checked(cx, rt_fn, quote! { *__r }, quote! { *__a });
-                    quote! {
-                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Int(__a)) => {
-                            spinel_rt::RubyValue::#wrapper(#call)
-                        }
-                    }
-                });
-                // `Float`-`Float`/`Int`-`Float`/`Float`-`Int`, promoting any
-                // `Int` side to `f64` first -- same rule as the static fast
-                // path above, just runtime-checked instead of statically
-                // proven.
-                let float_arm = float_entry.map(|&(_, rt_fn, result_ty)| {
+                // One inline Int-Int fast arm (the hot `def add(a, b); a +
+                // b; end` case); EVERY other operand shape -- Float pairs,
+                // mixed promotion, Bignum/Rational/Complex lanes, user
+                // operator methods, builtin rows -- resolves through
+                // `send_value`'s MRO walk, whose Integer/Float operator
+                // rows drive the same one tower matrix (Phase 17.1). The
+                // old hand-inlined Float/mixed arms are gone: they
+                // duplicated the promotion rules and knew nothing of the
+                // new lanes.
+                let int_arm = int_entry.map(|&(_, rt_fn, kind)| {
                     let func = format_ident!("{rt_fn}");
-                    let wrapper = format_ident!("{result_ty}");
+                    let call = match kind {
+                        IntOpKind::Value => quote! { spinel_rt::#func(__r, __a) },
+                        IntOpKind::Fallible => quote! { spinel_rt::#func(__r, __a)? },
+                        IntOpKind::DivMod => emit_int_div_or_mod_checked(
+                            cx,
+                            rt_fn,
+                            quote! { __r },
+                            quote! { (*__a).clone() },
+                        ),
+                        IntOpKind::Bool => quote! {
+                            spinel_rt::RubyValue::Bool(spinel_rt::#func(__r, __a))
+                        },
+                        IntOpKind::Cmp => quote! {
+                            spinel_rt::RubyValue::Int(spinel_rt::#func(__r, __a))
+                        },
+                    };
                     quote! {
-                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Float(__a)) => {
-                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a))
-                        }
-                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Float(__a)) => {
-                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r as f64, *__a))
-                        }
-                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Int(__a)) => {
-                            spinel_rt::RubyValue::#wrapper(spinel_rt::#func(*__r, *__a as f64))
-                        }
+                        (
+                            __r @ spinel_rt::RubyValue::Int(_),
+                            __a @ spinel_rt::RubyValue::Int(_),
+                        ) => #call,
                     }
                 });
-                // `<=>` isn't in `FLOAT_BINARY_OPS` (see its docs) -- a
-                // `NaN` comparison returns `nil`, not an `Int`.
-                let cmp_arm = (name == "<=>").then(|| {
-                    quote! {
-                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Float(__a)) => {
-                            match spinel_rt::float_cmp(*__r, *__a) {
-                                Some(__n) => spinel_rt::RubyValue::Int(__n),
-                                None => spinel_rt::RubyValue::Nil,
-                            }
-                        }
-                        (spinel_rt::RubyValue::Int(__r), spinel_rt::RubyValue::Float(__a)) => {
-                            match spinel_rt::float_cmp(*__r as f64, *__a) {
-                                Some(__n) => spinel_rt::RubyValue::Int(__n),
-                                None => spinel_rt::RubyValue::Nil,
-                            }
-                        }
-                        (spinel_rt::RubyValue::Float(__r), spinel_rt::RubyValue::Int(__a)) => {
-                            match spinel_rt::float_cmp(*__r, *__a as f64) {
-                                Some(__n) => spinel_rt::RubyValue::Int(__n),
-                                None => spinel_rt::RubyValue::Nil,
-                            }
-                        }
-                    }
-                });
-                // Non-numeric operands fall through to DYNAMIC dispatch
-                // (Phase 14.4): a user class's own operator method (`def
-                // <<`), or `send_value`'s builtin table (`Array#<<`,
-                // `String#+`, universal `==`) -- replacing the old
-                // unconditional panic.
                 return quote! {
                     match (&(#recv_expr), &(#arg_expr)) {
                         #int_arm
-                        #float_arm
-                        #cmp_arm
                         (__dyn_recv, __dyn_arg) => spinel_rt::catch_break(spinel_rt::send_value(
                             __dyn_recv,
                             spinel_rt::Symbol::intern(#name),
@@ -2760,22 +2817,17 @@ fn dispatch(
             let int_entry = INT_UNARY_OPS.iter().find(|(op, _)| *op == name);
             let float_entry = FLOAT_UNARY_OPS.iter().find(|(op, _)| *op == name);
             if int_entry.is_some() || float_entry.is_some() {
+                // Same shape as the binary fallback: inline Int fast arm,
+                // everything else through the MRO walk's unary rows.
                 let int_arm = int_entry.map(|&(_, rt_fn)| {
                     let func = format_ident!("{rt_fn}");
                     quote! {
-                        spinel_rt::RubyValue::Int(__r) => spinel_rt::RubyValue::Int(spinel_rt::#func(*__r)),
-                    }
-                });
-                let float_arm = float_entry.map(|&(_, rt_fn)| {
-                    let func = format_ident!("{rt_fn}");
-                    quote! {
-                        spinel_rt::RubyValue::Float(__r) => spinel_rt::RubyValue::Float(spinel_rt::#func(*__r)),
+                        __r @ spinel_rt::RubyValue::Int(_) => spinel_rt::#func(__r),
                     }
                 });
                 return quote! {
                     match &(#recv_expr) {
                         #int_arm
-                        #float_arm
                         __dyn_recv => spinel_rt::catch_break(spinel_rt::send_value(
                             __dyn_recv,
                             spinel_rt::Symbol::intern(#name),
@@ -2826,6 +2878,20 @@ fn dispatch(
             | TyKind::Range
             | TyKind::Regexp
             | TyKind::MatchData
+            // Since Phase 17.1's MRO-walking method tables, EVERY value
+            // kind falls through -- `5.itself`/`"a".between?(...)` resolve
+            // Kernel/Comparable rows down the receiver's real ancestor
+            // chain at runtime, and a genuinely unknown name raises real
+            // Ruby's NoMethodError instead of the old compile-time panic.
+            | TyKind::Int
+            | TyKind::Float
+            | TyKind::Symbol
+            | TyKind::Proc
+            | TyKind::Fiber
+            | TyKind::Thread
+            | TyKind::Mutex
+            | TyKind::Queue
+            | TyKind::Ractor
             // A class VALUE receiver (Phase 16.1) whose method isn't a
             // statically-defined class method (that case returned above):
             // `send_value`'s Class arm handles the reflection set

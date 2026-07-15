@@ -143,13 +143,15 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 
 /// A Rust expression of type `spinel_rt::Symbol` (not `RubyValue`) -- used
 /// for `send`'s second argument. A literal `:sym` skips the
-/// box-then-immediately-unwrap round trip.
+/// box-then-immediately-unwrap round trip; anything else goes through the
+/// runtime coercion (Symbol or String, real Ruby's rule -- `x.send("name")`
+/// is legal; a non-name value raises CRuby's TypeError shape).
 pub fn emit_symbol_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     if let HirNode::SymbolLit(s) = &cx.compiler.hir[id] {
         return quote! { spinel_rt::Symbol::intern(#s) };
     }
     let e = emit_expr(cx, id);
-    quote! { (#e).as_symbol_unchecked() }
+    quote! { spinel_rt::method_name_symbol(&(#e))? }
 }
 
 /// `defined?(expr)` -- a compile-time-resolvable classification of `expr`'s
@@ -194,6 +196,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::BlockGiven
         | HirNode::Raise(_) => Some("method"),
         HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -325,6 +330,25 @@ fn emit_case_when(
 pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     match &cx.compiler.hir[id] {
         HirNode::IntegerLit(v) => quote! { spinel_rt::RubyValue::Int(#v) },
+        // The bignum/rational/imaginary literals (Phase 17.1) -- digits
+        // baked as array literals, assembled by the runtime at the use
+        // site (no compile-time bigint dependency, no string parsing).
+        HirNode::BigIntegerLit { negative, digits } => {
+            quote! { spinel_rt::int_from_u32_digits(#negative, &[#(#digits),*]) }
+        }
+        HirNode::RationalLit { negative, num_digits, den_digits } => {
+            quote! {
+                spinel_rt::rational_from_digits(
+                    #negative,
+                    &[#(#num_digits),*],
+                    &[#(#den_digits),*],
+                )
+            }
+        }
+        HirNode::ImaginaryLit(inner) => {
+            let inner_expr = emit_expr(cx, *inner);
+            quote! { spinel_rt::complex_from_literal(#inner_expr) }
+        }
         HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
         HirNode::Lambda { params, body } => super::call::emit_lambda_value(cx, params, body),
         HirNode::SymbolLit(s) => {

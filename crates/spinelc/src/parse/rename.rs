@@ -320,6 +320,9 @@ impl Walker {
                 }
             }
             HirNode::IntegerLit(_)
+            | HirNode::BigIntegerLit { .. }
+            | HirNode::RationalLit { .. }
+            | HirNode::ImaginaryLit(_)
             | HirNode::FloatLit(_)
             | HirNode::SymbolLit(_)
             | HirNode::NilLit

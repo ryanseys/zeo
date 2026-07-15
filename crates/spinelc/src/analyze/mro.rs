@@ -609,6 +609,11 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::SelfRef
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit
@@ -828,6 +833,11 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::SelfRef
         | HirNode::Program(_)
         | HirNode::IntegerLit(_)
+        | HirNode::BigIntegerLit { .. }
+        | HirNode::RationalLit { .. }
+        // An imaginary literal's inner node is itself a numeric
+        // literal by syntax -- a leaf for this walk's purposes.
+        | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
         | HirNode::NilLit

@@ -667,6 +667,25 @@ pub struct RegexpFlags {
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
+    /// An Integer literal beyond i64 (Phase 17.1's bignum) -- carried as
+    /// prism's own `(negative, LSB-first u32 digits)` shape so spinelc
+    /// needs no bigint dependency; codegen emits
+    /// `spinel_rt::int_from_u32_digits`. Types as `Int` like `IntegerLit`
+    /// (one Ruby Integer class, two payloads).
+    BigIntegerLit { negative: bool, digits: Vec<u32> },
+    /// `3r` / `1.5r` (Phase 17.1) -- prism pre-rationalizes the decimal
+    /// forms (`1.5r` arrives as numerator 3, denominator 2), so both
+    /// components travel as digit strings like `BigIntegerLit`. The
+    /// denominator is positive and non-zero by syntax.
+    RationalLit {
+        negative: bool,
+        num_digits: Vec<u32>,
+        den_digits: Vec<u32>,
+    },
+    /// `4i` / `2.0i` / `3ri` (Phase 17.1) -- an imaginary literal wrapping
+    /// its lowered inner numeric literal compositionally
+    /// (`Complex(0, inner)`).
+    ImaginaryLit(NodeId),
     /// A real `f64` payload -- `HirNode` itself derives no `Eq`/`Hash` (see
     /// this enum's own docs), so an un-`Eq`-able float here is no different
     /// from `IntegerLit`'s `i64` in that respect.

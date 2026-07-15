@@ -1,0 +1,17 @@
+#<struct Point x=3, y=4>
+3
+[3, 9]
+{x: 3, y: 9}
+[:x, :y]
+true
+3
+9
+12
+[6, 24]
+x=3
+y=12
+true
+#<struct Label text="hi", size=12>
+hi
+5.0
+nil

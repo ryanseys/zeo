@@ -60,9 +60,13 @@ pub enum TyKind {
 /// statically `Int` -- see `codegen::call`'s use of this same list to decide
 /// the native-arithmetic fast path. Kept here (not codegen) because the
 /// local-type tracker (`analyze::locals`) needs the identical list to
-/// propagate `Int`-ness through a chain like `z = x + y`.
+/// propagate `Int`-ness through a chain like `z = x + y`. `**` is
+/// deliberately ABSENT since the numeric tower landed (Phase 17.1):
+/// `2 ** -2` is a Rational -- an Int-Int `**` result types `Poly`.
+/// (Overflow itself is fine: a Bignum result is still `TyKind::Int`, one
+/// Ruby class with two payloads.)
 pub const INT_RESULT_BINARY_OPS: &[&str] = &[
-    "+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>",
+    "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
 ];
 
 /// An empty locals map, for callers that have no per-scope local-type
@@ -136,6 +140,13 @@ pub fn infer_type_with_locals(
 ) -> TyKind {
     match &compiler.hir[id] {
         HirNode::IntegerLit(_) => TyKind::Int,
+        // A bignum literal is still an Integer -- one Ruby class, two
+        // payloads (`TyKind::Int` means exactly that since Phase 17.1).
+        // Rational/imaginary literals type `Poly`: no static fast paths
+        // exist for those kinds (deliberate -- they're rare), so they
+        // dispatch through the runtime tower.
+        HirNode::BigIntegerLit { .. } => TyKind::Int,
+        HirNode::RationalLit { .. } | HirNode::ImaginaryLit(_) => TyKind::Poly,
         HirNode::FloatLit(_) => TyKind::Float,
         HirNode::Lambda { .. } => TyKind::Proc,
         HirNode::SymbolLit(_) => TyKind::Symbol,

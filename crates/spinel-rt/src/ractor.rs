@@ -156,6 +156,9 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
         RubyValue::Nil
         | RubyValue::Bool(_)
         | RubyValue::Int(_)
+        | RubyValue::BigInt(_)
+        | RubyValue::Rational(_)
+        | RubyValue::Complex(_)
         | RubyValue::Float(_)
         | RubyValue::Symbol(_)
         | RubyValue::Regexp(_)
@@ -212,6 +215,9 @@ fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), St
         RubyValue::Nil
         | RubyValue::Bool(_)
         | RubyValue::Int(_)
+        | RubyValue::BigInt(_)
+        | RubyValue::Rational(_)
+        | RubyValue::Complex(_)
         | RubyValue::Float(_)
         | RubyValue::Symbol(_)
         | RubyValue::Regexp(_)

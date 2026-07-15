@@ -31,6 +31,11 @@ pub enum Signal {
     Retry,
     Return(RubyValue),
     Raise(RubyValue),
+    /// `Kernel#throw(tag, value)` unwinding toward the matching
+    /// `Kernel#catch` (Phase 17.1) -- `(tag, value)`. An uncaught throw
+    /// surfaces at the top level as CRuby's UncaughtThrowError would
+    /// (a loud abort; the error-class wrapper is a documented scope-cut).
+    Throw(RubyValue, RubyValue),
 }
 
 /// Catches a `break`/`break value` that unwound out of a real `Proc` (see

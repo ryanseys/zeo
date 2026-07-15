@@ -4,12 +4,11 @@
 //! for the full design writeup.
 
 mod arith;
+mod builtins;
 mod collections;
-mod comparable;
 mod constants;
 mod cvars;
 mod dispatch;
-mod enumerable;
 mod exec;
 mod fiber;
 mod globals;
@@ -25,15 +24,29 @@ mod value;
 pub use arith::*;
 pub use collections::*;
 pub use constants::{const_get, const_set};
+pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
+pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
+pub use builtins::kernel::{
+    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_float,
+    kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
+    kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
+    kernel_string, kernel_throw,
+};
+pub use builtins::format::sprintf;
+pub use builtins::math::math_call;
+pub use builtins::numeric::seed_numeric_constants;
+pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     class_is_module, class_name, downcast_robj, install_class_registry,
-    install_no_method_error_factory, is_a, responds_to, run_initialize, send, send_value,
+    install_exception_factory, is_a, method_name_symbol, raise_error, responds_to,
+    run_initialize, send, send_value,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
-    ARRAY_CLASS,
-    CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    COMPARABLE_CLASS, ENUMERABLE_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
-    THREAD_CLASS, TRUE_CLASS,
+    ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
+    ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS,
+    NIL_CLASS, NUMERIC_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS,
+    RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use exec::run_main;
@@ -45,7 +58,7 @@ pub use ractor::{
     RRactor, RactorData,
 };
 pub use regexp::*;
-pub use rproc::RProc;
+pub use rproc::{block_arg_to_proc, RProc};
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use thread::{
@@ -289,9 +302,9 @@ mod tests {
 
     ruby_class! {
         class Point : Object {
-            id: 1;
+            id: 100;
             name: "Point";
-            ancestors: [1, 0];
+            ancestors: [100, 0, 25, 24]; // [Point, Object, Kernel, BasicObject]
             ivars { x }
             def initialize(self: std::sync::Arc<Self>, x: RubyValue) { *self.x.lock() = x; Ok(RubyValue::Nil) }
             def x(self: std::sync::Arc<Self>) { Ok(self.x.lock().clone()) }
@@ -316,9 +329,9 @@ mod tests {
 
     ruby_class! {
         class Greeter : Object {
-            id: 2;
+            id: 101;
             name: "Greeter";
-            ancestors: [2, 0];
+            ancestors: [101, 0, 25, 24];
             ivars { }
             def hello(self: std::sync::Arc<Self>) { Ok(RubyValue::Str(string_new("hi".to_string()))) }
             def method_missing(self: std::sync::Arc<Self>, name: RubyValue) {
@@ -345,9 +358,9 @@ mod tests {
 
     ruby_class! {
         class Temp : Object {
-            id: 3;
+            id: 102;
             name: "Temp";
-            ancestors: [3, 22, 0]; // [Temp, Comparable, Object]
+            ancestors: [102, 22, 0, 25, 24]; // [Temp, Comparable, Object, Kernel, BasicObject]
             ivars { deg }
             def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
                 let mine = self.deg.lock().clone();
@@ -396,7 +409,21 @@ mod tests {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             let mut registry = ClassRegistry::new();
-            registry.register(Object::CLASS_ID, "Object", false, vec![Object::CLASS_ID], None);
+            registry.register(
+                Object::CLASS_ID,
+                "Object",
+                false,
+                vec![Object::CLASS_ID, KERNEL_CLASS, BASIC_OBJECT_CLASS],
+                None,
+            );
+            registry.register(KERNEL_CLASS, "Kernel", true, vec![KERNEL_CLASS], None);
+            registry.register(
+                BASIC_OBJECT_CLASS,
+                "BasicObject",
+                false,
+                vec![BASIC_OBJECT_CLASS],
+                None,
+            );
             Point::__register(&mut registry);
             Greeter::__register(&mut registry);
             Temp::__register(&mut registry);
@@ -412,14 +439,20 @@ mod tests {
                 ARRAY_CLASS,
                 "Array",
                 false,
-                vec![ARRAY_CLASS, Object::CLASS_ID],
+                vec![
+                    ARRAY_CLASS,
+                    ENUMERABLE_CLASS,
+                    Object::CLASS_ID,
+                    KERNEL_CLASS,
+                    BASIC_OBJECT_CLASS,
+                ],
                 None,
             );
             registry.register(
                 QUEUE_CLASS,
                 "Thread::Queue",
                 false,
-                vec![QUEUE_CLASS, Object::CLASS_ID],
+                vec![QUEUE_CLASS, Object::CLASS_ID, KERNEL_CLASS, BASIC_OBJECT_CLASS],
                 None,
             );
             registry.define_value_method(ARRAY_CLASS, Symbol::intern("shout"), |recv, _args, _blk| {
@@ -589,7 +622,7 @@ mod tests {
         assert_eq!(name.to_display_string(), "Point");
 
         let ancestors = send_value(&point, Symbol::intern("ancestors"), &[], None).unwrap();
-        assert_eq!(ancestors.inspect_string(), "[Point, Object]");
+        assert_eq!(ancestors.inspect_string(), "[Point, Object, Kernel, BasicObject]");
 
         // `.class` on a builtin value, and on an Object through `send`.
         let five_class = send_value(&RubyValue::Int(5), Symbol::intern("class"), &[], None).unwrap();

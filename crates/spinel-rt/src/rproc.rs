@@ -23,3 +23,27 @@ use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
 pub type RProc = Arc<dyn Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync>;
+
+/// The `&expr` block-argument conversion (CRuby's `Proc()` coercion at a
+/// call site): a Proc passes through, a Symbol converts via
+/// `Symbol#to_proc` (`map(&:to_s)`), nil means "no block", anything else
+/// is real Ruby's TypeError. Codegen's `emit_block_option` routes every
+/// forwarded block argument through this.
+pub fn block_arg_to_proc(
+    v: crate::RubyValue,
+) -> Result<Option<crate::RubyValue>, crate::Signal> {
+    match v {
+        crate::RubyValue::Proc(_) => Ok(Some(v)),
+        crate::RubyValue::Symbol(s) => {
+            Ok(Some(crate::builtins::symbol::symbol_to_proc(s)))
+        }
+        crate::RubyValue::Nil => Ok(None),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "wrong argument type {} (expected Proc)",
+                crate::builtins::class_name_of(&other)
+            ),
+        )),
+    }
+}

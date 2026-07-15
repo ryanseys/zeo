@@ -9,6 +9,7 @@
 
 mod loader;
 mod rename;
+mod struct_def;
 
 use crate::hir::{
     ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
@@ -79,6 +80,10 @@ end
 class NoMethodError < NameError
 end
 class RangeError < StandardError
+end
+class FloatDomainError < RangeError
+end
+class LocalJumpError < StandardError
 end
 class RegexpError < StandardError
 end
@@ -549,20 +554,70 @@ fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<
     Ok(hir.push(HirNode::Block { params, body }))
 }
 
+/// Assembles prism's `(negative, LSB-first u32 digits)` integer shape into
+/// an `i64` when it fits (`None` = a bignum literal).
+fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
+    let mut magnitude: u64 = 0;
+    for (i, &d) in digits.iter().enumerate() {
+        if i >= 2 {
+            if d != 0 {
+                return None;
+            }
+            continue;
+        }
+        magnitude |= u64::from(d) << (32 * i);
+    }
+    if negative {
+        // i64::MIN's magnitude is representable; anything larger isn't.
+        if magnitude > (i64::MAX as u64) + 1 {
+            return None;
+        }
+        Some((magnitude as i128).wrapping_neg() as i64)
+    } else {
+        i64::try_from(magnitude).ok()
+    }
+}
+
 fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
     if let Some(int) = node.as_integer_node() {
-        let text = std::str::from_utf8(result.as_slice(&int.location()))
-            .map_err(|_| "integer literal is not valid UTF-8")?;
-        let value: i64 = text.parse().map_err(|_| {
-            format!(
-                "unsupported integer literal `{text}` (spike only handles values that fit in i64)"
-            )
-        })?;
-        return Ok(hir.push(HirNode::IntegerLit(value)));
+        // prism's own arbitrary-precision value (LSB-first u32 digits) --
+        // which also handles `0xff`/`0b101`/`1_000` uniformly, unlike the
+        // old source-text `parse::<i64>()`. Values that fit stay the
+        // ordinary `IntegerLit(i64)`; anything bigger is a bignum literal
+        // (Phase 17.1).
+        let value = int.value();
+        let (negative, digits) = value.to_u32_digits();
+        return Ok(hir.push(match assemble_i64(negative, digits) {
+            Some(v) => HirNode::IntegerLit(v),
+            None => HirNode::BigIntegerLit {
+                negative,
+                digits: digits.to_vec(),
+            },
+        }));
     }
 
     if let Some(float) = node.as_float_node() {
         return Ok(hir.push(HirNode::FloatLit(float.value())));
+    }
+
+    if let Some(rat) = node.as_rational_node() {
+        // prism pre-rationalizes: `1.5r` arrives numerator 3, denominator
+        // 2. The numerator carries the sign; the denominator is positive
+        // and non-zero by syntax.
+        let numerator = rat.numerator();
+        let denominator = rat.denominator();
+        let (negative, num_digits) = numerator.to_u32_digits();
+        let (_, den_digits) = denominator.to_u32_digits();
+        return Ok(hir.push(HirNode::RationalLit {
+            negative,
+            num_digits: num_digits.to_vec(),
+            den_digits: den_digits.to_vec(),
+        }));
+    }
+
+    if let Some(im) = node.as_imaginary_node() {
+        let inner = lower_node(result, hir, &im.numeric())?;
+        return Ok(hir.push(HirNode::ImaginaryLit(inner)));
     }
 
     // `-> (x) { ... }` -- a real `ruby-prism` node (unlike `lambda { }`
@@ -765,6 +820,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
     if let Some(cw) = node.as_constant_write_node() {
         let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
+        // `Name = Struct.new(:a, :b)` -- compile-time class synthesis
+        // (Phase 17.1-H): the whole statement becomes an ordinary
+        // ClassDef; no constant write remains (the class IS the constant).
+        if let Some(class_def) = struct_def::try_lower_struct_def(result, hir, &name, &cw.value()) {
+            return class_def;
+        }
         let value = lower_node(result, hir, &cw.value())?;
         return Ok(hir.push(HirNode::ConstWrite { scope: None, name, value }));
     }
@@ -1187,13 +1248,43 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .filter(|r| r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some())
             {
                 let class_name = constant_path_name(&recv)?;
+                if class_name == "Struct" {
+                    return Err(
+                        "`Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`)"
+                            .to_string(),
+                    );
+                }
                 if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor") {
                     let args = match call.arguments() {
                         None => Vec::new(),
                         Some(a) => a
                             .arguments()
                             .iter()
-                            .map(|n| lower_node(result, hir, &n))
+                            .map(|n| {
+                                // A trailing keyword-hash at a `.new` site
+                                // lowers as a positional Hash literal (the
+                                // classic options-hash reading) -- what
+                                // keyword_init Struct constructors bind
+                                // (Phase 17.1-H). `HirNode::New` has no
+                                // kwargs channel; true kwarg binding for
+                                // `new` stays on the deferred backlog.
+                                if let Some(kw) = n.as_keyword_hash_node() {
+                                    let pairs = kw
+                                        .elements()
+                                        .iter()
+                                        .map(|e| {
+                                            let assoc = e.as_assoc_node().ok_or(
+                                                "unsupported splat in a keyword hash at a `.new` call (spike scope)",
+                                            )?;
+                                            let key = lower_node(result, hir, &assoc.key())?;
+                                            let value = lower_node(result, hir, &assoc.value())?;
+                                            Ok(crate::hir::HashPair(key, value))
+                                        })
+                                        .collect::<PResult<Vec<_>>>()?;
+                                    return Ok(hir.push(HirNode::HashLit(pairs)));
+                                }
+                                lower_node(result, hir, &n)
+                            })
                             .collect::<PResult<Vec<_>>>()?,
                     };
                     return Ok(hir.push(HirNode::New { class_name, args }));
