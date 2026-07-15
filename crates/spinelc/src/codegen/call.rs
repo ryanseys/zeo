@@ -932,6 +932,28 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
         .cloned()
         .collect();
 
+    // Nested-Proc guard (Phase 13.5, replacing the old blanket "no block
+    // escaping inside another escaping block" rejection): names shared with
+    // the enclosing METHOD are `Captured` cells and compose through any
+    // nesting depth, but an `own_only` name that this INNER block never
+    // assigns itself can only be the enclosing BLOCK's own local -- a plain
+    // per-invocation `let`, not a cell, which a `move` closure can't share
+    // correctly (fresh-declaring it here would silently read `nil` where
+    // real Ruby sees the outer block's value). Reject that narrow case
+    // cleanly; everything else nests fine.
+    if cx.in_real_proc && !own_only.is_empty() {
+        let mut assigned_here = Vec::new();
+        for &n in body {
+            super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
+        }
+        let assigned_here: std::collections::HashSet<&String> = assigned_here.iter().collect();
+        if let Some(outer_block_local) = own_only.iter().find(|n| !assigned_here.contains(n)) {
+            panic!(
+                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
+            );
+        }
+    }
+
     let needs_self = block_caps.self_captured;
     let self_clone = needs_self.then(|| {
         let slf = &cx.self_ident;
@@ -1168,38 +1190,65 @@ pub fn emit_call(
     // call, so compound assignment (`+=`/`-=`/etc., every operator except
     // `||=`) on a non-class constant panicked with a confusing "unknown
     // class/module" error instead of reading its actual value.
-    // `Fiber.new { }` / `Fiber.yield(...)` (Phase 13.3) -- intercepted
-    // ahead of the generic class-method branch below (which would reject
-    // the block / find no such class method). The block becomes an ordinary
-    // escaping `Proc` via `emit_proc_value` -- the same capture machinery
-    // every other escaping block uses, so captured locals/`self` compose
-    // for free. All FiberError construction happens here, not in
-    // `spinel_rt::fiber_*` (the `array_set`->`IndexError` division of
-    // labor; messages verbatim from CRuby `cont.c`).
+    // The concurrency builtins' constructors and `Fiber.yield` (Phases
+    // 13.3/13.5) -- intercepted ahead of the generic class-method branch
+    // below (which would reject the block / find no such class method). A
+    // `Fiber.new`/`Thread.new` block becomes an ordinary escaping `Proc`
+    // via `emit_proc_value` -- the same capture machinery every other
+    // escaping block uses, so captured locals/`self` compose for free. All
+    // FiberError construction happens here, not in `spinel_rt::fiber_*`
+    // (the `array_set`->`IndexError` division of labor; messages verbatim
+    // from CRuby `cont.c`).
     if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
-        if target_name == "Fiber" && !safe && kwargs.is_empty() {
-            if name == "new" {
-                let Some(block_id) = block else {
-                    panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
-                };
-                let proc = emit_proc_value(cx, block_id);
-                return quote! { spinel_rt::fiber_new(#proc) };
-            }
-            if name == "yield" && block.is_none() && block_arg.is_none() {
-                let arg_exprs: Vec<TokenStream> = args
-                    .iter()
-                    .map(|&a| {
-                        let e = emit_expr(cx, a);
-                        super::expr::box_if_object_typed(cx, a, e)
-                    })
-                    .collect();
-                let root_error = emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
-                return quote! {
-                    match spinel_rt::fiber_yield(vec![#(#arg_exprs),*]) {
-                        Some(__v) => __v,
-                        None => return Err(spinel_rt::Signal::Raise(#root_error)),
-                    }
-                };
+        if !safe && kwargs.is_empty() {
+            match (target_name.as_str(), name) {
+                ("Fiber", "new") => {
+                    let Some(block_id) = block else {
+                        panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                    };
+                    let proc = emit_proc_value(cx, block_id);
+                    return quote! { spinel_rt::fiber_new(#proc) };
+                }
+                ("Fiber", "yield") if block.is_none() && block_arg.is_none() => {
+                    let arg_exprs: Vec<TokenStream> = args
+                        .iter()
+                        .map(|&a| {
+                            let e = emit_expr(cx, a);
+                            super::expr::box_if_object_typed(cx, a, e)
+                        })
+                        .collect();
+                    let root_error =
+                        emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
+                    return quote! {
+                        match spinel_rt::fiber_yield(vec![#(#arg_exprs),*]) {
+                            Some(__v) => __v,
+                            None => return Err(spinel_rt::Signal::Raise(#root_error)),
+                        }
+                    };
+                }
+                // `Thread.new(*args) { |*params| }` -- constructor args pass
+                // through to the block's params, matching CRuby.
+                ("Thread", "new") => {
+                    let Some(block_id) = block else {
+                        panic!("`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                    };
+                    let proc = emit_proc_value(cx, block_id);
+                    let arg_exprs: Vec<TokenStream> = args
+                        .iter()
+                        .map(|&a| {
+                            let e = emit_expr(cx, a);
+                            super::expr::box_if_object_typed(cx, a, e)
+                        })
+                        .collect();
+                    return quote! { spinel_rt::thread_new(#proc, vec![#(#arg_exprs),*]) };
+                }
+                ("Mutex", "new") if args.is_empty() && block.is_none() => {
+                    return quote! { spinel_rt::mutex_new() };
+                }
+                ("Queue", "new") if args.is_empty() && block.is_none() => {
+                    return quote! { spinel_rt::queue_new() };
+                }
+                _ => {}
             }
         }
     }
@@ -1584,6 +1633,26 @@ fn dispatch(
         };
     }
 
+    // `.nil?` -- universal, same override-respecting shape as
+    // `freeze`/`frozen?` below (surfaced as a real need by Phase 13.5's
+    // queue-sentinel idiom, `break if q.pop.nil?`, on a Poly receiver). A
+    // statically-known Object receiver is never nil (only `RubyValue::Nil`
+    // is), but its receiver expression still evaluates for side effects.
+    if no_kwargs && name == "nil?" && args.is_empty() {
+        let user_defined = matches!(
+            infer(cx, recv_id),
+            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
+        );
+        if !user_defined {
+            return match infer(cx, recv_id) {
+                TyKind::Object(_) => {
+                    quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Bool(false) } }
+                }
+                _ => quote! { spinel_rt::RubyValue::Bool((#recv_expr).is_nil()) },
+            };
+        }
+    }
+
     // `.freeze`/`.frozen?` -- universal `Kernel` methods, dispatched over
     // every receiver representation (Phase 13.1). A user class's OWN
     // `def freeze`/`def frozen?` override wins, matching real Ruby (they're
@@ -1678,6 +1747,163 @@ fn dispatch(
                     &(#recv_expr).as_fiber_unchecked(),
                 ))
             };
+        }
+    }
+
+    // `Thread#join`/`#value` (Phase 13.5): both wait via
+    // `spinel_rt::thread_outcome` (a real may yield point); an `Err` is the
+    // thread's own uncaught signal, re-raised HERE in the joiner -- CRuby's
+    // stored-exception semantics (`thread.c:1195`). `join` returns the
+    // THREAD itself, `value` the block's result.
+    if no_kwargs && infer(cx, recv_id) == TyKind::Thread && args.is_empty() && block.is_none() {
+        if name == "join" {
+            return quote! {
+                {
+                    let __t = (#recv_expr).as_thread_unchecked();
+                    match spinel_rt::thread_outcome(&__t) {
+                        Ok(_) => spinel_rt::RubyValue::Thread(__t),
+                        Err(__sig) => return Err(__sig),
+                    }
+                }
+            };
+        }
+        if name == "value" {
+            return quote! {
+                match spinel_rt::thread_outcome(&(#recv_expr).as_thread_unchecked()) {
+                    Ok(__v) => __v,
+                    Err(__sig) => return Err(__sig),
+                }
+            };
+        }
+    }
+
+    // Ruby `Mutex` (Phase 13.5) -- CRuby-verbatim ThreadError messages come
+    // back from the runtime (`Err(&str)`), boxed into real exceptions here.
+    // `lock`/`unlock` both return self, matching CRuby.
+    if no_kwargs && infer(cx, recv_id) == TyKind::Mutex {
+        let thread_error = super::expr::emit_boxed_new(
+            cx,
+            "ThreadError",
+            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg.to_string())) }],
+        );
+        match (name, args.len(), block) {
+            ("lock", 0, None) => {
+                return quote! {
+                    {
+                        let __m = (#recv_expr).as_mutex_unchecked();
+                        match spinel_rt::mutex_lock(&__m) {
+                            Ok(()) => spinel_rt::RubyValue::Mutex(__m),
+                            Err(__msg) => return Err(spinel_rt::Signal::Raise(#thread_error)),
+                        }
+                    }
+                };
+            }
+            ("unlock", 0, None) => {
+                return quote! {
+                    {
+                        let __m = (#recv_expr).as_mutex_unchecked();
+                        match spinel_rt::mutex_unlock(&__m) {
+                            Ok(()) => spinel_rt::RubyValue::Mutex(__m),
+                            Err(__msg) => return Err(spinel_rt::Signal::Raise(#thread_error)),
+                        }
+                    }
+                };
+            }
+            ("locked?", 0, None) => {
+                return quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::mutex_locked(&(#recv_expr).as_mutex_unchecked()))
+                };
+            }
+            ("owned?", 0, None) => {
+                return quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::mutex_owned(&(#recv_expr).as_mutex_unchecked()))
+                };
+            }
+            // `synchronize { }`: lock, run the block (an ordinary escaping
+            // Proc), ALWAYS unlock -- including on a signal (an exception/
+            // `break` inside the block must release the lock on its way
+            // out), then re-propagate. `catch_break` first: `break` inside
+            // `synchronize` exits it with the break's value, real Ruby
+            // behavior.
+            ("synchronize", 0, Some(block_id)) => {
+                let proc = emit_proc_value(cx, block_id);
+                let lock_err = super::expr::emit_boxed_new(
+                    cx,
+                    "ThreadError",
+                    vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg.to_string())) }],
+                );
+                return quote! {
+                    {
+                        let __m = (#recv_expr).as_mutex_unchecked();
+                        if let Err(__msg) = spinel_rt::mutex_lock(&__m) {
+                            return Err(spinel_rt::Signal::Raise(#lock_err));
+                        }
+                        let __blk = (#proc).as_proc_unchecked();
+                        let __r = spinel_rt::catch_break(__blk(&[]));
+                        let _ = spinel_rt::mutex_unlock(&__m);
+                        match __r {
+                            Ok(__v) => __v,
+                            Err(__sig) => return Err(__sig),
+                        }
+                    }
+                };
+            }
+            _ => {}
+        }
+    }
+
+    // `Queue` (Phase 13.5): `pop` blocks coroutine-yieldingly; a closed
+    // empty queue pops nil; push to a closed queue raises ClosedQueueError
+    // -- all CRuby `thread_sync.c` semantics, verified in the plan addendum.
+    if no_kwargs && infer(cx, recv_id) == TyKind::Queue && block.is_none() {
+        match (name, args.len()) {
+            ("push" | "<<" | "enq", 1) => {
+                let v = emit_expr(cx, args[0]);
+                let v = super::expr::box_if_object_typed(cx, args[0], v);
+                let closed_err = super::expr::emit_boxed_new(
+                    cx,
+                    "ClosedQueueError",
+                    vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new("queue closed".to_string())) }],
+                );
+                return quote! {
+                    {
+                        let __q = (#recv_expr).as_queue_unchecked();
+                        let __v = #v;
+                        match spinel_rt::queue_push(&__q, __v) {
+                            Ok(()) => spinel_rt::RubyValue::Queue(__q),
+                            Err(_) => return Err(spinel_rt::Signal::Raise(#closed_err)),
+                        }
+                    }
+                };
+            }
+            ("pop" | "shift" | "deq", 0) => {
+                return quote! { spinel_rt::queue_pop(&(#recv_expr).as_queue_unchecked()) };
+            }
+            ("close", 0) => {
+                return quote! {
+                    {
+                        let __q = (#recv_expr).as_queue_unchecked();
+                        spinel_rt::queue_close(&__q);
+                        spinel_rt::RubyValue::Queue(__q)
+                    }
+                };
+            }
+            ("closed?", 0) => {
+                return quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::queue_closed(&(#recv_expr).as_queue_unchecked()))
+                };
+            }
+            ("length" | "size", 0) => {
+                return quote! {
+                    spinel_rt::RubyValue::Int(spinel_rt::queue_len(&(#recv_expr).as_queue_unchecked()))
+                };
+            }
+            ("empty?", 0) => {
+                return quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::queue_len(&(#recv_expr).as_queue_unchecked()) == 0)
+                };
+            }
+            _ => {}
         }
     }
 

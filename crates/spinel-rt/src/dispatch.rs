@@ -97,6 +97,9 @@ pub const PROC_CLASS: ClassId = ClassId(11);
 pub const REGEXP_CLASS: ClassId = ClassId(12);
 pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
 pub const FIBER_CLASS: ClassId = ClassId(14);
+pub const THREAD_CLASS: ClassId = ClassId(15);
+pub const MUTEX_CLASS: ClassId = ClassId(16);
+pub const QUEUE_CLASS: ClassId = ClassId(17);
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {

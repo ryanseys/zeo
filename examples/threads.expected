@@ -1,0 +1,9 @@
+in thread
+after join
+42
+joined error: thread boom
+1000
+Attempt to unlock a mutex which is not locked
+deadlock; recursive locking
+6
+queue closed

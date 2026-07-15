@@ -677,15 +677,20 @@ fn walk(
                     panic!("a Block should only be reached via the Call that invokes it");
                 };
                 let is_inline = is_times_fast_path(compiler, *receiver, name, kwargs.is_empty());
-                if !is_inline && in_escaping {
-                    // A real escaping block nested inside another escaping
-                    // block -- Proc-within-Proc, a genuinely harder case
-                    // (nested closures capturing across two levels) this
-                    // spike doesn't support yet. Clean rejection, matching
-                    // this project's "unsupported (spike scope)" posture
-                    // elsewhere in codegen.
-                    panic!("a block escaping from inside another escaping block isn't supported yet (spike scope)");
-                }
+                // A real escaping block nested inside another escaping block
+                // (Proc-within-Proc, e.g. `Thread.new { m.synchronize { } }`,
+                // Phase 13.5's canonical idiom) COMPOSES through this walk
+                // unchanged: captured-ness is a property of the NAME across
+                // the whole enclosing scope, an inner closure's same-named
+                // `Arc::clone` shadows resolve to the outer closure's
+                // moved-in cells, and `self`-capture chains through
+                // `cx.self_ident` (`__self` shadowing `__self`). The one
+                // genuinely unsupported sub-case -- an inner block capturing
+                // its enclosing BLOCK's own (non-cell) local -- is rejected
+                // at the Proc-construction site instead
+                // (`emit_proc_or_lambda_value`), where it can be detected
+                // precisely rather than banning all nesting wholesale (the
+                // blanket panic that previously lived here).
                 let next_exclusions: HashSet<String> =
                     param_exclusions.union(&own_param_names(params)).cloned().collect();
                 let next_in_escaping = in_escaping || !is_inline;

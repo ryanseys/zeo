@@ -16,6 +16,7 @@ mod regexp;
 mod rproc;
 mod signal;
 mod symbol;
+mod thread;
 mod value;
 
 pub use arith::*;
@@ -24,8 +25,9 @@ pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
     MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
-    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS,
-    REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
+    QUEUE_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use exec::run_main;
@@ -36,6 +38,11 @@ pub use regexp::*;
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
+pub use thread::{
+    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_unlock, queue_close, queue_closed,
+    queue_len, queue_new, queue_pop, queue_push, thread_new, thread_outcome, MutexData,
+    QueueData, RMutex, RQueue, RThread, ThreadData,
+};
 pub use value::RubyValue;
 
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a

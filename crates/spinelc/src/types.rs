@@ -32,6 +32,11 @@ pub enum TyKind {
     /// (see the inference arm below), consumed by `codegen::call`'s
     /// `resume`/`alive?` dispatch.
     Fiber,
+    /// `Thread`/`Mutex`/`Queue` (Phase 13.5) -- same only-from-`.new`
+    /// inference shape as `Fiber`.
+    Thread,
+    Mutex,
+    Queue,
     /// The result of a successful `Regexp#match`/`String#match` -- only ever
     /// produced by `codegen::call`'s own static dispatch (a `MatchData`
     /// value can't be constructed any other way), so nothing in
@@ -98,19 +103,22 @@ pub fn infer_type_with_locals(
             None => TyKind::Poly,
         },
         HirNode::LocalRead(name) => locals.get(name).copied().unwrap_or(TyKind::Poly),
-        // `Fiber.new { ... }` -- the only constructor of a Fiber value.
-        // (`Fiber` is a BUILTIN class, so this never collides with the
-        // ordinary user-class `New` arm above, which `parse` only produces
-        // for registered non-builtin constructors.)
+        // `Fiber.new { }` / `Thread.new { }` / `Mutex.new` / `Queue.new` --
+        // the only constructors of these values. (All four are BUILTIN
+        // classes kept OUT of `HirNode::New` by parse -- see the `.new`
+        // lowering's exclusion list -- so this never collides with the
+        // ordinary user-class `New` arm above.)
         HirNode::Call {
             receiver: Some(recv),
             name,
             ..
-        } if name == "new"
-            && matches!(&compiler.hir[*recv], HirNode::ClassRef(n) if n == "Fiber") =>
-        {
-            TyKind::Fiber
-        }
+        } if name == "new" => match &compiler.hir[*recv] {
+            HirNode::ClassRef(n) if n == "Fiber" => TyKind::Fiber,
+            HirNode::ClassRef(n) if n == "Thread" => TyKind::Thread,
+            HirNode::ClassRef(n) if n == "Mutex" => TyKind::Mutex,
+            HirNode::ClassRef(n) if n == "Queue" => TyKind::Queue,
+            _ => TyKind::Poly,
+        },
         HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, locals, *value),
         HirNode::Call {
             receiver: Some(recv),

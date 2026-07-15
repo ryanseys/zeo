@@ -1094,14 +1094,13 @@ fn a_named_block_param_can_be_forwarded_to_another_call() {
 }
 
 #[test]
-#[should_panic(expected = "escaping from inside another escaping block")]
-fn a_block_escaping_from_inside_another_escaping_block_is_a_clean_compile_error() {
-    // Unlike the `&block`/`...`-forwarding rejections above (parse-time,
-    // `Result::Err`), this check runs during CODEGEN (`codegen::captures`),
-    // same posture as this codebase's other "spike scope" violations (e.g.
-    // `codegen::call`'s "unsupported call" panic) -- a clean, clearly-worded
-    // panic, not a silent miscompile, but a panic rather than an `Err`.
-    let _ = spinelc::compile_to_rust(
+fn a_block_escaping_from_inside_another_escaping_block_works() {
+    // Phase 6's blanket rejection of Proc-within-Proc was LIFTED in Phase
+    // 13.5 (`Thread.new { m.synchronize { } }` is the canonical threading
+    // idiom): method-level captures are shared cells that compose through
+    // any nesting depth. This exact snippet was that rejection's own
+    // negative test -- now a positive one, oracle-verified.
+    let result = run_ruby(
         r#"
         class Collector
           def each_num(a, b)
@@ -1111,6 +1110,30 @@ fn a_block_escaping_from_inside_another_escaping_block_is_a_clean_compile_error(
         end
         c = Collector.new
         c.each_num(1, 2) { |n| c.each_num(n, n) { |m| puts m } }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n1\n2\n2\n");
+}
+
+#[test]
+#[should_panic(expected = "capturing its enclosing BLOCK's own local `n`")]
+fn a_nested_block_capturing_the_outer_blocks_own_local_is_a_clean_compile_error() {
+    // The one nesting sub-case still rejected (see
+    // `codegen::call::emit_proc_or_lambda_value`'s guard): the INNER block
+    // reads the OUTER block's own param/local -- a plain per-invocation
+    // binding, not a shared cell, which a `move` closure can't share
+    // correctly. Clean codegen-time panic, not a silent nil.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        class Collector
+          def each_num(a, b)
+            yield a
+            yield b
+          end
+        end
+        c = Collector.new
+        c.each_num(1, 2) { |n| c.each_num(3, 4) { |m| puts m + n } }
         "#,
     );
 }
@@ -5630,4 +5653,226 @@ fn uncaught_exceptions_still_exit_nonzero_through_the_coroutine_boundary() {
         "stderr: {}",
         result.stderr
     );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13.5: Thread/Mutex/Queue over may's green coroutines (see
+// spinel_rt::thread's docs, incl. the documented cooperative-scheduling
+// divergence -- these tests only assert SYNCHRONIZED, deterministic
+// outcomes). Every snippet oracle-verified against real `ruby`; error
+// messages CRuby-verbatim.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn thread_join_waits_for_the_body_and_returns() {
+    // Deterministic under the default single worker: the spawned coroutine
+    // first runs when the spawner blocks at join. (Real preemptive ruby
+    // agrees on this shape's ordering too -- oracle-verified.)
+    let result = run_ruby(
+        r#"
+        t = Thread.new do
+          puts "in thread"
+        end
+        t.join
+        puts "after join"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "in thread\nafter join\n");
+}
+
+#[test]
+fn thread_value_returns_the_block_result_and_args_bind_to_params() {
+    let result = run_ruby(
+        r#"
+        v = Thread.new(20, 22) { |a, b| a + b }.value
+        puts v
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn an_uncaught_exception_in_a_thread_reraises_at_join_and_value() {
+    // CRuby stores the exception and re-raises it in whoever joins
+    // (`thread.c:1195`). The no-join report_on_exception stderr warning is
+    // a documented skip.
+    let result = run_ruby(
+        r#"
+        bad = Thread.new { raise "thread boom" }
+        begin
+          bad.join
+        rescue RuntimeError => e
+          puts "joined error: #{e.send(:message)}"
+        end
+        bad2 = Thread.new { raise "thread boom2" }
+        begin
+          bad2.value
+        rescue RuntimeError => e
+          puts "valued error: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "joined error: thread boom\nvalued error: thread boom2\n");
+}
+
+#[test]
+fn mutex_protected_counter_across_threads_is_exact() {
+    // THE canonical threading idiom -- Proc-within-Proc (Thread.new wrapping
+    // synchronize), only possible because Phase 13.5 lifted the nested-
+    // escaping-block rejection. The sum is deterministic regardless of
+    // interleaving; the e2e harness runs this under the default GVL mode,
+    // and the same program was manually verified identical under
+    // SPINEL_THREADS=4 (real parallelism).
+    let result = run_ruby(
+        r#"
+        m = Mutex.new
+        count = 0
+        t1 = Thread.new { 1000.times { m.synchronize { count += 1 } } }
+        t2 = Thread.new { 1000.times { m.synchronize { count += 1 } } }
+        t1.join
+        t2.join
+        puts count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2000\n");
+}
+
+#[test]
+fn mutex_error_semantics_match_cruby() {
+    let result = run_ruby(
+        r#"
+        mu = Mutex.new
+        begin
+          mu.unlock
+        rescue ThreadError => e
+          puts e.send(:message)
+        end
+        mu.lock
+        puts mu.locked?
+        puts mu.owned?
+        begin
+          mu.lock
+        rescue ThreadError => e
+          puts e.send(:message)
+        end
+        mu.unlock
+        puts mu.locked?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Attempt to unlock a mutex which is not locked\ntrue\ntrue\ndeadlock; recursive locking\nfalse\n"
+    );
+}
+
+#[test]
+fn mutex_synchronize_returns_the_block_value_and_always_unlocks() {
+    let result = run_ruby(
+        r#"
+        mu = Mutex.new
+        r = mu.synchronize { 42 }
+        puts r
+        puts mu.locked?
+        begin
+          mu.synchronize { raise "inside" }
+        rescue RuntimeError => e
+          puts "rescued: #{e.send(:message)}"
+        end
+        puts mu.locked?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\nfalse\nrescued: inside\nfalse\n");
+}
+
+#[test]
+fn queue_producer_consumer_rendezvous_with_close() {
+    // pop blocks (coroutine-yielding) until a value or closure arrives; a
+    // closed empty queue pops nil (`thread_sync.c:1034`).
+    let result = run_ruby(
+        r#"
+        q = Queue.new
+        producer = Thread.new do
+          q.push 1
+          q.push 2
+          q.close
+        end
+        consumer = Thread.new do
+          total = 0
+          loop do
+            v = q.pop
+            break if v.nil?
+            total += v
+          end
+          total
+        end
+        producer.join
+        puts consumer.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn push_to_a_closed_queue_raises_closed_queue_error() {
+    let result = run_ruby(
+        r#"
+        qq = Queue.new
+        qq.close
+        puts qq.closed?
+        begin
+          qq.push 1
+        rescue ClosedQueueError => e
+          puts e.send(:message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nqueue closed\n");
+}
+
+#[test]
+fn queue_length_shovel_and_empty_predicate() {
+    let result = run_ruby(
+        r#"
+        q3 = Queue.new
+        q3 << 5
+        q3 << 6
+        puts q3.length
+        puts q3.empty?
+        puts q3.pop
+        puts q3.pop
+        puts q3.empty?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\nfalse\n5\n6\ntrue\n");
+}
+
+#[test]
+fn nil_predicate_works_universally() {
+    // Added in this phase (surfaced by the queue-sentinel idiom): `.nil?`
+    // on Poly, builtin, and Object receivers, with a user override winning.
+    let result = run_ruby(
+        r#"
+        puts nil.nil?
+        puts 1.nil?
+        class Once
+          def check(x)
+            x.nil?
+          end
+        end
+        puts Once.new.check(nil)
+        puts Once.new.check(5)
+        puts Once.new.nil?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\nfalse\nfalse\n");
 }

@@ -8,10 +8,11 @@
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ClassId, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS,
-    SYMBOL_CLASS, TRUE_CLASS,
+    MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS, RANGE_CLASS,
+    REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
 };
 use crate::fiber::RFiber;
+use crate::thread::{RMutex, RQueue, RThread};
 use crate::regexp::{RMatchData, RRegexp};
 use crate::{RObj, RProc, Symbol};
 
@@ -42,6 +43,14 @@ pub enum RubyValue {
     /// coroutine is thread-pinned in `fiber::FIBERS` (see that module's
     /// docs for why it can't live here).
     Fiber(RFiber),
+    /// A `Thread` (Phase 13.5) -- a `may` green coroutine; see
+    /// `thread`'s module docs for the cooperative-scheduling divergence.
+    Thread(RThread),
+    /// A Ruby `Mutex` (Phase 13.5) -- non-reentrant, per-execution-context
+    /// owned, like CRuby's.
+    Mutex(RMutex),
+    /// A `Queue` (Phase 13.5) -- blocking pop, closable.
+    Queue(RQueue),
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -130,6 +139,9 @@ impl RubyValue {
             RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).to_display_string(),
             // Same placeholder posture as `Object`/`Proc` above.
             RubyValue::Fiber(_) => "#<Fiber>".to_string(),
+            RubyValue::Thread(_) => "#<Thread>".to_string(),
+            RubyValue::Mutex(_) => "#<Mutex>".to_string(),
+            RubyValue::Queue(_) => "#<Thread::Queue>".to_string(),
         }
     }
 
@@ -214,6 +226,9 @@ impl RubyValue {
             RubyValue::Regexp(_) => REGEXP_CLASS,
             RubyValue::MatchData(_) => MATCH_DATA_CLASS,
             RubyValue::Fiber(_) => FIBER_CLASS,
+            RubyValue::Thread(_) => THREAD_CLASS,
+            RubyValue::Mutex(_) => MUTEX_CLASS,
+            RubyValue::Queue(_) => QUEUE_CLASS,
         }
     }
 
@@ -320,6 +335,30 @@ impl RubyValue {
         }
     }
 
+    /// Unwraps a `Thread` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_thread_unchecked(&self) -> RThread {
+        match self {
+            RubyValue::Thread(t) => t.clone(),
+            other => panic!("expected a Thread, got {}", other.to_display_string()),
+        }
+    }
+
+    /// Unwraps a `Mutex` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_mutex_unchecked(&self) -> RMutex {
+        match self {
+            RubyValue::Mutex(m) => m.clone(),
+            other => panic!("expected a Mutex, got {}", other.to_display_string()),
+        }
+    }
+
+    /// Unwraps a `Queue` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_queue_unchecked(&self) -> RQueue {
+        match self {
+            RubyValue::Queue(q) => q.clone(),
+            other => panic!("expected a Queue, got {}", other.to_display_string()),
+        }
+    }
+
     /// Unwraps an `Object` payload -- see `as_array_unchecked`'s docs. Used
     /// wherever a runtime `class_id()` is needed off a POLY-typed value
     /// (a dynamic `is_a?`/`kind_of?` check, or -- once `raise`/`rescue`
@@ -422,7 +461,10 @@ impl RubyValue {
             RubyValue::Proc(_)
             | RubyValue::Regexp(_)
             | RubyValue::MatchData(_)
-            | RubyValue::Fiber(_) => false,
+            | RubyValue::Fiber(_)
+            | RubyValue::Thread(_)
+            | RubyValue::Mutex(_)
+            | RubyValue::Queue(_) => false,
         }
     }
 
