@@ -23,6 +23,7 @@ mod value;
 
 pub use arith::*;
 pub use collections::*;
+pub use builtins::io::seed_stdio;
 pub use constants::{const_get, const_set, seed_argv};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
@@ -31,6 +32,7 @@ pub use builtins::kernel::{
     kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_float,
     kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
     kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
+    kernel_warn,
     kernel_string, kernel_throw,
 };
 pub use builtins::format::sprintf;

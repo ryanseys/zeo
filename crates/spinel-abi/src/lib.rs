@@ -116,6 +116,16 @@ pub const STRUCT_CLASS: ClassId = ClassId(30);
 /// NameError -- documented, since yielders are only ever OBTAINED, never
 /// named.
 pub const YIELDER_CLASS: ClassId = ClassId(31);
+/// The `GC` MODULE (G0) -- spinel-rs uses `Arc` refcounting, so
+/// `GC.start`/`stat`/`enable`/`disable`/`compact` are honest no-ops (see
+/// `spinel_rt::dispatch`'s GC probe); the id exists so `GC` resolves as a
+/// constant and `GC.start` dispatches cleanly instead of NameError-ing.
+pub const GC_CLASS: ClassId = ClassId(32);
+/// `IO` (G0, minimal) -- backs the `STDOUT`/`STDERR` singletons and the
+/// `$stdout`/`$stderr` globals; the print family routes through whichever
+/// value those globals hold. Full file-backed IO is a later phase (plan
+/// P-B).
+pub const IO_CLASS: ClassId = ClassId(33);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -155,6 +165,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: MATH_CLASS, name: "Math", is_module: true, superclass: None, includes: &[] },
     BuiltinClass { id: STRUCT_CLASS, name: "Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
     BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: GC_CLASS, name: "GC", is_module: true, superclass: None, includes: &[] },
+    BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

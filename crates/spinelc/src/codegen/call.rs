@@ -1341,12 +1341,13 @@ pub fn emit_call(
                         scope.needs_block_param(),
                     );
                 }
-                // The Kernel functions resolve here too -- `puts` inside a
-                // reopened builtin's (or a top-level) method body is a
-                // Kernel call, not a method of the receiver, and the
-                // dynamic fallback below would miss it at runtime.
+                // The universal Kernel forms resolve here too -- `puts`/
+                // `proc { }`/`__method__` inside a reopened builtin's (or a
+                // top-level) method body are Kernel calls, not methods of
+                // the receiver, and the dynamic fallback below would miss
+                // them at runtime.
                 if let Some(tokens) =
-                    emit_kernel_function(cx, name, args, kwargs, block, block_arg)
+                    emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
                 {
                     return tokens;
                 }
@@ -1408,6 +1409,27 @@ pub fn emit_call(
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
                     return emit_class_method_call_on(cx, defining, name, args, kwargs);
                 }
+                // A bare `new` inside a class method (`def self.create;
+                // new; end`) constructs the class itself -- `self` there IS
+                // the class, so `new` resolves like `Self.new` (real
+                // Ruby's rule; checked after the sibling lookup so a user
+                // `def self.new` override wins).
+                if name == "new"
+                    && !cx.compiler.class(defining).is_module
+                    && !cx.compiler.class(defining).is_builtin
+                    && kwargs.is_empty()
+                    && block.is_none()
+                    && block_arg.is_none()
+                {
+                    // Boxed: this Call node infers as `Poly` (only a
+                    // literal `HirNode::New` infers `Object(cid)`), so the
+                    // expression must be a `RubyValue`.
+                    let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args);
+                    let class_ident = super::ident::class_ident(cx.compiler, defining);
+                    return quote! {
+                        spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor))
+                    };
+                }
             }
         }
         // A TOP-LEVEL-defined method -- a private instance method on
@@ -1459,7 +1481,9 @@ pub fn emit_call(
         // ordering was a latent bug this stage fixed). Capitalized-name
         // conversion calls WITH arguments parse as ordinary CallNodes, so
         // there's no ClassRef ambiguity.
-        if let Some(tokens) = emit_kernel_function(cx, name, args, kwargs, block, block_arg) {
+        if let Some(tokens) =
+            emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
+        {
             return tokens;
         }
         // `catch(:tag) { ... }` -- the one Kernel function that takes its
@@ -1511,14 +1535,48 @@ pub fn emit_call(
         panic!("unsupported implicit-self call `{name}` (spike scope, or no such method is defined on the current class)");
     };
 
+    /// The universal implicit-self forms every method-body context shares:
+    /// the Kernel functions below, `proc { }`, and `__method__` --
+    /// consulted after sibling method resolution (a user override wins,
+    /// real Ruby's rule) from both the ordinary implicit-self path and the
+    /// value-backed (builtin-reopen / top-level) method-body path.
+    fn emit_universal_implicit_form(
+        cx: &Ctx,
+        name: &str,
+        args: &[NodeId],
+        kwargs: &[crate::hir::HashPair],
+        block: Option<NodeId>,
+        block_arg: Option<NodeId>,
+    ) -> Option<TokenStream> {
+        if let Some(tokens) = emit_kernel_function(cx, name, args, kwargs, block, block_arg) {
+            return Some(tokens);
+        }
+        // `proc { ... }` -- Kernel#proc: the literal block AS a Proc value
+        // (`lambda { ... }` desugars in parse to `HirNode::Lambda` already;
+        // `proc`'s non-lambda semantics are exactly `emit_proc_value`'s).
+        if name == "proc" && args.is_empty() && kwargs.is_empty() {
+            if let Some(b) = block {
+                return Some(emit_proc_value(cx, b));
+            }
+        }
+        // `__method__` -- the enclosing method's name as a Symbol, `nil` at
+        // the top level (a compile-time constant here: codegen always knows
+        // which method body it's emitting).
+        if name == "__method__" && args.is_empty() && kwargs.is_empty() && block.is_none() {
+            return Some(match &cx.current_method {
+                Some(m) => quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#m)) },
+                None => quote! { spinel_rt::RubyValue::Nil },
+            });
+        }
+        None
+    }
+
     /// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
     /// conversions, rand/srand, throw, sleep, exit/abort -- consulted after
     /// sibling method resolution (a user `def puts`/`def Integer` wins,
-    /// real Ruby's rule) from both the ordinary implicit-self path and the
-    /// value-backed (builtin-reopen / top-level) method-body path.
-    /// Capitalized-name conversion calls WITH arguments parse as ordinary
-    /// CallNodes, so there's no ClassRef ambiguity. `None` when the name
-    /// (or call shape) isn't a Kernel function.
+    /// real Ruby's rule). Capitalized-name conversion calls WITH arguments
+    /// parse as ordinary CallNodes, so there's no ClassRef ambiguity.
+    /// `None` when the name (or call shape) isn't a Kernel function.
     fn emit_kernel_function(
         cx: &Ctx,
         name: &str,
@@ -1530,17 +1588,17 @@ pub fn emit_call(
         if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
             return None;
         }
-        // Infallible print family (any arity, incl. zero).
-        let plain_fn = match name {
+        let plain_fn: Option<&str> = None;
+        // Fallible functions (`?`); the conversions require >= 1 arg
+        // (a bare `Integer` parses as a ClassRef, never reaches here).
+        // The print family is fallible since it routes through `$stdout`/
+        // `$stderr` (a duck-typed redirect target's `write` can raise).
+        let fallible_fn = match name {
             "puts" => Some("kernel_puts"),
             "p" => Some("kernel_p"),
             "pp" => Some("kernel_pp"),
             "print" => Some("kernel_print"),
-            _ => None,
-        };
-        // Fallible functions (`?`); the conversions require >= 1 arg
-        // (a bare `Integer` parses as a ClassRef, never reaches here).
-        let fallible_fn = match name {
+            "warn" => Some("kernel_warn"),
             "Integer" if !args.is_empty() => Some("kernel_integer"),
             "Float" if !args.is_empty() => Some("kernel_float"),
             "Rational" if !args.is_empty() => Some("kernel_rational"),

@@ -6,21 +6,21 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 300 | array_assoc_rassoc | uncaught exception: undefined method 'assoc' for an instance of Array |
-| ? | spike-misc | 154 | anon_block_forward | spinelc: an anonymous `&` block-forwarding argument (forwarding the enclosing method's own `&block` onward without naming it) isn't supported yet (spike scope) |
-| ? | implicit-self-call | 96 | array_eq_cross_kind | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| P | missing-core-const | 65 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
+| P | missing-builtin-method | 313 | array_assoc_rassoc | uncaught exception: undefined method 'assoc' for an instance of Array |
+| ? | spike-misc | 155 | anon_block_forward | spinelc: an anonymous `&` block-forwarding argument (forwarding the enclosing method's own `&block` onward without naming it) isn't supported yet (spike scope) |
 | ? | dynamic-receiver-call | 49 | alias_method_dispatch | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| g | arity-panic | 31 | array_callforms_strbuf_cycle | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| ? | unknown-class | 29 | bundle_tiny_misc | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ! | rustc-failure | 26 | array_grep_empty_literal | spinelc: rustc failed compiling the generated program (source left at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-44604-ThreadId1.rs) |
+| ? | implicit-self-call | 46 | at_exit_lifo | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| P | missing-core-const | 44 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
+| g | arity-panic | 33 | array_callforms_strbuf_cycle | uncaught exception: wrong number of arguments (given 1, expected 0) |
+| ! | rustc-failure | 31 | array_splice_to_ary | spinelc: rustc failed compiling the generated program (source left at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-26146-ThreadId1.rs) |
+| ? | unknown-class | 28 | bundle_tiny_misc | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | c | multi-assign | 23 | bundle_classd_12 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | param-shapes | 23 | block_param_destructure | spinelc: only plain required parameters are supported before a `*rest` (spike scope) |
 | d | class-level-state | 19 | class_ivar_in_class_method | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| b | dyn-dispatch-kwargs | 16 | bundle_tiny_string | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| b | dyn-dispatch-kwargs | 17 | bundle_tiny_string | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 15 | bare_return_in_initialize | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | b | kwargs-call-shape | 10 | kwargs_double_splat | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | auto-62255d30 | 7 | block_autosplat | uncaught exception: no implicit conversion of NilClass into Array |
+| ? | auto-62255d30 | 8 | block_autosplat | uncaught exception: no implicit conversion of NilClass into Array |
 | g | super-arity | 6 | class_ancestors_superclass | uncaught exception: undefined method 'superclass' for class Dog |
 | ? | auto-14bb593e | 5 | bundle_misc_c_26 | spinelc: unsupported syntax at "$1" (spike handles only what the 7 example programs need) |
 | k | pattern-shapes | 5 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
@@ -40,6 +40,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-5b396f72 | 2 | arity_keyword_argument_errors | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33 | spinelc: cannot load such file -- time |
 | ? | auto-ceeffdaa | 2 | format_raise_dollarbang_symproc | uncaught exception: malformed format string - %$ |
+| ? | auto-d46bf646 | 2 | proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
 | ? | auto-db1701f3 | 2 | bundle_sym | spinelc: unsupported syntax at "__ENCODING__" (spike handles only what the 7 example programs need) |
 | ? | auto-e1c6d05b | 2 | each_slice_cons_to_a | uncaught exception: no implicit conversion of NilClass into Integer |
 | ? | auto-f82b092f | 2 | i1015 | uncaught exception: no implicit conversion of Regexp into Integer |
@@ -103,6 +104,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-cef029d8 | 1 | format_binary | uncaught exception: malformed format string - %B |
 | ? | auto-cef06551 | 1 | format_hex_float | uncaught exception: malformed format string - %a |
 | ? | auto-d04215d7 | 1 | bignum_downto_upto_to_a | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-d453bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
 | ? | auto-d981d064 | 1 | to_h_with_block | uncaught exception: wrong element type Integer (expected array) |
 | ? | auto-dd0fbc13 | 1 | rational_ctor_exact | uncaught exception: can't convert Float into Rational |
 | ? | auto-def07d6b | 1 | i1009 | error: backreferences are not supported |

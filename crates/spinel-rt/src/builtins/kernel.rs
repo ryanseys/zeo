@@ -17,6 +17,24 @@ use crate::{RubyValue, Signal, Symbol};
 builtin_methods! {
     pub(crate) fn lookup;
 
+    // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,
+    // ...)`, `self.puts` on `main`, and any dynamic dispatch reach these;
+    // the receiver is ignored, exactly like CRuby's private Kernel#puts.
+    "puts" => fn puts(_recv, args, _block) {
+        kernel_puts(args)
+    }
+    "print" => fn print(_recv, args, _block) {
+        kernel_print(args)
+    }
+    "p" => fn p(_recv, args, _block) {
+        kernel_p(args)
+    }
+    "pp" => fn pp(_recv, args, _block) {
+        kernel_pp(args)
+    }
+    "warn" => fn warn(_recv, args, _block) {
+        kernel_warn(args)
+    }
     "class" => fn class(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))
@@ -370,72 +388,65 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 
 /// `Kernel#puts`: zero args print one newline; arrays flatten recursively,
 /// each scalar on its own line (nil renders empty) -- CRuby's exact rules.
-pub fn kernel_puts(args: &[RubyValue]) -> RubyValue {
-    // `seen` guards SELF-REFERENTIAL arrays (CRuby prints `[...]` for the
-    // recursive appearance instead of flattening forever).
-    fn put_one(v: &RubyValue, seen: &mut Vec<usize>) {
-        match v {
-            RubyValue::Array(a) => {
-                let id = std::sync::Arc::as_ptr(a) as usize;
-                if seen.contains(&id) {
-                    println!("[...]");
-                    return;
-                }
-                seen.push(id);
-                let items = a.lock().clone();
-                if items.is_empty() {
-                    println!();
-                }
-                for e in &items {
-                    put_one(e, seen);
-                }
-                seen.pop();
-            }
-            other => {
-                let s = other.to_display_string();
-                if s.ends_with('\n') {
-                    print!("{s}");
-                } else {
-                    println!("{s}");
-                }
-            }
+/// Routed through whatever `$stdout` currently holds (default: the
+/// `STDOUT` singleton) -- `$stdout = STDERR` or any duck-typed writer
+/// redirects the whole print family. See `builtins::io` for the rendering
+/// and write plumbing.
+pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut buf = String::new();
+    crate::builtins::io::render_puts(args, &mut buf);
+    crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
+    Ok(RubyValue::Nil)
+}
+
+/// `Kernel#warn`: each message on its own line (no trailing newline
+/// doubling, same rule as `puts`) to `$stderr`; returns nil. The
+/// `uplevel:` keyword isn't modeled (kwargs never reach the
+/// Kernel-function path).
+pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut buf = String::new();
+    for a in args {
+        let s = a.to_display_string();
+        buf.push_str(&s);
+        if !s.ends_with('\n') {
+            buf.push('\n');
         }
     }
-    if args.is_empty() {
-        println!();
-    }
-    for a in args {
-        put_one(a, &mut Vec::new());
-    }
-    RubyValue::Nil
+    crate::builtins::io::write_str(&crate::builtins::io::current_stderr(), &buf)?;
+    Ok(RubyValue::Nil)
 }
 
 /// `Kernel#p`: each argument's INSPECT rendering on its own line; returns
 /// nil / the single argument / the argument array (CRuby's exact shapes).
-pub fn kernel_p(args: &[RubyValue]) -> RubyValue {
+pub fn kernel_p(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut buf = String::new();
     for a in args {
-        println!("{}", a.inspect_string());
+        buf.push_str(&a.inspect_string());
+        buf.push('\n');
     }
-    match args.len() {
+    if !buf.is_empty() {
+        crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
+    }
+    Ok(match args.len() {
         0 => RubyValue::Nil,
         1 => args[0].clone(),
         _ => RubyValue::Array(crate::array_new(args.to_vec())),
-    }
+    })
 }
 
 /// `Kernel#pp` -- for this runtime's value shapes, `p`'s rendering.
-pub fn kernel_pp(args: &[RubyValue]) -> RubyValue {
+pub fn kernel_pp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     kernel_p(args)
 }
 
 /// `Kernel#print`: display renderings, no separators, no newline.
-pub fn kernel_print(args: &[RubyValue]) -> RubyValue {
+pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let mut buf = String::new();
     for a in args {
-        print!("{}", a.to_display_string());
+        buf.push_str(&a.to_display_string());
     }
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
-    RubyValue::Nil
+    crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
+    Ok(RubyValue::Nil)
 }
 
 /// `Kernel#format`/`sprintf`.
@@ -458,9 +469,10 @@ pub fn kernel_printf(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         return Ok(RubyValue::Nil);
     }
     let formatted = kernel_format(args)?;
-    print!("{}", formatted.to_display_string());
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    crate::builtins::io::write_str(
+        &crate::builtins::io::current_stdout(),
+        &formatted.to_display_string(),
+    )?;
     Ok(RubyValue::Nil)
 }
 

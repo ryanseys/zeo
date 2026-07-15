@@ -507,9 +507,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // -- the 15.3 const machinery resolves the OWNERS at compile
             // time; only the values need seeding.
             spinel_rt::seed_numeric_constants();
-            // `ARGV` (CRuby startup parity) -- reads resolve through the
-            // runtime const_get fallback, no compile-time registration.
+            // `ARGV` + `STDOUT`/`STDERR`/`$stdout`/`$stderr` (CRuby startup
+            // parity) -- reads resolve through the runtime const/global
+            // fallbacks, no compile-time registration.
             spinel_rt::seed_argv();
+            spinel_rt::seed_stdio();
             // Lets the runtime raise real, catchable exceptions
             // (NoMethodError since Phase 13.7; the whole ArgumentError/
             // TypeError/... set since 17.1) -- spinel-rt can't construct

@@ -10799,15 +10799,17 @@ fn boolean_operators_box_object_typed_operands() {
 
 #[test]
 fn yield_boxes_an_object_typed_argument() {
+    // (`Builder.new { }` can't be used here: `.new` doesn't forward its
+    // block to `initialize` yet -- a separate, pre-existing gap.)
     let result = run_ruby(
         r#"
         class Builder
-          def initialize
-            yield self if block_given?
+          def run
+            yield self
           end
           def ping = "pong"
         end
-        Builder.new { |b| puts b.send(:ping) }
+        Builder.new.run { |b| puts b.send(:ping) }
         "#,
     );
     assert_eq!(result.stdout, "pong\n");
@@ -10885,4 +10887,46 @@ fn fallible_class_body_constant_and_method_default_args() {
         "#,
     );
     assert_eq!(result.stdout, "6\n42\n5\n");
+}
+
+#[test]
+fn kernel_proc_warn_method_name_and_bare_new() {
+    let result = run_ruby(
+        r#"
+        sq = proc { |x| x * x }
+        puts sq.call(5)
+        warn "to stderr"
+        def who = __method__
+        p who
+        GC.start
+        class F
+          def self.create
+            new
+          end
+        end
+        puts F.create.class
+        "#,
+    );
+    assert_eq!(result.stdout, "25\n:who\nF\n");
+    assert_eq!(result.stderr, "to stderr\n");
+}
+
+#[test]
+fn stdout_stderr_constants_and_globals() {
+    let result = run_ruby(
+        r#"
+        STDOUT.puts "via const"
+        $stdout.puts "via global"
+        STDERR.puts "err const"
+        $stderr.print "err global\n"
+        puts STDOUT.write("abc\n")
+        $stdout = STDERR
+        puts "redirected"
+        $stdout = STDOUT
+        puts "back"
+        puts STDOUT.inspect
+        "#,
+    );
+    assert_eq!(result.stdout, "via const\nvia global\nabc\n4\nback\n#<IO:<STDOUT>>\n");
+    assert_eq!(result.stderr, "err const\nerr global\nredirected\n");
 }

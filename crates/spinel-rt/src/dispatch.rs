@@ -349,6 +349,15 @@ pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
             _ => {
                 if let Some(table) = crate::builtins::class_table(anc) {
                     if table(n).is_some() {
+                        // Kernel's print family is PRIVATE in CRuby:
+                        // reachable via implicit self and `send` (both go
+                        // through the table), but invisible to
+                        // `respond_to?` -- its default ignores privates.
+                        if anc == KERNEL_CLASS
+                            && matches!(n, "puts" | "print" | "p" | "pp" | "warn")
+                        {
+                            continue;
+                        }
                         return true;
                     }
                 }
@@ -613,6 +622,24 @@ pub fn send_value_in(
         if *cid == MATH_CLASS {
             if let Some(r) = crate::builtins::math::math_call(n, args) {
                 return r;
+            }
+        }
+        // `GC` module functions -- honest no-ops (spinel-rs is
+        // Arc-refcounted; no collector exists to drive). `stat` answers an
+        // empty-ish Hash so `GC.stat[:count]`-style reads get nil rather
+        // than crashing.
+        // TODO(plan P-D): replace this probe with the general
+        // `class_method_table(ClassId)` mechanism when File/Dir/Time land.
+        if *cid == spinel_abi::GC_CLASS {
+            match n {
+                "start" | "compact" => return Ok(RubyValue::Nil),
+                "enable" | "disable" => return Ok(RubyValue::Bool(false)),
+                "stress" => return Ok(RubyValue::Bool(false)),
+                "count" => return Ok(RubyValue::Int(0)),
+                "stat" => {
+                    return Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
+                }
+                _ => {}
             }
         }
     }
