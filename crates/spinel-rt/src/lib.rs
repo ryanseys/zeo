@@ -8,6 +8,7 @@ mod collections;
 mod constants;
 mod cvars;
 mod dispatch;
+mod exec;
 mod fiber;
 mod globals;
 mod handling;
@@ -27,6 +28,7 @@ pub use dispatch::{
     REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
+pub use exec::run_main;
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
 pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};

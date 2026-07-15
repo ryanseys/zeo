@@ -9,3 +9,4 @@ parking_lot = "0.12"
 indexmap = "2"
 regex = "1"
 spinel-fiber = { path = "../spinel-fiber" }
+may = "0.3"

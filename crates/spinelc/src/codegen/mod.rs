@@ -309,9 +309,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
 
-            let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| {
-                #main_body
-            })();
+            // The whole top level runs as `may`'s first coroutine (Phase
+            // 13.4) -- see `spinel_rt::run_main`'s docs for the worker-count
+            // GVL model and why registration must complete first. The
+            // closure is `move + Send + 'static` trivially: top-level
+            // statements are self-contained (their hoisted locals are
+            // declared inside the body itself) and every value is Send+Sync
+            // (Part 9).
+            let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> =
+                spinel_rt::run_main(move || {
+                    #main_body
+                });
             if let Err(__signal) = __result {
                 match __signal {
                     // An uncaught `raise` gets a real, Ruby-flavored

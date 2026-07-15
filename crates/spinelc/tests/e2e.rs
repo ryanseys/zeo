@@ -5565,3 +5565,69 @@ fn a_fiber_body_captures_and_mutates_enclosing_locals() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "10\n110\n");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 13.4: the whole top level runs as `may`'s first coroutine, with the
+// worker count as the GVL switch (see `spinel_rt::run_main`'s docs). The
+// REAL regression test for this change is every other test in this file --
+// all of them now execute through the coroutine-wrapped main. These three
+// only cover the configuration knobs themselves.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scheduler_config_knobs_change_nothing_observable() {
+    // The same fiber-exercising program (fibers being the most
+    // execution-context-sensitive feature shipped so far) under the default
+    // (workers=1, GVL-emulated), an explicit SPINEL_THREADS count, and
+    // --no-gvl -- byte-identical output on all three.
+    let src = r#"
+        f = Fiber.new do |x|
+          Fiber.yield(x + 1)
+          :done
+        end
+        puts f.resume(1)
+        puts f.resume
+        puts f.alive?
+    "#;
+    let expected = "2\ndone\nfalse\n";
+    let default = support::run_ruby(src);
+    assert!(default.status.success(), "stderr: {}", default.stderr);
+    assert_eq!(default.stdout, expected);
+
+    let threads4 = support::run_ruby_configured(src, &[("SPINEL_THREADS", "4")], &[]);
+    assert!(threads4.status.success(), "stderr: {}", threads4.stderr);
+    assert_eq!(threads4.stdout, expected);
+
+    let no_gvl = support::run_ruby_configured(src, &[], &["--no-gvl"]);
+    assert!(no_gvl.status.success(), "stderr: {}", no_gvl.stderr);
+    assert_eq!(no_gvl.stdout, expected);
+}
+
+#[test]
+fn a_malformed_spinel_threads_value_fails_loudly_at_startup() {
+    let result = support::run_ruby_configured(
+        "puts 1\n",
+        &[("SPINEL_THREADS", "not-a-number")],
+        &[],
+    );
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("SPINEL_THREADS must be a positive integer"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn uncaught_exceptions_still_exit_nonzero_through_the_coroutine_boundary() {
+    // The top-level uncaught-raise contract (message on stderr, exit 1)
+    // must survive the body now running inside a may coroutine and its
+    // Result crossing a join back to the OS main thread.
+    let result = run_ruby("raise \"through the boundary\"\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uncaught exception: through the boundary"),
+        "stderr: {}",
+        result.stderr
+    );
+}
