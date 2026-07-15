@@ -5,6 +5,7 @@
 
 mod arith;
 mod collections;
+mod comparable;
 mod constants;
 mod cvars;
 mod dispatch;
@@ -29,7 +30,7 @@ pub use dispatch::{
     install_no_method_error_factory, is_a, responds_to, run_initialize, send, send_value,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ARRAY_CLASS,
     CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, ENUMERABLE_CLASS,
+    COMPARABLE_CLASS, ENUMERABLE_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
     QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
     THREAD_CLASS, TRUE_CLASS,
 };
@@ -341,6 +342,46 @@ mod tests {
         }
     }
 
+    ruby_class! {
+        class Temp : Object {
+            id: 3;
+            name: "Temp";
+            ancestors: [3, 22, 0]; // [Temp, Comparable, Object]
+            ivars { deg }
+            def cmp(self: std::sync::Arc<Self>, other: RubyValue) {
+                let mine = self.deg.lock().clone();
+                let theirs = match &other {
+                    RubyValue::Object(o) => {
+                        let t = downcast_robj::<Temp>(o).expect("Temp <=> Temp only in tests");
+                        let deg = t.deg.lock().clone();
+                        deg
+                    }
+                    _ => return Ok(RubyValue::Nil),
+                };
+                Ok(match mine.rb_cmp(&theirs) {
+                    Some(o) => RubyValue::Int(o),
+                    None => RubyValue::Nil,
+                })
+            }
+            dispatch {
+                "<=>" => |recv, args: &[RubyValue], _blk: Option<RubyValue>| {
+                    let this = downcast_robj::<Temp>(recv).expect("class_id guarantees this downcast");
+                    match args {
+                        [other] => Temp::cmp(this, other.clone()),
+                        _ => panic!("wrong number of arguments for <=>"),
+                    }
+                },
+            }
+        }
+    }
+
+    fn temp(deg: i64) -> RubyValue {
+        RubyValue::Object(Temp::new_handle(std::sync::Arc::new(Temp {
+            __frozen: Default::default(),
+            deg: parking_lot::Mutex::new(RubyValue::Int(deg)),
+        })))
+    }
+
     /// The class registry is now a genuinely process-wide `OnceLock` (Part
     /// 9), correctly rejecting a second install -- exactly the "install
     /// once, from `main()`, before anything else runs" contract a real
@@ -357,6 +398,7 @@ mod tests {
             registry.register(Object::CLASS_ID, "Object", false, vec![Object::CLASS_ID], None);
             Point::__register(&mut registry);
             Greeter::__register(&mut registry);
+            Temp::__register(&mut registry);
             install_class_registry(registry);
         });
     }
@@ -569,6 +611,59 @@ mod tests {
             x: parking_lot::Mutex::new(RubyValue::Nil),
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
+    }
+
+    /// Phase 16.2: Comparable, Rust-backed (the compar.c pattern) --
+    /// `send`'s fallback drives the includer's own `<=>`.
+    #[test]
+    fn comparable_methods_drive_the_includers_spaceship() {
+        install();
+        let a = temp(50).as_object_unchecked();
+
+        let lt = send(&a, Symbol::intern("<"), &[temp(70)], None).unwrap();
+        assert!(lt.truthy());
+        let gt = send(&a, Symbol::intern(">"), &[temp(70)], None).unwrap();
+        assert!(!gt.truthy());
+        let between =
+            send(&a, Symbol::intern("between?"), &[temp(40), temp(60)], None).unwrap();
+        assert!(between.truthy());
+
+        // clamp returns the BOUND when outside it, the receiver otherwise.
+        let clamped = send(&a, Symbol::intern("clamp"), &[temp(55), temp(80)], None).unwrap();
+        assert!(clamped.rb_cmp(&temp(55)) == Some(0));
+        let kept = send(&a, Symbol::intern("clamp"), &[temp(40), temp(80)], None).unwrap();
+        assert!(kept.rb_cmp(&temp(50)) == Some(0));
+    }
+
+    /// `rb_eq` resolution order on Objects: Comparable's derived `==`
+    /// (via `<=>`) beats identity; identity remains the default without it.
+    #[test]
+    fn rb_eq_derives_equality_from_comparable() {
+        install();
+        assert!(temp(50).rb_eq(&temp(50)));
+        assert!(!temp(50).rb_eq(&temp(51)));
+
+        // No `==`, no Comparable: reference identity (real `Object#==`).
+        let g1 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+        })));
+        let g2 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+        })));
+        assert!(g1.rb_eq(&g1.clone()));
+        assert!(!g1.rb_eq(&g2));
+    }
+
+    /// The default Object rendering is `#<FQName>` from the registry
+    /// (Phase 16.2 -- real Ruby appends an address, omitted by design).
+    #[test]
+    fn default_object_rendering_names_the_class() {
+        install();
+        let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+        })));
+        assert_eq!(g.to_display_string(), "#<Greeter>");
+        assert_eq!(g.inspect_string(), "#<Greeter>");
     }
 
     /// Part 9 (Send+Sync migration) regression guard: fails to compile if

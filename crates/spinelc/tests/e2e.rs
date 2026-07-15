@@ -8567,3 +8567,193 @@ fn case_when_with_class_candidates_checks_instance_ancestry() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "int\nstr\nwidget\nother\n");
 }
+
+// -- Phase 16.2: user-overridable object protocols + Comparable. Every
+// expectation oracle-verified against real ruby 4.0.5.
+
+#[test]
+fn user_defined_equality_dispatches_everywhere() {
+    let result = support::run_ruby(
+        r#"
+        class Point
+          attr_reader :x
+
+          def initialize(x)
+            @x = x
+          end
+
+          def ==(other)
+            other.is_a?(Point) && x == other.x
+          end
+        end
+
+        puts Point.new(1) == Point.new(1)
+        puts Point.new(1) == Point.new(2)
+        puts Point.new(1) == 5
+        puts Point.new(1) != Point.new(2)
+        puts [Point.new(1), Point.new(2)] == [Point.new(1), Point.new(2)]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\nfalse\ntrue\ntrue\n");
+}
+
+#[test]
+fn collections_compare_element_wise_and_objects_default_to_identity() {
+    let result = support::run_ruby(
+        r#"
+        puts [1, [2, 3]] == [1, [2, 3]]
+        puts({ a: 1, b: [2] } == { a: 1, b: [2] })
+        puts({ a: 1 } == { a: 2 })
+
+        class Blank
+        end
+
+        b1 = Blank.new
+        b2 = Blank.new
+        puts b1 == b1
+        puts b1 == b2
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\ntrue\nfalse\n");
+}
+
+#[test]
+fn user_to_s_and_inspect_drive_puts_interpolation_and_p() {
+    let result = support::run_ruby(
+        r##"
+        class Named
+          def initialize(n)
+            @n = n
+          end
+
+          def to_s
+            "Named<#{@n}>"
+          end
+
+          def inspect
+            "#<Named n=#{@n}>"
+          end
+        end
+
+        n = Named.new(7)
+        puts n
+        puts "in a string: #{n}"
+        p n
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Named<7>\nin a string: Named<7>\n#<Named n=7>\n"
+    );
+}
+
+#[test]
+fn user_hash_protocol_keys_hashes_by_value() {
+    let result = support::run_ruby(
+        r#"
+        class Key
+          attr_reader :k
+
+          def initialize(k)
+            @k = k
+          end
+
+          def hash
+            k.hash
+          end
+
+          def eql?(other)
+            other.is_a?(Key) && k == other.k
+          end
+        end
+
+        h = {}
+        h[Key.new("a")] = 1
+        puts h[Key.new("a")]
+        puts h[Key.new("b")].inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\nnil\n");
+}
+
+#[test]
+fn comparable_drives_the_includers_spaceship() {
+    let result = support::run_ruby(
+        r#"
+        class Temp
+          include Comparable
+          attr_reader :deg
+
+          def initialize(d)
+            @deg = d
+          end
+
+          def <=>(other)
+            deg <=> other.deg
+          end
+        end
+
+        a = Temp.new(50)
+        b = Temp.new(70)
+        puts a < b
+        puts a > b
+        puts a <= b
+        puts b >= a
+        puts a == Temp.new(50)
+        puts a.between?(Temp.new(40), Temp.new(60))
+        puts a.clamp(Temp.new(55), Temp.new(80)).deg
+        puts a.clamp(Temp.new(20), Temp.new(30)).deg
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\ntrue\ntrue\ntrue\n55\n30\n"
+    );
+}
+
+#[test]
+fn enumerable_min_max_dispatch_a_user_spaceship() {
+    let result = support::run_ruby(
+        r#"
+        class Temp
+          include Comparable
+          attr_reader :deg
+
+          def initialize(d)
+            @deg = d
+          end
+
+          def <=>(other)
+            deg <=> other.deg
+          end
+        end
+
+        temps = [Temp.new(3), Temp.new(9), Temp.new(5)]
+        puts temps.min.deg
+        puts temps.max.deg
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n9\n");
+}
+
+#[test]
+fn explicit_triple_equals_on_class_values_checks_ancestry() {
+    let result = support::run_ruby(
+        r#"
+        class Widget
+        end
+
+        puts Integer === 5
+        puts Widget === Widget.new
+        puts Widget === 5
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\n");
+}

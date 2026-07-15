@@ -106,10 +106,10 @@ impl Object {
 /// mechanism, and the prerequisite for eventually `include`ing a plain-Ruby
 /// `Enumerable`/`Comparable` into these types via ordinary materialization.
 pub use spinel_abi::{
-    ARRAY_CLASS, CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS,
-    RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
-    TRUE_CLASS,
+    ARRAY_CLASS, CLASS_CLASS, COMPARABLE_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
+    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS,
+    PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS,
+    THREAD_CLASS, TRUE_CLASS, SYMBOL_CLASS,
 };
 /// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
 /// `send`'s Enumerable fallback (an Object whose registered ancestors
@@ -281,6 +281,33 @@ pub fn class_is_module(id: ClassId) -> Option<bool> {
     Some(REGISTRY.get()?.entries.get(&id.0)?.is_module)
 }
 
+/// A registry probe-and-call for the runtime PROTOCOL dispatches (Phase
+/// 16.2): user `==`/`<=>`/`to_s`/`inspect`/`hash` reached from deep inside
+/// pure helpers (`rb_eq`, `display_with`, `hash_key`) that can't route
+/// through `send` (whose `method_missing`/NoMethodError fallbacks must NOT
+/// fire for a protocol probe). `None` = no such method (or no registry --
+/// this crate's own unit tests), letting each caller apply its own
+/// default; the method, when present, is the MATERIALIZED entry, so
+/// inherited/mixed-in definitions resolve exactly like a real call.
+pub(crate) fn call_user_method(
+    recv: &RObj,
+    name: &str,
+    args: &[RubyValue],
+) -> Option<Result<RubyValue, Signal>> {
+    let f = REGISTRY.get()?.lookup(recv.class_id(), Symbol::intern(name))?;
+    Some(f(recv, args, None))
+}
+
+/// A registry-optional ancestry probe (Phase 16.2) -- `false` when no
+/// registry is installed (this crate's own unit tests), where `is_a`'s
+/// hard `registry()` access would panic. Used by `rb_eq`'s Comparable
+/// fallback, which must stay callable from anywhere.
+pub(crate) fn ancestors_contain(id: ClassId, target: ClassId) -> bool {
+    REGISTRY
+        .get()
+        .is_some_and(|r| r.ancestors_of(id).contains(&target))
+}
+
 /// Runs `initialize` on a freshly-constructed instance IF the class
 /// defines one -- the shared tail of every `ConstructorFn` (`ruby_class!`'s
 /// `__construct`). Deliberately a direct registry lookup, NOT `send`: a
@@ -428,6 +455,9 @@ pub fn send_value(
         ("dup", 0) => return Ok(recv.dup_value(false)),
         ("clone", 0) => return Ok(recv.dup_value(true)),
         ("class", 0) => return Ok(RubyValue::Class(recv.class_id())),
+        // `Object#hash`, universally (Phase 16.2) -- what a user-defined
+        // `hash` typically delegates to (`def hash; k.hash; end`).
+        ("hash", 0) => return Ok(RubyValue::Int(crate::value_hash_code(recv))),
         ("is_a?" | "kind_of?", 1) => {
             if let RubyValue::Class(target) = &args[0] {
                 return Ok(RubyValue::Bool(is_a(recv.class_id(), *target)));
@@ -478,6 +508,11 @@ pub fn send_value(
                     .map(|&a| RubyValue::Class(a))
                     .collect();
                 return Ok(RubyValue::Array(crate::array_new(ancestors)));
+            }
+            // Explicit `Module#===` (Phase 16.2) -- the same instance-of
+            // ancestry check `case`/`when` desugars to via `rb_case_eq`.
+            ("===", 1) => {
+                return Ok(RubyValue::Bool(is_a(args[0].class_id(), *cid)));
             }
             _ => {}
         }
@@ -589,6 +624,19 @@ pub fn send_value(
                 return Ok(recv.clone());
             }
         }
+    }
+    // Universal `to_s`/`inspect` (Phase 16.2), placed AFTER the curated
+    // tables so `String#to_s`'s identity-preserving row still wins:
+    // `nil.inspect` -> "nil", `5.to_s` -> "5", `[1, 2].inspect` ->
+    // "[1, 2]" -- the same rendering `puts`/`p` already print.
+    match (n, args.len()) {
+        ("to_s", 0) => {
+            return Ok(RubyValue::Str(crate::string_new(recv.to_display_string())))
+        }
+        ("inspect", 0) => {
+            return Ok(RubyValue::Str(crate::string_new(recv.inspect_string())))
+        }
+        _ => {}
     }
     // Numeric receivers: the binary operators, so `5.send(:+, 2)` and --
     // the motivating case -- `reduce(:+)`'s per-element
@@ -733,6 +781,27 @@ pub fn send(
             "dup" => return Ok(RubyValue::Object(recv.dup_object(false))),
             "clone" => return Ok(RubyValue::Object(recv.dup_object(true))),
             "class" => return Ok(RubyValue::Class(id)),
+            // Identity-based when no user `hash` exists (the registry
+            // lookup above already missed); `value_hash_code` re-probes,
+            // finds none, and digests by identity.
+            "hash" => {
+                return Ok(RubyValue::Int(crate::value_hash_code(
+                    &RubyValue::Object(recv.clone()),
+                )))
+            }
+            // Default `Object#to_s`/`#inspect` (the user-defined form was
+            // the registry lookup above): the `#<FQName>` rendering
+            // `display_with`/`inspect_with` produce.
+            "to_s" => {
+                return Ok(RubyValue::Str(crate::string_new(
+                    RubyValue::Object(recv.clone()).to_display_string(),
+                )))
+            }
+            "inspect" => {
+                return Ok(RubyValue::Str(crate::string_new(
+                    RubyValue::Object(recv.clone()).inspect_string(),
+                )))
+            }
             _ => {}
         }
     }
@@ -743,6 +812,23 @@ pub fn send(
                 "instance_of?" => return Ok(RubyValue::Bool(id == *target)),
                 _ => {}
             }
+        }
+        // `Object#==`'s reference-identity default (Phase 16.2) -- reached
+        // only when the class defines no `==` of its own (the registry
+        // lookup above wins otherwise), before `method_missing` like every
+        // real Kernel/Object method.
+        match name.name().as_str() {
+            "==" => {
+                return Ok(RubyValue::Bool(
+                    RubyValue::Object(recv.clone()).rb_eq(&args[0]),
+                ))
+            }
+            "!=" => {
+                return Ok(RubyValue::Bool(
+                    !RubyValue::Object(recv.clone()).rb_eq(&args[0]),
+                ))
+            }
+            _ => {}
         }
     }
 
@@ -775,6 +861,14 @@ pub fn send(
             args,
             block,
         ) {
+            return r;
+        }
+    }
+    // Same architecture for `include Comparable` (Phase 16.2): unresolved
+    // names try the Rust Comparable implementation, which drives this
+    // object's own `<=>` -- the compar.c pattern.
+    if is_a(id, COMPARABLE_CLASS) {
+        if let Some(r) = crate::comparable::comparable_send(recv, &name.name(), args) {
             return r;
         }
     }

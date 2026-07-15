@@ -69,6 +69,10 @@ pub const ENUMERABLE_CLASS: ClassId = ClassId(19);
 /// compiler special-cases when seeding parents.
 pub const CLASS_CLASS: ClassId = ClassId(20);
 pub const MODULE_CLASS: ClassId = ClassId(21);
+/// The builtin `Comparable` MODULE (Phase 16.2) -- implemented in Rust in
+/// `spinel_rt::comparable` (the same enum.c-style architecture as
+/// `Enumerable`: every method drives the includer's own `<=>`).
+pub const COMPARABLE_CLASS: ClassId = ClassId(22);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -96,6 +100,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true },
     BuiltinClass { id: CLASS_CLASS, name: "Class", is_module: false },
     BuiltinClass { id: MODULE_CLASS, name: "Module", is_module: false },
+    BuiltinClass { id: COMPARABLE_CLASS, name: "Comparable", is_module: true },
 ];
 
 #[cfg(test)]

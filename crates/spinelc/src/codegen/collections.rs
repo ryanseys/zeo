@@ -95,6 +95,9 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
         StrPart::Lit(s) => quote! { __s.push_str(#s); },
         StrPart::Interp(n) => {
             let e = emit_expr(cx, *n);
+            // Boxed if Object-typed (Phase 16.2): interpolation reaches
+            // `to_display_string`, which dispatches a user-defined `to_s`.
+            let e = super::expr::box_if_object_typed(cx, *n, e);
             quote! { __s.push_str(&(#e).to_display_string()); }
         }
     });

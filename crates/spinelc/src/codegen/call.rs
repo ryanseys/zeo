@@ -241,11 +241,16 @@ fn try_collection_dispatch(
         }
         (TyKind::Hash, "[]", 1) => {
             let key = emit_expr(cx, args[0]);
+            // Boxed if Object-typed (Phase 16.2): an object KEY reaches the
+            // `HashKey` projection (which now dispatches a user `hash`).
+            let key = super::expr::box_if_object_typed(cx, args[0], key);
             quote! { spinel_rt::hash_get(&(#recv_expr).as_hash_unchecked(), &(#key)) }
         }
         (TyKind::Hash, "[]=", 2) => {
             let key = emit_expr(cx, args[0]);
+            let key = super::expr::box_if_object_typed(cx, args[0], key);
             let val = emit_expr(cx, args[1]);
+            let val = super::expr::box_if_object_typed(cx, args[1], val);
             let frozen_error =
                 emit_frozen_error(cx, "Hash", quote! { spinel_rt::RubyValue::Hash(__recv.clone()) });
             // The frozen check runs BEFORE `hash_set` ever hashes the key --
@@ -1203,6 +1208,10 @@ pub fn emit_call(
     let Some(recv_id) = receiver else {
         if name == "puts" && args.len() == 1 && kwargs.is_empty() {
             let arg = emit_expr(cx, args[0]);
+            // Boxed if Object-typed (Phase 16.2): `puts w` must reach the
+            // uniform `RubyValue` display path, which now dispatches a
+            // user-defined `to_s`.
+            let arg = super::expr::box_if_object_typed(cx, args[0], arg);
             return quote! { { spinel_rt::puts(#arg); spinel_rt::RubyValue::Nil } };
         }
         // `Kernel#p`, single-argument form (Phase 16.1, wanted for
@@ -1812,6 +1821,28 @@ fn dispatch(
                     ))
                 },
             };
+        }
+    }
+
+    // `==`/`!=` on an OBJECT receiver with no matching user definition
+    // (Phase 16.2): real Ruby's `Object#==` default (reference identity)
+    // and its derived `!=`, via `rb_eq` on boxed operands -- which itself
+    // dispatches a user `==` when one exists, so `a != b` correctly
+    // negates a user-defined `==` even when no `!=` was written.
+    // Receivers with a matching own definition fall through to ordinary
+    // Path 1 dispatch below.
+    if no_kwargs && (name == "==" || name == "!=") && args.len() == 1 && block.is_none() && block_arg.is_none() {
+        if let TyKind::Object(cid) = infer(cx, recv_id) {
+            if cx.compiler.method_in_chain(cid, name).is_none() {
+                let recv_boxed =
+                    super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
+                let arg = emit_expr(cx, args[0]);
+                let arg = super::expr::box_if_object_typed(cx, args[0], arg);
+                let negate = name == "!=";
+                return quote! {
+                    spinel_rt::RubyValue::Bool((#recv_boxed).rb_eq(&(#arg)) != #negate)
+                };
+            }
         }
     }
 
@@ -2692,6 +2723,11 @@ fn dispatch(
             .class(cid)
             .ancestors
             .contains(&crate::compiler::ENUMERABLE_CLASS)
+            || cx
+                .compiler
+                .class(cid)
+                .ancestors
+                .contains(&crate::compiler::COMPARABLE_CLASS)
         {
             if !kwargs.is_empty() {
                 panic!(

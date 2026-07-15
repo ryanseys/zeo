@@ -567,11 +567,12 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
     Ok(result)
 }
 
-/// min/max: blockless compares via a native Int/Float/String `<=>`
-/// (CRuby's OPTIMIZED_CMP fast paths -- user-defined `<=>` dispatch is a
-/// documented gap); the block form receives `(candidate, current)` and
-/// must return a negative/zero/positive Int. First element seeds; empty
-/// -> nil. The `n`-smallest/largest forms are rejected (spike scope).
+/// min/max: blockless compares via `RubyValue::rb_cmp` (Phase 16.2 --
+/// native Int/Float/String fast paths PLUS user-defined `<=>` dispatch,
+/// retiring the documented native-only gap); the block form receives
+/// `(candidate, current)` and must return a negative/zero/positive Int.
+/// First element seeds; empty -> nil. The `n`-smallest/largest forms are
+/// rejected (spike scope).
 fn min_max(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -604,7 +605,7 @@ fn min_max(
                             _ => panic!("Enumerable#{method_name}: comparison block must return an Integer"),
                         }
                     }
-                    None => native_cmp(&elem, b.as_ref().expect("checked Some"), &method_name),
+                    None => cmp_or_fail(&elem, b.as_ref().expect("checked Some"), &method_name),
                 };
                 if want_min {
                     ord < 0
@@ -622,31 +623,15 @@ fn min_max(
     Ok(result)
 }
 
-fn native_cmp(a: &RubyValue, b: &RubyValue, method: &str) -> i64 {
-    let ord = match (a, b) {
-        (RubyValue::Int(x), RubyValue::Int(y)) => x.cmp(y) as i64,
-        (RubyValue::Float(x), RubyValue::Float(y)) => x
-            .partial_cmp(y)
-            .map(|o| o as i64)
-            .unwrap_or_else(|| panic!("comparison of Float with Float failed (NaN)")),
-        (RubyValue::Int(x), RubyValue::Float(y)) => (*x as f64)
-            .partial_cmp(y)
-            .map(|o| o as i64)
-            .unwrap_or_else(|| panic!("comparison of Integer with Float failed (NaN)")),
-        (RubyValue::Float(x), RubyValue::Int(y)) => x
-            .partial_cmp(&(*y as f64))
-            .map(|o| o as i64)
-            .unwrap_or_else(|| panic!("comparison of Float with Integer failed (NaN)")),
-        (RubyValue::Str(x), RubyValue::Str(y)) => {
-            let x = x.lock().clone();
-            let y = y.lock().clone();
-            x.cmp(&y) as i64
-        }
-        (a, b) => panic!(
-            "Enumerable#{method}: comparison of {} with {} isn't supported yet (only Int/Float/String compare natively; user-defined <=> dispatch is spike scope)",
+/// `rb_cmp` with real Ruby's incomparable-elements failure applied
+/// (`ArgumentError: comparison of X with Y failed` -- raised as a loud
+/// panic, the established no-exception-channel posture).
+fn cmp_or_fail(a: &RubyValue, b: &RubyValue, method: &str) -> i64 {
+    a.rb_cmp(b).unwrap_or_else(|| {
+        panic!(
+            "Enumerable#{method}: comparison of {} with {} failed (`<=>` returned nil; ArgumentError in real Ruby -- raised as a panic, spike scope)",
             a.to_display_string(),
             b.to_display_string()
-        ),
-    };
-    ord
+        )
+    })
 }

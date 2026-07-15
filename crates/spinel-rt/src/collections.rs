@@ -96,6 +96,15 @@ pub enum HashKey {
     /// identity, exactly real Ruby's `Class#hash`/`#eql?` (two references
     /// to the same class are one key).
     Class(u32),
+    /// An Object key whose class defines its own `hash` (Phase 16.2): the
+    /// projection of that method's RESULT. Wrapped (not flattened into the
+    /// result's own variant) so a user-hashed object never collides with a
+    /// plain value that happens to equal its hash. Documented
+    /// approximation: two keys with `hash`-equal results are ONE key here
+    /// even if their `eql?` would disagree (this table has no second
+    /// eql?-verification pass); in practice classes define the two
+    /// consistently.
+    Computed(Box<HashKey>),
     Identity(usize),
 }
 
@@ -119,7 +128,19 @@ fn hash_key(v: &RubyValue) -> HashKey {
         // through `*const ()` first to get a plain, `usize`-castable thin
         // pointer to the data alone (the vtable half is irrelevant to
         // identity).
-        RubyValue::Object(o) => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+        //
+        // A user-defined `hash` (Phase 16.2, dispatched once per
+        // insertion/lookup through the registry) projects the object
+        // through its RESULT -- see `HashKey::Computed`'s docs; identity
+        // stays the default (real Ruby's own `Object#hash`). A `hash` that
+        // raises is a loud panic (no exception channel here).
+        RubyValue::Object(o) => match crate::dispatch::call_user_method(o, "hash", &[]) {
+            Some(Ok(v)) => HashKey::Computed(Box::new(hash_key(&v))),
+            Some(Err(_)) => panic!(
+                "a user-defined `hash` raised inside a Hash key lookup (spike scope: no exception channel here)"
+            ),
+            None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+        },
         RubyValue::Proc(p) => HashKey::Identity(Arc::as_ptr(p) as *const () as usize),
         // Same identity-only fallback as `Object`/`Proc` above -- neither has
         // a user-overridable `#hash`/`#eql?` protocol yet (see `HashKey`'s
@@ -132,6 +153,19 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::Queue(q) => HashKey::Identity(Arc::as_ptr(q) as *const () as usize),
         RubyValue::Ractor(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
     }
+}
+
+/// `Object#hash`'s universal answer (Phase 16.2): an `i64` digest of the
+/// value's own `HashKey` projection -- so `"a".hash == "a".hash`,
+/// `[1, 2].hash` is structural, and an Object without a user `hash` digests
+/// by identity, exactly mirroring which values this module's Hash table
+/// would treat as the same key. (Not CRuby's salted SipHash values -- only
+/// the EQUALITY of two hashes is observable behavior worth matching.)
+pub fn value_hash_code(v: &RubyValue) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_key(v).hash(&mut hasher);
+    hasher.finish() as i64
 }
 
 /// A real hash table (`IndexMap`, not a linear-scan association list),

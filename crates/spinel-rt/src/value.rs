@@ -191,7 +191,24 @@ impl RubyValue {
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
-            RubyValue::Object(_) => "#<Object>".to_string(),
+            // A user-defined `to_s` wins (Phase 16.2, dispatched through
+            // the registry so inherited/mixed-in definitions resolve);
+            // default is `#<FQName>` -- real Ruby appends the object
+            // address (`#<Widget:0x...>`), omitted here as a documented
+            // approximation (addresses aren't reproducible output).
+            RubyValue::Object(o) => {
+                match crate::dispatch::call_user_method(o, "to_s", &[]) {
+                    Some(Ok(v)) => v.display_with(seen),
+                    Some(Err(_)) => panic!(
+                        "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
+                    ),
+                    None => format!(
+                        "#<{}>",
+                        crate::dispatch::class_name(o.class_id())
+                            .unwrap_or_else(|| "Object".to_string())
+                    ),
+                }
+            }
             RubyValue::Proc(_) => "#<Proc>".to_string(),
             // `Regexp#to_s` -- real Ruby's `(?opts-negopts:body)` form (NOT
             // the `/pattern/flags` literal form, that's `#inspect`'s job --
@@ -283,8 +300,26 @@ impl RubyValue {
             }
             RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).to_display_string(),
             RubyValue::MatchData(_) => "#<MatchData>".to_string(),
-            // `Bool`/`Int`/`Float`/`Object`/`Proc`: `#inspect` and `#to_s`
-            // agree (or share the same placeholder approximation).
+            // A user-defined `inspect` wins (Phase 16.2); the default is
+            // the same `#<FQName>` form as `to_s`'s -- real Ruby's default
+            // inspect additionally lists ivars and the address, both
+            // omitted (documented approximation). Note: NO fallback to a
+            // user `to_s` (real Ruby's inspect is independent of to_s).
+            RubyValue::Object(o) => {
+                match crate::dispatch::call_user_method(o, "inspect", &[]) {
+                    Some(Ok(v)) => v.display_with(seen),
+                    Some(Err(_)) => panic!(
+                        "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
+                    ),
+                    None => format!(
+                        "#<{}>",
+                        crate::dispatch::class_name(o.class_id())
+                            .unwrap_or_else(|| "Object".to_string())
+                    ),
+                }
+            }
+            // `Bool`/`Int`/`Float`/`Proc`: `#inspect` and `#to_s` agree
+            // (or share the same placeholder approximation).
             other => other.display_with(seen),
         }
     }
@@ -505,19 +540,27 @@ impl RubyValue {
         }
     }
 
-    /// Structural value equality for the primitive variants -- backs
-    /// `case`/`when`'s value-matching desugar (`val === subject`, which for
-    /// every value shape `case/when` currently supports -- `Int`/`Symbol`
-    /// literals -- means the same thing as `==`) and `Hash`'s key lookup
-    /// (`collections::hash_get`/`hash_set`). Deliberately NOT wired into the
-    /// general `==`/`!=` operator table (`codegen::call`, still scoped to
-    /// statically-known `Int` operands): this is a narrower escape hatch,
-    /// not a general `Object#==`. `Array`/`Hash`/`Range`/`Object` values (or
-    /// a mismatched-variant pair) conservatively compare unequal rather than
-    /// panicking or recursing -- element-wise `Array`/`Hash` equality and
-    /// identity/`==` dispatch on arbitrary objects are documented gaps, not
-    /// silent wrongness, until there's a real use for them.
+    /// `==` -- real Ruby's protocol (Phase 16.2, retiring the documented
+    /// "conservatively compare unequal" approximation): scalars compare
+    /// structurally (`1 == 1.0` across the numeric tower), `Array`/`Hash`
+    /// compare ELEMENT-WISE (recursively, cycle-guarded -- see
+    /// `rb_eq_guarded`), and an `Object` receiver dispatches its
+    /// user-defined `==` when one exists, falling back to real Ruby's own
+    /// `Object#==` default: reference identity. Backs `case`/`when`'s
+    /// value-matching desugar, `Array#include?`, `send_value`'s universal
+    /// `==`, and the codegen operator fallback.
     pub fn rb_eq(&self, other: &RubyValue) -> bool {
+        self.rb_eq_guarded(other, &mut Vec::new())
+    }
+
+    /// `rb_eq`'s recursive worker: `seen` holds PAIRS of container
+    /// identities currently being compared -- CRuby's
+    /// `rb_exec_recursive_paired` rule, under which a recursive pair
+    /// compares EQUAL (`a = [1]; a << a; b = [1]; b << b; a == b` is true
+    /// in real Ruby). Collection payloads are cloned before recursing
+    /// (element clones are cheap handle bumps) so no lock is held across a
+    /// nested comparison.
+    fn rb_eq_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
         match (self, other) {
             (RubyValue::Nil, RubyValue::Nil) => true,
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
@@ -533,7 +576,9 @@ impl RubyValue {
             // Class identity (Phase 16.1): `Widget == Widget`, and what
             // `Array#include?` on an array of classes consults.
             (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
-            (RubyValue::Str(a), RubyValue::Str(b)) => *a.lock() == *b.lock(),
+            (RubyValue::Str(a), RubyValue::Str(b)) => {
+                std::sync::Arc::ptr_eq(a, b) || *a.lock() == *b.lock()
+            }
             // Real Ruby `Regexp#==`: same source pattern AND same flags.
             (RubyValue::Regexp(a), RubyValue::Regexp(b)) => {
                 a.source == b.source
@@ -541,7 +586,114 @@ impl RubyValue {
                     && a.extended == b.extended
                     && a.multiline == b.multiline
             }
+            (RubyValue::Array(a), RubyValue::Array(b)) => {
+                if std::sync::Arc::ptr_eq(a, b) {
+                    return true;
+                }
+                let pair = (
+                    container_identity(self).expect("Array is a container"),
+                    container_identity(other).expect("Array is a container"),
+                );
+                if seen.contains(&pair) {
+                    return true;
+                }
+                seen.push(pair);
+                let av: Vec<RubyValue> = a.lock().clone();
+                let bv: Vec<RubyValue> = b.lock().clone();
+                let eq = av.len() == bv.len()
+                    && av.iter().zip(bv.iter()).all(|(x, y)| x.rb_eq_guarded(y, seen));
+                seen.pop();
+                eq
+            }
+            // `Hash#==`: same size, same KEYS (by the key table's own
+            // `eql?`-style projection -- see `collections::HashKey`), each
+            // value `==`.
+            (RubyValue::Hash(a), RubyValue::Hash(b)) => {
+                if std::sync::Arc::ptr_eq(a, b) {
+                    return true;
+                }
+                let pair = (
+                    container_identity(self).expect("Hash is a container"),
+                    container_identity(other).expect("Hash is a container"),
+                );
+                if seen.contains(&pair) {
+                    return true;
+                }
+                seen.push(pair);
+                let pairs: Vec<(RubyValue, RubyValue)> = a.lock().values().cloned().collect();
+                let eq = crate::hash_len(a) == crate::hash_len(b)
+                    && pairs.iter().all(|(k, va)| {
+                        crate::hash_has_key(b, k)
+                            && va.rb_eq_guarded(&crate::hash_get(b, k), seen)
+                    });
+                seen.pop();
+                eq
+            }
+            // An `Object` receiver, real Ruby's resolution order: its
+            // user-defined `==` (dispatched through the registry -- a
+            // materialized method, so inherited/mixed-in definitions
+            // resolve too), then `Comparable#==` derived from `<=>` for an
+            // `include Comparable` class, else `Object#==`'s default:
+            // reference identity. A user `==` that RAISES inside a
+            // structural comparison is a loud panic (spike scope: `rb_eq`
+            // has no exception channel).
+            (RubyValue::Object(o), _) => {
+                match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(other)) {
+                    Some(Ok(v)) => v.truthy(),
+                    Some(Err(_)) => panic!(
+                        "a user-defined `==` raised inside a structural comparison (spike scope: no exception channel here)"
+                    ),
+                    None if crate::dispatch::ancestors_contain(
+                        o.class_id(),
+                        crate::dispatch::COMPARABLE_CLASS,
+                    ) =>
+                    {
+                        self.rb_cmp(other) == Some(0)
+                    }
+                    None => match other {
+                        RubyValue::Object(b) => {
+                            std::sync::Arc::ptr_eq(o, b)
+                                || container_identity(self) == container_identity(other)
+                        }
+                        _ => false,
+                    },
+                }
+            }
             _ => false,
+        }
+    }
+
+    /// `a <=> b` as a signed ordering (Phase 16.2) -- `None` is Ruby's
+    /// `nil` (incomparable). Native Int/Float/String fast paths (CRuby's
+    /// OPTIMIZED_CMP), then a user-defined `<=>` on an `Object` receiver;
+    /// anything else is incomparable. Consumed by `Enumerable#min`/`#max`
+    /// and `comparable::comparable_send` (and Phase 17.1's `sort` family).
+    pub fn rb_cmp(&self, other: &RubyValue) -> Option<i64> {
+        match (self, other) {
+            (RubyValue::Int(a), RubyValue::Int(b)) => Some(a.cmp(b) as i64),
+            (RubyValue::Float(a), RubyValue::Float(b)) => a.partial_cmp(b).map(|o| o as i64),
+            (RubyValue::Int(a), RubyValue::Float(b)) => {
+                (*a as f64).partial_cmp(b).map(|o| o as i64)
+            }
+            (RubyValue::Float(a), RubyValue::Int(b)) => {
+                a.partial_cmp(&(*b as f64)).map(|o| o as i64)
+            }
+            (RubyValue::Str(a), RubyValue::Str(b)) => {
+                let a = a.lock().clone();
+                let b = b.lock().clone();
+                Some(a.cmp(&b) as i64)
+            }
+            (RubyValue::Object(o), _) => {
+                match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(other)) {
+                    Some(Ok(RubyValue::Int(i))) => Some(i.signum()),
+                    Some(Ok(_)) => None,
+                    Some(Err(_)) => panic!(
+                        "a user-defined `<=>` raised inside a comparison (spike scope: no exception channel here)"
+                    ),
+                    None => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -836,6 +988,80 @@ mod tests {
             false,
         );
         assert_eq!(r.dup_value(false).inspect_string(), "1..3");
+    }
+
+    /// Phase 16.2: element-wise `==` (retiring "conservatively compare
+    /// unequal"), including nesting and the recursive-pair rule.
+    #[test]
+    fn arrays_and_hashes_compare_element_wise() {
+        let a = RubyValue::Array(array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Array(array_new(vec![RubyValue::Int(2)])),
+        ]));
+        let b = RubyValue::Array(array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Array(array_new(vec![RubyValue::Int(2)])),
+        ]));
+        assert!(a.rb_eq(&b));
+        assert!(!a.rb_eq(&RubyValue::Array(array_new(vec![RubyValue::Int(1)]))));
+
+        let h1 = hash_new(vec![(sym("a"), RubyValue::Int(1))]);
+        let h2 = hash_new(vec![(sym("a"), RubyValue::Int(1))]);
+        let h3 = hash_new(vec![(sym("a"), RubyValue::Int(2))]);
+        assert!(RubyValue::Hash(h1.clone()).rb_eq(&RubyValue::Hash(h2)));
+        assert!(!RubyValue::Hash(h1).rb_eq(&RubyValue::Hash(h3)));
+    }
+
+    /// CRuby's `rb_exec_recursive_paired` rule: two structurally-identical
+    /// self-referential arrays compare EQUAL (`a = [1]; a << a` twice over
+    /// -- oracle-verified `a == b` is true in real Ruby), and the
+    /// comparison terminates.
+    #[test]
+    fn recursive_pairs_compare_equal_and_terminate() {
+        let a = array_new(vec![RubyValue::Int(1)]);
+        array_push(&a, RubyValue::Array(a.clone()));
+        let b = array_new(vec![RubyValue::Int(1)]);
+        array_push(&b, RubyValue::Array(b.clone()));
+
+        assert!(RubyValue::Array(a).rb_eq(&RubyValue::Array(b)));
+    }
+
+    /// `rb_cmp`'s native tiers; `None` is Ruby's nil (incomparable).
+    #[test]
+    fn rb_cmp_orders_the_native_tiers() {
+        assert_eq!(RubyValue::Int(1).rb_cmp(&RubyValue::Int(2)), Some(-1));
+        assert_eq!(RubyValue::Int(2).rb_cmp(&RubyValue::Float(2.0)), Some(0));
+        assert_eq!(RubyValue::Float(3.5).rb_cmp(&RubyValue::Int(3)), Some(1));
+        assert_eq!(
+            RubyValue::Str(string_new("a".into())).rb_cmp(&RubyValue::Str(string_new("b".into()))),
+            Some(-1)
+        );
+        assert_eq!(
+            RubyValue::Float(f64::NAN).rb_cmp(&RubyValue::Float(1.0)),
+            None,
+            "NaN is incomparable, like real Ruby's nil"
+        );
+        assert_eq!(RubyValue::Int(1).rb_cmp(&sym("x")), None);
+    }
+
+    /// `Object#hash`'s universal digest agrees exactly where the Hash
+    /// table would treat two values as one key.
+    #[test]
+    fn value_hash_code_is_structural() {
+        use crate::value_hash_code;
+        assert_eq!(
+            value_hash_code(&RubyValue::Str(string_new("a".into()))),
+            value_hash_code(&RubyValue::Str(string_new("a".into())))
+        );
+        assert_eq!(
+            value_hash_code(&RubyValue::Array(array_new(vec![RubyValue::Int(1)]))),
+            value_hash_code(&RubyValue::Array(array_new(vec![RubyValue::Int(1)])))
+        );
+        assert_ne!(
+            value_hash_code(&RubyValue::Int(1)),
+            value_hash_code(&RubyValue::Float(1.0)),
+            "eql?-style keying: 1 and 1.0 are distinct keys"
+        );
     }
 
     /// One representative of the rejected tier (Thread/Queue/Ractor/Fiber
