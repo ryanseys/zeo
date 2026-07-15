@@ -264,8 +264,23 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, class)| idx != 0 && !class.class_methods.is_empty())
+        .filter(|&(idx, class)| idx != 0 && !class.is_builtin && !class.class_methods.is_empty())
         .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)));
+
+    // A REOPENED builtin class (Phase 16.3): one `pub mod __bm_<Name>`
+    // container per builtin that gained any methods, holding its instance
+    // methods as free functions (`__self: RubyValue` receiver) and its
+    // `def self.x` class methods together (which is why the builtin case is
+    // excluded from `class_method_containers` above -- two `mod` items with
+    // one name would be a Rust E0428). See `emit_builtin_reopen`'s docs.
+    let builtin_reopens = compiler
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|&(_, class)| {
+            class.is_builtin && (!class.methods.is_empty() || !class.class_methods.is_empty())
+        })
+        .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)));
 
     // In FILE order (matching real Ruby's "a class/module body runs
     // immediately as it's defined"): register the class's dispatch table
@@ -321,6 +336,38 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             let name = &class.name;
             let is_module = class.is_module;
             let ancestor_ids = class.ancestors.iter().map(|a| a.0);
+            // A REOPENED builtin (Phase 16.3): each of its methods (own or
+            // module-included, all already materialized) registers as a
+            // value method so `send_value` dispatches it FIRST -- see
+            // `ValueMethodFn`'s docs for the precedence contract. Its
+            // `@@cvar = .../CONST = ...` body statements run here too --
+            // slightly earlier than their file position (builtins register
+            // ahead of user classes), a documented approximation that only
+            // matters if a builtin's class body reads a user class.
+            let value_defs = class.methods.iter().map(|&sid| {
+                let scope = compiler.scope(sid);
+                let mod_ident = ident::class_ident(compiler, ClassId(id));
+                let method_ident = safe_ident(&scope.name);
+                let fn_path = quote! { #mod_ident::#method_ident };
+                let tramp = params::emit_value_trampoline(
+                    &fn_path,
+                    &scope.name,
+                    &scope.params,
+                    scope.needs_block_param(),
+                );
+                // The dispatch KEY is the real Ruby name, not the escaped
+                // Rust ident -- same reasoning as `emit_class`'s
+                // `dispatch_key`.
+                let key = &scope.name;
+                quote! {
+                    __registry.define_value_method(
+                        spinel_rt::ClassId(#id),
+                        spinel_rt::Symbol::intern(#key),
+                        #tramp,
+                    );
+                }
+            });
+            let class_body = emit_class_body_stmts(compiler, ClassId(id));
             quote! {
                 __registry.register(
                     spinel_rt::ClassId(#id),
@@ -329,6 +376,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
                     None,
                 );
+                #(#value_defs)*
+                #class_body
             }
         });
 
@@ -368,6 +417,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     quote! {
         #(#classes)*
         #(#class_method_containers)*
+        #(#builtin_reopens)*
 
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
@@ -587,6 +637,119 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     };
     quote! {
         pub fn #method_ident(#(#sig_params),*) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            #body_tokens
+        }
+    }
+}
+
+/// The generated container for a REOPENED builtin class (Phase 16.3) -- a
+/// `pub mod __bm_<Name>` (see `ident::class_ident`'s builtin mangling for
+/// why not a bare `pub mod String`) holding the reopen's instance methods
+/// as FREE FUNCTIONS (`__self: RubyValue` first parameter -- a builtin has
+/// no struct for a `self: Arc<Self>` receiver) and its `def self.x` class
+/// methods (the same `emit_class_method_fn` shape a module container gets).
+/// Both kinds share one module, so one name can't be both -- a clean panic
+/// rather than a confusing generated-`rustc` duplicate-definition error.
+fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
+    let ci = compiler.class(cid);
+    for &sid in &ci.methods {
+        let n = &compiler.scope(sid).name;
+        if ci
+            .class_methods
+            .iter()
+            .any(|&cs| compiler.scope(cs).name == *n)
+        {
+            panic!(
+                "the built-in class `{}` defines both an instance method and a class method named `{n}` -- not supported yet (spike scope: they share one generated container)",
+                ci.name
+            );
+        }
+    }
+    let mod_ident = ident::class_ident(compiler, cid);
+    let instance_fns = ci
+        .methods
+        .iter()
+        .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+    let class_fns = ci
+        .class_methods
+        .iter()
+        .map(|&sid| emit_class_method_fn(compiler, sid));
+    // `use super::*;` for the same reason a module's class-method container
+    // needs it (see `emit_class_methods`): a `pub mod` is a real child
+    // module, and these bodies reference sibling top-level items.
+    quote! {
+        #[allow(non_snake_case)]
+        pub mod #mod_ident { #[allow(unused_imports)] use super::*; #(#instance_fns)* #(#class_fns)* }
+    }
+}
+
+/// One reopened-builtin INSTANCE method (Phase 16.3) -- the free-function
+/// counterpart of `emit_class`'s per-method emission: same params
+/// machinery, same hoisting, same `Signal::Return` catch rule; the receiver
+/// is the `__self: RubyValue` first parameter (`Ctx::self_ident` points at
+/// it, so `SelfRef`/interpolation/`yield` all compose unchanged), and
+/// `current_class` carries the builtin's id so `self` types as the builtin
+/// kind (see `expr::builtin_self_ty`) and implicit-self calls resolve
+/// against the reopen's own methods.
+fn emit_builtin_method_fn(
+    compiler: &Compiler,
+    cid: ClassId,
+    sid: crate::compiler::ScopeId,
+) -> TokenStream {
+    let scope = compiler.scope(sid);
+    let method_ident = safe_ident(&scope.name);
+    let needs_block = scope.needs_block_param();
+    let sig_params = params::emit_signature_params(&scope.params, needs_block);
+    let label_counter = Cell::new(0u32);
+    let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params);
+    let cx = Ctx {
+        compiler,
+        box_id: compiler.class(scope.defining_class).box_id,
+        current_class: Some(cid),
+        defining_class: Some(scope.defining_class),
+        current_method: Some(scope.name.clone()),
+        local_types: std::borrow::Cow::Borrowed(&scope.local_types),
+        label_counter: &label_counter,
+        loop_labels: None,
+        for_var_override: None,
+        captured_locals: &method_captures.locals,
+        self_ident: format_ident!("__self"),
+        in_real_proc: false,
+    };
+    let prologue = params::emit_prologue(&cx, &scope.params);
+    let body = hoisting::emit_hoisted_body_with_extra_roots(
+        &cx,
+        &scope.body,
+        &scope.params.default_ids(),
+        &scope.params.bound_names(),
+        true,
+    );
+    // Same needs-a-`Signal::Return`-catch rule as `emit_class`'s methods --
+    // see the long comment there.
+    let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
+        || captures::body_contains_begin(compiler, &scope.body);
+    let body_tokens = if needs_return_catch {
+        quote! {
+            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                #prologue
+                #body
+            })().or_else(|__e| match __e {
+                spinel_rt::Signal::Return(__v) => Ok(__v),
+                __e => Err(__e),
+            })
+        }
+    } else {
+        quote! {
+            #prologue
+            #body
+        }
+    };
+    // `allow(unused_variables)`: a reopen method that never references
+    // `self` leaves `__self` unread -- unlike a real `self` receiver
+    // parameter, which rustc never warns about.
+    quote! {
+        #[allow(unused_variables)]
+        pub fn #method_ident(__self: spinel_rt::RubyValue #sig_params) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
             #body_tokens
         }
     }

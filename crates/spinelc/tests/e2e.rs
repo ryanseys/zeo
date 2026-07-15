@@ -4057,10 +4057,14 @@ fn subclassing_a_built_in_type_is_a_clean_error() {
 }
 
 #[test]
-fn reopening_a_built_in_class_name_is_a_clean_error() {
+fn reopening_object_is_a_clean_error() {
+    // Reopening builtin VALUE classes became real in Phase 16.3 (see the
+    // builtin_reopen tests at the bottom of this file); `Object` stays
+    // cleanly rejected -- an Object reopen is top-level `def` by another
+    // name, which is Phase 18's per-box top-level-methods job.
     let err = spinelc::compile_to_rust(
         r#"
-        class Array
+        class Object
           def foo
             1
           end
@@ -4068,7 +4072,7 @@ fn reopening_a_built_in_class_name_is_a_clean_error() {
         "#,
     )
     .unwrap_err();
-    assert!(err.contains("reopening/redefining the built-in class"), "{err}");
+    assert!(err.contains("reopening the built-in class `Object`"), "{err}");
 }
 
 // --- Phase 12.7: Regexp -----------------------------------------------
@@ -7753,10 +7757,12 @@ fn blockless_enumerator_forms_panic_clearly() {
 #[test]
 fn redefining_enumerable_in_ruby_is_rejected() {
     // Enumerable is a RUST-implemented builtin now (the whole point of
-    // rev.2) -- a Ruby-source redefinition is the builtin-reopen error.
+    // rev.2) -- and builtin MODULES stayed un-reopenable through Phase 16.3
+    // (patching one would need re-materialization onto every includer,
+    // including the Rust-backed builtin fallbacks).
     let err = spinelc::compile_to_rust("module Enumerable\n  def map\n  end\nend\n").unwrap_err();
     assert!(
-        err.contains("built-in class `Enumerable`"),
+        err.contains("built-in module `Enumerable`"),
         "unexpected error: {err}"
     );
 }
@@ -8756,4 +8762,300 @@ fn explicit_triple_equals_on_class_values_checks_ancestry() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\ntrue\nfalse\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 16.3 -- builtin-class reopening (root). Every expectation below was
+// oracle-verified against real `ruby` (4.0.5) before being written down.
+// ---------------------------------------------------------------------------
+
+/// The Box docs' motivating example shape: a fresh method on `class String`,
+/// dispatching statically ("".blank?), dynamically through a Poly ivar
+/// (@s.blank?), and calling a NATIVE builtin method (`length`) implicitly on
+/// self from inside the reopen.
+#[test]
+fn builtin_reopen_string_blank_dispatches_everywhere() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def blank?
+            length == 0
+          end
+        end
+
+        class Foo
+          def initialize(s)
+            @s = s
+          end
+
+          def foo_is_blank?
+            @s.blank?
+          end
+        end
+
+        puts "".blank?
+        puts "  hi".blank?
+        puts Foo.new("").foo_is_blank?
+        puts Foo.new("x").foo_is_blank?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\nfalse\n");
+}
+
+/// Overriding an EXISTING native method: the user `length` wins at a static
+/// call site (where `try_collection_dispatch` would answer 3), at a dynamic
+/// Poly site, and `size` -- a separate method in real Ruby, NOT an alias of
+/// the override -- stays native.
+#[test]
+fn builtin_reopen_override_beats_native_length() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def length
+            42
+          end
+        end
+
+        s = "abc"
+        puts s.length
+        puts [s].first.length
+        puts "xy".size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n42\n2\n");
+}
+
+/// Blocks through a builtin reopen: `yield` + an optional parameter, and an
+/// escaping block that captures both a mutated local (a Captured cell) and
+/// `self` (the `__self: RubyValue` clone path).
+#[test]
+fn builtin_reopen_methods_take_blocks_and_capture_self() {
+    let result = support::run_ruby(
+        r#"
+        class Integer
+          def repeat(sep = "-")
+            out = ""
+            i = 0
+            while i < self
+              out = out + yield(i).to_s
+              out = out + sep if i < self - 1
+              i = i + 1
+            end
+            out
+          end
+
+          def add_each(arr)
+            total = 0
+            arr.each do |x|
+              total = total + x + self
+            end
+            total
+          end
+        end
+
+        puts 3.repeat { |i| i * 2 }
+        puts 2.repeat("+") { |i| i + 1 }
+        puts 10.add_each([1, 2, 3])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0-2-4\n1+2\n36\n");
+}
+
+/// Class-level state on a builtin: `@@cvar` + `CONST` in the body (ordinary
+/// ownership machinery, owner = the builtin's ClassId), `def self.x` via the
+/// generated `__bm_Array` container, and `Array::LIMIT` readable externally.
+#[test]
+fn builtin_reopen_cvars_consts_and_class_methods() {
+    let result = support::run_ruby(
+        r#"
+        class Array
+          @@made = 0
+          LIMIT = 3
+
+          def self.tally_up
+            @@made = @@made + 1
+            @@made
+          end
+
+          def under_limit?
+            length < LIMIT
+          end
+        end
+
+        puts Array.tally_up
+        puts Array.tally_up
+        puts [1, 2].under_limit?
+        puts [1, 2, 3, 4].under_limit?
+        puts Array::LIMIT
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\ntrue\nfalse\n3\n");
+}
+
+/// A patch calling another patch (implicit self -> direct free-fn call, the
+/// result's `+` going back through dynamic String dispatch), and an unknown
+/// method still raising real Ruby's exact NoMethodError.
+#[test]
+fn builtin_reopen_chained_patches_and_nme() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def shout
+            exclaim + "?"
+          end
+
+          def exclaim
+            self + "!"
+          end
+        end
+
+        puts "hey".shout
+        begin
+          "hey".nope
+        rescue NoMethodError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hey!?\nundefined method 'nope' for an instance of String\n"
+    );
+}
+
+/// The receiver-kind breadth: NilClass (no static TyKind -- fully dynamic),
+/// Hash (implicit native `size`), and Range (static `self.last`/`self.first`
+/// fast paths inside the reopen body).
+#[test]
+fn builtin_reopen_nil_hash_and_range() {
+    let result = support::run_ruby(
+        r#"
+        class NilClass
+          def describe
+            "nothing"
+          end
+        end
+
+        class Hash
+          def pair_count
+            size
+          end
+        end
+
+        class Range
+          def span
+            self.last - self.first
+          end
+        end
+
+        puts nil.describe
+        puts({ a: 1, b: 2 }.pair_count)
+        puts (3..9).span
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nothing\n2\n6\n");
+}
+
+/// Full `Params` support on a reopen method (required + rest), plus
+/// `respond_to?` seeing value methods through the widened registry probe.
+#[test]
+fn builtin_reopen_rest_params_and_respond_to() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def tag(first, *rest)
+            label = first.to_s
+            rest.each do |r|
+              label = label + "|" + r.to_s
+            end
+            label + ":" + self
+          end
+        end
+
+        puts "v".tag("a", "b", "c")
+        puts "w".tag("z")
+        puts "x".respond_to?(:tag)
+        puts "x".respond_to?(:zzz)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a|b|c:v\nz:w\ntrue\nfalse\n");
+}
+
+/// `to_s`/`inspect` overrides on a builtin drive `puts`, interpolation,
+/// `p`, CONTAINER inspect (real Ruby's rb_inspect dispatches per element --
+/// oracle-verified `[5].inspect` -> `[I]`), and explicit `.to_s`.
+#[test]
+fn builtin_reopen_to_s_and_inspect_drive_rendering() {
+    let result = support::run_ruby(
+        r#"
+        class Integer
+          def to_s
+            "int"
+          end
+
+          def inspect
+            "I"
+          end
+        end
+
+        puts 5
+        puts "v=#{5}"
+        p 7
+        puts [5].inspect
+        puts 6.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "int\nv=int\nI\n[I]\nint\n");
+}
+
+/// A `dup` override beats universal `Kernel#dup` on both the static String
+/// site and a Poly site (the any-builtin-overrides fall-through); `clone`
+/// -- not overridden -- stays the universal shallow copy.
+#[test]
+fn builtin_reopen_dup_override_beats_kernel_dup() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def dup
+            "dupped"
+          end
+        end
+
+        s = "orig"
+        puts s.dup
+        puts [s].first.dup
+        puts s.clone
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "dupped\ndupped\norig\n");
+}
+
+/// `send` with a literal symbol reaches a reopen method through
+/// `send_value`'s value-method-first probe (the generated arity-checked
+/// trampoline), same result as the direct static call.
+#[test]
+fn builtin_reopen_methods_reachable_via_send() {
+    let result = support::run_ruby(
+        r#"
+        class String
+          def echo(a, b)
+            a.to_s + b.to_s + self
+          end
+        end
+
+        puts "s".send(:echo, 1, 2)
+        puts "s".echo(9, 8)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "12s\n98s\n");
 }

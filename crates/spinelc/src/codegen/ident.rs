@@ -140,5 +140,19 @@ pub(super) fn class_ident(
             proc_macro2::Span::call_site(),
         );
     }
+    // A reopened BUILTIN's container `pub mod` (Phase 16.3 -- the only
+    // generated item a builtin ever gets, see `emit_builtin_reopen`) is
+    // prefix-mangled: a bare `pub mod String` would shadow the prelude
+    // `String` TYPE at the crate root (Rust modules and types share a
+    // namespace), breaking every generated body that names `String`.
+    // `Object` stays un-mangled -- it never gets generated items at all
+    // (reopening it is rejected), and its ident may still be referenced by
+    // pre-16.3 paths expecting the plain name.
+    if ci.is_builtin && cid != crate::compiler::OBJECT_CLASS {
+        return proc_macro2::Ident::new(
+            &format!("__bm_{}", ci.name),
+            proc_macro2::Span::call_site(),
+        );
+    }
     safe_ident(&ci.name)
 }

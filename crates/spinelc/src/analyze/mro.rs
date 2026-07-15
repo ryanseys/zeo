@@ -149,6 +149,19 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         }
     }
 
+    // A reopened BUILTIN class (Phase 16.3) has no generated struct, so
+    // there is nowhere for an `@ivar` to live -- a clean rejection here
+    // (which also catches ivars arriving via an `include`d module) beats a
+    // confusing `rustc` failure on the generated free functions. Real Ruby
+    // allows generic ivars on (unfrozen) builtin instances; documented
+    // divergence, spike scope.
+    if compiler.class(class_id).is_builtin && !ivars.is_empty() {
+        return Err(format!(
+            "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (spike scope: built-in values have no ivar storage)",
+            ivars[0],
+            compiler.class(class_id).name
+        ));
+    }
     let ci = &mut compiler.classes[class_id.0 as usize];
     ci.methods = materialized;
     ci.ivars = ivars;

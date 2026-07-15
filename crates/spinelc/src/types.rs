@@ -71,6 +71,44 @@ fn no_locals() -> HashMap<String, TyKind> {
     HashMap::new()
 }
 
+/// Whether a REOPENED builtin class (Phase 16.3) overrides `name` for a
+/// receiver of static type `recv_ty` -- the guard every builtin-receiver
+/// result-narrowing arm below must consult: `class String; def length;
+/// "long"; end` makes the old `length -> Int` narrowing unsound (the
+/// override's result is whatever it returns, so the call types `Poly`).
+/// Free for un-reopened builtins: their materialized method table is empty.
+fn builtin_override(compiler: &Compiler, recv_ty: TyKind, name: &str) -> bool {
+    use crate::compiler::{
+        ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, PROC_CLASS,
+        RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    };
+    let cid = match recv_ty {
+        TyKind::Int => INTEGER_CLASS,
+        TyKind::Float => FLOAT_CLASS,
+        TyKind::Str => STRING_CLASS,
+        TyKind::Symbol => SYMBOL_CLASS,
+        TyKind::Array => ARRAY_CLASS,
+        TyKind::Hash => HASH_CLASS,
+        TyKind::Range => RANGE_CLASS,
+        TyKind::Proc => PROC_CLASS,
+        TyKind::Regexp => REGEXP_CLASS,
+        TyKind::MatchData => MATCH_DATA_CLASS,
+        _ => return false,
+    };
+    // Both tables: `methods` (materialized -- complete, but only AFTER
+    // `mro::materialize` runs) and `own_methods` (populated during
+    // registration, so per-scope local-type inference -- which runs at
+    // `register_method` time -- already sees a reopen defined earlier in
+    // the file; the same defined-earlier posture the rest of the one-pass
+    // analyze has).
+    compiler.method_in_chain(cid, name).is_some()
+        || compiler
+            .class(cid)
+            .own_methods
+            .iter()
+            .any(|&sid| compiler.scope(sid).name == name)
+}
+
 /// Context-free type inference: given a node, what's its static type,
 /// ignoring any local variable bindings in scope? Mirrors `infer_type`/
 /// `infer_uncached` (`analyze_infer.c:4771`/`4225`) at spike scope: no
@@ -198,7 +236,13 @@ pub fn infer_type_with_locals(
                 ARRAY_CLASS, CLASS_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MODULE_CLASS,
                 PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
             };
-            match infer_type_with_locals(compiler, defining, locals, *recv) {
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            // A reopened builtin's `class` override defeats the fold --
+            // see `builtin_override`'s docs (Phase 16.3).
+            if builtin_override(compiler, recv_ty, "class") {
+                return TyKind::Poly;
+            }
+            match recv_ty {
                 TyKind::Object(cid) if compiler.method_in_chain(cid, "class").is_none() => {
                     TyKind::ClassObj(cid)
                 }
@@ -230,7 +274,13 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && (name == "length" || name == "size") => {
-            match infer_type_with_locals(compiler, defining, locals, *recv) {
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            // A reopened builtin's override may return anything (Phase
+            // 16.3) -- see `builtin_override`'s docs.
+            if builtin_override(compiler, recv_ty, name) {
+                return TyKind::Poly;
+            }
+            match recv_ty {
                 TyKind::Array | TyKind::Hash | TyKind::Str => TyKind::Int,
                 _ => TyKind::Poly,
             }
@@ -248,7 +298,11 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && name == "freeze" => {
-            match infer_type_with_locals(compiler, defining, locals, *recv) {
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            if builtin_override(compiler, recv_ty, name) {
+                return TyKind::Poly;
+            }
+            match recv_ty {
                 t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
                 _ => TyKind::Poly,
             }
@@ -264,7 +318,11 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && (name == "dup" || name == "clone") => {
-            match infer_type_with_locals(compiler, defining, locals, *recv) {
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            if builtin_override(compiler, recv_ty, name) {
+                return TyKind::Poly;
+            }
+            match recv_ty {
                 t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
                 _ => TyKind::Poly,
             }
@@ -290,6 +348,9 @@ pub fn infer_type_with_locals(
             };
             let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
             let arg_ty = infer_type_with_locals(compiler, defining, locals, arg);
+            if builtin_override(compiler, recv_ty, name) {
+                return TyKind::Poly;
+            }
             match (recv_ty, arg_ty) {
                 (TyKind::Regexp, TyKind::Str) | (TyKind::Str, TyKind::Regexp) => TyKind::MatchData,
                 _ => TyKind::Poly,
@@ -307,7 +368,11 @@ pub fn infer_type_with_locals(
             args,
             ..
         } if args.is_empty() && matches!(name.as_str(), "to_a" | "captures" | "named_captures") => {
-            match infer_type_with_locals(compiler, defining, locals, *recv) {
+            let recv_ty = infer_type_with_locals(compiler, defining, locals, *recv);
+            if builtin_override(compiler, recv_ty, name) {
+                return TyKind::Poly;
+            }
+            match recv_ty {
                 TyKind::MatchData if name == "named_captures" => TyKind::Hash,
                 TyKind::MatchData => TyKind::Array,
                 _ => TyKind::Poly,

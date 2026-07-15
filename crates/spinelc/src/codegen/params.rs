@@ -179,6 +179,55 @@ pub fn emit_call_args(
     block_arg: Option<NodeId>,
     needs_block: bool,
 ) -> TokenStream {
+    emit_call_args_to(
+        cx,
+        &Callee::Method(recv_expr.clone()),
+        method_name,
+        params,
+        args,
+        kwargs,
+        block,
+        block_arg,
+        needs_block,
+    )
+}
+
+/// How `emit_call_args_to` spells the actual invocation once the argument
+/// list is built -- ordinary Path-1 method syntax, or a builtin-reopen FREE
+/// FUNCTION (Phase 16.3), whose receiver `RubyValue` is passed as the
+/// generated `__self` first argument instead of a method receiver.
+pub enum Callee {
+    Method(TokenStream),
+    FreeFn { path: TokenStream, recv: TokenStream },
+}
+
+impl Callee {
+    fn invoke(&self, method_name: &str, arg_list: TokenStream) -> TokenStream {
+        let method_ident = safe_ident(method_name);
+        match self {
+            Callee::Method(recv) => quote! { (#recv).#method_ident(#arg_list) },
+            // No parens around `#recv` (a call ARGUMENT position needs
+            // none -- rustc lints them as unnecessary); the trailing comma
+            // after it is always valid call syntax, whether `arg_list` is
+            // empty or not.
+            Callee::FreeFn { path, recv } => quote! { #path(#recv, #arg_list) },
+        }
+    }
+}
+
+/// `emit_call_args`, generalized over the invocation shape (see `Callee`).
+#[allow(clippy::too_many_arguments)]
+pub fn emit_call_args_to(
+    cx: &Ctx,
+    callee: &Callee,
+    method_name: &str,
+    params: &Params,
+    args: &[NodeId],
+    kwargs: &[HashPair],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+    needs_block: bool,
+) -> TokenStream {
     // Fast path: a plain required-only callee with no call-site kwargs and
     // no block channel -- by far the common case, and everything Path 1
     // ever supported before `Params` existed. Emit the exact same simple
@@ -193,7 +242,6 @@ pub fn emit_call_args(
         && kwargs.is_empty()
         && !needs_block
     {
-        let method_ident = safe_ident(method_name);
         // Boxed via `box_if_object_typed`: the callee's own Rust parameter
         // type is always plain `RubyValue` (an ordinary parameter is never
         // inferred `TyKind::Object` -- see that function's docs), but an
@@ -205,7 +253,8 @@ pub fn emit_call_args(
             let e = emit_expr(cx, a);
             box_if_object_typed(cx, a, e)
         });
-        return quote! { (#recv_expr).#method_ident(#(#arg_exprs),*)? };
+        let call = callee.invoke(method_name, quote! { #(#arg_exprs),* });
+        return quote! { #call? };
     }
 
     let nreq = params.required.len();
@@ -354,12 +403,12 @@ pub fn emit_call_args(
         TokenStream::new()
     };
 
-    let method_ident = safe_ident(method_name);
-    let call_expr = quote! {
-        (#recv_expr).#method_ident(
+    let call_expr = callee.invoke(
+        method_name,
+        quote! {
             #(#required_args,)* #(#optional_args,)* #rest_arg #(#post_args,)* #(#keyword_args,)* #keyword_rest_arg #block_arg_value
-        )
-    };
+        },
+    );
     // `catch_break` only matters when the callee might actually invoke a
     // block (see its docs) -- gated on `needs_block` rather than applied
     // unconditionally, purely to avoid the extra match on every ordinary
@@ -467,6 +516,75 @@ pub fn emit_dynamic_trampoline(
             let __opt_bound = (args.len() - #min_lit).min(#nopt);
             #class_ident::#method_ident(
                 this,
+                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #block_arg
+            )
+        }
+    }
+}
+
+/// The Path 2 trampoline for a BUILTIN-REOPEN method (Phase 16.3) -- the
+/// `ValueMethodFn`-shaped counterpart of `emit_dynamic_trampoline` above
+/// (same arity checking, same keyword-parameter scope-cut), minus the
+/// `RObj` downcast: the receiver is the builtin `RubyValue` itself, cloned
+/// into the free function's `__self` first parameter. Registered from
+/// generated `main()` via `ClassRegistry::define_value_method`.
+pub fn emit_value_trampoline(
+    fn_path: &TokenStream,
+    method_name: &str,
+    params: &Params,
+    needs_block: bool,
+) -> TokenStream {
+    if !params.keywords.is_empty() || params.keyword_rest.is_some() {
+        return quote! {
+            |_recv: &spinel_rt::RubyValue, _args: &[spinel_rt::RubyValue], _blk: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+                panic!(
+                    "dynamic dispatch to `{}` isn't supported yet (spike scope): it declares keyword parameters, which `send`/`method_missing` don't bind yet -- call it directly instead",
+                    #method_name
+                )
+            }
+        };
+    }
+
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let has_rest = params.rest.is_some();
+    let min_lit = nreq + npost;
+    // Same `Option`-built bounds as `emit_dynamic_trampoline` -- see its
+    // comment for why a missing bound is skipped entirely.
+    let min_cond = (min_lit > 0).then(|| quote! { args.len() < #min_lit });
+    let max_cond = (!has_rest).then(|| {
+        let max_lit = nreq + nopt + npost;
+        quote! { args.len() > #max_lit }
+    });
+    let arity_check = match (min_cond, max_cond) {
+        (None, None) => quote! {},
+        (Some(a), None) => quote! { if #a { panic!("wrong number of arguments for {}", #method_name); } },
+        (None, Some(b)) => quote! { if #b { panic!("wrong number of arguments for {}", #method_name); } },
+        (Some(a), Some(b)) => {
+            quote! { if #a || #b { panic!("wrong number of arguments for {}", #method_name); } }
+        }
+    };
+
+    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
+    let optional_args = (0..nopt).map(|i| {
+        let idx = nreq + i;
+        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
+    });
+    let rest_arg = params.rest.iter().flatten().map(|_| {
+        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
+    });
+    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
+    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let block_arg = needs_block.then(|| quote! { blk, });
+
+    quote! {
+        |recv: &spinel_rt::RubyValue, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            #arity_check
+            #[allow(unused_variables)]
+            let __opt_bound = (args.len() - #min_lit).min(#nopt);
+            #fn_path(
+                recv.clone(),
                 #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #block_arg
             )
         }

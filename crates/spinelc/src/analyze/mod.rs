@@ -115,21 +115,45 @@ fn register_class(
             None => (cref.last().copied(), name.clone(), false),
         },
     };
-    // A built-in placeholder (`Integer`/`Array`/etc. -- see
-    // `spinel_abi::BUILTINS`) has no generated Rust struct to reopen or
-    // add methods onto; reopening one is Phase 16.3's job. Reject cleanly
-    // here rather than let this surface later as a confusing
-    // generated-`rustc`-compile failure or silently-wrong dispatch. Only a
-    // TOP-LEVEL name can collide: `module Store; class String; end; end`
-    // defines a fresh, unrelated `Store::String` (real Ruby's rule), which
-    // then lexically shadows the builtin inside `Store` -- also real
-    // Ruby's rule, falling out of `resolve_class`'s scope walk.
+    // Reopening a BUILTIN class (Phase 16.3): `class String ... end` at the
+    // top level ATTACHES to the existing builtin `ClassInfo` -- its methods
+    // dispatch as value methods on the `RubyValue` itself (see
+    // `codegen::mod::emit_builtin_reopen`), its `@@cvar`/`CONST` body
+    // statements ride the ordinary ownership machinery. Only a TOP-LEVEL
+    // name can collide: `module Store; class String; end; end` defines a
+    // fresh, unrelated `Store::String` (real Ruby's rule), which then
+    // lexically shadows the builtin inside `Store` -- also real Ruby's
+    // rule, falling out of `resolve_class`'s scope walk. Still rejected
+    // (clean errors, spike scope): `Object` (per-box TOP-LEVEL methods are
+    // Phase 18's job -- an Object reopen is top-level `def` by another
+    // name), `Class`/`Module` (no per-class-value dispatch exists), and
+    // the builtin MODULES (`Enumerable`/`Comparable` -- patching one would
+    // need re-materialization onto every includer, including the Rust-
+    // backed builtin fallbacks).
     let existing = compiler.class_in_scope(lexical_parent, &leaf, 0);
     if let Some(cid) = existing {
-        if compiler.class(cid).is_builtin {
-            return Err(format!(
-                "reopening/redefining the built-in class `{name}` isn't supported yet (spike scope)"
-            ));
+        let ci = compiler.class(cid);
+        // NOTE: the implicit `Object` root (id 0) is NOT `is_builtin` (it
+        // predates the `spinel_abi::BUILTINS` placeholders -- see
+        // `Compiler::new`), so it's checked by id alongside them.
+        if ci.is_builtin || cid == OBJECT_CLASS {
+            use crate::compiler::{CLASS_CLASS, MODULE_CLASS};
+            // A KIND mismatch (`module String`) falls through to the
+            // ordinary reopen guard below instead, which produces real
+            // Ruby's own TypeError message shape ("String is not a module").
+            if ci.is_module == is_module
+                && (cid == OBJECT_CLASS || cid == CLASS_CLASS || cid == MODULE_CLASS || ci.is_module)
+            {
+                return Err(format!(
+                    "reopening the built-in {} `{name}` isn't supported yet (spike scope)",
+                    if ci.is_module { "module" } else { "class" }
+                ));
+            }
+            if superclass.is_some() {
+                return Err(format!(
+                    "reopening the built-in class `{name}` with a superclass clause isn't supported (spike scope)"
+                ));
+            }
         }
     }
     let class_id = match existing {
@@ -209,6 +233,21 @@ fn register_class(
                     *is_class_method,
                     *visibility,
                 );
+                // An OPERATOR definition on a builtin reopen (`class
+                // Integer; def +`) is rejected outright (Phase 16.3, spike
+                // scope): the native `Int`/`Float`/`Str` operator fast
+                // paths are emitted unconditionally at every static call
+                // site, so a user operator would be silently bypassed
+                // there -- a loud rejection beats dispatch that only
+                // sometimes honors the override.
+                if compiler.class(class_id).is_builtin
+                    && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
+                {
+                    return Err(format!(
+                        "defining operator `{name}` on the built-in class `{}` isn't supported yet (spike scope: static operator fast paths would bypass it)",
+                        compiler.class(class_id).name
+                    ));
+                }
                 let sid = register_method(compiler, class_id, class_id, name, params, body, visibility)?;
                 add_own_method(compiler, class_id, sid, is_class_method);
             }
@@ -1016,9 +1055,115 @@ mod tests {
 
     /// Builtins stay un-reopenable until Phase 16.3 (loud, not silent).
     #[test]
-    fn reopening_a_builtin_is_still_rejected() {
-        assert!(analyze_err("class Integer\n  def double\n    self\n  end\nend\n")
+    fn reopening_a_builtin_module_is_still_rejected() {
+        // Value CLASSES became reopenable in Phase 16.3; the module tier
+        // (Enumerable/Comparable) did not -- see `builtin_reopen_tests`.
+        assert!(analyze_err("module Enumerable\n  def stat\n    0\n  end\nend\n")
             .contains("isn't supported yet (spike scope)"));
+    }
+}
+
+/// Phase 16.3: reopening a BUILTIN value class attaches methods/cvars/
+/// consts to the existing builtin `ClassInfo`; the still-rejected set
+/// (Object, Class/Module, builtin modules, superclass clauses, operators,
+/// ivars) rejects with clean messages.
+#[cfg(test)]
+mod builtin_reopen_tests {
+    use super::tests::{analyze_err, analyze_src, class_named};
+    use crate::compiler::{INTEGER_CLASS, STRING_CLASS};
+
+    #[test]
+    fn reopening_string_attaches_methods_to_the_builtin() {
+        let a = analyze_src(
+            "class String\n  def blank?\n    length == 0\n  end\n  def shout\n    self\n  end\nend\n",
+        );
+        assert_eq!(class_named(&a, "String"), STRING_CLASS);
+        let ci = a.compiler.class(STRING_CLASS);
+        assert!(ci.is_builtin, "reopening must NOT create a new class");
+        let names: Vec<&str> = ci
+            .methods
+            .iter()
+            .map(|&sid| a.compiler.scope(sid).name.as_str())
+            .collect();
+        assert!(names.contains(&"blank?") && names.contains(&"shout"));
+        assert!(a.compiler.method_in_chain(STRING_CLASS, "blank?").is_some());
+    }
+
+    #[test]
+    fn reopen_registers_class_methods_cvars_and_consts() {
+        let a = analyze_src(
+            "class Array\n  @@made = 0\n  LIMIT = 3\n  def self.tally_up\n    @@made = @@made + 1\n    @@made\n  end\nend\n",
+        );
+        let ci = a.compiler.class(class_named(&a, "Array"));
+        assert_eq!(ci.class_methods.len(), 1);
+        assert_eq!(ci.class_body_stmts.len(), 2, "@@made = 0 and LIMIT = 3");
+    }
+
+    #[test]
+    fn last_def_wins_when_reopening_twice() {
+        // 15.2's reopen-merge rule composes with builtins: the SECOND
+        // definition replaces the first, one entry total.
+        let a = analyze_src(
+            "class Integer\n  def tag\n    1\n  end\nend\nclass Integer\n  def tag\n    2\n  end\nend\n",
+        );
+        let ci = a.compiler.class(INTEGER_CLASS);
+        let tags = ci
+            .methods
+            .iter()
+            .filter(|&&sid| a.compiler.scope(sid).name == "tag")
+            .count();
+        assert_eq!(tags, 1);
+    }
+
+    #[test]
+    fn object_class_module_and_builtin_modules_stay_rejected() {
+        for src in [
+            "class Object\n  def probe\n    1\n  end\nend\n",
+            "class Class\n  def probe\n    1\n  end\nend\n",
+            "class Module\n  def probe\n    1\n  end\nend\n",
+            "module Comparable\n  def probe\n    1\n  end\nend\n",
+        ] {
+            assert!(
+                analyze_err(src).contains("isn't supported yet (spike scope)"),
+                "expected rejection for: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn kind_mismatch_keeps_the_typeerror_message_shape() {
+        assert!(analyze_err("module String\nend\n").contains("String is not a module"));
+        assert!(analyze_err("class Enumerable\nend\n").contains("Enumerable is not a class"));
+    }
+
+    #[test]
+    fn superclass_clause_on_a_builtin_reopen_is_rejected() {
+        assert!(analyze_err("class String < Object\n  def x\n    1\n  end\nend\n")
+            .contains("superclass clause"));
+    }
+
+    #[test]
+    fn operator_definitions_on_builtins_are_rejected() {
+        assert!(analyze_err("class Integer\n  def +(other)\n    0\n  end\nend\n")
+            .contains("defining operator `+`"));
+        assert!(analyze_err("class String\n  def ==(other)\n    true\n  end\nend\n")
+            .contains("defining operator `==`"));
+    }
+
+    #[test]
+    fn ivars_in_a_builtin_reopen_are_rejected() {
+        assert!(analyze_err("class String\n  def remember\n    @seen = 1\n  end\nend\n")
+            .contains("no ivar storage"));
+    }
+
+    #[test]
+    fn nested_class_string_still_shadows_lexically_not_reopens() {
+        // 15.3's rule is unchanged: `module Store; class String` is a
+        // FRESH nested class, not a builtin reopen.
+        let a = analyze_src("module Store\n  class String\n  end\nend\n");
+        let nested = class_named(&a, "Store::String");
+        assert_ne!(nested, STRING_CLASS);
+        assert!(!a.compiler.class(nested).is_builtin);
     }
 }
 

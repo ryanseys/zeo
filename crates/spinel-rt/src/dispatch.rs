@@ -169,6 +169,17 @@ pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyVal
 /// (`__construct`); `None` for modules and builtins.
 pub type ConstructorFn = fn(&[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+/// A method defined by REOPENING a builtin class (Phase 16.3, `class String;
+/// def blank?; ...`): the receiver is the builtin VALUE itself (`&RubyValue`,
+/// not an `RObj` -- builtins have no generated struct to downcast to), which
+/// is exactly what the generated free-function bodies take as `__self`.
+/// Consulted FIRST by `send_value` (before even the universal `==`/`dup`
+/// arms and the curated tables), because a user redefinition must OVERRIDE
+/// the builtin behavior -- real Ruby's rule, oracle-verified (`class String;
+/// def length; 42; end` wins everywhere). Phase 18 keys per-box overlays off
+/// this same table.
+pub type ValueMethodFn = fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
+
 struct ClassEntry {
     /// The Ruby-visible, fully-qualified name (`"Store::Item"`) -- what
     /// `Class#name`/`#to_s`/`puts Widget` print, and what `NoMethodError`
@@ -185,6 +196,12 @@ struct ClassEntry {
     /// 6), but `is_a`/rescue-by-class matching does.
     ancestors: Vec<ClassId>,
     methods: HashMap<Symbol, MethodFn>,
+    /// Methods added by reopening a BUILTIN class (Phase 16.3) -- keyed off
+    /// the receiver's `class_id()` with no ancestor walk needed (the only
+    /// reopenable builtins are leaf value classes; Object/module reopens are
+    /// rejected at spinelc compile time). Empty for every user class, whose
+    /// methods live in `methods` above.
+    value_methods: HashMap<Symbol, ValueMethodFn>,
     constructor: Option<ConstructorFn>,
 }
 
@@ -217,9 +234,22 @@ impl ClassRegistry {
                 is_module,
                 ancestors,
                 methods: HashMap::new(),
+                value_methods: HashMap::new(),
                 constructor,
             },
         );
+    }
+
+    /// Registers a builtin-reopen method (Phase 16.3) -- called from
+    /// generated `main()` right after the builtin's own `register`, one call
+    /// per `def` in a `class String ... end` reopen. See `ValueMethodFn`'s
+    /// docs for the dispatch-precedence contract.
+    pub fn define_value_method(&mut self, id: ClassId, name: Symbol, f: ValueMethodFn) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining value methods on it")
+            .value_methods
+            .insert(name, f);
     }
 
     /// The runtime-mutable path `define_method`/`define_singleton_method`
@@ -236,6 +266,10 @@ impl ClassRegistry {
 
     fn lookup(&self, id: ClassId, name: Symbol) -> Option<MethodFn> {
         self.entries.get(&id.0)?.methods.get(&name).copied()
+    }
+
+    fn lookup_value_method(&self, id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+        self.entries.get(&id.0)?.value_methods.get(&name).copied()
     }
 
     fn ancestors_of(&self, id: ClassId) -> &[ClassId] {
@@ -263,7 +297,18 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
 /// default behavior (doesn't consult `method_missing`/`respond_to_missing?`,
 /// which this spike doesn't model).
 pub fn responds_to(recv_class: ClassId, name: Symbol) -> bool {
-    registry().lookup(recv_class, name).is_some()
+    let r = registry();
+    r.lookup(recv_class, name).is_some() || r.lookup_value_method(recv_class, name).is_some()
+}
+
+/// A registry-OPTIONAL probe for a builtin-reopen method (Phase 16.3) --
+/// `None` when no registry is installed (this crate's own unit tests) or
+/// the class carries no such method. The lookup key is the receiver's own
+/// `class_id()`; see `ValueMethodFn`'s docs for why no ancestor walk is
+/// needed. Used by `send_value`'s override-first stage and by
+/// `display_with`/`inspect_with`'s `to_s`/`inspect` probes in `value.rs`.
+pub(crate) fn value_method(id: ClassId, name: Symbol) -> Option<ValueMethodFn> {
+    REGISTRY.get()?.lookup_value_method(id, name)
 }
 
 /// The registered Ruby-visible (fully-qualified) name of `id` -- `None`
@@ -443,12 +488,19 @@ pub fn send_value(
     }
     let n = name.name();
     let n = n.as_str();
-    // Universal builtin methods first: `==`/`!=` via `rb_eq` (Ruby's own
+    // A builtin-reopen method wins over EVERYTHING below (Phase 16.3):
+    // the universal arms, the curated tables, the numeric operators, and
+    // the Enumerable/NoMethodError stages -- real Ruby's rule (a user
+    // `def length` on `class String` overrides the native one, and a user
+    // `def dup`/`to_s` overrides the Kernel default; both oracle-verified).
+    if let Some(f) = value_method(recv.class_id(), name) {
+        return f(recv, args, block);
+    }
+    // Universal builtin methods next: `==`/`!=` via `rb_eq` (Ruby's own
     // cross-numeric-tower `==`), `dup`/`clone` via `dup_value` (Phase
     // 15.2), and the reflection set (Phase 16.1: `.class` on everything;
     // `is_a?`/`kind_of?`/`instance_of?` against a runtime Class value) --
-    // for every non-Object receiver. (Builtins can't be reopened until
-    // Phase 16.3, so there's no user override to consult yet.)
+    // for every non-Object receiver.
     match (n, args.len()) {
         ("==", 1) => return Ok(RubyValue::Bool(recv.rb_eq(&args[0]))),
         ("!=", 1) => return Ok(RubyValue::Bool(!recv.rb_eq(&args[0]))),

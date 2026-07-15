@@ -1049,7 +1049,19 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
     let needs_self = block_caps.self_captured;
     let self_clone = needs_self.then(|| {
         let slf = &cx.self_ident;
-        quote! { let __self = ::std::sync::Arc::clone(&#slf); }
+        // Inside a REOPENED builtin's method (Phase 16.3), `self` is the
+        // `__self: RubyValue` parameter -- a plain `RubyValue::clone`, not
+        // an `Arc<Concrete>` (`Arc::clone(&__self)` wouldn't typecheck).
+        // The alias deliberately shadows: the closure captures the fresh
+        // `__self` binding by move either way.
+        if cx
+            .current_class
+            .is_some_and(|c| cx.compiler.class(c).is_builtin)
+        {
+            quote! { let __self = (#slf).clone(); }
+        } else {
+            quote! { let __self = ::std::sync::Arc::clone(&#slf); }
+        }
     });
 
     let proc_cx = cx.in_proc(needs_self);
@@ -1233,6 +1245,54 @@ pub fn emit_call(
         // time panic, not a dynamic `method_missing` fallback (the class is
         // known, so an undefined method here is provably an error).
         if let Some(cid) = cx.current_class {
+            // Inside a REOPENED builtin's method (Phase 16.3), `self` is the
+            // `__self: RubyValue` parameter: an implicit-self call to a
+            // sibling reopen method is a direct free-function call, and any
+            // OTHER name (`length` inside `Array#under_limit?` -- a native
+            // builtin method, oracle-verified as implicit-self-reachable)
+            // dispatches dynamically on `__self` through `send_value`, whose
+            // value-methods-then-curated-tables order resolves it exactly
+            // like an explicit `self.length` would.
+            if cx.compiler.class(cid).is_builtin {
+                let slf = &cx.self_ident;
+                if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+                    let scope = cx.compiler.scope(sid);
+                    let mod_ident = super::ident::class_ident(cx.compiler, cid);
+                    let method_ident = safe_ident(name);
+                    return super::params::emit_call_args_to(
+                        cx,
+                        &super::params::Callee::FreeFn {
+                            path: quote! { #mod_ident::#method_ident },
+                            recv: quote! { #slf.clone() },
+                        },
+                        name,
+                        &scope.params,
+                        args,
+                        kwargs,
+                        block,
+                        block_arg,
+                        scope.needs_block_param(),
+                    );
+                }
+                if !kwargs.is_empty() {
+                    panic!(
+                        "dynamic dispatch of `{name}` with keyword arguments isn't supported yet (spike scope): call it directly instead"
+                    );
+                }
+                let arg_exprs = args.iter().map(|&a| {
+                    let e = emit_expr(cx, a);
+                    box_if_object_typed(cx, a, e)
+                });
+                let block_value = emit_block_option(cx, block, block_arg);
+                return quote! {
+                    spinel_rt::catch_break(spinel_rt::send_value(
+                        &#slf,
+                        spinel_rt::Symbol::intern(#name),
+                        &[#(#arg_exprs),*],
+                        #block_value,
+                    ))?
+                };
+            }
             if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
                 let scope = cx.compiler.scope(sid);
                 let slf = &cx.self_ident;
@@ -1551,8 +1611,15 @@ fn emit_splat_call(
                 panic!("unsupported implicit-self splat call `{name}` (spike scope, or no such method is defined on the current class)");
             };
             let slf = &cx.self_ident;
-            let class_ident = super::ident::class_ident(cx.compiler, cid);
-            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+            // A REOPENED builtin's `self` is already a boxed `RubyValue`
+            // (Phase 16.3) -- `send_value` dispatches its value methods
+            // directly, no `new_handle` boxing (or struct) exists for it.
+            if cx.compiler.class(cid).is_builtin {
+                quote! { (#slf.clone()) }
+            } else {
+                let class_ident = super::ident::class_ident(cx.compiler, cid);
+                quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+            }
         }
     };
     let name_expr = quote! { spinel_rt::Symbol::intern(#name) };
@@ -1575,6 +1642,22 @@ fn emit_splat_call(
             spinel_rt::catch_break(spinel_rt::send_value(&#recv_obj_expr, #name_expr, &__args, #block_value))?
         }
     }
+}
+
+/// Whether ANY reopened builtin defines `name` (Phase 16.3) -- the
+/// Poly-receiver side of the universal arms' override check in `dispatch`:
+/// a Poly value might turn out AT RUNTIME to be an instance of a reopened
+/// builtin, so a universal method it overrides anywhere must route
+/// dynamically (where `send_value`'s value-method-first probe decides per
+/// actual class). Free for programs with no reopens: every builtin's
+/// materialized method table is empty.
+fn any_builtin_overrides(cx: &Ctx, name: &str) -> bool {
+    cx.compiler.classes.iter().any(|c| {
+        c.is_builtin
+            && c.methods
+                .iter()
+                .any(|&sid| cx.compiler.scope(sid).name == name)
+    })
 }
 
 /// The shared core behind `ClassName.foo(...)` (`emit_call`'s
@@ -1877,10 +1960,18 @@ fn dispatch(
     // (still evaluating the receiver for side effects); Poly receivers ask
     // the value at runtime.
     if no_kwargs && name == "class" && args.is_empty() && block.is_none() && block_arg.is_none() {
-        let user_defined = matches!(
-            infer(cx, recv_id),
-            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
-        );
+        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // REOPENED builtin's override of this universal method must also
+        // fall through -- to the builtin free-function arm further down --
+        // instead of taking the universal fast path (a user `String#dup`
+        // beats `Kernel#dup`, oracle-verified). A Poly receiver falls
+        // through whenever ANY builtin reopen defines this name: only the
+        // runtime value knows its class, so the decision defers to
+        // `send_value`'s own value-method-first probe.
+        let user_defined = match infer_any_class(cx, recv_id) {
+            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            None => any_builtin_overrides(cx, name),
+        };
         if !user_defined {
             return match infer_any_class(cx, recv_id) {
                 Some(cid) => {
@@ -1923,10 +2014,18 @@ fn dispatch(
     // statically-known Object receiver is never nil (only `RubyValue::Nil`
     // is), but its receiver expression still evaluates for side effects.
     if no_kwargs && name == "nil?" && args.is_empty() {
-        let user_defined = matches!(
-            infer(cx, recv_id),
-            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
-        );
+        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // REOPENED builtin's override of this universal method must also
+        // fall through -- to the builtin free-function arm further down --
+        // instead of taking the universal fast path (a user `String#dup`
+        // beats `Kernel#dup`, oracle-verified). A Poly receiver falls
+        // through whenever ANY builtin reopen defines this name: only the
+        // runtime value knows its class, so the decision defers to
+        // `send_value`'s own value-method-first probe.
+        let user_defined = match infer_any_class(cx, recv_id) {
+            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            None => any_builtin_overrides(cx, name),
+        };
         if !user_defined {
             return match infer(cx, recv_id) {
                 TyKind::Object(_) => {
@@ -1950,10 +2049,18 @@ fn dispatch(
     // `freeze_value`/`is_frozen` methods (see their docs for the
     // always-frozen-immediates / flagless-`Proc` tiering).
     if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() {
-        let user_defined = matches!(
-            infer(cx, recv_id),
-            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
-        );
+        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // REOPENED builtin's override of this universal method must also
+        // fall through -- to the builtin free-function arm further down --
+        // instead of taking the universal fast path (a user `String#dup`
+        // beats `Kernel#dup`, oracle-verified). A Poly receiver falls
+        // through whenever ANY builtin reopen defines this name: only the
+        // runtime value knows its class, so the decision defers to
+        // `send_value`'s own value-method-first probe.
+        let user_defined = match infer_any_class(cx, recv_id) {
+            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            None => any_builtin_overrides(cx, name),
+        };
         if !user_defined {
             return match infer(cx, recv_id) {
                 TyKind::Object(cid) => {
@@ -1997,10 +2104,18 @@ fn dispatch(
     // `clone(freeze: false)` keyword form: not supported (kwargs fall
     // through to the ordinary rejection paths).
     if no_kwargs && (name == "dup" || name == "clone") && args.is_empty() {
-        let user_defined = matches!(
-            infer(cx, recv_id),
-            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
-        );
+        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // REOPENED builtin's override of this universal method must also
+        // fall through -- to the builtin free-function arm further down --
+        // instead of taking the universal fast path (a user `String#dup`
+        // beats `Kernel#dup`, oracle-verified). A Poly receiver falls
+        // through whenever ANY builtin reopen defines this name: only the
+        // runtime value knows its class, so the decision defers to
+        // `send_value`'s own value-method-first probe.
+        let user_defined = match infer_any_class(cx, recv_id) {
+            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            None => any_builtin_overrides(cx, name),
+        };
         if !user_defined {
             let copy_frozen = name == "clone";
             return match infer(cx, recv_id) {
@@ -2354,6 +2469,42 @@ fn dispatch(
                 return quote! {
                     spinel_rt::RubyValue::Float(spinel_rt::#func((#recv_expr).as_float_unchecked()))
                 };
+            }
+        }
+    }
+
+    // A REOPENED builtin's method on a statically-typed builtin receiver
+    // (Phase 16.3): a direct call to the generated free function (`__bm_
+    // String::length(recv, ...)`), checked BEFORE the collection/Proc/
+    // Regexp fast paths below because a user redefinition must OVERRIDE the
+    // native behavior -- real Ruby's rule, oracle-verified (`class String;
+    // def length; 42; end` wins at every call site). The receiver
+    // expression is already a boxed `RubyValue` for every builtin TyKind
+    // (only `Object` receivers are unboxed `Arc<Concrete>`s, and those
+    // never reach this arm).
+    if let Some(cid) = infer_any_class(cx, recv_id) {
+        if cx.compiler.class(cid).is_builtin {
+            if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+                let scope = cx.compiler.scope(sid);
+                if !bypass_visibility {
+                    enforce_visibility(cx, recv_id, scope, name);
+                }
+                let mod_ident = super::ident::class_ident(cx.compiler, cid);
+                let method_ident = safe_ident(name);
+                return super::params::emit_call_args_to(
+                    cx,
+                    &super::params::Callee::FreeFn {
+                        path: quote! { #mod_ident::#method_ident },
+                        recv: recv_expr.clone(),
+                    },
+                    name,
+                    &scope.params,
+                    args,
+                    kwargs,
+                    block,
+                    block_arg,
+                    scope.needs_block_param(),
+                );
             }
         }
     }

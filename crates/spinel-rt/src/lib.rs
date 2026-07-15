@@ -28,7 +28,8 @@ pub use constants::{const_get, const_set};
 pub use dispatch::{
     class_is_module, class_name, downcast_robj, install_class_registry,
     install_no_method_error_factory, is_a, responds_to, run_initialize, send, send_value,
-    ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ARRAY_CLASS,
+    ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
+    ARRAY_CLASS,
     CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
     COMPARABLE_CLASS, ENUMERABLE_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
     QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
@@ -399,6 +400,37 @@ mod tests {
             Point::__register(&mut registry);
             Greeter::__register(&mut registry);
             Temp::__register(&mut registry);
+            // Builtin entries + reopen VALUE METHODS (Phase 16.3) for the
+            // dispatch-precedence tests below. `Array`(5)/`Queue`(17) are
+            // chosen because their ids don't collide with the test classes
+            // above (Point/Greeter/Temp claimed 1-3, overlapping the low
+            // builtin ids -- harmless until a builtin ENTRY is actually
+            // registered), and the method names don't disturb anything
+            // other tests in this process render or send (`Array#inspect`
+            // stays native; only one test displays a Queue).
+            registry.register(
+                ARRAY_CLASS,
+                "Array",
+                false,
+                vec![ARRAY_CLASS, Object::CLASS_ID],
+                None,
+            );
+            registry.register(
+                QUEUE_CLASS,
+                "Thread::Queue",
+                false,
+                vec![QUEUE_CLASS, Object::CLASS_ID],
+                None,
+            );
+            registry.define_value_method(ARRAY_CLASS, Symbol::intern("shout"), |recv, _args, _blk| {
+                Ok(RubyValue::Str(string_new(format!("{}!", recv.inspect_string()))))
+            });
+            registry.define_value_method(ARRAY_CLASS, Symbol::intern("length"), |_recv, _args, _blk| {
+                Ok(RubyValue::Int(42))
+            });
+            registry.define_value_method(QUEUE_CLASS, Symbol::intern("to_s"), |_recv, _args, _blk| {
+                Ok(RubyValue::Str(string_new("#<a queue, reopened>".to_string())))
+            });
             install_class_registry(registry);
         });
     }
@@ -664,6 +696,36 @@ mod tests {
         })));
         assert_eq!(g.to_display_string(), "#<Greeter>");
         assert_eq!(g.inspect_string(), "#<Greeter>");
+    }
+
+    /// Phase 16.3: builtin-reopen value methods. `send_value` consults them
+    /// FIRST -- a user `length` override beats the curated String table row
+    /// (real Ruby's rule, oracle-verified) -- and `responds_to` sees them.
+    #[test]
+    fn value_methods_dispatch_first_and_override_curated_rows() {
+        install();
+        let a = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
+
+        let shout = send_value(&a, Symbol::intern("shout"), &[], None).unwrap();
+        assert_eq!(shout.to_display_string(), "[1]!");
+
+        // The curated `Array#length` row would answer 1; the reopen's
+        // override must win.
+        let len = send_value(&a, Symbol::intern("length"), &[], None).unwrap();
+        assert_eq!(len.to_display_string(), "42");
+
+        assert!(responds_to(ARRAY_CLASS, Symbol::intern("shout")));
+        assert!(!responds_to(ARRAY_CLASS, Symbol::intern("whisper")));
+    }
+
+    /// Phase 16.3: `display_with`'s value-method probe -- a builtin `to_s`
+    /// override drives `puts`/interpolation rendering (and `inspect`'s
+    /// catch-all for kinds whose inspect delegates to display).
+    #[test]
+    fn display_probe_honors_a_builtin_to_s_override() {
+        install();
+        let q = queue_new();
+        assert_eq!(q.to_display_string(), "#<a queue, reopened>");
     }
 
     /// Part 9 (Send+Sync migration) regression guard: fails to compile if

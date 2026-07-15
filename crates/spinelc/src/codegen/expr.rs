@@ -40,10 +40,51 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
     // statically-known-class receiver.
     if matches!(cx.compiler.hir[id], HirNode::SelfRef) {
         if let Some(cid) = cx.current_class {
+            // Inside a reopened BUILTIN class's method (Phase 16.3), `self`
+            // is the receiver VALUE (the free function's `__self:
+            // RubyValue` parameter), so it types as the builtin's own
+            // static kind (`TyKind::Str` inside `class String`) -- NOT
+            // `Object(cid)`, whose repr is an unboxed `Arc<Concrete>` no
+            // builtin has. That keeps `self.length`/`self + other` on the
+            // same static fast paths any other builtin-typed receiver gets.
+            if cx.compiler.class(cid).is_builtin {
+                return builtin_self_ty(cid);
+            }
             return TyKind::Object(cid);
         }
     }
     infer_type_with_locals(cx.compiler, cx.defining_class, &cx.local_types, id)
+}
+
+/// The static type of `self` inside a reopened BUILTIN class's methods --
+/// the inverse of `infer_any_class`'s TyKind->ClassId mapping below, for
+/// exactly the value kinds that HAVE a static TyKind. The rest (`NilClass`/
+/// `TrueClass`/`FalseClass`) stay `Poly`: their `__self` is still a real
+/// `RubyValue` at runtime, just dispatched dynamically.
+pub(super) fn builtin_self_ty(cid: ClassId) -> TyKind {
+    use crate::compiler::{
+        ARRAY_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS,
+        MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS,
+        STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    };
+    match cid {
+        INTEGER_CLASS => TyKind::Int,
+        FLOAT_CLASS => TyKind::Float,
+        STRING_CLASS => TyKind::Str,
+        SYMBOL_CLASS => TyKind::Symbol,
+        ARRAY_CLASS => TyKind::Array,
+        HASH_CLASS => TyKind::Hash,
+        RANGE_CLASS => TyKind::Range,
+        PROC_CLASS => TyKind::Proc,
+        REGEXP_CLASS => TyKind::Regexp,
+        MATCH_DATA_CLASS => TyKind::MatchData,
+        FIBER_CLASS => TyKind::Fiber,
+        THREAD_CLASS => TyKind::Thread,
+        MUTEX_CLASS => TyKind::Mutex,
+        QUEUE_CLASS => TyKind::Queue,
+        RACTOR_CLASS => TyKind::Ractor,
+        _ => TyKind::Poly,
+    }
 }
 
 /// The receiver's statically-known class, if any -- the entire input to the

@@ -135,6 +135,26 @@ impl RubyValue {
     /// recursion markers (`[...]`/`{...}`) instead of deadlocking on its
     /// own non-reentrant payload `Mutex` (the pre-15.2 behavior).
     fn display_with(&self, seen: &mut Vec<usize>) -> String {
+        // A builtin-reopen `to_s` override wins (Phase 16.3) -- real Ruby's
+        // behavior for `puts`/interpolation, oracle-verified (`class
+        // Integer; def to_s; "int"; end` makes `puts 5`/`"v=#{5}"` print
+        // "int"). Object receivers keep their own registry probe in the
+        // match below; the result's payload is taken directly when it's a
+        // `Str` (re-dispatching would re-probe the same override forever
+        // for an identity-shaped `to_s`).
+        if !matches!(self, RubyValue::Object(_)) {
+            if let Some(f) =
+                crate::dispatch::value_method(self.class_id(), crate::Symbol::intern("to_s"))
+            {
+                return match f(self, &[], None) {
+                    Ok(RubyValue::Str(s)) => s.lock().clone(),
+                    Ok(other) => other.display_with(seen),
+                    Err(_) => panic!(
+                        "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
+                    ),
+                };
+            }
+        }
         match self {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
@@ -253,6 +273,25 @@ impl RubyValue {
     /// enters through a Hash back into an outer Array prints `[...]` at the
     /// Array's re-entry point (`[1, {x: [...]}]`, oracle-verified).
     fn inspect_with(&self, seen: &mut Vec<usize>) -> String {
+        // A builtin-reopen `inspect` override wins (Phase 16.3) -- and it
+        // propagates into CONTAINER rendering too (`[5].inspect` ->
+        // `[I<5>]` with an `Integer#inspect` override -- real Ruby's
+        // `rb_inspect` dispatches per element, oracle-verified), which this
+        // probe's position inside the recursive worker reproduces. Same
+        // `Str`-payload shortcut as `display_with`'s probe.
+        if !matches!(self, RubyValue::Object(_)) {
+            if let Some(f) =
+                crate::dispatch::value_method(self.class_id(), crate::Symbol::intern("inspect"))
+            {
+                return match f(self, &[], None) {
+                    Ok(RubyValue::Str(s)) => s.lock().clone(),
+                    Ok(other) => other.display_with(seen),
+                    Err(_) => panic!(
+                        "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
+                    ),
+                };
+            }
+        }
         match self {
             RubyValue::Nil => "nil".to_string(),
             RubyValue::Symbol(s) => format!(":{}", s.name()),
