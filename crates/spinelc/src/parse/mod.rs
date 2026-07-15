@@ -91,6 +91,8 @@ class ThreadError < StandardError
 end
 class ClosedQueueError < StopIteration
 end
+class RactorError < StandardError
+end
 class TypeError < StandardError
 end
 class ZeroDivisionError < StandardError
@@ -1120,7 +1122,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         if name == "new" {
             if let Some(recv) = call.receiver() {
                 let class_name = constant_name(&recv)?;
-                if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue") {
+                if !matches!(class_name.as_str(), "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor") {
                     let args = match call.arguments() {
                         None => Vec::new(),
                         Some(a) => a

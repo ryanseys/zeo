@@ -53,6 +53,8 @@ pub const FIBER_CLASS: ClassId = ClassId(14);
 pub const THREAD_CLASS: ClassId = ClassId(15);
 pub const MUTEX_CLASS: ClassId = ClassId(16);
 pub const QUEUE_CLASS: ClassId = ClassId(17);
+/// A `Ractor` (Phase 13.8) -- see `spinel_rt::ractor`'s docs.
+pub const RACTOR_CLASS: ClassId = ClassId(18);
 
 /// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
 /// registration order -- the SINGLE source of truth `Compiler::new` seeds
@@ -77,6 +79,7 @@ const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
     (THREAD_CLASS, "Thread"),
     (MUTEX_CLASS, "Mutex"),
     (QUEUE_CLASS, "Queue"),
+    (RACTOR_CLASS, "Ractor"),
 ];
 
 pub struct ClassInfo {

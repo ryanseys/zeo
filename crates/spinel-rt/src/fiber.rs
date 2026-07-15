@@ -58,6 +58,14 @@ pub struct FiberHandle {
     /// `Fiber#alive?` (`!finished`, matching CRuby's `!FIBER_TERMINATED_P`:
     /// created/suspended/running all count as alive).
     finished: AtomicBool,
+    /// This fiber's OWN `$!`/rescue-nesting stack while it's suspended
+    /// (Phase 13.6) -- swapped into `handling`'s ambient slot for the
+    /// duration of every `resume` and back out on yield/return, giving each
+    /// fiber the isolated execution context CRuby's own per-fiber
+    /// `saved_ec.errinfo` provides (`cont.c:238`, verified in the plan's
+    /// research addendum). Starts empty: a fresh fiber has no exception in
+    /// flight regardless of what its creator was rescuing.
+    handling: parking_lot::Mutex<Vec<RubyValue>>,
 }
 
 pub type RFiber = Arc<FiberHandle>;
@@ -85,6 +93,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         id,
         owner: std::thread::current().id(),
         finished: AtomicBool::new(false),
+        handling: parking_lot::Mutex::new(Vec::new()),
     }))
 }
 
@@ -121,7 +130,19 @@ pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
     let Some(mut coro) = FIBERS.with(|f| f.borrow_mut().remove(&handle.id)) else {
         return FiberResume::DoubleResume;
     };
-    match spinel_fiber::resume(&mut coro, args) {
+    // Execution-context swap (Phase 13.6): install the fiber's own
+    // `$!`/rescue-nesting stack for the duration of the switch, exactly as
+    // CRuby swaps `th->ec` to the fiber's `saved_ec` -- the resumer's
+    // rescue state is invisible inside the fiber and vice versa. Sound
+    // because a fiber never runs CONCURRENTLY with its resumer (both swaps
+    // happen here, on the resumer's own stack, either side of the switch).
+    // A Rust panic propagating out of the resume skips the swap-back --
+    // acceptable: a runtime panic is already a dying process in this
+    // spike's posture.
+    let resumer_stack = crate::handling::swap_handling(std::mem::take(&mut handle.handling.lock()));
+    let result = spinel_fiber::resume(&mut coro, args);
+    *handle.handling.lock() = crate::handling::swap_handling(resumer_stack);
+    match result {
         CoroutineResult::Yield(v) => {
             FIBERS.with(|f| f.borrow_mut().insert(handle.id, coro));
             FiberResume::Value(v)

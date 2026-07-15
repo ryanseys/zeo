@@ -5876,3 +5876,348 @@ fn nil_predicate_works_universally() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\nfalse\ntrue\nfalse\nfalse\n");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 13.6: the `$!`/HANDLING stack is may COROUTINE-local (not
+// thread-local -- multiple Ruby Threads share one OS worker under the GVL
+// default), and Fiber#resume swaps in each fiber's own saved stack, giving
+// fibers the isolated execution context CRuby's per-fiber `saved_ec`
+// provides. All snippets oracle-verified against real `ruby`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn each_threads_bare_reraise_sees_its_own_handled_exception() {
+    // With a thread_local! HANDLING stack this would cross-contaminate the
+    // moment two Threads multiplex onto the one default worker.
+    let result = run_ruby(
+        r#"
+        t1 = Thread.new do
+          begin
+            raise "from t1"
+          rescue RuntimeError => e
+            begin
+              raise
+            rescue RuntimeError => inner
+              puts "t1 re-raised: #{inner.send(:message)}"
+            end
+          end
+        end
+        t1.join
+        t2 = Thread.new do
+          begin
+            raise "from t2"
+          rescue RuntimeError => e
+            begin
+              raise
+            rescue RuntimeError => inner
+              puts "t2 re-raised: #{inner.send(:message)}"
+            end
+          end
+        end
+        t2.join
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "t1 re-raised: from t1\nt2 re-raised: from t2\n");
+}
+
+#[test]
+fn a_fiber_does_not_see_its_resumers_currently_handled_exception() {
+    // CRuby: the fiber has its own errinfo (fresh, nil), so its bare
+    // `raise` builds a fresh empty-message RuntimeError instead of
+    // re-raising the resumer's in-flight exception -- `fiber saw: []`.
+    let result = run_ruby(
+        r#"
+        f = Fiber.new do
+          begin
+            raise
+          rescue RuntimeError => e
+            "fiber saw: [#{e.send(:message)}]"
+          end
+        end
+        begin
+          raise "resumer's exception"
+        rescue RuntimeError
+          puts f.resume
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "fiber saw: []\n");
+}
+
+#[test]
+fn a_fibers_rescue_state_survives_suspension_isolated_from_the_resumer() {
+    // The fiber suspends MID-rescue; the resumer then handles (and
+    // finishes handling) its own exception; on re-entry the fiber's bare
+    // re-raise must still see the FIBER's exception -- the save/restore
+    // swap around every switch, exercised in both directions.
+    let result = run_ruby(
+        r#"
+        g = Fiber.new do
+          begin
+            raise "fiber's own"
+          rescue RuntimeError
+            Fiber.yield :suspended_mid_rescue
+            begin
+              raise
+            rescue RuntimeError => again
+              again.send(:message)
+            end
+          end
+        end
+        puts g.resume
+        begin
+          raise "resumer noise"
+        rescue RuntimeError
+          x = 1
+        end
+        puts g.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "suspended_mid_rescue\nfiber's own\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13.7: `send`'s missing-method fallback raises a real, catchable
+// NoMethodError (via the factory generated main() installs) instead of the
+// original whole-process `exit(1)` -- which would have killed every OTHER
+// running Thread over one bad dispatch. Oracle-verified.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_missing_method_via_send_raises_a_rescuable_no_method_error() {
+    let result = run_ruby(
+        r#"
+        class Plain
+          def real
+            :real
+          end
+        end
+        p1 = Plain.new
+        begin
+          p1.send(:nope)
+        rescue NoMethodError => e
+          puts "caught nope"
+        end
+        begin
+          p1.send(:nope2)
+        rescue NameError => e
+          puts "caught via NameError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught nope\ncaught via NameError\n");
+}
+
+#[test]
+fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
+    let result = run_ruby(
+        r#"
+        class Plain
+        end
+        Plain.new.send(:missing)
+        "#,
+    );
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uncaught exception: undefined method 'missing'"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
+fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
+    // THE motivating scenario for this phase: the failure surfaces at the
+    // bad thread's own join; the healthy worker completes normally.
+    let result = run_ruby(
+        r#"
+        class Plain
+        end
+        worker = Thread.new { 21 * 2 }
+        bad = Thread.new { Plain.new.send(:missing_in_thread) }
+        begin
+          bad.join
+        rescue NoMethodError => e
+          puts "joined the failure"
+        end
+        puts worker.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "joined the failure\n42\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13.8: Ractor -- real OS threads sharing the global heap, with the
+// frozen-or-copy boundary discipline (see spinel_rt::ractor's docs, incl.
+// the documented divergences: no Ractor::RemoteError wrapper, RactorError
+// standing in for Ractor::Error, process-shared globals). Oracle-verified.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ractor_runs_in_parallel_and_returns_its_value() {
+    let result = run_ruby(
+        r#"
+        r = Ractor.new(20, 22) do |a, b|
+          a + b
+        end
+        puts r.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn ractor_message_passing_send_and_receive() {
+    let result = run_ruby(
+        r#"
+        worker = Ractor.new do
+          msg = Ractor.receive
+          msg * 10
+        end
+        worker.send(7)
+        puts worker.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "70\n");
+}
+
+#[test]
+fn ractor_shareable_tiering_and_make_shareable() {
+    let result = run_ruby(
+        r#"
+        puts Ractor.shareable?(1)
+        puts Ractor.shareable?(:sym)
+        puts Ractor.shareable?("mutable")
+        frozen_str = "frozen".freeze
+        puts Ractor.shareable?(frozen_str)
+        arr = [1, 2]
+        puts Ractor.shareable?(arr)
+        Ractor.make_shareable(arr)
+        puts Ractor.shareable?(arr)
+        puts arr.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\n");
+}
+
+#[test]
+fn an_unshareable_message_is_deep_copied_across_the_boundary() {
+    // Mutating the original AFTER send must not affect the ractor's copy --
+    // the whole point of the isolation discipline.
+    // Asserted via `puts` on the round-tripped copy (collection methods on
+    // the Poly-typed receive result are the pre-existing Poly-dispatch
+    // gap, nothing Ractor-specific).
+    let result = run_ruby(
+        r#"
+        echo = Ractor.new do
+          Ractor.receive
+        end
+        payload = [100, 200]
+        echo.send(payload)
+        payload[0] = 999
+        puts echo.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "100\n200\n");
+}
+
+#[test]
+fn an_uncaught_exception_in_a_ractor_reraises_at_value() {
+    // Documented divergence: the ORIGINAL exception re-raises directly
+    // (like Thread#join), not wrapped in Ractor::RemoteError (which needs
+    // nested class names + .cause chaining, both documented gaps).
+    let result = run_ruby(
+        r#"
+        bad = Ractor.new do
+          raise "ractor boom"
+        end
+        begin
+          bad.value
+        rescue RuntimeError => e
+          puts "rescued: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued: ractor boom\n");
+}
+
+#[test]
+#[should_panic(expected = "can not isolate a Proc because it accesses outer variables (x)")]
+fn a_ractor_block_capturing_an_outer_local_is_rejected_at_compile_time() {
+    // CRuby raises Ractor::IsolationError at Proc-creation time; the AOT
+    // compiler knows the capture set statically and rejects at COMPILE
+    // time, with CRuby's own message wording.
+    let _ = spinelc::compile_to_rust(
+        r#"
+        x = 5
+        Ractor.new { x + 1 }
+        "#,
+    );
+}
+
+#[test]
+fn an_unfrozen_object_sent_across_a_ractor_boundary_raises_ractor_error() {
+    // Documented narrower-than-CRuby divergence: real Ruby deep-copies an
+    // unfrozen object; this runtime has no by-name ivar-setting reflection
+    // to rebuild one, so it raises a catchable RactorError instead.
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(v)
+            @v = v
+          end
+        end
+        sink = Ractor.new do
+          Ractor.receive
+        end
+        begin
+          sink.send(Box.new(1))
+        rescue RactorError => e
+          puts "rejected: #{e.send(:message)}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert!(
+        result.stdout.starts_with("rejected: an unfrozen Object can't cross a Ractor boundary"),
+        "stdout: {}",
+        result.stdout
+    );
+}
+
+#[test]
+fn a_deeply_frozen_object_crosses_a_ractor_boundary_by_reference() {
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(v)
+            @v = v
+          end
+          def v
+            @v
+          end
+        end
+        b = Box.new(41)
+        Ractor.make_shareable(b)
+        puts b.frozen?
+        sink = Ractor.new do
+          got = Ractor.receive
+          got.send(:v)
+        end
+        sink.send(b)
+        puts sink.value + 1
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n42\n");
+}

@@ -16,12 +16,31 @@
 //! here; likewise the explicit `raise ..., cause: e` override, already a
 //! documented lowering-time rejection (see `parse/mod.rs`'s `raise`
 //! recognizer).
+//!
+//! **Storage is `may` COROUTINE-local, not `thread_local!`** (Phase 13.6):
+//! `$!`/rescue-nesting is per-EXECUTION-CONTEXT state, and once multiple
+//! Ruby `Thread`s (may coroutines) multiplex onto one OS worker -- the
+//! default GVL mode -- a `thread_local!` slot would be silently SHARED
+//! between them (thread A's rescue body would leak its exception into
+//! thread B's bare `raise`), and a `--no-gvl` coroutine migrating workers
+//! would lose its stack mid-rescue entirely: exactly `may`'s documented
+//! TLS-in-coroutine hazard, and the reason Part 9's original "leave it
+//! thread-local" call was explicitly flagged for revisiting here. CLS
+//! travels with the coroutine, so both cases are correct by construction.
+//!
+//! `Fiber` needs one more twist (also this phase): CRuby gives each fiber
+//! its OWN execution context (`fiber->cont.saved_ec.errinfo` -- rescue
+//! state inside a fiber is invisible to its resumer and vice versa), but a
+//! fiber here runs ON its resumer's coroutine. `fiber::fiber_resume` swaps
+//! this stack out for the fiber's own saved one around every switch (see
+//! [`swap_handling`]) -- sufficient BECAUSE a fiber never runs concurrently
+//! with its resumer, mirroring how CRuby itself just swaps `th->ec`.
 
 use crate::RubyValue;
 use std::cell::RefCell;
 
-thread_local! {
-    static HANDLING: RefCell<Vec<RubyValue>> = const { RefCell::new(Vec::new()) };
+may::coroutine_local! {
+    static HANDLING: RefCell<Vec<RubyValue>> = RefCell::new(Vec::new())
 }
 
 /// Called on entry to a `rescue` clause's own body, with the exception it's
@@ -46,4 +65,12 @@ pub fn pop_handling() {
 /// `codegen::expr::emit_raise`'s docs).
 pub fn current_exception() -> Option<RubyValue> {
     HANDLING.with(|h| h.borrow().last().cloned())
+}
+
+/// Installs `new` as this execution context's handling stack and returns
+/// the previous one -- `fiber::fiber_resume`'s entry/exit swap (see module
+/// docs). Not a general-purpose API: only the fiber boundary may call it,
+/// and always in save/restore pairs on the resumer's own stack.
+pub fn swap_handling(new: Vec<RubyValue>) -> Vec<RubyValue> {
+    HANDLING.with(|h| h.replace(new))
 }

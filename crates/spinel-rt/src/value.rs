@@ -8,10 +8,11 @@
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ClassId, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS,
-    MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS, RANGE_CLASS,
-    REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
+    MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
+    RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
 };
 use crate::fiber::RFiber;
+use crate::ractor::RRactor;
 use crate::thread::{RMutex, RQueue, RThread};
 use crate::regexp::{RMatchData, RRegexp};
 use crate::{RObj, RProc, Symbol};
@@ -51,6 +52,9 @@ pub enum RubyValue {
     Mutex(RMutex),
     /// A `Queue` (Phase 13.5) -- blocking pop, closable.
     Queue(RQueue),
+    /// A `Ractor` (Phase 13.8) -- a real OS thread with a frozen-or-copy
+    /// message boundary; see `ractor`'s module docs.
+    Ractor(RRactor),
 }
 
 // Hand-written rather than `#[derive(Debug)]`: `Object`'s payload is
@@ -142,6 +146,7 @@ impl RubyValue {
             RubyValue::Thread(_) => "#<Thread>".to_string(),
             RubyValue::Mutex(_) => "#<Mutex>".to_string(),
             RubyValue::Queue(_) => "#<Thread::Queue>".to_string(),
+            RubyValue::Ractor(_) => "#<Ractor>".to_string(),
         }
     }
 
@@ -229,6 +234,7 @@ impl RubyValue {
             RubyValue::Thread(_) => THREAD_CLASS,
             RubyValue::Mutex(_) => MUTEX_CLASS,
             RubyValue::Queue(_) => QUEUE_CLASS,
+            RubyValue::Ractor(_) => RACTOR_CLASS,
         }
     }
 
@@ -359,6 +365,14 @@ impl RubyValue {
         }
     }
 
+    /// Unwraps a `Ractor` payload -- see `as_array_unchecked`'s docs.
+    pub fn as_ractor_unchecked(&self) -> RRactor {
+        match self {
+            RubyValue::Ractor(r) => r.clone(),
+            other => panic!("expected a Ractor, got {}", other.to_display_string()),
+        }
+    }
+
     /// Unwraps an `Object` payload -- see `as_array_unchecked`'s docs. Used
     /// wherever a runtime `class_id()` is needed off a POLY-typed value
     /// (a dynamic `is_a?`/`kind_of?` check, or -- once `raise`/`rescue`
@@ -464,7 +478,8 @@ impl RubyValue {
             | RubyValue::Fiber(_)
             | RubyValue::Thread(_)
             | RubyValue::Mutex(_)
-            | RubyValue::Queue(_) => false,
+            | RubyValue::Queue(_)
+            | RubyValue::Ractor(_) => false,
         }
     }
 

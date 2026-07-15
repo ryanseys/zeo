@@ -125,6 +125,7 @@ fn hash_key(v: &RubyValue) -> HashKey {
         RubyValue::Thread(t) => HashKey::Identity(Arc::as_ptr(t) as *const () as usize),
         RubyValue::Mutex(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
         RubyValue::Queue(q) => HashKey::Identity(Arc::as_ptr(q) as *const () as usize),
+        RubyValue::Ractor(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
     }
 }
 

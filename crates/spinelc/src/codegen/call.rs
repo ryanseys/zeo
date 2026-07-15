@@ -146,6 +146,18 @@ const FLOAT_UNARY_OPS: &[(&str, &str)] = &[("-@", "float_neg"), ("+@", "float_po
 /// object (see `emit_boxed_new`'s docs). `recv_value` must be a
 /// `RubyValue`-typed expression valid at the emission site (the guarded
 /// blocks bind `__recv` first and pass a rewrapped clone here).
+/// A `RactorError` (the flat stand-in for `Ractor::Error` -- nested class
+/// names don't exist yet) whose message comes from a runtime `__msg: String`
+/// in scope at the emission site (boundary-crossing rejections are computed
+/// at runtime, unlike `FiberError`'s fixed strings).
+fn emit_ractor_error(cx: &Ctx) -> TokenStream {
+    super::expr::emit_boxed_new(
+        cx,
+        "RactorError",
+        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
+    )
+}
+
 /// A `FiberError` with a fixed message -- CRuby's own wording, passed
 /// verbatim from the dispatch sites (Phase 13.3).
 fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
@@ -1248,6 +1260,80 @@ pub fn emit_call(
                 ("Queue", "new") if args.is_empty() && block.is_none() => {
                     return quote! { spinel_rt::queue_new() };
                 }
+                // `Ractor.new(*args) { |*params| }` (Phase 13.8) -- block
+                // ISOLATION is enforced HERE, at compile time (the capture
+                // set is statically known), strictly earlier than CRuby's
+                // own Proc-creation-time `Ractor::IsolationError`. Args
+                // cross the boundary at runtime (shareable-by-reference or
+                // deep-copied; a rejection raises `RactorError`).
+                ("Ractor", "new") => {
+                    let Some(block_id) = block else {
+                        panic!("`Ractor.new` requires a literal block (spike scope)");
+                    };
+                    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+                        panic!("a Block should only be reached via the Call that invokes it");
+                    };
+                    let block_caps = super::captures::block_captures(cx.compiler, params, body);
+                    // `block_captures` reports every referenced non-param
+                    // name, INCLUDING the block's own locals (`msg =
+                    // Ractor.receive` -- found the hard way). An outer-scope
+                    // access is a name that's either a genuine shared
+                    // capture (in `cx.captured_locals`) or one this block
+                    // never assigns itself (an enclosing param/block-local).
+                    let mut assigned_here = Vec::new();
+                    for &n in body {
+                        super::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
+                    }
+                    let assigned_here: std::collections::HashSet<&String> =
+                        assigned_here.iter().collect();
+                    if let Some(outer) = block_caps
+                        .locals
+                        .iter()
+                        .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
+                        .min()
+                    {
+                        panic!("can not isolate a Proc because it accesses outer variables ({outer})");
+                    }
+                    if block_caps.self_captured {
+                        panic!("can not isolate a Proc because it accesses instance variables of the enclosing object");
+                    }
+                    let proc = emit_proc_value(cx, block_id);
+                    let arg_exprs: Vec<TokenStream> = args
+                        .iter()
+                        .map(|&a| {
+                            let e = emit_expr(cx, a);
+                            super::expr::box_if_object_typed(cx, a, e)
+                        })
+                        .collect();
+                    let ractor_error = emit_ractor_error(cx);
+                    return quote! {
+                        match spinel_rt::ractor_new(#proc, vec![#(#arg_exprs),*]) {
+                            Ok(__r) => __r,
+                            Err(__msg) => return Err(spinel_rt::Signal::Raise(#ractor_error)),
+                        }
+                    };
+                }
+                ("Ractor", "receive") if args.is_empty() && block.is_none() => {
+                    return quote! { spinel_rt::ractor_receive() };
+                }
+                ("Ractor", "make_shareable") if args.len() == 1 && block.is_none() => {
+                    let v = emit_expr(cx, args[0]);
+                    let v = super::expr::box_if_object_typed(cx, args[0], v);
+                    let ractor_error = emit_ractor_error(cx);
+                    return quote! {
+                        match spinel_rt::make_shareable(&(#v)) {
+                            Ok(__v) => __v,
+                            Err(__msg) => return Err(spinel_rt::Signal::Raise(#ractor_error)),
+                        }
+                    };
+                }
+                ("Ractor", "shareable?") if args.len() == 1 && block.is_none() => {
+                    let v = emit_expr(cx, args[0]);
+                    let v = super::expr::box_if_object_typed(cx, args[0], v);
+                    return quote! {
+                        spinel_rt::RubyValue::Bool(spinel_rt::shareable(&(#v)))
+                    };
+                }
                 _ => {}
             }
         }
@@ -1901,6 +1987,51 @@ fn dispatch(
             ("empty?", 0) => {
                 return quote! {
                     spinel_rt::RubyValue::Bool(spinel_rt::queue_len(&(#recv_expr).as_queue_unchecked()) == 0)
+                };
+            }
+            _ => {}
+        }
+    }
+
+    // `Ractor` instance methods (Phase 13.8). NOTE: on a Ractor receiver,
+    // `send` is the MESSAGE-passing method (as in real Ruby, where
+    // `Ractor#send` shadows `Object#send`) -- this arm must stay ahead of
+    // the generic dynamic-dispatch `send` handling further down.
+    // `value`/`join` mirror Thread's (an uncaught signal re-raises in the
+    // caller; join returns the Ractor itself).
+    if no_kwargs && infer(cx, recv_id) == TyKind::Ractor && block.is_none() && block_arg.is_none() {
+        let ractor_error = emit_ractor_error(cx);
+        match (name, args.len()) {
+            ("send", 1) => {
+                let v = emit_expr(cx, args[0]);
+                let v = super::expr::box_if_object_typed(cx, args[0], v);
+                return quote! {
+                    {
+                        let __r = (#recv_expr).as_ractor_unchecked();
+                        match spinel_rt::ractor_send(&__r, &(#v)) {
+                            Ok(()) => spinel_rt::RubyValue::Ractor(__r),
+                            Err(__msg) => return Err(spinel_rt::Signal::Raise(#ractor_error)),
+                        }
+                    }
+                };
+            }
+            ("value", 0) => {
+                return quote! {
+                    match spinel_rt::ractor_outcome(&(#recv_expr).as_ractor_unchecked()) {
+                        Ok(__v) => __v,
+                        Err(__sig) => return Err(__sig),
+                    }
+                };
+            }
+            ("join", 0) => {
+                return quote! {
+                    {
+                        let __r = (#recv_expr).as_ractor_unchecked();
+                        match spinel_rt::ractor_outcome(&__r) {
+                            Ok(_) => spinel_rt::RubyValue::Ractor(__r),
+                            Err(__sig) => return Err(__sig),
+                        }
+                    }
                 };
             }
             _ => {}

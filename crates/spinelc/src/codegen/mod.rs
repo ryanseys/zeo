@@ -298,6 +298,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
+    // The NoMethodError factory's construction expression -- built by the
+    // SAME `emit_boxed_new` chokepoint every other codegen-raised exception
+    // uses (deriving the ivar layout from the class info rather than
+    // hardcoding it here), just wrapped to absorb `initialize`'s `?` (an
+    // Exception constructor can't signal).
+    let nme_ctor = expr::emit_boxed_new(
+        &cx,
+        "NoMethodError",
+        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
+    );
+
     quote! {
         #(#classes)*
         #(#class_method_containers)*
@@ -308,6 +319,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             #(#builtin_registrations)*
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
+            // Lets `send`'s missing-method fallback raise a real, catchable
+            // NoMethodError (Phase 13.7) -- spinel-rt can't construct
+            // exception objects itself (see the factory's docs).
+            spinel_rt::install_no_method_error_factory(|__msg| {
+                (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#nme_ctor) })()
+                    .expect("Exception#initialize can't signal")
+            });
 
             // The whole top level runs as `may`'s first coroutine (Phase
             // 13.4) -- see `spinel_rt::run_main`'s docs for the worker-count

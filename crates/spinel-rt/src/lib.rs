@@ -12,6 +12,7 @@ mod exec;
 mod fiber;
 mod globals;
 mod handling;
+mod ractor;
 mod regexp;
 mod rproc;
 mod signal;
@@ -23,17 +24,22 @@ pub use arith::*;
 pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use dispatch::{
-    downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
+    downcast_robj, install_class_registry, install_no_method_error_factory, is_a, responds_to,
+    send, ClassId, ClassRegistry,
     MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
     HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    QUEUE_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
-    TRUE_CLASS,
+    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    THREAD_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
 pub use exec::run_main;
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
 pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
+pub use ractor::{
+    make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send, shareable,
+    RRactor, RactorData,
+};
 pub use regexp::*;
 pub use rproc::RProc;
 pub use signal::{catch_break, Signal};
@@ -177,6 +183,9 @@ macro_rules! ruby_class {
             fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
             fn is_frozen(&self) -> bool { self.__frozen.load(std::sync::atomic::Ordering::Relaxed) }
             fn set_frozen(&self) { self.__frozen.store(true, std::sync::atomic::Ordering::Relaxed) }
+            fn ivar_values(&self) -> Vec<$crate::RubyValue> {
+                vec![ $( self.$ivar.lock().clone() ),* ]
+            }
         }
 
         impl $name {

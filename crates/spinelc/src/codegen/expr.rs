@@ -69,8 +69,8 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     use crate::compiler::{
         ARRAY_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS,
-        MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS,
-        SYMBOL_CLASS, THREAD_CLASS,
+        MUTEX_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS,
+        STRING_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     };
     match infer(cx, id) {
         TyKind::Object(cid) => Some(cid),
@@ -88,6 +88,7 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         TyKind::Thread => Some(THREAD_CLASS),
         TyKind::Mutex => Some(MUTEX_CLASS),
         TyKind::Queue => Some(QUEUE_CLASS),
+        TyKind::Ractor => Some(RACTOR_CLASS),
         TyKind::Poly => None,
     }
 }

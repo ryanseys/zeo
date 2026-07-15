@@ -32,11 +32,12 @@ pub enum TyKind {
     /// (see the inference arm below), consumed by `codegen::call`'s
     /// `resume`/`alive?` dispatch.
     Fiber,
-    /// `Thread`/`Mutex`/`Queue` (Phase 13.5) -- same only-from-`.new`
-    /// inference shape as `Fiber`.
+    /// `Thread`/`Mutex`/`Queue` (Phase 13.5) and `Ractor` (13.8) -- same
+    /// only-from-`.new` inference shape as `Fiber`.
     Thread,
     Mutex,
     Queue,
+    Ractor,
     /// The result of a successful `Regexp#match`/`String#match` -- only ever
     /// produced by `codegen::call`'s own static dispatch (a `MatchData`
     /// value can't be constructed any other way), so nothing in
@@ -117,6 +118,7 @@ pub fn infer_type_with_locals(
             HirNode::ClassRef(n) if n == "Thread" => TyKind::Thread,
             HirNode::ClassRef(n) if n == "Mutex" => TyKind::Mutex,
             HirNode::ClassRef(n) if n == "Queue" => TyKind::Queue,
+            HirNode::ClassRef(n) if n == "Ractor" => TyKind::Ractor,
             _ => TyKind::Poly,
         },
         HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, locals, *value),
