@@ -28,6 +28,10 @@ pub enum TyKind {
     /// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
     /// `hir::HirNode::RegexpLit`'s docs.
     Regexp,
+    /// A `Fiber` handle (Phase 13.3) -- only ever produced by `Fiber.new`
+    /// (see the inference arm below), consumed by `codegen::call`'s
+    /// `resume`/`alive?` dispatch.
+    Fiber,
     /// The result of a successful `Regexp#match`/`String#match` -- only ever
     /// produced by `codegen::call`'s own static dispatch (a `MatchData`
     /// value can't be constructed any other way), so nothing in
@@ -94,6 +98,19 @@ pub fn infer_type_with_locals(
             None => TyKind::Poly,
         },
         HirNode::LocalRead(name) => locals.get(name).copied().unwrap_or(TyKind::Poly),
+        // `Fiber.new { ... }` -- the only constructor of a Fiber value.
+        // (`Fiber` is a BUILTIN class, so this never collides with the
+        // ordinary user-class `New` arm above, which `parse` only produces
+        // for registered non-builtin constructors.)
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            ..
+        } if name == "new"
+            && matches!(&compiler.hir[*recv], HirNode::ClassRef(n) if n == "Fiber") =>
+        {
+            TyKind::Fiber
+        }
         HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, locals, *value),
         HirNode::Call {
             receiver: Some(recv),
@@ -127,6 +144,24 @@ pub fn infer_type_with_locals(
         } if args.is_empty() && (name == "length" || name == "size") => {
             match infer_type_with_locals(compiler, locals, *recv) {
                 TyKind::Array | TyKind::Hash | TyKind::Str => TyKind::Int,
+                _ => TyKind::Poly,
+            }
+        }
+        // `.freeze` returns SELF, so a frozen collection keeps its static
+        // type (`A = [1, 2].freeze; A[0]` still takes the static `Array`
+        // fast path instead of the Poly-dispatch fallback -- the single most
+        // common real-world freeze idiom, a frozen constant). Scoped to the
+        // built-in collection types only: an `Object` receiver's class might
+        // define its own `freeze` returning something else, and builtins
+        // can't override it, so this narrowing is only provably sound here.
+        HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            ..
+        } if args.is_empty() && name == "freeze" => {
+            match infer_type_with_locals(compiler, locals, *recv) {
+                t @ (TyKind::Str | TyKind::Array | TyKind::Hash | TyKind::Range) => t,
                 _ => TyKind::Poly,
             }
         }

@@ -19,9 +19,51 @@
 use crate::RubyValue;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-pub type RArray = Arc<Mutex<Vec<RubyValue>>>;
+/// The shared storage cell behind every mutable built-in value: the
+/// `Mutex`-guarded payload plus its `.freeze` flag (Phase 13.1), mirroring
+/// how CRuby keeps `FL_FREEZE` as one bit on the object header next to the
+/// data rather than as a separate registry. `lock()` is deliberately an
+/// inherent method with the exact signature `Mutex::lock` had when
+/// `RArray`/`RHash`/`RStr` were bare `Arc<Mutex<_>>` aliases, so every
+/// pre-existing call site -- including every codegen-EMITTED `.lock()` in
+/// generated programs -- keeps compiling unchanged.
+///
+/// `Ordering::Relaxed` is sufficient for the flag: freezing only needs to
+/// prevent FUTURE mutations observed through ordinary program order (CRuby's
+/// own flag is a plain bit with no fence either); it synchronizes nothing
+/// else. The frozen CHECK itself lives in codegen-emitted guards, not here
+/// -- only codegen can construct the `FrozenError` to raise (same division
+/// of labor as `array_set`'s `IndexError` contract below).
+pub struct Freezable<T> {
+    frozen: AtomicBool,
+    payload: Mutex<T>,
+}
+
+impl<T> Freezable<T> {
+    pub fn new(payload: T) -> Freezable<T> {
+        Freezable {
+            frozen: AtomicBool::new(false),
+            payload: Mutex::new(payload),
+        }
+    }
+
+    pub fn lock(&self) -> parking_lot::MutexGuard<'_, T> {
+        self.payload.lock()
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    pub fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed)
+    }
+}
+
+pub type RArray = Arc<Freezable<Vec<RubyValue>>>;
 
 /// A structural, hashable projection of a `RubyValue` -- the actual
 /// `IndexMap` key (see `RHash` below), so `Hash#[]`/`#[]=` are real
@@ -79,6 +121,7 @@ fn hash_key(v: &RubyValue) -> HashKey {
         // own docs on this documented, narrow scope-cut).
         RubyValue::Regexp(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
         RubyValue::MatchData(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
+        RubyValue::Fiber(f) => HashKey::Identity(Arc::as_ptr(f) as *const () as usize),
     }
 }
 
@@ -90,12 +133,12 @@ fn hash_key(v: &RubyValue) -> HashKey {
 /// (identity-only) -- anything that needs to iterate/display/rebuild the
 /// actual key (`to_display_string`, `#deconstruct_keys` pattern binding)
 /// needs the real value back.
-pub type RHash = Arc<Mutex<IndexMap<HashKey, (RubyValue, RubyValue)>>>;
+pub type RHash = Arc<Freezable<IndexMap<HashKey, (RubyValue, RubyValue)>>>;
 
-pub type RStr = Arc<Mutex<String>>;
+pub type RStr = Arc<Freezable<String>>;
 
 pub fn array_new(elems: Vec<RubyValue>) -> RArray {
-    Arc::new(Mutex::new(elems))
+    Arc::new(Freezable::new(elems))
 }
 
 /// Ruby's own `Array#[]`: negative indices count from the end, and an
@@ -152,7 +195,7 @@ fn resolve_index(index: i64, len: usize) -> Option<usize> {
 }
 
 pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
-    let h: RHash = Arc::new(Mutex::new(IndexMap::new()));
+    let h: RHash = Arc::new(Freezable::new(IndexMap::new()));
     for (k, v) in pairs {
         hash_set(&h, k, v);
     }
@@ -202,11 +245,11 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         .filter(|(k, _)| !excluded.contains(k))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    Arc::new(Mutex::new(pairs))
+    Arc::new(Freezable::new(pairs))
 }
 
 pub fn string_new(s: String) -> RStr {
-    Arc::new(Mutex::new(s))
+    Arc::new(Freezable::new(s))
 }
 
 /// Character-indexed (not byte-indexed), matching Ruby's own UTF-8-aware

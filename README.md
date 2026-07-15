@@ -45,14 +45,18 @@ cargo run -p xtask -- regen
 
 ## Status
 
-All 41 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
+All 43 examples pass (`cargo run -p xtask -- test`), plus a Rust-native
 `cargo test --workspace` suite (`crates/spinelc/tests/e2e.rs`, in-process via
 `spinelc::compile_to_rust`/`spinelc::build::build_binary` -- no subprocess
 spawn for the compiler itself) that's now the default place to add coverage.
 Zero `unsafe` code in `spinelc` or `spinel-rt` (parsing safety is delegated
 entirely to the `ruby-prism` crate; every `RubyValue`/generated class is
 genuinely `Send + Sync` via `Arc`/`parking_lot::Mutex`, needing no
-`unsafe impl` anywhere -- see the plan's Part 9). See
+`unsafe impl` anywhere -- see the plan's Part 9). The single exception in
+the whole workspace is `spinel-fiber` (~30 auditable lines): the
+maintainer-endorsed "current yielder" TLS shim over `corosensei` that lets
+`Fiber.yield` suspend from arbitrary call depth -- one `unsafe` deref with
+its invariants documented at the site (see that crate's docs). See
 [`docs/PORTING_ANALYSIS.md`](docs/PORTING_ANALYSIS.md) for the full
 feasibility analysis, design rationale, and phased roadmap beyond this spike.
 

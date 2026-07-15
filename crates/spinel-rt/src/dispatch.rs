@@ -39,6 +39,19 @@ pub trait RubyObject: Any + Send + Sync {
     /// trait object), so this is the bridge -- same "no default body"
     /// reasoning as `as_any` above.
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+
+    /// `.frozen?` state (Phase 13.1) -- backed by the `__frozen: AtomicBool`
+    /// field `ruby_class!` generates on every class struct (the per-object
+    /// counterpart of `collections::Freezable`'s flag). On the trait (not
+    /// just inherent) so `freeze_value`/`is_frozen_value` can reach it
+    /// through an erased `RObj` without downcasting. The frozen CHECK before
+    /// an ivar write is emitted by codegen (`emit_ivar_write_stmt`'s guard),
+    /// which alone can construct the `FrozenError` to raise.
+    fn is_frozen(&self) -> bool;
+
+    /// Marks this object frozen -- `.freeze`'s storage half; a repeat call
+    /// is a harmless no-op, matching CRuby's own already-frozen guard.
+    fn set_frozen(&self);
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
@@ -83,6 +96,7 @@ pub const FALSE_CLASS: ClassId = ClassId(10);
 pub const PROC_CLASS: ClassId = ClassId(11);
 pub const REGEXP_CLASS: ClassId = ClassId(12);
 pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
+pub const FIBER_CLASS: ClassId = ClassId(14);
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
@@ -94,6 +108,14 @@ impl RubyObject for Object {
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
+    // The root `Object` is never instantiated as a runtime value (no
+    // `Object.new` path exists -- `emit_new` only constructs user classes),
+    // so it has no `__frozen` field to consult; a fixed unfrozen answer
+    // keeps the trait total without pretending at state that can't exist.
+    fn is_frozen(&self) -> bool {
+        false
+    }
+    fn set_frozen(&self) {}
 }
 
 /// Downcasts an erased `RObj` to an owned `Arc<T>` -- the Path 2 trampoline

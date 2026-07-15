@@ -8,6 +8,7 @@ mod collections;
 mod constants;
 mod cvars;
 mod dispatch;
+mod fiber;
 mod globals;
 mod handling;
 mod regexp;
@@ -21,11 +22,12 @@ pub use collections::*;
 pub use constants::{const_get, const_set};
 pub use dispatch::{
     downcast_robj, install_class_registry, is_a, responds_to, send, ClassId, ClassRegistry,
-    MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, MATCH_DATA_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS, REGEXP_CLASS,
-    STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+    MethodFn, Object, RObj, RubyObject, ARRAY_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
+    HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, NIL_CLASS, PROC_CLASS, RANGE_CLASS,
+    REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS, TRUE_CLASS,
 };
 pub use cvars::{cvar_get, cvar_set};
+pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
 pub use globals::{global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use regexp::*;
@@ -113,6 +115,14 @@ macro_rules! ruby_class {
         }
     ) => {
         pub struct $name {
+            /// `.freeze`'s per-object flag (Phase 13.1) -- read through
+            /// `RubyObject::is_frozen` and by the guard codegen emits before
+            /// every ivar write (`emit_ivar_write_stmt`). Double-underscore
+            /// prefixed, matching the `__blk`/`__self` convention for
+            /// generated names a user ivar won't realistically collide with
+            /// (a literal Ruby `@__frozen` would -- same accepted, vanishing
+            /// residual risk as every other `__`-reserved name in codegen).
+            pub __frozen: std::sync::atomic::AtomicBool,
             $( pub $ivar: $crate::parking_lot::Mutex<$crate::RubyValue>, )*
         }
 
@@ -156,6 +166,8 @@ macro_rules! ruby_class {
             fn class_id(&self) -> $crate::ClassId { Self::CLASS_ID }
             fn as_any(&self) -> &dyn std::any::Any { self }
             fn as_any_rc(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> { self }
+            fn is_frozen(&self) -> bool { self.__frozen.load(std::sync::atomic::Ordering::Relaxed) }
+            fn set_frozen(&self) { self.__frozen.store(true, std::sync::atomic::Ordering::Relaxed) }
         }
 
         impl $name {
@@ -279,6 +291,7 @@ mod tests {
     #[test]
     fn static_path_stores_and_reads_ivar() {
         let p = std::sync::Arc::new(Point {
+            __frozen: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
@@ -291,15 +304,56 @@ mod tests {
     #[test]
     fn new_handle_erases_to_a_trait_object() {
         let handle: RObj = Point::new_handle(std::sync::Arc::new(Point {
+            __frozen: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Int(7)),
         }));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
 
+    /// Phase 13.1: the freeze tiering `RubyValue::is_frozen`/`freeze_value`
+    /// implement -- immediates/`Range` always frozen, mutable types start
+    /// unfrozen and latch on `.freeze` (which returns self and no-ops when
+    /// repeated), the flagless `Proc` approximation stays `false`.
+    #[test]
+    fn freeze_tiering_matches_cruby_semantics() {
+        assert!(RubyValue::Int(1).is_frozen());
+        assert!(RubyValue::Nil.is_frozen());
+        assert!(RubyValue::Symbol(Symbol::intern("s")).is_frozen());
+        assert!(RubyValue::Range(None, None, false).is_frozen());
+
+        let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
+        assert!(!arr.is_frozen());
+        let same = arr.freeze_value();
+        assert!(arr.is_frozen());
+        // Returns SELF (the same shared storage), not a copy.
+        assert!(same.is_frozen());
+        arr.freeze_value(); // repeat freeze is a silent no-op
+        assert!(arr.is_frozen());
+
+        let s = RubyValue::Str(string_new("abc".to_string()));
+        assert!(!s.is_frozen());
+        s.freeze_value();
+        assert!(s.is_frozen());
+
+        let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
+            __frozen: Default::default(),
+            x: parking_lot::Mutex::new(RubyValue::Nil),
+        })));
+        assert!(!obj.is_frozen());
+        obj.freeze_value();
+        assert!(obj.is_frozen());
+
+        assert_eq!(
+            arr.inspect_string(),
+            "[1]",
+            "inspect backs the FrozenError message format"
+        );
+    }
+
     #[test]
     fn dynamic_send_finds_registered_method() {
         install();
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {}));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default() }));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
@@ -307,7 +361,7 @@ mod tests {
     #[test]
     fn dynamic_send_falls_back_to_method_missing() {
         install();
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {}));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default() }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
     }

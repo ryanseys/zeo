@@ -137,6 +137,41 @@ const FLOAT_UNARY_OPS: &[(&str, &str)] = &[("-@", "float_neg"), ("+@", "float_po
 /// already plain calls. Returns `None` (falls through to ordinary Path 1/
 /// Path 2 dispatch below) for any receiver whose static type isn't one of
 /// these four, so a user class's own `def []` is completely unaffected.
+/// A `FrozenError` for a mutation attempt on a frozen `class_name` receiver,
+/// with CRuby's exact message shape (`can't modify frozen Array: [1, 2, 3]`
+/// -- `error.c:4221`, the class name static since every guarded site is
+/// type-gated, the receiver's `inspect` computed at runtime). Constructed by
+/// codegen, not inside the `spinel_rt` mutators, for the same reason as
+/// `array_set`'s `IndexError` contract: only codegen can build an exception
+/// object (see `emit_boxed_new`'s docs). `recv_value` must be a
+/// `RubyValue`-typed expression valid at the emission site (the guarded
+/// blocks bind `__recv` first and pass a rewrapped clone here).
+/// A `FiberError` with a fixed message -- CRuby's own wording, passed
+/// verbatim from the dispatch sites (Phase 13.3).
+fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
+    super::expr::emit_boxed_new(
+        cx,
+        "FiberError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(#msg.to_string()))
+        }],
+    )
+}
+
+fn emit_frozen_error(cx: &Ctx, class_name: &str, recv_value: TokenStream) -> TokenStream {
+    super::expr::emit_boxed_new(
+        cx,
+        "FrozenError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!(
+                "can't modify frozen {}: {}",
+                #class_name,
+                (#recv_value).inspect_string()
+            )))
+        }],
+    )
+}
+
 fn try_collection_dispatch(
     cx: &Ctx,
     recv_id: NodeId,
@@ -167,10 +202,22 @@ fn try_collection_dispatch(
                     ))
                 }],
             );
+            let frozen_error =
+                emit_frozen_error(cx, "Array", quote! { spinel_rt::RubyValue::Array(__recv.clone()) });
             quote! {
                 {
+                    // Receiver and arguments evaluate FIRST, then the frozen
+                    // check, then the actual store -- real Ruby's own order
+                    // (`FrozenError` raises from inside `[]=`, after argument
+                    // evaluation but before any work: CRuby's
+                    // `rb_ary_modify_check` at the top of the mutator).
+                    let __recv = (#recv_expr).as_array_unchecked();
                     let __idx = (#idx).as_int_unchecked();
-                    match spinel_rt::array_set(&(#recv_expr).as_array_unchecked(), __idx, #val) {
+                    let __val = #val;
+                    if __recv.is_frozen() {
+                        return Err(spinel_rt::Signal::Raise(#frozen_error));
+                    }
+                    match spinel_rt::array_set(&__recv, __idx, __val) {
                         Some(__v) => __v,
                         None => return Err(spinel_rt::Signal::Raise(#index_error)),
                     }
@@ -187,7 +234,22 @@ fn try_collection_dispatch(
         (TyKind::Hash, "[]=", 2) => {
             let key = emit_expr(cx, args[0]);
             let val = emit_expr(cx, args[1]);
-            quote! { spinel_rt::hash_set(&(#recv_expr).as_hash_unchecked(), #key, #val) }
+            let frozen_error =
+                emit_frozen_error(cx, "Hash", quote! { spinel_rt::RubyValue::Hash(__recv.clone()) });
+            // The frozen check runs BEFORE `hash_set` ever hashes the key --
+            // the same ordering CRuby guarantees (`rb_hash_modify` is
+            // `rb_hash_aset`'s first statement, ahead of any `st_update`).
+            quote! {
+                {
+                    let __recv = (#recv_expr).as_hash_unchecked();
+                    let __key = #key;
+                    let __val = #val;
+                    if __recv.is_frozen() {
+                        return Err(spinel_rt::Signal::Raise(#frozen_error));
+                    }
+                    spinel_rt::hash_set(&__recv, __key, __val)
+                }
+            }
         }
         (TyKind::Hash, "length" | "size", 0) => {
             quote! { spinel_rt::RubyValue::Int(spinel_rt::hash_len(&(#recv_expr).as_hash_unchecked())) }
@@ -199,7 +261,19 @@ fn try_collection_dispatch(
         (TyKind::Str, "[]=", 2) => {
             let idx = emit_expr(cx, args[0]);
             let val = emit_expr(cx, args[1]);
-            quote! { spinel_rt::string_set(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked(), &(#val)) }
+            let frozen_error =
+                emit_frozen_error(cx, "String", quote! { spinel_rt::RubyValue::Str(__recv.clone()) });
+            quote! {
+                {
+                    let __recv = (#recv_expr).as_str_unchecked();
+                    let __idx = (#idx).as_int_unchecked();
+                    let __val = #val;
+                    if __recv.is_frozen() {
+                        return Err(spinel_rt::Signal::Raise(#frozen_error));
+                    }
+                    spinel_rt::string_set(&__recv, __idx, &__val)
+                }
+            }
         }
         (TyKind::Str, "length" | "size", 0) => {
             quote! { spinel_rt::RubyValue::Int(spinel_rt::string_len(&(#recv_expr).as_str_unchecked())) }
@@ -482,6 +556,9 @@ pub fn emit_new_with_arg_tokens(
         let f = safe_ident(iv);
         quote! { #f: spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil), }
     });
+    // Every object starts unfrozen -- `.freeze`'s per-object flag (see
+    // `ruby_class!`'s `__frozen` field docs).
+    let fields = quote! { __frozen: std::sync::atomic::AtomicBool::new(false), #(#fields)* };
     // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
     // holding this needs to be `Arc::clone()`-able on every re-read
     // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
@@ -489,7 +566,7 @@ pub fn emit_new_with_arg_tokens(
     // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
     // work unchanged against a `self: Arc<Self>`-shaped method. `Arc` (not
     // `Rc`, Part 9): every generated struct is genuinely `Send + Sync`.
-    let ctor = quote! { std::sync::Arc::new(#class_ident { #(#fields)* }) };
+    let ctor = quote! { std::sync::Arc::new(#class_ident { #fields }) };
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some(_) => {
@@ -1091,6 +1168,42 @@ pub fn emit_call(
     // call, so compound assignment (`+=`/`-=`/etc., every operator except
     // `||=`) on a non-class constant panicked with a confusing "unknown
     // class/module" error instead of reading its actual value.
+    // `Fiber.new { }` / `Fiber.yield(...)` (Phase 13.3) -- intercepted
+    // ahead of the generic class-method branch below (which would reject
+    // the block / find no such class method). The block becomes an ordinary
+    // escaping `Proc` via `emit_proc_value` -- the same capture machinery
+    // every other escaping block uses, so captured locals/`self` compose
+    // for free. All FiberError construction happens here, not in
+    // `spinel_rt::fiber_*` (the `array_set`->`IndexError` division of
+    // labor; messages verbatim from CRuby `cont.c`).
+    if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
+        if target_name == "Fiber" && !safe && kwargs.is_empty() {
+            if name == "new" {
+                let Some(block_id) = block else {
+                    panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                };
+                let proc = emit_proc_value(cx, block_id);
+                return quote! { spinel_rt::fiber_new(#proc) };
+            }
+            if name == "yield" && block.is_none() && block_arg.is_none() {
+                let arg_exprs: Vec<TokenStream> = args
+                    .iter()
+                    .map(|&a| {
+                        let e = emit_expr(cx, a);
+                        super::expr::box_if_object_typed(cx, a, e)
+                    })
+                    .collect();
+                let root_error = emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
+                return quote! {
+                    match spinel_rt::fiber_yield(vec![#(#arg_exprs),*]) {
+                        Some(__v) => __v,
+                        None => return Err(spinel_rt::Signal::Raise(#root_error)),
+                    }
+                };
+            }
+        }
+    }
+
     if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
         if cx.compiler.class_by_name(target_name).is_some() {
             if safe || block.is_some() || block_arg.is_some() {
@@ -1469,6 +1582,103 @@ fn dispatch(
         return quote! {
             spinel_rt::RubyValue::Bool(spinel_rt::responds_to(#class_id_expr, #sym_expr))
         };
+    }
+
+    // `.freeze`/`.frozen?` -- universal `Kernel` methods, dispatched over
+    // every receiver representation (Phase 13.1). A user class's OWN
+    // `def freeze`/`def frozen?` override wins, matching real Ruby (they're
+    // ordinary overridable `Kernel` methods) -- checked via the receiver's
+    // materialized method table, falling through to ordinary Path 1
+    // dispatch when one exists. Two receiver shapes: a statically-known
+    // Object receiver is a bare `Arc<Concrete>` (flag reached via the
+    // `RubyObject` trait, UFCS-qualified since generated programs don't
+    // import the trait by name); everything else -- builtins and Poly -- is
+    // already a `RubyValue`, handled by its own universal
+    // `freeze_value`/`is_frozen` methods (see their docs for the
+    // always-frozen-immediates / flagless-`Proc` tiering).
+    if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() {
+        let user_defined = matches!(
+            infer(cx, recv_id),
+            TyKind::Object(cid) if cx.compiler.method_in_chain(cid, name).is_some()
+        );
+        if !user_defined {
+            return match infer(cx, recv_id) {
+                TyKind::Object(cid) => {
+                    let class_ident = safe_ident(&cx.compiler.class(cid).name);
+                    if name == "freeze" {
+                        // Returns self, boxed -- `freeze`'s result is
+                        // Poly-typed downstream (see `types.rs`), so the
+                        // uniform `RubyValue` representation is the right
+                        // one, exactly like `emit_boxed_new`'s.
+                        quote! {
+                            {
+                                let __r = #recv_expr;
+                                spinel_rt::RubyObject::set_frozen(&*__r);
+                                spinel_rt::RubyValue::Object(#class_ident::new_handle(__r))
+                            }
+                        }
+                    } else {
+                        quote! {
+                            spinel_rt::RubyValue::Bool(spinel_rt::RubyObject::is_frozen(&*(#recv_expr)))
+                        }
+                    }
+                }
+                _ => {
+                    if name == "freeze" {
+                        quote! { (#recv_expr).freeze_value() }
+                    } else {
+                        quote! { spinel_rt::RubyValue::Bool((#recv_expr).is_frozen()) }
+                    }
+                }
+            };
+        }
+    }
+
+    // `Fiber#resume` / `Fiber#alive?` on a statically-known Fiber receiver
+    // (Phase 13.3). `resume`'s error outcomes each become their own
+    // CRuby-verbatim `FiberError`; an uncaught Ruby signal from inside the
+    // fiber's body re-raises HERE, at the resumer -- exactly CRuby's
+    // `cont.c:2914` behavior. A Poly-typed receiver falls through to the
+    // generic Poly-`send` fallback below (which can't reach a Fiber -- the
+    // same documented builtin-receiver `send` gap every other builtin has).
+    if no_kwargs && infer(cx, recv_id) == TyKind::Fiber && block.is_none() && block_arg.is_none() {
+        if name == "resume" {
+            let arg_exprs: Vec<TokenStream> = args
+                .iter()
+                .map(|&a| {
+                    let e = emit_expr(cx, a);
+                    super::expr::box_if_object_typed(cx, a, e)
+                })
+                .collect();
+            let dead = emit_fiber_error(cx, "attempt to resume a terminated fiber");
+            let double = emit_fiber_error(cx, "attempt to resume the current fiber (double resume)");
+            let cross = emit_fiber_error(cx, "fiber called across threads");
+            return quote! {
+                match spinel_rt::fiber_resume(
+                    &(#recv_expr).as_fiber_unchecked(),
+                    vec![#(#arg_exprs),*],
+                ) {
+                    spinel_rt::FiberResume::Value(__v) => __v,
+                    spinel_rt::FiberResume::RubyError(__sig) => return Err(__sig),
+                    spinel_rt::FiberResume::Dead => {
+                        return Err(spinel_rt::Signal::Raise(#dead))
+                    }
+                    spinel_rt::FiberResume::DoubleResume => {
+                        return Err(spinel_rt::Signal::Raise(#double))
+                    }
+                    spinel_rt::FiberResume::CrossThread => {
+                        return Err(spinel_rt::Signal::Raise(#cross))
+                    }
+                }
+            };
+        }
+        if name == "alive?" && args.is_empty() {
+            return quote! {
+                spinel_rt::RubyValue::Bool(spinel_rt::fiber_alive(
+                    &(#recv_expr).as_fiber_unchecked(),
+                ))
+            };
+        }
     }
 
     // Native `Int` arithmetic/comparison/bitwise ops: both operands must be

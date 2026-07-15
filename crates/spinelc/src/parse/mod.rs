@@ -85,6 +85,8 @@ class FrozenError < RuntimeError
 end
 class NoMatchingPatternError < StandardError
 end
+class FiberError < StandardError
+end
 class TypeError < StandardError
 end
 class ZeroDivisionError < StandardError
@@ -1103,19 +1105,26 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(call) = node.as_call_node() {
         let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
 
-        // `ClassName.new(args)` -- a distinct node; see hir.rs.
+        // `ClassName.new(args)` -- a distinct node; see hir.rs. `Fiber.new
+        // { }` is deliberately NOT this shape: it must keep its BLOCK (the
+        // fiber's body), which `HirNode::New` has no slot for, so it falls
+        // through to the generic `Call` lowering below (receiver becomes an
+        // ordinary `ClassRef("Fiber")`) and is intercepted by
+        // `codegen::call::emit_call`'s fiber dispatch instead.
         if name == "new" {
             if let Some(recv) = call.receiver() {
                 let class_name = constant_name(&recv)?;
-                let args = match call.arguments() {
-                    None => Vec::new(),
-                    Some(a) => a
-                        .arguments()
-                        .iter()
-                        .map(|n| lower_node(result, hir, &n))
-                        .collect::<PResult<Vec<_>>>()?,
-                };
-                return Ok(hir.push(HirNode::New { class_name, args }));
+                if class_name != "Fiber" {
+                    let args = match call.arguments() {
+                        None => Vec::new(),
+                        Some(a) => a
+                            .arguments()
+                            .iter()
+                            .map(|n| lower_node(result, hir, &n))
+                            .collect::<PResult<Vec<_>>>()?,
+                    };
+                    return Ok(hir.push(HirNode::New { class_name, args }));
+                }
             }
         }
 

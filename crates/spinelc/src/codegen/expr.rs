@@ -68,8 +68,8 @@ pub fn infer_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
 /// (`is_a?`/`kind_of?`/`respond_to?`), not a constructible struct.
 pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
     use crate::compiler::{
-        ARRAY_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS, PROC_CLASS,
-        RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
+        ARRAY_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, MATCH_DATA_CLASS,
+        PROC_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
     };
     match infer(cx, id) {
         TyKind::Object(cid) => Some(cid),
@@ -83,6 +83,7 @@ pub fn infer_any_class(cx: &Ctx, id: NodeId) -> Option<ClassId> {
         TyKind::Proc => Some(PROC_CLASS),
         TyKind::Regexp => Some(REGEXP_CLASS),
         TyKind::MatchData => Some(MATCH_DATA_CLASS),
+        TyKind::Fiber => Some(FIBER_CLASS),
         TyKind::Poly => None,
     }
 }
@@ -467,8 +468,46 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let write = emit_const_write_stmt(cx, scope.as_deref(), name, quote! { __v.clone() });
             quote! { { let __v = #v; #write __v } }
         }
-        HirNode::Seq(body) => super::stmt::emit_body(cx, body, false),
-        HirNode::Eval(body) => super::stmt::emit_body(cx, body, false),
+        // Brace-wrapped into a single Rust block EXPRESSION, not spliced as
+        // bare statements: every `emit_expr` caller assumes one expression,
+        // and a multi-statement `Seq`/`Eval` body in tail position otherwise
+        // lands inside the tail's `Ok(...)` as `Ok(stmt; stmt; expr)` --
+        // invalid Rust, found via `arr[i] += 1` as the last statement of a
+        // method/`begin` body (a PRE-existing bug since these arms were
+        // written, latent only because no test ever put one in tail
+        // position). Safe to wrap: any local a `Seq`/`Eval` body assigns is
+        // DECLARED in the enclosing scope's hoisting prelude (see
+        // `codegen::hoisting`), so the braces hide nothing that outlives
+        // this expression.
+        //
+        // `Seq` additionally emits under a positionally-exact type OVERLAY
+        // for its own hidden temps (`__recvN`/`__idxN`, `hir.gensym`'d by
+        // `parse`'s compound-assignment desugars): the scope-level
+        // `local_types` map is a whole-scope MERGE, and a temp first
+        // assigned inside a `begin` body merges against the rescue branches'
+        // "never assigned" vote and widens to `Poly` -- sending `arr[i] +=
+        // 1` inside any `begin` down the Poly-dispatch-to-`send` fallback (a
+        // second PRE-existing bug, confirmed against the pre-freeze
+        // checkout). Within a `Seq` the overlay is exact by construction:
+        // its binds are straight-line and always precede every read, and the
+        // gensym'd names are unreadable outside it. `Eval` deliberately gets
+        // NO overlay -- its body is arbitrary user code where "the first
+        // write's type" isn't a sound stand-in for a branch-merged one.
+        HirNode::Seq(body) => {
+            let mut overlay = std::collections::HashMap::new();
+            for &n in body {
+                if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[n] {
+                    overlay.insert(name.clone(), infer(cx, *value));
+                }
+            }
+            let narrowed = cx.with_narrowed_locals(overlay);
+            let b = super::stmt::emit_body(&narrowed, body, false);
+            quote! { { #b } }
+        }
+        HirNode::Eval(body) => {
+            let b = super::stmt::emit_body(cx, body, false);
+            quote! { { #b } }
+        }
         HirNode::Return(v) => {
             let value = match v {
                 Some(id) => emit_expr(cx, *id),
@@ -713,7 +752,33 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
 pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     let slf = &cx.self_ident;
-    quote! { *#slf.#ident.lock() = #value; }
+    // The `.freeze` guard (Phase 13.1) -- checked at the top of every ivar
+    // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
+    // The message's `#<Class>` receiver rendering is a fully-static
+    // approximation of real Ruby's `#<Class:0xaddr @ivar=...>` inspect (this
+    // runtime has no per-object address/ivar reflection to interpolate) --
+    // documented, same posture as `RubyValue::inspect_string`'s `Object` arm.
+    // `RubyObject::is_frozen` is UFCS-qualified: generated programs never
+    // `use` the trait by name. The one atomic load this adds to every ivar
+    // write (including inside `initialize`, where it's always false) is
+    // negligible; `FrozenError`'s construction only ever runs on the raise
+    // path.
+    let class_name = cx
+        .current_class
+        .map(|cid| cx.compiler.class(cid).name.clone())
+        .expect("ivar write outside a class context");
+    let msg = format!("can't modify frozen {class_name}: #<{class_name}>");
+    let frozen_error = emit_boxed_new(
+        cx,
+        "FrozenError",
+        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#msg.to_string())) }],
+    );
+    quote! {
+        if spinel_rt::RubyObject::is_frozen(&*#slf) {
+            return Err(spinel_rt::Signal::Raise(#frozen_error));
+        }
+        *#slf.#ident.lock() = #value;
+    }
 }
 
 /// A cvar WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s docs

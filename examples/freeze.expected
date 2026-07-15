@@ -1,0 +1,15 @@
+false
+true
+can't modify frozen Array: [1, 2, 3]
+1
+a
+2
+99
+true
+true
+true
+true
+can't modify frozen Hash: {a: 1}
+can't modify frozen String: "abc"
+frozen counter
+1

@@ -47,6 +47,8 @@ pub const PROC_CLASS: ClassId = ClassId(11);
 pub const REGEXP_CLASS: ClassId = ClassId(12);
 /// The result of a successful `Regexp#match`/`String#match` (Phase 12.7).
 pub const MATCH_DATA_CLASS: ClassId = ClassId(13);
+/// A `Fiber` (Phase 13.3) -- see `spinel_rt::fiber`'s module docs.
+pub const FIBER_CLASS: ClassId = ClassId(14);
 
 /// `(reserved ClassId, Ruby-visible name)` for every built-in class, in
 /// registration order -- the SINGLE source of truth `Compiler::new` seeds
@@ -67,6 +69,7 @@ const BUILTIN_CLASSES: &[(ClassId, &str)] = &[
     (PROC_CLASS, "Proc"),
     (REGEXP_CLASS, "Regexp"),
     (MATCH_DATA_CLASS, "MatchData"),
+    (FIBER_CLASS, "Fiber"),
 ];
 
 pub struct ClassInfo {

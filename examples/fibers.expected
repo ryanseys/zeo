@@ -1,0 +1,13 @@
+true
+1
+2
+3
+false
+6
+70
+42
+1
+11
+attempt to resume a terminated fiber
+rescued: kaboom
+false

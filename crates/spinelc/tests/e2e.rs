@@ -5048,3 +5048,520 @@ fn combined_optional_rest_post_keyword_keyword_rest_and_block_params_all_bind_co
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "1\n2\n3\n4\n5\n99\n100\nblock!\n");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 13.1: .freeze / .frozen? -- every snippet oracle-verified against
+// real `ruby` first, per this project's standing convention. Semantics
+// grounded in CRuby's actual implementation (see the plan's Part 11
+// addendum): freeze is SHALLOW, returns self, no-ops when repeated;
+// immediates and Ranges are always frozen; mutation of a frozen value
+// raises a catchable FrozenError (a RuntimeError subclass) with the message
+// `can't modify frozen <Class>: <inspect>`, checked at the top of every
+// mutator after argument evaluation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freezing_an_array_makes_index_assignment_raise_a_catchable_frozen_error() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3]
+        a.freeze
+        begin
+          a[0] = 9
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        puts a[0]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "can't modify frozen Array: [1, 2, 3]\n1\n");
+}
+
+#[test]
+fn frozen_predicate_flips_after_freeze_and_freeze_returns_self() {
+    let result = run_ruby(
+        r#"
+        a = [1]
+        puts a.frozen?
+        b = a.freeze
+        puts a.frozen?
+        puts b.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\ntrue\ntrue\n");
+}
+
+#[test]
+fn freeze_is_shallow_so_a_frozen_containers_elements_stay_mutable() {
+    let result = run_ruby(
+        r#"
+        inner = [1, 2]
+        b = [inner]
+        b.freeze
+        inner[0] = 99
+        puts inner[0]
+        puts b.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "99\ntrue\n");
+}
+
+#[test]
+fn immediates_and_ranges_are_always_frozen() {
+    let result = run_ruby(
+        r#"
+        puts 1.frozen?
+        puts 1.5.frozen?
+        puts :sym.frozen?
+        puts nil.frozen?
+        puts true.frozen?
+        puts (1..5).frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n");
+}
+
+#[test]
+fn frozen_hash_assignment_raises_with_the_inspect_bearing_message() {
+    let result = run_ruby(
+        r#"
+        h = { a: 1 }
+        h.freeze
+        begin
+          h[:b] = 2
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        puts h.length
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "can't modify frozen Hash: {a: 1}\n1\n");
+}
+
+#[test]
+fn frozen_string_assignment_raises_with_the_quoted_inspect_message() {
+    let result = run_ruby(
+        r#"
+        s = "abc"
+        s.freeze
+        begin
+          s[0] = "z"
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        puts s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "can't modify frozen String: \"abc\"\nabc\n");
+}
+
+#[test]
+fn ivar_write_on_a_frozen_object_raises_and_leaves_the_ivar_unchanged() {
+    // The message's `#<Pt>` receiver rendering is this compiler's documented
+    // static approximation of real Ruby's `#<Pt:0xaddr @x=1>` (no per-object
+    // address/ivar reflection exists) -- the SEMANTICS (raises a catchable
+    // FrozenError, the ivar keeps its old value, readers still work) are
+    // oracle-verified exactly.
+    let result = run_ruby(
+        r#"
+        class Pt
+          def initialize(x)
+            @x = x
+          end
+          def set_x(v)
+            @x = v
+          end
+          def x
+            @x
+          end
+        end
+        p1 = Pt.new(1)
+        p1.freeze
+        puts p1.frozen?
+        begin
+          p1.set_x(5)
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        puts p1.x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ncan't modify frozen Pt: #<Pt>\n1\n"
+    );
+}
+
+#[test]
+fn frozen_error_is_caught_by_a_runtime_error_rescue() {
+    let result = run_ruby(
+        r#"
+        g = [1].freeze
+        begin
+          g[0] = 2
+        rescue RuntimeError => e
+          puts "runtime-rescued"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "runtime-rescued\n");
+}
+
+#[test]
+fn repeated_freeze_is_a_silent_no_op() {
+    let result = run_ruby(
+        r#"
+        c = "hi"
+        c.freeze
+        c.freeze
+        puts c.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n");
+}
+
+#[test]
+fn freeze_returns_self_keeping_the_static_collection_type() {
+    // Exercises `types.rs`'s `.freeze`-returns-self inference: `names[0]`/
+    // `names.length` must still take the static Array fast path (a Poly
+    // fallback would panic). A LOCAL, not the classic `NAMES = [...].freeze`
+    // constant idiom: a constant READ is always Poly (constants live in a
+    // runtime map with no static type tracking) -- a PRE-existing gap that
+    // makes `A = [1]; A[0]` fail with or without `.freeze` involved, noted
+    // for a later phase, not a freeze regression.
+    let result = run_ruby(
+        r#"
+        names = ["a", "b"].freeze
+        puts names[0]
+        puts names.length
+        puts names.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\n2\ntrue\n");
+}
+
+#[test]
+fn compound_index_assignment_in_tail_position_compiles() {
+    // Regression test for a pre-existing codegen bug found during the
+    // freeze work (not freeze-related): `HirNode::Seq` -- the lowering
+    // artifact behind `arr[i] += 1` -- emitted a brace-less statement
+    // sequence from `emit_expr`, producing invalid Rust (`Ok(stmt; stmt;
+    // expr)`) whenever the compound assignment was the LAST statement of a
+    // method/`begin` body. Latent since the `Seq` arm was written; every
+    // prior test happened to put a statement after it.
+    let result = run_ruby(
+        r#"
+        class Bumper
+          def bump
+            arr = [10]
+            arr[0] += 1
+          end
+        end
+        puts Bumper.new.bump
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "11\n");
+}
+
+#[test]
+fn compound_assignment_on_a_frozen_array_raises_after_the_read() {
+    // `d[0] += 1` desugars to a read (fine on a frozen array) then a `[]=`
+    // (raises) -- real Ruby's own order.
+    let result = run_ruby(
+        r#"
+        d = [1]
+        d.freeze
+        begin
+          d[0] += 1
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "can't modify frozen Array: [1]\n");
+}
+
+#[test]
+fn multi_assignment_into_a_frozen_index_target_raises() {
+    let result = run_ruby(
+        r#"
+        f = [1, 2]
+        f.freeze
+        begin
+          f[0], x = 5, 6
+        rescue FrozenError => e
+          puts e.send(:message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "can't modify frozen Array: [1, 2]\n");
+}
+
+#[test]
+fn a_user_defined_freeze_override_wins_over_the_builtin() {
+    // `freeze`/`frozen?` are ordinary overridable Kernel methods in real
+    // Ruby -- a class's own definition must win over the universal dispatch.
+    let result = run_ruby(
+        r#"
+        class Custom
+          def freeze
+            :custom
+          end
+        end
+        puts Custom.new.freeze
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "custom\n");
+}
+
+#[test]
+fn self_freeze_inside_a_method_freezes_the_receiver() {
+    let result = run_ruby(
+        r#"
+        class Lockable
+          def initialize
+            @v = 1
+          end
+          def lock_it
+            self.freeze
+          end
+          def set_v(n)
+            @v = n
+          end
+          def v
+            @v
+          end
+        end
+        l = Lockable.new
+        l.lock_it
+        puts l.frozen?
+        begin
+          l.set_v(2)
+        rescue FrozenError => e
+          puts "frozen!"
+        end
+        puts l.v
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfrozen!\n1\n");
+}
+
+#[test]
+fn freeze_and_frozen_predicate_work_on_a_poly_typed_receiver() {
+    // A method parameter is always statically Poly -- the universal
+    // `RubyValue::freeze_value`/`is_frozen` path, not the type-gated ones.
+    let result = run_ruby(
+        r#"
+        class Once
+          def run(x)
+            x.freeze
+            puts x.frozen?
+          end
+        end
+        Once.new.run([1])
+        Once.new.run(42)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\n");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 13.3: Fiber -- corosensei-backed stackful coroutines behind the
+// spinel-fiber shim (see that crate's docs for the one quarantined unsafe
+// block and its invariants). Every snippet oracle-verified against real
+// `ruby` first; error messages are CRuby-verbatim (`cont.c`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fiber_yields_values_in_order_then_returns_the_body_value_and_dies() {
+    let result = run_ruby(
+        r#"
+        f = Fiber.new do
+          Fiber.yield 1
+          Fiber.yield 2
+          3
+        end
+        puts f.alive?
+        puts f.resume
+        puts f.resume
+        puts f.resume
+        puts f.alive?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n1\n2\n3\nfalse\n");
+}
+
+#[test]
+fn fiber_resume_and_yield_pass_values_in_both_directions() {
+    // resume(v)'s v becomes the suspended Fiber.yield's return value;
+    // Fiber.yield(v)'s v becomes resume's return value -- CRuby
+    // `make_passing_arg` both ways.
+    let result = run_ruby(
+        r#"
+        g = Fiber.new do |x|
+          y = Fiber.yield(x + 1)
+          z = Fiber.yield(y + 10)
+          z + 100
+        end
+        puts g.resume(5)
+        puts g.resume(6)
+        puts g.resume(7)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n16\n107\n");
+}
+
+#[test]
+fn first_resume_args_bind_to_the_fiber_blocks_params() {
+    let result = run_ruby(
+        r#"
+        h = Fiber.new do |a, b|
+          a + b
+        end
+        puts h.resume(3, 4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn resuming_a_dead_fiber_raises_a_catchable_fiber_error() {
+    let result = run_ruby(
+        r#"
+        d = Fiber.new { :done }
+        d.resume
+        begin
+          d.resume
+        rescue FiberError => e
+          puts e.send(:message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "attempt to resume a terminated fiber\n");
+}
+
+#[test]
+fn fiber_yield_at_the_root_raises_a_fiber_error() {
+    let result = run_ruby(
+        r#"
+        begin
+          Fiber.yield(1)
+        rescue FiberError => e
+          puts e.send(:message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "attempt to yield on a not resumed fiber\n");
+}
+
+#[test]
+fn multiple_yield_args_pack_into_an_array_for_the_resumer() {
+    // Asserted via `puts` (an Array prints one element per line, matching
+    // real ruby) rather than `v.length`/`v[0]`: `resume`'s result is
+    // statically Poly, and collection methods on a Poly value are the
+    // PRE-existing Poly-dispatch gap, nothing fiber-specific.
+    let result = run_ruby(
+        r#"
+        m = Fiber.new do
+          Fiber.yield(1, 2)
+          :fin
+        end
+        v = m.resume
+        puts v
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n");
+}
+
+#[test]
+fn an_uncaught_exception_inside_a_fiber_reraises_at_the_resumer_and_kills_the_fiber() {
+    let result = run_ruby(
+        r#"
+        x = Fiber.new do
+          raise "boom in fiber"
+        end
+        begin
+          x.resume
+        rescue RuntimeError => e
+          puts "caught: #{e.send(:message)}"
+        end
+        puts x.alive?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught: boom in fiber\nfalse\n");
+}
+
+#[test]
+fn nested_fibers_each_yield_to_their_own_resumer() {
+    // The exact shape the spinel-fiber TLS save/restore discipline exists
+    // for: after the inner fiber yields, the OUTER fiber's own Fiber.yield
+    // must suspend the outer one, not touch the inner's suspended yielder.
+    // The inner fiber is CREATED outside the outer's block (captured via an
+    // ordinary local) because a block literal escaping from inside another
+    // escaping block is a PRE-existing Phase 6 scope-cut unrelated to
+    // fibers; the nested block-LITERAL form is covered at the Rust level by
+    // spinel-fiber's own `nested_fibers_yield_to_their_own_resumers` test.
+    let result = run_ruby(
+        r#"
+        inner = Fiber.new do
+          Fiber.yield :from_inner
+          :inner_done
+        end
+        outer = Fiber.new do
+          got = inner.resume
+          Fiber.yield got
+          inner.resume
+        end
+        puts outer.resume
+        puts outer.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "from_inner\ninner_done\n");
+}
+
+#[test]
+fn a_fiber_body_captures_and_mutates_enclosing_locals() {
+    // The fiber's block goes through the ordinary escaping-Proc capture
+    // machinery (Phase 6's Arc<Mutex> cells), so shared mutation across
+    // suspension points works exactly like any other escaping block.
+    let result = run_ruby(
+        r#"
+        count = 0
+        c = Fiber.new do
+          count += 10
+          Fiber.yield
+          count += 100
+        end
+        c.resume
+        puts count
+        c.resume
+        puts count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n110\n");
+}
