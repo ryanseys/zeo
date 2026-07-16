@@ -14673,3 +14673,90 @@ fn alias_and_alias_method_including_inherited_sources() {
         "hi a\nhi b\nhi c\nhi d\nhi e\ntrue\n"
     );
 }
+
+#[test]
+fn string_new_builds_empty_and_copied_buffers_with_encoding() {
+    let result = run_ruby(
+        r#"
+        p String.new
+        p String.new("hi")
+        p String.new.encoding.name
+        p String.new("x", encoding: "ASCII-8BIT").encoding.name
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"\"\n\"hi\"\n\"ASCII-8BIT\"\n\"ASCII-8BIT\"\n");
+}
+
+#[test]
+fn hash_new_default_value_and_default_block() {
+    let result = run_ruby(
+        r#"
+        h = Hash.new(0)
+        h[:a] += 1
+        h[:a] += 1
+        p h[:a]
+        p h[:z]
+        p h.size
+        d = Hash.new { |hh, k| hh[k] = k.to_s }
+        p d[:q]
+        p d
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n0\n1\n\"q\"\n{q: \"q\"}\n");
+}
+
+#[test]
+fn regexp_new_from_string_flags_and_copy() {
+    let result = run_ruby(
+        r#"
+        p(Regexp.new("a.c") =~ "xabc")
+        p Regexp.new("hi", Regexp::IGNORECASE).match?("HI")
+        p Regexp.new(/z/i).match?("Z")
+        p Regexp.new("a.c").source
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\ntrue\ntrue\n\"a.c\"\n");
+}
+
+#[test]
+fn set_construction_membership_operators_and_enumerable() {
+    let result = run_ruby(
+        r#"
+        s = Set[3, 1, 2, 1]
+        p s.size
+        p s.include?(2)
+        p (Set[1, 2] | Set[2, 3]).to_a.sort
+        p Set[1, 2].subset?(Set[1, 2, 3])
+        p s.map { |x| x * 2 }.sort
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\ntrue\n[1, 2, 3]\ntrue\n[2, 4, 6]\n");
+}
+
+#[test]
+fn enumerable_chunk_groups_consecutive_runs() {
+    let result = run_ruby(
+        r#"
+        p [1, 1, 2, 2, 2, 3].chunk { |x| x }.map { |k, v| [k, v.size] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[[1, 2], [2, 3], [3, 1]]\n");
+}
+
+#[test]
+fn lazy_enumerator_over_infinite_and_finite_sources() {
+    let result = run_ruby(
+        r#"
+        p (1..Float::INFINITY).lazy.select(&:even?).map { |x| x * x }.first(3)
+        p [1, 2, 3, 4].lazy.map { |x| x + 1 }.to_a
+        p [1, 2, 3].lazy.class.name
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[4, 16, 36]\n[2, 3, 4, 5]\n\"Enumerator::Lazy\"\n");
+}

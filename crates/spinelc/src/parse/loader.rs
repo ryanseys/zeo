@@ -749,10 +749,11 @@ fn cannot_load(name: &str) -> String {
 }
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so
-/// `require`ing it is a no-op (nothing to splice). Currently just `tmpdir`
-/// (its one method, `Dir.mktmpdir`, is a built-in `Dir` class method).
+/// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)
+/// and `set` (the `Set` core class) are both compiled in -- `Set` is now an
+/// autoloaded core class in real Ruby, so `require "set"` is a no-op there too.
 fn is_builtin_feature(feature: &str) -> bool {
-    matches!(feature, "tmpdir")
+    matches!(feature, "tmpdir" | "set")
 }
 
 fn with_rb_ext(feature: &str) -> String {

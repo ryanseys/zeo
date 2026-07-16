@@ -237,6 +237,25 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     id
 }
 
+/// Pulls one element (as its arity-preserving value vector), `Ok(None)` at
+/// natural exhaustion instead of raising `StopIteration` -- the driver
+/// `Enumerator::Lazy` uses to consume a source incrementally (so an infinite
+/// source is only advanced as far as a `first`/`take` actually needs). A
+/// StopIteration sets the enumerator's `done`; a genuine user exception does
+/// not, which is how the two are told apart here.
+pub(crate) fn pull_next(e: &REnumerator) -> Result<Option<Vec<RubyValue>>, Signal> {
+    match get_next_values(e) {
+        Ok(v) => Ok(Some(v)),
+        Err(sig) => {
+            if e.state.lock().done.is_some() {
+                Ok(None)
+            } else {
+                Err(sig)
+            }
+        }
+    }
+}
+
 /// CRuby's `get_next_values`: always ADVANCES the fiber (the lookahead
 /// interplay lives in [`take_next`]/[`fill_peek`]). The state lock is
 /// never held across the fiber switch -- the iterated block may touch

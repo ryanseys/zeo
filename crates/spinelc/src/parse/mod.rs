@@ -1801,7 +1801,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 if !has_dynamic_args
                     && !matches!(
                         class_name.as_str(),
-                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array"
+                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set"
                     )
                 {
                     // A trailing keyword hash lands in `kwargs`, kept apart

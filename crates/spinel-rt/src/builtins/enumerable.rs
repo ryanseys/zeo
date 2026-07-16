@@ -114,6 +114,8 @@ pub(crate) fn enumerable_send(
         "slice_after" => slice_before_after(recv, args, block, false),
         "minmax_by" => minmax_by(recv, args, block),
         "each_entry" => each_entry(recv, args, block),
+        "chunk" => chunk(recv, args, block),
+        "lazy" => Ok(crate::builtins::lazy::make_lazy(recv)),
         _ => return None,
     })
 }
@@ -147,7 +149,7 @@ pub(crate) fn responds(name: &str) -> bool {
             | "tally" | "uniq" | "to_h" | "reverse_each"
             | "grep" | "grep_v"
             | "chunk_while" | "slice_when" | "slice_before" | "slice_after"
-            | "minmax_by" | "each_entry"
+            | "minmax_by" | "each_entry" | "chunk" | "lazy"
     )
 }
 
@@ -1156,6 +1158,38 @@ fn grep(
 /// Real Ruby answers a lazy Enumerator here; this answers an Array, which
 /// `.to_a`/`.each`/`.map` (the overwhelmingly common uses) can't tell apart.
 /// Documented divergence, same posture as the rest of this module.
+/// `chunk { |x| key }` -- groups CONSECUTIVE elements sharing a `==`-equal
+/// block key into `[key, [elements...]]` pairs. Like the other slicing
+/// methods here, the result materializes as an Array (responding to the
+/// Array/Enumerable surface a real Enumerator would).
+fn chunk(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    reject_args(args, "chunk", "arguments");
+    let blk = block_or_enum!(recv, "chunk", args, block);
+    let items = collect_packed(recv)?;
+    let mut out: Vec<RubyValue> = Vec::new();
+    let mut cur_key: Option<RubyValue> = None;
+    let mut cur: Vec<RubyValue> = Vec::new();
+    for e in items {
+        let key = blk.call(std::slice::from_ref(&e))?;
+        let same = cur_key.as_ref().is_some_and(|k| k.rb_eq(&key));
+        if !same {
+            if let Some(k) = cur_key.take() {
+                out.push(RubyValue::Array(array_new(vec![k, RubyValue::Array(array_new(std::mem::take(&mut cur)))])));
+            }
+            cur_key = Some(key);
+        }
+        cur.push(e);
+    }
+    if let Some(k) = cur_key {
+        out.push(RubyValue::Array(array_new(vec![k, RubyValue::Array(array_new(cur))])));
+    }
+    Ok(RubyValue::Array(array_new(out)))
+}
+
 fn chunk_while(
     recv: &RubyValue,
     args: &[RubyValue],

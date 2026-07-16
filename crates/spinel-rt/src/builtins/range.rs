@@ -13,6 +13,31 @@ fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, boo
     }
 }
 
+/// Whether integer `i` is still within an integer-start range whose end is
+/// `end` -- unbounded for an endless (`nil`/`None`) or `+Float::INFINITY`
+/// end, so an infinite range keeps yielding until its consumer stops pulling.
+fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
+    match end {
+        None | Some(RubyValue::Nil) => true,
+        Some(RubyValue::Int(e)) => {
+            if exclusive {
+                i < *e
+            } else {
+                i <= *e
+            }
+        }
+        Some(RubyValue::Float(f)) if f.is_infinite() => *f > 0.0,
+        Some(RubyValue::Float(f)) => {
+            if exclusive {
+                (i as f64) < *f
+            } else {
+                (i as f64) <= *f
+            }
+        }
+        _ => false,
+    }
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -20,14 +45,14 @@ builtin_methods! {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         let (start, end, exclusive) = range_parts(recv);
-        let (Some(s), Some(e)) = (start, end) else {
-            panic!("can't iterate from a beginless/endless Range (spike scope)");
-        };
-        match (s, e) {
-            (RubyValue::Int(s), RubyValue::Int(e)) => {
-                let last = if exclusive { *e - 1 } else { *e };
+        match start {
+            // An integer start iterates integers upward. A finite Int/Float
+            // end bounds it; an endless (`nil`) or `+Float::INFINITY` end
+            // iterates forever, so a lazy pull or a block `break` is what
+            // stops it (`(1..Float::INFINITY).lazy.first(3)`).
+            Some(RubyValue::Int(s)) => {
                 let mut i = *s;
-                while i <= last {
+                while int_in_range(i, end, exclusive) {
                     p.call(&[RubyValue::Int(i)])?;
                     i += 1;
                 }
@@ -35,7 +60,8 @@ builtin_methods! {
             // String ranges iterate via `succ` until passing the end
             // (CRuby's rule, incl. the length guard: `"a".."e"` walks
             // b/c/d/e; a longer successor stops the walk).
-            (RubyValue::Str(s), RubyValue::Str(e)) => {
+            Some(RubyValue::Str(s)) if matches!(end, Some(RubyValue::Str(_))) => {
+                let RubyValue::Str(e) = end.unwrap() else { unreachable!() };
                 let end = e.lock().to_utf8_lossy().into_owned();
                 let mut cur = s.lock().to_utf8_lossy().into_owned();
                 loop {
@@ -52,7 +78,14 @@ builtin_methods! {
                     cur = crate::builtins::string::succ_str(&cur);
                 }
             }
-            _ => panic!("can't iterate a non-Integer/non-String Range (spike scope)"),
+            // A beginless range (or an otherwise non-iterable element type)
+            // can't be walked forward -- CRuby's own TypeError.
+            _ => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "can't iterate from the given Range".to_string(),
+                ))
+            }
         }
         Ok(recv.clone())
     }

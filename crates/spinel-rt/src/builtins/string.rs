@@ -1287,6 +1287,56 @@ fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Sig
     Ok(RubyValue::Str(crate::string_new(out)))
 }
 
+/// The `encoding:` keyword shared by `String.new` -- reads it from the
+/// trailing options Hash (the G2 kwargs convention), resolving a name string
+/// or an `Encoding` value; `None` when absent.
+fn kw_encoding(args: &[RubyValue]) -> Result<Option<crate::encoding::EncodingId>, Signal> {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return Ok(None);
+    };
+    let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("encoding")));
+    if v.is_nil() {
+        return Ok(None);
+    }
+    Ok(Some(crate::builtins::encoding::arg_encoding(&v)?))
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `String.new` / `String.new(str)` / `String.new(str, encoding:, capacity:)`.
+    // A no-arg new is an empty ASCII-8BIT string (CRuby's default for a
+    // fresh buffer); a source string is copied, keeping its own encoding
+    // unless `encoding:` overrides it. `capacity:` only hints allocation, so
+    // it is accepted and ignored.
+    "new" => fn string_new_m(_recv, args, _block) {
+        let enc_override = kw_encoding(args)?;
+        // Strip a trailing options Hash before reading the positional source.
+        let positional = match args.last() {
+            Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
+            _ => args,
+        };
+        arity!(positional, 0..=1);
+        let (bytes, enc) = match positional.first() {
+            None => (Vec::new(), crate::encoding::ASCII_8BIT),
+            Some(RubyValue::Str(s)) => {
+                let s = s.lock();
+                (s.bytes().to_vec(), s.encoding())
+            }
+            Some(other) => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "no implicit conversion of {} into String",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        };
+        Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc_override.unwrap_or(enc))))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

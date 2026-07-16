@@ -156,6 +156,8 @@ pub const ENCODING_CLASS: ClassId = ClassId(40);
 /// immutable and NOT `Enumerable` (no `each`). The one other subclassable
 /// builtin besides `Struct`.
 pub const DATA_CLASS: ClassId = ClassId(41);
+pub const SET_CLASS: ClassId = ClassId(42);
+pub const LAZY_CLASS: ClassId = ClassId(43);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -205,6 +207,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
     BuiltinClass { id: ENCODING_CLASS, name: "Encoding", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
     BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: SET_CLASS, name: "Set", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
+    BuiltinClass { id: LAZY_CLASS, name: "Enumerator::Lazy", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

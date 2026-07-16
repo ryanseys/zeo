@@ -117,7 +117,7 @@ pub enum HashKey {
     Complex(Box<(HashKey, HashKey)>),
 }
 
-fn hash_key(v: &RubyValue) -> HashKey {
+pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
     match v {
         RubyValue::Nil => HashKey::Nil,
         RubyValue::Bool(b) => HashKey::Bool(*b),
@@ -197,7 +197,39 @@ pub fn value_hash_code(v: &RubyValue) -> i64 {
 /// (identity-only) -- anything that needs to iterate/display/rebuild the
 /// actual key (`to_display_string`, `#deconstruct_keys` pattern binding)
 /// needs the real value back.
-pub type RHash = Arc<Freezable<IndexMap<HashKey, (RubyValue, RubyValue)>>>;
+/// A Hash's payload: its ordered entries plus the per-instance default a
+/// missing key falls back to. `Hash.new(default)` stores a `default` VALUE;
+/// `Hash.new { |h, k| ... }` stores a `default_proc`. The two channels are
+/// mutually exclusive in real Ruby (`#default` reports `nil` for a
+/// proc-backed hash and vice versa), so they sit side by side and are read
+/// independently. Deref/DerefMut to the map keep the many `h.lock().<map op>`
+/// call sites (insert/get/iter/len/...) compiling unchanged.
+pub struct RHashData {
+    map: IndexMap<HashKey, (RubyValue, RubyValue)>,
+    pub default: RubyValue,
+    pub default_proc: Option<RubyValue>,
+}
+
+impl RHashData {
+    fn new() -> RHashData {
+        RHashData { map: IndexMap::new(), default: RubyValue::Nil, default_proc: None }
+    }
+}
+
+impl std::ops::Deref for RHashData {
+    type Target = IndexMap<HashKey, (RubyValue, RubyValue)>;
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl std::ops::DerefMut for RHashData {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.map
+    }
+}
+
+pub type RHash = Arc<Freezable<RHashData>>;
 
 pub type RStr = Arc<Freezable<crate::encoding::StrBuf>>;
 
@@ -302,18 +334,51 @@ fn resolve_index(index: i64, len: usize) -> Option<usize> {
 }
 
 pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
-    let h: RHash = Arc::new(Freezable::new(IndexMap::new()));
+    let h: RHash = Arc::new(Freezable::new(RHashData::new()));
     for (k, v) in pairs {
         hash_set(&h, k, v);
     }
     h
 }
 
-/// `Hash#[]`: a missing key returns `nil` (the no-default-block spike
-/// scope-cut -- real Ruby's per-instance `Hash.new(default)`/
-/// `Hash#default_proc` aren't modeled).
+/// An empty Hash carrying a per-instance default (`Hash.new(default)`) or
+/// default block (`Hash.new { |h, k| ... }`) -- the constructor behind
+/// `Hash.new`'s two argument shapes.
+pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>) -> RHash {
+    Arc::new(Freezable::new(RHashData { map: IndexMap::new(), default, default_proc }))
+}
+
+/// A plain lookup: the stored value, or `nil` for a missing key -- WITHOUT
+/// triggering any per-instance default. This is the internal read used by
+/// `merge`/`dig`/keyword extraction/pattern matching, none of which invoke a
+/// hash's default in real Ruby. The default-triggering `Hash#[]` is
+/// `hash_index`.
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
     h.lock().get(&hash_key(key)).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
+}
+
+/// `Hash#[]`: the stored value, or the per-instance default on a miss -- the
+/// stored default VALUE, the result of the default PROC (called with the hash
+/// and key, and free to mutate the hash), or `nil` when neither is set. The
+/// lock is released before the proc runs, since the proc commonly writes back
+/// into the same hash (`Hash.new { |h, k| h[k] = ... }`).
+pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal> {
+    if let Some((_, v)) = h.lock().get(&hash_key(key)) {
+        return Ok(v.clone());
+    }
+    let (default, proc) = {
+        let g = h.lock();
+        (g.default.clone(), g.default_proc.clone())
+    };
+    match proc {
+        Some(p) => crate::dispatch::send_value(
+            &p,
+            crate::Symbol::intern("call"),
+            &[RubyValue::Hash(h.clone()), key.clone()],
+            None,
+        ),
+        None => Ok(default),
+    }
 }
 
 /// `Hash#[]=`: replaces an existing key's VALUE in place, preserving its
@@ -386,7 +451,7 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         .filter(|(k, _)| !excluded.contains(k))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    Arc::new(Freezable::new(pairs))
+    Arc::new(Freezable::new(RHashData { map: pairs, default: RubyValue::Nil, default_proc: None }))
 }
 
 pub fn string_new(s: String) -> RStr {
@@ -482,6 +547,29 @@ pub fn multi_assign(
         .chain(std::iter::repeat_n(RubyValue::Nil, pad))
         .collect();
     (before, splat_part.to_vec(), after)
+}
+
+#[cfg(test)]
+mod hash_default_tests {
+    use super::*;
+
+    #[test]
+    fn plain_hash_misses_to_nil() {
+        let h = hash_new(vec![(RubyValue::Int(1), RubyValue::Int(10))]);
+        assert!(matches!(hash_index(&h, &RubyValue::Int(1)).unwrap(), RubyValue::Int(10)));
+        assert!(matches!(hash_index(&h, &RubyValue::Int(2)).unwrap(), RubyValue::Nil));
+    }
+
+    #[test]
+    fn default_value_returns_on_miss_without_inserting() {
+        let h = hash_new_with_default(RubyValue::Int(0), None);
+        assert!(matches!(hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("x"))).unwrap(), RubyValue::Int(0)));
+        // The default is NOT stored -- a plain default only reads back.
+        assert_eq!(hash_len(&h), 0);
+        // A present key still wins over the default.
+        hash_set(&h, RubyValue::Symbol(crate::Symbol::intern("y")), RubyValue::Int(5));
+        assert!(matches!(hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("y"))).unwrap(), RubyValue::Int(5)));
+    }
 }
 
 #[cfg(test)]

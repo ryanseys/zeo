@@ -285,7 +285,7 @@ fn try_collection_dispatch(
             // Boxed if Object-typed (Phase 16.2): an object KEY reaches the
             // `HashKey` projection (which now dispatches a user `hash`).
             let key = super::expr::box_if_object_typed(cx, args[0], key);
-            quote! { spinel_rt::hash_get(&(#recv_expr).as_hash_unchecked(), &(#key)) }
+            quote! { spinel_rt::hash_index(&(#recv_expr).as_hash_unchecked(), &(#key))? }
         }
         (TyKind::Hash, "[]=", 2) => {
             let key = emit_expr(cx, args[0]);
@@ -625,13 +625,27 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[KwArg]) -
     // into another's constructor) otherwise emits a bare, unboxed
     // `Arc<Concrete>`, a real `rustc` type mismatch confirmed by direct
     // reproduction.
-    let arg_exprs = args
+    let mut arg_exprs: Vec<TokenStream> = args
         .iter()
         .map(|&a| {
             let e = emit_expr(cx, a);
             box_if_object_typed(cx, a, e)
         })
         .collect();
+    // A builtin/module `.new` dispatches dynamically through `send_value_in`,
+    // whose ABI carries keywords as one trailing Hash (the G2 convention) --
+    // so `String.new(s, encoding:)`/`Hash.new`'s options reach the runtime row.
+    // (A user class binds keywords through `emit_call_args_to` above, not here.)
+    if !kwargs.is_empty() && (ci.is_builtin || ci.is_module) {
+        let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
+        arg_exprs.push(quote! {
+            {
+                let __kw = spinel_rt::hash_new(vec![]);
+                #inserts
+                spinel_rt::RubyValue::Hash(__kw)
+            }
+        });
+    }
     emit_new_with_arg_tokens(cx, class_name, arg_exprs)
 }
 

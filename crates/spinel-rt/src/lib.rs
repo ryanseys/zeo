@@ -45,6 +45,7 @@ pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
 pub use builtins::encoding::seed_encoding_constants;
 pub use builtins::numeric::seed_numeric_constants;
+pub use builtins::regexp::seed_regexp_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, downcast_robj,

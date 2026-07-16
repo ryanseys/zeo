@@ -680,6 +680,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // `Encoding::UTF_8`/`US_ASCII`/`ASCII_8BIT`/... -- same
             // resolve-owner-at-compile-time, seed-values-at-runtime story.
             spinel_rt::seed_encoding_constants();
+            // `Regexp::IGNORECASE`/`EXTENDED`/`MULTILINE` -- the flag bits
+            // accepted by `Regexp.new`, same resolve-owner-at-compile-time story.
+            spinel_rt::seed_regexp_constants();
             // `ARGV` + `STDOUT`/`STDERR`/`$stdout`/`$stderr` (CRuby startup
             // parity) -- reads resolve through the runtime const/global
             // fallbacks, no compile-time registration.

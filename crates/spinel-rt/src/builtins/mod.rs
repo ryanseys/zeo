@@ -35,6 +35,7 @@ pub(crate) mod hash;
 pub(crate) mod integer;
 pub(crate) mod io;
 pub(crate) mod kernel;
+pub(crate) mod lazy;
 pub(crate) mod method_obj;
 pub(crate) mod matchdata;
 pub(crate) mod math;
@@ -50,6 +51,7 @@ pub(crate) mod process;
 pub(crate) mod time;
 pub(crate) mod range;
 pub(crate) mod rational;
+pub(crate) mod set;
 pub(crate) mod regexp;
 pub(crate) mod fiber;
 pub(crate) mod rproc;
@@ -96,6 +98,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::FIBER_CLASS => fiber::lookup,
         spinel_abi::TIME_CLASS => time::lookup,
         spinel_abi::ENCODING_CLASS => encoding::lookup,
+        spinel_abi::SET_CLASS => set::lookup,
+        spinel_abi::LAZY_CLASS => lazy::lookup,
         _ => return None,
     })
 }
@@ -119,12 +123,16 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     Some(match id {
         spinel_abi::ARRAY_CLASS => array::lookup_class,
+        spinel_abi::STRING_CLASS => string::lookup_class,
+        spinel_abi::HASH_CLASS => hash::lookup_class,
+        spinel_abi::REGEXP_CLASS => regexp::lookup_class,
         spinel_abi::FILE_CLASS => file::lookup_class,
         spinel_abi::DIR_CLASS => dir::lookup_class,
         spinel_abi::TIME_CLASS => time::lookup_class,
         spinel_abi::PROCESS_CLASS => process::lookup_class,
         spinel_abi::GC_CLASS => gc::lookup_class,
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
+        spinel_abi::SET_CLASS => set::lookup_class,
         _ => return None,
     })
 }

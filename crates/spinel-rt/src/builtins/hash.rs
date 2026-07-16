@@ -9,7 +9,50 @@ builtin_methods! {
 
     "[]" => fn index(recv, args, _block) {
         arity!(args, 1);
-        Ok(crate::hash_get(recv_hash!(recv), &args[0]))
+        crate::hash_index(recv_hash!(recv), &args[0])
+    }
+    // The per-instance default set by `Hash.new(default)` / `Hash.new { }`.
+    // `#default(key)` optionally runs a default proc for `key`, matching CRuby.
+    "default" => fn default_m(recv, args, _block) {
+        arity!(args, 0..=1);
+        let h = recv_hash!(recv);
+        let (default, proc) = {
+            let g = h.lock();
+            (g.default.clone(), g.default_proc.clone())
+        };
+        match (proc, args.first()) {
+            (Some(p), Some(key)) => crate::dispatch::send_value(
+                &p,
+                crate::Symbol::intern("call"),
+                &[recv.clone(), key.clone()],
+                None,
+            ),
+            _ => Ok(default),
+        }
+    }
+    "default=" => fn default_set(recv, args, _block) {
+        arity!(args, 1);
+        let mut g = recv_hash!(recv).lock();
+        g.default = args[0].clone();
+        g.default_proc = None;
+        Ok(args[0].clone())
+    }
+    "default_proc" => fn default_proc_m(recv, args, _block) {
+        arity!(args, 0);
+        Ok(recv_hash!(recv).lock().default_proc.clone().unwrap_or(RubyValue::Nil))
+    }
+    "default_proc=" => fn default_proc_set(recv, args, _block) {
+        arity!(args, 1);
+        let mut g = recv_hash!(recv).lock();
+        match &args[0] {
+            RubyValue::Nil => g.default_proc = None,
+            p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
+            other => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Proc", crate::builtins::class_name_of(other)),
+            )),
+        }
+        Ok(args[0].clone())
     }
     "[]=" | "store" => fn index_set(recv, args, _block) {
         arity!(args, 2);
@@ -205,12 +248,6 @@ builtin_methods! {
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
-    "default" => fn default(recv, args, _block) {
-        arity!(args, 0);
-        let _ = recv;
-        // Hash defaults are a documented backlog item; the default default.
-        Ok(RubyValue::Nil)
-    }
     "clear" => fn clear(recv, args, _block) {
         arity!(args, 0);
         recv_hash!(recv).lock().clear();
@@ -283,6 +320,28 @@ fn hash_filter(
         }
     }
     Ok(RubyValue::Hash(crate::hash_new(out)))
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Hash.new` / `Hash.new(default)` / `Hash.new { |hash, key| ... }`. The
+    // default value and default block are mutually exclusive -- passing both
+    // is an ArgumentError, matching CRuby.
+    "new" => fn hash_new_m(_recv, args, block) {
+        arity!(args, 0..=1);
+        if let Some(RubyValue::Proc(_)) = &block {
+            if !args.is_empty() {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "wrong number of arguments (given 1, expected 0)".to_string(),
+                ));
+            }
+            return Ok(RubyValue::Hash(crate::hash_new_with_default(RubyValue::Nil, block)));
+        }
+        let default = args.first().cloned().unwrap_or(RubyValue::Nil);
+        Ok(RubyValue::Hash(crate::hash_new_with_default(default, None)))
+    }
 }
 
 #[cfg(test)]
