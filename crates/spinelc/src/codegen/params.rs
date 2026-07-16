@@ -101,6 +101,41 @@ fn signature_param_items(params: &Params, needs_block: bool) -> Vec<TokenStream>
 /// `codegen::hoisting`'s prelude only ever sees names `collect_locals` finds
 /// (which never includes a method's own params -- they're bound via the
 /// Rust fn signature, not that prelude).
+/// The parenthesized-destructuring params (`|a, (b, c)|`), replayed as the
+/// ordinary multi-assignments they are: each slot was bound under an internal
+/// name by the normal positional rules, and this splits that value into the
+/// nested names. Emitted by BOTH param-binding sites (methods' `emit_prologue`
+/// and blocks' `emit_proc_param_bindings`) immediately after the slots are
+/// bound and before the body runs. See `hir::Params::destructures`.
+///
+/// Empty for the overwhelming majority of params lists, so this costs
+/// nothing when unused.
+///
+/// The nested names are DECLARED here as well as assigned. They are
+/// parameters (`Params::bound_names` lists them), and `bound_names` is
+/// precisely hoisting's exclusion set -- a method's ordinary params need no
+/// declaration because the Rust fn signature binds them, but a destructured
+/// name has no signature slot of its own (only the `__destr_<i>` slot does),
+/// so nothing else would ever declare it. Declaration goes through
+/// `local_storage` rather than always emitting `let mut`: a destructured name
+/// captured by an escaping block needs the `Arc<Mutex<..>>` cell every other
+/// captured local gets, and `emit_local_write` will emit a cell-write for it.
+fn emit_destructures(cx: &Ctx, params: &Params) -> TokenStream {
+    if params.destructures.is_empty() {
+        return quote! {};
+    }
+    let decls = params
+        .destructured_names()
+        .into_iter()
+        .map(|n| super::hoisting::emit_local_decl(cx, &n))
+        .collect::<Vec<_>>();
+    let writes = params
+        .destructures
+        .iter()
+        .map(|(read, group)| super::loops::emit_multi_write(cx, group, *read));
+    quote! { #(#decls)* #(#writes)* }
+}
+
 pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
     let optional = params.optional.iter().map(|(name, default)| {
         emit_lazy_default_shadow(cx, name, *default)
@@ -142,8 +177,17 @@ pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
     // among themselves doesn't affect behavior), but reproducible output is
     // still worth having.
     let own_names = super::captures::own_param_names(params);
-    let mut captured_params: Vec<&String> =
-        own_names.iter().filter(|name| cx.captured_locals.contains(*name)).collect();
+    // Destructured names are excluded: this wrap turns a by-value Rust
+    // PARAMETER into its capture cell, and a destructured name has no
+    // parameter to turn -- only its `__destr_<i>` slot does.
+    // `emit_destructures` already declares each one directly at its storage
+    // class (cell included), so wrapping here would wrap the cell in a cell.
+    let destructured: std::collections::HashSet<String> =
+        params.destructured_names().into_iter().collect();
+    let mut captured_params: Vec<&String> = own_names
+        .iter()
+        .filter(|name| cx.captured_locals.contains(*name) && !destructured.contains(*name))
+        .collect();
     captured_params.sort();
     let captured_param_wraps = captured_params.into_iter().map(|name| {
         let ident = safe_ident(name);
@@ -152,7 +196,14 @@ pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
                 std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(#ident));
         }
     });
-    quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* #(#block)* #(#captured_param_wraps)* }
+    // Destructures split the slots bound above, so they come after those --
+    // but BEFORE `captured_param_wraps`, which reads each captured param's
+    // current value into its cell. A `__destr_<i>` slot wrapped before being
+    // split would leave the split reading a cell as if it were a value.
+    // (The destructured NAMES aren't affected: `emit_destructures` declares
+    // each one at its own storage class, cell included.)
+    let destructures = emit_destructures(cx, params);
+    quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* #(#block)* #destructures #(#captured_param_wraps)* }
 }
 
 fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStream {
@@ -755,24 +806,53 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
 }
 
 /// Whether a (non-lambda) block with these parameters auto-splats a lone
-/// Array argument across its positional slots -- CRuby's `has_lead &&
-/// !ambiguous_param0` rule, verified against ruby 4.0.5 for every shape:
+/// Array argument across its positional slots.
+///
+/// Two independent triggers, either of which splats, unless the
+/// `ambiguous_param0` exemption applies:
+///   - `lead + post > 0` -- the block demands at least one positional by
+///     position, so a lone Array is spread to feed it;
+///   - `opt > 1` -- more than one optional slot, even with no required ones.
+///
+/// `ambiguous_param0` is the `{ |a| }` exemption: exactly one lead param and
+/// nothing else positional. `|a|` must receive the array WHOLE (it is the
+/// `each { |pair| }` idiom), so it never splats. Keyword params don't disturb
+/// it (`|a, **k|` is still exempt), but a rest or post does (`|a, *b|` splats).
+///
+/// Oracle-derived, not recalled from CRuby's source -- every row below was
+/// read off `ruby 4.0.5` via `def m(x); yield x; end; m([1,2]) { |...| }`:
 ///
 /// ```text
-/// |a|            -> no    (ambiguous_param0: the one-param case is exempt)
-/// |a, **k|       -> no    (still ONE positional slot)
-/// |*a|           -> no    (no leading required param)
-/// |*a, **k|      -> no
-/// |a, b|         -> yes
-/// |a, b, **k|    -> yes
-/// |a, *b|        -> yes
-/// |a, b = 5|     -> yes
-/// |a, *b, c|     -> yes
+/// |a|             -> no    ambiguous_param0
+/// |a, **k|        -> no    ambiguous_param0 (keywords don't disturb it)
+/// |a, b: 9|       -> no    ambiguous_param0
+/// |a = 9|         -> no    lead+post == 0, opt == 1
+/// |*a|            -> no    lead+post == 0, opt == 0
+/// |*a, **k|       -> no
+/// |a = 5, *b|     -> no    lead+post == 0, opt == 1  (the subtle one)
+/// |a, b|          -> yes   lead == 2
+/// |a, *b|         -> yes   lead == 1, rest breaks the exemption
+/// |a, *b, **k|    -> yes
+/// |a, *b, c|      -> yes
+/// |a = 5, b = 4|  -> yes   opt > 1, with NO lead at all
+/// |a = 1, b = 2, **k| -> yes
+/// |a = 5, b = 4, *c|  -> yes   opt > 1
+/// |a = 5, *b, c|  -> yes   post > 0
+/// |*a, b|         -> yes   post > 0
+/// |*a, b, c|      -> yes
+/// |a, |           -> yes   trailing comma == an anonymous rest, which
+///                          breaks the exemption exactly like `*b` does
 /// ```
+///
+/// The pair `|a, *b|` (splats) vs `|a = 5, *b|` (does not) is what rules out
+/// the tempting "count the positional slots" formulation: both have one
+/// nameable slot plus a rest, and they disagree.
 fn auto_splats(params: &Params) -> bool {
-    let nreq = params.required.len();
-    let slots = nreq + params.optional.len() + params.post.len();
-    nreq >= 1 && (slots > 1 || params.rest.is_some())
+    let lead = params.required.len();
+    let opt = params.optional.len();
+    let post = params.post.len();
+    let ambiguous_param0 = lead == 1 && opt == 0 && post == 0 && params.rest.is_none();
+    !ambiguous_param0 && (lead + post > 0 || opt > 1)
 }
 
 /// A real escaping block's OWN parameter binding, given its `Params` and the
@@ -868,12 +948,18 @@ pub fn emit_proc_param_bindings(
             ));
         }
     });
+    // Post params start where the lead/optional/rest slots stopped consuming,
+    // NOT at `__n - npost`. The two agree whenever there are enough arguments
+    // to reach the posts, but underfull they don't: `m([1, 2]) { |a, *b, c, d| }`
+    // is `a=1, b=[], c=2, d=nil` (oracle-verified) -- the posts fill
+    // left-to-right from what's left and nil-pad the tail. Anchoring from the
+    // end instead wrapped back over the lead's own argument and bound `c=1`.
     let post_lets = params.post.iter().enumerate().map(|(i, name)| {
         let ident = safe_ident(name);
         quote! {
             #[allow(unused_mut)]
             let mut #ident: spinel_rt::RubyValue = {
-                let __idx = __n.saturating_sub(#npost) + #i;
+                let __idx = #nreq + __opt_bound + __rest_count + #i;
                 __positional.get(__idx).cloned().unwrap_or(spinel_rt::RubyValue::Nil)
             };
         }
@@ -926,6 +1012,9 @@ pub fn emit_proc_param_bindings(
         }
     });
 
+    // Parenthesized destructuring params, split after their slots are bound.
+    let destructures = emit_destructures(cx, params);
+
     // `__opt_bound`/`__rest_count` are computed even when there's no
     // rest/optional param at all -- harmless dead-ish locals the compiler
     // won't warn about here since they're always at least read by the
@@ -950,6 +1039,7 @@ pub fn emit_proc_param_bindings(
         #(#post_lets)*
         #(#keyword_lets)*
         #(#keyword_rest_let)*
+        #destructures
     }
 }
 
@@ -1093,22 +1183,42 @@ mod tests {
     fn auto_splats_matches_the_ruby_oracle_for_every_block_param_shape() {
         let hir = &mut Hir::default();
         let cases: Vec<(Spec, bool, &str)> = vec![
-            // No leading required param -> never splats.
+            // Nothing positional to spread into.
             (Spec { ..Default::default() }, false, "{ }"),
             (Spec { rest: true, ..Default::default() }, false, "{ |*a| }"),
             (Spec { rest: true, kwrest: true, ..Default::default() }, false, "{ |*a, **k| }"),
             (Spec { kw_required: 1, ..Default::default() }, false, "{ |a:| }"),
-            // Exactly ONE positional slot -> the ambiguous-param0 exemption.
+            // `ambiguous_param0`: exactly one lead and nothing else
+            // positional. Keywords do NOT disturb the exemption.
             (Spec { req: 1, ..Default::default() }, false, "{ |a| }"),
             (Spec { req: 1, kwrest: true, ..Default::default() }, false, "{ |a, **k| }"),
             (Spec { req: 1, kw_required: 1, ..Default::default() }, false, "{ |a, b:| }"),
-            // A lead param plus ANY second positional slot -> splats.
+            // A LONE optional is the `|a|` case by another spelling -- one
+            // slot, no lead, so nothing forces a spread.
+            (Spec { opt: 1, ..Default::default() }, false, "{ |a = 9| }"),
+            // The subtle one: one optional plus a rest still has no lead and
+            // only one optional, so it does NOT splat -- unlike `|a, *b|`
+            // just below, which is identical but for the lead. This pair is
+            // why the rule can't be "count the positional slots".
+            (Spec { opt: 1, rest: true, ..Default::default() }, false, "{ |a = 5, *b| }"),
+            // lead + post > 0 -> splats.
             (Spec { req: 2, ..Default::default() }, true, "{ |a, b| }"),
             (Spec { req: 2, kwrest: true, ..Default::default() }, true, "{ |a, b, **k| }"),
             (Spec { req: 1, rest: true, ..Default::default() }, true, "{ |a, *b| }"),
             (Spec { req: 1, opt: 1, ..Default::default() }, true, "{ |a, b = 5| }"),
             (Spec { req: 1, rest: true, post: 1, ..Default::default() }, true, "{ |a, *b, c| }"),
             (Spec { req: 1, post: 1, ..Default::default() }, true, "{ |a, (b)| }-shaped post"),
+            (Spec { rest: true, post: 1, ..Default::default() }, true, "{ |*a, b| }"),
+            (Spec { rest: true, post: 2, ..Default::default() }, true, "{ |*a, b, c| }"),
+            (Spec { opt: 1, rest: true, post: 1, ..Default::default() }, true, "{ |a = 5, *b, c| }"),
+            // opt > 1 -> splats, with no lead at all.
+            (Spec { opt: 2, ..Default::default() }, true, "{ |a = 5, b = 4| }"),
+            (Spec { opt: 2, kwrest: true, ..Default::default() }, true, "{ |a = 1, b = 2, **k| }"),
+            (Spec { opt: 2, rest: true, ..Default::default() }, true, "{ |a = 5, b = 4, *c| }"),
+            (Spec { opt: 3, ..Default::default() }, true, "{ |a = 1, b = 2, c = 3| }"),
+            // A trailing comma (`|a, |`) lowers to an anonymous rest, which
+            // breaks the exemption exactly as `*b` does.
+            (Spec { req: 1, rest: true, ..Default::default() }, true, "{ |a, | }"),
         ];
         for (spec, expected, source) in cases {
             let p = params(hir, spec);

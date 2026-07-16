@@ -405,9 +405,18 @@ pub fn multi_assign(
     let rest = elems.get(n_before..).unwrap_or(&[]);
     let split_at = rest.len().saturating_sub(n_after);
     let (splat_part, after_part) = rest.split_at(split_at);
+    // Padding goes on the END, not the front: when there aren't enough
+    // values left to fill the post-splat targets, Ruby assigns what it has to
+    // the EARLIEST of them and nils the tail -- `w, *x, y, z = [1, 2]` is
+    // `w=1, x=[], y=2, z=nil`, not `z=2` (oracle-verified). The post targets
+    // are anchored to the end of the value list only when there are enough
+    // values to reach them; underfull, they fill left-to-right like any
+    // other target list.
     let pad = n_after.saturating_sub(after_part.len());
-    let after: Vec<RubyValue> = std::iter::repeat_n(RubyValue::Nil, pad)
-        .chain(after_part.iter().cloned())
+    let after: Vec<RubyValue> = after_part
+        .iter()
+        .cloned()
+        .chain(std::iter::repeat_n(RubyValue::Nil, pad))
         .collect();
     (before, splat_part.to_vec(), after)
 }

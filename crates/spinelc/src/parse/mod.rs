@@ -466,6 +466,33 @@ fn required_param_name(node: &Node<'_>, where_: &str) -> PResult<String> {
     Ok(String::from_utf8_lossy(p.name().as_slice()).into_owned())
 }
 
+/// One entry of `requireds()`/`posts()`: either a plain name, or a
+/// parenthesized DESTRUCTURING target list (`|a, (b, c)|`), which prism
+/// surfaces as a `MultiTargetNode` in the very same slot -- the same node
+/// type, with the same `lefts()`/`rest()`/`rights()` grammar, that a
+/// multi-assignment's nested group uses. So it lowers through the same
+/// `lower_multi_target_group`, and the slot itself gets an internal name
+/// (`__destr_<i>`) that behaves as an ordinary required param everywhere
+/// else -- see `Params::destructures`.
+///
+/// Returns the slot's name, pushing onto `destructures` when it destructures.
+fn required_param_slot(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+    where_: &str,
+    destructures: &mut Vec<(NodeId, crate::hir::MultiTargetGroup)>,
+) -> PResult<String> {
+    let Some(mt) = node.as_multi_target_node() else {
+        return required_param_name(node, where_);
+    };
+    let group = lower_multi_target_group(result, hir, mt.lefts(), mt.rest(), mt.rights())?;
+    let slot = format!("__destr_{}", destructures.len());
+    let read = hir.push(HirNode::LocalRead(slot.clone()));
+    destructures.push((read, group));
+    Ok(slot)
+}
+
 /// Full `ParametersNode` lowering: required -> optional (default evaluated
 /// LAZILY by the callee -- see `Params::optional`'s docs, so its expression
 /// is only lowered here, never eagerly evaluated at every call site) ->
@@ -504,10 +531,11 @@ fn lower_params(
         None => None,
     };
 
+    let mut destructures = Vec::new();
     let required = params
         .requireds()
         .iter()
-        .map(|n| required_param_name(&n, "before a `*rest`"))
+        .map(|n| required_param_slot(result, hir, &n, "before a `*rest`", &mut destructures))
         .collect::<PResult<Vec<_>>>()?;
 
     let optional = params
@@ -526,6 +554,13 @@ fn lower_params(
     let rest = match params.rest() {
         None if forwarding => Some(Some("__fwd_rest".to_string())),
         None => None,
+        // A TRAILING COMMA (`|a, |`) -- prism's `ImplicitRestNode`. It means
+        // "this block takes more than one parameter", which is what turns on
+        // auto-splat, and then discards everything past the named ones:
+        // `m([1, 2]) { |a, | a }` is `1`, not `[1, 2]` (oracle-verified).
+        // That is exactly an anonymous `*`, so it lowers as one and the
+        // existing arity/auto-splat rules cover it with no special case.
+        Some(n) if n.as_implicit_rest_node().is_some() => Some(None),
         Some(n) => {
             let r = n.as_rest_parameter_node().ok_or(
                 "unsupported rest-parameter form (spike scope)",
@@ -542,7 +577,7 @@ fn lower_params(
     let post = params
         .posts()
         .iter()
-        .map(|n| required_param_name(&n, "after a `*rest`"))
+        .map(|n| required_param_slot(result, hir, &n, "after a `*rest`", &mut destructures))
         .collect::<PResult<Vec<_>>>()?;
 
     let keywords = params
@@ -593,6 +628,7 @@ fn lower_params(
 
     Ok(Params {
         required,
+        destructures,
         optional,
         rest,
         post,
@@ -2534,6 +2570,14 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
     if let Some(t) = node.as_local_variable_target_node() {
         return Ok(MultiTarget::Local(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
     }
+    // The same group shape reached from a PARAMETER list (`|a, (b, c)|` --
+    // see `required_param_slot`) names its leaves with parameter nodes rather
+    // than target nodes: prism distinguishes the two contexts, but a
+    // destructuring param binds a plain local exactly as an assignment target
+    // does, so both spell the same `MultiTarget::Local`.
+    if let Some(t) = node.as_required_parameter_node() {
+        return Ok(MultiTarget::Local(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+    }
     if let Some(t) = node.as_instance_variable_target_node() {
         let name = String::from_utf8_lossy(t.name().as_slice())
             .trim_start_matches('@')
@@ -2641,6 +2685,18 @@ fn lower_multi_target_group(
         .collect::<PResult<Vec<_>>>()?;
     let splat = match rest {
         None => None,
+        // A PARAMETER-context group (`|(a, *r)|`) spells its splat as a
+        // `RestParameterNode` where an assignment-context one uses a
+        // `SplatNode` -- same meaning, and both allow the anonymous form
+        // (`Some(None)`: absorbs and discards the middle slice).
+        Some(n) if n.as_rest_parameter_node().is_some() => {
+            let r = n.as_rest_parameter_node().unwrap();
+            Some(r.name().map(|name| {
+                Box::new(crate::hir::MultiTarget::Local(
+                    String::from_utf8_lossy(name.as_slice()).into_owned(),
+                ))
+            }))
+        }
         Some(n) => {
             let splat = n
                 .as_splat_node()

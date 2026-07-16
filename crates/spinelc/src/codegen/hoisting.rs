@@ -509,6 +509,30 @@ pub fn emit_hoisted_body_with_extra_roots(
     quote! { #(#decls)* #inner }
 }
 
+/// ONE local's declaration, per its storage class -- the same rule
+/// `emit_hoisted_body`'s prelude applies, for callers that need to declare a
+/// name outside that prelude. Today: destructuring parameters
+/// (`codegen::params::emit_destructures`), whose nested names are params (so
+/// hoisting deliberately skips them) but have no Rust signature slot to be
+/// bound by either.
+///
+/// `Shadowed` emits nothing: that storage class means "the `let` comes from
+/// the assignment itself", and `emit_local_write` duly emits one.
+pub(super) fn emit_local_decl(cx: &Ctx, name: &str) -> TokenStream {
+    let ident = safe_ident(name);
+    match local_storage(cx, name) {
+        LocalStorage::Hoisted => quote! {
+            #[allow(unused_assignments, unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+        },
+        LocalStorage::Captured => quote! {
+            let #ident: std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil));
+        },
+        LocalStorage::Shadowed => quote! {},
+    }
+}
+
 /// The escaping-block counterpart to `emit_hoisted_body`'s declaration
 /// step -- used by `codegen::call`'s Proc-construction site for names an
 /// escaping block references that AREN'T genuinely shared with its

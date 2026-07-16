@@ -12,7 +12,7 @@
 
 use super::call::is_times_fast_path;
 use crate::compiler::Compiler;
-use crate::hir::{ArrayElem, HirNode, KeywordParam, NodeId, Params, StrPart};
+use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
 use std::collections::HashSet;
 
 #[derive(Default)]
@@ -32,32 +32,20 @@ pub struct Captures {
 
 /// Every name a `Params` list itself binds -- the exclusion set for "is this
 /// name a BLOCK's OWN parameter, not something captured from its enclosing
-/// scope". Mirrors `codegen::params`'s own per-kind enumeration. Also reused
-/// by `codegen::params::emit_prologue` to decide which of a METHOD's own
-/// parameter names need the additional `Arc<parking_lot::Mutex<_>>`-wrapping shadow
-/// (when captured by one of ITS OWN escaping blocks).
+/// scope". Also reused by `codegen::params::emit_prologue` to decide which of
+/// a METHOD's own parameter names need the additional
+/// `Arc<parking_lot::Mutex<_>>`-wrapping shadow (when captured by one of ITS
+/// OWN escaping blocks).
+///
+/// Delegates to `Params::bound_names` rather than re-enumerating the param
+/// kinds. It used to keep its own copy of that walk, and the copy drifted the
+/// moment destructuring params arrived: the names inside `|(a, b)|` are bound
+/// by the params but live in `Params::destructures`, so this missed them and
+/// they were classified as ordinary locals rather than captured ones --
+/// silently making `def m((a, b)); -> { a += 1 }; end` read a nil `a` inside
+/// the block. One enumeration, one place to update.
 pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
-    let mut names: HashSet<String> = HashSet::new();
-    names.extend(params.required.iter().cloned());
-    names.extend(params.optional.iter().map(|(n, _)| n.clone()));
-    if let Some(Some(n)) = &params.rest {
-        names.insert(n.clone());
-    }
-    names.extend(params.post.iter().cloned());
-    for kw in &params.keywords {
-        match kw {
-            KeywordParam::Required(n) | KeywordParam::Optional(n, _) => {
-                names.insert(n.clone());
-            }
-        }
-    }
-    if let Some(Some(n)) = &params.keyword_rest {
-        names.insert(n.clone());
-    }
-    if let Some(Some(n)) = &params.block {
-        names.insert(n.clone());
-    }
-    names
+    params.bound_names().into_iter().collect()
 }
 
 /// Scans a WHOLE scope's body (a method's or the top level's) for every

@@ -11586,3 +11586,203 @@ fn to_h_maps_elements_through_its_block() {
         "{1 => 2, 3 => 4}\n{2 => 1, 4 => 3}\n{1 => :a, 2 => :b}\n{1 => 1, 2 => 4, 3 => 9}\n"
     );
 }
+
+/// A parenthesized parameter destructures the value bound to its slot --
+/// `|(a, b)|`, mixed with plain params, and nested arbitrarily deep. Lowered
+/// as the multi-assignment it is (see `hir::Params::destructures`).
+#[test]
+fn parenthesized_block_params_destructure_their_slot() {
+    let result = run_ruby(
+        r#"
+        [[1, 2], [3, 4]].each { |(a, b)| p [a, b] }
+        [[1, [2, 3], 4]].each { |a, (b, c), d| p [a, b, c, d] }
+        [[[1, 2], 3]].each { |(a, b), c| p [a, b, c] }
+        [[1, [2, [3, 4]]]].each { |a, (b, (c, d))| p [a, b, c, d] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[3, 4]\n[1, 2, 3, 4]\n[1, 2, 3]\n[1, 2, 3, 4]\n"
+    );
+}
+
+/// A destructuring param may carry a splat, named or anonymous -- the same
+/// `before`/`splat`/`after` shape every multi-assignment target group has.
+#[test]
+fn destructuring_params_take_splats() {
+    let result = run_ruby(
+        r#"
+        [[1, [2, 3, 4]]].each { |a, (b, *r)| p [a, b, r] }
+        [[1, 2, 3]].each { |a, (*), b| p [a, b] }
+        [[[1, 2, 3], 9]].each { |(*init, last), z| p [init, last, z] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2, [3, 4]]\n[1, 3]\n[[1, 2], 3, 9]\n");
+}
+
+/// METHOD params destructure too, not just block params.
+#[test]
+fn method_params_destructure() {
+    // `r##"..."##`: the body contains `"#{a}`, which would close an `r#"..."#`.
+    let result = run_ruby(
+        r##"
+        def pair((a, b)) = "#{a}-#{b}"
+        puts pair([1, 2])
+        def nested((a, (b, c))) = [a, b, c]
+        p nested([1, [2, 3]])
+        def mixed(x, (y, z)) = [x, y, z]
+        p mixed(1, [2, 3])
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1-2\n[1, 2, 3]\n[1, 2, 3]\n");
+}
+
+/// A destructured name is an ordinary local: an escaping block captures it by
+/// reference, so a write inside the block is visible after it returns. This
+/// regressed once already -- `captures::own_param_names` kept its own copy of
+/// the param-name walk and didn't know about destructures, so the name was
+/// classified as a block-own local and silently read `nil`.
+#[test]
+fn destructured_names_are_capturable_by_escaping_blocks() {
+    let result = run_ruby(
+        r#"
+        def capture((a, b))
+          bump = -> { a += 10 }
+          bump.call
+          [a, b]
+        end
+        p capture([1, 2])
+
+        def collect((x, y))
+          out = []
+          [1, 2].each { |i| out << (x * i + y) }
+          out
+        end
+        p collect([10, 1])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[11, 2]\n[11, 21]\n");
+}
+
+/// A lone Array argument spreads across a block's positional params -- but a
+/// block with exactly ONE plain param receives it whole (`ambiguous_param0`,
+/// the `each { |pair| }` idiom), and so does a lone optional. Oracle-derived;
+/// see `codegen::params::auto_splats` for the full truth table.
+#[test]
+fn block_auto_splat_follows_the_ambiguous_param0_rule() {
+    let result = run_ruby(
+        r#"
+        def one(x) = yield x
+        one([1, 2]) { |a| p a }
+        one([1, 2]) { |a = 9| p a }
+        one([1, 2]) { |*a| p a }
+        one([1, 2]) { |a, **k| p a }
+        one([1, 2]) { |a, b| p [a, b] }
+        one([1, 2]) { |a, *b| p [a, b] }
+        one([1, 2]) { |*a, b| p [a, b] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[1, 2]\n[[1, 2]]\n[1, 2]\n[1, 2]\n[1, [2]]\n[[1], 2]\n"
+    );
+}
+
+/// More than one OPTIONAL param auto-splats even with no required param at
+/// all, while a single optional plus a rest does not. This pair is what rules
+/// out the tempting "count the positional slots" formulation of the rule.
+#[test]
+fn block_auto_splat_triggers_on_more_than_one_optional() {
+    let result = run_ruby(
+        r#"
+        def one(x) = yield x
+        one([1, 2]) { |a = 5, b = 4| p [a, b] }
+        one([1, 2]) { |a = 5, *b| p [a, b] }
+        one([1, 2]) { |a = 5, b = 4, *c| p [a, b, c] }
+        one([1, 2]) { |a = 5, *b, c| p [a, b, c] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[[1, 2], []]\n[1, 2, []]\n[1, [], 2]\n"
+    );
+}
+
+/// A lambda is strict: it never auto-splats, whatever its param shape.
+#[test]
+fn a_lambda_never_auto_splats() {
+    let result = run_ruby(
+        r#"
+        p(->(a) { a }.call([1, 2]))
+        p(->(a, b) { [a, b] }.call(1, 2))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2]\n[1, 2]\n");
+}
+
+/// Post params fill left-to-right from whatever the lead/optional/rest slots
+/// left behind, nil-padding the tail -- they are anchored to the END of the
+/// argument list only when there are enough values to reach them.
+#[test]
+fn post_params_fill_from_the_front_when_underfull() {
+    let result = run_ruby(
+        r#"
+        def one(x) = yield x
+        one([1, 2]) { |a, *b, c, d| p [a, b, c, d] }
+        one([1, 2, 3, 4, 5]) { |a, *b, c| p [a, b, c] }
+        one([1, 2]) { |a, b = 5, c = 6, d, e| p [a, b, c, d, e] }
+        one([1, 2, 3, 4, 5]) { |a, b = 5, c = 6, d, e| p [a, b, c, d, e] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, [], 2, nil]\n[1, [2, 3, 4], 5]\n[1, 5, 6, 2, nil]\n[1, 2, 3, 4, 5]\n"
+    );
+}
+
+/// The same underfull clamping in a multi-assignment: `w, *x, y, z = [1, 2]`
+/// is `y=2, z=nil`, not `z=2`.
+#[test]
+fn multi_assign_post_targets_clamp_when_underfull() {
+    let result = run_ruby(
+        r#"
+        w, *x, y, z = [1, 2]
+        p [w, x, y, z]
+        a, *b, c = [1]
+        p [a, b, c]
+        q, r, *s, t, u = [1, 2, 3]
+        p [q, r, s, t, u]
+        a2, *b2, c2 = [1, 2, 3, 4]
+        p [a2, b2, c2]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, [], 2, nil]\n[1, [], nil]\n[1, 2, [], 3, nil]\n[1, [2, 3], 4]\n"
+    );
+}
+
+/// A trailing comma (`|a, |`) means "this block takes more than one param",
+/// which turns auto-splat on and then discards everything past the named
+/// ones -- exactly an anonymous rest, which is how it lowers.
+#[test]
+fn a_trailing_comma_param_is_an_anonymous_rest() {
+    let result = run_ruby(
+        r#"
+        def one(x) = yield x
+        one([1, 2]) { |a,| p a }
+        one([1, 2, 3]) { |a, b,| p [a, b] }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n[1, 2]\n");
+}

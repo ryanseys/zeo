@@ -174,6 +174,20 @@ pub enum ArrayElem {
 #[derive(Clone, Default)]
 pub struct Params {
     pub required: Vec<String>,
+    /// Parenthesized DESTRUCTURING params (`|a, (b, c), d|`, `|(a, *r)|`,
+    /// nested `|(a, (b, c))|`). Ruby lets any positional slot be a
+    /// parenthesized target list that splits the value bound to it, which is
+    /// exactly a multi-assignment of that slot -- so it is lowered as one
+    /// rather than given its own binding machinery.
+    ///
+    /// `lower_params` names each such slot internally (`__destr_<i>`, which
+    /// is what lands in `required`/`post`, keeping every arity rule --
+    /// counting, auto-splat, `Proc#arity` -- working on plain names), and
+    /// records here the `LocalRead` of that slot plus the target group to
+    /// split it into. The two param-binding sites (`emit_prologue` for
+    /// methods, `emit_proc_param_bindings` for blocks) replay these through
+    /// the ordinary `emit_multi_write` immediately after binding.
+    pub destructures: Vec<(NodeId, MultiTargetGroup)>,
     /// Each default value expression is evaluated LAZILY -- only when its
     /// argument is actually omitted at the call site -- so codegen emits it
     /// inside the callee's own prologue, never eagerly at every call site.
@@ -267,6 +281,25 @@ impl Params {
         }
         if let Some(Some(n)) = &self.block {
             names.push(n.clone());
+        }
+        // The names a destructuring param binds are nested inside its target
+        // group, not in `required` (which holds only the internal slot name)
+        // -- but they are every bit as much parameters of this scope, so
+        // hoisting has to declare them and capture analysis has to treat
+        // them as the block's OWN names rather than enclosing-scope captures.
+        names.extend(self.destructured_names());
+        names
+    }
+
+    /// Just the names bound INSIDE destructuring params (`b`/`c` of
+    /// `|a, (b, c)|`) -- the part of `bound_names` that the Rust fn signature
+    /// does NOT bind, since only the `__destr_<i>` slot has a signature
+    /// parameter. Callers that mean "the names arriving as real Rust
+    /// parameters" want `bound_names` minus this.
+    pub fn destructured_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for (_, group) in &self.destructures {
+            group.collect_local_names(&mut names);
         }
         names
     }
@@ -522,6 +555,9 @@ pub struct PatternArm {
 /// `emit_expr` path, reusing the EXACT same static/dynamic dispatch
 /// `codegen::call::dispatch` already provides for every other call, with no
 /// bespoke attr/index-write codegen of its own. See `parse::lower_multi_target`.
+// `Clone` because `Params` is `Clone` and now carries destructuring groups
+// (`Params::destructures`); the targets themselves are small, owned data.
+#[derive(Clone)]
 pub enum MultiTarget {
     Local(String),
     Ivar(String),
@@ -550,10 +586,31 @@ pub enum MultiTarget {
 /// None` = no `*` at all; `Some(None)` = an anonymous `*` (discards the
 /// middle slice -- still unsupported, matching the pre-existing plain-local
 /// restriction, a clean lowering error); `Some(Some(target))` = `*target`.
+#[derive(Clone)]
 pub struct MultiTargetGroup {
     pub before: Vec<MultiTarget>,
     pub splat: Option<Option<Box<MultiTarget>>>,
     pub after: Vec<MultiTarget>,
+}
+
+impl MultiTargetGroup {
+    /// Every plain LOCAL name this group binds, at any nesting depth,
+    /// appended to `out`. Only locals: an ivar/global/constant/attr-write
+    /// target isn't a name the enclosing scope binds, so it is irrelevant to
+    /// the callers (`Params::bound_names`, which answers "what does this
+    /// parameter list introduce as locals?").
+    pub fn collect_local_names(&self, out: &mut Vec<String>) {
+        let mut visit = |t: &MultiTarget| match t {
+            MultiTarget::Local(n) => out.push(n.clone()),
+            MultiTarget::Nested(g) => g.collect_local_names(out),
+            _ => {}
+        };
+        self.before.iter().for_each(&mut visit);
+        if let Some(Some(t)) = &self.splat {
+            visit(t);
+        }
+        self.after.iter().for_each(&mut visit);
+    }
 }
 
 impl MultiTarget {
