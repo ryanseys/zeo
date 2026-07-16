@@ -91,8 +91,17 @@ fn build_match_data(re: &RRegexp, haystack: &str, caps: &regex::Captures) -> RMa
 /// pattern doesn't match at all.
 pub fn regexp_match(re: &RRegexp, haystack: &str) -> RubyValue {
     match re.compiled.captures(haystack) {
-        Some(caps) => RubyValue::MatchData(build_match_data(re, haystack, &caps)),
-        None => RubyValue::Nil,
+        Some(caps) => {
+            let m = build_match_data(re, haystack, &caps);
+            crate::lastmatch::set_last_match(Some(m.clone()));
+            RubyValue::MatchData(m)
+        }
+        None => {
+            // A failed match CLEARS `$~` and everything derived from it --
+            // it does not leave the previous match in place (oracle-verified).
+            crate::lastmatch::set_last_match(None);
+            RubyValue::Nil
+        }
     }
 }
 
@@ -118,10 +127,21 @@ fn char_index(haystack: &str, byte_idx: usize) -> i64 {
 /// `Regexp#=~`/`String#=~` -- the CHAR index (not byte index, matching
 /// every other char-indexed string operation in this runtime -- see
 /// `collections::string_get`'s docs) of the match start, or `nil`.
+///
+/// Runs `captures`, not the cheaper `find`, because `=~` must ALSO record
+/// `$~`/`$1`/... -- the whole point of `if s =~ /(\d+)/ then $1 end`, and
+/// the groups don't exist without capturing them.
 pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
-    match re.compiled.find(haystack) {
-        Some(m) => RubyValue::Int(char_index(haystack, m.start())),
-        None => RubyValue::Nil,
+    match re.compiled.captures(haystack) {
+        Some(caps) => {
+            let start = caps.get(0).expect("group 0 always exists on a match").start();
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            RubyValue::Int(char_index(haystack, start))
+        }
+        None => {
+            crate::lastmatch::set_last_match(None);
+            RubyValue::Nil
+        }
     }
 }
 

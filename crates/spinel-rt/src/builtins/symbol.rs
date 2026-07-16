@@ -4,7 +4,6 @@
 
 use crate::builtins::{arity, builtin_methods};
 use crate::{RProc, RubyValue, Symbol};
-use std::sync::Arc;
 
 fn recv_sym(recv: &RubyValue) -> Symbol {
     match recv {

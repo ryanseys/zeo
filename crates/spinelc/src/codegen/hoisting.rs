@@ -330,7 +330,13 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, n, out);
             }
         }
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                collect_locals(compiler, *n, out);
+            }
+        }
+        HirNode::Raise(args) => {
             for &a in args {
                 collect_locals(compiler, a, out);
             }
@@ -423,6 +429,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::BlockGiven

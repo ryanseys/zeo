@@ -202,7 +202,11 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => node_contains_escaping_block(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_escaping_block(compiler, *value),
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => elems.iter().any(|e| {
+            let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+            node_contains_escaping_block(compiler, *n)
+        }),
+        HirNode::Raise(args) => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
@@ -277,6 +281,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -378,7 +383,11 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => node_contains_begin(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_begin(compiler, *value),
-        HirNode::Yield(args) | HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::Yield(elems) => elems.iter().any(|e| {
+            let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+            node_contains_begin(compiler, *n)
+        }),
+        HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::SuperCall { args, block, .. } => {
             args.iter().any(|&a| node_contains_begin(compiler, a))
@@ -424,6 +433,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -612,7 +622,13 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
+            }
+        }
+        HirNode::Raise(args) => {
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
@@ -822,6 +838,7 @@ fn walk(
         | HirNode::BoolLit(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

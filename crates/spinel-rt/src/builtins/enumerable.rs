@@ -106,6 +106,14 @@ pub(crate) fn enumerable_send(
         "uniq" => uniq(recv, args),
         "to_h" => enum_to_h(recv, args, block),
         "reverse_each" => reverse_each(recv, args, block),
+        "grep" => grep(recv, args, block, true),
+        "grep_v" => grep(recv, args, block, false),
+        "chunk_while" => chunk_while(recv, args, block, false),
+        "slice_when" => chunk_while(recv, args, block, true),
+        "slice_before" => slice_before_after(recv, args, block, true),
+        "slice_after" => slice_before_after(recv, args, block, false),
+        "minmax_by" => minmax_by(recv, args, block),
+        "each_entry" => each_entry(recv, args, block),
         _ => return None,
     })
 }
@@ -137,6 +145,9 @@ pub(crate) fn responds(name: &str) -> bool {
             | "take" | "drop" | "take_while" | "drop_while"
             | "find_index"
             | "tally" | "uniq" | "to_h" | "reverse_each"
+            | "grep" | "grep_v"
+            | "chunk_while" | "slice_when" | "slice_before" | "slice_after"
+            | "minmax_by" | "each_entry"
     )
 }
 
@@ -1093,6 +1104,171 @@ fn enum_find_index(
     Ok(RubyValue::Nil)
 }
 
+/// `pattern === value`, dispatched -- the test `grep`/`slice_before`/
+/// `slice_after`'s argument forms are defined in terms of. Sent rather
+/// than matched on: `===` means something different for a Range (cover?),
+/// a Module (is_a?), a Regexp (match?), a Proc (call) and a plain value
+/// (==), and every one of those already has its own row. A user class's
+/// own `def ===` works for free for the same reason.
+fn case_eq(pattern: &RubyValue, value: &RubyValue) -> Result<bool, Signal> {
+    Ok(
+        send_value(pattern, Symbol::intern("==="), std::slice::from_ref(value), None)?
+            .truthy(),
+    )
+}
+
+/// `grep(pattern)` / `grep(pattern) { |e| ... }` and their `grep_v`
+/// negations: select the elements the pattern `===` matches (or doesn't),
+/// mapping each through the block first if one is given.
+fn grep(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    keep: bool,
+) -> Result<RubyValue, Signal> {
+    let name = if keep { "grep" } else { "grep_v" };
+    if args.len() != 1 {
+        panic!("Enumerable#{name} takes exactly one pattern argument");
+    }
+    let mut out = Vec::new();
+    for e in collect_packed(recv)? {
+        if case_eq(&args[0], &e)? != keep {
+            continue;
+        }
+        out.push(match &block {
+            Some(b) => b.as_proc_unchecked().call(&[e])?,
+            None => e,
+        });
+    }
+    Ok(RubyValue::Array(array_new(out)))
+}
+
+/// `chunk_while { |a, b| ... }` and `slice_when { |a, b| ... }` -- exact
+/// negations of each other: both walk adjacent PAIRS and cut between them,
+/// `chunk_while` when the block is FALSE ("keep them together while true"),
+/// `slice_when` when it is TRUE ("start a new slice when true"). One
+/// implementation with a flipped test, since that is genuinely all the
+/// difference is.
+///
+/// An empty receiver answers `[]`, and a one-element one `[[x]]` -- the
+/// block never runs in either case (there is no adjacent pair).
+///
+/// Real Ruby answers a lazy Enumerator here; this answers an Array, which
+/// `.to_a`/`.each`/`.map` (the overwhelmingly common uses) can't tell apart.
+/// Documented divergence, same posture as the rest of this module.
+fn chunk_while(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    cut_on: bool,
+) -> Result<RubyValue, Signal> {
+    let name = if cut_on { "slice_when" } else { "chunk_while" };
+    reject_args(args, name, "arguments");
+    let blk = block_or_enum!(recv, name, args, block);
+    let items = collect_packed(recv)?;
+    let mut out: Vec<RubyValue> = Vec::new();
+    let mut cur: Vec<RubyValue> = Vec::new();
+    for e in items {
+        if let Some(prev) = cur.last().cloned() {
+            if blk.call(&[prev, e.clone()])?.truthy() == cut_on {
+                out.push(RubyValue::Array(array_new(std::mem::take(&mut cur))));
+            }
+        }
+        cur.push(e);
+    }
+    if !cur.is_empty() {
+        out.push(RubyValue::Array(array_new(cur)));
+    }
+    Ok(RubyValue::Array(array_new(out)))
+}
+
+/// `slice_before` / `slice_after`, in both their block and pattern-argument
+/// forms. `before` cuts so the matching element STARTS the next slice;
+/// `after` cuts so it ENDS the current one.
+///
+/// The leading-empty-slice case is why `before` can't just push on every
+/// match: `[1,2,3].slice_before { |x| x == 1 }` is `[[1, 2, 3]]`, not
+/// `[[], [1, 2, 3]]` -- a match at the very start opens the first slice
+/// rather than closing an empty one.
+fn slice_before_after(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    before: bool,
+) -> Result<RubyValue, Signal> {
+    let name = if before { "slice_before" } else { "slice_after" };
+    let mut out: Vec<RubyValue> = Vec::new();
+    let mut cur: Vec<RubyValue> = Vec::new();
+    // Exactly one of a pattern argument or a block, real Ruby's own rule.
+    let test: Box<dyn Fn(&RubyValue) -> Result<bool, Signal>> = match (args.len(), &block) {
+        (1, None) => {
+            let pattern = args[0].clone();
+            Box::new(move |e: &RubyValue| case_eq(&pattern, e))
+        }
+        (0, Some(b)) => {
+            let b = b.clone();
+            Box::new(move |e: &RubyValue| Ok(b.as_proc_unchecked().call(&[e.clone()])?.truthy()))
+        }
+        _ => panic!("Enumerable#{name} takes exactly one pattern argument OR a block"),
+    };
+    for e in collect_packed(recv)? {
+        let hit = test(&e)?;
+        if before && hit && !cur.is_empty() {
+            out.push(RubyValue::Array(array_new(std::mem::take(&mut cur))));
+        }
+        cur.push(e);
+        if !before && hit {
+            out.push(RubyValue::Array(array_new(std::mem::take(&mut cur))));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(RubyValue::Array(array_new(cur)));
+    }
+    Ok(RubyValue::Array(array_new(out)))
+}
+
+/// `each_entry` -- like `each`, but yields the PACKED element where `each`
+/// passes the raw values through. That is the entire difference, and it is
+/// only observable when the receiver's `each` yields MORE THAN ONE value
+/// (oracle-verified against a class whose `each` does `yield 1; yield 2, 3;
+/// yield`):
+///
+/// ```text
+/// each_entry { |x| }  sees  1, [2, 3], nil
+/// each       { |x| }  sees  1,  2,     nil
+/// ```
+///
+/// Answers the receiver.
+fn each_entry(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    reject_args(args, "each_entry", "arguments");
+    let blk = block_or_enum!(recv, "each_entry", args, block);
+    for e in collect_packed(recv)? {
+        blk.call(&[e])?;
+    }
+    Ok(recv.clone())
+}
+
+/// `minmax_by { |e| ... }` -- `[min_by, max_by]`, computed in ONE pass so
+/// the block runs once per element, as CRuby's does. `[nil, nil]` for an
+/// empty receiver (not `[]`).
+fn minmax_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    reject_args(args, "minmax_by", "arguments");
+    let blk = block_or_enum!(recv, "minmax_by", args, block);
+    let mut lo: Option<(RubyValue, RubyValue)> = None;
+    let mut hi: Option<(RubyValue, RubyValue)> = None;
+    for e in collect_packed(recv)? {
+        let k = blk.call(&[e.clone()])?;
+        if lo.as_ref().is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o < 0)) {
+            lo = Some((k.clone(), e.clone()));
+        }
+        if hi.as_ref().is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o > 0)) {
+            hi = Some((k, e));
+        }
+    }
+    let pick = |o: Option<(RubyValue, RubyValue)>| o.map_or(RubyValue::Nil, |(_, v)| v);
+    Ok(RubyValue::Array(array_new(vec![pick(lo), pick(hi)])))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1198,5 +1374,99 @@ mod tests {
             enumerable_send(&ints(&[1]), "to_h", &[], Some(RubyValue::Proc(blk)))
         }));
         assert!(r.is_err());
+    }
+
+    /// `chunk_while` and `slice_when` are exact negations -- the same cut
+    /// points, chosen on opposite truth values. Oracle-verified:
+    ///   [1,2,4,9,10,11,12,15].slice_when  { |i,j| i+1 != j }
+    ///   [1,2,4,9,10,11,12,15].chunk_while { |i,j| i+1 == j }
+    /// both => [[1,2],[4],[9,10,11,12],[15]]
+    #[test]
+    fn chunk_while_and_slice_when_are_negations_of_each_other() {
+        let a = ints(&[1, 2, 4, 9, 10, 11, 12, 15]);
+        let adjacent = RProc::new(|args: &[RubyValue]| {
+            let (RubyValue::Int(i), RubyValue::Int(j)) = (&args[0], &args[1]) else {
+                unreachable!()
+            };
+            Ok(RubyValue::Bool(i + 1 == *j))
+        });
+        let gap = RProc::new(|args: &[RubyValue]| {
+            let (RubyValue::Int(i), RubyValue::Int(j)) = (&args[0], &args[1]) else {
+                unreachable!()
+            };
+            Ok(RubyValue::Bool(i + 1 != *j))
+        });
+        let want = "[[1, 2], [4], [9, 10, 11, 12], [15]]";
+        let c = enumerable_send(&a, "chunk_while", &[], Some(RubyValue::Proc(adjacent)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(c.inspect_string(), want);
+        let s = enumerable_send(&a, "slice_when", &[], Some(RubyValue::Proc(gap)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(s.inspect_string(), want);
+    }
+
+    /// Neither an empty nor a one-element receiver ever runs the block
+    /// (there is no adjacent pair to test).
+    #[test]
+    fn chunk_while_on_short_receivers_never_calls_the_block() {
+        let never = || {
+            RProc::new(|_: &[RubyValue]| unreachable!("no adjacent pair exists"))
+        };
+        let e = enumerable_send(&ints(&[]), "chunk_while", &[], Some(RubyValue::Proc(never())))
+            .unwrap()
+            .unwrap();
+        assert_eq!(e.inspect_string(), "[]");
+        let one = enumerable_send(&ints(&[7]), "chunk_while", &[], Some(RubyValue::Proc(never())))
+            .unwrap()
+            .unwrap();
+        assert_eq!(one.inspect_string(), "[[7]]");
+    }
+
+    /// A `slice_before` match at the very START opens the first slice
+    /// rather than closing an empty one -- `[[1,2,3]]`, not `[[], [1,2,3]]`.
+    #[test]
+    fn slice_before_does_not_emit_a_leading_empty_slice() {
+        let is_one = RProc::new(|args: &[RubyValue]| {
+            Ok(RubyValue::Bool(matches!(args[0], RubyValue::Int(1))))
+        });
+        let out = enumerable_send(
+            &ints(&[1, 2, 3]),
+            "slice_before",
+            &[],
+            Some(RubyValue::Proc(is_one)),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(out.inspect_string(), "[[1, 2, 3]]");
+    }
+
+    /// `minmax_by` answers `[nil, nil]` for an empty receiver -- not `[]`.
+    #[test]
+    fn minmax_by_on_an_empty_receiver_is_a_nil_pair() {
+        let id = RProc::new(|args: &[RubyValue]| Ok(args[0].clone()));
+        let out = enumerable_send(&ints(&[]), "minmax_by", &[], Some(RubyValue::Proc(id)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.inspect_string(), "[nil, nil]");
+    }
+
+    /// `grep` selects by `===`, so a Range argument covers.
+    #[test]
+    fn grep_selects_by_case_equality() {
+        let out = enumerable_send(
+            &ints(&[1, 2, 3, 4, 5]),
+            "grep",
+            &[RubyValue::Range(
+                Some(Box::new(RubyValue::Int(2))),
+                Some(Box::new(RubyValue::Int(4))),
+                false,
+            )],
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(out.inspect_string(), "[2, 3, 4]");
     }
 }

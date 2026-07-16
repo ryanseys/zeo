@@ -356,33 +356,6 @@ fn strftime(t: &RTime, fmt: &str) -> String {
     out
 }
 
-/// A Float's seconds/nanoseconds, computed EXACTLY from the double's own
-/// binary value rather than in floating point.
-///
-/// This is the difference between `Time.at(0.7).nsec` answering 699999999
-/// (Ruby, and now us) and 700000000 (what `((f - f.floor()) * 1e9) as u32`
-/// gives): the subtraction and multiply each round back to the nearest
-/// double, landing exactly on 0.7e9 and erasing the deficit the literal
-/// actually carries. So the fraction is taken over exact integers instead --
-/// `nsec = floor(rem * 1e9 / den)`, where `num/den` IS the double.
-fn float_epoch(f: f64) -> (i64, u32) {
-    use num_bigint::BigInt;
-    use num_integer::Integer;
-    let (num, den) = crate::builtins::float::float_exact_parts(f);
-    // Floored division, so a negative epoch still leaves a remainder in
-    // `0..den` -- Ruby's own normalization (`Time.at(-0.5)` is second -1
-    // plus 500000000ns, not second 0 minus half).
-    let (sec, rem) = num.div_mod_floor(&den);
-    let nsec = (rem * BigInt::from(1_000_000_000u32)) / den;
-    let sec = i64::try_from(sec).unwrap_or(i64::MAX);
-    let nsec = u32::try_from(nsec).unwrap_or(999_999_999);
-    (sec, nsec.min(999_999_999))
-}
-
-fn args_float_name(v: &RubyValue) -> String {
-    v.to_display_string()
-}
-
 /// `t + delta` / `t - delta` (`sign` picks), computed EXACTLY.
 ///
 /// Not `epoch_arg` then integer add: rounding the delta to `(sec, nsec)`

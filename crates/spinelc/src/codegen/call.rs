@@ -565,7 +565,48 @@ fn try_proc_dispatch(
     Some(quote! { ((#recv_expr).as_proc_unchecked()).call(&[#(#arg_exprs),*])? })
 }
 
-pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
+pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[crate::hir::HashPair]) -> TokenStream {
+    // A USER class with a real `initialize`: bind its arguments through the
+    // SAME `emit_call_args_to` machinery every other call site uses, so
+    // `initialize` gets the full `Params` surface (splat/post/keyword/block)
+    // rather than the required+optional-only subset `.new` used to bind by
+    // hand -- `def initialize(*values)` was a compile-time rejection.
+    //
+    // Only this path can: the others have no generated `initialize` with a
+    // `Params` to bind against (a builtin/module `.new` dispatches
+    // dynamically; `Object.new`'s copy is a free function in a container).
+    // They keep the token path below, which is also the one `raise`'s
+    // synthetic-argument caller needs.
+    let cid = cx
+        .resolve_class(class_name)
+        .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+    let ci = cx.compiler.class(cid);
+    if !ci.is_builtin && !ci.is_module && cid != crate::compiler::OBJECT_CLASS {
+        if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
+            let scope = cx.compiler.scope(sid);
+            let ctor = emit_ctor_struct(cx, cid);
+            // `initialize` takes `self: Arc<Self>` BY VALUE (see
+            // `ruby_class!`'s docs), so it would move `__obj` -- clone the
+            // handle (a refcount bump) to keep `__obj` returnable.
+            //
+            // `.new` still forwards no BLOCK (`&blk`/`yield` inside
+            // `initialize` sees none) -- a narrower, pre-existing gap;
+            // `needs_block` here only makes the callee's own block slot
+            // line up.
+            let init = super::params::emit_call_args_to(
+                cx,
+                &super::params::Callee::Method(quote! { __obj.clone() }),
+                "initialize",
+                &scope.params,
+                args,
+                kwargs,
+                None,
+                None,
+                scope.needs_block_param(),
+            );
+            return quote! { { let __obj = #ctor; #init; __obj } };
+        }
+    }
     // Boxed via `box_if_object_typed`: `initialize`'s own Rust parameters
     // are always plain `RubyValue` (see that function's docs) -- an
     // Object-typed constructor ARGUMENT (e.g. passing one class instance
@@ -580,6 +621,30 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
         })
         .collect();
     emit_new_with_arg_tokens(cx, class_name, arg_exprs)
+}
+
+/// The bare `Arc<Concrete>` struct literal for one generated class -- every
+/// ivar `Nil`, unfrozen. Shared by `emit_new`'s general-binder path and
+/// `emit_new_with_arg_tokens`' hand-bound one, which must construct the
+/// identical object.
+fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
+    let ci = cx.compiler.class(cid);
+    let class_ident = super::ident::class_ident(cx.compiler, cid);
+    let fields = ci.ivars.iter().map(|iv| {
+        let f = safe_ident(iv);
+        quote! { #f: spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil), }
+    });
+    // Every object starts unfrozen -- `.freeze`'s per-object flag (see
+    // `ruby_class!`'s `__frozen` field docs).
+    let fields = quote! { __frozen: std::sync::atomic::AtomicBool::new(false), #(#fields)* };
+    // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
+    // holding this needs to be `Arc::clone()`-able on every re-read
+    // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
+    // for why the bare struct can't just derive `Clone` instead). `Arc<T>`
+    // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
+    // work unchanged against a `self: Arc<Self>`-shaped method. `Arc` (not
+    // `Rc`, Part 9): every generated struct is genuinely `Send + Sync`.
+    quote! { std::sync::Arc::new(#class_ident { #fields }) }
 }
 
 /// The actual construction logic behind `ClassName.new(...)`, factored out
@@ -644,35 +709,22 @@ pub fn emit_new_with_arg_tokens(
                     }
                 }
             }
-            None => {
-                if !arg_exprs.is_empty() {
-                    panic!(
-                        "wrong number of arguments for `Object.new` (given {}, expected 0)",
-                        arg_exprs.len()
-                    );
+            None if !arg_exprs.is_empty() => {
+                // A raise, not a panic -- see the matching arm for user
+                // classes below.
+                let n = arg_exprs.len();
+                let msg = format!("wrong number of arguments (given {n}, expected 0)");
+                quote! {
+                    {
+                        #(let _ = #arg_exprs;)*
+                        return Err(spinel_rt::raise_error("ArgumentError", #msg.to_string()));
+                    }
                 }
-                ctor
             }
+            None => ctor,
         };
     }
-    let ci = cx.compiler.class(cid);
-    let class_ident = super::ident::class_ident(cx.compiler, cid);
-
-    let fields = ci.ivars.iter().map(|iv| {
-        let f = safe_ident(iv);
-        quote! { #f: spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil), }
-    });
-    // Every object starts unfrozen -- `.freeze`'s per-object flag (see
-    // `ruby_class!`'s `__frozen` field docs).
-    let fields = quote! { __frozen: std::sync::atomic::AtomicBool::new(false), #(#fields)* };
-    // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
-    // holding this needs to be `Arc::clone()`-able on every re-read
-    // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs
-    // for why the bare struct can't just derive `Clone` instead). `Arc<T>`
-    // derefs transparently, so Path 1's `(recv_expr).method(...)` calls still
-    // work unchanged against a `self: Arc<Self>`-shaped method. `Arc` (not
-    // `Rc`, Part 9): every generated struct is genuinely `Send + Sync`.
-    let ctor = quote! { std::sync::Arc::new(#class_ident { #fields }) };
+    let ctor = emit_ctor_struct(cx, cid);
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some((_, sid)) => {
@@ -688,6 +740,25 @@ pub fn emit_new_with_arg_tokens(
             // move it -- clone the `Arc` handle first (a cheap refcount bump,
             // not a deep copy) so `__obj` is still available to return.
             quote! { { let __obj = #ctor; __obj.clone().initialize(#(#final_args),*)?; __obj } }
+        }
+        // No user `initialize`, so the inherited `Object#initialize` takes
+        // none -- passing any is an ArgumentError, not something to drop on
+        // the floor. `Bag.new(1, 2)` on an `initialize`-less class silently
+        // ignored its arguments and constructed happily.
+        //
+        // Raised at RUNTIME (after evaluating the arguments for their side
+        // effects), not a compile panic: real Ruby resolves this arity at
+        // runtime and the error is rescuable. Message shape oracle-verified
+        // -- CRuby names no method in it.
+        None if !arg_exprs.is_empty() => {
+            let n = arg_exprs.len();
+            let msg = format!("wrong number of arguments (given {n}, expected 0)");
+            quote! {
+                {
+                    #(let _ = #arg_exprs;)*
+                    return Err(spinel_rt::raise_error("ArgumentError", #msg.to_string()));
+                }
+            }
         }
         None => ctor,
     }
@@ -1624,7 +1695,7 @@ pub fn emit_call(
                     // Boxed: this Call node infers as `Poly` (only a
                     // literal `HirNode::New` infers `Object(cid)`), so the
                     // expression must be a `RubyValue`.
-                    let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args);
+                    let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs);
                     let class_ident = super::ident::class_ident(cx.compiler, defining);
                     return quote! {
                         spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor))
@@ -2104,7 +2175,7 @@ pub fn emit_call(
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
             if name == "new" && !cx.compiler.class(target).is_module && !cx.compiler.class(target).is_builtin {
                 let recv_expr = emit_expr(cx, recv_id);
-                let ctor = emit_new(cx, &cx.compiler.fq_name(target), args);
+                let ctor = emit_new(cx, &cx.compiler.fq_name(target), args, kwargs);
                 return quote! { { let _ = #recv_expr; #ctor } };
             }
             if cx.compiler.class_method_in_chain(target, name).is_some() {
@@ -2243,7 +2314,20 @@ fn emit_splat_call(
             let __kw = spinel_rt::hash_new(vec![]);
             #(#literal_sets)*
             #splat_sets
-            __args.push(spinel_rt::RubyValue::Hash(__kw));
+            // Only when non-empty: a `**h` whose hash is empty AT RUNTIME
+            // contributes NOTHING -- `def c(h) = foo(1, **h); c({})` passes
+            // just `1`, with no trailing hash (oracle-verified; pushing it
+            // unconditionally silently handed the callee an extra `{}`
+            // argument). Note this is about a RUNTIME-empty hash, not the
+            // literal `**{}` a parser could fold away, so the guard has to
+            // be here rather than in lowering.
+            //
+            // Unconditional rather than gated on `kwargs_splat.is_some()`: a
+            // literal keyword (`k: 1`) can never produce an empty hash, so
+            // for those this check is simply never false.
+            if !__kw.lock().is_empty() {
+                __args.push(spinel_rt::RubyValue::Hash(__kw));
+            }
         }
     });
     let block_value = emit_block_option(cx, block, block_arg);
@@ -3198,6 +3282,17 @@ fn dispatch(
                 // `mut`: a block param is an ordinary reassignable local.
                 quote! { #[allow(unused_mut)] let mut #ident = spinel_rt::RubyValue::Int(__i); }
             });
+            // `3.times { |i; n| ... }` -- block-locals get a fresh `nil` per
+            // iteration here, exactly as `emit_proc_param_bindings` does for
+            // a real Proc. Inside the loop, not outside: the reset-every-
+            // invocation semantics is the whole point of the declaration.
+            let block_locals = params.block_locals.iter().map(|name| {
+                let ident = safe_ident(name);
+                quote! {
+                    #[allow(unused_variables, unused_mut)]
+                    let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+                }
+            });
             let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
             return quote! {
                 {
@@ -3205,6 +3300,7 @@ fn dispatch(
                     #outer: loop {
                         if __i >= #n { break #outer spinel_rt::RubyValue::Nil; }
                         #bind
+                        #(#block_locals)*
                         #inner
                         __i += 1;
                     }

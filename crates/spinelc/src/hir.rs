@@ -210,6 +210,28 @@ pub struct Params {
     /// forwarding (which implies a block too, among other things) is still a
     /// clean lowering error -- see `parse/mod.rs::lower_params`'s docs.
     pub block: Option<Option<String>>,
+    /// BLOCK-LOCAL declarations -- the names after the `;` in `|x; sum|`.
+    /// Always empty for a method's `Params` (the syntax exists only on a
+    /// block).
+    ///
+    /// Not parameters: nothing is ever bound to them from the argument
+    /// list, so they take no signature slot and count toward no arity rule.
+    /// They are fresh locals scoped to the block, re-initialized to `nil` on
+    /// EVERY invocation -- which is the part that makes them more than a
+    /// naming convention, and is oracle-verified:
+    ///
+    /// ```ruby
+    /// total = 42
+    /// [1, 2, 3].each { |x; total| total = (total || 0) + x }
+    /// total  # => 42 -- never written, AND never accumulated:
+    ///        #    `total` is nil again at the top of each call
+    /// ```
+    ///
+    /// They ARE in `bound_names`, though, which is what makes them shadow an
+    /// enclosing local correctly: that one enumeration is what
+    /// `captures::own_param_names` (capture classification), `Ctx::in_proc`
+    /// (static-type/cell shadowing) and hoisting all read.
+    pub block_locals: Vec<String>,
 }
 
 /// A method's visibility, as of the point in the class body where its `def`
@@ -288,6 +310,12 @@ impl Params {
         // hoisting has to declare them and capture analysis has to treat
         // them as the block's OWN names rather than enclosing-scope captures.
         names.extend(self.destructured_names());
+        // Block-locals (`|x; sum|`) bind nothing from the argument list, but
+        // they are unambiguously this block's OWN names -- which is the
+        // question every `bound_names` caller is actually asking. Including
+        // them here is what makes them shadow an enclosing `sum` instead of
+        // being classified as a capture of it. See the field's docs.
+        names.extend(self.block_locals.iter().cloned());
         names
     }
 
@@ -310,6 +338,20 @@ impl Params {
 /// a clear error (spike scope), the same posture as `ParenthesesNode`'s other
 /// narrowings (see `parse/mod.rs`).
 pub struct HashPair(pub NodeId, pub NodeId);
+
+/// Which last-match special a `LastMatchRef` reads -- see that variant's
+/// docs. All of them derive from the one `$~` slot.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum LastMatch {
+    /// `$~` -- the MatchData itself.
+    Data,
+    /// `$1`..`$9` (and `$&`, which is group 0).
+    Group(usize),
+    /// `` $` `` -- the text before the match.
+    Pre,
+    /// `$'` -- the text after it.
+    Post,
+}
 
 /// A `case/in` pattern -- a small, directly-recursive tree, deliberately NOT
 /// reusing `HirNode`/`NodeId` for every position: a pattern's leaves have
@@ -896,9 +938,22 @@ pub enum HirNode {
     /// `ClassName.new(args)` -- a distinct node (not a plain `Call`) because
     /// it's always statically resolvable to a concrete class, and codegen
     /// needs that class name early to route ivar defaults / registration.
+    ///
+    /// `kwargs` carries a trailing `Foo.new(k: 1)`, kept SEPARATE from
+    /// `args` the way `Call`'s own are, so `initialize`'s keyword
+    /// parameters bind as keywords. It used to lower to a positional Hash
+    /// instead, which bound to the wrong slot (or, more often, made the
+    /// call look one argument too long: `def initialize(a, k:)` given
+    /// `New.new(1, k: 2)` saw two positionals and raised).
+    ///
+    /// `args` stays `Vec<NodeId>` rather than `Call`'s `Vec<ArrayElem>`: a
+    /// SPLAT at a `.new` site (`Foo.new(*args)`) is still unsupported -- it
+    /// needs the runtime arg-vector path, not this static one. See
+    /// `parse`'s `.new` lowering.
     New {
         class_name: String,
         args: Vec<NodeId>,
+        kwargs: Vec<HashPair>,
     },
     /// Mirrors spinel's `emit_super`: always resolved against the *static*
     /// superclass, never through the dynamic dispatch table. See codegen's
@@ -1134,7 +1189,16 @@ pub enum HirNode {
     /// method's implicit `__blk` parameter (see `codegen::params`), panicking
     /// with a clear "no block given" message (mirroring real Ruby's
     /// `LocalJumpError`) if the method was called without one.
-    Yield(Vec<NodeId>),
+    ///
+    /// `Vec<ArrayElem>`, the same shape `Call`'s positional arguments use,
+    /// so `yield(*a)` needs no machinery of its own -- a `Splat` element
+    /// flattens at runtime exactly as it does at a call site. A trailing
+    /// `yield(k: 1)`/`yield(**h)` is folded by lowering into one trailing
+    /// `HashLit`/merge element, which is what
+    /// `codegen::params::emit_proc_param_bindings` already binds a block's
+    /// own keyword params from (real Ruby's auto-conversion of a trailing
+    /// Hash into block keywords).
+    Yield(Vec<ArrayElem>),
     /// `block_given?` -- a zero-arg, no-receiver call-shape recognized at
     /// lowering time (mirrors `loop`/`define_method`'s desugars), not a
     /// distinct `ruby-prism` node. Same "not inside a nested block" scope-cut
@@ -1270,16 +1334,34 @@ pub enum HirNode {
         name: String,
         value: NodeId,
     },
-    /// A synthetic statement sequence introduced by LOWERING itself (never
-    /// written directly in Ruby source) -- used to bind a compound-
-    /// assignment target's receiver/index expression(s) to a hidden local
-    /// exactly ONCE before reading-then-writing through them (e.g. `obj.attr
-    /// += 1`, `arr[i] ||= 1`), matching real Ruby's own "evaluate the
-    /// receiver once" semantics; see `parse::lower_call_operator_write`'s
-    /// docs. Identical codegen shape to `Eval`'s (a `Vec<NodeId>` emitted as
-    /// one tail-value Rust block expression via `emit_body`) -- kept as a
-    /// distinct variant because it means something different to a Ruby
-    /// reader/tooling (`defined?`, error messages): `Eval` is a real
-    /// Ruby-level construct, `Seq` is purely a compiler lowering artifact.
+    /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
+    ///
+    /// NOT `GlobalRead`, even though they are spelled like globals: nothing
+    /// ever assigns them (a regexp match does, as a side effect), and they
+    /// read off a dedicated runtime slot rather than the `$foo` table. See
+    /// `spinel_rt::lastmatch`, including the frame-locality divergence.
+    LastMatchRef(LastMatch),
+    /// A statement sequence evaluated in order, answering its LAST
+    /// statement's value -- emitted as one tail-value Rust block expression
+    /// via `emit_body` (the same codegen shape as `Eval`'s).
+    ///
+    /// Two sources reach here:
+    ///   - a parenthesized multi-statement expression written in real
+    ///     source (`x = (a; b)`, `(puts "hi"; 42)`);
+    ///   - lowering itself, binding a compound-assignment target's
+    ///     receiver/index expression(s) to a hidden local exactly ONCE
+    ///     before reading-then-writing through them (`obj.attr += 1`,
+    ///     `arr[i] ||= 1`), matching Ruby's "evaluate the receiver once"
+    ///     rule; see `parse::lower_call_operator_write`'s docs.
+    ///
+    /// Introduces NO scope of its own in either case: a local assigned
+    /// inside is visible afterwards (`y = (a = 5; a * 2)` leaves `a == 5`
+    /// readable), which is both what real Ruby does with `(a; b)` and what
+    /// the compound-assignment lowering needs from its hidden locals.
+    ///
+    /// Distinct from `Eval` (which is specifically a literal
+    /// `eval("...")`'s spliced body) because the two mean different things
+    /// to a Ruby reader and to tooling, not because they generate
+    /// differently.
     Seq(Vec<NodeId>),
 }

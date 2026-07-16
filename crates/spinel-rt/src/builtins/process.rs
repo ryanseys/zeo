@@ -88,7 +88,7 @@ fn clock_seconds(clock: i64) -> Result<f64, crate::Signal> {
 /// `main()`. Values are the OS's own ids (see `clock_seconds`).
 pub fn seed_process() {
     let cid = spinel_abi::PROCESS_CLASS.0;
-    let mut set = |name: &str, v: libc::clockid_t| {
+    let set = |name: &str, v: libc::clockid_t| {
         crate::constants::const_set(cid, name, RubyValue::Int(v as i64));
     };
     set("CLOCK_REALTIME", libc::CLOCK_REALTIME);

@@ -233,7 +233,7 @@ pub fn bind_dynamic_kwargs<'a>(
         Some(h) => h.lock().values().cloned().collect(),
         None => Vec::new(),
     };
-    let mut lookup = |name: &str| -> Option<RubyValue> {
+    let lookup = |name: &str| -> Option<RubyValue> {
         pairs.iter().find_map(|(k, v)| match k {
             RubyValue::Symbol(s) if s.name() == name => Some(v.clone()),
             _ => None,
@@ -752,11 +752,20 @@ pub fn run_initialize(
         f(recv, args, block)?;
         return Ok(());
     }
+    // No user `initialize` at all, so the inherited `Object#initialize`
+    // takes no arguments. A RAISE, not a panic (plan G1): real Ruby resolves
+    // arity at runtime and the error is rescuable -- `rescue ArgumentError`
+    // around a bad `.new` is a corpus idiom, and a panic is uncatchable.
+    // Message shape oracle-verified: CRuby says "wrong number of arguments
+    // (given 2, expected 0)" with no method name in it.
     if !args.is_empty() {
-        panic!(
-            "wrong number of arguments for initialize (given {}, expected 0)",
-            args.len()
-        );
+        return Err(raise_error(
+            "ArgumentError",
+            format!(
+                "wrong number of arguments (given {}, expected 0)",
+                args.len()
+            ),
+        ));
     }
     Ok(())
 }

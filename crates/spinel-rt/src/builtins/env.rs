@@ -16,7 +16,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::builtins::builtin_methods;
 use crate::dispatch::{RObj, RubyObject};
-use crate::{RubyValue, Symbol};
+use crate::RubyValue;
 use spinel_abi::{ClassId, OBJECT_CLASS};
 
 /// The ENV singleton's payload -- stateless: every method reads or writes
@@ -231,6 +231,7 @@ builtin_methods! {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Symbol;
 
     /// Each test uses its own variable name: `std::env` is process-global and
     /// Rust runs tests in threads, so a shared name would race.

@@ -349,6 +349,30 @@ pub fn emit_call_args_to(
     let nopt = params.optional.len();
     let npost = params.post.len();
     let has_rest = params.rest.is_some();
+
+    // Ruby's keywords-to-positional-hash conversion: when the callee
+    // declares NO keyword parameters AND no `**kwrest`, trailing keywords at
+    // the call site are not keywords at all -- they become one positional
+    // Hash. That is what makes the classic options-hash idiom work, and it
+    // is still true in Ruby 3+ (oracle-verified):
+    //
+    //     def m(opts = {}) = opts
+    //     m(a: 1, b: 2)   # => {a: 1, b: 2}, bound to `opts`
+    //
+    // Without this the keyword-binding path below rejects them as unknown
+    // keywords -- `m(a: 1)` raised `unknown keyword: :a` for a method that
+    // has none to be unknown. A callee that DOES declare keywords keeps the
+    // real check (`k(x: 1, zz: 2)` is still `unknown keyword: :zz`).
+    let kw_as_positional =
+        params.keywords.is_empty() && params.keyword_rest.is_none() && !kwargs.is_empty();
+    let (kwargs, kw_hash_arg) = if kw_as_positional {
+        (&[][..], Some(super::collections::emit_hash_lit(cx, kwargs)))
+    } else {
+        (kwargs, None)
+    };
+    // The converted hash counts as an ordinary positional from here on --
+    // for arity checking as much as for binding.
+    let n_pos = args.len() + usize::from(kw_hash_arg.is_some());
     let min_positional = nreq + npost;
 
     // Every positional arg gets a temporary, in source order, regardless of
@@ -357,7 +381,7 @@ pub fn emit_call_args_to(
     // still evaluates its arguments (for side effects) and then raises a
     // runtime ArgumentError, CRuby's exact behavior -- never a compile
     // panic (`rescue ArgumentError` around a bad call is a corpus idiom).
-    let pos_temps: Vec<syn::Ident> = (0..args.len()).map(|i| format_ident!("__a{i}")).collect();
+    let pos_temps: Vec<syn::Ident> = (0..n_pos).map(|i| format_ident!("__a{i}")).collect();
     let pos_lets: Vec<TokenStream> = args
         .iter()
         .zip(&pos_temps)
@@ -366,6 +390,12 @@ pub fn emit_call_args_to(
             let e = box_if_object_typed(cx, a, e);
             quote! { let #t = #e; }
         })
+        // The converted hash is built last, matching its source position as
+        // the trailing argument.
+        .chain(kw_hash_arg.into_iter().map(|h| {
+            let t = &pos_temps[args.len()];
+            quote! { let #t = #h; }
+        }))
         .collect();
 
     // Every kwarg value gets a temporary too, in source order. The key must
@@ -410,10 +440,10 @@ pub fn emit_call_args_to(
         }
     };
 
-    if args.len() < min_positional || (!has_rest && args.len() > nreq + nopt + npost) {
+    if n_pos < min_positional || (!has_rest && n_pos > nreq + nopt + npost) {
         return raise_argument_error(format!(
             "wrong number of arguments (given {}, expected {})",
-            args.len(),
+            n_pos,
             expected_shape()
         ));
     }
@@ -435,7 +465,7 @@ pub fn emit_call_args_to(
         }
     }
 
-    let extra = args.len() - min_positional;
+    let extra = n_pos - min_positional;
     let opt_bound = extra.min(nopt);
     let rest_count = extra - opt_bound;
 
@@ -1038,6 +1068,23 @@ pub fn emit_proc_param_bindings(
     // Parenthesized destructuring params, split after their slots are bound.
     let destructures = emit_destructures(cx, params);
 
+    // Block-locals (`|x; sum|`): a fresh `nil` binding per invocation,
+    // shadowing any enclosing local of the same name. (Shadowing a same-named
+    // PARAM is not a case to handle -- `|sum; sum|` is a SyntaxError in real
+    // Ruby, "duplicated argument name", so it never reaches codegen.)
+    //
+    // Being re-declared here, inside the per-call prologue, IS the
+    // reset-to-nil-every-invocation semantics: `[1,2,3].each { |x; total|
+    // total = (total || 0) + x }` must never accumulate. Hoisting them out
+    // would silently turn that into a running sum.
+    let block_local_lets = params.block_locals.iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            #[allow(unused_variables, unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+        }
+    });
+
     // `__opt_bound`/`__rest_count` are computed even when there's no
     // rest/optional param at all -- harmless dead-ish locals the compiler
     // won't warn about here since they're always at least read by the
@@ -1063,6 +1110,7 @@ pub fn emit_proc_param_bindings(
         #(#keyword_lets)*
         #(#keyword_rest_let)*
         #destructures
+        #(#block_local_lets)*
     }
 }
 

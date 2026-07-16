@@ -12,8 +12,8 @@ mod rename;
 mod struct_def;
 
 use crate::hir::{
-    ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, NodeId, Params, Pattern,
-    PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
+    ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, LastMatch, NodeId, Params,
+    Pattern, PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
 };
 use ruby_prism::{Node, ParseResult};
 
@@ -663,6 +663,11 @@ fn lower_params(
         keywords,
         keyword_rest,
         block,
+        // Filled in by `lower_block_like_params` for a block: prism keeps
+        // `|x; sum|`'s locals on the BlockParametersNode, not here on the
+        // ParametersNode. Always empty for a method's params -- the syntax
+        // doesn't exist there.
+        block_locals: Vec::new(),
     })
 }
 
@@ -694,7 +699,18 @@ fn lower_block_like_params(result: &ParseResult, hir: &mut Hir, params: Option<N
             let bp = p
                 .as_block_parameters_node()
                 .ok_or("unsupported block parameter form (spike scope)")?;
-            lower_params(result, hir, bp.parameters())
+            let mut params = lower_params(result, hir, bp.parameters())?;
+            // `|x; sum|`'s block-locals -- prism keeps them on the
+            // `BlockParametersNode` itself (`locals()`), not in the
+            // `ParametersNode` `lower_params` handles, precisely because
+            // they are not parameters. See `Params::block_locals`' docs.
+            params.block_locals = bp
+                .locals()
+                .iter()
+                .filter_map(|l| l.as_block_local_variable_node())
+                .map(|l| String::from_utf8_lossy(l.name().as_slice()).into_owned())
+                .collect();
+            Ok(params)
         }
     }
 }
@@ -804,22 +820,34 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // `(expr)` -- prism wraps a parenthesized expression in its own node
     // (not transparently folded away), distinct from the identically-shaped
     // `body: Option<Node>` on a `def`/`class`/`if` (see `lower_body`).
-    // Multiple-statement parens (`(a; b)`) would need a first-class
-    // "sequence of statements as one expression" HIR shape this spike
-    // doesn't have yet -- narrower than real Ruby, a clean error rather
-    // than silently dropping all but the last statement.
+    //
+    // Multiple statements (`(a; b)`) lower to a `Seq`: evaluate each in
+    // order, answer the last. That is exactly `Seq`'s existing codegen (one
+    // tail-value Rust block expression), and it needs no scope of its own --
+    // a local assigned inside leaks out, oracle-verified: `y = (a = 5; a *
+    // 2)` leaves `a == 5` visible afterwards, so these are ordinary
+    // statements in the enclosing scope, not a nested one.
+    //
+    // `()` stays an error: prism only produces an empty-bodied
+    // `ParenthesesNode` for source that Ruby itself rejects in an
+    // expression position, so there is no correct value to answer.
     if let Some(paren) = node.as_parentheses_node() {
         return match paren.body() {
             None => Err("empty parentheses `()` aren't supported yet (spike scope)".to_string()),
             Some(n) => match n.as_statements_node() {
                 Some(stmts) => {
                     let body: Vec<_> = stmts.body().iter().collect();
-                    match body.len() {
-                        1 => lower_node(result, hir, &body[0]),
-                        _ => Err(
-                            "parenthesized multi-statement expressions aren't supported yet (spike scope)"
-                                .to_string(),
-                        ),
+                    match body.as_slice() {
+                        // Not wrapped in a `Seq`: `(x)` IS `x`, and the extra
+                        // node would only cost a block expression around it.
+                        [only] => lower_node(result, hir, only),
+                        _ => {
+                            let ids = body
+                                .iter()
+                                .map(|s| lower_node(result, hir, s))
+                                .collect::<PResult<Vec<_>>>()?;
+                            Ok(hir.push(HirNode::Seq(ids)))
+                        }
                     }
                 }
                 None => lower_node(result, hir, &n),
@@ -947,8 +975,37 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let rhs = lower_node(result, hir, &op.value())?;
         return Ok(lower_or_write(hir, Storage::Global(name), rhs));
     }
+    // `$1`..`$9` -- prism gives these their own node kind, not a global
+    // read, because nothing can assign them.
+    if let Some(nref) = node.as_numbered_reference_read_node() {
+        return Ok(hir.push(HirNode::LastMatchRef(LastMatch::Group(
+            nref.number() as usize
+        ))));
+    }
+    // `` $` ``, `$&`, `$'` -- one node kind for all three, told apart by
+    // name. (`$~` itself arrives as an ordinary global read, handled below.)
+    if let Some(bref) = node.as_back_reference_read_node() {
+        let name = String::from_utf8_lossy(bref.name().as_slice()).into_owned();
+        let which = match name.as_str() {
+            "$&" => LastMatch::Group(0),
+            "$`" => LastMatch::Pre,
+            "$'" => LastMatch::Post,
+            // `$+` (the last non-empty group) has no slot of its own here.
+            other => {
+                return Err(format!(
+                    "the `{other}` back-reference global isn't supported yet (spike scope)"
+                ))
+            }
+        };
+        return Ok(hir.push(HirNode::LastMatchRef(which)));
+    }
     if let Some(gvr) = node.as_global_variable_read_node() {
         let name = String::from_utf8_lossy(gvr.name().as_slice()).into_owned();
+        // `$~` reads the last-match slot, not the `$foo` table -- see
+        // `HirNode::LastMatchRef`.
+        if name == "$~" {
+            return Ok(hir.push(HirNode::LastMatchRef(LastMatch::Data)));
+        }
         return Ok(hir.push(HirNode::GlobalRead(name)));
     }
     if let Some(gvw) = node.as_global_variable_write_node() {
@@ -1163,22 +1220,29 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let (arg_elems, kwargs, kwargs_splat, _fwd_block) =
+        let (mut args, kwargs, kwargs_splat, _fwd_block) =
             lower_call_args(result, hir, yield_node.arguments())?;
+        // A `*expr` splat needs no handling here at all: `Yield` carries the
+        // same `Vec<ArrayElem>` a `Call`'s positional args do, and codegen
+        // flattens a `Splat` element at runtime the same way.
+        //
+        // `**h` is still rejected, and for a real reason rather than an
+        // unexamined one: a double-splat contributes NOTHING when the hash
+        // is empty AT RUNTIME (oracle-verified -- `def y(h); yield(1, **h);
+        // end; y({})` yields just `1`, no trailing hash), so it is not an
+        // element that can be lowered into this list; it needs the
+        // conditional push `codegen::call::emit_splat_call` does. Literal
+        // kwargs have no such problem -- `{k: 1}` is never empty -- so they
+        // still fold into one trailing `HashLit`, which is what
+        // `emit_proc_param_bindings` binds a block's keyword params from.
+        // TODO(plan G3): fold `**h` in here once `HirNode::Yield`/`Call`
+        // share the single ordered `KwArg { Pair | DoubleSplat }` list --
+        // the same refactor the key-ordering TODO in `emit_splat_call` needs.
         if kwargs_splat.is_some() {
             return Err("a `**h` double-splat argument isn't supported in `yield` (spike scope)".to_string());
         }
-        let mut args = arg_elems
-            .into_iter()
-            .map(|e| match e {
-                ArrayElem::Single(n) => Ok(n),
-                ArrayElem::Splat(_) => {
-                    Err("a `*expr` splat argument isn't supported in `yield` (spike scope)".to_string())
-                }
-            })
-            .collect::<PResult<Vec<_>>>()?;
         if !kwargs.is_empty() {
-            args.push(hir.push(HirNode::HashLit(kwargs)));
+            args.push(ArrayElem::Single(hir.push(HirNode::HashLit(kwargs))));
         }
         return Ok(hir.push(HirNode::Yield(args)));
     }
@@ -1445,43 +1509,42 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // the dynamic Class#new arm. `Proc.new { ... }` is in the
                 // set for the same reason -- its block IS the value it
                 // answers, and `HirNode::New` has no slot to carry one.
+                // `Array.new(n) { |i| ... }` likewise: its block computes
+                // each element, and routing it through `HirNode::New` would
+                // silently DROP the block and answer `[nil, nil, ...]`.
                 if !matches!(
                     class_name.as_str(),
-                    "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc"
+                    "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array"
                 ) {
-                    let args = match call.arguments() {
-                        None => Vec::new(),
-                        Some(a) => a
-                            .arguments()
-                            .iter()
-                            .map(|n| {
-                                // A trailing keyword-hash at a `.new` site
-                                // lowers as a positional Hash literal (the
-                                // classic options-hash reading) -- what
-                                // keyword_init Struct constructors bind
-                                // (Phase 17.1-H). `HirNode::New` has no
-                                // kwargs channel; true kwarg binding for
-                                // `new` stays on the deferred backlog.
-                                if let Some(kw) = n.as_keyword_hash_node() {
-                                    let pairs = kw
-                                        .elements()
-                                        .iter()
-                                        .map(|e| {
-                                            let assoc = e.as_assoc_node().ok_or(
-                                                "unsupported splat in a keyword hash at a `.new` call (spike scope)",
-                                            )?;
-                                            let key = lower_node(result, hir, &assoc.key())?;
-                                            let value = lower_node(result, hir, &assoc.value())?;
-                                            Ok(crate::hir::HashPair(key, value))
-                                        })
-                                        .collect::<PResult<Vec<_>>>()?;
-                                    return Ok(hir.push(HirNode::HashLit(pairs)));
+                    // A trailing keyword hash lands in `kwargs`, kept apart
+                    // from the positionals exactly as an ordinary call's is,
+                    // so `initialize`'s keyword params bind as keywords.
+                    // (It used to fold into a positional Hash literal, which
+                    // made `Foo.new(1, k: 2)` look like two positionals to a
+                    // `def initialize(a, k:)`.) A callee declaring NO keyword
+                    // params still sees the options hash it expects --
+                    // `emit_call_args_to` converts trailing keywords back to
+                    // one positional Hash in that case, which is Ruby's own
+                    // rule and what keyword_init Structs bind through.
+                    let mut args = Vec::new();
+                    let mut kwargs = Vec::new();
+                    if let Some(a) = call.arguments() {
+                        for n in a.arguments().iter() {
+                            if let Some(kw) = n.as_keyword_hash_node() {
+                                for e in kw.elements().iter() {
+                                    let assoc = e.as_assoc_node().ok_or(
+                                        "unsupported splat in a keyword hash at a `.new` call (spike scope)",
+                                    )?;
+                                    let key = lower_node(result, hir, &assoc.key())?;
+                                    let value = lower_node(result, hir, &assoc.value())?;
+                                    kwargs.push(crate::hir::HashPair(key, value));
                                 }
-                                lower_node(result, hir, &n)
-                            })
-                            .collect::<PResult<Vec<_>>>()?,
-                    };
-                    let new_id = hir.push(HirNode::New { class_name, args });
+                                continue;
+                            }
+                            args.push(lower_node(result, hir, &n)?);
+                        }
+                    }
+                    let new_id = hir.push(HirNode::New { class_name, args, kwargs });
                     return Ok(match box_ctx {
                         Some((bx, _)) => {
                             hir.push(HirNode::BoxScope { box_id: bx, body: vec![new_id] })
@@ -2444,23 +2507,42 @@ fn lower_class_body_statement(
     Ok(())
 }
 
-/// A `break`/`next`'s optional value -- at most one argument is supported
-/// (`break a, b`, which real Ruby builds into an implicit array, is a clean
-/// lowering error rather than a panic; spike scope).
+/// A `return`/`break`/`next`'s optional value.
+///
+/// More than one value (`return 1, 2`) builds an implicit ARRAY -- the same
+/// array a `[1, 2]` literal would, splats included, which is why this
+/// delegates to `lower_array_elem` rather than re-deriving the shape. Real
+/// Ruby, oracle-verified:
+///
+/// ```text
+/// def two = (return 1, 2)      # => [1, 2]
+/// def m(a) = (return 1, *a)    # m([2, 3]) => [1, 2, 3]
+/// [1].each { break 1, 2 }      # => [1, 2]
+/// ```
+///
+/// A SINGLE splat is an array too, and that is the case a plain
+/// "len == 1 ? lower it : error" rule gets wrong: `return *a` with `a ==
+/// [1]` is `[1]`, not `1` -- the splat expands into a fresh array rather
+/// than passing its operand through. So one argument only takes the
+/// scalar path when it isn't a splat.
 fn lower_single_optional_argument(
     result: &ParseResult,
     hir: &mut Hir,
     args: Option<ruby_prism::ArgumentsNode<'_>>,
-    keyword: &str,
+    _keyword: &str,
 ) -> PResult<Option<NodeId>> {
     let Some(args) = args else { return Ok(None) };
     let list: Vec<_> = args.arguments().iter().collect();
-    match list.len() {
-        0 => Ok(None),
-        1 => Ok(Some(lower_node(result, hir, &list[0])?)),
-        _ => Err(format!(
-            "`{keyword}` with more than one value isn't supported yet (spike scope)"
-        )),
+    match list.as_slice() {
+        [] => Ok(None),
+        [only] if only.as_splat_node().is_none() => Ok(Some(lower_node(result, hir, only)?)),
+        _ => {
+            let elems = list
+                .iter()
+                .map(|n| lower_array_elem(result, hir, n))
+                .collect::<PResult<Vec<_>>>()?;
+            Ok(Some(hir.push(HirNode::ArrayLit(elems))))
+        }
     }
 }
 
@@ -3092,11 +3174,16 @@ fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
     Ok(())
 }
 
-/// One `parts()` entry of an `InterpolatedStringNode` -- either a literal
-/// chunk (`StringNode`) or an `#{ }` (`EmbeddedStatementsNode`, exactly one
-/// statement supported -- see `StrPart`'s docs). `EmbeddedVariableNode`
-/// (bare `#@ivar`/`#$global` interpolation, no braces) isn't handled, a
-/// narrower-than-real-Ruby spike scope-cut.
+/// One `parts()` entry of an `InterpolatedStringNode`:
+///
+///   - a literal chunk (`StringNode`);
+///   - an `#{ }` (`EmbeddedStatementsNode`) -- several statements answer the
+///     LAST, via the same `Seq` a parenthesized `(a; b)` lowers to, and an
+///     EMPTY `#{}` interpolates the empty string (real Ruby: `"x#{}y"` is
+///     `"xy"`);
+///   - a brace-less `#@ivar`/`#@@cvar`/`#$global` (`EmbeddedVariableNode`),
+///     whose `variable()` is an ordinary read node and so needs no special
+///     handling beyond unwrapping it.
 fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<StrPart> {
     if let Some(s) = node.as_string_node() {
         return Ok(StrPart::Lit(String::from_utf8_lossy(s.unescaped()).into_owned()));
@@ -3106,13 +3193,20 @@ fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PR
             .statements()
             .map(|s| s.body().iter().collect())
             .unwrap_or_default();
-        return match stmts.len() {
-            1 => Ok(StrPart::Interp(lower_node(result, hir, &stmts[0])?)),
-            _ => Err(
-                "string interpolation only supports a single expression inside `#{ }` (spike scope)"
-                    .to_string(),
-            ),
+        return match stmts.as_slice() {
+            [] => Ok(StrPart::Lit(String::new())),
+            [only] => Ok(StrPart::Interp(lower_node(result, hir, only)?)),
+            _ => {
+                let ids = stmts
+                    .iter()
+                    .map(|s| lower_node(result, hir, s))
+                    .collect::<PResult<Vec<_>>>()?;
+                Ok(StrPart::Interp(hir.push(HirNode::Seq(ids))))
+            }
         };
+    }
+    if let Some(embedded) = node.as_embedded_variable_node() {
+        return Ok(StrPart::Interp(lower_node(result, hir, &embedded.variable())?));
     }
     Err("unsupported string interpolation part (spike scope)".to_string())
 }

@@ -14,7 +14,7 @@ use super::ident::safe_ident;
 use super::loops::{emit_break, emit_for, emit_loop, emit_next, emit_redo, emit_while};
 use super::Ctx;
 use crate::compiler::ClassId;
-use crate::hir::{HirNode, NodeId};
+use crate::hir::{ArrayElem, HirNode, NodeId};
 use crate::types::{infer_type_with_locals, TyKind};
 use proc_macro2::TokenStream;
 
@@ -196,6 +196,14 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // never-assigned global specifically, unlike every OTHER
         // classification here).
         HirNode::GlobalRead(_) => Some("global-variable"),
+        // `$~`/`$1`/`$&`/... classify as globals, which is what real Ruby
+        // calls them -- with the same never-checked-the-value approximation
+        // as `GlobalRead` right above, and it bites in the same way: real
+        // Ruby answers nil for a group that did not participate
+        // (`defined?($9)` after a one-group match), where this says
+        // "global-variable". Consistent with the rest of this function
+        // rather than singled out.
+        HirNode::LastMatchRef(_) => Some("global-variable"),
         // Real Ruby: `defined?(self)` is always `"self"`, everywhere --
         // confirmed via `ruby -e 'puts defined?(self)'` -- unlike every other
         // classification here, this needs no further check at all.
@@ -506,7 +514,18 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             if cx.self_is_dynamic {
                 let slf = &cx.self_ident;
                 let key = ident.to_string();
-                return quote! { spinel_rt::ivar_get_dyn(#slf, #key) };
+                // `&#slf`, not `#slf`: a dynamic self is an OWNED `RubyValue`
+                // in a reopened-builtin/`Object` free function (`__self:
+                // RubyValue`) but already a `&RubyValue` inside a Proc
+                // closure. Borrowing covers the first and deref-coerces
+                // `&&RubyValue` back to `&RubyValue` for the second.
+                return quote! { spinel_rt::ivar_get_dyn(&#slf, #key) };
+            }
+            // The TOP LEVEL: `self` is `main` -- see the matching arm in
+            // `emit_ivar_write_stmt`.
+            if cx.current_class.is_none() {
+                let key = ident.to_string();
+                return quote! { spinel_rt::ivar_get_dyn(&spinel_rt::main_object(), #key) };
             }
             // `cx.self_ident` is ordinarily the literal `self`, but becomes a
             // fresh capture-alias identifier while emitting an escaping
@@ -588,7 +607,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 .0;
             quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
         }
-        HirNode::New { class_name, args } => super::call::emit_new(cx, class_name, args),
+        HirNode::New { class_name, args, kwargs } => {
+            super::call::emit_new(cx, class_name, args, kwargs)
+        }
         HirNode::SuperCall { args, zsuper, block } => {
             super::call::emit_super_inline(cx, args, *zsuper, *block)
         }
@@ -629,6 +650,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let bx = cx.box_id;
             quote! { spinel_rt::global_get(#bx, #name) }
         }
+        // The last-match specials read a dedicated runtime slot, not the
+        // `$foo` table -- see `HirNode::LastMatchRef` and
+        // `spinel_rt::lastmatch`. Not box-scoped: a match's result belongs
+        // to whoever ran it, and `$~` has no per-box table to live in.
+        HirNode::LastMatchRef(which) => match which {
+            crate::hir::LastMatch::Data => quote! { spinel_rt::last_match() },
+            crate::hir::LastMatch::Group(n) => quote! { spinel_rt::last_match_group(#n) },
+            crate::hir::LastMatch::Pre => quote! { spinel_rt::last_match_pre() },
+            crate::hir::LastMatch::Post => quote! { spinel_rt::last_match_post() },
+        },
         HirNode::GlobalWrite(name, value) => {
             let v = emit_expr(cx, *value);
             // See `IvarWrite`'s docs: global storage is likewise always
@@ -743,11 +774,38 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // mirroring real Ruby's `LocalJumpError`.
             // Boxed: `yield self` (or any Object-typed value) crosses the
             // Proc boundary as a `RubyValue` slice element.
-            let arg_exprs = args
-                .iter()
-                .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
+            let invoke = quote! {
+                __blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked()
+            };
+            // No splat: the arguments are a fixed-length list, so they go
+            // straight into a borrowed slice literal with no Vec allocated.
+            if !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
+                let arg_exprs = args.iter().map(|a| {
+                    let ArrayElem::Single(n) = a else { unreachable!("just checked for splats") };
+                    box_if_object_typed(cx, *n, emit_expr(cx, *n))
+                });
+                return quote! { (#invoke).call(&[#(#arg_exprs),*])? };
+            }
+            // `yield(*a)` -- the length is only known at runtime, so build
+            // the argument vector the same way `call::emit_splat_call` does.
+            // The block then binds from it through its ordinary parameter
+            // machinery (auto-splat, rest, nil-padding all included).
+            let pushes = args.iter().map(|a| match a {
+                ArrayElem::Single(n) => {
+                    let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
+                    quote! { __args.push(#e); }
+                }
+                ArrayElem::Splat(n) => {
+                    let e = emit_expr(cx, *n);
+                    quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
+                }
+            });
             quote! {
-                (__blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked()).call(&[#(#arg_exprs),*])?
+                {
+                    let mut __args: Vec<spinel_rt::RubyValue> = Vec::new();
+                    #(#pushes)*
+                    (#invoke).call(&__args)?
+                }
             }
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
@@ -1007,7 +1065,16 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     // message, which is exactly what a statically-unknown self couldn't.
     if cx.self_is_dynamic {
         let key = ident.to_string();
-        return quote! { spinel_rt::ivar_set_dyn(#slf, #key, #value)?; };
+        // Borrowed for the same reason as `IvarRead`'s arm above.
+        return quote! { spinel_rt::ivar_set_dyn(&#slf, #key, #value)?; };
+    }
+    // The TOP LEVEL: `self` is `main`, a runtime `Object` whose ivars are a
+    // name-keyed map rather than struct fields (no compile-time class exists
+    // whose ivar list codegen could have materialized). Same `ivar_set_dyn`
+    // path a dynamic self takes -- see `dispatch::Object`'s docs.
+    if cx.current_class.is_none() {
+        let key = ident.to_string();
+        return quote! { spinel_rt::ivar_set_dyn(&spinel_rt::main_object(), #key, #value)?; };
     }
     // The `.freeze` guard (Phase 13.1) -- checked at the top of every ivar
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.

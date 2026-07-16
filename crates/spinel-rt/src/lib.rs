@@ -14,6 +14,7 @@ mod exec;
 mod fiber;
 mod globals;
 mod handling;
+mod lastmatch;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -58,6 +59,9 @@ pub use dispatch::{
 };
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use cvars::{cvar_get, cvar_set};
+pub use lastmatch::{
+    last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
+};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
 pub use globals::{global_get, global_set};

@@ -146,8 +146,19 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // reachable via `super` is harmless (an unused, always-`Nil` field),
     // so this doesn't try to be more precise than "every ancestor's own
     // body, unconditionally".
+    //
+    // The one ancestor skipped is the same one the method loop above skips,
+    // and for the same reason: a builtin never materializes `Object`'s
+    // methods, so their ivars are not its ivars either. Collecting them
+    // anyway made a top-level `def m; @x; end` attribute `@x` to every
+    // builtin in the program and trip the builtin-ivar rejection below --
+    // a top-level `def` touching any ivar failed the whole compile, blaming
+    // `Integer`. The two loops must agree on what belongs to this class.
     let mut ivars = Vec::new();
     for &anc_id in &ancestors {
+        if compiler.class(class_id).is_builtin && anc_id == crate::compiler::OBJECT_CLASS {
+            continue;
+        }
         for &sid in &compiler.class(anc_id).own_methods.clone() {
             let scope = compiler.scope(sid);
             let body = scope.body.clone();
@@ -168,18 +179,15 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // allows generic ivars on (unfrozen) builtin instances; documented
     // divergence, spike scope.
     //
-    // `Object` itself (top-level `def`s / `class Object` reopens) is
-    // value-backed the same way: its own `__bm_Object` copies dispatch on
-    // the ivar-less runtime `main` object. The ivar is only a problem for
-    // OBJECT'S OWN copy -- the same method materialized into a user class
-    // stores the ivar on that class's struct, which is real Ruby's behavior
-    // -- so the rejection names the top-level shape specifically.
-    if class_id == crate::compiler::OBJECT_CLASS && !ivars.is_empty() {
-        return Err(format!(
-            "instance variable `@{}` in a top-level method (or `Object` reopen) isn't supported yet (spike scope: the `main` object has no ivar storage)",
-            ivars[0]
-        ));
-    }
+    // `Object` is NOT rejected alongside them, though it is value-backed the
+    // same way: the runtime `main` object its `__bm_Object` copies dispatch
+    // on keys its ivars BY NAME (`dispatch::Object`'s map) rather than
+    // needing struct fields, so `@x` in a top-level `def` has somewhere real
+    // to live. `emit_builtin_method_fn` marks those bodies' self dynamic,
+    // which routes the access through `ivar_get_dyn`/`ivar_set_dyn` onto
+    // that map. The `ci.ivars` recorded below is harmlessly unread for
+    // Object: it exists to drive generated STRUCT fields, and `emit_class`
+    // skips `ClassId(0)` entirely.
     if compiler.class(class_id).is_builtin && !ivars.is_empty() {
         return Err(format!(
             "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (spike scope: built-in values have no ivar storage)",
@@ -585,7 +593,13 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 collect_const_refs(compiler, n, cref, out);
             }
         }
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                collect_const_refs(compiler, *n, cref, out);
+            }
+        }
+        HirNode::Raise(args) => {
             for &a in args {
                 collect_const_refs(compiler, a, cref, out);
             }
@@ -656,6 +670,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::IvarRead(_)
         | HirNode::ClassVarRead(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -818,7 +833,13 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, n, out);
             }
         }
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                collect_cvars(hir, *n, out);
+            }
+        }
+        HirNode::Raise(args) => {
             for &a in args {
                 collect_cvars(hir, a, out);
             }
@@ -889,6 +910,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::IvarRead(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

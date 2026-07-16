@@ -36,6 +36,7 @@ pub(crate) mod integer;
 pub(crate) mod io;
 pub(crate) mod kernel;
 pub(crate) mod method_obj;
+pub(crate) mod matchdata;
 pub(crate) mod math;
 pub(crate) mod dir;
 pub(crate) mod env;
@@ -79,6 +80,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::RANGE_CLASS => range::lookup,
         spinel_abi::PROC_CLASS => rproc::lookup,
         spinel_abi::REGEXP_CLASS => regexp::lookup,
+        spinel_abi::MATCH_DATA_CLASS => matchdata::lookup,
         spinel_abi::CLASS_CLASS => class_module::lookup_class,
         spinel_abi::MODULE_CLASS => class_module::lookup_module,
         spinel_abi::NIL_CLASS => object::lookup_nil,
@@ -113,6 +115,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     Some(match id {
+        spinel_abi::ARRAY_CLASS => array::lookup_class,
         spinel_abi::FILE_CLASS => file::lookup_class,
         spinel_abi::DIR_CLASS => dir::lookup_class,
         spinel_abi::TIME_CLASS => time::lookup_class,

@@ -229,7 +229,13 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
                 track_node(compiler, defining, box_id, locals, n);
             }
         }
-        HirNode::Yield(args) | HirNode::Raise(args) => {
+        HirNode::Yield(elems) => {
+            for e in elems {
+                let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                track_node(compiler, defining, box_id, locals, *n);
+            }
+        }
+        HirNode::Raise(args) => {
             for &a in args {
                 track_node(compiler, defining, box_id, locals, a);
             }
@@ -345,6 +351,7 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         | HirNode::ClassVarRead(_)
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

@@ -268,19 +268,36 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
+    // `pop`/`shift` answer ONE element (nil when empty); `pop(n)`/`shift(n)`
+    // answer an ARRAY of up to n -- a different return type, not just a
+    // different count, which is why the no-arg case can't just be `pop(1)`.
+    // `n` past the length takes what's there; `n == 0` is `[]`.
     "pop" => fn pop(recv, args, _block) {
-        arity!(args, 0);
-        Ok(recv_array!(recv).lock().pop().unwrap_or(RubyValue::Nil))
-    }
-    "shift" => fn shift(recv, args, _block) {
-        arity!(args, 0);
+        arity!(args, 0..=1);
         let handle = recv_array!(recv);
         let mut guard = handle.lock();
-        Ok(if guard.is_empty() {
-            RubyValue::Nil
-        } else {
-            guard.remove(0)
-        })
+        let Some(n) = count_arg(args)? else {
+            return Ok(guard.pop().unwrap_or(RubyValue::Nil));
+        };
+        let at = guard.len().saturating_sub(n);
+        let taken: Vec<RubyValue> = guard.split_off(at);
+        Ok(RubyValue::Array(crate::array_new(taken)))
+    }
+    "shift" => fn shift(recv, args, _block) {
+        arity!(args, 0..=1);
+        let handle = recv_array!(recv);
+        let mut guard = handle.lock();
+        let Some(n) = count_arg(args)? else {
+            return Ok(if guard.is_empty() {
+                RubyValue::Nil
+            } else {
+                guard.remove(0)
+            });
+        };
+        let n = n.min(guard.len());
+        let rest = guard.split_off(n);
+        let taken = std::mem::replace(&mut *guard, rest);
+        Ok(RubyValue::Array(crate::array_new(taken)))
     }
     "unshift" | "prepend" => fn unshift(recv, args, _block) {
         let handle = recv_array!(recv);
@@ -631,7 +648,7 @@ builtin_methods! {
         drop(guard);
         Ok(recv.clone())
     }
-    "zip" => fn zip(recv, args, _block) {
+    "zip" => fn zip(recv, args, block) {
         let base = recv_array!(recv).lock().clone();
         let others: Vec<Vec<RubyValue>> = args
             .iter()
@@ -657,6 +674,15 @@ builtin_methods! {
                 RubyValue::Array(crate::array_new(row))
             })
             .collect();
+        // The BLOCK form yields each row and answers nil, rather than
+        // building the result array at all -- real Ruby's own rule
+        // (`[1,2].zip([3,4]) { |r| }` is nil, oracle-checked).
+        if let Some(b) = block {
+            for row in out {
+                b.as_proc_unchecked().call(&[row])?;
+            }
+            return Ok(RubyValue::Nil);
+        }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "rotate" => fn rotate(recv, args, _block) {
@@ -682,26 +708,53 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
+    // `values_at(0, 2, -1)` / `values_at(0..1, 3..)` -- each argument is an
+    // index OR a range of them, and an out-of-bounds index contributes nil
+    // rather than being skipped.
+    //
+    // A range past the end still contributes one entry PER INDEX it names,
+    // which is the non-obvious part: on a 5-element array,
+    // `values_at(3..9)` is `[4, 5, nil, nil, nil, nil, nil]` (7 entries,
+    // for indices 3..9) -- oracle-verified. So the range is expanded to its
+    // indices and each looked up exactly as a bare Int index would be,
+    // rather than being clamped to the array like `arr[3..9]` slicing is.
     "values_at" => fn values_at(recv, args, _block) {
         let items = recv_array!(recv).lock().clone();
         let n = items.len() as i64;
-        let mut out = Vec::new();
-        for a in args {
-            let RubyValue::Int(i) = a else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(a)
-                    ),
-                ));
-            };
-            let idx = if *i < 0 { i + n } else { *i };
-            out.push(if (0..n).contains(&idx) {
+        let at = |i: i64| {
+            let idx = if i < 0 { i + n } else { i };
+            if (0..n).contains(&idx) {
                 items[idx as usize].clone()
             } else {
                 RubyValue::Nil
-            });
+            }
+        };
+        let mut out = Vec::new();
+        for a in args {
+            match a {
+                RubyValue::Int(i) => out.push(at(*i)),
+                RubyValue::Range(start, end, exclusive) => {
+                    let s = match start.as_deref() {
+                        Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                        None => 0,
+                        _ => return Err(range_index_error(a)),
+                    };
+                    // An endless range stops at the array's end -- it names
+                    // no index past it, unlike a bounded one.
+                    let e = match end.as_deref() {
+                        Some(RubyValue::Int(v)) => {
+                            let v = if *v < 0 { v + n } else { *v };
+                            if *exclusive { v - 1 } else { v }
+                        }
+                        None => n - 1,
+                        _ => return Err(range_index_error(a)),
+                    };
+                    for i in s..=e {
+                        out.push(at(i));
+                    }
+                }
+                other => return Err(range_index_error(other)),
+            }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -837,6 +890,319 @@ builtin_methods! {
             p.call(&[e])?;
         }
         Ok(recv.clone())
+    }
+    "each_index" => fn each_index(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "each_index", args, block);
+        let n = recv_array!(recv).lock().len();
+        for i in 0..n {
+            p.call(&[RubyValue::Int(i as i64)])?;
+        }
+        Ok(recv.clone())
+    }
+    // `combination(n)`/`permutation(n)`: the block form yields each tuple
+    // and answers the receiver; the blockless form answers an Enumerator
+    // (`block_or_enum!`), which is what makes the idiomatic
+    // `.combination(2).to_a` work.
+    //
+    // Ruby's own edge cases, oracle-verified, and the reason the bounds
+    // aren't just `n > len => empty`:
+    //   [1,2,3].combination(0) => [[]]   -- ONE empty tuple, not none
+    //   [1,2,3].combination(4) => []
+    //   [1,2].permutation      => the FULL-length permutations (no arg)
+    "combination" => fn combination(recv, args, block) {
+        arity!(args, 1);
+        let n = arg_int!(args, 0);
+        let p = block_or_enum!(recv, "combination", args, block);
+        let items = recv_array!(recv).lock().clone();
+        for tuple in combinations_of(&items, n) {
+            p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
+        }
+        Ok(recv.clone())
+    }
+    "permutation" => fn permutation(recv, args, block) {
+        arity!(args, 0..=1);
+        let items = recv_array!(recv).lock().clone();
+        // No argument means the receiver's own length -- read BEFORE
+        // `block_or_enum!`'s early return so the Enumerator it builds
+        // re-invokes with the identical (empty) argument list.
+        let n = match args.first() {
+            Some(_) => arg_int!(args, 0),
+            None => items.len() as i64,
+        };
+        let p = block_or_enum!(recv, "permutation", args, block);
+        for tuple in permutations_of(&items, n) {
+            p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
+        }
+        Ok(recv.clone())
+    }
+    // `cycle(n)` repeats the whole array n times; `cycle` with no argument
+    // repeats FOREVER (so it only terminates via `break`) -- that infinite
+    // form is why this can't just materialize the repeated array.
+    // `cycle(0)`/`cycle(-1)` yield nothing at all.
+    "cycle" => fn cycle(recv, args, block) {
+        arity!(args, 0..=1);
+        let count = match args.first() {
+            None | Some(RubyValue::Nil) => None,
+            Some(_) => Some(arg_int!(args, 0)),
+        };
+        let p = block_or_enum!(recv, "cycle", args, block);
+        let items = recv_array!(recv).lock().clone();
+        // An empty receiver never yields, and would spin forever below.
+        if items.is_empty() {
+            return Ok(RubyValue::Nil);
+        }
+        let mut remaining = count.unwrap_or(1);
+        while remaining > 0 {
+            for e in &items {
+                p.call(&[e.clone()])?;
+            }
+            if count.is_some() {
+                remaining -= 1;
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `bsearch`/`bsearch_index` in FIND-MINIMUM mode: the block answers
+    // true/false and the array must be sorted so that every false precedes
+    // every true; the answer is the first true (`nil` if there is none).
+    // CRuby also has a find-any mode (the block answering an Integer);
+    // that's a documented gap -- a numeric block result raises rather than
+    // silently treating it as truthy and answering the wrong element.
+    "bsearch" => fn bsearch(recv, args, block) {
+        arity!(args, 0);
+        let items = recv_array!(recv).lock().clone();
+        Ok(match bsearch_find_min(&items, block)? {
+            Some(i) => items[i].clone(),
+            None => RubyValue::Nil,
+        })
+    }
+    "bsearch_index" => fn bsearch_index(recv, args, block) {
+        arity!(args, 0);
+        let items = recv_array!(recv).lock().clone();
+        Ok(match bsearch_find_min(&items, block)? {
+            Some(i) => RubyValue::Int(i as i64),
+            None => RubyValue::Nil,
+        })
+    }
+    // `flatten!`/`sort_by!`: the bang forms mutate in place. `flatten!`
+    // answers nil when NOTHING changed (Ruby's convention for the
+    // destructive forms); `sort_by!` always answers the receiver.
+    "flatten!" => fn flatten_bang(recv, args, _block) {
+        arity!(args, 0..=1);
+        let depth = match args.first() {
+            None | Some(RubyValue::Nil) => -1,
+            Some(_) => arg_int!(args, 0),
+        };
+        let cell = recv_array!(recv);
+        let before = cell.lock().clone();
+        let after = flatten_to_depth(&before, depth);
+        if after.len() == before.len()
+            && after.iter().zip(before.iter()).all(|(a, b)| a.rb_eq(b))
+        {
+            return Ok(RubyValue::Nil);
+        }
+        *cell.lock() = after;
+        Ok(recv.clone())
+    }
+    "sort_by!" => fn sort_by_bang(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "sort_by!", args, block);
+        let cell = recv_array!(recv);
+        let items = cell.lock().clone();
+        // Decorate-sort-undecorate: the block runs once per element, as
+        // CRuby's does, rather than once per comparison.
+        let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
+        for e in items {
+            keyed.push((p.call(&[e.clone()])?, e));
+        }
+        keyed.sort_by(|a, b| match a.0.rb_cmp(&b.0) {
+            Some(o) => o.cmp(&0),
+            None => std::cmp::Ordering::Equal,
+        });
+        *cell.lock() = keyed.into_iter().map(|(_, e)| e).collect();
+        Ok(recv.clone())
+    }
+}
+
+/// The optional COUNT argument of `pop(n)`/`shift(n)`: `None` when absent
+/// (the answer-one-element form), else the count. A negative one is
+/// CRuby's "negative array size" ArgumentError.
+fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {
+    let Some(v) = args.first() else {
+        return Ok(None);
+    };
+    let RubyValue::Int(n) = v else {
+        return Err(range_index_error(v));
+    };
+    if *n < 0 {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "negative array size".to_string(),
+        ));
+    }
+    Ok(Some(*n as usize))
+}
+
+/// CRuby's TypeError for a `values_at` argument that is neither an index
+/// nor a range of them.
+fn range_index_error(v: &RubyValue) -> crate::Signal {
+    crate::dispatch::raise_error(
+        "TypeError",
+        format!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::class_name_of(v)
+        ),
+    )
+}
+
+/// The INDEX of the first element the block answers truthy for, in
+/// FIND-MINIMUM mode: `items` must be sorted so every false precedes every
+/// true, and the search is the ordinary binary one over that boundary.
+/// Shared by `bsearch` (which wants the element) and `bsearch_index`.
+///
+/// CRuby also has a find-any mode, selected by the block answering an
+/// Integer instead of a boolean. That's a documented gap -- and it RAISES
+/// rather than falling through, because a numeric result is truthy, so
+/// treating it as the boolean mode would silently answer the wrong element
+/// instead of failing.
+fn bsearch_find_min(
+    items: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<Option<usize>, crate::Signal> {
+    let p = crate::builtins::need_block!(block);
+    let (mut lo, mut hi) = (0usize, items.len());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let r = p.call(&[items[mid].clone()])?;
+        match r {
+            RubyValue::Int(_) | RubyValue::Float(_) => {
+                return Err(crate::dispatch::raise_error(
+                    "NotImplementedError",
+                    "Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope)".to_string(),
+                ))
+            }
+            _ if r.truthy() => hi = mid,
+            _ => lo = mid + 1,
+        }
+    }
+    Ok((lo < items.len()).then_some(lo))
+}
+
+/// Every `n`-element combination of `items`, in Ruby's order (indices
+/// ascending, lexicographic). `n == 0` is ONE empty tuple; `n` past the
+/// length, or negative, is none at all.
+fn combinations_of(items: &[RubyValue], n: i64) -> Vec<Vec<RubyValue>> {
+    if n < 0 || n as usize > items.len() {
+        return Vec::new();
+    }
+    let n = n as usize;
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut out = Vec::new();
+    let mut idx: Vec<usize> = (0..n).collect();
+    loop {
+        out.push(idx.iter().map(|&i| items[i].clone()).collect());
+        // Advance the rightmost index that still has room, then repack the
+        // ones after it -- the standard odometer over ascending indices.
+        let Some(i) = (0..n).rev().find(|&i| idx[i] != i + items.len() - n) else {
+            return out;
+        };
+        idx[i] += 1;
+        for j in i + 1..n {
+            idx[j] = idx[j - 1] + 1;
+        }
+    }
+}
+
+/// Every `n`-element permutation of `items`, in Ruby's order. Same bounds
+/// rules as `combinations_of`.
+fn permutations_of(items: &[RubyValue], n: i64) -> Vec<Vec<RubyValue>> {
+    if n < 0 || n as usize > items.len() {
+        return Vec::new();
+    }
+    let n = n as usize;
+    let mut out = Vec::new();
+    let mut chosen: Vec<usize> = Vec::with_capacity(n);
+    let mut used = vec![false; items.len()];
+    walk_permutations(items, n, &mut chosen, &mut used, &mut out);
+    out
+}
+
+fn walk_permutations(
+    items: &[RubyValue],
+    n: usize,
+    chosen: &mut Vec<usize>,
+    used: &mut Vec<bool>,
+    out: &mut Vec<Vec<RubyValue>>,
+) {
+    if chosen.len() == n {
+        out.push(chosen.iter().map(|&i| items[i].clone()).collect());
+        return;
+    }
+    for i in 0..items.len() {
+        if used[i] {
+            continue;
+        }
+        used[i] = true;
+        chosen.push(i);
+        walk_permutations(items, n, chosen, used, out);
+        chosen.pop();
+        used[i] = false;
+    }
+}
+
+/// Flattens nested arrays up to `depth` levels (`-1` = fully). Shared by
+/// `flatten` and `flatten!`.
+fn flatten_to_depth(items: &[RubyValue], depth: i64) -> Vec<RubyValue> {
+    let mut out = Vec::new();
+    for e in items {
+        match e {
+            RubyValue::Array(inner) if depth != 0 => {
+                let inner = inner.lock().clone();
+                out.extend(flatten_to_depth(&inner, depth - 1));
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    out
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Array.new(size = 0, default = nil)` / `Array.new(size) { |i| ... }`.
+    // Reached through `class_method_table` on a `RubyValue::Class` receiver
+    // -- `Array` has no generated struct, so there is no constructor for
+    // `Class#new`'s ordinary allocator path to find.
+    //
+    // The default-value form SHARES one object across every slot (real
+    // Ruby: `a = Array.new(2, "x"); a[0] << "!"` changes `a[1]` too), which
+    // is exactly why the block form exists; a `RubyValue` clone is a handle
+    // clone, so that sharing is inherited rather than needing to be built.
+    "new" => fn array_new_m(_recv, args, block) {
+        arity!(args, 0..=2);
+        let size = match args.first() {
+            None => 0,
+            Some(_) => arg_int!(args, 0),
+        };
+        if size < 0 {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "negative array size".to_string(),
+            ));
+        }
+        let size = size as usize;
+        if let Some(RubyValue::Proc(p)) = &block {
+            let mut out = Vec::with_capacity(size);
+            for i in 0..size {
+                out.push(p.call(&[RubyValue::Int(i as i64)])?);
+            }
+            return Ok(RubyValue::Array(crate::array_new(out)));
+        }
+        let fill = args.get(1).cloned().unwrap_or(RubyValue::Nil);
+        Ok(RubyValue::Array(crate::array_new(vec![fill; size])))
     }
 }
 

@@ -281,7 +281,11 @@ impl Walker {
                 self.visit_group(hir, targets);
                 self.visit(hir, *value);
             }
-            HirNode::Yield(args) | HirNode::Raise(args) => self.visit_all(hir, &args.clone()),
+            HirNode::Yield(elems) => {
+                let ids: Vec<_> = elems.iter().map(|e| { let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e; *n }).collect();
+                self.visit_all(hir, &ids)
+            }
+            HirNode::Raise(args) => self.visit_all(hir, &args.clone()),
             HirNode::CaseIn {
                 subject,
                 arms,
@@ -337,6 +341,7 @@ impl Walker {
             | HirNode::ClassVarRead(_)
             | HirNode::ClassRef(_)
             | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
             | HirNode::QualifiedConstRead(..)
             | HirNode::ConstReadOrNil(..)
             | HirNode::Include(_)

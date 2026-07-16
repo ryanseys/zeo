@@ -7981,10 +7981,116 @@ fn new_binds_optional_initialize_params() {
 }
 
 #[test]
-#[should_panic(expected = "wrong number of arguments for `Bag.new`")]
-fn new_arity_is_still_checked() {
-    let _ = spinelc::compile_to_rust(
-        "class Bag\n  def initialize(a, b = 1)\n  end\nend\nBag.new(1, 2, 3)\n",
+fn new_with_the_wrong_arity_raises_a_rescuable_runtime_error() {
+    // Was a COMPILE-TIME panic, from `.new`'s own hand-rolled argument
+    // binding. Now that `.new` binds through the same `emit_call_args_to`
+    // every other call site uses, it inherits that machinery's posture,
+    // which is real Ruby's: arity resolves at RUNTIME, the error is
+    // rescuable, and a never-executed bad call compiles fine. Both lines
+    // oracle-verified, message included.
+    let result = run_ruby(
+        r#"
+        class Bag
+          def initialize(a, b = 1); end
+        end
+        begin
+          Bag.new(1, 2, 3)
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        def never_called
+          Bag.new(1, 2, 3)
+        end
+        puts "compiled fine"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ArgumentError: wrong number of arguments (given 3, expected 1..2)\ncompiled fine\n"
+    );
+}
+
+#[test]
+fn initialize_takes_the_full_param_shapes() {
+    // `.new` was the last call site still binding arguments by hand, and it
+    // only handled required + optional -- `def initialize(*values)` was a
+    // flat compile-time rejection.
+    let result = run_ruby(
+        r#"
+        class Splat
+          def initialize(*v); @v = v; end
+          attr_reader :v
+        end
+        p Splat.new.v
+        p Splat.new(1).v
+        p Splat.new(1, 2, 3).v
+
+        class Mixed
+          def initialize(a, b = 5, *rest, last)
+            @all = [a, b, rest, last]
+          end
+          attr_reader :all
+        end
+        p Mixed.new(1, 9).all
+        p Mixed.new(1, 2, 3, 4, 9).all
+
+        class Kw
+          def initialize(a, k:, j: 7, **rest)
+            @all = [a, k, j, rest]
+          end
+          attr_reader :all
+        end
+        p Kw.new(1, k: 2).all
+        p Kw.new(1, k: 2, j: 3, z: 4).all
+
+        class Post
+          def initialize(a, *m, y, z); @all = [a, m, y, z]; end
+          attr_reader :all
+        end
+        p Post.new(1, 2, 3, 4, 5).all
+        p Post.new(1, 2, 3).all
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[]\n[1]\n[1, 2, 3]\n[1, 5, [], 9]\n[1, 2, [3, 4], 9]\n\
+         [1, 2, 7, {}]\n[1, 2, 3, {z: 4}]\n[1, [2, 3], 4, 5]\n[1, [], 2, 3]\n"
+    );
+}
+
+#[test]
+fn trailing_keywords_become_a_positional_hash_when_the_callee_has_no_keyword_params() {
+    // Ruby's keywords-to-positional-hash conversion, still true in 3+: with
+    // no keyword params and no `**kwrest` declared, trailing keywords are
+    // not keywords at all -- they are one positional Hash. This is what
+    // makes the classic options-hash idiom work, and it was raising
+    // `unknown keyword: :a` for a method that has no keywords to be
+    // unknown. A callee that DOES declare keywords keeps the real check.
+    let result = run_ruby(
+        r#"
+        def m(opts = {}); opts; end
+        p m(a: 1, b: 2)
+        p m({a: 1})
+        p m
+        class C
+          def initialize(opts = {}); @o = opts; end
+          attr_reader :o
+        end
+        p C.new(a: 1).o
+        def k(x:); x; end
+        begin
+          k(x: 1, zz: 2)
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{a: 1, b: 2}\n{a: 1}\n{}\n{a: 1}\nArgumentError: unknown keyword: :zz\n"
     );
 }
 
@@ -11002,11 +11108,577 @@ fn top_level_def_self_is_a_clean_error() {
 }
 
 #[test]
-fn top_level_def_with_ivar_is_a_clean_error() {
-    // `Object`'s own copy dispatches on the ivar-less `main` object; the
-    // clean rejection names the top-level shape (spike scope).
-    let err = spinelc::compile_to_rust("def bump\n  @count = 1\nend\nbump\n").unwrap_err();
-    assert!(err.contains("top-level method"), "{err}");
+fn top_level_ivars_live_on_the_main_object() {
+    // Was rejected as "the `main` object has no ivar storage". It has some
+    // now (`dispatch::Object`'s name-keyed map), so a top-level `@x` -- read
+    // or written, at the top level or from a top-level `def`, which is a
+    // private method of Object whose self IS main -- is ordinary state.
+    // A never-assigned one reads nil rather than raising.
+    let result = run_ruby(
+        r#"
+        @x = 1
+        p @x
+        p @never
+        def read_it; @x; end
+        p read_it
+        def bump; @count = (@count || 0) + 1; end
+        bump
+        bump
+        p @count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\nnil\n1\n2\n");
+}
+
+#[test]
+fn a_top_level_def_touching_an_ivar_does_not_taint_builtins() {
+    // `mro::materialize_methods` collects ivars from every ancestor, but a
+    // BUILTIN never materializes Object's methods -- so the ivar loop has to
+    // skip Object for builtins exactly as the method loop does. It didn't,
+    // which made this program fail to compile with a rejection blaming
+    // `Integer` for a `@count` that Integer has nothing to do with.
+    let result = run_ruby(
+        r#"
+        def bump; @count = (@count || 0) + 1; end
+        bump
+        p @count
+        p 1 + 2
+        p "s".length
+        p [1, 2].map { |i| i * 2 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n3\n1\n[2, 4]\n");
+}
+
+#[test]
+fn return_break_and_next_with_several_values_build_an_implicit_array() {
+    // A single SPLAT is the case a plain "one argument -> pass it through"
+    // rule gets wrong: `return *a` with `a == [1]` is `[1]`, not `1`.
+    let result = run_ruby(
+        r#"
+        def two; return 1, 2; end
+        p two
+        def three; return 1, 2, 3; end
+        p three
+        def splat_ret(a); return *a; end
+        p splat_ret([1, 2])
+        p splat_ret([1])
+        def mixed(a); return 1, *a; end
+        p mixed([2, 3])
+        p([1].each { break 1, 2 })
+        p([[1, 2]].map { |a, b| next a, b })
+        def none; return; end
+        p none
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[1, 2, 3]\n[1, 2]\n[1]\n[1, 2, 3]\n[1, 2]\n[[1, 2]]\nnil\n"
+    );
+}
+
+#[test]
+fn a_parenthesized_multi_statement_expression_answers_its_last_statement() {
+    // `(a; b)` introduces NO scope: `a` below is still readable afterwards,
+    // which is why this lowers to a plain `Seq` rather than anything that
+    // pushes a scope.
+    let result = run_ruby(
+        r#"
+        x = (1; 2; 3)
+        p x
+        y = (a = 5; a * 2)
+        p y
+        p a
+        p((puts "side"; 42))
+        p [(1; 2), 3]
+        z = (
+          q = 7
+          q + 1
+        )
+        p z
+        p((1; (2; 3)))
+        w = (if true then "yes" else "no" end; "after")
+        p w
+        p (5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3\n10\n5\nside\n42\n[2, 3]\n8\n3\n\"after\"\n5\n"
+    );
+}
+
+#[test]
+fn interpolation_takes_multi_statement_empty_and_braceless_forms() {
+    let result = run_ruby(
+        r##"
+        p "v=#{1; 2}"
+        p "v=#{a = 3; a * 2}"
+        p a
+        p "x#{}y"
+        $g = "glob"
+        class C
+          def initialize; @iv = "ivar"; end
+          def show; "iv=#@iv g=#$g"; end
+        end
+        p C.new.show
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"v=2\"\n\"v=6\"\n3\n\"xy\"\n\"iv=ivar g=glob\"\n");
+}
+
+#[test]
+fn block_locals_shadow_an_enclosing_local_and_never_write_back() {
+    let result = run_ruby(
+        r#"
+        sum = 99
+        [1].each { |x; sum| sum = x }
+        p sum
+
+        a = 1
+        b = 2
+        [0].each { |z; a, b| a = 7; b = 8 }
+        p [a, b]
+
+        n = 100
+        [10, 20].each { |v; n| n = v }
+        p n
+
+        r = 0
+        [5].each do |i|
+          [9].each { |j; r| r = j }
+          r = i
+        end
+        p r
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "99\n[1, 2]\n100\n5\n");
+}
+
+#[test]
+fn a_block_local_resets_to_nil_on_every_invocation() {
+    // The part that makes a block-local more than a naming convention, and
+    // the reason it can't be hoisted out of the per-call prologue: `total`
+    // is nil again at the top of EVERY call, so this never accumulates.
+    let result = run_ruby(
+        r#"
+        total = 42
+        [1, 2, 3].each { |x; total| total = (total || 0) + x }
+        p total
+
+        outs = []
+        [1, 2].each { |x; acc| acc ||= []; acc << x; outs << acc.dup }
+        p outs
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n[[1], [2]]\n");
+}
+
+#[test]
+fn block_locals_work_on_the_times_inline_path_and_in_lambdas() {
+    // `n.times { }` on an integer literal is spliced inline as a native Rust
+    // loop rather than becoming a real Proc, so it binds its params at its
+    // own site and needs the block-local declaration applied there too.
+    let result = run_ruby(
+        r#"
+        n = "outer"
+        3.times { |i; n| n = i }
+        p n
+
+        f = ->(x; t) { t = x * 2; t }
+        p f.call(5)
+
+        q = "kept"
+        [[1, 2, 3]].each { |(x, y), *r; q| q = x }
+        p q
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"outer\"\n10\n\"kept\"\n");
+}
+
+#[test]
+fn yield_takes_splat_arguments() {
+    // `HirNode::Yield` carries the same `Vec<ArrayElem>` a Call's positional
+    // args do, so a splat flattens at runtime and the block then binds from
+    // the result through its ordinary parameter machinery -- auto-splat,
+    // rest, and nil-padding of surplus params all included.
+    let result = run_ruby(
+        r#"
+        def m(*a); yield(*a); end
+        p(m(1, 2) { |x, y| [x, y] })
+        p(m(1) { |x, y| [x, y] })
+        p(m() { |x, y| [x, y] })
+
+        def mix(*a); yield(0, *a, 9); end
+        p(mix(1, 2) { |*z| z })
+
+        def empty; yield(*[]); end
+        p(empty { |*z| z })
+
+        def kwmix(*a); yield(*a, k: 1); end
+        p(kwmix(1) { |x, k:| [x, k] })
+
+        class W
+          def initialize(n); @n = n; end
+          attr_reader :n
+        end
+        def objs; yield(*[W.new(1), W.new(2)]); end
+        p(objs { |a, b| a.n + b.n })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n[1, nil]\n[nil, nil]\n[0, 1, 2, 9]\n[]\n[1, 1]\n3\n"
+    );
+}
+
+#[test]
+fn a_runtime_empty_double_splat_contributes_no_trailing_hash() {
+    // `foo(1, **h)` with an empty `h` passes just `1` -- the trailing hash
+    // is pushed only when non-empty. This is about a RUNTIME-empty hash, not
+    // the literal `**{}`, so it can't be decided at lowering time. Pushing
+    // unconditionally silently handed the callee an extra `{}`.
+    let result = run_ruby(
+        r#"
+        def foo(*z); z; end
+        def c(h); foo(1, **h); end
+        p c({})
+        p c({k: 2})
+
+        def kw(*z); z; end
+        def d(h); kw(**h); end
+        p d({})
+
+        def both(h); foo(1, k: 1, **h); end
+        p both({})
+        p both({j: 2})
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1]\n[1, {k: 2}]\n[]\n[1, {k: 1}]\n[1, {k: 1, j: 2}]\n"
+    );
+}
+
+#[test]
+fn enumerable_chunking_and_slicing() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 4, 9, 10, 11, 12, 15]
+        p a.slice_when { |i, j| i + 1 != j }.to_a
+        p a.chunk_while { |i, j| i + 1 == j }.to_a
+        p [1, 1, 2, 3, 3].chunk_while { |i, j| i == j }.to_a
+        p [1, 2, 3, 4, 5].slice_before { |x| x.even? }.to_a
+        p [1, 2, 3, 4, 5].slice_after { |x| x.even? }.to_a
+        p [1, 2, 3, 4, 5].slice_before(3).to_a
+        p [1, 2, 3, 4, 5].slice_after(3).to_a
+        p ["a", "b1", "c"].slice_before(/\d/).to_a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[1, 2], [4], [9, 10, 11, 12], [15]]\n\
+         [[1, 2], [4], [9, 10, 11, 12], [15]]\n\
+         [[1, 1], [2], [3, 3]]\n\
+         [[1], [2, 3], [4, 5]]\n\
+         [[1, 2], [3, 4], [5]]\n\
+         [[1, 2], [3, 4, 5]]\n\
+         [[1, 2, 3], [4, 5]]\n\
+         [[\"a\"], [\"b1\", \"c\"]]\n"
+    );
+}
+
+#[test]
+fn enumerable_grep_zip_and_minmax_by() {
+    let result = run_ruby(
+        r#"
+        p (1..10).grep(3..5)
+        p [1, "a", 2, "b"].grep(Integer)
+        p [1, "a", 2, "b"].grep(Integer) { |x| x * 10 }
+        p [1, "a", 2, "b"].grep_v(Integer)
+        p [1, "a", 2, "b"].grep_v(Integer) { |x| x + "!" }
+        p [1, 2, 3].zip([4, 5, 6])
+        p [1, 2, 3].zip([4, 5], [6])
+        p([1, 2, 3].zip([4, 5, 6]) { |x| })
+        p [1, 2, 3, 4].minmax_by { |x| -x }
+        p [].minmax_by { |x| x }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[3, 4, 5]\n[1, 2]\n[10, 20]\n[\"a\", \"b\"]\n[\"a!\", \"b!\"]\n\
+         [[1, 4], [2, 5], [3, 6]]\n[[1, 4, 6], [2, 5, nil], [3, nil, nil]]\n\
+         nil\n[4, 1]\n[nil, nil]\n"
+    );
+}
+
+#[test]
+fn array_combinatorics_and_binary_search() {
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].combination(2).to_a
+        p [1, 2, 3].combination(0).to_a
+        p [1, 2, 3].combination(4).to_a
+        p [1, 2, 3].permutation(2).to_a
+        p [1, 2].permutation.to_a
+        r = []
+        [1, 2, 3].combination(2) { |c| r << c }
+        p r
+        p [1, 2, 3].each_index.to_a
+        p [1, 2, 3, 4].bsearch { |x| x >= 3 }
+        p [1, 2, 3, 4].bsearch { |x| x >= 9 }
+        p [1, 2, 3, 4].bsearch_index { |x| x >= 3 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[1, 2], [1, 3], [2, 3]]\n[[]]\n[]\n\
+         [[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]\n[[1, 2], [2, 1]]\n\
+         [[1, 2], [1, 3], [2, 3]]\n[0, 1, 2]\n3\nnil\n2\n"
+    );
+}
+
+#[test]
+fn array_cycle_bang_forms_and_values_at() {
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].cycle(2).to_a
+        c = []
+        [1, 2].cycle(2) { |x| c << x }
+        p c
+        p [1, 2].cycle(0).to_a
+        p [[1, [2, 3]], [4]].flatten!
+        a = [1, 2]
+        p a.flatten!
+        b = [3, 1, 2]
+        b.sort_by! { |x| -x }
+        p b
+        p [1, 2, 3].values_at(0, 2, 5)
+        p [1, 2, 3].values_at(0..1)
+        p [1, 2, 3, 4, 5].values_at(3..9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3, 1, 2, 3]\n[1, 2, 1, 2]\n[]\n[1, 2, 3, 4]\nnil\n[3, 2, 1]\n\
+         [1, 3, nil]\n[1, 2]\n[4, 5, nil, nil, nil, nil, nil]\n"
+    );
+}
+
+#[test]
+fn array_new_takes_a_size_default_and_block() {
+    // The block form has to reach the runtime allocator, so `Array.new`
+    // joins the block-keeping set in lowering -- routing it through
+    // `HirNode::New` (which has no block slot) silently answered nils.
+    let result = run_ruby(
+        r#"
+        p Array.new(3) { |i| i * 2 }
+        p Array.new(2, "x")
+        p Array.new(3)
+        p Array.new
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[0, 2, 4]\n[\"x\", \"x\"]\n[nil, nil, nil]\n[]\n"
+    );
+}
+
+#[test]
+fn pop_and_shift_take_a_count() {
+    // `pop`/`shift` answer ONE element; `pop(n)`/`shift(n)` answer an ARRAY
+    // -- a different return type, not just a different count, which is why
+    // the no-arg form can't be `pop(1)`. Both were `arity!(args, 0)`, so the
+    // count form raised a spurious ArgumentError on a call Ruby accepts.
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3, 4]
+        p a.pop(2)
+        p a
+        b = [1, 2, 3, 4]
+        p b.shift(2)
+        p b
+        p [1, 2].pop(5)
+        p [1, 2].pop(0)
+        c = [1, 2]
+        p c.shift(0)
+        p c
+        p [1, 2].pop
+        p [].pop
+        p [].shift
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[3, 4]\n[1, 2]\n[1, 2]\n[3, 4]\n[1, 2]\n[]\n[]\n[1, 2]\n2\nnil\nnil\n"
+    );
+}
+
+#[test]
+fn each_entry_packs_multi_value_yields_where_each_passes_them_through() {
+    // The entire difference between `each_entry` and `each`, and it is only
+    // observable when the receiver's own `each` yields MORE THAN ONE value.
+    let result = run_ruby(
+        r#"
+        class Multi
+          include Enumerable
+          def each
+            yield 1
+            yield 2, 3
+            yield
+          end
+        end
+        r = []
+        Multi.new.each_entry { |x| r << x }
+        p r
+        s = []
+        Multi.new.each { |x| s << x }
+        p s
+        p Multi.new.each_entry.to_a
+        p [1, 2].each_entry.to_a
+        h = []
+        ({a: 1}).each_entry { |e| h << e }
+        p h
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, [2, 3], nil]\n[1, 2, nil]\n[1, [2, 3], nil]\n[1, 2]\n[[:a, 1]]\n"
+    );
+}
+
+#[test]
+fn new_on_a_class_with_no_initialize_rejects_arguments() {
+    // `Object#initialize` takes none, so passing any is an ArgumentError --
+    // it was silently DROPPING them and constructing happily. Rescuable and
+    // raised at runtime (plan G1), covering both the static `.new` path and
+    // the dynamic one through a class-valued variable.
+    let result = run_ruby(
+        r#"
+        class Bare; end
+        begin
+          Bare.new(1, 2)
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        k = Bare
+        begin
+          k.new(9)
+        rescue ArgumentError => e
+          puts "dyn: #{e.message}"
+        end
+        p Bare.new.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ArgumentError: wrong number of arguments (given 2, expected 0)\n\
+         dyn: wrong number of arguments (given 1, expected 0)\nBare\n"
+    );
+}
+
+#[test]
+fn the_last_match_specials_read_off_the_most_recent_match() {
+    let result = run_ruby(
+        r#"
+        if "hello world" =~ /(\w+)\s(\w+)/
+          p $1
+          p $2
+          p $3
+          p $&
+          p $`
+          p $'
+          p $~[0]
+          p $~.class
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"hello\"\n\"world\"\nnil\n\"hello world\"\n\"\"\n\"\"\n\"hello world\"\nMatchData\n"
+    );
+}
+
+#[test]
+fn a_failed_match_clears_the_last_match_specials() {
+    // They are RESET, not left holding the previous match -- the property
+    // that makes `if s =~ re then $1 end` safe to reuse in a loop.
+    let result = run_ruby(
+        r#"
+        "ab" =~ /(a)/
+        p $1
+        "zzz" =~ /(\d+)/
+        p $1
+        p $&
+        p $~
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"a\"\nnil\nnil\nnil\n");
+}
+
+#[test]
+fn match_p_does_not_touch_the_last_match_but_match_does() {
+    // `match?` is specifically the allocation-free predicate: it builds no
+    // MatchData and so leaves the slot alone. `Regexp#match` sets it.
+    let result = run_ruby(
+        r#"
+        "abc" =~ /b/
+        p $&
+        "xyz".match?(/y/)
+        p $&
+        /(\d)/.match("a1")
+        p $1
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"b\"\n\"b\"\n\"1\"\n");
+}
+
+#[test]
+fn matchdata_methods_work_on_a_dynamically_typed_receiver() {
+    // `$~` can be nil (whenever the last match failed), so it never infers
+    // as `TyKind::MatchData` and can't take codegen's static MatchData fast
+    // path -- it dispatches dynamically, which needs a real runtime table.
+    // `$~[0]` raised NoMethodError while `re.match(s)[0]` worked.
+    let result = run_ruby(
+        r#"
+        "hello" =~ /e(l+)(o)/
+        m = $~
+        p m[0]
+        p m[1]
+        p m.captures
+        p m.pre_match
+        p m.post_match
+        p m.to_a
+        p m.string
+        p m.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ello\"\n\"ll\"\n[\"ll\", \"o\"]\n\"h\"\n\"\"\n[\"ello\", \"ll\", \"o\"]\n\"hello\"\n\"ello\"\n"
+    );
 }
 
 #[test]
