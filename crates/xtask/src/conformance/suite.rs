@@ -68,6 +68,21 @@ pub enum Verdict {
 }
 
 impl Verdict {
+    /// Every verdict, in report order (PASS first, then failures by severity,
+    /// SKIP last). Reports enumerate this so a category with zero tests still
+    /// prints a `0` row rather than silently vanishing.
+    pub const ALL: [Verdict; 9] = [
+        Verdict::Pass,
+        Verdict::FailOutput,
+        Verdict::FailCompile,
+        Verdict::FailRustc,
+        Verdict::FailRun,
+        Verdict::TimeoutCompile,
+        Verdict::TimeoutRun,
+        Verdict::OracleFail,
+        Verdict::Skip,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Verdict::Pass => "PASS",

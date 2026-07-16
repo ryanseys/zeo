@@ -174,9 +174,11 @@ fn emit_pattern_match(cx: &Ctx, pattern: &Pattern, scrutinee_ty: TyKind, scrutin
 }
 
 /// `1..10` / `..5` / `1..` as a pattern -- "does the scrutinee fall inside
-/// this range", checked via `as_int_unchecked` (matching `codegen::loops`'
-/// existing `for`-in-`Range` restriction to `Int`-valued ranges only, not a
-/// general `Comparable`-based `#cover?`).
+/// this range" (`Range#===`). Reuses the runtime's real `===`/`#cover?`
+/// engine by building a `RubyValue::Range` and calling `rb_case_eq`, exactly
+/// like `Pattern::Value` above: `rb_case_eq` -> `range_covers` does a full
+/// `rb_cmp` cover check with exclusivity + beginless/endless, so a Float or
+/// Poly scrutinee works (the old `as_int_unchecked` path panicked on both).
 fn emit_range_pattern(
     cx: &Ctx,
     start: Option<NodeId>,
@@ -184,25 +186,18 @@ fn emit_range_pattern(
     exclusive: bool,
     scrutinee: &TokenStream,
 ) -> TokenStream {
-    let start_check = match start {
+    let bound = |n: Option<NodeId>| match n {
         Some(n) => {
             let e = emit_expr(cx, n);
-            quote! { (#scrutinee).as_int_unchecked() >= (#e).as_int_unchecked() }
+            quote! { Some(Box::new(#e)) }
         }
-        None => quote! { true },
+        None => quote! { None },
     };
-    let end_check = match end {
-        Some(n) => {
-            let e = emit_expr(cx, n);
-            if exclusive {
-                quote! { (#scrutinee).as_int_unchecked() < (#e).as_int_unchecked() }
-            } else {
-                quote! { (#scrutinee).as_int_unchecked() <= (#e).as_int_unchecked() }
-            }
-        }
-        None => quote! { true },
-    };
-    quote! { (#start_check) && (#end_check) }
+    let start_b = bound(start);
+    let end_b = bound(end);
+    quote! {
+        spinel_rt::RubyValue::Range(#start_b, #end_b, #exclusive).rb_case_eq(&(#scrutinee))
+    }
 }
 
 /// `in Integer` / `in SomeClass` (also used for an `Array`/`Hash`/`Find`

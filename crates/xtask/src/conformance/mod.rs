@@ -259,14 +259,21 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     results.extend(skipped);
     results.sort_by(|a, b| a.id.cmp(&b.id));
 
-    // Summary.
-    let mut counts = std::collections::BTreeMap::new();
-    for r in &results {
-        *counts.entry(r.verdict.as_str()).or_insert(0usize) += 1;
-    }
+    // Summary: every verdict category (zero-filled) + total, then the top
+    // failure buckets so a run ends with an actionable ranking.
     println!();
-    for (v, n) in &counts {
+    for (v, n) in scoreboard::verdict_counts(&results) {
         println!("{v:>16} {n}");
+    }
+    println!("{:>16} {}", "TOTAL", results.len());
+
+    let ranked = scoreboard::ranked_buckets(&results);
+    if !ranked.is_empty() {
+        println!("\ntop {} failure categories:", ranked.len().min(10));
+        println!("{:>8}  {:<28} {}", "blocked", "bucket", "sample");
+        for b in ranked.iter().take(10) {
+            println!("{:>8}  {:<28} {}", b.count, b.bucket, b.sample_id);
+        }
     }
 
     if opts.show_diffs > 0 {

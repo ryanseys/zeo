@@ -2044,6 +2044,40 @@ fn case_in_range_pattern() {
 }
 
 #[test]
+fn case_in_range_pattern_covers_float_poly_and_open_bounds() {
+    // A range pattern is Range#=== (rb_case_eq/range_covers), so a Float or
+    // Poly scrutinee, an exclusive bound, and a beginless/endless range all
+    // work -- the old as_int_unchecked path panicked on non-Int scrutinees.
+    let result = run_ruby(
+        r#"
+        def classify(x)
+          case x
+          in 0.0...0.5 then "low"
+          in 0.5..1.0 then "high"
+          in ..0.0 then "neg"
+          else "other"
+          end
+        end
+        puts classify(0.2)
+        puts classify(0.9)
+        puts classify(-1.0)
+        puts classify(5.0)
+        arr = [3, "x"]
+        case arr[0]
+        in 0..3 then puts "small"
+        else puts "big"
+        end
+        case arr[1]
+        in 0..3 then puts "small"
+        else puts "not-int"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "low\nhigh\nneg\nother\nsmall\nnot-int\n");
+}
+
+#[test]
 fn case_in_nil_true_false_literal_patterns() {
     let result = run_ruby(
         r#"

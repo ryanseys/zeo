@@ -6,25 +6,26 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 350 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
-| ? | spike-misc | 41 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
-| g | arity-panic | 32 | array_bounds_guards | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| ? | unknown-class | 26 | case_in_hash_pattern_object | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| P | missing-builtin-method | 335 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
+| ? | spike-misc | 39 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
+| ? | unknown-class | 24 | case_in_hash_pattern_object | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| g | arity-panic | 16 | block_forward_poly | uncaught exception: wrong number of arguments (given 2, expected 1) |
 | P | missing-core-const | 13 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
-| ! | rustc-failure | 9 | bundle_class_14 | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-3d1c7c5bf17c2178.rs) |
 | k | pattern-shapes | 7 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-1dc88be1 | 4 | ffi_poly_int_array | spinelc: cannot load such file -- json |
 | ? | auto-693fd5cf | 4 | gsub_with_hash_replacement | uncaught exception: no implicit conversion of Hash into String |
 | ? | auto-74de9804 | 4 | module_function_str_method_param | error: unrecognized escape sequence |
 | ? | auto-f715b554 | 4 | i1017 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| f | dynamic-require | 4 | for_over_hash_and_bigint_when | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 4 | enum_chain_splat_sliceb_wave6 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | toplevel-node-in-expr | 4 | class_eval_reopen | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| f | dynamic-require | 3 | for_over_hash_and_bigint_when | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-3e862739 | 3 | array_cycle_bounded | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | alias-inherited | 2 | alias_attr_reader_source | spinelc: `alias title name`: `name` must already be defined earlier in the same class/module body (spike scope) -- aliasing an inherited method isn't supported yet |
 | ? | auto-03f2cac6 | 2 | enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-2febf97c | 2 | regexp_captures_family | error: look-around, including look-ahead and look-behind, is not supported |
-| ? | auto-3e862739 | 2 | array_cycle_bounded | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | auto-5acee2ea | 2 | rindex_regexp_polypoly_merge | uncaught exception: no implicit conversion of Regexp into String |
+| ? | auto-3d0c6827 | 2 | array_fill_block_form | uncaught exception: no implicit conversion of Range into Integer |
+| ? | auto-3fa590af | 2 | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 |
+| ? | auto-7c6fb6fc | 2 | bundle_array_b | uncaught exception: comparison of Symbol with Symbol failed |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33 | spinelc: cannot load such file -- time |
 | ? | auto-ceeffdaa | 2 | format_raise_dollarbang_symproc | uncaught exception: malformed format string - %$ |
 | ? | auto-d46bf646 | 2 | proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
@@ -34,6 +35,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-0b8761b3 | 1 | case_in_range_pattern | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-176da354 | 1 | range_and_array_range_args | uncaught exception: invalid argument - 1..6 |
 | ? | auto-1ce7f942 | 1 | string_multiply_overflow | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-20576ab1 | 1 | raise_non_exception_typeerror | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-20dcf25f | 1 | anon_struct_local | spinelc: `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-221106e8 | 1 | numeric_coerce | uncaught exception: Money can't be coerced into Integer |
 | ? | auto-2d0f16c6 | 1 | ffi_gem_compat | spinelc: cannot load such file -- ffi |
@@ -44,13 +46,14 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-3814d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
 | ? | auto-3943f115 | 1 | struct_bare_super_initialize | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-3b2b9cc5 | 1 | open_class_object | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | auto-3fa590af | 1 | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-41318f62 | 1 | integer_shift_float_and_coerce | uncaught exception: Float can't be coerced into Integer |
 | ? | auto-434a127c | 1 | time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
+| ? | auto-4394232b | 1 | clamp_nil_open_bounds | uncaught exception: comparison of Integer with NilClass failed |
 | ? | auto-503269d5 | 1 | hash_range_enum_extensions | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-50835bcc | 1 | alias_under_modifier | spinelc: unsupported syntax at "alias aliased original" (spike handles only what the 7 example programs need) |
 | ? | auto-52e6d3e6 | 1 | bundle_misc_c_23 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-567065dd | 1 | comparable_clamp_parity | uncaught exception: comparison of Money with NilClass failed |
+| ? | auto-5acee2ea | 1 | string_search_slice | uncaught exception: no implicit conversion of Regexp into String |
 | ? | auto-5c693233 | 1 | mutex_synchronize_block | spinelc: cannot load such file -- monitor |
 | ? | auto-5c727403 | 1 | data_super_kwarg | spinelc: unsupported syntax at "x: x * 100, y: y + 1" (spike handles only what the 7 example programs need) |
 | ? | auto-5d152f37 | 1 | pp_store_float_inf_literal | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
@@ -60,7 +63,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-6bc687b9 | 1 | native_binding_poc | spinelc: `native_func` takes a symbol, an array of argument type constants, and a return type constant, e.g. `native_func :encode64, [String], String` |
 | ? | auto-6dc7ea47 | 1 | require_first_line | spinelc: cannot load such file -- optparse |
 | ? | auto-76817b19 | 1 | shareable_constant | spinelc: unsupported syntax at "FOO = [1, 2, 3]" (spike handles only what the 7 example programs need) |
-| ? | auto-7c6fb6fc | 1 | bundle_array_b | uncaught exception: comparison of Symbol with Symbol failed |
+| ? | auto-7af30852 | 1 | comparable_cmp_result_validation | uncaught exception: comparison of FDiff with FDiff failed |
 | ? | auto-7d203286 | 1 | bundle_misc_c_26 | error: invalid escape sequence found in character class |
 | ? | auto-7f91b6c6 | 1 | constant_path | spinelc: cannot load such file -- stringio |
 | ? | auto-844df666 | 1 | sort_mixed_type_raises | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
@@ -87,11 +90,14 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-d02546fb | 1 | struct_yield_initialize | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-d04215d7 | 1 | bignum_downto_upto_to_a | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-d453bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
+| ? | auto-d56c139e | 1 | integer_rational_complex_ops | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-dd0fbc13 | 1 | rational_ctor_exact | uncaught exception: can't convert Float into Rational |
 | ? | auto-def07d6b | 1 | i1009 | error: backreferences are not supported |
 | ? | auto-dfbd22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
+| ? | auto-e62722d3 | 1 | pack_float_directives | uncaught exception: unsupported pack directive: G |
+| ? | auto-e62733d1 | 1 | pack_base64 | uncaught exception: unsupported pack directive: M |
+| ? | auto-e6274b9b | 1 | pack_endian_modifiers | uncaught exception: unsupported pack directive: _ |
 | ? | auto-ebd75c85 | 1 | stdin_io | uncaught exception: not a file |
-| a | double-splat | 1 | hash_double_splat | spinelc: double-splat (`**expr`) in a hash literal isn't supported yet (spike scope) |
 | a | interpolation-shapes | 1 | interp_adjacent_concat | spinelc: unsupported string interpolation part (spike scope) |
 | d | singleton-class | 1 | singleton_class_block | spinelc: unsupported syntax at "class << Greeter\n  def hello; \"hello\"; end\nend" (spike handles only what the 7 example programs need) |
 | g | super-arity | 1 | reopen_split_superclass_dispatch | spinelc: superclass mismatch for class Sub |

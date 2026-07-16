@@ -29,16 +29,15 @@ fn tsv(meta: &RunMeta, results: &[TestResult]) -> String {
         "# suite={} corpus={} ruby={:?} spinel-rs={}\n",
         meta.suite, meta.corpus, meta.ruby_version, meta.git_sha
     );
-    let counts = verdict_counts(results);
     out.push_str("# ");
     out.push_str(
-        &counts
+        &verdict_counts(results)
             .iter()
             .map(|(v, n)| format!("{v}={n}"))
             .collect::<Vec<_>>()
             .join(" "),
     );
-    out.push('\n');
+    out.push_str(&format!(" TOTAL={}\n", results.len()));
     for r in results {
         out.push_str(&format!(
             "{}\t{}\t{}\t{}\n",
@@ -54,7 +53,10 @@ fn tsv(meta: &RunMeta, results: &[TestResult]) -> String {
 fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
     let counts = verdict_counts(results);
     let total = results.len();
-    let passed = *counts.get("PASS").unwrap_or(&0);
+    let passed = counts
+        .iter()
+        .find(|(v, _)| *v == "PASS")
+        .map_or(0, |(_, n)| *n);
     let mut out = format!(
         "# Conformance scoreboard\n\n\
          Suite `{}` — **{passed}/{total} passing** — oracle `{}` — spinel-rs `{}`\n\n\
@@ -64,6 +66,22 @@ fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
     for (v, n) in &counts {
         out.push_str(&format!("| {v} | {n} |\n"));
     }
+    out.push_str(&format!("| **TOTAL** | **{total}** |\n"));
+
+    out.push_str("\n## Top failure categories\n\n");
+    let ranked = ranked_buckets(results);
+    if ranked.is_empty() {
+        out.push_str("(none)\n");
+    } else {
+        out.push_str("| blocked | bucket | cluster | sample test |\n|---|---|---|---|\n");
+        for b in ranked.iter().take(10) {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                b.count, b.bucket, b.cluster, b.sample_id
+            ));
+        }
+    }
+
     out.push_str("\n## Skipped tests\n\n");
     let skips: Vec<_> = results
         .iter()
@@ -84,9 +102,7 @@ fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
 }
 
 fn triage_md(meta: &RunMeta, results: &[TestResult]) -> String {
-    let buckets = bucket_stats(results);
-    let mut ranked: Vec<_> = buckets.values().collect();
-    ranked.sort_by(|a, b| b.count.cmp(&a.count).then(a.bucket.cmp(&b.bucket)));
+    let ranked = ranked_buckets(results);
 
     let mut out = format!(
         "# Gap triage\n\n\
@@ -120,6 +136,13 @@ pub struct BucketStat {
     pub sample_message: String,
 }
 
+/// Failure buckets ranked by how many tests each blocks (ties broken by name).
+pub fn ranked_buckets(results: &[TestResult]) -> Vec<BucketStat> {
+    let mut ranked: Vec<BucketStat> = bucket_stats(results).into_values().collect();
+    ranked.sort_by(|a, b| b.count.cmp(&a.count).then(a.bucket.cmp(&b.bucket)));
+    ranked
+}
+
 pub fn bucket_stats(results: &[TestResult]) -> BTreeMap<String, BucketStat> {
     let mut buckets: BTreeMap<String, BucketStat> = BTreeMap::new();
     for r in results {
@@ -140,12 +163,16 @@ pub fn bucket_stats(results: &[TestResult]) -> BTreeMap<String, BucketStat> {
     buckets
 }
 
-fn verdict_counts(results: &[TestResult]) -> BTreeMap<&'static str, usize> {
-    let mut counts = BTreeMap::new();
-    for r in results {
-        *counts.entry(r.verdict.as_str()).or_insert(0) += 1;
-    }
-    counts
+/// Every verdict with its count, in `Verdict::ALL` order -- categories with
+/// zero tests still appear (as `0`) so the report never hides a category.
+pub fn verdict_counts(results: &[TestResult]) -> Vec<(&'static str, usize)> {
+    Verdict::ALL
+        .iter()
+        .map(|v| {
+            let n = results.iter().filter(|r| r.verdict == *v).count();
+            (v.as_str(), n)
+        })
+        .collect()
 }
 
 fn write(path: std::path::PathBuf, content: String) -> Result<(), String> {
