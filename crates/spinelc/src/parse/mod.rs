@@ -157,6 +157,52 @@ pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
     parse_and_lower_with(source, None, &[], &[])
 }
 
+/// The `# encoding:`/`# coding:` magic comment's value, honored only on the
+/// first line (or the second, after a `#!` shebang) exactly as CRuby does --
+/// `coding\s*[:=]\s*NAME` inside that comment. `None` when absent.
+fn magic_encoding_comment(source: &str) -> Option<String> {
+    let mut lines = source.lines();
+    let first = lines.next()?;
+    let line = if first.starts_with("#!") { lines.next()? } else { first };
+    let line = line.trim_start();
+    if !line.starts_with('#') {
+        return None;
+    }
+    let lower = line.to_ascii_lowercase();
+    let start = lower.find("coding")? + "coding".len();
+    let rest = line[start..].trim_start();
+    let rest = rest.strip_prefix(':').or_else(|| rest.strip_prefix('='))?;
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Maps a magic-comment encoding name to its `Encoding::` constant spelling
+/// (`None` = the UTF-8 default, needing no override), rejecting an
+/// unsupported encoding with a clean compile error.
+fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
+    let norm: String = name
+        .chars()
+        .filter(|c| *c != '-' && *c != '_' && *c != '.')
+        .flat_map(char::to_lowercase)
+        .collect();
+    Ok(match norm.as_str() {
+        "utf8" | "cp65001" => None,
+        "usascii" | "ascii" | "ansix341968" | "646" => Some("US_ASCII"),
+        "ascii8bit" | "binary" => Some("ASCII_8BIT"),
+        "iso88591" | "latin1" => Some("ISO_8859_1"),
+        _ => {
+            return Err(format!(
+                "unsupported source encoding in magic comment: '{name}' \
+                 (supported: UTF-8, US-ASCII, ASCII-8BIT/BINARY, ISO-8859-1)"
+            ))
+        }
+    })
+}
+
 /// `parse_and_lower` plus the file context Phase 14.1's compile-time
 /// `require` resolution needs: `input_path` (the requiring-file directory
 /// for the main file's own `require_relative` calls -- `None` means any
@@ -174,6 +220,9 @@ pub fn parse_and_lower_with(
     package_dirs: &[std::path::PathBuf],
 ) -> PResult<(Hir, NodeId)> {
     let mut hir = Hir::default();
+    if let Some(name) = magic_encoding_comment(source) {
+        hir.script_encoding = encoding_const_name(&name)?.map(str::to_string);
+    }
     let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
         .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
     hir.prelude_len = statements.len();
@@ -1055,14 +1104,14 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // Rejected rather than stubbed: inventing a placeholder Encoding now
     // would pre-empt that design, and `__ENCODING__` is only useful if the
     // object it answers actually behaves like one.
-    // `__ENCODING__` answers the script's own encoding -- UTF-8, the
-    // compiler's default (a magic `# encoding:` comment could change it; not
-    // modeled yet). Lowered to the ordinary `Encoding::UTF_8` constant read,
-    // which resolves to the seeded singleton.
+    // `__ENCODING__` answers the script's own encoding -- UTF-8 by default,
+    // or whatever a `# encoding:` magic comment set. Lowered to the ordinary
+    // `Encoding::<NAME>` constant read, which resolves to the seeded singleton.
     if node.as_source_encoding_node().is_some() {
+        let const_name = hir.script_encoding.clone().unwrap_or_else(|| "UTF_8".to_string());
         return Ok(hir.push(HirNode::QualifiedConstRead(
             "Encoding".to_string(),
-            "UTF_8".to_string(),
+            const_name,
         )));
     }
 

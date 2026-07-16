@@ -4,7 +4,7 @@
 //! `spinel_rt::RubyValue`, matching every other `emit_*` fragment's
 //! contract.
 
-use quote::quote;
+use quote::{format_ident, quote};
 
 use super::expr::{box_if_object_typed, emit_boxed_new, emit_expr};
 use super::Ctx;
@@ -139,6 +139,22 @@ pub fn emit_range_lit(
 /// An interpolated `#{expr}` part is stringified via `to_display_string`
 /// (mirrors real Ruby: interpolation calls `to_s`, not `inspect`).
 pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
+    // A `# encoding:` magic comment tags EVERY literal in the file with that
+    // encoding (byte-built); otherwise a raw-byte segment forces ASCII-8BIT,
+    // and a purely-UTF-8 literal keeps the readable String path.
+    let script_enc = cx.compiler.hir.script_encoding.as_deref();
+    if let Some(name) = script_enc {
+        let enc = format_ident!("{name}");
+        let pieces = parts.iter().map(|p| string_lit_bytes_piece(cx, p));
+        return quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_from_bytes({
+                #[allow(unused_mut)]
+                let mut __b: Vec<u8> = Vec::new();
+                #(#pieces)*
+                __b
+            }, spinel_rt::encoding::#enc))
+        };
+    }
     if let [StrPart::Lit(s)] = parts {
         return quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) };
     }
@@ -154,17 +170,7 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
     // Any raw-byte segment makes the WHOLE literal byte-built (ASCII-8BIT,
     // Ruby's rule); a purely-UTF-8 literal keeps the readable String path.
     if parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
-        let pieces = parts.iter().map(|p| match p {
-            StrPart::Lit(s) => quote! { __b.extend_from_slice(#s.as_bytes()); },
-            StrPart::Bytes(b) => {
-                let bytes = byte_literals(b);
-                quote! { __b.extend_from_slice(&[#(#bytes),*]); }
-            }
-            StrPart::Interp(n) => {
-                let e = super::expr::box_if_object_typed(cx, *n, emit_expr(cx, *n));
-                quote! { __b.extend_from_slice((#e).to_display_string().as_bytes()); }
-            }
-        });
+        let pieces = parts.iter().map(|p| string_lit_bytes_piece(cx, p));
         return quote! {
             spinel_rt::RubyValue::Str(spinel_rt::string_from_bytes({
                 #[allow(unused_mut)]
@@ -198,6 +204,22 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
 /// The `u8` token literals for a raw-byte string segment.
 fn byte_literals(bytes: &[u8]) -> Vec<TokenStream> {
     bytes.iter().map(|b| quote! { #b }).collect()
+}
+
+/// One string-literal segment appended to the `__b: Vec<u8>` byte builder --
+/// shared by the raw-byte and magic-comment-encoding literal paths.
+fn string_lit_bytes_piece(cx: &Ctx, part: &StrPart) -> TokenStream {
+    match part {
+        StrPart::Lit(s) => quote! { __b.extend_from_slice(#s.as_bytes()); },
+        StrPart::Bytes(b) => {
+            let bytes = byte_literals(b);
+            quote! { __b.extend_from_slice(&[#(#bytes),*]); }
+        }
+        StrPart::Interp(n) => {
+            let e = super::expr::box_if_object_typed(cx, *n, emit_expr(cx, *n));
+            quote! { __b.extend_from_slice((#e).to_display_string().as_bytes()); }
+        }
+    }
 }
 
 /// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated -- the

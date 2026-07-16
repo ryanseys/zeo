@@ -4945,6 +4945,25 @@ fn broken_and_binary_strings_inspect_with_hex_escapes() {
 }
 
 #[test]
+fn magic_comment_sets_the_script_encoding() {
+    // A `# encoding:` comment on the first line tags every string literal and
+    // __ENCODING__ with that encoding. Verified against ruby 4.0.5. (The
+    // source must start with the comment, so no leading newline here.)
+    let result = run_ruby(
+        "# encoding: ISO-8859-1\n\
+         p __ENCODING__\n\
+         p \"hi\".encoding\n\
+         p \"hi\".encoding == Encoding::ISO_8859_1\n\
+         p \"hi\".bytes\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<Encoding:ISO-8859-1>\n#<Encoding:ISO-8859-1>\ntrue\n[104, 105]\n"
+    );
+}
+
+#[test]
 fn undef_removes_a_name_including_an_inherited_one() {
     // `undef` works on a name this class only INHERITS, which is why it
     // can't be "delete the local def" -- there is none. It stays live on

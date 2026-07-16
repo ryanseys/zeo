@@ -51,6 +51,11 @@ pub struct Hir {
     /// run 1..=boxes (0 is the root program). `analyze` creates one
     /// top-level surrogate `ClassInfo` per id.
     pub boxes: u32,
+    /// The main file's script encoding as its `Encoding::` CONSTANT spelling
+    /// (`"ISO_8859_1"`), set from a `# encoding:` magic comment; `None` is
+    /// the UTF-8 default. Governs `__ENCODING__` and the encoding tag of
+    /// string literals.
+    pub script_encoding: Option<String>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
