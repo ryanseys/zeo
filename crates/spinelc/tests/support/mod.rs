@@ -49,7 +49,12 @@ pub fn run_ruby_packages(
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::build_binary_with_deps(rust_source, &compiled.native_deps, &bin)
+    spinelc::build::build_binary_with_deps(
+        rust_source,
+        &compiled.native_deps,
+        &bin,
+        spinelc::build::Linkage::Dynamic,
+    )
         .unwrap_or_else(|e| {
             panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
         });
@@ -130,7 +135,7 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::build_binary(&rust_source, &bin).unwrap_or_else(|e| {
+    spinelc::build::build_binary(&rust_source, &bin, spinelc::build::Linkage::Dynamic).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 

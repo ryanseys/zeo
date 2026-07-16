@@ -1,0 +1,28 @@
+# Link the Rust standard library dynamically across the workspace.
+#
+# This exists for `spinel-rt`'s `dylib` output (see its Cargo.toml). A Rust
+# `dylib` statically embeds `std` unless told otherwise, and a generated program
+# that links that dylib then needs `std` too -- rustc rejects the result with
+# "cannot satisfy dependencies so `std` only shows up once". Building everything
+# with `prefer-dynamic` gives the runtime and the programs that link it one
+# shared `libstd`.
+#
+# The payoff is size, not speed: a generated program drops from 9.8MB to 616K
+# (measured), which is what keeps the compiled-program cache affordable across
+# the ~2,300 programs the test and conformance suites build. Compile time only
+# improves ~7%, since Apple's linker was already fast at dead-stripping the rlib.
+#
+# This only affects programs `spinelc` builds when a harness asks for it
+# (`SPINELC_LINK_DYNAMIC`, see `build::Linkage`). `spinelc foo.rb -o app` still
+# links statically and still produces a self-contained binary.
+#
+# Cost: every binary this workspace builds -- including `spinelc` itself --
+# resolves `libstd-<hash>.dylib` at run time by the absolute path baked in at
+# link time. Fine for `cargo run`/`cargo test`, which sit next to the toolchain
+# that built them, but a `cargo install` from this workspace would produce a
+# `spinelc` that breaks when the Rust toolchain is upgraded or moved. Scoping
+# the flag to `spinel-rt` alone isn't possible -- Cargo has no per-crate
+# `rustflags`, and driving it via `cargo rustc` would differ from `cargo build`'s
+# fingerprint and rebuild the runtime on every alternation.
+[build]
+rustflags = ["-C", "prefer-dynamic"]

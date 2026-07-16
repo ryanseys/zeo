@@ -107,7 +107,19 @@ impl Runner {
         cmd.arg(&case.source)
             .arg("-o")
             .arg(&bin_path)
-            .env("RUST_BACKTRACE", "0");
+            .env("RUST_BACKTRACE", "0")
+            // Corpus programs are compiled, run once, and deleted, so they can
+            // link the runtime dynamically: 616K each instead of 9.8MB, which
+            // is what keeps the compiled-program cache near 1GB rather than the
+            // ~16GB this suite alone costs statically. `spinelc` defaults to
+            // static because a shipped binary has to stand on its own.
+            .env("SPINELC_LINK_DYNAMIC", "1")
+            // `prebuild` above already built everything these cases link, and
+            // spinelc's freshness check is memoized per-process -- worth nothing
+            // when it IS the process, once per case. Left on, each of ~1,800
+            // cases spawns its own `cargo build -p spinel-rt` (~84ms), and
+            // Cargo's exclusive build-directory lock makes them serialize.
+            .env("SPINELC_ASSUME_BUILT", "1");
         let compile = match run_with_timeout(cmd, None, self.compile_timeout) {
             Ok(e) => e,
             Err(e) => return harness_error(result, "compile", &e),

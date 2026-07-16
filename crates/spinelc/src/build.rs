@@ -1,12 +1,24 @@
 //! Compiles generated Rust source directly against the WORKSPACE's own
 //! already-built `spinel-rt` artifacts -- a single `rustc` invocation with
-//! `--extern spinel_rt=target/debug/libspinel_rt.rlib` and `-L
-//! dependency=target/debug/deps`, not a fresh throwaway `cargo` project.
+//! `--extern spinel_rt=<the built lib>` and `-L dependency=target/debug/deps`,
+//! not a fresh throwaway `cargo` project.
+//!
+//! Two things guard the identity of what comes out. `--crate-name` is pinned
+//! (see `GENERATED_CRATE_NAME`) and the temp source is content-addressed (see
+//! `generated_source_path`), because `rustc` otherwise derives the crate name
+//! from the source FILENAME and embeds that path as panic-location metadata --
+//! either one makes identical Ruby compile to different bytes. With both, the
+//! output is a pure function of the generated source, which is what lets
+//! `cache_path` hand back an earlier build instead of re-running `rustc`.
+//!
+//! Whether the runtime is linked statically or dynamically is the caller's
+//! choice (`Linkage`); it changes the output from a 9.8MB self-contained binary
+//! to a 616K one that needs `target/` on disk beside it.
 //!
 //! This deliberately does NOT enumerate `spinel-rt`'s own transitive
 //! dependencies (`indexmap`/`parking_lot`/`regex`/...) by hand: `rustc`
 //! resolves those automatically via the `-L` search path, using the crate
-//! metadata already embedded in `libspinel_rt.rlib` itself -- the generated
+//! metadata already embedded in the built `spinel-rt` itself -- the generated
 //! program only ever references `spinel_rt` directly (`use spinel_rt::...`),
 //! never its transitive deps by name, so only ONE `--extern` is ever needed.
 //! Confirmed both correct (a real generated program links and runs) and
@@ -66,6 +78,15 @@ static CRATES_BUILT: OnceLock<std::sync::Mutex<std::collections::HashMap<String,
 /// the same process (the common case: a test binary making hundreds of
 /// `build_binary` calls) is a cached map hit.
 fn ensure_crate_built(name: &str) -> Result<(), String> {
+    // A harness that already built the workspace can say so, and skip this
+    // entirely. The memoization below is per-PROCESS, which is worth nothing to
+    // a driver that runs `spinelc` as a subprocess per case: the conformance
+    // suite pays this 1,819 times at ~84ms each (~153s of CPU), and because
+    // Cargo takes an exclusive lock on the whole build directory, those calls
+    // serialize against each other instead of just being redundant.
+    if std::env::var_os("SPINELC_ASSUME_BUILT").is_some() {
+        return Ok(());
+    }
     let map = CRATES_BUILT.get_or_init(Default::default);
     let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(cached) = map.get(name) {
@@ -84,13 +105,66 @@ fn ensure_crate_built(name: &str) -> Result<(), String> {
     result
 }
 
-/// The built rlib for a workspace lib crate, erroring loudly if it isn't
-/// where the shared target dir says it should be.
-fn rlib_for(crate_name: &str) -> Result<PathBuf, String> {
+/// How a generated program links the runtime.
+///
+/// `Static` is the only shippable answer and so the default. A `Dynamic`
+/// program is NOT self-contained: it resolves `libspinel_rt.dylib` and
+/// `libstd.dylib` at run time by absolute paths baked in at link time, so
+/// `cargo clean` breaks every binary ever produced and it runs on no other
+/// machine. `spinelc foo.rb -o app` must keep producing a real native binary
+/// someone can just run.
+///
+/// The test harnesses choose `Dynamic`, because for them the tradeoff inverts:
+/// their programs are compiled, executed once, and thrown away, always
+/// alongside the `target/` that built them. It takes each one from 9.8MB to
+/// 616K (measured), which is the difference between a ~21GB compiled-program
+/// cache and a ~1.4GB one across the ~2,300 programs the suites build. It buys
+/// almost no time (~7%) -- this is a disk tradeoff, not a speed one.
+///
+/// Passed explicitly rather than read from the environment down here: the e2e
+/// harness calls this from a dozen `#[test]` threads at once, and a `set_var`
+/// racing a `var_os` is a real data race. The CLI reads the environment once,
+/// at startup, while still single-threaded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Linkage {
+    Static,
+    Dynamic,
+}
+
+impl Linkage {
+    /// The CLI's choice: static unless a harness driving `spinelc` as a
+    /// subprocess asked otherwise.
+    pub fn from_env() -> Self {
+        match std::env::var_os("SPINELC_LINK_DYNAMIC") {
+            Some(_) => Linkage::Dynamic,
+            None => Linkage::Static,
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        match self {
+            Linkage::Static => b"static;",
+            Linkage::Dynamic => b"dynamic;",
+        }
+    }
+}
+
+/// The built library a generated program should link against: the `dylib` when
+/// linking dynamically and the crate publishes one, else the `rlib`.
+///
+/// A crate without a `dylib` (any `[native]` package that hasn't asked for one)
+/// falls back to its rlib and links statically even in dynamic mode, which is
+/// fine -- `-C prefer-dynamic` is a preference, not a requirement.
+fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
     let underscored = crate_name.replace('-', "_");
-    let rlib = target_dir()
-        .join("debug")
-        .join(format!("lib{underscored}.rlib"));
+    let debug = target_dir().join("debug");
+    if linkage == Linkage::Dynamic {
+        let dylib = debug.join(format!("lib{underscored}.dylib"));
+        if dylib.exists() {
+            return Ok(dylib);
+        }
+    }
+    let rlib = debug.join(format!("lib{underscored}.rlib"));
     if !rlib.exists() {
         return Err(format!(
             "expected {} to exist after building {crate_name} -- was it built into a different target directory?",
@@ -100,8 +174,8 @@ fn rlib_for(crate_name: &str) -> Result<PathBuf, String> {
     Ok(rlib)
 }
 
-pub fn build_binary(rust_source: &str, output: &Path) -> Result<(), String> {
-    build_binary_with_deps(rust_source, &[], output)
+pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Result<(), String> {
+    build_binary_with_deps(rust_source, &[], output, linkage)
 }
 
 /// `build_binary` plus the extra workspace lib crates (`native_deps`, cargo
@@ -112,16 +186,17 @@ pub fn build_binary_with_deps(
     rust_source: &str,
     native_deps: &[String],
     output: &Path,
+    linkage: Linkage,
 ) -> Result<(), String> {
     ensure_crate_built("spinel-rt")?;
     for dep in native_deps {
         ensure_crate_built(dep)?;
     }
 
-    let rlib = rlib_for("spinel-rt")?;
+    let runtime = linkable_for("spinel-rt", linkage)?;
     let deps_dir = target_dir().join("debug").join("deps");
 
-    let cached = cache_path(rust_source, native_deps)?;
+    let cached = cache_path(rust_source, native_deps, linkage)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -157,13 +232,21 @@ pub fn build_binary_with_deps(
         .arg("-o")
         .arg(&staged)
         .arg("--extern")
-        .arg(format!("spinel_rt={}", rlib.display()))
+        .arg(format!("spinel_rt={}", runtime.display()))
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
     for dep in native_deps {
-        let dep_rlib = rlib_for(dep)?;
+        let dep_lib = linkable_for(dep, linkage)?;
         cmd.arg("--extern")
-            .arg(format!("{}={}", dep.replace('-', "_"), dep_rlib.display()));
+            .arg(format!("{}={}", dep.replace('-', "_"), dep_lib.display()));
+    }
+    if linkage == Linkage::Dynamic {
+        // Matches how the workspace builds the dylib (`.cargo/config.toml`).
+        // Required rather than cosmetic: a Rust `dylib` embeds its own `std`
+        // unless built this way, and a program linking it would then carry a
+        // second copy -- rustc rejects that outright ("cannot satisfy
+        // dependencies so `std` only shows up once").
+        cmd.arg("-C").arg("prefer-dynamic");
     }
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
@@ -203,11 +286,19 @@ fn cache_dir() -> PathBuf {
 /// the 32MB rlib could not be amortized and would cost more than it saves.
 /// Cargo does not touch mtimes on a no-op rebuild, so this only
 /// over-invalidates when the runtime genuinely got rebuilt.
-fn cache_path(rust_source: &str, native_deps: &[String]) -> Result<PathBuf, String> {
-    let mut generation = 0xcbf2_9ce4_8422_2325;
+fn cache_path(
+    rust_source: &str,
+    native_deps: &[String],
+    linkage: Linkage,
+) -> Result<PathBuf, String> {
+    // Linkage is part of the generation, not just a detail: the same source
+    // compiles to a 9.8MB self-contained binary or a 616K one that needs the
+    // dylib, and handing a caller the wrong kind would either bloat their
+    // output or hand them something that dies in `dyld`.
+    let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, linkage.tag());
     for name in std::iter::once("spinel-rt").chain(native_deps.iter().map(String::as_str)) {
-        let rlib = rlib_for(name)?;
-        let meta = std::fs::metadata(&rlib).map_err(|e| format!("stat {}: {e}", rlib.display()))?;
+        let lib = linkable_for(name, linkage)?;
+        let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
         let mtime = meta
             .modified()
             .ok()

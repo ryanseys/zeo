@@ -103,7 +103,12 @@ fn run() -> Result<(), String> {
         p.set_extension("");
         p
     });
-    spinelc::build::build_binary_with_deps(&compiled.rust_source, &compiled.native_deps, &output)
+    spinelc::build::build_binary_with_deps(
+        &compiled.rust_source,
+        &compiled.native_deps,
+        &output,
+        spinelc::build::Linkage::from_env(),
+    )
 }
 
 fn main() -> ExitCode {
