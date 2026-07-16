@@ -4871,14 +4871,77 @@ fn file_line_and_dir_name_the_file_the_code_was_written_in() {
 }
 
 #[test]
-fn encoding_literal_is_a_clean_rejection() {
-    // `__ENCODING__` would be `Encoding::UTF_8`, but no `Encoding` class
-    // exists yet to answer with -- it is the encoding phase's deliverable.
-    // Rejected rather than stubbed: a placeholder would pre-empt that
-    // design, and the constant is only useful if it behaves like one.
-    let err = spinelc::compile_to_rust("p __ENCODING__\n").unwrap_err();
-    assert!(err.contains("__ENCODING__"), "{err}");
-    assert!(err.contains("Encoding"), "{err}");
+fn encoding_surface_reports_transcodes_and_raises() {
+    // The Encoding engine: a string is bytes + an encoding, queryable and
+    // transcodable, with the Encoding class and its constants. `__ENCODING__`
+    // answers the script encoding (UTF-8). Cross-checked against ruby 4.0.5.
+    let result = run_ruby(
+        r##"
+        p "hello".encoding
+        p __ENCODING__
+        p "€".bytesize
+        p "€".length
+        p "hello".ascii_only?
+        p "€".ascii_only?
+        p Encoding::UTF_8.name
+        p Encoding::ASCII_8BIT.names
+        p Encoding.find("BINARY")
+        p Encoding.default_external
+        raw = "€".b
+        p raw.encoding
+        p raw.length
+        mis = "€".dup.force_encoding("US-ASCII")
+        p mis.valid_encoding?
+        latin = "café".encode(Encoding::ISO_8859_1)
+        p latin.encoding
+        p latin.bytes
+        p latin.encode(Encoding::UTF_8) == "café"
+        p "café".encode(Encoding::US_ASCII, undef: :replace)
+        p "a<b>&c".encode(Encoding::US_ASCII, xml: :text)
+        begin
+          "café".encode(Encoding::US_ASCII)
+        rescue Encoding::UndefinedConversionError => e
+          puts "raised #{e.class}"
+        end
+        p :hi.encoding
+        p :café.encoding
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<Encoding:UTF-8>\n#<Encoding:UTF-8>\n3\n1\ntrue\nfalse\n\
+         \"UTF-8\"\n[\"ASCII-8BIT\", \"BINARY\"]\n\
+         #<Encoding:BINARY (ASCII-8BIT)>\n#<Encoding:UTF-8>\n\
+         #<Encoding:BINARY (ASCII-8BIT)>\n3\nfalse\n\
+         #<Encoding:ISO-8859-1>\n[99, 97, 102, 233]\ntrue\n\
+         \"caf?\"\n\"a&lt;b&gt;&amp;c\"\n\
+         raised Encoding::UndefinedConversionError\n\
+         #<Encoding:US-ASCII>\n#<Encoding:UTF-8>\n"
+    );
+}
+
+#[test]
+fn broken_and_binary_strings_inspect_with_hex_escapes() {
+    // A byte that isn't a character in the string's encoding renders as
+    // \xNN, and the cross-encoding equality rule keeps ASCII-only strings
+    // equal across encodings. Cross-checked against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        p "abc".b == "abc"
+        p "abc".b.encoding
+        s = "\xff\x80".b
+        p s.valid_encoding?
+        puts s.inspect
+        puts "caf\xe9".force_encoding("ISO-8859-1").inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\n#<Encoding:BINARY (ASCII-8BIT)>\ntrue\n\
+         \"\\xFF\\x80\"\n\"caf\\xE9\"\n"
+    );
 }
 
 #[test]

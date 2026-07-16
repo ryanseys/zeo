@@ -150,7 +150,7 @@ builtin_methods! {
         arity!(args, 1..=2);
         let sym = match &args[0] {
             RubyValue::Symbol(s) => *s,
-            RubyValue::Str(s) => Symbol::intern(&s.lock()),
+            RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
             other => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
@@ -180,7 +180,7 @@ builtin_methods! {
         let meth = match args.first() {
             None => "each".to_string(),
             Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
-            Some(RubyValue::Str(s)) => s.lock().clone(),
+            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             Some(other) => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
@@ -231,7 +231,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         }
         RubyValue::Rational(r) => Ok(crate::builtins::integer::int_value(&r.num / &r.den)),
         RubyValue::Str(s) => {
-            let text = s.lock().clone();
+            let text = s.lock().to_utf8_lossy().into_owned();
             parse_integer_strict(&text, base).ok_or_else(|| {
                 crate::dispatch::raise_error(
                     "ArgumentError",
@@ -305,7 +305,7 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             Ok(RubyValue::Float(crate::builtins::numeric::num_to_f64_unchecked(&args[0])))
         }
         RubyValue::Str(s) => {
-            let text = s.lock().clone();
+            let text = s.lock().to_utf8_lossy().into_owned();
             let clean: String = text.trim().chars().filter(|c| *c != '_').collect();
             clean
                 .parse::<f64>()
@@ -489,7 +489,7 @@ pub fn kernel_format(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             "no format string given".to_string(),
         ));
     };
-    let template = template.lock().clone();
+    let template = template.lock().to_utf8_lossy().into_owned();
     Ok(RubyValue::Str(crate::string_new(
         crate::builtins::format::sprintf(&template, rest)?,
     )))
@@ -651,10 +651,10 @@ mod tests {
     fn to_s_and_inspect_render_like_puts_and_p() {
         let s = to_s(&RubyValue::Nil, &[], None).unwrap();
         let RubyValue::Str(s) = s else { panic!() };
-        assert_eq!(&*s.lock(), "");
+        assert_eq!(&*s.lock().to_utf8_lossy(), "");
         let i = inspect(&RubyValue::Nil, &[], None).unwrap();
         let RubyValue::Str(i) = i else { panic!() };
-        assert_eq!(&*i.lock(), "nil");
+        assert_eq!(&*i.lock().to_utf8_lossy(), "nil");
     }
 
     #[test]

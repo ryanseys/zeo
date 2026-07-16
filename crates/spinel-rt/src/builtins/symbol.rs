@@ -39,6 +39,11 @@ builtin_methods! {
         arity!(args, 0);
         Ok(recv.clone())
     }
+    "encoding" => fn encoding_m(recv, args, _block) {
+        arity!(args, 0);
+        let id = crate::builtins::encoding::computed_encoding_of(&recv_sym(recv).name());
+        Ok(crate::builtins::encoding::encoding_value(id))
+    }
     "inspect" => fn inspect(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(format!(":{}", recv_sym(recv).name()))))

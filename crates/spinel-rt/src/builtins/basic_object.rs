@@ -45,7 +45,7 @@ builtin_methods! {
         };
         let sym = match name_arg {
             RubyValue::Symbol(s) => *s,
-            RubyValue::Str(s) => Symbol::intern(&s.lock()),
+            RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
             other => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",

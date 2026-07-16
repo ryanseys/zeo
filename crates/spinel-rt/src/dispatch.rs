@@ -710,7 +710,7 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
 pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
     match v {
         RubyValue::Symbol(s) => Ok(*s),
-        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock())),
+        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
         other => Err(raise_error(
             "TypeError",
             format!("{} is not a symbol nor a string", other.inspect_string()),

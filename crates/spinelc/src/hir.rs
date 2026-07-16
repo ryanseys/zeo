@@ -762,6 +762,11 @@ pub struct RescueClause {
 /// error, not silently truncated to its last statement.
 pub enum StrPart {
     Lit(String),
+    /// A literal segment whose bytes are NOT valid UTF-8 -- a `"\xNN"`
+    /// escape that doesn't form a character (Ruby tags such a literal
+    /// ASCII-8BIT). Kept as raw bytes so the encoding engine sees them
+    /// verbatim instead of the `String::from_utf8_lossy` U+FFFD mangling.
+    Bytes(Vec<u8>),
     Interp(NodeId),
 }
 

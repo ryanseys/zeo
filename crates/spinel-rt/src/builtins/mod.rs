@@ -39,6 +39,7 @@ pub(crate) mod method_obj;
 pub(crate) mod matchdata;
 pub(crate) mod math;
 pub(crate) mod dir;
+pub(crate) mod encoding;
 pub(crate) mod env;
 pub(crate) mod file;
 pub(crate) mod gc;
@@ -93,6 +94,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::METHOD_CLASS => method_obj::lookup,
         spinel_abi::FIBER_CLASS => fiber::lookup,
         spinel_abi::TIME_CLASS => time::lookup,
+        spinel_abi::ENCODING_CLASS => encoding::lookup,
         _ => return None,
     })
 }
@@ -121,6 +123,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::TIME_CLASS => time::lookup_class,
         spinel_abi::PROCESS_CLASS => process::lookup_class,
         spinel_abi::GC_CLASS => gc::lookup_class,
+        spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         _ => return None,
     })
 }

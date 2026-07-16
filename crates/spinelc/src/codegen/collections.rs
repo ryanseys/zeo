@@ -142,8 +142,41 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
     if let [StrPart::Lit(s)] = parts {
         return quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) };
     }
+    if let [StrPart::Bytes(b)] = parts {
+        let bytes = byte_literals(b);
+        return quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_from_bytes(
+                vec![#(#bytes),*],
+                spinel_rt::encoding::ASCII_8BIT,
+            ))
+        };
+    }
+    // Any raw-byte segment makes the WHOLE literal byte-built (ASCII-8BIT,
+    // Ruby's rule); a purely-UTF-8 literal keeps the readable String path.
+    if parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
+        let pieces = parts.iter().map(|p| match p {
+            StrPart::Lit(s) => quote! { __b.extend_from_slice(#s.as_bytes()); },
+            StrPart::Bytes(b) => {
+                let bytes = byte_literals(b);
+                quote! { __b.extend_from_slice(&[#(#bytes),*]); }
+            }
+            StrPart::Interp(n) => {
+                let e = super::expr::box_if_object_typed(cx, *n, emit_expr(cx, *n));
+                quote! { __b.extend_from_slice((#e).to_display_string().as_bytes()); }
+            }
+        });
+        return quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_from_bytes({
+                #[allow(unused_mut)]
+                let mut __b: Vec<u8> = Vec::new();
+                #(#pieces)*
+                __b
+            }, spinel_rt::encoding::ASCII_8BIT))
+        };
+    }
     let pieces = parts.iter().map(|p| match p {
         StrPart::Lit(s) => quote! { __s.push_str(#s); },
+        StrPart::Bytes(_) => unreachable!("byte segments took the byte-built path above"),
         StrPart::Interp(n) => {
             let e = emit_expr(cx, *n);
             // Boxed if Object-typed (Phase 16.2): interpolation reaches
@@ -160,6 +193,11 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
             __s
         }))
     }
+}
+
+/// The `u8` token literals for a raw-byte string segment.
+fn byte_literals(bytes: &[u8]) -> Vec<TokenStream> {
+    bytes.iter().map(|b| quote! { #b }).collect()
 }
 
 /// `/pattern/flags` / `%r{pattern}flags`, possibly interpolated -- the
@@ -179,6 +217,12 @@ pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> Token
     } else {
         let pieces = parts.iter().map(|p| match p {
             StrPart::Lit(s) => quote! { __pat.push_str(#s); },
+            // A regexp source is UTF-8; a stray raw-byte segment is rendered
+            // lossily (non-UTF-8 patterns aren't otherwise modeled).
+            StrPart::Bytes(b) => {
+                let s = String::from_utf8_lossy(b).into_owned();
+                quote! { __pat.push_str(#s); }
+            }
             StrPart::Interp(n) => {
                 let e = emit_expr(cx, *n);
                 quote! { __pat.push_str(&(#e).to_display_string()); }

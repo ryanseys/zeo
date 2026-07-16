@@ -36,8 +36,8 @@ builtin_methods! {
             // (CRuby's rule, incl. the length guard: `"a".."e"` walks
             // b/c/d/e; a longer successor stops the walk).
             (RubyValue::Str(s), RubyValue::Str(e)) => {
-                let end = e.lock().clone();
-                let mut cur = s.lock().clone();
+                let end = e.lock().to_utf8_lossy().into_owned();
+                let mut cur = s.lock().to_utf8_lossy().into_owned();
                 loop {
                     if cur.len() > end.len() || (cur.len() == end.len() && cur > end) {
                         break;

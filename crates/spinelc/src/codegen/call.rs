@@ -389,7 +389,15 @@ fn try_regexp_dispatch(
         }
         let e = emit_expr(cx, arg_id);
         let var = format_ident!("{ident}");
-        Some(quote! { let #var = (#e).as_str_unchecked(); let #var = #var.lock(); })
+        // Lock, then take the UTF-8 view -- the regexp engine consumes a
+        // `&str`, and a `Cow<str>` derefs to one. For valid UTF-8 (every
+        // string, until non-UTF-8 encodings enter the picture) this is the
+        // exact bytes.
+        Some(quote! {
+            let #var = (#e).as_str_unchecked();
+            let #var = #var.lock();
+            let #var = #var.to_utf8_lossy();
+        })
     };
 
     if ty == TyKind::Regexp {
@@ -444,7 +452,11 @@ fn try_regexp_dispatch(
 
         if pattern_is_regexp {
             let re_expr = emit_expr(cx, args[0]);
-            let haystack_guard = quote! { let __h = (#recv_expr).as_str_unchecked(); let __h = __h.lock(); };
+            let haystack_guard = quote! {
+                let __h = (#recv_expr).as_str_unchecked();
+                let __h = __h.lock();
+                let __h = __h.to_utf8_lossy();
+            };
             match (name, args.len()) {
                 ("=~", 1) => {
                     return Some(quote! {
@@ -479,14 +491,14 @@ fn try_regexp_dispatch(
                 ("sub", 2) if infer(cx, args[1]) == TyKind::Str => {
                     let repl_expr = emit_expr(cx, args[1]);
                     return Some(quote! {
-                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock();
+                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock(); let __r = __r.to_utf8_lossy();
                           spinel_rt::regexp_sub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
                     });
                 }
                 ("gsub", 2) if infer(cx, args[1]) == TyKind::Str => {
                     let repl_expr = emit_expr(cx, args[1]);
                     return Some(quote! {
-                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock();
+                        { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock(); let __r = __r.to_utf8_lossy();
                           spinel_rt::regexp_gsub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
                     });
                 }

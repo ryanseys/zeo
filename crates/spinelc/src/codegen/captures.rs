@@ -235,7 +235,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => node_contains_escaping_block(compiler, *n),
-            StrPart::Lit(_) => false,
+            StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
         HirNode::CaseIn { subject, arms, else_body } => {
             node_contains_escaping_block(compiler, *subject)
@@ -419,7 +419,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
-            StrPart::Lit(_) => false,
+            StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_begin(compiler, body),
         HirNode::Retry

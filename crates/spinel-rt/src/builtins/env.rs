@@ -69,7 +69,7 @@ pub fn seed_env() {
 /// TypeError for a non-String here (`ENV[:PATH]` is a TypeError, not nil).
 fn key(v: &RubyValue, method: &str) -> Result<String, crate::Signal> {
     match v {
-        RubyValue::Str(s) => Ok(s.lock().clone()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
             format!(

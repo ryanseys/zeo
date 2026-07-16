@@ -128,7 +128,7 @@ mod tests {
         assert!(matches!(r, RubyValue::Bool(true)));
         let r = comparable_send(&s("m"), "clamp", &[s("a"), s("f")]).unwrap().unwrap();
         let RubyValue::Str(clamped) = r else { panic!() };
-        assert_eq!(&*clamped.lock(), "f");
+        assert_eq!(&*clamped.lock().to_utf8_lossy(), "f");
     }
 
     #[test]

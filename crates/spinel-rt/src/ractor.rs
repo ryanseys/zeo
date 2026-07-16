@@ -270,7 +270,7 @@ fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
         return Ok(v.clone());
     }
     match v {
-        RubyValue::Str(s) => Ok(RubyValue::Str(crate::string_new(s.lock().clone()))),
+        RubyValue::Str(s) => Ok(RubyValue::Str(crate::string_new(s.lock().to_utf8_lossy().into_owned()))),
         RubyValue::Array(a) => {
             let copied: Vec<RubyValue> =
                 a.lock().iter().map(cross_boundary).collect::<Result<_, _>>()?;

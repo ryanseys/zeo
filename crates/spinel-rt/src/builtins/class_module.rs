@@ -102,7 +102,7 @@ builtin_methods! {
 fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     let raw = match v {
         RubyValue::Symbol(s) => s.name().to_string(),
-        RubyValue::Str(s) => s.lock().clone(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => {
             return Err(crate::dispatch::raise_error(
                 "TypeError",

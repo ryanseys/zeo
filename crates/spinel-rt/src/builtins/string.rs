@@ -129,18 +129,6 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
-/// A `[]`-style char-index extraction shared by `[]`/`slice`/`index`
-/// helpers: `chars` is the receiver's chars, negative starts count from
-/// the end.
-fn char_slice(chars: &[char], start: i64, len: i64) -> Option<String> {
-    let n = chars.len() as i64;
-    let start = if start < 0 { start + n } else { start };
-    if start < 0 || start > n || len < 0 {
-        return None;
-    }
-    let end = (start + len).min(n);
-    Some(chars[start as usize..end as usize].iter().collect())
-}
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -153,19 +141,20 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Bool(crate::string_len(recv_str!(recv)) == 0))
     }
-    // Byte accessors over the UTF-8 representation (the plan's encoding
-    // engine gives these real per-encoding semantics later; UTF-8 bytes ARE
-    // the bytes until then).
+    // Byte-level accessors, honoring the string's real encoding (`bytes`
+    // yields the raw bytes; `bytesize` counts them, distinct from the
+    // char-counting `length`).
     "bytesize" => fn bytesize(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Int(recv_str!(recv).lock().len() as i64))
+        Ok(RubyValue::Int(recv_str!(recv).lock().bytesize() as i64))
     }
     "bytes" => fn bytes(recv, args, _block) {
         arity!(args, 0);
         let out = recv_str!(recv)
             .lock()
             .bytes()
-            .map(|b| RubyValue::Int(b as i64))
+            .iter()
+            .map(|b| RubyValue::Int(*b as i64))
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
@@ -177,7 +166,7 @@ builtin_methods! {
                 "no block given (yield)".to_string(),
             ));
         };
-        let bytes: Vec<u8> = recv_str!(recv).lock().bytes().collect();
+        let bytes: Vec<u8> = recv_str!(recv).lock().bytes().to_vec();
         for b in bytes {
             p.call(&[RubyValue::Int(b as i64)])?;
         }
@@ -186,18 +175,81 @@ builtin_methods! {
     "getbyte" => fn getbyte(recv, args, _block) {
         arity!(args, 1);
         let i = arg_int!(args, 0);
-        let s = recv_str!(recv).lock().clone();
-        let idx = if i < 0 { i + s.len() as i64 } else { i };
-        Ok(if idx >= 0 && (idx as usize) < s.len() {
-            RubyValue::Int(s.as_bytes()[idx as usize] as i64)
+        let s = recv_str!(recv).lock();
+        let idx = if i < 0 { i + s.bytesize() as i64 } else { i };
+        Ok(if idx >= 0 && (idx as usize) < s.bytesize() {
+            RubyValue::Int(s.getbyte(idx as usize).unwrap() as i64)
         } else {
             RubyValue::Nil
         })
     }
+    "setbyte" => fn setbyte(recv, args, _block) {
+        arity!(args, 2);
+        let (i, b) = (arg_int!(args, 0), arg_int!(args, 1));
+        let s = recv_str!(recv);
+        let len = s.lock().bytesize() as i64;
+        let idx = if i < 0 { i + len } else { i };
+        if idx < 0 || idx >= len {
+            return Err(crate::dispatch::raise_error("IndexError", format!("index {i} out of string")));
+        }
+        s.lock().setbyte(idx as usize, (b & 0xff) as u8);
+        Ok(args[1].clone())
+    }
+    // --- Encoding surface -------------------------------------------------
+    "encoding" => fn encoding_m(recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::builtins::encoding::encoding_value(recv_str!(recv).lock().encoding()))
+    }
+    // `force_encoding` re-TAGS the bytes without touching them; `b` COPIES
+    // them under ASCII-8BIT. Both return a value the caller can chain.
+    "force_encoding" => fn force_encoding(recv, args, _block) {
+        arity!(args, 1);
+        let id = crate::builtins::encoding::arg_encoding(&args[0])?;
+        recv_str!(recv).lock().set_encoding(id);
+        Ok(recv.clone())
+    }
+    "b" => fn to_binary(recv, args, _block) {
+        arity!(args, 0);
+        let bytes = recv_str!(recv).lock().bytes().to_vec();
+        Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
+    }
+    "ascii_only?" => fn ascii_only(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(recv_str!(recv).lock().ascii_only()))
+    }
+    "valid_encoding?" => fn valid_encoding(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(recv_str!(recv).lock().valid_encoding()))
+    }
+    "encode" => fn encode(recv, args, _block) {
+        encode_impl(recv, args, false)
+    }
+    "encode!" => fn encode_bang(recv, args, _block) {
+        encode_impl(recv, args, true)
+    }
+    "scrub" => fn scrub(recv, args, _block) {
+        // Rewrite every invalid byte sequence to the replacement (an explicit
+        // String argument, else U+FFFD for a Unicode encoding / "?" otherwise).
+        arity!(args, 0..=1);
+        let repl = match args.first() {
+            Some(RubyValue::Str(r)) => Some(r.lock().to_utf8_lossy().into_owned()),
+            _ => None,
+        };
+        let s = recv_str!(recv).lock();
+        let mut opts = crate::encoding::TranscodeOptions { invalid_replace: true, ..Default::default() };
+        opts.replace = repl;
+        // Scrub = transcode to self's own encoding, replacing invalids.
+        let out = crate::encoding::transcode(s.bytes(), s.encoding(), s.encoding(), &opts, None)
+            .map_err(|e| e.into_signal())?;
+        Ok(RubyValue::Str(crate::string_from_bytes(out, s.encoding())))
+    }
     "include?" => fn include_p(recv, args, _block) {
         arity!(args, 1);
         let needle = arg_str!(args, 0);
-        let found = recv_str!(recv).lock().contains(&*needle.lock());
+        let found = recv_str!(recv)
+            .lock()
+            .to_utf8_lossy()
+            .contains(&*needle.lock().to_utf8_lossy());
         Ok(RubyValue::Bool(found))
     }
     "+" => fn plus(recv, args, _block) {
@@ -210,7 +262,7 @@ builtin_methods! {
     "<<" | "concat" => fn concat(recv, args, _block) {
         arity!(args, 1);
         let addition = match &args[0] {
-            RubyValue::Str(s) => s.lock().clone(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             // `str << 65` appends the CODEPOINT's character.
             RubyValue::Int(i) => match u32::try_from(*i).ok().and_then(char::from_u32) {
                 Some(c) => c.to_string(),
@@ -243,7 +295,7 @@ builtin_methods! {
                 "negative argument".to_string(),
             ));
         }
-        Ok(str_value(recv_str!(recv).lock().repeat(n as usize)))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().repeat(n as usize)))
     }
     "to_s" | "to_str" => fn to_s(recv, args, _block) {
         arity!(args, 0);
@@ -257,7 +309,7 @@ builtin_methods! {
         let ord = {
             let a = recv_str!(recv).lock();
             let b = other.lock();
-            a.cmp(&b)
+            a.to_utf8_lossy().cmp(&b.to_utf8_lossy())
         };
         Ok(RubyValue::Int(ord as i64))
     }
@@ -265,33 +317,36 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
+    // Casing is encoding-aware (`StrBuf::*cased`): full Unicode for UTF-8
+    // (unchanged), ASCII-only for BINARY/US-ASCII, Latin-1's own case map for
+    // ISO-8859-1 -- and the result keeps the receiver's encoding.
     "upcase" => fn upcase(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_uppercase()))
+        Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().upcased())))
     }
     "downcase" => fn downcase(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_lowercase()))
+        Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().downcased())))
     }
     "capitalize" => fn capitalize(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(capitalize_str(&recv_str!(recv).lock())))
+        Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().capitalized())))
     }
     "swapcase" => fn swapcase(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(swapcase_str(&recv_str!(recv).lock())))
+        Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().swapcased())))
     }
     "strip" => fn strip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().trim().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim().to_string()))
     }
     "lstrip" => fn lstrip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().trim_start().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_start().to_string()))
     }
     "rstrip" => fn rstrip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().trim_end().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end().to_string()))
     }
     "chars" => fn chars(recv, args, _block) {
         arity!(args, 0);
@@ -306,7 +361,7 @@ builtin_methods! {
     "lines" => fn lines(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(split_lines(
-            &recv_str!(recv).lock(),
+            &recv_str!(recv).lock().to_utf8_lossy(),
         ))))
     }
     "each_char" => fn each_char(recv, args, block) {
@@ -324,8 +379,11 @@ builtin_methods! {
         arity!(args, 0..=1);
         let p = block_or_enum!(recv, "each_line", args, block);
         let ls = match args.first() {
-            Some(RubyValue::Str(sep)) => split_lines_sep(&recv_str!(recv).lock(), &sep.lock()),
-            _ => split_lines(&recv_str!(recv).lock()),
+            Some(RubyValue::Str(sep)) => split_lines_sep(
+                &recv_str!(recv).lock().to_utf8_lossy(),
+                &sep.lock().to_utf8_lossy(),
+            ),
+            _ => split_lines(&recv_str!(recv).lock().to_utf8_lossy()),
         };
         for l in ls {
             p.call(&[l])?;
@@ -339,7 +397,7 @@ builtin_methods! {
     // them (`0`/omitted).
     "split" => fn split(recv, args, _block) {
         arity!(args, 0..=2);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let limit = match args.get(1) {
             Some(RubyValue::Int(n)) => *n,
             Some(RubyValue::Nil) | None => 0,
@@ -351,7 +409,7 @@ builtin_methods! {
         match args.first() {
             None | Some(RubyValue::Nil) => Ok(str_array(awk_split(&text, limit))),
             Some(RubyValue::Str(sep)) => {
-                let sep = sep.lock().clone();
+                let sep = sep.lock().to_utf8_lossy().into_owned();
                 if sep == " " {
                     // The one magic separator: a single space means
                     // whitespace-run splitting, real Ruby's awk rule.
@@ -381,10 +439,10 @@ builtin_methods! {
     }
     "chomp" => fn chomp(recv, args, _block) {
         arity!(args, 0..=1);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = match args.first() {
             Some(RubyValue::Str(suffix)) => {
-                let suffix = suffix.lock().clone();
+                let suffix = suffix.lock().to_utf8_lossy().into_owned();
                 text.strip_suffix(&suffix).unwrap_or(&text).to_string()
             }
             _ => text
@@ -398,7 +456,7 @@ builtin_methods! {
     }
     "chop" => fn chop(recv, args, _block) {
         arity!(args, 0);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let mut cs: Vec<char> = text.chars().collect();
         if text.ends_with("\r\n") {
             cs.truncate(cs.len() - 2);
@@ -409,14 +467,14 @@ builtin_methods! {
     }
     "reverse" => fn reverse(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().chars().rev().collect()))
+        Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().reversed())))
     }
     "index" => fn index(recv, args, _block) {
         arity!(args, 1);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         match &args[0] {
             RubyValue::Str(needle) => {
-                let needle = needle.lock().clone();
+                let needle = needle.lock().to_utf8_lossy().into_owned();
                 Ok(match text.find(&needle) {
                     Some(byte_pos) => RubyValue::Int(text[..byte_pos].chars().count() as i64),
                     None => RubyValue::Nil,
@@ -437,7 +495,7 @@ builtin_methods! {
     // string when omitted), or nil.
     "rindex" => fn rindex(recv, args, _block) {
         arity!(args, 1..=2);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let clen = text.chars().count() as i64;
         let before = match args.get(1) {
             Some(v) => {
@@ -453,7 +511,7 @@ builtin_methods! {
         match &args[0] {
             RubyValue::Regexp(re) => Ok(crate::regexp_rindex(re, &text, before)),
             RubyValue::Str(needle) => {
-                let needle = needle.lock().clone();
+                let needle = needle.lock().to_utf8_lossy().into_owned();
                 // Search only within the prefix up to (and including a needle
                 // starting at) `before`.
                 let cutoff = before.map_or(text.len(), |p| {
@@ -473,38 +531,30 @@ builtin_methods! {
             )),
         }
     }
-    // The `[]`/`slice` forms: Int, (Int, Int), Range, String.
+    // The `[]`/`slice` forms: Int, (Int, Int), Range, String -- all
+    // char-indexed and encoding-preserving (a substring of a BINARY string
+    // stays BINARY; a UTF-8 multibyte char is one index).
     "[]" | "slice" => fn index_op(recv, args, _block) {
         arity!(args, 1..=2);
-        let text = recv_str!(recv).lock().clone();
-        let cs: Vec<char> = text.chars().collect();
+        let s = recv_str!(recv).lock();
+        let n = s.char_len() as i64;
+        let wrap = |buf: Option<crate::encoding::StrBuf>| match buf {
+            Some(b) => RubyValue::Str(crate::string_wrap(b)),
+            None => RubyValue::Nil,
+        };
         if args.len() == 2 {
             let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
-            return Ok(match char_slice(&cs, start, len) {
-                Some(s) => str_value(s),
-                None => RubyValue::Nil,
-            });
+            return Ok(wrap(s.char_substr(start, len)));
         }
         match &args[0] {
-            RubyValue::Int(i) => {
-                let n = cs.len() as i64;
-                let i = if *i < 0 { i + n } else { *i };
-                Ok(if (0..n).contains(&i) {
-                    str_value(cs[i as usize].to_string())
-                } else {
-                    RubyValue::Nil
-                })
-            }
+            RubyValue::Int(i) => Ok(wrap(s.char_at(*i))),
             RubyValue::Range(start, end, exclusive) => {
-                let n = cs.len() as i64;
-                let s = match start.as_deref() {
-                    Some(RubyValue::Int(v)) => {
-                        if *v < 0 { v + n } else { *v }
-                    }
+                let start_i = match start.as_deref() {
+                    Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
                     None => 0,
                     _ => return Ok(RubyValue::Nil),
                 };
-                let e = match end.as_deref() {
+                let end_i = match end.as_deref() {
                     Some(RubyValue::Int(v)) => {
                         let v = if *v < 0 { v + n } else { *v };
                         if *exclusive { v - 1 } else { v }
@@ -512,15 +562,12 @@ builtin_methods! {
                     None => n - 1,
                     _ => return Ok(RubyValue::Nil),
                 };
-                Ok(match char_slice(&cs, s, (e - s + 1).max(0)) {
-                    Some(sub) => str_value(sub),
-                    None => RubyValue::Nil,
-                })
+                Ok(wrap(s.char_substr(start_i, (end_i - start_i + 1).max(0))))
             }
             RubyValue::Str(sub) => {
-                let sub = sub.lock().clone();
-                Ok(if text.contains(&sub) {
-                    str_value(sub)
+                let needle = sub.lock().to_utf8_lossy().into_owned();
+                Ok(if s.to_utf8_lossy().contains(&needle) {
+                    str_value(needle)
                 } else {
                     RubyValue::Nil
                 })
@@ -542,7 +589,7 @@ builtin_methods! {
         sub_gsub(recv, args, block, true)
     }
     "start_with?" => fn start_with_p(recv, args, _block) {
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
             let RubyValue::Str(prefix) = a else {
                 return Err(crate::dispatch::raise_error(
@@ -553,14 +600,14 @@ builtin_methods! {
                     ),
                 ));
             };
-            if text.starts_with(&*prefix.lock()) {
+            if text.starts_with(&*prefix.lock().to_utf8_lossy()) {
                 return Ok(RubyValue::Bool(true));
             }
         }
         Ok(RubyValue::Bool(false))
     }
     "end_with?" => fn end_with_p(recv, args, _block) {
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
             let RubyValue::Str(suffix) = a else {
                 return Err(crate::dispatch::raise_error(
@@ -571,7 +618,7 @@ builtin_methods! {
                     ),
                 ));
             };
-            if text.ends_with(&*suffix.lock()) {
+            if text.ends_with(&*suffix.lock().to_utf8_lossy()) {
                 return Ok(RubyValue::Bool(true));
             }
         }
@@ -581,8 +628,8 @@ builtin_methods! {
     // last character (CRuby's rule).
     "tr" => fn tr(recv, args, _block) {
         arity!(args, 2);
-        let from = expand_charset(&arg_str!(args, 0).lock());
-        let to = expand_charset(&arg_str!(args, 1).lock());
+        let from = expand_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
+        let to = expand_charset(&arg_str!(args, 1).lock().to_utf8_lossy());
         let out = recv_str!(recv)
             .lock()
             .chars()
@@ -610,7 +657,7 @@ builtin_methods! {
         let set = args
             .first()
             .map(|a| match a {
-                RubyValue::Str(s) => expand_charset(&s.lock()),
+                RubyValue::Str(s) => expand_charset(&s.lock().to_utf8_lossy()),
                 _ => Vec::new(),
             });
         let mut out = String::new();
@@ -655,12 +702,12 @@ builtin_methods! {
             }
             None => 10,
         };
-        Ok(lenient_to_i(&recv_str!(recv).lock(), base))
+        Ok(lenient_to_i(&recv_str!(recv).lock().to_utf8_lossy(), base))
     }
     // Lenient like `to_i`: the longest valid leading float, else 0.0.
     "to_f" => fn to_f(recv, args, _block) {
         arity!(args, 0);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let t = text.trim_start();
         let mut end = 0;
         for (i, _) in t.char_indices() {
@@ -684,12 +731,12 @@ builtin_methods! {
     "to_sym" | "intern" => fn to_sym(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(crate::Symbol::intern(
-            &recv_str!(recv).lock(),
+            &recv_str!(recv).lock().to_utf8_lossy(),
         )))
     }
     "succ" | "next" => fn succ(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(succ_str(&recv_str!(recv).lock())))
+        Ok(str_value(succ_str(&recv_str!(recv).lock().to_utf8_lossy())))
     }
     "center" => fn center(recv, args, _block) {
         arity!(args, 1..=2)
@@ -707,10 +754,10 @@ builtin_methods! {
     "insert" => fn insert(recv, args, _block) {
         arity!(args, 2);
         let at = arg_int!(args, 0);
-        let addition = arg_str!(args, 1).lock().clone();
+        let addition = arg_str!(args, 1).lock().to_utf8_lossy().into_owned();
         let handle = recv_str!(recv);
         let mut guard = handle.lock();
-        let n = guard.chars().count() as i64;
+        let n = guard.char_len() as i64;
         let at = if at < 0 { at + n + 1 } else { at };
         if at < 0 || at > n {
             return Err(crate::dispatch::raise_error(
@@ -718,27 +765,31 @@ builtin_methods! {
                 format!("index {} out of string", arg_int!(args, 0)),
             ));
         }
-        let byte_pos = guard
+        let mut txt = guard.to_utf8_lossy().into_owned();
+        let byte_pos = txt
             .char_indices()
             .nth(at as usize)
-            .map_or(guard.len(), |(b, _)| b);
-        guard.insert_str(byte_pos, &addition);
+            .map_or(txt.len(), |(b, _)| b);
+        txt.insert_str(byte_pos, &addition);
+        guard.replace_utf8(txt);
         drop(guard);
         Ok(recv.clone())
     }
     "prepend" => fn prepend(recv, args, _block) {
         arity!(args, 1);
-        let addition = arg_str!(args, 0).lock().clone();
+        let addition = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         let handle = recv_str!(recv);
         let mut guard = handle.lock();
-        guard.insert_str(0, &addition);
+        let mut txt = guard.to_utf8_lossy().into_owned();
+        txt.insert_str(0, &addition);
+        guard.replace_utf8(txt);
         drop(guard);
         Ok(recv.clone())
     }
     "replace" => fn replace(recv, args, _block) {
         arity!(args, 1);
-        let new_text = arg_str!(args, 0).lock().clone();
-        *recv_str!(recv).lock() = new_text;
+        let new_text = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        recv_str!(recv).lock().replace_utf8(new_text);
         Ok(recv.clone())
     }
     // `Integer#chr`'s inverse -- the first character's codepoint.
@@ -760,7 +811,7 @@ builtin_methods! {
             other => vec![other.clone()],
         };
         Ok(str_value(crate::builtins::format::sprintf(
-            &recv_str!(recv).lock(),
+            &recv_str!(recv).lock().to_utf8_lossy(),
             &format_args,
         )?))
     }
@@ -768,7 +819,7 @@ builtin_methods! {
         arity!(args, 1);
         match &args[0] {
             RubyValue::Regexp(re) => {
-                Ok(crate::regexp_match_index(re, &recv_str!(recv).lock()))
+                Ok(crate::regexp_match_index(re, &recv_str!(recv).lock().to_utf8_lossy()))
             }
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
@@ -785,7 +836,7 @@ builtin_methods! {
     "match" => fn match_m(recv, args, _block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         match match_haystack(&text, args.get(1))? {
             Some(h) => Ok(crate::regexp_match(&re, &h)),
             None => Ok(RubyValue::Nil),
@@ -794,7 +845,7 @@ builtin_methods! {
     "match?" => fn match_p(recv, args, _block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Bool(match match_haystack(&text, args.get(1))? {
             Some(h) => crate::regexp_is_match(&re, &h),
             None => false,
@@ -802,7 +853,7 @@ builtin_methods! {
     }
     "scan" => fn scan(recv, args, _block) {
         arity!(args, 1);
-        let text = recv_str!(recv).lock().clone();
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         match &args[0] {
             RubyValue::Regexp(re) => Ok(crate::regexp_scan(re, &text)),
             other => Err(crate::dispatch::raise_error(
@@ -820,6 +871,92 @@ builtin_methods! {
 /// Split into lines, KEEPING each terminating newline (a trailing fragment
 /// with no newline is still a line) -- `String#each_line`/`#lines`, and
 /// `File.readlines`, which is the same rule applied to a whole file.
+/// `String#encode`/`encode!`: transcode to a target encoding (default
+/// `Encoding.default_internal`, else self's own), reading the CRuby option
+/// matrix from a trailing options Hash. `:fallback` may be a Hash, Method, or
+/// Proc -- consulted (via ordinary dispatch) for characters the target can't
+/// represent, before the `:undef`/error path.
+fn encode_impl(recv: &RubyValue, args: &[RubyValue], in_place: bool) -> Result<RubyValue, Signal> {
+    use crate::encoding;
+    // A trailing Hash carries the keyword options; the rest are positional.
+    let (positional, opts_hash) = match args.last() {
+        Some(RubyValue::Hash(h)) => (&args[..args.len() - 1], Some(h.clone())),
+        _ => (args, None),
+    };
+    let src = recv_str!(recv);
+    let from_enc = match positional.get(1) {
+        Some(v) => crate::builtins::encoding::arg_encoding(v)?,
+        None => src.lock().encoding(),
+    };
+    let to_enc = match positional.first() {
+        Some(v) => crate::builtins::encoding::arg_encoding(v)?,
+        None => encoding::default_internal().unwrap_or_else(|| src.lock().encoding()),
+    };
+    let opts = parse_encode_opts(opts_hash.as_ref())?;
+    let bytes = src.lock().bytes().to_vec();
+
+    let fallback_val = opts_hash.as_ref().and_then(|h| {
+        let v = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("fallback")));
+        (!v.is_nil()).then_some(v)
+    });
+    let mut fb = fallback_val.as_ref().map(|fv| {
+        move |c: &str| -> Option<String> {
+            let key = RubyValue::Str(crate::string_new(c.to_string()));
+            let method = if matches!(fv, RubyValue::Hash(_)) { "[]" } else { "call" };
+            match crate::dispatch::send_value(fv, crate::Symbol::intern(method), &[key], None) {
+                Ok(v) if !v.is_nil() => Some(v.to_display_string()),
+                _ => None,
+            }
+        }
+    });
+    let out = encoding::transcode(
+        &bytes,
+        from_enc,
+        to_enc,
+        &opts,
+        fb.as_mut().map(|f| f as &mut dyn FnMut(&str) -> Option<String>),
+    )
+    .map_err(|e| e.into_signal())?;
+
+    if in_place {
+        src.lock().replace_bytes(out, to_enc);
+        Ok(recv.clone())
+    } else {
+        Ok(RubyValue::Str(crate::string_from_bytes(out, to_enc)))
+    }
+}
+
+/// Reads `encode`'s keyword options out of the trailing Hash.
+fn parse_encode_opts(
+    hash: Option<&crate::collections::RHash>,
+) -> Result<crate::encoding::TranscodeOptions, Signal> {
+    use crate::encoding::{NewlineMode, TranscodeOptions, XmlMode};
+    let mut opts = TranscodeOptions::default();
+    let Some(h) = hash else { return Ok(opts) };
+    let get = |name: &str| crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)));
+    let is_replace = |v: &RubyValue| matches!(v, RubyValue::Symbol(s) if s.name() == "replace");
+    opts.invalid_replace = is_replace(&get("invalid"));
+    opts.undef_replace = is_replace(&get("undef"));
+    if let RubyValue::Str(r) = get("replace") {
+        opts.replace = Some(r.lock().to_utf8_lossy().into_owned());
+    }
+    opts.xml = match get("xml") {
+        RubyValue::Symbol(s) if s.name() == "text" => Some(XmlMode::Text),
+        RubyValue::Symbol(s) if s.name() == "attr" => Some(XmlMode::Attr),
+        _ => None,
+    };
+    opts.newline = if get("cr_newline").truthy() {
+        Some(NewlineMode::Cr)
+    } else if get("crlf_newline").truthy() {
+        Some(NewlineMode::Crlf)
+    } else if get("universal_newline").truthy() {
+        Some(NewlineMode::Universal)
+    } else {
+        None
+    };
+    Ok(opts)
+}
+
 /// An Integer argument (a position/limit), raising CRuby's exact TypeError
 /// for a non-Integer.
 fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
@@ -847,7 +984,7 @@ fn byte_at_char(text: &str, char_idx: usize) -> usize {
 fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
     match v {
         RubyValue::Regexp(re) => Ok(re.clone()),
-        RubyValue::Str(pat) => crate::regexp_new(&pat.lock(), false, false, false)
+        RubyValue::Str(pat) => crate::regexp_new(&pat.lock().to_utf8_lossy(), false, false, false)
             .map_err(|e| crate::dispatch::raise_error("RegexpError", e)),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
@@ -897,7 +1034,7 @@ fn charset_specs(args: &[RubyValue]) -> Result<Vec<(std::collections::HashSet<ch
                     format!("no implicit conversion of {} into String", crate::builtins::class_name_of(a)),
                 ));
             };
-            let spec = s.lock().clone();
+            let spec = s.lock().to_utf8_lossy().into_owned();
             let (negated, body) = match spec.strip_prefix('^') {
                 Some(rest) if !rest.is_empty() => (true, rest.to_string()),
                 _ => (false, spec),
@@ -991,7 +1128,7 @@ fn sub_gsub(
 ) -> Result<RubyValue, Signal> {
     let label = if global { "gsub" } else { "sub" };
     let text = match recv {
-        RubyValue::Str(s) => s.lock().clone(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
     let block_proc = match &block {
@@ -1014,7 +1151,7 @@ fn sub_gsub(
                     ),
                 ));
             };
-            let replacement = replacement.lock().clone();
+            let replacement = replacement.lock().to_utf8_lossy().into_owned();
             Ok(if global {
                 crate::regexp_gsub(re, &text, &replacement)
             } else {
@@ -1029,7 +1166,7 @@ fn sub_gsub(
             }
         }
         (RubyValue::Str(pattern), None) => {
-            let pattern = pattern.lock().clone();
+            let pattern = pattern.lock().to_utf8_lossy().into_owned();
             let RubyValue::Str(replacement) = &args[1] else {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
@@ -1039,7 +1176,7 @@ fn sub_gsub(
                     ),
                 ));
             };
-            let replacement = replacement.lock().clone();
+            let replacement = replacement.lock().to_utf8_lossy().into_owned();
             Ok(RubyValue::Str(crate::string_new(if global {
                 text.replace(&pattern, &replacement)
             } else {
@@ -1047,7 +1184,7 @@ fn sub_gsub(
             })))
         }
         (RubyValue::Str(pattern), Some(p)) => {
-            let pattern = pattern.lock().clone();
+            let pattern = pattern.lock().to_utf8_lossy().into_owned();
             let mut out = String::new();
             let mut rest = text.as_str();
             loop {
@@ -1086,7 +1223,7 @@ enum Pad {
 
 fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Signal> {
     let text = match recv {
-        RubyValue::Str(s) => s.lock().clone(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
     let RubyValue::Int(width) = &args[0] else {
@@ -1099,7 +1236,7 @@ fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Sig
         ));
     };
     let fill = match args.get(1) {
-        Some(RubyValue::Str(f)) => f.lock().clone(),
+        Some(RubyValue::Str(f)) => f.lock().to_utf8_lossy().into_owned(),
         _ => " ".to_string(),
     };
     if fill.is_empty() {

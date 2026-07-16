@@ -418,7 +418,7 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> RubyValue {
     match key {
         RubyValue::Int(i) => matchdata_group(m, *i),
         RubyValue::Symbol(s) => matchdata_group_by_name(m, &s.name()),
-        RubyValue::Str(s) => matchdata_group_by_name(m, &s.lock()),
+        RubyValue::Str(s) => matchdata_group_by_name(m, &s.lock().to_utf8_lossy()),
         other => panic!("MatchData#[] expected an Int/Symbol/String key, got {}", other.to_display_string()),
     }
 }
@@ -501,17 +501,17 @@ mod tests {
         let RubyValue::Str(s) = regexp_gsub(&word_pair, "John Smith", r"\2 \1") else {
             panic!("expected a Str")
         };
-        assert_eq!(*s.lock(), "Smith John");
+        assert_eq!(&*s.lock().to_utf8_lossy(), "Smith John");
 
         let o = regexp_new("o", false, false, false).unwrap();
         let RubyValue::Str(s) = regexp_gsub(&o, "hello world", "0") else { panic!("expected a Str") };
-        assert_eq!(*s.lock(), "hell0 w0rld");
+        assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 w0rld");
         let RubyValue::Str(s) = regexp_sub(&o, "hello world", "0") else { panic!("expected a Str") };
-        assert_eq!(*s.lock(), "hell0 world");
+        assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 world");
 
         let l = regexp_new("l", false, false, false).unwrap();
         let RubyValue::Str(s) = regexp_gsub(&l, "hello", r"[\&]") else { panic!("expected a Str") };
-        assert_eq!(*s.lock(), "he[l][l]o");
+        assert_eq!(&*s.lock().to_utf8_lossy(), "he[l][l]o");
     }
 
     /// Ruby's `^`/`$` are always line-anchored (`multi_line` unconditional);

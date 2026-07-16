@@ -65,6 +65,14 @@ class ArgumentError < StandardError
 end
 class EncodingError < StandardError
 end
+class Encoding::UndefinedConversionError < EncodingError
+end
+class Encoding::InvalidByteSequenceError < EncodingError
+end
+class Encoding::CompatibilityError < EncodingError
+end
+class Encoding::ConverterNotFoundError < EncodingError
+end
 class IOError < StandardError
 end
 class EOFError < IOError
@@ -1047,11 +1055,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // Rejected rather than stubbed: inventing a placeholder Encoding now
     // would pre-empt that design, and `__ENCODING__` is only useful if the
     // object it answers actually behaves like one.
+    // `__ENCODING__` answers the script's own encoding -- UTF-8, the
+    // compiler's default (a magic `# encoding:` comment could change it; not
+    // modeled yet). Lowered to the ordinary `Encoding::UTF_8` constant read,
+    // which resolves to the seeded singleton.
     if node.as_source_encoding_node().is_some() {
-        return Err(
-            "`__ENCODING__` isn't supported yet (spike scope: no `Encoding` class exists -- see the encoding phase)"
-                .to_string(),
-        );
+        return Ok(hir.push(HirNode::QualifiedConstRead(
+            "Encoding".to_string(),
+            "UTF_8".to_string(),
+        )));
     }
 
     // `$1`..`$9` -- prism gives these their own node kind, not a global
@@ -1930,8 +1942,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     if let Some(s) = node.as_string_node() {
-        let content = String::from_utf8_lossy(s.unescaped()).into_owned();
-        return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(content)])));
+        return Ok(hir.push(HirNode::StringLit(vec![string_literal_part(s.unescaped())])));
     }
 
     // `:"hello_#{x}"` -- an interpolated symbol is exactly its interpolated
@@ -3258,7 +3269,9 @@ fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
     for p in parts {
         match p {
             StrPart::Lit(s) => out.push_str(s),
-            StrPart::Interp(_) => return None,
+            // A raw-byte (non-UTF-8) or interpolated segment can't fold to a
+            // static UTF-8 string (e.g. a `require` path).
+            StrPart::Bytes(_) | StrPart::Interp(_) => return None,
         }
     }
     Some(out)
@@ -3383,9 +3396,20 @@ fn line_of(result: &ParseResult, offset: usize) -> i64 {
 ///   - a brace-less `#@ivar`/`#@@cvar`/`#$global` (`EmbeddedVariableNode`),
 ///     whose `variable()` is an ordinary read node and so needs no special
 ///     handling beyond unwrapping it.
+/// A literal string segment's bytes as a `StrPart`: readable UTF-8 text when
+/// the bytes form valid UTF-8 (the overwhelmingly common case), else the raw
+/// bytes preserved for the encoding engine (a `"\xNN"` escape that isn't a
+/// character -- Ruby tags such a literal ASCII-8BIT).
+fn string_literal_part(bytes: &[u8]) -> StrPart {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => StrPart::Lit(s.to_string()),
+        Err(_) => StrPart::Bytes(bytes.to_vec()),
+    }
+}
+
 fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<StrPart> {
     if let Some(s) = node.as_string_node() {
-        return Ok(StrPart::Lit(String::from_utf8_lossy(s.unescaped()).into_owned()));
+        return Ok(string_literal_part(s.unescaped()));
     }
     if let Some(embedded) = node.as_embedded_statements_node() {
         let stmts: Vec<_> = embedded

@@ -89,7 +89,10 @@ pub enum HashKey {
     /// documented, narrow approximation for a vanishingly rare key shape.
     Float(u64),
     Symbol(crate::Symbol),
-    Str(String),
+    /// A string key as `(bytes, encoding-tag)` -- see
+    /// `encoding::StrBuf::hash_key_tag` for the cross-encoding `eql?` rule
+    /// the tag encodes (ascii-only strings share tag `0`).
+    Str(Vec<u8>, u8),
     Array(Vec<HashKey>),
     Range(Option<Box<HashKey>>, Option<Box<HashKey>>, bool),
     /// A first-class class/module value (Phase 16.1): keyed by class
@@ -128,7 +131,10 @@ fn hash_key(v: &RubyValue) -> HashKey {
         }
         RubyValue::Float(f) => HashKey::Float(f.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
-        RubyValue::Str(s) => HashKey::Str(s.lock().clone()),
+        RubyValue::Str(s) => {
+            let s = s.lock();
+            HashKey::Str(s.bytes().to_vec(), s.hash_key_tag())
+        }
         RubyValue::Class(cid) => HashKey::Class(cid.0),
         RubyValue::Array(a) => HashKey::Array(a.lock().iter().map(hash_key).collect()),
         RubyValue::Range(start, end, exclusive) => HashKey::Range(
@@ -193,7 +199,7 @@ pub fn value_hash_code(v: &RubyValue) -> i64 {
 /// needs the real value back.
 pub type RHash = Arc<Freezable<IndexMap<HashKey, (RubyValue, RubyValue)>>>;
 
-pub type RStr = Arc<Freezable<String>>;
+pub type RStr = Arc<Freezable<crate::encoding::StrBuf>>;
 
 pub fn array_new(elems: Vec<RubyValue>) -> RArray {
     Arc::new(Freezable::new(elems))
@@ -384,7 +390,21 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
 }
 
 pub fn string_new(s: String) -> RStr {
-    Arc::new(Freezable::new(s))
+    Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)))
+}
+
+/// A string from raw bytes tagged with an explicit encoding -- what
+/// `String#b`, `force_encoding`, IO byte reads, and `\xNN`-bearing literals
+/// build (the byte-level sibling of `string_new`'s UTF-8 text path).
+pub fn string_from_bytes(bytes: Vec<u8>, enc: crate::encoding::EncodingId) -> RStr {
+    Arc::new(Freezable::new(crate::encoding::StrBuf::from_bytes(bytes, enc)))
+}
+
+/// Wraps an already-built `StrBuf` (carrying its own encoding) as an `RStr` --
+/// the constructor for the encoding-aware string builders (`char_at`,
+/// `reversed`, `upcased`, ...).
+pub fn string_wrap(buf: crate::encoding::StrBuf) -> RStr {
+    Arc::new(Freezable::new(buf))
 }
 
 /// Character-indexed (not byte-indexed), matching Ruby's own UTF-8-aware
@@ -393,10 +413,10 @@ pub fn string_new(s: String) -> RStr {
 /// strings (documented, not fixed -- a byte-offset cache is a
 /// straightforward later optimization, not a spike blocker).
 pub fn string_get(s: &RStr, index: i64) -> RubyValue {
-    let s = s.lock();
-    let chars: Vec<char> = s.chars().collect();
-    match resolve_index(index, chars.len()) {
-        Some(i) => RubyValue::Str(string_new(chars[i].to_string())),
+    // Encoding-aware: a character is a UTF-8 sequence or a single byte, and
+    // the result keeps the receiver's encoding (a BINARY byte stays BINARY).
+    match s.lock().char_at(index) {
+        Some(buf) => RubyValue::Str(string_wrap(buf)),
         None => RubyValue::Nil,
     }
 }
@@ -409,19 +429,19 @@ pub fn string_set(s: &RStr, index: i64, value: &RubyValue) -> RubyValue {
     let RubyValue::Str(new_chars) = value else {
         panic!("expected a String, got {}", value.to_display_string());
     };
-    let new_chars = new_chars.lock().clone();
+    let new_chars = new_chars.lock().char_vec();
     let mut s = s.lock();
-    let mut chars: Vec<char> = s.chars().collect();
+    let mut chars: Vec<char> = s.char_vec();
     let i = resolve_index(index, chars.len()).unwrap_or_else(|| {
         panic!("index {index} out of range for string of length {}", chars.len())
     });
-    chars.splice(i..=i, new_chars.chars());
-    *s = chars.into_iter().collect();
+    chars.splice(i..=i, new_chars);
+    s.replace_utf8(chars.into_iter().collect());
     value.clone()
 }
 
 pub fn string_len(s: &RStr) -> i64 {
-    s.lock().chars().count() as i64
+    s.lock().char_len() as i64
 }
 
 /// Ruby multi-assignment's `a, b = ...` / `a, *b, c = ...` destructuring:

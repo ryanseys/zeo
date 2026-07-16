@@ -224,7 +224,7 @@ impl RubyValue {
                 crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("to_s"))
             {
                 return match f(self, &[], None) {
-                    Ok(RubyValue::Str(s)) => s.lock().clone(),
+                    Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
                     Ok(other) => other.display_with(seen),
                     Err(_) => panic!(
                         "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
@@ -243,7 +243,7 @@ impl RubyValue {
             RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, false),
             RubyValue::Float(f) => float_to_display_string(*f),
             RubyValue::Symbol(s) => s.name(),
-            RubyValue::Str(s) => s.lock().clone(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             // `puts` on an `Array` recursively flattens and prints each
             // element on its own line (not `[1, 2, 3]`, which is `inspect`'s
             // job, not `to_s`'s) -- real, verified CRuby behavior, not a
@@ -366,7 +366,7 @@ impl RubyValue {
                 crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("inspect"))
             {
                 return match f(self, &[], None) {
-                    Ok(RubyValue::Str(s)) => s.lock().clone(),
+                    Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
                     Ok(other) => other.display_with(seen),
                     Err(_) => panic!(
                         "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
@@ -383,7 +383,7 @@ impl RubyValue {
             }
             RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true),
             RubyValue::Symbol(s) => format!(":{}", s.name()),
-            RubyValue::Str(s) => format!("{:?}", &*s.lock()),
+            RubyValue::Str(s) => crate::encoding::inspect(&s.lock()),
             RubyValue::Array(a) => {
                 let ptr = container_identity(self).expect("Array is a container");
                 if seen.contains(&ptr) {
@@ -810,8 +810,8 @@ impl RubyValue {
         }
         match (self, other) {
             (RubyValue::Str(a), RubyValue::Str(b)) => {
-                let a = a.lock().clone();
-                let b = b.lock().clone();
+                let a = a.lock().to_utf8_lossy().into_owned();
+                let b = b.lock().to_utf8_lossy().into_owned();
                 Some(a.cmp(&b) as i64)
             }
             (RubyValue::Object(o), _) => {
@@ -938,7 +938,7 @@ impl RubyValue {
             // divergence, same posture as Proc/Regexp above).
             | RubyValue::Class(_) => self.clone(),
             RubyValue::Str(s) => {
-                let fresh = crate::string_new(s.lock().clone());
+                let fresh = crate::string_new(s.lock().to_utf8_lossy().into_owned());
                 if keep_frozen {
                     fresh.set_frozen();
                 }
@@ -993,7 +993,7 @@ impl RubyValue {
     /// function's own no-panic-on-mismatched-shape posture.
     pub fn rb_case_eq(&self, subject: &RubyValue) -> bool {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
-            return re.compiled.is_match(&s.lock());
+            return re.compiled.is_match(&s.lock().to_utf8_lossy());
         }
         // `Range#===` is `#cover?` (Phase 17.1, fixing `when 1..5` -- which
         // previously fell to `rb_eq` and silently never matched): each

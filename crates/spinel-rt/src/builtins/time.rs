@@ -570,7 +570,7 @@ builtin_methods! {
                 Ok(time_value(as_utc - off as i64, 0, Some(off)))
             }
             Some(RubyValue::Str(s)) => {
-                let off = parse_offset(&s.lock())?;
+                let off = parse_offset(&s.lock().to_utf8_lossy())?;
                 Ok(time_value(as_utc - off as i64, 0, Some(off)))
             }
             Some(other) => Err(raise_error(
@@ -730,7 +730,7 @@ builtin_methods! {
                 ),
             ));
         };
-        let fmt = f.lock().clone();
+        let fmt = f.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))
     }
     // `t + n` -> a Time n seconds later; `t - other_time` -> a Float count of

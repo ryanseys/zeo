@@ -13,6 +13,14 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_case_eq(&args[0])))
     }
+    "encoding" => fn encoding_m(recv, args, _block) {
+        arity!(args, 0);
+        let RubyValue::Regexp(re) = recv else {
+            unreachable!("the Regexp table only dispatches on Regexp receivers")
+        };
+        let id = crate::builtins::encoding::computed_encoding_of(&re.source);
+        Ok(crate::builtins::encoding::encoding_value(id))
+    }
 }
 
 #[cfg(test)]

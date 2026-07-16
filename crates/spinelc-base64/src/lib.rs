@@ -144,7 +144,7 @@ fn str_arg(v: &RubyValue, method: &str) -> String {
     let RubyValue::Str(s) = v else {
         panic!("Base64.{method}: no implicit conversion into String (TypeError; spike scope: raised as a panic)");
     };
-    s.lock().clone()
+    s.lock().to_utf8_lossy().into_owned()
 }
 
 #[cfg(test)]

@@ -44,14 +44,14 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
 /// a non-String without it is a TypeError.
 pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
     match v {
-        RubyValue::Str(s) => Ok(s.lock().clone()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => {
             let to_path = crate::Symbol::intern("to_path");
             if crate::dispatch::responds_to(other.class_id(), to_path, false) {
                 if let RubyValue::Str(s) =
                     crate::dispatch::send_value(other, to_path, &[], None)?
                 {
-                    return Ok(s.lock().clone());
+                    return Ok(s.lock().to_utf8_lossy().into_owned());
                 }
             }
             Err(raise_error(

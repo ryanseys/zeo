@@ -677,6 +677,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // -- the 15.3 const machinery resolves the OWNERS at compile
             // time; only the values need seeding.
             spinel_rt::seed_numeric_constants();
+            // `Encoding::UTF_8`/`US_ASCII`/`ASCII_8BIT`/... -- same
+            // resolve-owner-at-compile-time, seed-values-at-runtime story.
+            spinel_rt::seed_encoding_constants();
             // `ARGV` + `STDOUT`/`STDERR`/`$stdout`/`$stderr` (CRuby startup
             // parity) -- reads resolve through the runtime const/global
             // fallbacks, no compile-time registration.

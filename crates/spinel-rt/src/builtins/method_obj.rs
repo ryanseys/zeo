@@ -47,7 +47,7 @@ impl RubyObject for RMethod {
 pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = match name_arg {
         RubyValue::Symbol(s) => *s,
-        RubyValue::Str(s) => Symbol::intern(&s.lock().clone()),
+        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
         other => {
             return Err(raise_error(
                 "TypeError",

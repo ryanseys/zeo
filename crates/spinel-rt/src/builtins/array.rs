@@ -543,7 +543,7 @@ builtin_methods! {
     "join" => fn join(recv, args, _block) {
         arity!(args, 0..=1);
         let sep = match args.first() {
-            Some(RubyValue::Str(s)) => s.lock().clone(),
+            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             None | Some(RubyValue::Nil) => String::new(),
             Some(other) => {
                 return Err(crate::dispatch::raise_error(

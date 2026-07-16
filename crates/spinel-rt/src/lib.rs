@@ -10,6 +10,7 @@ mod collections;
 mod constants;
 mod cvars;
 mod dispatch;
+pub mod encoding;
 mod exec;
 mod fiber;
 mod globals;
@@ -25,6 +26,7 @@ mod value;
 
 pub use arith::*;
 pub use collections::*;
+pub use encoding::{EncodingId, StrBuf};
 pub use builtins::env::seed_env;
 pub use builtins::io::{seed_io_constants, seed_stdio};
 pub use builtins::process::seed_process;
@@ -41,6 +43,7 @@ pub use builtins::kernel::{
 };
 pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
+pub use builtins::encoding::seed_encoding_constants;
 pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{

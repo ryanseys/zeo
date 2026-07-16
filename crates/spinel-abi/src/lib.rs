@@ -148,6 +148,9 @@ pub const PROCESS_CLASS: ClassId = ClassId(38);
 /// `File::Stat` -- what `File.stat`/`File#stat` answer; the predicates
 /// (`File.file?`, `.directory?`, `.size`) read through it.
 pub const FILE_STAT_CLASS: ClassId = ClassId(39);
+/// `Encoding` -- what `String#encoding` answers and `Encoding::UTF_8` names;
+/// wraps an `encoding::EncodingId` in the runtime.
+pub const ENCODING_CLASS: ClassId = ClassId(40);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -195,6 +198,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: TIME_CLASS, name: "Time", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
     BuiltinClass { id: PROCESS_CLASS, name: "Process", is_module: true, superclass: None, includes: &[] },
     BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
+    BuiltinClass { id: ENCODING_CLASS, name: "Encoding", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):
