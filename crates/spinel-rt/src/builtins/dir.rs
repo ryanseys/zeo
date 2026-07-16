@@ -12,6 +12,10 @@ use crate::builtins::file::{path_arg, raise_errno};
 use crate::builtins::{arity, builtin_methods};
 use crate::{RubyValue, Signal};
 
+/// A per-process monotonic counter making each `Dir.mktmpdir` name unique
+/// even when the PRNG and pid coincide within one run.
+static MKTMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s))
 }
@@ -301,6 +305,56 @@ builtin_methods! {
         let path = path_arg(&args[0], "mkdir")?;
         std::fs::create_dir(&path).map_err(|e| raise_errno(&e, "mkdir", &path))?;
         Ok(RubyValue::Int(0))
+    }
+    // `mktmpdir([prefix | [prefix, suffix]], [parent])`: create a fresh
+    // temporary directory. With a block, yield its path and remove the
+    // directory (recursively) afterward -- even if the block raises --
+    // answering the block's value; without a block, answer the path for the
+    // caller to clean up.
+    "mktmpdir" => fn dir_mktmpdir(_recv, args, block) {
+        arity!(args, 0..=2);
+        let (prefix, suffix) = match args.first() {
+            None | Some(RubyValue::Nil) => ("d".to_string(), String::new()),
+            Some(RubyValue::Str(s)) => (s.lock().to_utf8_lossy().into_owned(), String::new()),
+            Some(RubyValue::Array(a)) => {
+                let a = a.lock();
+                (
+                    a.first().map(|v| v.to_display_string()).unwrap_or_default(),
+                    a.get(1).map(|v| v.to_display_string()).unwrap_or_default(),
+                )
+            }
+            Some(other) => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                ))
+            }
+        };
+        let parent = match args.get(1) {
+            Some(RubyValue::Str(s)) => std::path::PathBuf::from(s.lock().to_utf8_lossy().into_owned()),
+            _ => std::env::temp_dir(),
+        };
+        let pid = std::process::id();
+        let path = loop {
+            let rand = crate::builtins::kernel::prng_next();
+            let n = MKTMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let candidate = parent.join(format!("{prefix}{pid}-{n}-{rand:x}{suffix}"));
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(raise_errno(&e, "mkdir", &candidate.to_string_lossy())),
+            }
+        };
+        let path_str = path.to_string_lossy().into_owned();
+        match &block {
+            Some(RubyValue::Proc(p)) => {
+                let result = p.call(&[str_val(path_str)]);
+                // Cleanup runs on both the normal and the raising path (ensure).
+                let _ = std::fs::remove_dir_all(&path);
+                result
+            }
+            _ => Ok(str_val(path_str)),
+        }
     }
     "rmdir" | "unlink" | "delete" => fn dir_rmdir(_recv, args, _block) {
         arity!(args, 1);

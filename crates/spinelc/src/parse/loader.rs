@@ -367,6 +367,13 @@ impl Loader {
             ));
         };
 
+        // Features spinel already provides natively -- `require` short-circuits
+        // to a no-op before any filesystem search (CRuby's own built-in-feature
+        // rule). `tmpdir` (Dir.mktmpdir) is compiled in.
+        if name == "require" && is_builtin_feature(&feature) {
+            return Ok(Vec::new());
+        }
+
         // Package attribution (Phase 14.2): a `require` resolved out of a
         // package's roots belongs to that package; `require_relative`/
         // `load` INHERIT the requiring file's package (a package's internal
@@ -739,6 +746,13 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Package> {
 /// CRuby's exact missing-feature message (`load_failed` -> `rb_load_fail`).
 fn cannot_load(name: &str) -> String {
     format!("cannot load such file -- {name}")
+}
+
+/// Whether `feature` names a stdlib feature the runtime compiles in, so
+/// `require`ing it is a no-op (nothing to splice). Currently just `tmpdir`
+/// (its one method, `Dir.mktmpdir`, is a built-in `Dir` class method).
+fn is_builtin_feature(feature: &str) -> bool {
+    matches!(feature, "tmpdir")
 }
 
 fn with_rb_ext(feature: &str) -> String {

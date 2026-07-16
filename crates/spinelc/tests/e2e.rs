@@ -4964,6 +4964,36 @@ fn magic_comment_sets_the_script_encoding() {
 }
 
 #[test]
+fn file_read_applies_external_and_internal_encodings() {
+    // File.read tags bytes with the external encoding (default UTF-8), or a
+    // requested one; binread is always ASCII-8BIT; binwrite round-trips raw
+    // bytes. Verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        Dir.mktmpdir do |dir|
+          path = File.join(dir, "f.txt")
+          File.write(path, "café")
+          p File.read(path).encoding
+          p File.read(path).bytesize
+          p File.binread(path).encoding
+          p File.binread(path).bytes
+          p File.read(path, encoding: "ISO-8859-1").encoding
+          p File.read(path, encoding: "ISO-8859-1").bytes
+          File.binwrite(path, [0, 255, 128].pack("C*"))
+          p File.binread(path).bytes
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<Encoding:UTF-8>\n5\n#<Encoding:BINARY (ASCII-8BIT)>\n\
+         [99, 97, 102, 195, 169]\n#<Encoding:ISO-8859-1>\n\
+         [99, 97, 102, 195, 169]\n[0, 255, 128]\n"
+    );
+}
+
+#[test]
 fn pack_and_unpack_roundtrip_core_directives() {
     // Array#pack / String#unpack across the integer, string, base64, hex,
     // BER and UTF-8 directives. Verified against ruby 4.0.5.

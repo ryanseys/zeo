@@ -69,6 +69,84 @@ fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s))
 }
 
+/// The raw bytes to write for a value -- a String's own bytes (so a BINARY
+/// string round-trips), else its `to_s`.
+fn write_bytes(v: &RubyValue) -> Vec<u8> {
+    match v {
+        RubyValue::Str(s) => s.lock().bytes().to_vec(),
+        other => other.to_display_string().into_bytes(),
+    }
+}
+
+/// The `(external, internal)` encodings a `File.read` should apply, from its
+/// trailing options Hash: `mode: "...b..."` forces binary; `encoding:` sets
+/// the external (or `"ext:int"` both); `external_encoding:`/
+/// `internal_encoding:` override each. Defaults to
+/// `(Encoding.default_external, nil)`.
+#[allow(clippy::type_complexity)]
+fn read_encodings(
+    trailing: Option<&RubyValue>,
+) -> Result<(crate::encoding::EncodingId, Option<crate::encoding::EncodingId>), Signal> {
+    let mut ext = crate::encoding::default_external();
+    let mut int = None;
+    let Some(RubyValue::Hash(h)) = trailing else {
+        return Ok((ext, int));
+    };
+    let get = |name: &str| {
+        crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)))
+    };
+    let resolve = |name: &str| {
+        crate::encoding::find(name)
+            .ok_or_else(|| raise_error("ArgumentError", format!("unknown encoding name - {name}")))
+    };
+    if let RubyValue::Str(m) = get("mode") {
+        if m.lock().to_utf8_lossy().contains('b') {
+            ext = crate::encoding::ASCII_8BIT;
+        }
+    }
+    match get("encoding") {
+        RubyValue::Str(s) => {
+            let name = s.lock().to_utf8_lossy().into_owned();
+            match name.split_once(':') {
+                Some((e, i)) => {
+                    ext = resolve(e)?;
+                    int = Some(resolve(i)?);
+                }
+                None => ext = resolve(&name)?,
+            }
+        }
+        v if !v.is_nil() => ext = crate::builtins::encoding::arg_encoding(&v)?,
+        _ => {}
+    }
+    let external = get("external_encoding");
+    if !external.is_nil() {
+        ext = crate::builtins::encoding::arg_encoding(&external)?;
+    }
+    let internal = get("internal_encoding");
+    if !internal.is_nil() {
+        int = Some(crate::builtins::encoding::arg_encoding(&internal)?);
+    }
+    Ok((ext, int))
+}
+
+/// Builds a read string: bytes tagged with `external`, transcoded to
+/// `internal` when one is set (and different).
+fn build_read_string(
+    bytes: Vec<u8>,
+    external: crate::encoding::EncodingId,
+    internal: Option<crate::encoding::EncodingId>,
+) -> Result<crate::RStr, Signal> {
+    match internal {
+        Some(int) if int != external => {
+            let opts = crate::encoding::TranscodeOptions::default();
+            let out = crate::encoding::transcode(&bytes, external, int, &opts, None)
+                .map_err(|e| e.into_signal())?;
+            Ok(crate::string_from_bytes(out, int))
+        }
+        _ => Ok(crate::string_from_bytes(bytes, external)),
+    }
+}
+
 /// Whether a trailing keyword Hash carries `name: <truthy>`. Keywords reach
 /// a builtin as one trailing `RubyValue::Hash` (the G2 convention), so this
 /// is the shared reader for the option keywords the File rows accept.
@@ -247,15 +325,30 @@ builtin_methods! {
         let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
         out
     }
+    // The text-read path: bytes are tagged with the EXTERNAL encoding
+    // (default `Encoding.default_external`, UTF-8) WITHOUT validation --
+    // CRuby's own rule. `encoding:`/`external_encoding:`/`internal_encoding:`
+    // options override it; an internal encoding transcodes the bytes.
     "read" => fn file_read(_recv, args, _block) {
-        arity!(args, 1..=2);
+        arity!(args, 1..=4);
         let path = path_arg(&args[0], "read")?;
         let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        // TODO(plan E1): this is the text-read path, so the bytes are tagged
-        // with the external encoding and NOT validated (CRuby's own rule --
-        // coderange stays Unknown). Until StrBuf exists, a non-UTF-8 file is
-        // lossy here rather than a BINARY-tagged String.
-        Ok(str_val(String::from_utf8_lossy(&bytes).into_owned()))
+        let (ext, int) = read_encodings(args.last())?;
+        Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
+    }
+    // `binread` always answers ASCII-8BIT bytes, no transcoding.
+    "binread" => fn file_binread(_recv, args, _block) {
+        arity!(args, 1..=3);
+        let path = path_arg(&args[0], "binread")?;
+        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
+    }
+    "binwrite" => fn file_binwrite(_recv, args, _block) {
+        arity!(args, 2..=3);
+        let path = path_arg(&args[0], "binwrite")?;
+        let data = write_bytes(&args[1]);
+        std::fs::write(&path, &data).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        Ok(RubyValue::Int(data.len() as i64))
     }
     "readlines" => fn file_readlines(_recv, args, _block) {
         arity!(args, 1..=2);
@@ -282,8 +375,10 @@ builtin_methods! {
     "write" => fn file_write(_recv, args, _block) {
         arity!(args, 2..=3);
         let path = path_arg(&args[0], "write")?;
-        let data = args[1].to_display_string();
-        std::fs::write(&path, data.as_bytes())
+        // Bytes are written VERBATIM (a String emits its own bytes, so a
+        // BINARY string round-trips unchanged).
+        let data = write_bytes(&args[1]);
+        std::fs::write(&path, &data)
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(data.len() as i64))
     }
