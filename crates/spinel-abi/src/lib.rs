@@ -130,6 +130,25 @@ pub const IO_CLASS: ClassId = ClassId(33);
 /// bound receiver + method name and dispatches `#call` through `send`.
 pub const METHOD_CLASS: ClassId = ClassId(34);
 
+/// The plan P-B core classes. All are `RubyValue::Object(RObj)` over a
+/// spinel-rt-resident struct -- `RubyValue` stays frozen at its 23 variants
+/// (a new variant only pays for itself for structural Hash-key equality, a
+/// codegen fast path, or an immediate; none of these qualify).
+///
+/// `File < IO` is CRuby's real edge, so a `File` instance answers every IO
+/// instance method through the ordinary MRO walk with no duplication.
+pub const FILE_CLASS: ClassId = ClassId(35);
+pub const DIR_CLASS: ClassId = ClassId(36);
+/// `Time` includes `Comparable` (CRuby), so `t1 < t2`/`between?`/`clamp`
+/// all fall out of the existing `comparable_send` driver once `Time#<=>`
+/// exists.
+pub const TIME_CLASS: ClassId = ClassId(37);
+/// `Process` is a MODULE (`Process.pid`, `Process::CLOCK_MONOTONIC`).
+pub const PROCESS_CLASS: ClassId = ClassId(38);
+/// `File::Stat` -- what `File.stat`/`File#stat` answer; the predicates
+/// (`File.file?`, `.directory?`, `.size`) read through it.
+pub const FILE_STAT_CLASS: ClassId = ClassId(39);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -169,8 +188,13 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: STRUCT_CLASS, name: "Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
     BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
     BuiltinClass { id: GC_CLASS, name: "GC", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
     BuiltinClass { id: METHOD_CLASS, name: "Method", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: FILE_CLASS, name: "File", is_module: false, superclass: Some(IO_CLASS), includes: &[] },
+    BuiltinClass { id: DIR_CLASS, name: "Dir", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
+    BuiltinClass { id: TIME_CLASS, name: "Time", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
+    BuiltinClass { id: PROCESS_CLASS, name: "Process", is_module: true, superclass: None, includes: &[] },
+    BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

@@ -11786,3 +11786,686 @@ fn a_trailing_comma_param_is_an_anonymous_rest() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "1\n[1, 2]\n");
 }
+
+// --- plan P-B: the core classes (File, Dir, Time, Process, ENV) ------------
+
+/// `File`'s pure-path family: string work that never touches the disk. Every
+/// expectation oracle-read from ruby 4.0.5 -- including the two that read
+/// like off-by-ones (a TRAILING dot IS an extension, a LEADING one is not).
+#[test]
+fn file_pure_path_family() {
+    let result = run_ruby(
+        r#"
+        puts File.basename("/home/user/notes.md")
+        puts File.basename("/home/user/notes.md", ".md")
+        puts File.basename("/home/user/notes.md", ".*")
+        puts File.basename("/a/b/")
+        puts File.basename("/")
+        puts File.dirname("/home/user/notes.md")
+        puts File.dirname("solo")
+        puts File.dirname("/x")
+        p File.extname("archive.tar.gz")
+        p File.extname(".bashrc")
+        p File.extname("trailing.")
+        p File.extname("plain")
+        p File.split("/a/b/c.rb")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "notes.md\nnotes\nnotes\nb\n/\n/home/user\n.\n/\n\".gz\"\n\"\"\n\".\"\n\"\"\n[\"/a/b\", \"c.rb\"]\n"
+    );
+}
+
+/// `File.join` collapses a separator at the seam rather than doubling it, and
+/// flattens a nested Array argument.
+#[test]
+fn file_join_collapses_separators() {
+    let result = run_ruby(
+        r#"
+        puts File.join("a", "b", "c")
+        puts File.join("a/", "b")
+        puts File.join("a", "/b")
+        puts File.join("a/", "/b")
+        puts File.join("/a", "b")
+        puts File.join("a", ["b", "c"])
+        p File.absolute_path?("/abs")
+        p File.absolute_path?("rel")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "a/b/c\na/b\na/b\na/b\n/a/b\na/b/c\ntrue\nfalse\n"
+    );
+}
+
+/// A fixed instant read in UTC -- zone-independent, so these are safe to
+/// assert on any machine. Oracle-read for epoch 1700000000.
+#[test]
+fn time_utc_civil_fields() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1700000000).getutc
+        puts t.to_s
+        p [t.year, t.month, t.day, t.hour, t.min, t.sec]
+        p [t.wday, t.yday]
+        p t.to_i
+        p t.utc?
+        p t.zone
+        p t.utc_offset
+        p [t.monday?, t.tuesday?]
+        puts Time.at(0).getutc.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2023-11-14 22:13:20 UTC\n[2023, 11, 14, 22, 13, 20]\n[2, 318]\n1700000000\ntrue\n\"UTC\"\n0\n[false, true]\n1970-01-01 00:00:00 UTC\n"
+    );
+}
+
+/// `strftime`'s directive table, including Ruby's `-`/`_` padding flags and
+/// the verbatim-unknown-directive rule.
+#[test]
+fn time_strftime_directives() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1700000000).getutc
+        puts t.strftime("%Y-%m-%d %H:%M:%S")
+        puts t.strftime("%F %T")
+        puts t.strftime("%a %A %b %B")
+        puts t.strftime("%j %u %w %p %I")
+        puts t.strftime("%z %Z")
+        puts t.strftime("%y %C %s")
+        puts t.strftime("100%% literal")
+        puts t.strftime("%Q")
+        jan = Time.at(1704067200).getutc
+        puts jan.strftime("%m|%-m|%_m")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2023-11-14 22:13:20\n2023-11-14 22:13:20\nTue Tuesday Nov November\n318 2 2 PM 10\n+0000 UTC\n23 20 1700000000\n100% literal\n%Q\n01|1| 1\n"
+    );
+}
+
+/// `t + n` answers a Time; `t - other_time` answers a Float of seconds; `t -
+/// n` answers a Time. The argument's type picks.
+#[test]
+fn time_arithmetic_picks_by_argument_type() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1700000000).getutc
+        p (t + 60).to_i
+        p (t - 60).to_i
+        p (Time.at(100) - Time.at(40))
+        p (Time.at(100) - Time.at(40)).class
+        p (t + 60).class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1700000060\n1699999940\n60.0\nFloat\nTime\n"
+    );
+}
+
+/// A Float epoch is stored EXACTLY (Ruby keeps the double's true rational,
+/// denominator a power of two), and `nsec` is a TRUNCATED VIEW of it. This is
+/// observable: `Time.at(10.8) - 0.9` is nsec 900000000, which a `(sec, nsec)`
+/// representation gets wrong (899999999) by dropping 10.8's sub-nanosecond
+/// tail before subtracting. All oracle-read.
+#[test]
+fn time_keeps_a_float_epoch_exactly() {
+    let result = run_ruby(
+        r#"
+        p Time.at(0.5).subsec
+        p Time.at(10.8).subsec
+        p Time.at(10.8).nsec
+        p (Time.at(10.8) - 0.9).nsec
+        p (Time.at(10.8) - 0.9).subsec
+        p Time.at(1.25).to_f
+        p Time.at(1700000000).getutc.subsec
+        p (Time.at(100) + -1.3).usec
+        p (Time.at(100) - 1.3).usec
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "(1/2)\n(225179981368525/281474976710656)\n800000000\n900000000\n(8106479329266899/9007199254740992)\n1.25\n0\n699999\n699999\n"
+    );
+}
+
+/// A negative epoch floors: second -1 plus a POSITIVE sub-second remainder,
+/// never second 0 minus half.
+#[test]
+fn time_normalizes_a_negative_float_epoch() {
+    let result = run_ruby(
+        r#"
+        p Time.at(-0.5).to_i
+        p Time.at(-0.5).nsec
+        p Time.at(-1).to_i
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "-1\n500000000\n-1\n");
+}
+
+/// Time includes Comparable, so the whole ordering surface falls out of
+/// `<=>`. Equality is by INSTANT, so a Time equals its own UTC copy and they
+/// hash alike (which is what makes a Time usable as a Hash key).
+#[test]
+fn time_drives_comparable_and_hashes_by_instant() {
+    let result = run_ruby(
+        r#"
+        p Time.at(5) < Time.at(6)
+        p Time.at(6) > Time.at(5)
+        p Time.at(5).between?(Time.at(1), Time.at(9))
+        p Time.at(1).clamp(Time.at(2), Time.at(5)).to_i
+        p [Time.at(3), Time.at(1), Time.at(2)].sort.map(&:to_i)
+        p Time.at(5) == Time.at(5)
+        p Time.at(5).getutc == Time.at(5)
+        p Time.at(1.5).hash == Time.at(1.5).hash
+        p({ Time.at(99) => "found" }[Time.at(99)])
+        p (Time.at(5) <=> Time.at(6))
+        p (Time.at(5) <=> 5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\ntrue\n2\n[1, 2, 3]\ntrue\ntrue\ntrue\n\"found\"\n-1\nnil\n"
+    );
+}
+
+/// The civil constructors disagree about their 7th argument on purpose:
+/// `Time.utc`'s is MICROSECONDS, `Time.new`'s is a UTC OFFSET in seconds.
+/// Both range-check it. Also: `inspect` renders an offset's seconds where
+/// `to_s` doesn't.
+#[test]
+fn time_civil_constructors_and_their_seventh_argument() {
+    let result = run_ruby(
+        r#"
+        u = Time.utc(2007, 11, 1, 15, 25, 0, 123456)
+        p u.usec
+        p u.nsec
+        puts u.inspect
+        p u.utc?
+
+        o = Time.new(2000, 1, 1, 0, 0, 0, 3600)
+        p o.utc_offset
+        p o.utc?
+        puts o.to_s
+
+        # An offset that is not a whole minute: to_s truncates, inspect does not.
+        s = Time.new(2000, 1, 1, 0, 0, 0, 123)
+        puts s.to_s
+        puts s.inspect
+
+        begin
+          Time.utc(2000, 1, 1, 0, 0, 0, 1000000)
+        rescue ArgumentError => e
+          puts "usec: #{e.message}"
+        end
+        begin
+          Time.new(2000, 1, 1, 0, 0, 0, 86400)
+        rescue ArgumentError => e
+          puts "offset: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "123456\n123456000\n2007-11-01 15:25:00.123456 UTC\ntrue\n3600\nfalse\n2000-01-01 00:00:00 +0100\n2000-01-01 00:00:00 +0002\n2000-01-01 00:00:00 +000203\nusec: subsecx out of range\noffset: utc_offset out of range\n"
+    );
+}
+
+/// `utc`/`gmtime`/`localtime` convert the receiver IN PLACE and answer self;
+/// the `get*` forms answer a copy and leave the receiver alone.
+#[test]
+fn time_mutating_converters_versus_their_copies() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1700000000)
+        u = t.getutc
+        p u.utc?
+        p t.utc?          # getutc did NOT mutate t
+        t.utc
+        p t.utc?          # ...but utc did
+        puts t.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\n2023-11-14 22:13:20 UTC\n"
+    );
+}
+
+/// `inspect` shows sub-second digits (trailing zeros trimmed); `to_s` never
+/// does.
+#[test]
+fn time_inspect_shows_trimmed_subseconds() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1700000000.5).getutc
+        puts t.inspect
+        puts t.to_s
+        puts Time.at(1700000000).getutc.inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2023-11-14 22:13:20.5 UTC\n2023-11-14 22:13:20 UTC\n2023-11-14 22:13:20 UTC\n"
+    );
+}
+
+/// A Time interpolates via its own `to_s` -- it is an Object with a runtime
+/// table, not a registry class, so `call_user_method` has to find the row.
+#[test]
+fn time_interpolates_through_its_own_to_s() {
+    let result = run_ruby(
+        r##"
+        t = Time.at(1700000000).getutc
+        puts "at #{t}"
+        puts "#{t.year}-#{t.month}"
+        p t.to_s.class
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "at 2023-11-14 22:13:20 UTC\n2023-11\nString\n");
+}
+
+/// `ENV` is an Object with Hash-shaped methods, NOT a Hash (`ENV.class` is
+/// `Object` -- oracle-verified), and it reads the LIVE environment.
+#[test]
+fn env_is_an_object_with_hash_shaped_methods() {
+    let result = run_ruby(
+        r#"
+        p ENV.class
+        ENV["SPINEL_E2E"] = "set"
+        p ENV["SPINEL_E2E"]
+        p ENV.key?("SPINEL_E2E")
+        p ENV.fetch("SPINEL_E2E")
+        p ENV.fetch("SPINEL_E2E_ABSENT", "default")
+        p ENV.fetch("SPINEL_E2E_ABSENT") { |k| "computed:#{k}" }
+        p ENV["SPINEL_E2E_ABSENT"]
+        p ENV.delete("SPINEL_E2E")
+        p ENV.key?("SPINEL_E2E")
+        p ENV.delete("SPINEL_E2E")
+        p ENV.to_h.class
+        p ENV.keys.class
+        ENV["SPINEL_E2E2"] = "x"
+        ENV["SPINEL_E2E2"] = nil
+        p ENV["SPINEL_E2E2"]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Object\n\"set\"\ntrue\n\"set\"\n\"default\"\n\"computed:SPINEL_E2E_ABSENT\"\nnil\n\"set\"\nfalse\nnil\nHash\nArray\nnil\n"
+    );
+}
+
+/// ENV's error shapes: a non-String key is a TypeError, a bare `fetch` miss
+/// is a KeyError.
+#[test]
+fn env_error_shapes() {
+    let result = run_ruby(
+        r#"
+        begin
+          ENV[:PATH]
+        rescue TypeError => e
+          puts "TypeError"
+        end
+        begin
+          ENV.fetch("SPINEL_DEFINITELY_ABSENT")
+        rescue KeyError => e
+          puts "KeyError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "TypeError\nKeyError\n");
+}
+
+/// `Process` identity and clocks -- asserted as FACTS about the values, never
+/// the values themselves (a pid isn't reproducible).
+#[test]
+fn process_identity_and_clocks() {
+    let result = run_ruby(
+        r#"
+        p Process.pid.is_a?(Integer)
+        p Process.pid > 0
+        p Process.clock_gettime(Process::CLOCK_MONOTONIC).is_a?(Float)
+        p Process.clock_gettime(Process::CLOCK_MONOTONIC, :millisecond).is_a?(Integer)
+        p Process.clock_gettime(Process::CLOCK_MONOTONIC, :float_second).is_a?(Float)
+        a = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        b = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        p b >= a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\ntrue\ntrue\ntrue\n");
+}
+
+/// A missing path raises the right `Errno::*`, with CRuby's message shape --
+/// and it is catchable by its PARENT (`SystemCallError`), which is what the
+/// prelude hierarchy buys.
+#[test]
+fn file_errors_are_real_errno_classes() {
+    let result = run_ruby(
+        r##"
+        begin
+          File.read("/definitely/not/here")
+        rescue Errno::ENOENT => e
+          puts "#{e.class}: #{e.message}"
+        end
+        p Errno::ENOENT.superclass
+        p Errno::ENOENT.ancestors.include?(StandardError)
+        begin
+          Dir.entries("/definitely/not/here")
+        rescue SystemCallError => e
+          puts e.class
+        end
+        begin
+          File.read(5)
+        rescue TypeError => e
+          puts "TypeError"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Errno::ENOENT: No such file or directory @ rb_sysopen - /definitely/not/here\nSystemCallError\ntrue\nErrno::ENOENT\nTypeError\n"
+    );
+}
+
+/// The `File.<predicate>?` family answers false for a missing path rather
+/// than raising -- and `size?` is nil for a missing OR empty file, though
+/// `size` is 0 for an empty one.
+#[test]
+fn file_predicates_answer_rather_than_raise() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_pred_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          full = File.join(dir, "full.txt")
+          empty = File.join(dir, "empty.txt")
+          missing = File.join(dir, "missing.txt")
+          File.write(full, "12345")
+          File.write(empty, "")
+
+          p [File.exist?(full), File.exist?(missing)]
+          p [File.file?(full), File.file?(dir)]
+          p [File.directory?(dir), File.directory?(full)]
+          p [File.zero?(empty), File.zero?(full)]
+          p File.size(full)
+          p File.size(empty)
+          p File.size?(full)
+          p File.size?(empty)
+          p File.size?(missing)
+          p [File.exist?(missing), File.file?(missing), File.directory?(missing)]
+
+          File.delete(full, empty)
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[true, false]\n[true, false]\n[true, false]\n[true, false]\n5\n0\n5\nnil\nnil\n[false, false, false]\n"
+    );
+}
+
+/// Whole-file read/write/readlines, including `chomp: true`.
+#[test]
+fn file_whole_file_io() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_rw_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          path = File.join(dir, "lines.txt")
+          n = File.write(path, "alpha\nbeta\ngamma\n")
+          p n
+          p File.read(path)
+          p File.readlines(path)
+          p File.readlines(path, chomp: true)
+          File.write(path, "no trailing newline")
+          p File.readlines(path)
+          File.delete(path)
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "17\n\"alpha\\nbeta\\ngamma\\n\"\n[\"alpha\\n\", \"beta\\n\", \"gamma\\n\"]\n[\"alpha\", \"beta\", \"gamma\"]\n[\"no trailing newline\"]\n"
+    );
+}
+
+/// `File.open`: the block form closes on every exit path and answers the
+/// block's value. A LENGTHED read at EOF is nil where a whole-rest read is
+/// `""` -- the asymmetry a `while chunk = f.read(n)` loop relies on.
+#[test]
+fn file_open_block_form_and_positioned_reads() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_open_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          path = File.join(dir, "counted.txt")
+          File.open(path, "w") { |f| f.print "ABCDEFGHIJ" }
+          p File.read(path)
+
+          File.open(path, "r") do |f|
+            p f.read(5)
+            p f.read(5)
+            p f.read(5)
+            f.rewind
+            p f.read(2)
+            p f.tell
+            f.seek(0)
+            p f.read
+            p f.eof?
+          end
+
+          p File.open(path, "r") { |f| f.read(3) }
+
+          h = File.open(path, "r")
+          p h.closed?
+          h.close
+          p h.closed?
+          begin
+            h.read
+          rescue IOError => e
+            puts "IOError: #{e.message}"
+          end
+
+          File.delete(path)
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ABCDEFGHIJ\"\n\"ABCDE\"\n\"FGHIJ\"\nnil\n\"AB\"\n2\n\"ABCDEFGHIJ\"\ntrue\n\"ABC\"\nfalse\ntrue\nIOError: closed stream\n"
+    );
+}
+
+/// `File.open`'s block form closes the file even when the block RAISES --
+/// that ensure is the whole reason the idiom exists.
+#[test]
+fn file_open_closes_even_when_the_block_raises() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_raise_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          path = File.join(dir, "x.txt")
+          File.write(path, "data")
+          handle = nil
+          begin
+            File.open(path, "r") do |f|
+              handle = f
+              raise "boom"
+            end
+          rescue RuntimeError => e
+            puts "rescued: #{e.message}"
+          end
+          p handle.closed?
+          File.delete(path)
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued: boom\ntrue\n");
+}
+
+/// `Dir` listing: `entries` includes `.`/`..`, `children` does not.
+#[test]
+fn dir_listing_distinguishes_entries_from_children() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_list_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          File.write(File.join(dir, "a.rb"), "")
+          File.write(File.join(dir, "b.txt"), "")
+          Dir.mkdir(File.join(dir, "sub"))
+
+          p Dir.children(dir).sort
+          p Dir.entries(dir).sort
+          p Dir.exist?(dir)
+          p Dir.exist?(File.join(dir, "a.rb"))
+          p Dir.exist?("/definitely/not/here")
+          p Dir.empty?(File.join(dir, "sub"))
+          p Dir.pwd.start_with?("/")
+
+          Dir.rmdir(File.join(dir, "sub"))
+          File.delete(File.join(dir, "a.rb"), File.join(dir, "b.txt"))
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"a.rb\", \"b.txt\", \"sub\"]\n[\".\", \"..\", \"a.rb\", \"b.txt\", \"sub\"]\ntrue\nfalse\nfalse\ntrue\ntrue\n"
+    );
+}
+
+/// `Dir.glob`: `*` within a segment, `**` across them, `?`, `{a,b}`
+/// alternation, and Ruby's hidden-file rule (a leading `.` is invisible to a
+/// wildcard).
+#[test]
+fn dir_glob_semantics() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_glob_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          Dir.chdir(dir) do
+            Dir.mkdir("sub")
+            File.write("x.rb", "")
+            File.write("y.txt", "")
+            File.write(".hidden", "")
+            File.write("sub/z.rb", "")
+
+            p Dir.glob("*.rb").sort
+            p Dir.glob("**/*.rb").sort
+            p Dir.glob("sub/*.rb")
+            p Dir.glob("*.{rb,txt}").sort
+            p Dir.glob("?.rb")
+            p Dir["*.rb"]
+            p Dir.glob("*").sort
+            p Dir.glob("*").include?(".hidden")
+            p Dir.glob(".*").include?(".hidden")
+
+            File.delete("x.rb", "y.txt", ".hidden", "sub/z.rb")
+            Dir.rmdir("sub")
+          end
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"x.rb\"]\n[\"sub/z.rb\", \"x.rb\"]\n[\"sub/z.rb\"]\n[\"x.rb\", \"y.txt\"]\n[\"x.rb\"]\n[\"x.rb\"]\n[\"sub\", \"x.rb\", \"y.txt\"]\nfalse\ntrue\n"
+    );
+}
+
+/// `Dir.chdir`'s block form restores the previous directory afterwards.
+#[test]
+fn dir_chdir_block_form_restores_the_previous_directory() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_chdir_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          before = Dir.pwd
+          Dir.chdir(dir) do
+            p Dir.pwd != before
+          end
+          p Dir.pwd == before
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\n");
+}
+
+/// `Dir.mkdir`/`rmdir` round-trip, and `File.rename`/`delete`.
+#[test]
+fn dir_and_file_mutation_round_trips() {
+    let result = run_ruby(
+        r##"
+        dir = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_e2e_mut_#{Process.pid}")
+        Dir.mkdir(dir)
+        begin
+          fresh = File.join(dir, "fresh")
+          Dir.mkdir(fresh)
+          p Dir.exist?(fresh)
+          Dir.rmdir(fresh)
+          p Dir.exist?(fresh)
+
+          a = File.join(dir, "a.txt")
+          b = File.join(dir, "b.txt")
+          File.write(a, "x")
+          File.rename(a, b)
+          p [File.exist?(a), File.exist?(b)]
+          p File.delete(b)
+          p File.exist?(b)
+        ensure
+          Dir.rmdir(dir)
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\n[false, true]\n1\nfalse\n"
+    );
+}

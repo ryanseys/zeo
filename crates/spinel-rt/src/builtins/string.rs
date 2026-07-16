@@ -792,7 +792,10 @@ builtin_methods! {
 }
 
 /// `lines`' separator-keeping splitter.
-fn split_lines(text: &str) -> Vec<RubyValue> {
+/// Split into lines, KEEPING each terminating newline (a trailing fragment
+/// with no newline is still a line) -- `String#each_line`/`#lines`, and
+/// `File.readlines`, which is the same rule applied to a whole file.
+pub(crate) fn split_lines(text: &str) -> Vec<RubyValue> {
     let mut out = Vec::new();
     let mut cur = String::new();
     for c in text.chars() {

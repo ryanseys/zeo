@@ -598,16 +598,16 @@ pub fn emit_new_with_arg_tokens(
     let cid = cx
         .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
-    if cx.compiler.class(cid).is_builtin {
-        panic!(
-            "`{class_name}.new` isn't supported yet -- built-in types are constructed via their own literal syntax, not `.new` (spike scope)"
-        );
-    }
-    // `SomeModule.new` -- no struct exists to construct; route through the
-    // dynamic path so it raises real Ruby's NoMethodError ("undefined
-    // method 'new' for module M", oracle-verified) at runtime via
-    // `send_value`'s Class arm instead of failing inside rustc.
-    if cx.compiler.class(cid).is_module {
+    // A BUILT-IN's `.new` -- no generated struct exists to construct, but
+    // that doesn't make the call an error: `Time.new(...)` is ordinary Ruby,
+    // answered by the runtime's own class-method table. Route it dynamically
+    // (exactly as the module case just below does) and let the runtime
+    // decide: a builtin with a `new` row constructs, and one without raises
+    // real Ruby's NoMethodError at the moment the call runs. This used to be
+    // a compile-time panic ("built-in types are constructed via their own
+    // literal syntax"), which was never true of `Time`/`File`/`Dir` and made
+    // an unreachable `Time.new` fail the whole compile.
+    if cx.compiler.class(cid).is_builtin || cx.compiler.class(cid).is_module {
         let id = cid.0;
         return quote! {
             spinel_rt::send_value_in(#__bx, 
@@ -886,7 +886,7 @@ pub fn emit_super_inline(
         loop_labels: cx.loop_labels.clone(),
         // NOT inherited -- see `Ctx::for_var_override`'s docs.
         for_var_override: None,
-        captured_locals: &defining_captures.locals,
+        captured_locals: std::borrow::Cow::Borrowed(&defining_captures.locals),
         // Both ARE inherited (unlike `for_var_override`): the inlined body
         // must keep referring to whichever `self` the CALLING method's own
         // body is already using, and `break`/`next`/`redo`/`return` inside
@@ -1271,7 +1271,9 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
         quote! { let __self_default = #boxed; }
     });
 
-    let proc_cx = cx.in_proc(needs_self);
+    // The block's OWN parameter names shadow the enclosing scope's metadata
+    // for them -- see `Ctx::in_proc`.
+    let proc_cx = cx.in_proc(needs_self, &super::captures::own_param_names(params));
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
     let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =

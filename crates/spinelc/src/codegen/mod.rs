@@ -115,7 +115,10 @@ struct Ctx<'a> {
     /// (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a
     /// plain hoisted `let mut` (see `hoisting::local_storage`), computed ONCE
     /// per method/top-level scope, same lifetime as `local_types`.
-    captured_locals: &'a HashSet<String>,
+    /// `Cow`, not a plain `&`, for the same reason `local_types` is one: a
+    /// block's own Ctx must SHADOW these for its own parameter names (see
+    /// `in_proc`), which means owning a modified copy.
+    captured_locals: std::borrow::Cow<'a, HashSet<String>>,
     /// The identifier that stands for `self` in THIS position -- ordinarily
     /// the literal `self`, but rebound to a fresh capture-alias identifier
     /// while emitting an escaping block's own body that captured `self`
@@ -229,7 +232,29 @@ impl<'a> Ctx<'a> {
     // Not consumed yet -- wired up together with Proc construction, later in
     // this same phase.
     #[allow(dead_code)]
-    fn in_proc(&self, needs_self_capture: bool) -> Ctx<'a> {
+    fn in_proc(&self, needs_self_capture: bool, own_params: &HashSet<String>) -> Ctx<'a> {
+        // A block's own PARAMETERS shadow whatever the enclosing scope calls
+        // the same name -- they are fresh bindings, and nothing about the
+        // outer name applies to them. Both maps must forget those names, or
+        // the block's body reads its own parameter through the OUTER name's
+        // metadata:
+        //   - `local_types`: `b = Builder.new; xs.each { |a, b| ... }` typed
+        //     the param `b` as Object(Builder) and emitted a
+        //     `Builder::new_handle(b)` box around a plain RubyValue (E0308);
+        //   - `captured_locals`: `rescue => e` (captured by some block) made
+        //     the param `e` of a LATER `each { |e| }` read as a cell,
+        //     emitting `e.lock()` on a plain RubyValue (E0599).
+        // Both were live bugs; see the corpus's block_param_shadow family.
+        let shadow = |mut c: std::borrow::Cow<'a, HashSet<String>>| {
+            if own_params.iter().any(|n| c.contains(n)) {
+                c.to_mut().retain(|n| !own_params.contains(n));
+            }
+            c
+        };
+        let mut local_types = self.local_types.clone();
+        if own_params.iter().any(|n| local_types.contains_key(n)) {
+            local_types.to_mut().retain(|n, _| !own_params.contains(n));
+        }
         Ctx {
             loop_labels: None,
             for_var_override: None,
@@ -242,6 +267,8 @@ impl<'a> Ctx<'a> {
             // A captured self arrives as `&RubyValue` (the closure's own
             // first parameter) -- see the field's docs.
             self_is_dynamic: needs_self_capture || self.self_is_dynamic,
+            captured_locals: shadow(self.captured_locals.clone()),
+            local_types,
             ..self.clone()
         }
     }
@@ -493,7 +520,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         label_counter: &main_label_counter,
         loop_labels: None,
         for_var_override: None,
-        captured_locals: &main_captures.locals,
+        captured_locals: std::borrow::Cow::Borrowed(&main_captures.locals),
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -584,6 +611,11 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // fallbacks, no compile-time registration.
             spinel_rt::seed_argv();
             spinel_rt::seed_stdio();
+            spinel_rt::seed_io_constants();
+            // `ENV` and the `Process::CLOCK_*` constants (plan P-B) -- same
+            // runtime-fallback story as ARGV/STDOUT above.
+            spinel_rt::seed_env();
+            spinel_rt::seed_process();
             // Lets the runtime raise real, catchable exceptions
             // (NoMethodError since Phase 13.7; the whole ArgumentError/
             // TypeError/... set since 17.1) -- spinel-rt can't construct
@@ -697,7 +729,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
-        captured_locals: &no_captures,
+        captured_locals: std::borrow::Cow::Borrowed(&no_captures),
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -783,7 +815,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
-        captured_locals: &no_captures.locals,
+        captured_locals: std::borrow::Cow::Borrowed(&no_captures.locals),
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
@@ -895,7 +927,7 @@ fn emit_builtin_method_fn(
         label_counter: &label_counter,
         loop_labels: None,
         for_var_override: None,
-        captured_locals: &method_captures.locals,
+        captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
         self_ident: format_ident!("__self"),
         in_real_proc: false,
         // `__self` here is the `RubyValue` receiver parameter, not an
@@ -984,7 +1016,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             label_counter: &method_label_counter,
             loop_labels: None,
             for_var_override: None,
-            captured_locals: &method_captures.locals,
+            captured_locals: std::borrow::Cow::Borrowed(&method_captures.locals),
             self_ident: format_ident!("self"),
             in_real_proc: false,
             self_is_dynamic: false,

@@ -111,6 +111,34 @@ class TypeError < StandardError
 end
 class ZeroDivisionError < StandardError
 end
+class SystemCallError < StandardError
+end
+module Errno
+  class ENOENT < SystemCallError
+  end
+  class EACCES < SystemCallError
+  end
+  class EEXIST < SystemCallError
+  end
+  class ENOTDIR < SystemCallError
+  end
+  class EISDIR < SystemCallError
+  end
+  class ENOTEMPTY < SystemCallError
+  end
+  class EPIPE < SystemCallError
+  end
+  class EINVAL < SystemCallError
+  end
+  class EAGAIN < SystemCallError
+  end
+  class EBADF < SystemCallError
+  end
+  class ESPIPE < SystemCallError
+  end
+  class EXDEV < SystemCallError
+  end
+end
 "#;
 
 /// Returns the built `Hir` plus the id of its `Program` root -- `Hir` itself

@@ -26,3 +26,9 @@ may = "0.3"
 num-bigint = "0.5"
 num-integer = "0.1"
 num-traits = "0.2"
+# The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
+# `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
+# already owns. Deliberately libc rather than chrono: Time's strftime and
+# zone semantics are CRuby-specific enough that a datetime crate's own
+# opinions would have to be fought, not used (see the plan's P-E note).
+libc = "0.2"

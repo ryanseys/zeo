@@ -611,6 +611,7 @@ name = "spinel-rt"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "libc",
  "may",
  "num-bigint",
  "num-integer",

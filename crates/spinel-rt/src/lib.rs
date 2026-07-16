@@ -23,7 +23,9 @@ mod value;
 
 pub use arith::*;
 pub use collections::*;
-pub use builtins::io::seed_stdio;
+pub use builtins::env::seed_env;
+pub use builtins::io::{seed_io_constants, seed_stdio};
+pub use builtins::process::seed_process;
 pub use constants::{const_get, const_set, seed_argv};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
 pub use builtins::enumerator::{EnumeratorData, REnumerator};

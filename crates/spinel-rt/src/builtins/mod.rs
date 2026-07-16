@@ -37,8 +37,14 @@ pub(crate) mod io;
 pub(crate) mod kernel;
 pub(crate) mod method_obj;
 pub(crate) mod math;
+pub(crate) mod dir;
+pub(crate) mod env;
+pub(crate) mod file;
+pub(crate) mod gc;
 pub(crate) mod numeric;
 pub(crate) mod object;
+pub(crate) mod process;
+pub(crate) mod time;
 pub(crate) mod range;
 pub(crate) mod rational;
 pub(crate) mod regexp;
@@ -81,9 +87,37 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup,
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
-        spinel_abi::IO_CLASS => io::lookup,
+        spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup,
         spinel_abi::METHOD_CLASS => method_obj::lookup,
         spinel_abi::FIBER_CLASS => fiber::lookup,
+        spinel_abi::TIME_CLASS => time::lookup,
+        _ => return None,
+    })
+}
+
+/// The static ClassId -> CLASS-METHOD table map -- `class_table`'s
+/// counterpart for methods invoked on the class/module VALUE itself
+/// (`File.read`, `Time.now`, `Dir.pwd`, `Math.sqrt`), as opposed to on an
+/// instance.
+///
+/// Needed because this runtime has no singleton-method tables: an instance
+/// method table is keyed by the receiver's class, but the receiver of
+/// `File.read` is `RubyValue::Class(FILE_CLASS)`, whose own class is
+/// `Class` -- so the ordinary MRO walk looks at Class/Module and never at
+/// File. `send_value_in` probes this table first for a `RubyValue::Class`
+/// receiver, which is what `Math.sqrt` used to get via a hardcoded
+/// `if *cid == MATH_CLASS` arm (and `GC` via a second one).
+///
+/// The `&RubyValue` a row receives is the CLASS VALUE itself, not an
+/// instance -- rows generally ignore it (`Time.now` needs no receiver), but
+/// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
+pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
+    Some(match id {
+        spinel_abi::FILE_CLASS => file::lookup_class,
+        spinel_abi::DIR_CLASS => dir::lookup_class,
+        spinel_abi::TIME_CLASS => time::lookup_class,
+        spinel_abi::PROCESS_CLASS => process::lookup_class,
+        spinel_abi::GC_CLASS => gc::lookup_class,
         _ => return None,
     })
 }

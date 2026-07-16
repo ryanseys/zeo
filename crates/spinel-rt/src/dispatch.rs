@@ -661,8 +661,26 @@ pub(crate) fn call_user_method(
     name: &str,
     args: &[RubyValue],
 ) -> Option<Result<RubyValue, Signal>> {
-    let f = REGISTRY.get()?.lookup(recv.class_id(), Symbol::intern(name))?;
-    Some(f(recv, args, None))
+    let id = recv.class_id();
+    if let Some(f) = REGISTRY.get().and_then(|r| r.lookup(id, Symbol::intern(name))) {
+        return Some(f(recv, args, None));
+    }
+    // A RUNTIME-RESIDENT class (`Time`, `File`, ... -- plan P-B) is an
+    // `Object(RObj)` with no registry entry, but it does have a builtin
+    // table. Without this probe its own `to_s`/`inspect`/`hash` would be
+    // invisible to every caller here -- stringifying a Time would answer
+    // `#<Time>` rather than running `Time#to_s`.
+    //
+    // The receiver's OWN class only, deliberately NOT its ancestors: this is
+    // called from `display_with`/`inspect_with`, and `Kernel`'s own `to_s`
+    // row renders via `to_display_string` -- walking up to it would recurse
+    // until the stack died (it did). The ancestor walk belongs to `send_in`,
+    // which has no such reentrancy; what this needs is only "does THIS class
+    // define the method itself".
+    if let Some(f) = crate::builtins::class_table(id).and_then(|lookup| lookup(name)) {
+        return Some(f(&RubyValue::Object(recv.clone()), args, None));
+    }
+    None
 }
 
 /// A registry-optional ancestry probe (Phase 16.2) -- `false` when no
@@ -833,32 +851,23 @@ pub fn send_value_in(
     }
     let n = name.name();
     let n = n.as_str();
-    // `Math.sqrt(...)`-style MODULE FUNCTIONS (Phase 17.1): our model has
-    // no singleton-method tables, so the Math module value gets one
-    // dedicated probe ahead of the walk (whose chains describe INSTANCE
-    // methods -- a Class value's walk runs over Class/Module, not Math).
+    // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
+    // this runtime has no singleton-method tables, so a class value gets its
+    // own table probed ahead of the walk. The walk itself describes INSTANCE
+    // methods, and a `RubyValue::Class`'s own chain runs over Class/Module --
+    // it would never reach File's or Math's rows.
     if let RubyValue::Class(cid) = recv {
+        if let Some(lookup) = crate::builtins::class_method_table(*cid) {
+            if let Some(f) = lookup(n) {
+                return f(recv, args, block);
+            }
+        }
+        // Math predates the table shape (it answers `Option<Result<..>>` from
+        // one `math_call` fn rather than per-name rows), so it keeps its own
+        // probe rather than being reshaped for no behavior change.
         if *cid == MATH_CLASS {
             if let Some(r) = crate::builtins::math::math_call(n, args) {
                 return r;
-            }
-        }
-        // `GC` module functions -- honest no-ops (spinel-rs is
-        // Arc-refcounted; no collector exists to drive). `stat` answers an
-        // empty-ish Hash so `GC.stat[:count]`-style reads get nil rather
-        // than crashing.
-        // TODO(plan P-D): replace this probe with the general
-        // `class_method_table(ClassId)` mechanism when File/Dir/Time land.
-        if *cid == spinel_abi::GC_CLASS {
-            match n {
-                "start" | "compact" => return Ok(RubyValue::Nil),
-                "enable" | "disable" => return Ok(RubyValue::Bool(false)),
-                "stress" => return Ok(RubyValue::Bool(false)),
-                "count" => return Ok(RubyValue::Int(0)),
-                "stat" => {
-                    return Ok(RubyValue::Hash(crate::collections::hash_new(Vec::new())))
-                }
-                _ => {}
             }
         }
     }
@@ -943,13 +952,25 @@ pub fn send_in(
         return f(recv, args, block);
     }
 
+    let boxed = RubyValue::Object(recv.clone());
+    // ENV's methods are probed by IDENTITY, not by class: `ENV.class` is
+    // `Object` (real Ruby -- it is a lone singleton with Hash-shaped
+    // methods, not a Hash), so a class-keyed table would hand `[]`/`fetch`/
+    // `keys` to every plain Object in the program. Ahead of the walk for the
+    // same reason `Math` is: these are ENV's own methods, and the walk only
+    // describes what `Object`'s ancestors offer.
+    if crate::builtins::env::is_env(&boxed) {
+        if let Some(f) = crate::builtins::env::lookup(name.name().as_str()) {
+            return f(&boxed, args, block);
+        }
+    }
+
     // The SAME MRO walk `send_value` runs (Phase 17.1), over a boxed
     // handle: Kernel's universals, BasicObject's `==`, and the
     // Enumerable/Comparable drivers all resolve as real ancestor methods
     // -- which also fixes a fidelity bug: `method_missing` used to fire
     // BEFORE the Enumerable/Comparable fallbacks, but real Ruby finds a
     // real (module) method first, always.
-    let boxed = RubyValue::Object(recv.clone());
     let n = name.name();
     let n = n.as_str();
     for &anc in ancestors_of_value(id) {

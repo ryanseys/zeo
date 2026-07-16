@@ -1261,7 +1261,7 @@ mod tests {
             label_counter: &label_counter,
             loop_labels: None,
             for_var_override: None,
-            captured_locals: &empty,
+            captured_locals: std::borrow::Cow::Borrowed(&empty),
             self_ident: quote::format_ident!("__self"),
             in_real_proc: false,
             self_is_dynamic: false,

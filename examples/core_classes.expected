@@ -1,0 +1,111 @@
+notes.md
+notes
+notes
+b
+/home/user
+.
+/
+".gz"
+""
+"."
+["/a/b", "c.rb"]
+a/b/c
+a/b
+true
+false
+2023-11-14 22:13:20 UTC
+2023-11-14 22:13:20 UTC
+[2023, 11, 14, 22, 13, 20]
+[2, 318]
+1700000000
+true
+"UTC"
+0
+false
+true
+2023-11-14 22:13:20
+2023-11-14 22:13:20
+Tue Tuesday Nov November
+318 2 2 PM 10
++0000 UTC
+100% literal
+01|1| 1
+1700000060
+1699999940
+60.0
+Float
+(1/2)
+(225179981368525/281474976710656)
+800000000
+900000000
+1.25
+-1
+500000000
+true
+true
+2
+[1, 2, 3]
+true
+true
+"found"
+123456
+123456000
+2007-11-01 15:25:00.123456 UTC
+3600
+false
+2000-01-01 00:00:00 +0100
+"alpha\nbeta\n"
+["alpha\n", "beta\n"]
+["alpha", "beta"]
+11
+true
+false
+true
+false
+true
+false
+true
+false
+nil
+11
+["one.rb", "sub", "two.txt"]
+[".", "..", "one.rb", "sub", "two.txt"]
+["one.rb"]
+["one.rb", "sub/three.rb"]
+["one.rb", "two.txt"]
+["one.rb"]
+["one.rb"]
+true
+false
+false
+"ABCDE"
+"FGHIJ"
+nil
+"AB"
+2
+"ABCDEFGHIJ"
+true
+"ABC"
+true
+IOError: closed stream
+false
+true
+Errno::ENOENT: No such file or directory @ rb_sysopen - /definitely/not/here
+SystemCallError
+true
+Errno::ENOENT
+Object
+"set"
+true
+"set"
+"default"
+"computed:SPINEL_ABSENT"
+nil
+"set"
+false
+Hash
+Array
+true
+true
+true
+true

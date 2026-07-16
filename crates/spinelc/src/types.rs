@@ -183,14 +183,23 @@ pub fn infer_type_with_locals(
         // inside `module Store` types as the nested `Store::Item`.
         HirNode::New { class_name, .. } => {
             match compiler.resolve_class(class_name, &compiler.cref_of(defining), box_id) {
-                // A MODULE stays Poly: `M.new` has no struct -- codegen
-                // routes it to the dynamic path, whose result is a plain
-                // `RubyValue` (well, a raised NoMethodError -- Phase 16.1).
-                // `Object.new` (the sentinel idiom) is Poly too: it
-                // constructs a boxed `spinel_rt::Object`, not a generated
-                // struct (see `emit_new_with_arg_tokens`'s Object arm).
+                // `TyKind::Object(cid)` means "an unboxed `Arc<GeneratedStruct>`",
+                // so it is only correct when a generated struct actually
+                // exists. Three kinds have none, and all stay Poly (a plain
+                // `RubyValue`), matching what `emit_new_with_arg_tokens`
+                // emits for each:
+                //   - a MODULE: `M.new` routes to the dynamic path (which
+                //     raises NoMethodError -- Phase 16.1);
+                //   - `Object.new`: the sentinel idiom, a boxed
+                //     `spinel_rt::Object`;
+                //   - a BUILT-IN (`Time.new`, plan P-B): answered by the
+                //     runtime's own class-method table, as a `RubyValue`.
+                //     Typing it `Object(TIME_CLASS)` made codegen try to box
+                //     the result through a `__bm_Time::new_handle` that does
+                //     not exist.
                 Some(cid)
                     if !compiler.class(cid).is_module
+                        && !compiler.class(cid).is_builtin
                         && cid != crate::compiler::OBJECT_CLASS =>
                 {
                     TyKind::Object(cid)

@@ -152,15 +152,14 @@ fn float_to_integer(f: f64) -> Result<RubyValue, Signal> {
     ))
 }
 
-/// `Float#to_r`'s exact dyadic decomposition: f == mantissa * 2^exp.
-fn float_to_rational(f: f64) -> Result<RubyValue, Signal> {
+/// A finite double's EXACT value as `(num, den)`, `den` a power of two --
+/// the dyadic decomposition `f == mantissa * 2^exp` every exact reading of a
+/// Float goes through. Shared with `Time`, whose sub-second fields are
+/// oracle-exact rather than recomputed in floating point (`Time.at(0.7).nsec`
+/// is 699999999, because that IS what the double holds; doing the arithmetic
+/// in f64 rounds it back to 700000000 and hides the very thing Ruby shows).
+pub(crate) fn float_exact_parts(f: f64) -> (num_bigint::BigInt, num_bigint::BigInt) {
     use num_bigint::BigInt;
-    if !f.is_finite() {
-        return Err(crate::dispatch::raise_error(
-            "FloatDomainError",
-            RubyValue::Float(f).to_display_string(),
-        ));
-    }
     let bits = f.to_bits();
     let sign: i64 = if bits >> 63 == 0 { 1 } else { -1 };
     let exponent = ((bits >> 52) & 0x7ff) as i64;
@@ -172,10 +171,22 @@ fn float_to_rational(f: f64) -> Result<RubyValue, Signal> {
     let exp = exponent - 1075;
     let num = BigInt::from(sign) * BigInt::from(mantissa);
     if exp >= 0 {
-        crate::builtins::rational::rational_new(num << exp as usize, BigInt::from(1))
+        (num << exp as usize, BigInt::from(1))
     } else {
-        crate::builtins::rational::rational_new(num, BigInt::from(1) << (-exp) as usize)
+        (num, BigInt::from(1) << (-exp) as usize)
     }
+}
+
+/// `Float#to_r`'s exact dyadic decomposition: f == mantissa * 2^exp.
+fn float_to_rational(f: f64) -> Result<RubyValue, Signal> {
+    if !f.is_finite() {
+        return Err(crate::dispatch::raise_error(
+            "FloatDomainError",
+            RubyValue::Float(f).to_display_string(),
+        ));
+    }
+    let (num, den) = float_exact_parts(f);
+    crate::builtins::rational::rational_new(num, den)
 }
 
 fn float_round_family(
