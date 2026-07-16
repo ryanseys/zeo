@@ -756,7 +756,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 }
             }
             let narrowed = cx.with_narrowed_locals(overlay);
-            let b = super::stmt::emit_body(&narrowed, body, false);
+            // A `Seq`/`PreExec` expression ALWAYS infers `Poly` (see `infer`),
+            // so every consumer expects a boxed `RubyValue` -- but a bare tail
+            // `self`/`New`/`Shadowed`-local emits an unboxed `Arc<Concrete>`.
+            // `emit_body_boxed` boxes exactly that tail, keeping the block's
+            // Rust type consistent with its `Poly` inference. (`emit_body(..,
+            // false)` left `(@x = 1; self)` producing `Arc<Self>`, an E0308 in
+            // `Ok(...)` position -- reproduced via `def freeze = (..; self)`.)
+            let b = super::stmt::emit_body_boxed(&narrowed, body);
             quote! { { #b } }
         }
         HirNode::Eval(body) => {
