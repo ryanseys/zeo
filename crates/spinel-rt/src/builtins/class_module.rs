@@ -87,6 +87,90 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(names)))
     }
+    // `Module#method_defined?(:name)` -- does the class (or an ancestor)
+    // provide `name` as a public/protected INSTANCE method? Reuses the same
+    // MRO walk `respond_to?` does (`responds_to` with `include_all=false`,
+    // which skips private but keeps protected -- exactly method_defined?'s
+    // rule), so an inherited `object_id`/`frozen?` answers true too.
+    "method_defined?" => fn method_defined(recv, args, _block) {
+        arity!(args, 1);
+        let name = name_arg(&args[0])?;
+        Ok(RubyValue::Bool(crate::dispatch::responds_to(
+            recv_cid(recv),
+            crate::Symbol::intern(&name),
+            false,
+        )))
+    }
+    // `Module#class_variable_get/set/defined?` over the linearized ancestry
+    // (a `@@x` is owned by the nearest ancestor that first assigned it --
+    // see `cvars`' docs). `get` on a never-assigned name is a `NameError`,
+    // unlike a plain `@@x` read's nil-on-miss.
+    "class_variable_get" => fn cvar_get_m(recv, args, _block) {
+        arity!(args, 1);
+        let name = cvar_name_arg(&args[0])?;
+        let cid = recv_cid(recv);
+        for &anc in crate::dispatch::ancestors_of_value(cid) {
+            if crate::cvar_defined(anc.0, &name) {
+                return Ok(crate::cvar_get(anc.0, &name));
+            }
+        }
+        Err(crate::dispatch::raise_error(
+            "NameError",
+            format!(
+                "uninitialized class variable @@{name} in {}",
+                crate::dispatch::class_name(cid).unwrap_or_default()
+            ),
+        ))
+    }
+    "class_variable_set" => fn cvar_set_m(recv, args, _block) {
+        arity!(args, 2);
+        let name = cvar_name_arg(&args[0])?;
+        let cid = recv_cid(recv);
+        // Assign on the owning ancestor if one already exists, else on the
+        // receiver itself (real Ruby's own rule).
+        let owner = crate::dispatch::ancestors_of_value(cid)
+            .iter()
+            .find(|&&anc| crate::cvar_defined(anc.0, &name))
+            .map_or(cid, |&anc| anc);
+        crate::cvar_set(owner.0, &name, args[1].clone());
+        Ok(args[1].clone())
+    }
+    "class_variable_defined?" => fn cvar_defined_m(recv, args, _block) {
+        arity!(args, 1);
+        let name = cvar_name_arg(&args[0])?;
+        Ok(RubyValue::Bool(
+            crate::dispatch::ancestors_of_value(recv_cid(recv))
+                .iter()
+                .any(|&anc| crate::cvar_defined(anc.0, &name)),
+        ))
+    }
+}
+
+/// A `:name`/`"name"` method-name argument as a bare `String`. Accepts a
+/// Symbol or String (real Ruby takes either); anything else is a TypeError.
+fn name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(s.name().to_string()),
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+        _ => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("{} is not a symbol nor a string", v.inspect_string()),
+        )),
+    }
+}
+
+/// The `:@@x`/`"@@x"` argument of the `class_variable_*` family, as the bare
+/// name (`x`) the `cvars` table is keyed on. A name without the leading
+/// `@@` is a NameError, matching real Ruby's shape.
+fn cvar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
+    let raw = name_arg(v)?;
+    match raw.strip_prefix("@@") {
+        Some(name) => Ok(name.to_string()),
+        None => Err(crate::dispatch::raise_error(
+            "NameError",
+            format!("'{raw}' is not allowed as a class variable name"),
+        )),
+    }
 }
 
 /// The `:@x`/`"@x"` argument of the `instance_variable_*` family, as the

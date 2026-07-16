@@ -14481,3 +14481,100 @@ fn alias_under_a_static_modifier_and_if_elsif() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "1\n2\n2\nfalse\n");
 }
+
+#[test]
+fn exception_backtrace_full_message_and_inspect() {
+    // backtrace is an empty array (spinel does not track per-exception
+    // backtraces); inspect renders "#<Class: msg>" (or the bare class name
+    // when the message is empty); full_message is "Class: msg".
+    let result = run_ruby(
+        r#"
+        begin
+          raise ArgumentError, "bad"
+        rescue => e
+          p e.backtrace
+          p e.inspect
+          puts e.full_message
+        end
+        p StandardError.new("").inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[]\n\"#<ArgumentError: bad>\"\nArgumentError: bad\n\"StandardError\"\n"
+    );
+}
+
+#[test]
+fn dollar_bang_reads_the_exception_being_handled() {
+    // `$!` is the current exception inside a rescue (block or modifier form),
+    // nil outside one.
+    let result = run_ruby(
+        r#"
+        p $!
+        r = (Integer("x") rescue $!.class)
+        p r
+        begin
+          raise "boom"
+        rescue
+          puts $!.message
+        end
+        p $!
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\nArgumentError\nboom\nnil\n");
+}
+
+#[test]
+fn module_const_get_and_const_defined_reflect_the_registry() {
+    let result = run_ruby(
+        r#"
+        module M
+          X = 7
+          module N
+          end
+        end
+        puts M.const_get(:X)
+        puts M.const_get("X")
+        p M.const_defined?(:X)
+        p M.const_defined?(:Nope)
+        p M.const_defined?(:N)
+        p M.const_get(:N).is_a?(Module)
+        begin; M.const_get(:Missing); rescue NameError => e; puts e.message; end
+        begin; M.const_defined?("bad"); rescue NameError => e; puts e.message; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "7\n7\ntrue\nfalse\ntrue\ntrue\n\
+         uninitialized constant M::Missing\nwrong constant name bad\n"
+    );
+}
+
+#[test]
+fn class_method_defined_and_class_variable_reflection() {
+    let result = run_ruby(
+        r#"
+        class Base
+          @@shared = 1
+          def inherited_m; end
+        end
+        class Sub < Base
+          def own_m; end
+        end
+        p Sub.method_defined?(:own_m)
+        p Sub.method_defined?(:inherited_m)
+        p Sub.method_defined?(:frozen?)
+        p Sub.method_defined?(:nope)
+        p Base.class_variable_defined?(:@@shared)
+        p Base.class_variable_get(:@@shared)
+        Base.class_variable_set(:@@shared, 42)
+        p Base.class_variable_get(:@@shared)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\nfalse\ntrue\n1\n42\n");
+}

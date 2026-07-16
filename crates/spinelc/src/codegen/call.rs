@@ -2233,6 +2233,14 @@ pub fn emit_call(
 
     if let Some(target_path) = super::expr::const_path_of(cx, recv_id) {
         if let Some(target) = cx.resolve_class(&target_path) {
+            // `const_get`/`const_defined?` with a literal name fold against
+            // the compile-time registry (a literal-constant receiver has no
+            // side effects to preserve).
+            if let Some(folded) =
+                try_const_reflection(cx, target, name, args, kwargs, block, block_arg)
+            {
+                return folded;
+            }
             // Path 1 only when the class actually DEFINES a matching class
             // method (or native function). Anything else falls through to
             // the generic dynamic path with the receiver as a first-class
@@ -2265,6 +2273,12 @@ pub fn emit_call(
     // not statically resolvable falls through to the dynamic path
     // (`send_value`'s Class arm, including the registry constructor).
     if let TyKind::ClassObj(target) = infer(cx, recv_id) {
+        // `x.class.const_get(:N)` / `.const_defined?(:N)` fold too, evaluating
+        // the receiver expression for its side effects first.
+        if let Some(folded) = try_const_reflection(cx, target, name, args, kwargs, block, block_arg) {
+            let recv_expr = emit_expr(cx, recv_id);
+            return quote! { { let _ = #recv_expr; #folded } };
+        }
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
             if name == "new" && !cx.compiler.class(target).is_module && !cx.compiler.class(target).is_builtin {
                 let recv_expr = emit_expr(cx, recv_id);
@@ -2435,6 +2449,126 @@ fn any_builtin_overrides(cx: &Ctx, name: &str) -> bool {
 /// no name to look up at all). Same "plain required parameters only, no
 /// keyword args, no block" restriction either way (see
 /// `codegen::mod::emit_class_method_fn`'s matching rejection).
+/// Extracts the compile-time string of a literal Symbol (`:Name`) or
+/// single-segment String (`"Name"`) argument -- the only forms the constant-
+/// reflection fold recognizes; a computed name falls through to runtime.
+fn literal_name_arg(cx: &Ctx, id: NodeId) -> Option<String> {
+    match &cx.compiler.hir[id] {
+        HirNode::SymbolLit(s) => Some(s.clone()),
+        HirNode::StringLit(parts) => match parts.as_slice() {
+            [crate::hir::StrPart::Lit(s)] => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// A well-formed constant name (`/\A\p{Upper}\w*\z/`): a leading uppercase
+/// letter, then identifier characters. Anything else (`lower`, `_Foo`, `@x`,
+/// `1A`, `A B`, `""`) is a `NameError "wrong constant name ..."`.
+fn is_valid_const_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_uppercase() => chars.all(|c| c.is_alphanumeric() || c == '_'),
+        _ => false,
+    }
+}
+
+/// The class/module `target::cname` names, if any -- a nested definition in
+/// `target`'s own namespace, or (const lookup inherits) a top-level class,
+/// which lives on `Object` and so is visible from every receiver.
+fn class_const_in(
+    cx: &Ctx,
+    target: crate::compiler::ClassId,
+    cname: &str,
+) -> Option<crate::compiler::ClassId> {
+    if let Some(c) = cx.resolve_class(&format!("{}::{cname}", cx.compiler.fq_name(target))) {
+        return Some(c);
+    }
+    cx.compiler.resolve_class(cname, &[], cx.box_id)
+}
+
+/// Whether a VALUE constant named `cname` is defined on `target` or any
+/// ancestor (constant lookup inherits, up through `Object`) -- read from the
+/// compile-time `const_owners` registry `resolve_consts` populates.
+fn value_const_defined_in(cx: &Ctx, target: crate::compiler::ClassId, cname: &str) -> bool {
+    let mut chain = cx.compiler.class(target).ancestors.clone();
+    if !chain.contains(&crate::compiler::OBJECT_CLASS) {
+        chain.push(crate::compiler::OBJECT_CLASS);
+    }
+    chain
+        .iter()
+        .any(|&anc| cx.compiler.class(anc).const_owners.contains_key(cname))
+}
+
+/// Compile-time fold of `Klass.const_get(:NAME)` / `Klass.const_defined?(:NAME)`
+/// on a statically-known class/module `target` with a LITERAL name -- the
+/// same flat constant/class registry a constant READ resolves against.
+/// Returns `None` (fall through to ordinary dynamic dispatch) for a computed
+/// name, extra args, a block, or any other method.
+fn try_const_reflection(
+    cx: &Ctx,
+    target: crate::compiler::ClassId,
+    name: &str,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> Option<TokenStream> {
+    if (name != "const_get" && name != "const_defined?")
+        || !kwargs.is_empty()
+        || block.is_some()
+        || block_arg.is_some()
+    {
+        return None;
+    }
+    let [arg] = args else { return None };
+    let cname = literal_name_arg(cx, *arg)?;
+
+    if !is_valid_const_name(&cname) {
+        let msg = format!("wrong constant name {cname}");
+        let err = super::expr::emit_boxed_new(
+            cx,
+            "NameError",
+            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#msg.to_string())) }],
+        );
+        return Some(quote! { return Err(spinel_rt::Signal::Raise(#err)) });
+    }
+
+    let as_class = class_const_in(cx, target, &cname);
+    if name == "const_defined?" {
+        let defined = as_class.is_some() || value_const_defined_in(cx, target, &cname);
+        return Some(quote! { spinel_rt::RubyValue::Bool(#defined) });
+    }
+    // const_get: a class-name constant answers the Class value directly; a
+    // value constant reads through the runtime store (which also holds the
+    // builtin-seeded ones, e.g. `Float::INFINITY`), raising a receiver-
+    // qualified NameError on a genuine miss.
+    if let Some(c) = as_class {
+        let id = c.0;
+        return Some(quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) });
+    }
+    let owner = super::expr::const_owner_id(cx, Some(&cx.compiler.fq_name(target)), &cname);
+    let qualified = if target == crate::compiler::OBJECT_CLASS {
+        cname.clone()
+    } else {
+        format!("{}::{cname}", cx.compiler.fq_name(target))
+    };
+    let err = super::expr::emit_boxed_new(
+        cx,
+        "NameError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #qualified)))
+        }],
+    );
+    Some(quote! {
+        match spinel_rt::const_get(#owner, #cname) {
+            Some(__v) => __v,
+            None => return Err(spinel_rt::Signal::Raise(#err)),
+        }
+    })
+}
+
 fn emit_class_method_call_on(
     cx: &Ctx,
     target: crate::compiler::ClassId,

@@ -41,7 +41,7 @@ type PResult<T> = Result<T, String>;
 /// with no optional-argument `Some(...)`-wrapping smarts (fine for
 /// required-only signatures like this one; a separate, unrelated fix if a
 /// class's own `initialize` needs real optional-param support via `.new`).
-const EXCEPTION_PRELUDE: &str = r#"
+const EXCEPTION_PRELUDE: &str = r##"
 class Exception
   def initialize(msg = nil)
     @message = msg
@@ -51,6 +51,22 @@ class Exception
   end
   def to_s
     @message || self.class.name
+  end
+  def backtrace
+    []
+  end
+  def full_message
+    self.class.name + ": " + message
+  end
+  def inspect
+    s = message.to_s
+    if s.empty?
+      self.class.name
+    elsif s.include?("\n")
+      "#<" + self.class.name + ":" + s.inspect + ">"
+    else
+      "#<" + self.class.name + ": " + s + ">"
+    end
   end
 end
 class ScriptError < Exception
@@ -154,7 +170,7 @@ end
 def initialize_copy(orig)
   self
 end
-"#;
+"##;
 
 /// Returns the built `Hir` plus the id of its `Program` root -- `Hir` itself
 /// doesn't track a root (it's just an arena), so lowering hands the root id

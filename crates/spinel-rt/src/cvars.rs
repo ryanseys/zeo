@@ -45,3 +45,14 @@ pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) {
         .lock()
         .insert((owner_class_id, name.to_string()), value);
 }
+
+/// Whether `@@name` has EVER been assigned on `owner_class_id` -- the
+/// genuine "defined" distinction `cvar_get`'s nil-on-miss convention can't
+/// express, needed by `Module#class_variable_defined?`/`class_variable_get`
+/// (the latter raises `NameError` on a never-set name, unlike a plain
+/// `@@x` read).
+pub fn cvar_defined(owner_class_id: u32, name: &str) -> bool {
+    CVARS
+        .lock()
+        .contains_key(&(owner_class_id, name.to_string()))
+}

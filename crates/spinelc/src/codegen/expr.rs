@@ -671,6 +671,15 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
+        HirNode::GlobalRead(name) if name == "$!" => {
+            // `$!` is the exception currently being handled -- the SAME
+            // runtime slot a bare `raise` re-raises (`current_exception`,
+            // pushed around every `rescue` clause body by `emit_begin`), not
+            // an ordinary `$foo` global-table entry (which is never set, so
+            // the plain read below would always answer nil). `nil` outside
+            // any rescue, exactly as CRuby's own `$!`.
+            quote! { spinel_rt::current_exception().unwrap_or(spinel_rt::RubyValue::Nil) }
+        }
         HirNode::GlobalRead(name) => {
             // Globals are per-box tables (Phase 18) -- the statement's own
             // defining box picks the table, no fallback layer (the CRuby
@@ -1206,7 +1215,7 @@ pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// docs) as an ordinary RUNTIME outcome, not a spinelc-compile-time panic --
 /// an unset constant is legitimately-valid-but-erroring Ruby, not a
 /// programming mistake in the compiler itself.
-fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
+pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
     let owner_class = match scope {
         Some(class_name) => cx
             .resolve_class(class_name)

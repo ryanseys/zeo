@@ -1,0 +1,7 @@
+nil
+ArgumentError
+handling: bad value
+class: TypeError
+nil
+"#<RuntimeError: boom>"
+"ArgumentError"

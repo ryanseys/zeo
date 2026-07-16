@@ -61,7 +61,7 @@ pub use dispatch::{
     TRUE_CLASS, YIELDER_CLASS,
 };
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
-pub use cvars::{cvar_get, cvar_set};
+pub use cvars::{cvar_defined, cvar_get, cvar_set};
 pub use lastmatch::{
     last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
 };
