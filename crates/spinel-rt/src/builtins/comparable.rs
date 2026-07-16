@@ -10,35 +10,25 @@
 //! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
-use crate::builtins::class_name_of;
 use crate::{RubyValue, Signal, Symbol};
 
 /// The receiver's own `<=>`, reduced to a sign -- `Ok(None)` is Ruby's
 /// `nil` (incomparable).
 fn cmp(recv: &RubyValue, other: &RubyValue) -> Result<Option<i64>, Signal> {
-    match crate::dispatch::send_value(
+    let result = crate::dispatch::send_value(
         recv,
         Symbol::intern("<=>"),
         std::slice::from_ref(other),
         None,
-    )? {
-        RubyValue::Int(i) => Ok(Some(i.signum())),
-        _ => Ok(None),
-    }
+    )?;
+    crate::value::cmp_int(&result)
 }
 
 /// `cmp`, with real Ruby's incomparable-operands `ArgumentError` applied.
 fn cmp_or_fail(recv: &RubyValue, other: &RubyValue) -> Result<i64, Signal> {
     match cmp(recv, other)? {
         Some(ord) => Ok(ord),
-        None => Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!(
-                "comparison of {} with {} failed",
-                class_name_of(recv),
-                class_name_of(other)
-            ),
-        )),
+        None => Err(crate::value::cmp_error(recv, other)),
     }
 }
 
@@ -56,18 +46,36 @@ pub(crate) fn comparable_send(
         ("<=", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o <= 0)),
         (">", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o > 0)),
         (">=", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o >= 0)),
-        ("==", 1) => cmp(recv, &args[0]).map(|o| RubyValue::Bool(o == Some(0))),
+        // Identity wins first (CRuby's `x == y` short-circuit); otherwise
+        // equal iff `<=>` is 0. A `nil` result is `false`; a non-numeric
+        // result raises (via `cmp`'s `rb_cmpint`).
+        ("==", 1) => match (recv, &args[0]) {
+            (RubyValue::Object(a), RubyValue::Object(b)) if std::sync::Arc::ptr_eq(a, b) => {
+                Ok(RubyValue::Bool(true))
+            }
+            _ => cmp(recv, &args[0]).map(|o| RubyValue::Bool(o == Some(0))),
+        },
         ("between?", 2) => (|| {
             let lo = cmp_or_fail(recv, &args[0])?;
             let hi = cmp_or_fail(recv, &args[1])?;
             Ok(RubyValue::Bool(lo >= 0 && hi <= 0))
         })(),
+        // A `nil` bound is open on that side (`5.clamp(1, nil)` -> 5),
+        // mirroring the beginless/endless range form below. Two present
+        // bounds must be ordered (CRuby rejects a reversed pair).
         ("clamp", 2) => (|| {
-            if cmp_or_fail(recv, &args[0])? < 0 {
-                return Ok(args[0].clone());
+            let (lo, hi) = (&args[0], &args[1]);
+            if !lo.is_nil() && !hi.is_nil() && cmp_or_fail(lo, hi)? > 0 {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "min argument must be less than or equal to max argument".to_string(),
+                ));
             }
-            if cmp_or_fail(recv, &args[1])? > 0 {
-                return Ok(args[1].clone());
+            if !lo.is_nil() && cmp_or_fail(recv, lo)? < 0 {
+                return Ok(lo.clone());
+            }
+            if !hi.is_nil() && cmp_or_fail(recv, hi)? > 0 {
+                return Ok(hi.clone());
             }
             Ok(recv.clone())
         })(),
@@ -88,6 +96,14 @@ pub(crate) fn comparable_send(
                     "ArgumentError",
                     "cannot clamp with an exclusive range".to_string(),
                 ));
+            }
+            if let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) {
+                if cmp_or_fail(lo, hi)? > 0 {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        "min argument must be less than or equal to max argument".to_string(),
+                    ));
+                }
             }
             if let Some(lo) = lo.as_deref() {
                 if cmp_or_fail(recv, lo)? < 0 {

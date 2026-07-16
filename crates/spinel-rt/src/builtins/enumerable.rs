@@ -634,7 +634,6 @@ fn min_max(
     block: Option<RubyValue>,
     want_min: bool,
 ) -> Result<RubyValue, Signal> {
-    let method = if want_min { "min" } else { "max" };
     // `min(n)`/`max(n)`: the n smallest/largest, as an Array -- sorted
     // ascending for `min`, descending for `max` (CRuby's nsmallest/
     // nlargest). Collect-then-sort (not a bounded heap): honest for the
@@ -675,7 +674,6 @@ fn min_max(
     };
     let best: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let best2 = best.clone();
-    let method_name = method.to_string();
     for_each(recv, move |yielded| {
         let elem = pack(yielded);
         let mut b = best2.lock();
@@ -686,14 +684,14 @@ fn min_max(
                     Some(cmp) => {
                         let current = current.clone();
                         drop(b);
-                        let r = cmp.call(&[elem.clone(), current])?;
+                        let r = cmp.call(&[elem.clone(), current.clone()])?;
                         b = best2.lock();
-                        match r {
-                            RubyValue::Int(n) => n,
-                            _ => panic!("Enumerable#{method_name}: comparison block must return an Integer"),
+                        match crate::value::cmp_int(&r)? {
+                            Some(n) => n,
+                            None => return Err(crate::value::cmp_error(&elem, &current)),
                         }
                     }
-                    None => cmp_or_fail(&elem, b.as_ref().expect("checked Some"), &method_name),
+                    None => crate::value::cmp_or_raise(&elem, b.as_ref().expect("checked Some"))?,
                 };
                 if want_min {
                     ord < 0
@@ -709,19 +707,6 @@ fn min_max(
     })?;
     let result = best.lock().take().unwrap_or(RubyValue::Nil);
     Ok(result)
-}
-
-/// `rb_cmp` with real Ruby's incomparable-elements failure applied
-/// (`ArgumentError: comparison of X with Y failed` -- raised as a loud
-/// panic, the established no-exception-channel posture).
-fn cmp_or_fail(a: &RubyValue, b: &RubyValue, method: &str) -> i64 {
-    a.rb_cmp(b).unwrap_or_else(|| {
-        panic!(
-            "Enumerable#{method}: comparison of {} with {} failed (`<=>` returned nil; ArgumentError in real Ruby -- raised as a panic, spike scope)",
-            a.to_display_string(),
-            b.to_display_string()
-        )
-    })
 }
 
 /// Materializes the receiver's elements -- the shared front half of every

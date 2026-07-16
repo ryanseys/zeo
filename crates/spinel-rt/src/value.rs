@@ -769,15 +769,45 @@ impl RubyValue {
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(other)) {
                     Some(Ok(v)) => v.truthy(),
-                    Some(Err(_)) => panic!(
-                        "a user-defined `==` raised inside a structural comparison (spike scope: no exception channel here)"
-                    ),
+                    // A raising user `==` is stashed for the fallible
+                    // `rb_eq_checked` wrapper to surface (`rb_eq` itself has
+                    // no exception channel); a plain caller sees `false`.
+                    Some(Err(sig)) => {
+                        stash_cmp_signal(sig);
+                        false
+                    }
                     None if crate::dispatch::ancestors_contain(
                         o.class_id(),
                         crate::dispatch::COMPARABLE_CLASS,
                     ) =>
                     {
-                        self.rb_cmp(other) == Some(0)
+                        // `Comparable#==`: identity wins first (CRuby's
+                        // `x == y` short-circuit), so a `<=>` that answers
+                        // `nil` for self still reports an object equal to
+                        // itself; a numeric result is equal iff its sign is 0;
+                        // a non-numeric (or raising) `<=>` is an ArgumentError,
+                        // stashed like the user-`==` case above.
+                        match other {
+                            RubyValue::Object(b) if std::sync::Arc::ptr_eq(o, b) => true,
+                            _ => match crate::dispatch::call_user_method(
+                                o,
+                                "<=>",
+                                std::slice::from_ref(other),
+                            ) {
+                                Some(Ok(v)) => match cmp_int(&v) {
+                                    Ok(sign) => sign == Some(0),
+                                    Err(sig) => {
+                                        stash_cmp_signal(sig);
+                                        false
+                                    }
+                                },
+                                Some(Err(sig)) => {
+                                    stash_cmp_signal(sig);
+                                    false
+                                }
+                                None => false,
+                            },
+                        }
                     }
                     None => match other {
                         RubyValue::Object(b) => {
@@ -837,11 +867,15 @@ impl RubyValue {
             }
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(other)) {
-                    Some(Ok(RubyValue::Int(i))) => Some(i.signum()),
-                    Some(Ok(_)) => None,
-                    Some(Err(_)) => panic!(
-                        "a user-defined `<=>` raised inside a comparison (spike scope: no exception channel here)"
-                    ),
+                    Some(Ok(v)) => cmp_sign(&v),
+                    // `rb_cmp` is infallible, so a raising user `<=>` is
+                    // stashed for the fallible `cmp_or_raise` to surface
+                    // (the sort/min/max/Comparable drivers) rather than
+                    // aborting; a plain infallible caller sees `None`.
+                    Some(Err(e)) => {
+                        stash_cmp_signal(e);
+                        None
+                    }
                     None => None,
                 }
             }
@@ -1041,6 +1075,112 @@ impl RubyValue {
 /// subject (< or <=) end, via `rb_cmp` (numeric tower, strings, user
 /// `<=>`); a `nil` comparison (incomparable) is `false`, real Ruby's rule.
 /// Beginless/endless sides are unbounded.
+/// Reduce any `<=>`/comparison-block result to its sign, CRuby's
+/// `rb_cmpint`: a numeric answer (`Int`/`BigInt`/`Float`/`Rational`) gives
+/// its sign relative to zero, anything else (nil, a non-numeric, NaN) is
+/// incomparable (`None`). The one place the Int-only cut used to live,
+/// shared by `rb_cmp`, `comparable::cmp`, and the sort/min/max drivers.
+pub(crate) fn cmp_sign(result: &RubyValue) -> Option<i64> {
+    crate::builtins::numeric::num_cmp(result, &RubyValue::Int(0)).flatten()
+}
+
+/// CRuby's `rb_cmpint`, distinguishing the two incomparable outcomes a bare
+/// sign can't: a `nil` result is `Ok(None)` (the caller decides -- `==`
+/// yields `false`, ordering raises `comparison of <recv> with <arg> failed`),
+/// while any other non-numeric result is itself the `comparison of <class>
+/// with 0 failed` ArgumentError (`rb_cmpint` reaching for `result > 0`).
+pub(crate) fn cmp_int(result: &RubyValue) -> Result<Option<i64>, crate::Signal> {
+    if result.is_nil() {
+        return Ok(None);
+    }
+    match cmp_sign(result) {
+        Some(sign) => Ok(Some(sign)),
+        None => Err(cmp_error(result, &RubyValue::Int(0))),
+    }
+}
+
+/// CRuby's `rb_cmperr` message: the receiver always shows its class; the
+/// argument shows its `inspect` when it's an immediate (Integer/Float/
+/// Symbol/…) and its class otherwise (`comparison of String with 1 failed`
+/// vs `comparison of Integer with String failed`).
+pub(crate) fn cmp_error(a: &RubyValue, b: &RubyValue) -> crate::Signal {
+    let shown = match b {
+        RubyValue::Nil
+        | RubyValue::Bool(_)
+        | RubyValue::Int(_)
+        | RubyValue::BigInt(_)
+        | RubyValue::Float(_)
+        | RubyValue::Rational(_)
+        | RubyValue::Complex(_)
+        | RubyValue::Symbol(_) => b.inspect_string(),
+        _ => crate::builtins::class_name_of(b),
+    };
+    crate::dispatch::raise_error(
+        "ArgumentError",
+        format!("comparison of {} with {} failed", crate::builtins::class_name_of(a), shown),
+    )
+}
+
+/// `a <=> b` reduced to a sign, raising `ArgumentError` when the pair is
+/// incomparable. An `Object` receiver dispatches its own `<=>` so a raising
+/// user `<=>` propagates as its `Signal` (unlike the infallible `rb_cmp`,
+/// which aborts); every other receiver takes the fast structural path.
+pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::Signal> {
+    if let RubyValue::Object(o) = a {
+        // Call the receiver's own `<=>` (not `send_value`, whose missing-
+        // method NoMethodError would mask CRuby's `Object#<=>` default of
+        // "incomparable"): a raising `<=>` propagates, a value is validated
+        // through `rb_cmpint`, and a missing one is incomparable -- except
+        // an object always equals itself (`Object#<=>` identity -> 0).
+        return match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(b)) {
+            Some(Ok(v)) => cmp_int(&v)?.ok_or_else(|| cmp_error(a, b)),
+            Some(Err(sig)) => Err(sig),
+            None => match b {
+                RubyValue::Object(bb) if std::sync::Arc::ptr_eq(o, bb) => Ok(0),
+                _ => Err(cmp_error(a, b)),
+            },
+        };
+    }
+    // Clear before comparing, then surface any raising `<=>` that `rb_cmp`
+    // stashed -- including one nested inside an `Array#<=>` element compare.
+    clear_cmp_signal();
+    let ord = a.rb_cmp(b);
+    if let Some(sig) = take_cmp_signal() {
+        return Err(sig);
+    }
+    ord.ok_or_else(|| cmp_error(a, b))
+}
+
+/// `a == b` with a fallible channel: an infallible `rb_eq` stashes a raising
+/// user `==`/`<=>` (or a non-numeric `Comparable#==` result); this clears
+/// before comparing and turns any stash back into the `Signal` it was.
+pub fn rb_eq_checked(a: &RubyValue, b: &RubyValue) -> Result<bool, crate::Signal> {
+    clear_cmp_signal();
+    let eq = a.rb_eq(b);
+    match take_cmp_signal() {
+        Some(sig) => Err(sig),
+        None => Ok(eq),
+    }
+}
+
+thread_local! {
+    /// A raising user `<=>`/`==` caught by the infallible `rb_cmp`/`rb_eq`,
+    /// awaiting a fallible driver (`cmp_or_raise`/`rb_eq_checked`) to turn it
+    /// back into a `Signal`.
+    static PENDING_CMP: std::cell::RefCell<Option<crate::Signal>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn stash_cmp_signal(sig: crate::Signal) {
+    PENDING_CMP.with(|c| *c.borrow_mut() = Some(sig));
+}
+fn clear_cmp_signal() {
+    PENDING_CMP.with(|c| *c.borrow_mut() = None);
+}
+fn take_cmp_signal() -> Option<crate::Signal> {
+    PENDING_CMP.with(|c| c.borrow_mut().take())
+}
+
 pub(crate) fn range_covers(
     start: Option<&RubyValue>,
     end: Option<&RubyValue>,
@@ -1086,6 +1226,30 @@ mod tests {
         let short = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
         let long = RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(0)]));
         assert_eq!(short.rb_cmp(&long), Some(-1));
+    }
+
+    #[test]
+    fn cmp_sign_reduces_any_numeric_result_to_its_sign() {
+        assert_eq!(cmp_sign(&RubyValue::Int(7)), Some(1));
+        assert_eq!(cmp_sign(&RubyValue::Int(-3)), Some(-1));
+        assert_eq!(cmp_sign(&RubyValue::Int(0)), Some(0));
+        assert_eq!(cmp_sign(&RubyValue::Float(2.5)), Some(1));
+        assert_eq!(cmp_sign(&RubyValue::Float(-0.1)), Some(-1));
+        // Non-numeric and nil are not signs.
+        assert_eq!(cmp_sign(&RubyValue::Nil), None);
+        assert_eq!(cmp_sign(&sym("x")), None);
+        assert_eq!(cmp_sign(&RubyValue::Float(f64::NAN)), None);
+    }
+
+    #[test]
+    fn cmp_int_distinguishes_nil_from_a_numeric_result() {
+        // A numeric result is its sign; nil is `Ok(None)` (incomparable, the
+        // caller decides). The non-numeric-raises path is covered by the
+        // corpus tests, where the exception factory is installed (registry-
+        // less here, `cmp_error` would panic).
+        assert_eq!(cmp_int(&RubyValue::Float(-4.0)).unwrap(), Some(-1));
+        assert_eq!(cmp_int(&RubyValue::Int(0)).unwrap(), Some(0));
+        assert_eq!(cmp_int(&RubyValue::Nil).unwrap(), None);
     }
 
     /// Phase 15.2: every expected string below is oracle-verified against

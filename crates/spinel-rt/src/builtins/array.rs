@@ -1448,18 +1448,20 @@ pub(crate) fn sort_items(
                 return std::cmp::Ordering::Equal;
             }
             match p.call(&[a.clone(), b.clone()]) {
-                Ok(RubyValue::Int(c)) => c.cmp(&0),
-                Ok(_) => {
-                    failure = Some(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!(
-                            "comparison of {} with {} failed",
-                            crate::builtins::class_name_of(a),
-                            crate::builtins::class_name_of(b)
-                        ),
-                    ));
-                    std::cmp::Ordering::Equal
-                }
+                // The block's answer is validated like a `<=>` result (a
+                // Float orders by sign; `nil` fails on the two elements; a
+                // non-numeric fails as `comparison of <class> with 0`).
+                Ok(r) => match crate::value::cmp_int(&r) {
+                    Ok(Some(c)) => c.cmp(&0),
+                    Ok(None) => {
+                        failure = Some(crate::value::cmp_error(a, b));
+                        std::cmp::Ordering::Equal
+                    }
+                    Err(e) => {
+                        failure = Some(e);
+                        std::cmp::Ordering::Equal
+                    }
+                },
                 Err(e) => {
                     failure = Some(e);
                     std::cmp::Ordering::Equal
@@ -1471,17 +1473,13 @@ pub(crate) fn sort_items(
             if failure.is_some() {
                 return std::cmp::Ordering::Equal;
             }
-            match a.rb_cmp(b) {
-                Some(c) => c.cmp(&0),
-                None => {
-                    failure = Some(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!(
-                            "comparison of {} with {} failed",
-                            crate::builtins::class_name_of(a),
-                            crate::builtins::class_name_of(b)
-                        ),
-                    ));
+            // Compare in array order (`a[i] <=> a[j]`, not the reverse
+            // `sort_by` hands us) so an incomparable pair's ArgumentError
+            // names the operands in CRuby's left-to-right order.
+            match crate::value::cmp_or_raise(b, a) {
+                Ok(c) => c.cmp(&0).reverse(),
+                Err(e) => {
+                    failure = Some(e);
                     std::cmp::Ordering::Equal
                 }
             }

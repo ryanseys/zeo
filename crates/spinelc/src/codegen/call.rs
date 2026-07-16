@@ -2874,7 +2874,7 @@ fn dispatch(
                 let arg = super::expr::box_if_object_typed(cx, args[0], arg);
                 let negate = name == "!=";
                 return quote! {
-                    spinel_rt::RubyValue::Bool((#recv_boxed).rb_eq(&(#arg)) != #negate)
+                    spinel_rt::RubyValue::Bool(spinel_rt::rb_eq_checked(&(#recv_boxed), &(#arg))? != #negate)
                 };
             }
         }

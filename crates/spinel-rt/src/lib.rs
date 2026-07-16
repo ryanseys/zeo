@@ -84,6 +84,7 @@ pub use thread::{
     queue_len, queue_new, queue_pop, queue_push, thread_new, thread_outcome, MutexData,
     QueueData, RMutex, RQueue, RThread, ThreadData,
 };
+pub use value::rb_eq_checked;
 pub use value::RubyValue;
 
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a
