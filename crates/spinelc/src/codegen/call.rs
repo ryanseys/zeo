@@ -693,7 +693,7 @@ pub fn emit_new_with_arg_tokens(
     // Object` reopen) is honored through its `__bm_Object` copy.
     if cid == crate::compiler::OBJECT_CLASS {
         let ctor = quote! {
-            spinel_rt::RubyValue::Object(std::sync::Arc::new(spinel_rt::Object))
+            spinel_rt::RubyValue::Object(std::sync::Arc::new(spinel_rt::Object::default()))
         };
         return match cx.compiler.method_in_chain(cid, "initialize") {
             Some((_, sid)) => {
