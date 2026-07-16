@@ -13,7 +13,7 @@ use super::expr::{box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer
 use super::ident::safe_ident;
 use super::Ctx;
 use crate::compiler::Compiler;
-use crate::hir::{ArrayElem, HashPair, HirNode, KeywordParam, NodeId, Params, Visibility};
+use crate::hir::{ArrayElem, HirNode, KeywordParam, KwArg, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
@@ -565,7 +565,7 @@ fn try_proc_dispatch(
     Some(quote! { ((#recv_expr).as_proc_unchecked()).call(&[#(#arg_exprs),*])? })
 }
 
-pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[crate::hir::HashPair]) -> TokenStream {
+pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[KwArg]) -> TokenStream {
     // A USER class with a real `initialize`: bind its arguments through the
     // SAME `emit_call_args_to` machinery every other call site uses, so
     // `initialize` gets the full `Params` surface (splat/post/keyword/block)
@@ -1477,11 +1477,17 @@ fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::
 /// the callee declares keywords; a keywordless callee sees it as an
 /// ordinary trailing Hash (real Ruby's own pre-3.0-flavored collapse --
 /// the documented no-`ruby2_keywords` approximation).
-pub(super) fn emit_kwargs_trailing_hash(cx: &Ctx, kwargs: &[HashPair]) -> Option<TokenStream> {
+pub(super) fn emit_kwargs_trailing_hash(cx: &Ctx, kwargs: &[KwArg]) -> Option<TokenStream> {
     if kwargs.is_empty() {
         return None;
     }
-    let pairs = kwargs.iter().map(|HashPair(k, v)| {
+    // Only reached on the Path-1 / non-splat route, where `emit_call`'s
+    // routing guard has already sent any `**h` to `emit_splat_call` -- so
+    // every element here is a literal `Pair`.
+    let pairs = kwargs.iter().map(|kw| {
+        let KwArg::Pair(k, v) = kw else {
+            unreachable!("a `**` double-splat routes to emit_splat_call, never here")
+        };
         let ke = emit_expr(cx, *k);
         let ve = {
             let e = emit_expr(cx, *v);
@@ -1526,8 +1532,7 @@ pub fn emit_call(
     receiver: Option<NodeId>,
     name: &str,
     args: &[ArrayElem],
-    kwargs: &[HashPair],
-    kwargs_splat: Option<NodeId>,
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     safe: bool,
@@ -1536,12 +1541,15 @@ pub fn emit_call(
     // A call-site `*expr`/`**h` splat can't take any of the arity-checked
     // static paths below (the flattened argument COUNT isn't known until
     // runtime) -- see `emit_splat_call`'s docs for the always-dynamic
-    // fallback this routes to instead. Every other call site (the
-    // overwhelming common case) is completely unaffected: `args` unwraps
-    // back to a plain `Vec<NodeId>` and every existing fast path below runs
-    // exactly as it did before call-site splats existed.
-    if kwargs_splat.is_some() || args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
-        return emit_splat_call(cx, receiver, name, args, kwargs, kwargs_splat, block, block_arg, safe);
+    // fallback this routes to instead. This is THE routing linchpin: any
+    // `**h` `DoubleSplat` (or positional `*expr`) goes dynamic, so every
+    // Path-1 consumer below only ever sees pure `Pair` kwargs. The common
+    // case is unaffected: `args` unwraps to a plain `Vec<NodeId>` and every
+    // fast path runs exactly as before.
+    if kwargs.iter().any(|k| matches!(k, KwArg::DoubleSplat(_)))
+        || args.iter().any(|a| matches!(a, ArrayElem::Splat(_)))
+    {
+        return emit_splat_call(cx, receiver, name, args, kwargs, block, block_arg, safe);
     }
     let args: Vec<NodeId> = args
         .iter()
@@ -1842,7 +1850,7 @@ pub fn emit_call(
         cx: &Ctx,
         name: &str,
         args: &[NodeId],
-        kwargs: &[crate::hir::HashPair],
+        kwargs: &[KwArg],
         block: Option<NodeId>,
         block_arg: Option<NodeId>,
     ) -> Option<TokenStream> {
@@ -1914,7 +1922,7 @@ pub fn emit_call(
         cx: &Ctx,
         name: &str,
         args: &[NodeId],
-        kwargs: &[crate::hir::HashPair],
+        kwargs: &[KwArg],
         block: Option<NodeId>,
         block_arg: Option<NodeId>,
     ) -> Option<TokenStream> {
@@ -2217,8 +2225,7 @@ fn emit_splat_call(
     receiver: Option<NodeId>,
     name: &str,
     args: &[ArrayElem],
-    kwargs: &[HashPair],
-    kwargs_splat: Option<NodeId>,
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     safe: bool,
@@ -2273,58 +2280,25 @@ fn emit_splat_call(
             quote! { __args.extend((#e).as_array_unchecked().lock().iter().cloned()); }
         }
     });
-    // Keyword args (literal and/or `**h` splat) merge into ONE trailing
-    // Hash (the G2 convention): literal pairs first, splat entries after
-    // (same-key splat entries replace, `Hash#merge`'s rule).
-    //
-    // TODO(plan G3): the resulting Hash's KEY ORDER is wrong when a `**h`
-    // splat is written BEFORE a literal pair -- `f(**h, c: 1)` builds
-    // `{c: 1, <h...>}` where real Ruby builds `{<h...>, c: 1}` (Hash is
-    // insertion-ordered, so this is observable). `HirNode::Call` keeps
-    // `kwargs: Vec<HashPair>` and `kwargs_splat: Option<NodeId>` in
-    // SEPARATE fields, so the source-order interleaving is already lost by
-    // the time codegen runs -- and `f(**a, **b)` (two splats) can't be
-    // represented at all. Both need the plan's `KwArg { Pair | DoubleSplat }`
-    // single ordered list replacing the two fields (~53 sites across parse,
-    // codegen and every HIR walker). Splat-last -- the common shape -- is
-    // correct today.
-    let kw_push = (!kwargs.is_empty() || kwargs_splat.is_some()).then(|| {
-        let literal_sets = kwargs.iter().map(|HashPair(k, v)| {
-            let ke = emit_expr(cx, *k);
-            let ve = {
-                let e = emit_expr(cx, *v);
-                box_if_object_typed(cx, *v, e)
-            };
-            quote! { spinel_rt::hash_set(&__kw, #ke, #ve); }
-        });
-        let splat_sets = kwargs_splat.map(|n| {
-            let e = emit_expr(cx, n);
-            // `**obj` converts through `to_hash` like CRuby, so a non-Hash
-            // converter object splats (and a non-converter raises a real
-            // TypeError); boxed first, since the coercion takes a
-            // `RubyValue`.
-            let e = box_if_object_typed(cx, n, e);
-            quote! {
-                for (__k, __v) in spinel_rt::to_hash_coerce(&(#e))?.lock().values().cloned().collect::<Vec<_>>() {
-                    spinel_rt::hash_set(&__kw, __k, __v);
-                }
-            }
-        });
+    // Keyword args (literal pairs INTERLEAVED with `**h` double-splats, in
+    // source order) merge into ONE trailing Hash (the G2 convention), built
+    // by the shared `emit_kwarg_inserts` -- so `f(**a, c: 1, **b)` gets Ruby's
+    // exact left-to-right, last-key-wins order (which the old two-phase
+    // "literals then splats" build got wrong for a splat written before a
+    // pair, and couldn't represent for two splats at all).
+    let kw_push = (!kwargs.is_empty()).then(|| {
+        let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
         quote! {
             let __kw = spinel_rt::hash_new(vec![]);
-            #(#literal_sets)*
-            #splat_sets
+            #inserts
             // Only when non-empty: a `**h` whose hash is empty AT RUNTIME
             // contributes NOTHING -- `def c(h) = foo(1, **h); c({})` passes
             // just `1`, with no trailing hash (oracle-verified; pushing it
             // unconditionally silently handed the callee an extra `{}`
-            // argument). Note this is about a RUNTIME-empty hash, not the
-            // literal `**{}` a parser could fold away, so the guard has to
-            // be here rather than in lowering.
-            //
-            // Unconditional rather than gated on `kwargs_splat.is_some()`: a
-            // literal keyword (`k: 1`) can never produce an empty hash, so
-            // for those this check is simply never false.
+            // argument). About a RUNTIME-empty hash, not the literal `**{}` a
+            // parser could fold away, so the guard belongs here, not lowering.
+            // A literal keyword (`k: 1`) can never produce an empty hash, so
+            // for a pairs-only list this check is simply never false.
             if !__kw.lock().is_empty() {
                 __args.push(spinel_rt::RubyValue::Hash(__kw));
             }
@@ -2373,7 +2347,7 @@ fn emit_class_method_call_on(
     target: crate::compiler::ClassId,
     name: &str,
     args: &[NodeId],
-    kwargs: &[HashPair],
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
 ) -> TokenStream {
@@ -2553,7 +2527,7 @@ fn dispatch(
     recv_id: NodeId,
     name: &str,
     args: &[NodeId],
-    kwargs: &[HashPair],
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     recv_expr: &TokenStream,

@@ -245,7 +245,6 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             name,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             ..
@@ -257,12 +256,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 collect_locals(compiler, *n, out);
             }
-            for pair in kwargs {
-                collect_locals(compiler, pair.0, out);
-                collect_locals(compiler, pair.1, out);
-            }
-            if let Some(s) = kwargs_splat {
-                collect_locals(compiler, *s, out);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_locals(compiler, n, out);
             }
             if let Some(b) = block {
                 // An ESCAPING block (anything but the `.times` inline fast
@@ -306,9 +301,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                collect_locals(compiler, pair.0, out);
-                collect_locals(compiler, pair.1, out);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_locals(compiler, n, out);
             }
         }
         HirNode::RangeLit { start, end, .. } => {

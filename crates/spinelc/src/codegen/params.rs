@@ -24,7 +24,7 @@ use quote::{format_ident, quote};
 use super::expr::{box_if_object_typed, emit_expr};
 use super::ident::safe_ident;
 use super::Ctx;
-use crate::hir::{HashPair, HirNode, KeywordParam, NodeId, Params};
+use crate::hir::{KwArg, HirNode, KeywordParam, NodeId, Params};
 use proc_macro2::TokenStream;
 
 /// The callee's extra Rust fn parameters (after `&self`), one per `Params`
@@ -254,7 +254,7 @@ pub fn emit_call_args(
     method_name: &str,
     params: &Params,
     args: &[NodeId],
-    kwargs: &[HashPair],
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     needs_block: bool,
@@ -307,7 +307,7 @@ pub fn emit_call_args_to(
     method_name: &str,
     params: &Params,
     args: &[NodeId],
-    kwargs: &[HashPair],
+    kwargs: &[KwArg],
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     needs_block: bool,
@@ -401,21 +401,31 @@ pub fn emit_call_args_to(
     // Every kwarg value gets a temporary too, in source order. The key must
     // be a literal symbol (guaranteed by the call-site lowering's
     // `is_symbol_keys` check -- see `parse/mod.rs::lower_call_args`).
+    // Post-routing, every kwarg here is a literal `Pair` -- `emit_call`'s
+    // guard already sent any `**h` `DoubleSplat` to `emit_splat_call`.
     let kw_temps: Vec<syn::Ident> = (0..kwargs.len()).map(|i| format_ident!("__kw{i}")).collect();
     let kw_lets: Vec<TokenStream> = kwargs
         .iter()
         .zip(&kw_temps)
-        .map(|(pair, t)| {
-            let e = emit_expr(cx, pair.1);
-            let e = box_if_object_typed(cx, pair.1, e);
+        .map(|(kw, t)| {
+            let KwArg::Pair(_, v) = kw else {
+                unreachable!("a `**` double-splat routes to emit_splat_call, never Path 1")
+            };
+            let e = emit_expr(cx, *v);
+            let e = box_if_object_typed(cx, *v, e);
             quote! { let #t = #e; }
         })
         .collect();
     let kw_names: Vec<String> = kwargs
         .iter()
-        .map(|pair| match &cx.compiler.hir[pair.0] {
-            HirNode::SymbolLit(s) => s.clone(),
-            _ => panic!("`{method_name}`: keyword argument names must be literal symbols (spike scope)"),
+        .map(|kw| {
+            let KwArg::Pair(k, _) = kw else {
+                unreachable!("a `**` double-splat routes to emit_splat_call, never Path 1")
+            };
+            match &cx.compiler.hir[*k] {
+                HirNode::SymbolLit(s) => s.clone(),
+                _ => panic!("`{method_name}`: keyword argument names must be literal symbols (spike scope)"),
+            }
         })
         .collect();
 

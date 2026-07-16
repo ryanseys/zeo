@@ -307,7 +307,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                 || arms.iter().any(|arm| body_contains_bare_loop_jump(compiler, &arm.body))
                 || else_body.as_deref().is_some_and(|b| body_contains_bare_loop_jump(compiler, b))
         }
-        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             let block_jumps = block.is_some_and(|b| {
                 let HirNode::Block { body, .. } = &compiler.hir[b] else {
                     panic!("a Block should only be reached via the Call that invokes it");
@@ -328,8 +328,8 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                 })
                 || kwargs
                     .iter()
-                    .any(|p| node_contains_bare_loop_jump(compiler, p.0) || node_contains_bare_loop_jump(compiler, p.1))
-                || kwargs_splat.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|n| node_contains_bare_loop_jump(compiler, n))
                 || block_arg.is_some_and(|b| node_contains_bare_loop_jump(compiler, b))
         }
         HirNode::MultiWrite { targets, value } => {
@@ -353,7 +353,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             node_contains_bare_loop_jump(compiler, *n)
         }),
         HirNode::HashLit(pairs) => {
-            pairs.iter().any(|p| node_contains_bare_loop_jump(compiler, p.0) || node_contains_bare_loop_jump(compiler, p.1))
+            pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_bare_loop_jump(compiler, n))
         }
         HirNode::RangeLit { start, end, .. } => {
             start.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))

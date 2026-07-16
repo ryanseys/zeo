@@ -212,9 +212,8 @@ impl Walker {
                 }
             }
             HirNode::HashLit(pairs) => {
-                for pair in pairs.iter() {
-                    self.visit(hir, pair.0);
-                    self.visit(hir, pair.1);
+                for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                    self.visit(hir, n);
                 }
             }
             HirNode::RangeLit { start, end, .. } => {
@@ -236,7 +235,6 @@ impl Walker {
                 receiver,
                 args,
                 kwargs,
-                kwargs_splat,
                 block,
                 block_arg,
                 ..
@@ -246,11 +244,9 @@ impl Walker {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                     self.visit(hir, *n);
                 }
-                for pair in kwargs.iter() {
-                    self.visit(hir, pair.0);
-                    self.visit(hir, pair.1);
+                for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                    self.visit(hir, n);
                 }
-                self.visit_opt(hir, kwargs_splat);
                 self.visit_opt(hir, block);
                 self.visit_opt(hir, block_arg);
             }

@@ -664,11 +664,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             name,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             safe,
-        } => emit_call(cx, *receiver, name, args, kwargs, *kwargs_splat, *block, *block_arg, *safe),
+        } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
         HirNode::Block { .. } => {
             panic!("a Block should only be reached via the Call that invokes it")
         }
@@ -1128,24 +1127,28 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     }
     // The `.freeze` guard (Phase 13.1) -- checked at the top of every ivar
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
-    // The message's `#<Class>` receiver rendering is a fully-static
-    // approximation of real Ruby's `#<Class:0xaddr @ivar=...>` inspect (this
-    // runtime has no per-object address/ivar reflection to interpolate) --
-    // documented, same posture as `RubyValue::inspect_string`'s `Object` arm.
+    // The message interpolates the receiver's real `#<Class:0xaddr @ivar=...>`
+    // inspect (`default_object_repr`), built ONLY on the raise path (the
+    // `#slf.clone()` is a cheap `Arc` bump, never taken on a normal write).
     // `RubyObject::is_frozen` is UFCS-qualified: generated programs never
     // `use` the trait by name. The one atomic load this adds to every ivar
     // write (including inside `initialize`, where it's always false) is
-    // negligible; `FrozenError`'s construction only ever runs on the raise
-    // path.
+    // negligible.
     let class_name = cx
         .current_class
         .map(|cid| cx.compiler.class(cid).name.clone())
         .expect("ivar write outside a class context");
-    let msg = format!("can't modify frozen {class_name}: #<{class_name}>");
+    let prefix = format!("can't modify frozen {class_name}: ");
     let frozen_error = emit_boxed_new(
         cx,
         "FrozenError",
-        vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#msg.to_string())) }],
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!(
+                "{}{}",
+                #prefix,
+                spinel_rt::RubyValue::Object(#slf.clone()).inspect_string()
+            )))
+        }],
     );
     quote! {
         if spinel_rt::RubyObject::is_frozen(&*#slf) {

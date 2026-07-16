@@ -249,6 +249,13 @@ macro_rules! ruby_class {
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
                 vec![ $( self.$ivar.lock().clone() ),* ]
             }
+            // Field-declaration order, `@`-prefixed to match Ruby's ivar
+            // names -- the field idents ARE the names minus the `@` (see
+            // `ivar_get_named`'s `stringify!` note), so no extra list to keep
+            // in sync.
+            fn ivar_pairs(&self) -> Vec<(String, $crate::RubyValue)> {
+                vec![ $( (format!("@{}", stringify!($ivar)), self.$ivar.lock().clone()) ),* ]
+            }
             // By-NAME ivar access, for receivers whose concrete class codegen
             // couldn't know statically (`instance_exec`'s rebound self). The
             // field idents ARE the ivar names minus the `@` (codegen's
@@ -750,16 +757,20 @@ mod tests {
         assert!(!g1.rb_eq(&g2));
     }
 
-    /// The default Object rendering is `#<FQName>` from the registry
-    /// (Phase 16.2 -- real Ruby appends an address, omitted by design).
+    /// The default Object rendering is CRuby's `#<FQName:0xADDR>` -- the
+    /// class name from the registry plus the object's identity address.
+    /// `Greeter` declares no ivars, so `inspect` matches `to_s` (no ivar
+    /// list); the address is non-deterministic, so this asserts structure.
     #[test]
-    fn default_object_rendering_names_the_class() {
+    fn default_object_rendering_carries_class_and_address() {
         install();
         let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
             __frozen: Default::default(),
         })));
-        assert_eq!(g.to_display_string(), "#<Greeter>");
-        assert_eq!(g.inspect_string(), "#<Greeter>");
+        let s = g.to_display_string();
+        assert!(s.starts_with("#<Greeter:0x") && s.ends_with('>'), "got {s}");
+        // No ivars -> inspect agrees with to_s.
+        assert_eq!(g.inspect_string(), s);
     }
 
     /// Phase 16.3: builtin-reopen value methods. `send_value` consults them

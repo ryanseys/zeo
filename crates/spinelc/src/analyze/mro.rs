@@ -510,7 +510,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 collect_const_refs(compiler, n, cref, out);
             }
         }
-        HirNode::Call { receiver, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
             if let Some(r) = receiver {
                 collect_const_refs(compiler, *r, cref, out);
             }
@@ -518,12 +518,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 collect_const_refs(compiler, *n, cref, out);
             }
-            for pair in kwargs {
-                collect_const_refs(compiler, pair.0, cref, out);
-                collect_const_refs(compiler, pair.1, cref, out);
-            }
-            if let Some(s) = kwargs_splat {
-                collect_const_refs(compiler, *s, cref, out);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_const_refs(compiler, n, cref, out);
             }
             if let Some(b) = block {
                 collect_const_refs(compiler, *b, cref, out);
@@ -557,9 +553,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                collect_const_refs(compiler, pair.0, cref, out);
-                collect_const_refs(compiler, pair.1, cref, out);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_const_refs(compiler, n, cref, out);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
@@ -751,7 +746,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, n, out);
             }
         }
-        HirNode::Call { receiver, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
             if let Some(r) = receiver {
                 collect_cvars(hir, *r, out);
             }
@@ -759,12 +754,8 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 collect_cvars(hir, *n, out);
             }
-            for pair in kwargs {
-                collect_cvars(hir, pair.0, out);
-                collect_cvars(hir, pair.1, out);
-            }
-            if let Some(s) = kwargs_splat {
-                collect_cvars(hir, *s, out);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_cvars(hir, n, out);
             }
             if let Some(b) = block {
                 collect_cvars(hir, *b, out);
@@ -798,9 +789,8 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                collect_cvars(hir, pair.0, out);
-                collect_cvars(hir, pair.1, out);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_cvars(hir, n, out);
             }
         }
         HirNode::RangeLit { start, end, .. } => {

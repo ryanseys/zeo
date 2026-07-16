@@ -12,7 +12,7 @@ mod rename;
 mod struct_def;
 
 use crate::hir::{
-    ArrayElem, HashPair, HashPatternRest, Hir, HirNode, KeywordParam, LastMatch, NodeId, Params,
+    ArrayElem, HashPatternRest, Hir, HirNode, KeywordParam, KwArg, LastMatch, NodeId, Params,
     Pattern, PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
 };
 use ruby_prism::{Node, ParseResult};
@@ -441,7 +441,6 @@ fn lower_compound_op_write(hir: &mut Hir, target: Storage, op: String, rhs: Node
         name: op,
         args: vec![ArrayElem::Single(rhs)],
         kwargs: Vec::new(),
-        kwargs_splat: None,
         block: None,
         block_arg: None,
         safe: false,
@@ -997,7 +996,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name: "at_exit".to_string(),
             args: Vec::new(),
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: Some(block),
             block_arg: None,
             safe: false,
@@ -1187,7 +1185,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name: op_name,
             args: vec![ArrayElem::Single(rhs)],
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
@@ -1238,7 +1235,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name: op_name,
             args: vec![ArrayElem::Single(rhs)],
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
@@ -1301,27 +1297,20 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let (mut args, kwargs, kwargs_splat, _fwd_block) =
+        let (mut args, kwargs, _fwd_block) =
             lower_call_args(result, hir, yield_node.arguments())?;
-        // A `*expr` splat needs no handling here at all: `Yield` carries the
-        // same `Vec<ArrayElem>` a `Call`'s positional args do, and codegen
-        // flattens a `Splat` element at runtime the same way.
+        // A `*expr` splat needs no handling here: `Yield` carries the same
+        // `Vec<ArrayElem>` a `Call`'s positional args do, and codegen flattens
+        // a `Splat` element at runtime. Keyword args (literal pairs AND `**h`
+        // double-splats) fold into one trailing `HashLit`, which codegen
+        // builds via the shared `KwArg` emitter and `emit_proc_param_bindings`
+        // binds a block's keyword params from.
         //
-        // `**h` is still rejected, and for a real reason rather than an
-        // unexamined one: a double-splat contributes NOTHING when the hash
-        // is empty AT RUNTIME (oracle-verified -- `def y(h); yield(1, **h);
-        // end; y({})` yields just `1`, no trailing hash), so it is not an
-        // element that can be lowered into this list; it needs the
-        // conditional push `codegen::call::emit_splat_call` does. Literal
-        // kwargs have no such problem -- `{k: 1}` is never empty -- so they
-        // still fold into one trailing `HashLit`, which is what
-        // `emit_proc_param_bindings` binds a block's keyword params from.
-        // TODO(plan G3): fold `**h` in here once `HirNode::Yield`/`Call`
-        // share the single ordered `KwArg { Pair | DoubleSplat }` list --
-        // the same refactor the key-ordering TODO in `emit_splat_call` needs.
-        if kwargs_splat.is_some() {
-            return Err("a `**h` double-splat argument isn't supported in `yield` (spike scope)".to_string());
-        }
+        // Divergence: a runtime-empty `**{}` still contributes a trailing `{}`
+        // here (`yield(1, **{})` -> `[1, {}]`), where real Ruby drops it -- the
+        // call path suppresses that via `emit_splat_call`'s non-empty guard,
+        // but yield's trailing-`HashLit` shape has none. Rare, and strictly
+        // better than the previous flat rejection of `yield **h`.
         if !kwargs.is_empty() {
             args.push(ArrayElem::Single(hir.push(HirNode::HashLit(kwargs))));
         }
@@ -1614,13 +1603,16 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     if let Some(a) = call.arguments() {
                         for n in a.arguments().iter() {
                             if let Some(kw) = n.as_keyword_hash_node() {
-                                for e in kw.elements().iter() {
-                                    let assoc = e.as_assoc_node().ok_or(
-                                        "unsupported splat in a keyword hash at a `.new` call (spike scope)",
-                                    )?;
-                                    let key = lower_node(result, hir, &assoc.key())?;
-                                    let value = lower_node(result, hir, &assoc.value())?;
-                                    kwargs.push(crate::hir::HashPair(key, value));
+                                let elements: Vec<Node<'_>> = kw.elements().iter().collect();
+                                kwargs = lower_kwargs(result, hir, &elements)?;
+                                // `.new` binds its args on the STATIC path
+                                // (`New.args` is `Vec<NodeId>`, no runtime
+                                // arg-vector), so a `**h` double-splat -- whose
+                                // keys aren't known until runtime -- can't be
+                                // bound here. Clean rejection, not a miscompile;
+                                // the same gap as a positional splat at `.new`.
+                                if kwargs.iter().any(|k| matches!(k, KwArg::DoubleSplat(_))) {
+                                    return Err("a `**h` double-splat at a `.new` call isn't supported yet (spike scope)".to_string());
                                 }
                                 continue;
                             }
@@ -1710,7 +1702,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                                 name: "result".to_string(),
                                 args: Vec::new(),
                                 kwargs: Vec::new(),
-                                kwargs_splat: None,
                                 block: None,
                                 block_arg: None,
                                 safe: false,
@@ -1902,7 +1893,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
-        let (args, kwargs, kwargs_splat, fwd_block) =
+        let (args, kwargs, fwd_block) =
             lower_call_args(result, hir, call.arguments())?;
         // A call's `block()` slot is one of two distinct shapes: a literal
         // `{ }`/`do..end` (`BlockNode`), or `&existing_proc` forwarding an
@@ -1932,7 +1923,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             safe: call.is_safe_navigation(),
@@ -1961,7 +1951,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             name: "to_sym".to_string(),
             args: Vec::new(),
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
@@ -2058,19 +2047,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     if let Some(h) = node.as_hash_node() {
-        let pairs = h
-            .elements()
-            .iter()
-            .map(|el| {
-                let assoc = el.as_assoc_node().ok_or(
-                    "double-splat (`**expr`) in a hash literal isn't supported yet (spike scope)",
-                )?;
-                let key = lower_node(result, hir, &assoc.key())?;
-                let value = lower_node(result, hir, &assoc.value())?;
-                Ok(HashPair(key, value))
-            })
-            .collect::<PResult<Vec<_>>>()?;
-        return Ok(hir.push(HirNode::HashLit(pairs)));
+        let elements: Vec<Node<'_>> = h.elements().iter().collect();
+        let kwargs = lower_kwargs(result, hir, &elements)?;
+        return Ok(hir.push(HirNode::HashLit(kwargs)));
     }
 
     if let Some(range) = node.as_range_node() {
@@ -2212,40 +2191,60 @@ fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     Ok(ArrayElem::Single(lower_node(result, hir, node)?))
 }
 
-/// Splits a call's raw argument list into (positional `ArrayElem`s, literal
-/// keyword `HashPair`s, an optional trailing `**h` double-splat) -- a
-/// trailing `KeywordHashNode` (`foo(x: 1, y: 2, **h)`) is the only prism
-/// shape recognized as keyword arguments; every other entry lowers as an
-/// ordinary positional argument via `lower_array_elem` (reusing the exact
-/// same plain-value-or-`*expr`-splat recognizer an array literal's own
-/// elements already use -- `foo(*arr)` and `[*arr]` are structurally the
-/// same `SplatNode` shape at the `ruby-prism` level). A `KeywordHashNode`'s
-/// own elements are a mix of plain `key: value` `AssocNode`s and, at most
-/// one trailing `**h` `AssocSplatNode` (real Ruby only allows one double-
-/// splat per call, always last) -- `kwargs_splat` carries that one
-/// separately since it's merged into the callee's keyword args at RUNTIME
-/// (its keys aren't known at compile time), unlike every literal `key:
-/// value` pair.
+/// Lowers a keyword-hash / hash-literal element list into the ordered
+/// `KwArg` list, preserving SOURCE ORDER between literal `k: v` pairs and
+/// `**expr` double-splats (Ruby's insertion-ordered, last-wins merge makes
+/// the interleaving observable). Shared by call kwargs, `.new` kwargs, and
+/// `{ }` literals -- one representation, one builder.
+fn lower_kwargs(result: &ParseResult, hir: &mut Hir, elements: &[Node<'_>]) -> PResult<Vec<KwArg>> {
+    let mut kwargs = Vec::with_capacity(elements.len());
+    for el in elements {
+        if let Some(splat) = el.as_assoc_splat_node() {
+            let expr = match splat.value() {
+                Some(expr) => lower_node(result, hir, &expr)?,
+                // Anonymous `**` forwarding -- the enclosing method's
+                // internally-named `**` param (see `lower_params`).
+                None => hir.push(HirNode::LocalRead("__anon_kwrest".to_string())),
+            };
+            kwargs.push(KwArg::DoubleSplat(expr));
+        } else {
+            let assoc = el
+                .as_assoc_node()
+                .ok_or("unsupported keyword-argument shape (spike scope)")?;
+            let key = lower_node(result, hir, &assoc.key())?;
+            let value = lower_node(result, hir, &assoc.value())?;
+            kwargs.push(KwArg::Pair(key, value));
+        }
+    }
+    Ok(kwargs)
+}
+
+/// Splits a call's raw argument list into (positional `ArrayElem`s, an
+/// ordered `KwArg` list, an optional forwarded block). A trailing
+/// `KeywordHashNode` (`foo(x: 1, **h)`) is the only prism shape recognized as
+/// keyword arguments (lowered via `lower_kwargs`); every other entry lowers as
+/// a positional argument via `lower_array_elem`. The returned `Option<NodeId>`
+/// is a `...`-forwarded block (`&__fwd_blk`); a call's own literal block lives
+/// outside this function.
 fn lower_call_args(
     result: &ParseResult,
     hir: &mut Hir,
     arguments: Option<ruby_prism::ArgumentsNode<'_>>,
-) -> PResult<(Vec<ArrayElem>, Vec<HashPair>, Option<NodeId>, Option<NodeId>)> {
+) -> PResult<(Vec<ArrayElem>, Vec<KwArg>, Option<NodeId>)> {
     let Some(arguments) = arguments else {
-        return Ok((Vec::new(), Vec::new(), None, None));
+        return Ok((Vec::new(), Vec::new(), None));
     };
     let mut list: Vec<_> = arguments.arguments().iter().collect();
-    let mut kwargs_splat = None;
     // `n(...)` inside `def m(...)` -- a `ForwardingArgumentsNode` in the
     // list. Expands to the three internal params `lower_params`
     // synthesized: `*__fwd_rest, **__fwd_kw, &__fwd_blk` (the block half
     // returned separately -- a call's block slot lives outside this
-    // function).
-    let mut fwd_block = None;
+    // function). `**__fwd_kw` enters the ordered `kwargs` list as a trailing
+    // double-splat.
     if let Some(pos) = list.iter().position(|n| n.as_forwarding_arguments_node().is_some()) {
         list.remove(pos);
-        kwargs_splat = Some(hir.push(HirNode::LocalRead("__fwd_kw".to_string())));
-        fwd_block = Some(hir.push(HirNode::LocalRead("__fwd_blk".to_string())));
+        let fwd_kw = hir.push(HirNode::LocalRead("__fwd_kw".to_string()));
+        let fwd_block = Some(hir.push(HirNode::LocalRead("__fwd_blk".to_string())));
         // The rest-splat slots in positionally where `...` was written.
         let rest_read = hir.push(HirNode::LocalRead("__fwd_rest".to_string()));
         let mut args = Vec::new();
@@ -2258,34 +2257,13 @@ fn lower_call_args(
         if pos >= list.len() {
             args.push(ArrayElem::Splat(rest_read));
         }
-        return Ok((args, Vec::new(), kwargs_splat, fwd_block));
+        return Ok((args, vec![KwArg::DoubleSplat(fwd_kw)], fwd_block));
     }
     let kwargs = match list.last().and_then(|n| n.as_keyword_hash_node()) {
         Some(kw) => {
             list.pop();
-            let mut pairs = Vec::new();
-            for el in kw.elements().iter() {
-                if let Some(splat) = el.as_assoc_splat_node() {
-                    if kwargs_splat.is_some() {
-                        return Err("at most one `**h` double-splat is supported per call (spike scope)".to_string());
-                    }
-                    kwargs_splat = Some(match splat.value() {
-                        Some(expr) => lower_node(result, hir, &expr)?,
-                        // Anonymous `**` forwarding -- references the
-                        // enclosing method's internally-named `**` param
-                        // (see `lower_params`).
-                        None => hir.push(HirNode::LocalRead("__anon_kwrest".to_string())),
-                    });
-                    continue;
-                }
-                let assoc = el
-                    .as_assoc_node()
-                    .ok_or("unsupported keyword-argument shape (spike scope)")?;
-                let key = lower_node(result, hir, &assoc.key())?;
-                let value = lower_node(result, hir, &assoc.value())?;
-                pairs.push(HashPair(key, value));
-            }
-            pairs
+            let elements: Vec<Node<'_>> = kw.elements().iter().collect();
+            lower_kwargs(result, hir, &elements)?
         }
         None => Vec::new(),
     };
@@ -2293,7 +2271,7 @@ fn lower_call_args(
         .iter()
         .map(|n| lower_array_elem_or_anon(result, hir, n))
         .collect::<PResult<Vec<_>>>()?;
-    Ok((args, kwargs, kwargs_splat, fwd_block))
+    Ok((args, kwargs, None))
 }
 
 /// `lower_array_elem`, plus the CALL-argument-only anonymous `*` forwarding
@@ -2725,7 +2703,6 @@ fn bind_call_target_once(
         name: read_name.to_string(),
         args: Vec::new(),
         kwargs: Vec::new(),
-        kwargs_splat: None,
         block: None,
         block_arg: None,
         safe: false,
@@ -2742,7 +2719,6 @@ fn build_call_target_write(hir: &mut Hir, tmp: &str, write_name: &str, value: No
         name: write_name.to_string(),
         args: vec![ArrayElem::Single(value)],
         kwargs: Vec::new(),
-        kwargs_splat: None,
         block: None,
         block_arg: None,
         safe: false,
@@ -2774,7 +2750,6 @@ fn bind_index_target_once(
         name: "[]".to_string(),
         args: vec![ArrayElem::Single(read_idx)],
         kwargs: Vec::new(),
-        kwargs_splat: None,
         block: None,
         block_arg: None,
         safe: false,
@@ -2792,7 +2767,6 @@ fn build_index_target_write(hir: &mut Hir, recv_tmp: &str, idx_tmp: &str, value:
         name: "[]=".to_string(),
         args: vec![ArrayElem::Single(write_idx), ArrayElem::Single(value)],
         kwargs: Vec::new(),
-        kwargs_splat: None,
         block: None,
         block_arg: None,
         safe: false,
@@ -2879,7 +2853,6 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
             name: setter_name,
             args: vec![ArrayElem::Single(tmp_read)],
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
@@ -2902,7 +2875,6 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
             name: "[]=".to_string(),
             args: vec![ArrayElem::Single(index), ArrayElem::Single(tmp_read)],
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             safe: false,
@@ -3351,7 +3323,6 @@ fn lower_named_capture_match(
             name: "[]".to_string(),
             args: vec![ArrayElem::Single(group)],
             kwargs: Vec::new(),
-            kwargs_splat: None,
             block: None,
             block_arg: None,
             // `&.` -- nil when `$~` is nil, i.e. when the match failed.

@@ -603,7 +603,6 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
             receiver,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             ..
@@ -616,12 +615,8 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 found |= scan_bare_block_use(hir, *n);
             }
-            for pair in kwargs {
-                found |= scan_bare_block_use(hir, pair.0);
-                found |= scan_bare_block_use(hir, pair.1);
-            }
-            if let Some(s) = kwargs_splat {
-                found |= scan_bare_block_use(hir, *s);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                found |= scan_bare_block_use(hir, n);
             }
             if let Some(b) = block_arg {
                 found |= scan_bare_block_use(hir, *b);
@@ -675,9 +670,8 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         }
         HirNode::HashLit(pairs) => {
             let mut found = false;
-            for pair in pairs {
-                found |= scan_bare_block_use(hir, pair.0);
-                found |= scan_bare_block_use(hir, pair.1);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                found |= scan_bare_block_use(hir, n);
             }
             found
         }
@@ -881,7 +875,6 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             receiver,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             ..
@@ -893,12 +886,8 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 collect_ivars(hir, *n, out);
             }
-            for pair in kwargs {
-                collect_ivars(hir, pair.0, out);
-                collect_ivars(hir, pair.1, out);
-            }
-            if let Some(s) = kwargs_splat {
-                collect_ivars(hir, *s, out);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_ivars(hir, n, out);
             }
             if let Some(b) = block {
                 collect_ivars(hir, *b, out);
@@ -929,9 +918,8 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                collect_ivars(hir, pair.0, out);
-                collect_ivars(hir, pair.1, out);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_ivars(hir, n, out);
             }
         }
         HirNode::RangeLit { start, end, .. } => {

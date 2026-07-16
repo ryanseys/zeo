@@ -8,7 +8,7 @@ use quote::quote;
 
 use super::expr::{box_if_object_typed, emit_boxed_new, emit_expr};
 use super::Ctx;
-use crate::hir::{ArrayElem, HashPair, NodeId, RegexpFlags, StrPart};
+use crate::hir::{ArrayElem, KwArg, NodeId, RegexpFlags, StrPart};
 use proc_macro2::TokenStream;
 
 /// `[1, 2, *rest]` -- a plain element is pushed directly; a `*splat`
@@ -44,23 +44,64 @@ pub fn emit_array_lit(cx: &Ctx, elems: &[ArrayElem]) -> TokenStream {
     }
 }
 
-/// `{ a: 1, b: 2 }` -- built via repeated `spinel_rt::hash_set` calls (not a
-/// raw `Vec` literal) so a duplicate key keeps its *last* value, matching
-/// real Ruby (see `spinel_rt::hash_new`'s docs).
-pub fn emit_hash_lit(cx: &Ctx, pairs: &[HashPair]) -> TokenStream {
-    let inserts = pairs.iter().map(|HashPair(k, v)| {
-        let k_expr = emit_expr(cx, *k);
-        let k_expr = box_if_object_typed(cx, *k, k_expr);
-        let v_expr = emit_expr(cx, *v);
-        let v_expr = box_if_object_typed(cx, *v, v_expr);
-        quote! { __pairs.push((#k_expr, #v_expr)); }
+/// Emits the in-order statements that populate an already-created runtime
+/// hash (bound to `hash_ident`) from a `KwArg` list: a `Pair` sets one key; a
+/// `DoubleSplat` merges every entry of a `to_hash`-coerced value AT ITS
+/// POSITION. `hash_set` preserves insertion order and overwrites on a
+/// duplicate key, so this reproduces Ruby's left-to-right, last-key-wins
+/// merge for `f(**a, c: 1, **b)`. Shared by `emit_hash_lit`, `call`'s
+/// `emit_splat_call`, and `yield`'s trailing hash so the three can't drift.
+pub fn emit_kwarg_inserts(cx: &Ctx, kwargs: &[KwArg], hash_ident: &TokenStream) -> TokenStream {
+    let stmts = kwargs.iter().map(|kw| match kw {
+        KwArg::Pair(k, v) => {
+            let k_expr = box_if_object_typed(cx, *k, emit_expr(cx, *k));
+            let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
+            quote! { spinel_rt::hash_set(&#hash_ident, #k_expr, #v_expr); }
+        }
+        // `**obj` converts through `to_hash` like CRuby, so a non-Hash
+        // converter object splats (and a non-converter raises a real
+        // TypeError); boxed first, since the coercion takes a `RubyValue`.
+        KwArg::DoubleSplat(n) => {
+            let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
+            quote! {
+                for (__k, __v) in spinel_rt::to_hash_coerce(&(#e))?.lock().values().cloned().collect::<Vec<_>>() {
+                    spinel_rt::hash_set(&#hash_ident, __k, __v);
+                }
+            }
+        }
     });
+    quote! { #(#stmts)* }
+}
+
+/// `{ a: 1, b: 2, **other }` -- an all-`Pair` literal takes the one-shot
+/// `hash_new(Vec<(k,v)>)` fast path (unchanged, so the common case emits
+/// exactly what it always did); a `**` splat forces incremental building via
+/// `emit_kwarg_inserts` so each merge lands at its source position. NO
+/// empty-suppression: a literal `{**h}` with an empty `h` is legitimately
+/// `{}` (unlike a call/yield arg's trailing hash, which drops an empty one).
+pub fn emit_hash_lit(cx: &Ctx, kwargs: &[KwArg]) -> TokenStream {
+    if kwargs.iter().all(|kw| matches!(kw, KwArg::Pair(..))) {
+        let inserts = kwargs.iter().map(|kw| {
+            let KwArg::Pair(k, v) = kw else { unreachable!("guarded all-Pair above") };
+            let k_expr = box_if_object_typed(cx, *k, emit_expr(cx, *k));
+            let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
+            quote! { __pairs.push((#k_expr, #v_expr)); }
+        });
+        return quote! {
+            spinel_rt::RubyValue::Hash({
+                #[allow(unused_mut)]
+                let mut __pairs: Vec<(spinel_rt::RubyValue, spinel_rt::RubyValue)> = Vec::new();
+                #(#inserts)*
+                spinel_rt::hash_new(__pairs)
+            })
+        };
+    }
+    let inserts = emit_kwarg_inserts(cx, kwargs, &quote! { __h });
     quote! {
         spinel_rt::RubyValue::Hash({
-            #[allow(unused_mut)]
-            let mut __pairs: Vec<(spinel_rt::RubyValue, spinel_rt::RubyValue)> = Vec::new();
-            #(#inserts)*
-            spinel_rt::hash_new(__pairs)
+            let __h = spinel_rt::hash_new(vec![]);
+            #inserts
+            __h
         })
     }
 }

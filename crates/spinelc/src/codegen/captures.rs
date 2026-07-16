@@ -137,7 +137,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         // `hir::HirNode::Lambda`'s docs) -- its mere presence never requires
         // the ENCLOSING method to install its own catch, so this is a leaf.
         HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             if let Some(b) = block {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
                     panic!("a Block should only be reached via the Call that invokes it");
@@ -156,10 +156,10 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                     node_contains_escaping_block(compiler, *n)
                 })
-                || kwargs.iter().any(|p| {
-                    node_contains_escaping_block(compiler, p.0) || node_contains_escaping_block(compiler, p.1)
-                })
-                || kwargs_splat.is_some_and(|s| node_contains_escaping_block(compiler, s))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|n| node_contains_escaping_block(compiler, n))
                 || block_arg.is_some_and(|b| node_contains_escaping_block(compiler, b))
         }
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
@@ -227,7 +227,8 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         }),
         HirNode::HashLit(pairs) => pairs
             .iter()
-            .any(|p| node_contains_escaping_block(compiler, p.0) || node_contains_escaping_block(compiler, p.1)),
+            .flat_map(|kw| kw.node_ids())
+            .any(|n| node_contains_escaping_block(compiler, n)),
         HirNode::RangeLit { start, end, .. } => {
             start.is_some_and(|s| node_contains_escaping_block(compiler, s))
                 || end.is_some_and(|e| node_contains_escaping_block(compiler, e))
@@ -325,14 +326,16 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         // so a `begin`/`rescue` lexically inside one never requires the
         // ENCLOSING method to install its own `Signal::Return` catch.
         HirNode::Lambda { .. } => false,
-        HirNode::Call { receiver, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, args, kwargs, block, block_arg, .. } => {
             receiver.is_some_and(|r| node_contains_begin(compiler, r))
                 || args.iter().any(|a| {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                     node_contains_begin(compiler, *n)
                 })
-                || kwargs.iter().any(|p| node_contains_begin(compiler, p.0) || node_contains_begin(compiler, p.1))
-                || kwargs_splat.is_some_and(|s| node_contains_begin(compiler, s))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|n| node_contains_begin(compiler, n))
                 || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| {
                     let HirNode::Block { body, .. } = &compiler.hir[b] else {
@@ -409,7 +412,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             node_contains_begin(compiler, *n)
         }),
         HirNode::HashLit(pairs) => {
-            pairs.iter().any(|p| node_contains_begin(compiler, p.0) || node_contains_begin(compiler, p.1))
+            pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_begin(compiler, n))
         }
         HirNode::RangeLit { start, end, .. } => {
             start.is_some_and(|s| node_contains_begin(compiler, s)) || end.is_some_and(|e| node_contains_begin(compiler, e))
@@ -750,9 +753,8 @@ fn walk(
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                walk(compiler, pair.0, in_escaping, param_exclusions, caps, self_class);
-                walk(compiler, pair.1, in_escaping, param_exclusions, caps, self_class);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
@@ -770,7 +772,7 @@ fn walk(
                 }
             }
         }
-        HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
+        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             // A receiverless call dispatches on `self` (see `emit_call`'s
             // implicit-self branch) -- inside an escaping block that's a
             // `self` capture exactly like an ivar reference, otherwise the
@@ -795,12 +797,8 @@ fn walk(
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
             }
-            for pair in kwargs {
-                walk(compiler, pair.0, in_escaping, param_exclusions, caps, self_class);
-                walk(compiler, pair.1, in_escaping, param_exclusions, caps, self_class);
-            }
-            if let Some(s) = kwargs_splat {
-                walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
             if let Some(b) = block_arg {
                 walk(compiler, *b, in_escaping, param_exclusions, caps, self_class);

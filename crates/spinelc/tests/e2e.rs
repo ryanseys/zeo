@@ -555,11 +555,14 @@ fn multi_assign_with_and_without_a_splat() {
 
 #[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // A double-splat (`**h`) inside a HASH LITERAL isn't supported yet
-    // (spike scope) -- update this to a still-unsupported construct if that
-    // ever lands and makes this compile. `begin`/`rescue` (Phase 9) and a
-    // call-site splat (Phase 12.5) are no longer valid examples here.
-    let err = spinelc::compile_to_rust("h = {a: 1}\nputs({b: 2, **h})\n").unwrap_err();
+    // A `**h` double-splat at a `.new` call isn't supported yet (spike scope):
+    // `.new` binds on the STATIC path (`New.args` is `Vec<NodeId>`, no runtime
+    // arg-vector). Update this to another still-unsupported construct if that
+    // ever lands. A `**h` in a hash literal / ordinary call now compiles.
+    let err = spinelc::compile_to_rust(
+        "class Foo; def initialize(a:); end; end\nh = {a: 1}\nFoo.new(**h)\n",
+    )
+    .unwrap_err();
     assert!(
         err.contains("double-splat"),
         "expected a double-splat-related unsupported-syntax error, got: {err}"
@@ -5755,11 +5758,9 @@ fn frozen_string_assignment_raises_with_the_quoted_inspect_message() {
 
 #[test]
 fn ivar_write_on_a_frozen_object_raises_and_leaves_the_ivar_unchanged() {
-    // The message's `#<Pt>` receiver rendering is this compiler's documented
-    // static approximation of real Ruby's `#<Pt:0xaddr @x=1>` (no per-object
-    // address/ivar reflection exists) -- the SEMANTICS (raises a catchable
-    // FrozenError, the ivar keeps its old value, readers still work) are
-    // oracle-verified exactly.
+    // The message carries the receiver's real `#<Pt:0xADDR @x=1>` inspect
+    // (address normalized in-program). Semantics oracle-verified: a catchable
+    // FrozenError, the ivar keeps its old value, readers still work.
     let result = run_ruby(
         r#"
         class Pt
@@ -5779,7 +5780,7 @@ fn ivar_write_on_a_frozen_object_raises_and_leaves_the_ivar_unchanged() {
         begin
           p1.set_x(5)
         rescue FrozenError => e
-          puts e.send(:message)
+          puts e.send(:message).gsub(/0x[0-9a-f]+/, "0xADDR")
         end
         puts p1.x
         "#,
@@ -5787,7 +5788,7 @@ fn ivar_write_on_a_frozen_object_raises_and_leaves_the_ivar_unchanged() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "true\ncan't modify frozen Pt: #<Pt>\n1\n"
+        "true\ncan't modify frozen Pt: #<Pt:0xADDR @x=1>\n1\n"
     );
 }
 
@@ -8328,6 +8329,177 @@ fn value_trampoline_wrong_arity_raises_a_rescuable_argument_error() {
         "cm: wrong number of arguments (given 1, expected 2)\n\
          double: wrong number of arguments (given 0, expected 1)\n\
          survived\n"
+    );
+}
+
+#[test]
+fn default_object_inspect_and_to_s_carry_address_and_ivars() {
+    // Default (no override) `to_s` is `#<Class:0xADDR>`; `inspect` adds the
+    // ivars as `@name=<inspected>` in declaration order. Addresses are
+    // normalized in-program (as the corpus tests do) so the expectation is
+    // stable. A frozen-mutation FrozenError message carries the same inspect.
+    let result = run_ruby(
+        r#"
+        def norm(s) = s.gsub(/0x[0-9a-f]+/, "0xADDR")
+        class Widget
+          def initialize(n); @name = n; @size = 3; end
+        end
+        w = Widget.new("gadget")
+        puts norm(w.to_s)
+        puts norm(w.inspect)
+        class Empty; end
+        puts norm(Empty.new.inspect)
+        puts norm(Object.new.inspect)
+        class Frozen
+          attr_accessor :v
+          def initialize; @v = 1; freeze; end
+        end
+        begin
+          Frozen.new.v = 2
+        rescue FrozenError => e
+          puts norm(e.message)
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<Widget:0xADDR>\n\
+         #<Widget:0xADDR @name=\"gadget\", @size=3>\n\
+         #<Empty:0xADDR>\n\
+         #<Object:0xADDR>\n\
+         can't modify frozen Frozen: #<Frozen:0xADDR @v=1>\n"
+    );
+}
+
+#[test]
+fn kwargs_and_double_splats_preserve_source_order() {
+    // The KwArg merge: `Call`/`HashLit`/`Yield` carry ONE ordered list of
+    // literal pairs and `**h` double-splats. Ruby's Hash is insertion-ordered
+    // and the merge is left-to-right last-wins, so the interleaving is
+    // observable. The old two-field split got the order wrong for a splat
+    // before a pair and couldn't represent two splats at all. All
+    // oracle-verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        def capture(**h) = h
+        p capture(**{a: 1, b: 2}, c: 3)   # splat before pair
+        p capture(c: 3, **{a: 1, b: 2})   # pair before splat
+        p capture(**{x: 1}, **{y: 2})     # two splats
+        p capture(**{x: 1}, **{x: 2})     # last-wins on dup key
+        p capture(**{a: 1}, b: 2, **{c: 3})
+        h = {a: 1}
+        p({**h, b: 2})
+        p({b: 2, **h})
+        def y
+          yield 1, **{k: 2, j: 3}
+        end
+        y { |*a| p a }
+        class HasToHash
+          def to_hash = {z: 99}
+        end
+        p capture(**HasToHash.new, w: 1)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{a: 1, b: 2, c: 3}\n\
+         {c: 3, a: 1, b: 2}\n\
+         {x: 1, y: 2}\n\
+         {x: 2}\n\
+         {a: 1, b: 2, c: 3}\n\
+         {a: 1, b: 2}\n\
+         {b: 2, a: 1}\n\
+         [1, {k: 2, j: 3}]\n\
+         {z: 99, w: 1}\n"
+    );
+}
+
+#[test]
+fn object_new_builds_a_distinct_boxed_sentinel() {
+    // `Object.new` emitted `Arc::new(spinel_rt::Object)` -- using the struct
+    // `Object` (a private-field struct, not a unit struct) as a value, an
+    // E0423 that never compiled. It must be `Object::default()`. Each call is
+    // a fresh Arc, so two sentinels are distinct by identity.
+    let result = run_ruby(
+        r#"
+        A = Object.new
+        B = Object.new
+        p A == B
+        p A == A
+        p A.is_a?(Object)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\ntrue\ntrue\n");
+}
+
+#[test]
+fn a_parenthesized_body_ending_in_self_returns_self() {
+    // `def m = (@x = 2; self)` -- a `Seq` whose tail is `self`. The `Seq`
+    // block emitted its tail unboxed (`Arc<Concrete>`) while every consumer
+    // of a `Seq` (which always infers `Poly`) expects a boxed `RubyValue` --
+    // an E0308 in `Ok(...)` position. The `Seq` now boxes its own tail.
+    let result = run_ruby(
+        r#"
+        class C
+          def initialize = (@x = 1)
+          def tap_self = (@x = 2; self)
+          attr_reader :x
+        end
+        c = C.new
+        p c.tap_self.equal?(c)
+        p c.x
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n2\n");
+}
+
+#[test]
+fn user_object_freeze_frozen_and_custom_freeze_returning_self() {
+    // The `freeze_user_object` scenario end to end: a bareword self-`freeze`
+    // in `initialize` sets real state, `frozen?` reads it back, mutation
+    // after freeze raises FrozenError, and a user `def freeze = (@log =
+    // "custom"; self)` (the `Seq`-tail-`self` shape whose codegen boxing was
+    // the E0308) returns self, runs its body, and -- since it overrides the
+    // real freeze -- leaves the object UNfrozen. (The FrozenError message's
+    // inspect tail `#<Sealed:0x.. @x=1>` is a separate default-inspect gap,
+    // so this asserts the message PREFIX, not the address/ivar detail.)
+    let result = run_ruby(
+        r##"
+        class Sealed
+          attr_accessor :x
+          def initialize
+            @x = 1
+            freeze
+          end
+        end
+        o = Sealed.new
+        p o.frozen?
+        begin
+          o.x = 2
+        rescue FrozenError => e
+          puts "FrozenError: #{e.message.start_with?('can\'t modify frozen Sealed')}"
+        end
+        p o.x
+
+        class OwnFreeze
+          attr_reader :log
+          def initialize = (@log = "clean")
+          def freeze = (@log = "custom"; self)
+        end
+        f = OwnFreeze.new
+        p f.freeze.equal?(f)
+        p f.log
+        p f.frozen?
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nFrozenError: true\n1\ntrue\n\"custom\"\nfalse\n"
     );
 }
 

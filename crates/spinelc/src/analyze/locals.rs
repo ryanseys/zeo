@@ -120,9 +120,8 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
             }
         }
         HirNode::HashLit(pairs) => {
-            for pair in pairs {
-                track_node(compiler, defining, box_id, locals, pair.0);
-                track_node(compiler, defining, box_id, locals, pair.1);
+            for n in pairs.iter().flat_map(|kw| kw.node_ids()) {
+                track_node(compiler, defining, box_id, locals, n);
             }
         }
         HirNode::RangeLit { start, end, .. } => {
@@ -144,7 +143,6 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
             receiver,
             args,
             kwargs,
-            kwargs_splat,
             block,
             block_arg,
             ..
@@ -156,12 +154,8 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
                 let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
                 track_node(compiler, defining, box_id, locals, *n);
             }
-            for pair in kwargs {
-                track_node(compiler, defining, box_id, locals, pair.0);
-                track_node(compiler, defining, box_id, locals, pair.1);
-            }
-            if let Some(s) = kwargs_splat {
-                track_node(compiler, defining, box_id, locals, *s);
+            for n in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                track_node(compiler, defining, box_id, locals, n);
             }
             if let Some(b) = block {
                 track_node(compiler, defining, box_id, locals, *b);

@@ -333,11 +333,31 @@ impl Params {
     }
 }
 
-/// One `key => value` / `key: value` pair inside a `{ }` literal.
-/// Double-splat (`**other`) isn't supported yet -- lowering rejects it with
-/// a clear error (spike scope), the same posture as `ParenthesesNode`'s other
-/// narrowings (see `parse/mod.rs`).
-pub struct HashPair(pub NodeId, pub NodeId);
+/// One element of a keyword-argument list / `{ }` literal, in SOURCE ORDER --
+/// the keyword-position analogue of [`ArrayElem`]. `Pair` is a literal
+/// `k: v` / `k => v`; `DoubleSplat` is a `**expr` whose runtime hash is merged
+/// in AT THIS POSITION (its keys aren't known until runtime). Ordering is
+/// observable because Ruby's Hash is insertion-ordered, so `f(**a, c: 1)` and
+/// `f(c: 1, **a)` build different hashes -- which is why a call's keywords
+/// can't be split into a separate `pairs` list and `**` slot. One type serves
+/// `Call`, `New`, `HashLit`, and (via a trailing `HashLit`) `Yield`.
+pub enum KwArg {
+    Pair(NodeId, NodeId),
+    DoubleSplat(NodeId),
+}
+
+impl KwArg {
+    /// The child node ids this element references, for HIR walkers (a `Pair`'s
+    /// key+value, or a `DoubleSplat`'s single expression) -- so every pass can
+    /// visit a `kwargs` list uniformly without re-matching the variant.
+    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> {
+        let (a, b) = match *self {
+            KwArg::Pair(k, v) => (k, Some(v)),
+            KwArg::DoubleSplat(n) => (n, None),
+        };
+        std::iter::once(a).chain(b)
+    }
+}
 
 /// Which last-match special a `LastMatchRef` reads -- see that variant's
 /// docs. All of them derive from the one `$~` slot.
@@ -855,8 +875,9 @@ pub enum HirNode {
     },
     /// `[1, 2, *rest]` -- see `ArrayElem`'s docs for the splat handling.
     ArrayLit(Vec<ArrayElem>),
-    /// `{ a: 1, b: 2 }` -- see `HashPair`'s docs for the double-splat gap.
-    HashLit(Vec<HashPair>),
+    /// `{ a: 1, b: 2, **other }` -- an ordered list of pairs and double-splats
+    /// (see `KwArg`). Merged left-to-right, last key wins.
+    HashLit(Vec<KwArg>),
     /// `a..b` / `a...b` -- either endpoint may be absent (`a..`/`..b`),
     /// matching Ruby's beginless/endless ranges.
     RangeLit {
@@ -921,10 +942,13 @@ pub enum HirNode {
     /// `args` reuses `ArrayElem` (a plain positional value, or a `*expr`
     /// splat whose contents are flattened in at runtime -- see
     /// `ArrayElem`'s docs and `codegen::params::emit_call_args`'s Path 1
-    /// splat-flattening); `kwargs_splat` is a call-site `**h` double-splat
-    /// (its pairs are merged into `kwargs` at runtime, after every literal
-    /// `name: value` pair -- matching real Ruby's own left-to-right
-    /// last-one-wins merge order). `block_arg` is `foo(&existing_proc)` --
+    /// splat-flattening); `kwargs` is the ordered `KwArg` list (literal
+    /// `name: value` pairs INTERLEAVED with `**h` double-splats in source
+    /// order -- Ruby's Hash is insertion-ordered and the merge is
+    /// left-to-right last-one-wins, so the order is observable). A `kwargs`
+    /// containing any `DoubleSplat` routes to the runtime arg-vector path;
+    /// a pairs-only `kwargs` stays on the static Path 1 fast path.
+    /// `block_arg` is `foo(&existing_proc)` --
     /// forwarding an already-built `Proc` value as the call's block (a
     /// distinct `BlockArgumentNode`), separate from `block` (a literal `{
     /// }`/`do..end` at the call site); real Ruby rejects having both on the
@@ -935,8 +959,7 @@ pub enum HirNode {
         receiver: Option<NodeId>,
         name: String,
         args: Vec<ArrayElem>,
-        kwargs: Vec<HashPair>,
-        kwargs_splat: Option<NodeId>,
+        kwargs: Vec<KwArg>,
         block: Option<NodeId>,
         block_arg: Option<NodeId>,
         safe: bool,
@@ -955,11 +978,12 @@ pub enum HirNode {
     /// `args` stays `Vec<NodeId>` rather than `Call`'s `Vec<ArrayElem>`: a
     /// SPLAT at a `.new` site (`Foo.new(*args)`) is still unsupported -- it
     /// needs the runtime arg-vector path, not this static one. See
-    /// `parse`'s `.new` lowering.
+    /// `parse`'s `.new` lowering. `kwargs` is the ordered `KwArg` list (pairs
+    /// plus `**h` double-splats), the same as `Call`'s.
     New {
         class_name: String,
         args: Vec<NodeId>,
-        kwargs: Vec<HashPair>,
+        kwargs: Vec<KwArg>,
     },
     /// Mirrors spinel's `emit_super`: always resolved against the *static*
     /// superclass, never through the dynamic dispatch table. See codegen's
@@ -1117,8 +1141,8 @@ pub enum HirNode {
     /// something lowering has to re-validate). Compiles to a literal Rust
     /// `break 'label value;` -- no `Signal` involved, per the ABI's stated
     /// scope-cut (see `signal.rs`), since real escaping closures don't exist
-    /// until Part 1.3/Phase 6. At most one argument is supported (`break a,
-    /// b` building an implicit array is a clean lowering error, spike scope).
+    /// until Part 1.3/Phase 6. A multi-value `break a, b` lowers to a single
+    /// implicit-array argument (`break [a, b]`), the same as `Return`/`Next`.
     Break(Option<NodeId>),
     /// `next` / `next value` -- ends the current iteration early, jumping to
     /// the loop's own re-test-the-condition point. See `Break`'s docs; the
@@ -1180,9 +1204,9 @@ pub enum HirNode {
     /// phase) with its own Rust fn boundary a bare `return` would incorrectly
     /// stop at instead of passing through -- that needs `Signal::Return`
     /// (already reserved for exactly this in `spinel_rt::Signal`) once it
-    /// exists. At most one value is supported (`return a, b` building an
-    /// implicit array is a clean lowering error, spike scope, mirroring
-    /// `Break`/`Next`).
+    /// exists. A multi-value `return a, b` lowers to a single implicit-array
+    /// argument (`return [a, b]`), via `lower_single_optional_argument`, so
+    /// this stays one optional node (mirroring `Break`/`Next`).
     Return(Option<NodeId>),
     /// `yield` / `yield(args)` -- invokes the enclosing method's implicit
     /// block. Only recognized directly within a method's own control flow

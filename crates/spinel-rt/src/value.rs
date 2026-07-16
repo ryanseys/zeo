@@ -165,6 +165,39 @@ pub(crate) fn container_identity(v: &RubyValue) -> Option<usize> {
     }
 }
 
+/// The default `#<Class:0xADDR ...>` rendering for a user object that defines
+/// no `to_s`/`inspect` override -- CRuby's `rb_any_to_s`/`rb_obj_inspect`.
+/// `to_s` (`with_ivars=false`) is just `#<Class:0xADDR>`; `inspect` lists the
+/// ivars as `@name=<inspected value>` in field-declaration order. The address
+/// is the object's identity (its `Arc` data pointer), address-normalized
+/// (`0x[0-9a-f]+` -> `0xADDR`) by the conformance harness. A self-referential
+/// ivar renders `...` (CRuby's recursion guard). Divergence: CRuby omits a
+/// never-assigned ivar, but our generated structs pre-declare every `@x` the
+/// class body mentions, so an unassigned one shows as `@x=nil` -- same root as
+/// `ivar_get_named`'s invented-ivar TODO.
+pub(crate) fn default_object_repr(o: &crate::RObj, with_ivars: bool, seen: &mut Vec<usize>) -> String {
+    let name = crate::dispatch::class_name(o.class_id()).unwrap_or_else(|| "Object".to_string());
+    let addr = std::sync::Arc::as_ptr(o) as *const () as usize;
+    if !with_ivars {
+        return format!("#<{name}:0x{addr:016x}>");
+    }
+    if seen.contains(&addr) {
+        return format!("#<{name}:0x{addr:016x} ...>");
+    }
+    let pairs = o.ivar_pairs();
+    if pairs.is_empty() {
+        return format!("#<{name}:0x{addr:016x}>");
+    }
+    seen.push(addr);
+    let body = pairs
+        .iter()
+        .map(|(n, v)| format!("{n}={}", v.inspect_with(seen)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    seen.pop();
+    format!("#<{name}:0x{addr:016x} {body}>")
+}
+
 impl RubyValue {
     /// Mirrors `sp_*_to_s`/CRuby's `Kernel#puts` argument stringification.
     pub fn to_display_string(&self) -> String {
@@ -261,21 +294,17 @@ impl RubyValue {
                 format!("{s}{op}{e}")
             }
             // A user-defined `to_s` wins (Phase 16.2, dispatched through
-            // the registry so inherited/mixed-in definitions resolve);
-            // default is `#<FQName>` -- real Ruby appends the object
-            // address (`#<Widget:0x...>`), omitted here as a documented
-            // approximation (addresses aren't reproducible output).
+            // the registry so inherited/mixed-in definitions resolve); the
+            // default is CRuby's `#<Class:0xADDR>` (no ivars -- that's
+            // `inspect`'s job). The address is normalized by the conformance
+            // harness (see `default_object_repr`).
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, "to_s", &[]) {
                     Some(Ok(v)) => v.display_with(seen),
                     Some(Err(_)) => panic!(
                         "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
                     ),
-                    None => format!(
-                        "#<{}>",
-                        crate::dispatch::class_name(o.class_id())
-                            .unwrap_or_else(|| "Object".to_string())
-                    ),
+                    None => default_object_repr(o, false, seen),
                 }
             }
             RubyValue::Proc(_) => "#<Proc>".to_string(),
@@ -399,21 +428,17 @@ impl RubyValue {
             RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).to_display_string(),
             RubyValue::MatchData(_) => "#<MatchData>".to_string(),
             // A user-defined `inspect` wins (Phase 16.2); the default is
-            // the same `#<FQName>` form as `to_s`'s -- real Ruby's default
-            // inspect additionally lists ivars and the address, both
-            // omitted (documented approximation). Note: NO fallback to a
-            // user `to_s` (real Ruby's inspect is independent of to_s).
+            // CRuby's `#<Class:0xADDR @iv=val, ...>` -- address plus the
+            // object's ivars, each inspected, in field-declaration order (see
+            // `default_object_repr`). NO fallback to a user `to_s` (real
+            // Ruby's inspect is independent of to_s).
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, "inspect", &[]) {
                     Some(Ok(v)) => v.display_with(seen),
                     Some(Err(_)) => panic!(
                         "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
                     ),
-                    None => format!(
-                        "#<{}>",
-                        crate::dispatch::class_name(o.class_id())
-                            .unwrap_or_else(|| "Object".to_string())
-                    ),
+                    None => default_object_repr(o, true, seen),
                 }
             }
             // `Bool`/`Int`/`Float`/`Proc`: `#inspect` and `#to_s` agree
