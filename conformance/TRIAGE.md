@@ -6,17 +6,16 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 318 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
-| ? | spike-misc | 125 | arg_assigned_in_sequence | spinelc: parenthesized multi-statement expressions aren't supported yet (spike scope) |
-| P | missing-core-const | 49 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
-| g | arity-panic | 37 | array_callforms_strbuf_cycle | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| ? | unknown-class | 31 | bundle_tiny_misc | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| d | class-level-state | 24 | block_param_into_thread | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| P | missing-builtin-method | 393 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
+| ? | spike-misc | 52 | arg_assigned_in_sequence | spinelc: parenthesized multi-statement expressions aren't supported yet (spike scope) |
+| g | arity-panic | 38 | array_bounds_guards | uncaught exception: wrong number of arguments (given 1, expected 0) |
+| ? | unknown-class | 26 | case_in_hash_pattern_object | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| d | class-level-state | 25 | block_param_into_thread | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 19 | arity_keyword_argument_errors | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| a | param-shapes | 16 | block_param_destructure | spinelc: only plain required parameters are supported before a `*rest` (spike scope) |
-| ! | rustc-failure | 16 | bundle_class_14 | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-4f0b670ceb17f2d1.rs) |
+| P | missing-core-const | 12 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
+| ! | rustc-failure | 8 | bundle_class_14 | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-79323f0bc15408d0.rs) |
+| k | pattern-shapes | 6 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-14bb593e | 5 | bundle_misc_c_26 | spinelc: unsupported syntax at "$1" (spike handles only what the 7 example programs need) |
-| k | pattern-shapes | 5 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-1dc88be1 | 4 | ffi_poly_int_array | spinelc: cannot load such file -- json |
 | ? | auto-693fd5cf | 4 | gsub_with_hash_replacement | uncaught exception: no implicit conversion of Hash into String |
 | ? | auto-f715b554 | 4 | i1017 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
@@ -59,7 +58,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-3fa590af | 1 | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-41318f62 | 1 | integer_shift_float_and_coerce | uncaught exception: Float can't be coerced into Integer |
 | ? | auto-4208b3f2 | 1 | splat_value_positions | spinelc: unsupported syntax at "*[1, 2]" (spike handles only what the 7 example programs need) |
+| ? | auto-434a127c | 1 | time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
+| ? | auto-503269d5 | 1 | hash_range_enum_extensions | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-50835bcc | 1 | alias_under_modifier | spinelc: unsupported syntax at "alias aliased original" (spike handles only what the 7 example programs need) |
+| ? | auto-52e6d3e6 | 1 | bundle_misc_c_23 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-567065dd | 1 | comparable_clamp_parity | uncaught exception: comparison of Money with NilClass failed |
 | ? | auto-5c693233 | 1 | mutex_synchronize_block | spinelc: cannot load such file -- monitor |
 | ? | auto-5c727403 | 1 | data_super_kwarg | spinelc: unsupported syntax at "x: x * 100, y: y + 1" (spike handles only what the 7 example programs need) |
@@ -110,6 +112,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-def07d6b | 1 | i1009 | error: backreferences are not supported |
 | ? | auto-dfbd22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
 | ? | auto-e0b8f18c | 1 | undef_method_raises | spinelc: unsupported syntax at "undef meth" (spike handles only what the 7 example programs need) |
+| ? | auto-ebd75c85 | 1 | stdin_io | uncaught exception: not a file |
 | a | double-splat | 1 | hash_double_splat | spinelc: double-splat (`**expr`) in a hash literal isn't supported yet (spike scope) |
 | j | regex-sugar | 1 | regexp_named_capture_match | spinelc: `=~`'s named-capture auto-binding sugar (synthesizing a local per named group) isn't supported yet (spike scope) -- bind the `MatchData` explicitly via `#match`/`#[]` instead |
 | d | singleton-class | 1 | singleton_class_block | spinelc: unsupported syntax at "class << Greeter\n  def hello; \"hello\"; end\nend" (spike handles only what the 7 example programs need) |
