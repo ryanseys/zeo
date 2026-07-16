@@ -139,9 +139,17 @@ builtin_methods! {
         }
         Ok(crate::array_get(recv_array!(recv), 0))
     }
+    // `last`/`last(n)` mirror `pop`'s dual return: bare answers ONE element
+    // (nil when empty), `last(n)` an ARRAY of up to the last n, in original
+    // order (`n` past the length takes what's there; `n == 0` is `[]`).
     "last" => fn last(recv, args, _block) {
-        arity!(args, 0);
-        Ok(crate::array_get(recv_array!(recv), -1))
+        arity!(args, 0..=1);
+        let items = recv_array!(recv).lock();
+        let Some(n) = count_arg(args)? else {
+            return Ok(items.last().cloned().unwrap_or(RubyValue::Nil));
+        };
+        let at = items.len().saturating_sub(n);
+        Ok(RubyValue::Array(crate::array_new(items[at..].to_vec())))
     }
     "to_a" => fn to_a(recv, args, _block) {
         arity!(args, 0);
@@ -230,24 +238,41 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "|" | "union" => fn union(recv, args, _block) {
-        arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
-                ),
-            ));
-        };
+    // Variadic siblings of `&`/`-`: `intersection` keeps self's elements
+    // present in EVERY argument (uniq'd); `difference` keeps self's elements
+    // absent from ALL arguments (duplicates preserved, like `-`).
+    "intersection" => fn intersection(recv, args, _block) {
+        let others = set_op_args(args)?;
         let mut out: Vec<RubyValue> = Vec::new();
-        for e in recv_array!(recv).lock().iter().chain(other.lock().iter()) {
-            if !out.iter().any(|x| e.rb_eq(x)) {
+        for e in recv_array!(recv).lock().iter() {
+            let in_all = others.iter().all(|o| o.iter().any(|x| e.rb_eq(x)));
+            if in_all && !out.iter().any(|x| e.rb_eq(x)) {
                 out.push(e.clone());
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "difference" => fn difference(recv, args, _block) {
+        let others = set_op_args(args)?;
+        let out: Vec<RubyValue> = recv_array!(recv)
+            .lock()
+            .iter()
+            .filter(|e| !others.iter().any(|o| o.iter().any(|x| e.rb_eq(x))))
+            .cloned()
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `|` is the BINARY operator (`a | b`); `union` is its variadic sibling
+    // (`a.union(b, c, ...)`, zero args = a uniq'd copy of self). Both drop
+    // later duplicates, keeping first-occurrence order.
+    "|" => fn or(recv, args, _block) {
+        arity!(args, 1);
+        let others = set_op_args(args)?;
+        Ok(RubyValue::Array(crate::array_new(union_of(recv_array!(recv), &others))))
+    }
+    "union" => fn union(recv, args, _block) {
+        let others = set_op_args(args)?;
+        Ok(RubyValue::Array(crate::array_new(union_of(recv_array!(recv), &others))))
     }
     "<=>" => fn spaceship(recv, args, _block) {
         arity!(args, 1);
@@ -553,9 +578,19 @@ builtin_methods! {
             None => RubyValue::Nil,
         })
     }
-    "rindex" => fn rindex(recv, args, _block) {
-        arity!(args, 1);
+    // `rindex(obj)` matches by `==` from the right; `rindex { |e| }` finds
+    // the last element the block answers truthy for.
+    "rindex" => fn rindex(recv, args, block) {
         let items = recv_array!(recv).lock().clone();
+        if let Some(RubyValue::Proc(p)) = &block {
+            for i in (0..items.len()).rev() {
+                if p.call(std::slice::from_ref(&items[i]))?.truthy() {
+                    return Ok(RubyValue::Int(i as i64));
+                }
+            }
+            return Ok(RubyValue::Nil);
+        }
+        arity!(args, 1);
         Ok(match items.iter().rposition(|e| e.rb_eq(&args[0])) {
             Some(i) => RubyValue::Int(i as i64),
             None => RubyValue::Nil,
@@ -763,14 +798,56 @@ builtin_methods! {
         let i = arg_int!(args, 0);
         Ok(crate::array_get(recv_array!(recv), i))
     }
-    "fill" => fn fill(recv, args, _block) {
-        arity!(args, 1);
+    // `fill` writes a contiguous span, optionally growing the array.
+    // Value form: `fill(obj[, start[, length]])`. Block form:
+    // `fill([start[, length]]) { |i| }` -- the block maps each index to its
+    // value. `start` is end-relative when negative; with no `length` the
+    // span runs to the current end (so a `start` past the end is a no-op);
+    // with `length`, `start + length` may extend past the end, back-filling
+    // any gap with nil.
+    "fill" => fn fill(recv, args, block) {
         let handle = recv_array!(recv);
-        let mut guard = handle.lock();
-        for slot in guard.iter_mut() {
-            *slot = args[0].clone();
+        let cur_len = handle.lock().len() as i64;
+        let (value, span): (Option<RubyValue>, &[RubyValue]) = match &block {
+            Some(RubyValue::Proc(_)) => {
+                arity!(args, 0..=2);
+                (None, args)
+            }
+            _ => {
+                arity!(args, 1..=3);
+                (Some(args[0].clone()), &args[1..])
+            }
+        };
+        let start = match span.first() {
+            Some(v) => {
+                let s = int_arg(v)?;
+                if s < 0 { s + cur_len } else { s }
+            }
+            None => 0,
+        };
+        if start < 0 {
+            return Err(crate::dispatch::raise_error(
+                "IndexError",
+                format!("index {} too small for array; minimum: {}", start - cur_len, -cur_len),
+            ));
         }
-        drop(guard);
+        let end = match span.get(1) {
+            Some(v) => start + int_arg(v)?.max(0),
+            None => cur_len,
+        };
+        if end > cur_len {
+            handle.lock().resize(end as usize, RubyValue::Nil);
+        }
+        for i in start..end {
+            let v = match (&value, &block) {
+                (Some(obj), _) => obj.clone(),
+                // Compute the block's value WITHOUT holding the array lock --
+                // the block may itself touch the array.
+                (None, Some(RubyValue::Proc(p))) => p.call(&[RubyValue::Int(i)])?,
+                _ => unreachable!("fill has either a value or a block"),
+            };
+            handle.lock()[i as usize] = v;
+        }
         Ok(recv.clone())
     }
     "clear" => fn clear(recv, args, _block) {
@@ -846,16 +923,27 @@ builtin_methods! {
         in_place_filter(recv, "delete_if", block, false)?;
         Ok(recv.clone())
     }
+    // `sample` answers ONE random element (nil when empty); `sample(n)` an
+    // ARRAY of up to n DISTINCT elements (a partial Fisher-Yates shuffle).
+    // Shares Kernel#rand's PRNG (srand-reseedable; documented MT19937
+    // divergence -- tests assert membership/length, not values).
     "sample" => fn sample(recv, args, _block) {
-        arity!(args, 0);
-        // Shares Kernel#rand's PRNG (srand-reseedable; documented
-        // MT19937 divergence -- tests assert membership, not values).
-        let items = recv_array!(recv).lock().clone();
-        Ok(if items.is_empty() {
-            RubyValue::Nil
-        } else {
-            items[(crate::builtins::kernel::prng_next() % items.len() as u64) as usize].clone()
-        })
+        arity!(args, 0..=1);
+        let mut items = recv_array!(recv).lock().clone();
+        let Some(n) = count_arg(args)? else {
+            return Ok(if items.is_empty() {
+                RubyValue::Nil
+            } else {
+                items[(crate::builtins::kernel::prng_next() % items.len() as u64) as usize].clone()
+            });
+        };
+        let take = n.min(items.len());
+        for i in 0..take {
+            let j = i + (crate::builtins::kernel::prng_next() as usize % (items.len() - i));
+            items.swap(i, j);
+        }
+        items.truncate(take);
+        Ok(RubyValue::Array(crate::array_new(items)))
     }
     "shuffle" => fn shuffle(recv, args, _block) {
         arity!(args, 0);
@@ -1028,6 +1116,51 @@ builtin_methods! {
 /// The optional COUNT argument of `pop(n)`/`shift(n)`: `None` when absent
 /// (the answer-one-element form), else the count. A negative one is
 /// CRuby's "negative array size" ArgumentError.
+/// An Integer argument (`fill`'s start/length), raising CRuby's exact
+/// TypeError for a non-Integer.
+fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
+    match v {
+        RubyValue::Int(n) => Ok(*n),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// Coerces every argument of a variadic set op (`union`/`intersection`/
+/// `difference`) to its element vector, raising CRuby's TypeError for a
+/// non-Array argument.
+fn set_op_args(args: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, crate::Signal> {
+    args.iter()
+        .map(|a| match a {
+            RubyValue::Array(o) => Ok(o.lock().clone()),
+            other => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Array",
+                    crate::builtins::class_name_of(other)
+                ),
+            )),
+        })
+        .collect()
+}
+
+/// The uniq'd concatenation `self ++ others...`, first occurrence winning --
+/// shared by `|` (binary) and `union` (variadic).
+fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec<RubyValue> {
+    let mut out: Vec<RubyValue> = Vec::new();
+    for e in recv.lock().iter().chain(others.iter().flatten()) {
+        if !out.iter().any(|x| e.rb_eq(x)) {
+            out.push(e.clone());
+        }
+    }
+    out
+}
+
 fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {
     let Some(v) = args.first() else {
         return Ok(None);

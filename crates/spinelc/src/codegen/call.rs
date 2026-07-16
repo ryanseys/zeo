@@ -473,7 +473,7 @@ fn try_regexp_dispatch(
                 }
                 ("split", 1) => {
                     return Some(quote! {
-                        { #haystack_guard spinel_rt::regexp_split(&(#re_expr).as_regexp_unchecked(), &__h) }
+                        { #haystack_guard spinel_rt::regexp_split(&(#re_expr).as_regexp_unchecked(), &__h, 0) }
                     });
                 }
                 ("sub", 2) if infer(cx, args[1]) == TyKind::Str => {

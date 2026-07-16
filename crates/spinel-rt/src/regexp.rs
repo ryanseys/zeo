@@ -145,6 +145,31 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
     }
 }
 
+/// `String#rindex(regexp[, pos])` -- the CHAR index of the RIGHTMOST match
+/// whose start is at or before `before` (a char index; `None` searches the
+/// whole string), or `nil`. Records `$~` like the leftward probes.
+pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> RubyValue {
+    let mut last = None;
+    for caps in re.compiled.captures_iter(haystack) {
+        let start_char = char_index(haystack, caps.get(0).expect("group 0 exists").start());
+        if before.is_some_and(|lim| start_char as usize > lim) {
+            break;
+        }
+        last = Some(caps);
+    }
+    match last {
+        Some(caps) => {
+            let start = caps.get(0).expect("group 0 exists").start();
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            RubyValue::Int(char_index(haystack, start))
+        }
+        None => {
+            crate::lastmatch::set_last_match(None);
+            RubyValue::Nil
+        }
+    }
+}
+
 pub fn regexp_source(re: &RRegexp) -> RubyValue {
     RubyValue::Str(string_new(re.source.clone()))
 }
@@ -215,17 +240,24 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
     RubyValue::Array(array_new(results))
 }
 
-/// `String#split(regexp)` -- Ruby's default (`limit` unspecified/`0`)
-/// leniency: a capture group inside the pattern gets its captured text
-/// spliced into the output alongside the split segments (verified against
-/// real `ruby`); trailing empty strings are dropped, but an embedded or
-/// LEADING empty string is kept (`",a".split(",") == ["", "a"]`).
-pub fn regexp_split(re: &RRegexp, haystack: &str) -> RubyValue {
+/// `String#split(regexp[, limit])` -- a capture group inside the pattern
+/// gets its captured text spliced into the output alongside the split
+/// segments (verified against real `ruby`); an embedded or LEADING empty
+/// string is kept (`",a".split(",") == ["", "a"]`). `limit == 0` (the
+/// default) drops trailing empties; `limit > 0` caps the field count with
+/// the tail kept whole; `limit < 0` keeps every field including trailing
+/// empties.
+pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
     let mut segments: Vec<String> = Vec::new();
     let mut last_end = 0usize;
+    let mut fields = 0i64;
     for caps in re.compiled.captures_iter(haystack) {
+        if limit > 0 && fields + 1 >= limit {
+            break;
+        }
         let m = caps.get(0).expect("group 0 is always the whole match");
         segments.push(haystack[last_end..m.start()].to_string());
+        fields += 1;
         for i in 1..caps.len() {
             if let Some(g) = caps.get(i) {
                 segments.push(g.as_str().to_string());
@@ -234,8 +266,10 @@ pub fn regexp_split(re: &RRegexp, haystack: &str) -> RubyValue {
         last_end = m.end();
     }
     segments.push(haystack[last_end..].to_string());
-    while segments.last().is_some_and(|s| s.is_empty()) {
-        segments.pop();
+    if limit == 0 {
+        while segments.last().is_some_and(|s| s.is_empty()) {
+            segments.pop();
+        }
     }
     let items = segments.into_iter().map(|s| RubyValue::Str(string_new(s))).collect();
     RubyValue::Array(array_new(items))
@@ -449,16 +483,16 @@ mod tests {
     #[test]
     fn split_matches_real_ruby_leniency() {
         let comma = regexp_new(",", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&comma, "a,b,,c")), ["a", "b", "", "c"]);
-        assert_eq!(strs(&regexp_split(&comma, ",a,b")), ["", "a", "b"]);
-        assert_eq!(strs(&regexp_split(&comma, "a,b,")), ["a", "b"]);
-        assert!(strs(&regexp_split(&comma, "")).is_empty());
+        assert_eq!(strs(&regexp_split(&comma, "a,b,,c", 0)), ["a", "b", "", "c"]);
+        assert_eq!(strs(&regexp_split(&comma, ",a,b", 0)), ["", "a", "b"]);
+        assert_eq!(strs(&regexp_split(&comma, "a,b,", 0)), ["a", "b"]);
+        assert!(strs(&regexp_split(&comma, "", 0)).is_empty());
 
         let digit = regexp_new(r"\d", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&digit, "a1b2c3")), ["a", "b", "c"]);
+        assert_eq!(strs(&regexp_split(&digit, "a1b2c3", 0)), ["a", "b", "c"]);
 
         let no_match = regexp_new("x", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&no_match, "abc")), ["abc"]);
+        assert_eq!(strs(&regexp_split(&no_match, "abc", 0)), ["abc"]);
     }
 
     #[test]

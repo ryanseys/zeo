@@ -13897,3 +13897,77 @@ fn dir_and_file_mutation_round_trips() {
         "true\nfalse\n[false, true]\n1\nfalse\n"
     );
 }
+
+#[test]
+fn array_optional_and_variadic_arities() {
+    // The builtin tables used to hardcode a single arity and reject the
+    // optional-`n` and variadic forms Ruby accepts: `last(n)`, `sample(n)`,
+    // the block form of `rindex`, the fill span forms, and the variadic
+    // set-op siblings `union`/`intersection`/`difference` (distinct from the
+    // binary `|`/`&`/`-`). All oracle-verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].last(2)
+        p [1, 2, 3].last(0)
+        p [1, 2, 3].last(5)
+        p [1, 2, 3, 2].rindex { |x| x < 3 }
+        p [1, 2, 3, 2].rindex(2)
+        p [1, 2, 3].union
+        p [1, 2, 3].union([2, 3], [4])
+        p [1, 2, 3, 4].intersection([2, 3, 4], [3, 4, 5])
+        p [1, 2, 3].difference([2], [4])
+        p [1, 1, 2].difference([2])
+        a = [0, 0, 0]; a.fill(9); p a
+        a = [0, 0, 0]; a.fill(9, 1, 1); p a
+        a = [1, 2, 3]; a.fill(9, 1, 5); p a
+        a = [1, 2, 3]; a.fill { |i| i }; p a
+        a = [1, 2, 3, 4, 5]; a.fill(-2) { |i| i * 10 }; p a
+        p [1, 2, 3].sample(2).length
+        p [1, 2, 3].sample(5).sort
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[2, 3]\n[]\n[1, 2, 3]\n3\n3\n\
+         [1, 2, 3]\n[1, 2, 3, 4]\n[3, 4]\n[1, 3]\n[1, 1]\n\
+         [9, 9, 9]\n[0, 9, 0]\n[1, 9, 9, 9, 9, 9]\n[0, 1, 2]\n[1, 2, 3, 30, 40]\n\
+         2\n[1, 2, 3]\n"
+    );
+}
+
+#[test]
+fn string_optional_arg_arities() {
+    // `count`/`delete` take one OR MORE char-set specs (intersected, `^`
+    // negation honored); `match`/`match?`/`rindex` take an optional start
+    // position; `rindex` also accepts a Regexp; `each_line` an optional
+    // separator; `split` an optional limit (positive caps fields, negative
+    // keeps trailing empties). All oracle-verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        p "hello world".count("lo")
+        p "hello world".count("lo", "o")
+        p "hello world".count("^l", "lo")
+        p "hello".rindex("l", 2)
+        p "hello".rindex("l", 3)
+        p "abcdabcd".rindex(/c/)
+        p "hello".rindex(/l/, 2)
+        p "hello".match?(/e/, 1)
+        p "hello".match?(/o/, -1)
+        r = "hello".match(/l/, 3); p(r && r[0])
+        p "1-2-3".each_line("-").to_a
+        p "a,b,c".split(",", 2)
+        p "a,b,,".split(",")
+        p "a,b,,".split(",", -1)
+        p "a1b2c3".split(/\d/, 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "5\n2\n2\n2\n3\n6\n2\ntrue\ntrue\n\"l\"\n\
+         [\"1-\", \"2-\", \"3\"]\n\
+         [\"a\", \"b,c\"]\n[\"a\", \"b\"]\n[\"a\", \"b\", \"\", \"\"]\n\
+         [\"a\", \"b2c3\"]\n"
+    );
+}

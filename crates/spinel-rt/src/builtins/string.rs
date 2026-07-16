@@ -318,49 +318,58 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
+    // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
+    // occurrence on each piece, exactly like the default `"\n"`.
     "each_line" => fn each_line(recv, args, block) {
-        arity!(args, 0);
+        arity!(args, 0..=1);
         let p = block_or_enum!(recv, "each_line", args, block);
-        let ls = split_lines(&recv_str!(recv).lock());
+        let ls = match args.first() {
+            Some(RubyValue::Str(sep)) => split_lines_sep(&recv_str!(recv).lock(), &sep.lock()),
+            _ => split_lines(&recv_str!(recv).lock()),
+        };
         for l in ls {
             p.call(&[l])?;
         }
         Ok(recv.clone())
     }
     // `split`: no-arg/nil = whitespace runs (leading skipped); a String
-    // separator keeps interior empties, drops trailing ones; a Regexp
-    // separator delegates to the shared regexp splitter.
+    // separator keeps interior empties; a Regexp separator delegates to the
+    // shared regexp splitter. The optional `limit` caps the field count
+    // (`> 0`, tail kept whole), keeps trailing empties (`< 0`), or drops
+    // them (`0`/omitted).
     "split" => fn split(recv, args, _block) {
-        arity!(args, 0..=1);
+        arity!(args, 0..=2);
         let text = recv_str!(recv).lock().clone();
+        let limit = match args.get(1) {
+            Some(RubyValue::Int(n)) => *n,
+            Some(RubyValue::Nil) | None => 0,
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        };
         match args.first() {
-            None | Some(RubyValue::Nil) => {
-                let out = text
-                    .split_whitespace()
-                    .map(|p| str_value(p.to_string()))
-                    .collect();
-                Ok(RubyValue::Array(crate::array_new(out)))
-            }
+            None | Some(RubyValue::Nil) => Ok(str_array(awk_split(&text, limit))),
             Some(RubyValue::Str(sep)) => {
                 let sep = sep.lock().clone();
                 if sep == " " {
                     // The one magic separator: a single space means
                     // whitespace-run splitting, real Ruby's awk rule.
-                    let out = text
-                        .split_whitespace()
-                        .map(|p| str_value(p.to_string()))
-                        .collect();
-                    return Ok(RubyValue::Array(crate::array_new(out)));
+                    return Ok(str_array(awk_split(&text, limit)));
                 }
-                let mut parts: Vec<&str> = text.split(sep.as_str()).collect();
-                while parts.last() == Some(&"") {
-                    parts.pop();
+                let mut parts: Vec<String> = if limit > 0 {
+                    text.splitn(limit as usize, sep.as_str()).map(str::to_string).collect()
+                } else {
+                    text.split(sep.as_str()).map(str::to_string).collect()
+                };
+                if limit == 0 {
+                    while parts.last().is_some_and(|s| s.is_empty()) {
+                        parts.pop();
+                    }
                 }
-                Ok(RubyValue::Array(crate::array_new(
-                    parts.into_iter().map(|p| str_value(p.to_string())).collect(),
-                )))
+                Ok(str_array(parts))
             }
-            Some(RubyValue::Regexp(re)) => Ok(crate::regexp_split(re, &text)),
+            Some(RubyValue::Regexp(re)) => Ok(crate::regexp_split(re, &text, limit)),
             Some(other) => Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(
@@ -423,14 +432,46 @@ builtin_methods! {
             )),
         }
     }
+    // `rindex(str_or_regexp[, pos])`: the CHAR index of the LAST match whose
+    // start is at or before `pos` (end-relative when negative; the whole
+    // string when omitted), or nil.
     "rindex" => fn rindex(recv, args, _block) {
-        arity!(args, 1);
+        arity!(args, 1..=2);
         let text = recv_str!(recv).lock().clone();
-        let needle = arg_str!(args, 0).lock().clone();
-        Ok(match text.rfind(&needle) {
-            Some(byte_pos) => RubyValue::Int(text[..byte_pos].chars().count() as i64),
-            None => RubyValue::Nil,
-        })
+        let clen = text.chars().count() as i64;
+        let before = match args.get(1) {
+            Some(v) => {
+                let p = int_arg(v)?;
+                let p = if p < 0 { p + clen } else { p };
+                if p < 0 {
+                    return Ok(RubyValue::Nil);
+                }
+                Some((p.min(clen)) as usize)
+            }
+            None => None,
+        };
+        match &args[0] {
+            RubyValue::Regexp(re) => Ok(crate::regexp_rindex(re, &text, before)),
+            RubyValue::Str(needle) => {
+                let needle = needle.lock().clone();
+                // Search only within the prefix up to (and including a needle
+                // starting at) `before`.
+                let cutoff = before.map_or(text.len(), |p| {
+                    byte_at_char(&text, p) + needle.len()
+                });
+                Ok(match text[..cutoff.min(text.len())].rfind(&needle) {
+                    Some(byte_pos) => RubyValue::Int(text[..byte_pos].chars().count() as i64),
+                    None => RubyValue::Nil,
+                })
+            }
+            other => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into String",
+                    crate::builtins::class_name_of(other)
+                ),
+            )),
+        }
     }
     // The `[]`/`slice` forms: Int, (Int, Int), Range, String.
     "[]" | "slice" => fn index_op(recv, args, _block) {
@@ -552,13 +593,15 @@ builtin_methods! {
             .collect();
         Ok(str_value(out))
     }
+    // `delete`/`count` take ONE OR MORE char-set specs; a char is selected
+    // only when it satisfies EVERY spec (CRuby's intersection rule), each of
+    // which may itself be negated with a leading `^` or use `a-z` ranges.
     "delete" => fn delete(recv, args, _block) {
-        arity!(args, 1);
-        let set = expand_charset(&arg_str!(args, 0).lock());
+        let sets = charset_specs(args)?;
         let out = recv_str!(recv)
             .lock()
             .chars()
-            .filter(|c| !set.contains(c))
+            .filter(|c| !in_all_charsets(*c, &sets))
             .collect();
         Ok(str_value(out))
     }
@@ -583,12 +626,11 @@ builtin_methods! {
         Ok(str_value(out))
     }
     "count" => fn count(recv, args, _block) {
-        arity!(args, 1);
-        let set = expand_charset(&arg_str!(args, 0).lock());
+        let sets = charset_specs(args)?;
         let n = recv_str!(recv)
             .lock()
             .chars()
-            .filter(|c| set.contains(c))
+            .filter(|c| in_all_charsets(*c, &sets))
             .count();
         Ok(RubyValue::Int(n as i64))
     }
@@ -737,43 +779,26 @@ builtin_methods! {
             )),
         }
     }
+    // Both accept an optional start position (char offset, end-relative when
+    // negative); a position outside the string means "no match" without even
+    // running the engine.
     "match" => fn match_m(recv, args, _block) {
-        arity!(args, 1);
+        arity!(args, 1..=2);
+        let re = to_regexp(&args[0])?;
         let text = recv_str!(recv).lock().clone();
-        match &args[0] {
-            RubyValue::Regexp(re) => Ok(crate::regexp_match(re, &text)),
-            RubyValue::Str(pat) => {
-                let re = crate::regexp_new(&pat.lock(), false, false, false)
-                    .map_err(|e| crate::dispatch::raise_error("RegexpError", e))?;
-                Ok(crate::regexp_match(&re, &text))
-            }
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other)
-                ),
-            )),
+        match match_haystack(&text, args.get(1))? {
+            Some(h) => Ok(crate::regexp_match(&re, &h)),
+            None => Ok(RubyValue::Nil),
         }
     }
     "match?" => fn match_p(recv, args, _block) {
-        arity!(args, 1);
+        arity!(args, 1..=2);
+        let re = to_regexp(&args[0])?;
         let text = recv_str!(recv).lock().clone();
-        match &args[0] {
-            RubyValue::Regexp(re) => Ok(RubyValue::Bool(crate::regexp_is_match(re, &text))),
-            RubyValue::Str(pat) => {
-                let re = crate::regexp_new(&pat.lock(), false, false, false)
-                    .map_err(|e| crate::dispatch::raise_error("RegexpError", e))?;
-                Ok(RubyValue::Bool(crate::regexp_is_match(&re, &text)))
-            }
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other)
-                ),
-            )),
-        }
+        Ok(RubyValue::Bool(match match_haystack(&text, args.get(1))? {
+            Some(h) => crate::regexp_is_match(&re, &h),
+            None => false,
+        }))
     }
     "scan" => fn scan(recv, args, _block) {
         arity!(args, 1);
@@ -795,6 +820,152 @@ builtin_methods! {
 /// Split into lines, KEEPING each terminating newline (a trailing fragment
 /// with no newline is still a line) -- `String#each_line`/`#lines`, and
 /// `File.readlines`, which is the same rule applied to a whole file.
+/// An Integer argument (a position/limit), raising CRuby's exact TypeError
+/// for a non-Integer.
+fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Int(n) => Ok(*n),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// The byte offset of the `char_idx`-th character (the string's byte length
+/// when past the end) -- bridges this runtime's char-indexed string API to
+/// Rust's byte-indexed slicing.
+fn byte_at_char(text: &str, char_idx: usize) -> usize {
+    text.char_indices().nth(char_idx).map_or(text.len(), |(b, _)| b)
+}
+
+/// Wraps a `Regexp` or `String` pattern argument as a compiled Regexp --
+/// `match`/`match?`'s shared coercion (a String pattern compiles literally).
+fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
+    match v {
+        RubyValue::Regexp(re) => Ok(re.clone()),
+        RubyValue::Str(pat) => crate::regexp_new(&pat.lock(), false, false, false)
+            .map_err(|e| crate::dispatch::raise_error("RegexpError", e)),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "wrong argument type {} (expected Regexp)",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// The haystack a `match`/`match?` engine should run over given an optional
+/// start position (char offset, end-relative when negative). `None` means
+/// the position lands outside the string -- the caller reports "no match"
+/// without running the engine.
+fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Option<String>, Signal> {
+    let Some(v) = pos else {
+        return Ok(Some(text.to_string()));
+    };
+    let clen = text.chars().count() as i64;
+    let start = match int_arg(v)? {
+        p if p < 0 => p + clen,
+        p => p,
+    };
+    if start < 0 || start > clen {
+        return Ok(None);
+    }
+    Ok(Some(text.chars().skip(start as usize).collect()))
+}
+
+/// The `count`/`delete` char-set arguments as `(chars, negated)` specs: a
+/// leading `^` negates (a bare `"^"` stays literal), `a-z` expands to a
+/// range. Zero arguments is CRuby's `ArgumentError`.
+#[allow(clippy::type_complexity)]
+fn charset_specs(args: &[RubyValue]) -> Result<Vec<(std::collections::HashSet<char>, bool)>, Signal> {
+    if args.is_empty() {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "wrong number of arguments (given 0, expected 1+)".to_string(),
+        ));
+    }
+    args.iter()
+        .map(|a| {
+            let RubyValue::Str(s) = a else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into String", crate::builtins::class_name_of(a)),
+                ));
+            };
+            let spec = s.lock().clone();
+            let (negated, body) = match spec.strip_prefix('^') {
+                Some(rest) if !rest.is_empty() => (true, rest.to_string()),
+                _ => (false, spec),
+            };
+            Ok((expand_charset(&body).into_iter().collect(), negated))
+        })
+        .collect()
+}
+
+/// Whether `c` belongs to EVERY char-set spec (CRuby's intersection rule for
+/// the multi-argument `count`/`delete` forms).
+fn in_all_charsets(c: char, sets: &[(std::collections::HashSet<char>, bool)]) -> bool {
+    sets.iter().all(|(set, negated)| set.contains(&c) != *negated)
+}
+
+/// `split`'s whitespace (awk) mode: leading whitespace skipped, fields split
+/// on whitespace runs. A positive `limit` keeps the tail (internal
+/// whitespace and all) whole as the final field.
+fn awk_split(text: &str, limit: i64) -> Vec<String> {
+    if limit <= 0 {
+        // Whitespace mode never yields empty fields, so trailing-empty
+        // handling is moot for both the 0 and negative cases.
+        return text.split_whitespace().map(str::to_string).collect();
+    }
+    let mut fields = Vec::new();
+    let mut rest = text.trim_start();
+    while (fields.len() as i64) + 1 < limit {
+        match rest.find(char::is_whitespace) {
+            Some(i) => {
+                fields.push(rest[..i].to_string());
+                rest = rest[i..].trim_start();
+            }
+            None => break,
+        }
+        if rest.is_empty() {
+            break;
+        }
+    }
+    if !rest.is_empty() {
+        fields.push(rest.to_string());
+    }
+    fields
+}
+
+/// Wraps a list of split fields as a Ruby `Array` of `String`s.
+fn str_array(parts: Vec<String>) -> RubyValue {
+    RubyValue::Array(crate::array_new(parts.into_iter().map(str_value).collect()))
+}
+
+/// `each_line(sep)`: like `split_lines` but on an arbitrary separator, each
+/// piece keeping its trailing separator.
+fn split_lines_sep(text: &str, sep: &str) -> Vec<RubyValue> {
+    if sep.is_empty() {
+        return vec![RubyValue::Str(crate::string_new(text.to_string()))];
+    }
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(sep) {
+        let end = i + sep.len();
+        out.push(RubyValue::Str(crate::string_new(rest[..end].to_string())));
+        rest = &rest[end..];
+    }
+    if !rest.is_empty() {
+        out.push(RubyValue::Str(crate::string_new(rest.to_string())));
+    }
+    out
+}
+
 pub(crate) fn split_lines(text: &str) -> Vec<RubyValue> {
     let mut out = Vec::new();
     let mut cur = String::new();
