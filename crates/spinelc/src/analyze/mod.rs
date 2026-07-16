@@ -399,7 +399,13 @@ fn register_class(
                 let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
             }
-            HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
+            // `IvarWrite`: a bare `@x = expr` in a class body is an ivar on
+            // the CLASS OBJECT (`self` in a class body is the class), i.e.
+            // the same storage `def self.x; @x; end` reads -- the ordinary
+            // way a class-level `@registry = []` gets initialized. Before
+            // this it fell into the `_ => {}` arm below and was SILENTLY
+            // DROPPED, so the reader saw a bare nil with no diagnostic.
+            HirNode::IvarWrite(..) | HirNode::ClassVarWrite(..) | HirNode::ConstWrite { .. } => {
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);

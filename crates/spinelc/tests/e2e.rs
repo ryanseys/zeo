@@ -3357,22 +3357,286 @@ fn an_escaping_block_capturing_self_via_explicit_self_dot_method() {
 }
 
 #[test]
-#[should_panic(expected = "`self` isn't supported inside a class method")]
-fn self_inside_a_class_method_is_a_clean_compile_error() {
-    // No first-class `Class`/`Module` runtime value exists (a documented
-    // scope-cut -- see the plan's Part 6), so `self` inside `def self.x`
-    // has nothing to represent it. Must be a clean codegen-time panic, not
-    // a `rustc` failure on the generated program referencing a Rust `self`
-    // binding that doesn't exist in a class method's signature.
-    let _ = spinelc::compile_to_rust(
+fn self_inside_a_class_method_is_the_class_object() {
+    // Was a documented scope-cut ("no first-class Class/Module runtime value
+    // exists") and a codegen panic. `RubyValue::Class` has been the
+    // representation for a while; a class method's `self` is now that value,
+    // so `self` and the class constant are interchangeable -- including as a
+    // receiver for the class's OWN other class methods.
+    let result = run_ruby(
         r#"
         class Foo
           def self.bar
             self
           end
+          def self.baz
+            self.bar.name
+          end
         end
-        Foo.bar
+        p Foo.bar
+        p Foo.bar == Foo
+        p Foo.baz
+        p Foo.bar.new.class
         "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Foo\ntrue\n\"Foo\"\nFoo\n");
+}
+
+#[test]
+fn class_level_ivars_are_per_class_and_not_inherited() {
+    // The defining property of class-level `@x`, and the whole reason it
+    // can't share `@@x`'s storage: a subclass gets its OWN slot, starting
+    // empty, even though it inherits the method that reads it. Contrast the
+    // `@@cv` line, which IS shared. Oracle-verified (ruby 4.0.5).
+    let result = run_ruby(
+        r#"
+        class Base
+          @reg = "base-ivar"
+          @@cv = "base-cvar"
+          def self.reg; @reg; end
+          def self.reg=(v); @reg = v; end
+          def self.cv; @@cv; end
+          def self.unset; @never_written; end
+        end
+        class Sub < Base; end
+        p Base.reg
+        p Sub.reg
+        p Sub.cv
+        p Base.unset
+        Sub.reg = "sub-only"
+        p [Base.reg, Sub.reg]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"base-ivar\"\nnil\n\"base-cvar\"\nnil\n[\"base-ivar\", \"sub-only\"]\n"
+    );
+}
+
+#[test]
+fn a_class_ivar_and_an_instance_ivar_of_the_same_name_are_distinct_storage() {
+    // `@x` in a class body/class method and `@x` in an instance method name
+    // two completely different slots -- the class object's own, and the
+    // instance's. Also exercises the same-name collision across Ruby's two
+    // method namespaces (`def self.x` + `def x`), which share one generated
+    // container and so need `ident::class_method_ident`'s mangling.
+    let result = run_ruby(
+        r#"
+        class C
+          @x = "class-level"
+          def initialize; @x = "instance-level"; end
+          def self.x; @x; end
+          def x; @x; end
+        end
+        p [C.x, C.new.x]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"class-level\", \"instance-level\"]\n");
+}
+
+#[test]
+fn a_class_body_ivar_write_initializes_class_level_state() {
+    // A bare `@x = ...` directly in a class body -- the ordinary way
+    // class-level state gets seeded. It used to fall through `register_class`'s
+    // catch-all arm and be SILENTLY DROPPED, leaving the reader a bare nil
+    // with no diagnostic at all.
+    let result = run_ruby(
+        r#"
+        class Registry
+          @items = []
+          @count = 0
+          def self.add(x); @items << x; @count += 1; self; end
+          def self.items; @items; end
+          def self.count; @count; end
+        end
+        Registry.add("a").add("b")
+        p Registry.items
+        p Registry.count
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"a\", \"b\"]\n2\n");
+}
+
+#[test]
+fn module_level_state_accumulates_across_class_method_calls() {
+    let result = run_ruby(
+        r#"
+        module Counter
+          @n = 0
+          def self.bump; @n += 1; end
+          def self.n; @n; end
+        end
+        Counter.bump
+        Counter.bump
+        Counter.bump
+        p Counter.n
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn class_shovel_self_attr_accessor_backs_onto_class_level_ivars() {
+    // `class << self; attr_accessor :x; end` is THE idiomatic way to declare
+    // class-level state, and it works by generating `def self.x; @x; end` --
+    // so it only works once class-level `@x` has real storage.
+    let result = run_ruby(
+        r#"
+        module Reg
+          class << self
+            attr_accessor :handler
+            def helper; "helped"; end
+          end
+        end
+        Reg.handler = "H"
+        p Reg.handler
+        p Reg.helper
+
+        class Cfg
+          class << self
+            attr_reader :mode
+            attr_writer :mode
+          end
+          @mode = "default"
+        end
+        p Cfg.mode
+        Cfg.mode = "custom"
+        p Cfg.mode
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"H\"\n\"helped\"\n\"default\"\n\"custom\"\n");
+}
+
+#[test]
+fn a_class_ivar_is_reachable_from_a_block_inside_a_class_method() {
+    // The block captures `self` as a plain `RubyValue::Class`, so the ivar
+    // resolves through `ivar_get_dyn`/`ivar_set_dyn`'s Class arm rather than
+    // the static class-id path -- the two must agree on the same storage.
+    let result = run_ruby(
+        r#"
+        class Blk
+          @vals = []
+          def self.collect
+            [1, 2, 3].each { |i| @vals << i * 10 }
+            @vals
+          end
+        end
+        p Blk.collect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[10, 20, 30]\n");
+}
+
+#[test]
+fn a_class_method_dispatches_dynamically_through_a_class_valued_variable() {
+    // The receiver isn't a literal constant, so codegen can't emit a direct
+    // `H1::__cm_run(...)` -- it goes through the registry's class-method
+    // table on a `RubyValue::Class` receiver.
+    let result = run_ruby(
+        r#"
+        class H1
+          def self.run(x); "h1:#{x}"; end
+        end
+        class H2
+          def self.run(x); "h2:#{x}"; end
+        end
+        [H1, H2].each { |h| puts h.run(5) }
+        handler = H1
+        puts handler.run(9)
+        handler = H2
+        puts handler.run(9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "h1:5\nh2:5\nh1:9\nh2:9\n");
+}
+
+#[test]
+fn an_implicit_self_call_in_a_class_method_resolves_against_the_receiver() {
+    // `self` in a class method is the class it was CALLED on, not the one
+    // whose body the method was written in. Both of these were silently wrong
+    // (no error, just the wrong object) while implicit-self resolution used
+    // the lexical `defining_class`:
+    //   - `Sub.create` built a Base;
+    //   - `Ext.helped` answered "Helper".
+    let result = run_ruby(
+        r#"
+        class Base
+          def self.create; new; end
+          def self.who; name; end
+        end
+        class Sub < Base; end
+        p Base.create.class
+        p Sub.create.class
+        p Sub.who
+
+        module Helper
+          def helped; "helped-#{name}"; end
+        end
+        class Ext
+          extend Helper
+        end
+        p Ext.helped
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Base\nSub\n\"Sub\"\n\"helped-Ext\"\n");
+}
+
+#[test]
+fn class_methods_take_the_full_param_shapes() {
+    let result = run_ruby(
+        r#"
+        class P
+          def self.m(a, b = 2, *rest, k: 9, **kw, &blk)
+            [a, b, rest, k, kw, blk ? blk.call : nil]
+          end
+        end
+        p P.m(1)
+        p P.m(1, 3, 4, 5, k: 0, z: 1) { "blk" }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, [], 9, {}, nil]\n[1, 3, [4, 5], 0, {z: 1}, \"blk\"]\n"
+    );
+}
+
+#[test]
+fn class_objects_answer_the_instance_variable_reflection_family() {
+    let result = run_ruby(
+        r#"
+        class K
+          @a = 1
+        end
+        p K.instance_variable_get(:@a)
+        p K.instance_variable_get("@a")
+        p K.instance_variable_get(:@nope)
+        p K.instance_variables
+        p K.instance_variable_set(:@b, 2)
+        p K.instance_variables
+        p K.instance_variable_defined?(:@a)
+        p K.instance_variable_defined?(:@zz)
+        begin
+          K.instance_variable_get(:a)
+        rescue NameError => e
+          puts "NameError: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n1\nnil\n[:@a]\n2\n[:@a, :@b]\ntrue\nfalse\n\
+         NameError: 'a' is not allowed as an instance variable name\n"
     );
 }
 

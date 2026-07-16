@@ -306,6 +306,12 @@ pub fn main_object() -> RubyValue {
 pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
     match recv {
         RubyValue::Object(o) => o.ivar_get_named(name).unwrap_or(RubyValue::Nil),
+        // A CLASS object's own ivars live in their own table (see
+        // `civars`' docs for why they can't share `cvars`'). Reached when a
+        // class-method body's `self` is dynamic rather than the static class
+        // id codegen usually emits -- e.g. `def self.x; [1].each { @n } end`,
+        // where the block captures `self` as a plain `RubyValue::Class`.
+        RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, name),
         _ => RubyValue::Nil,
     }
 }
@@ -325,6 +331,14 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
                 ));
             }
             o.ivar_set_named(name, v.clone());
+            Ok(v)
+        }
+        // See `ivar_get_dyn`'s Class arm. No frozen check: a class object is
+        // only frozen by an explicit `Foo.freeze`, which this runtime has no
+        // storage to record -- the same posture the static class-ivar write
+        // path takes.
+        RubyValue::Class(cid) => {
+            crate::civars::class_ivar_set(cid.0, name, v.clone());
             Ok(v)
         }
         // Real Ruby raises here (immediates are frozen and have no ivar
@@ -410,6 +424,23 @@ struct ClassEntry {
     /// (`puts`/`p`/...) aren't here -- they have no registry entry at all
     /// and are special-cased in `responds_to`.
     private_methods: HashSet<Symbol>,
+    /// This class's own CLASS methods (`def self.x`, `class << self`,
+    /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
+    /// dynamically (`handler.run(...)`, where `handler` holds a class), the
+    /// one path where the callee isn't statically known and so can't be a
+    /// direct `Foo::__cm_run(...)` call.
+    ///
+    /// `ValueMethodFn`-shaped like `value_methods`, but with a DROPPED
+    /// receiver rather than a passed one (`params::RecvMode`): the emitted
+    /// class-method free function takes no receiver parameter.
+    ///
+    /// No ancestor walk on lookup, for the same reason `methods` needs
+    /// none: `analyze::mro::materialize_class_methods` already copies every
+    /// inherited class method onto each subclass at compile time, so a hit
+    /// here is always this exact class's own entry. That is also what keeps
+    /// class-level `@x` storage correct through this path -- each copy
+    /// carries its own class id (see `civars`' docs).
+    class_methods: HashMap<Symbol, ValueMethodFn>,
     constructor: Option<ConstructorFn>,
 }
 
@@ -444,6 +475,7 @@ impl ClassRegistry {
                 methods: HashMap::new(),
                 value_methods: HashMap::new(),
                 private_methods: HashSet::new(),
+                class_methods: HashMap::new(),
                 constructor,
             },
         );
@@ -478,6 +510,16 @@ impl ClassRegistry {
             .expect("class must be registered before defining value methods on it")
             .value_methods
             .insert((box_id, name), f);
+    }
+
+    /// Registers one `def self.x` for dynamic dispatch -- see
+    /// `ClassEntry::class_methods`' docs.
+    pub fn define_class_method(&mut self, id: ClassId, name: Symbol, f: ValueMethodFn) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining class methods on it")
+            .class_methods
+            .insert(name, f);
     }
 
     /// The runtime-mutable path `define_method`/`define_singleton_method`
@@ -857,6 +899,18 @@ pub fn send_value_in(
     // methods, and a `RubyValue::Class`'s own chain runs over Class/Module --
     // it would never reach File's or Math's rows.
     if let RubyValue::Class(cid) = recv {
+        // A USER `def self.x` first -- ahead of the builtin table below, so
+        // a class defining its own `self.name`/`self.new` overrides
+        // `Class#name`/`Class#new` rather than being shadowed by them. Real
+        // Ruby's placement rule: the singleton method is strictly closer
+        // than the one inherited from Class/Module.
+        if let Some(f) = REGISTRY
+            .get()
+            .and_then(|r| r.entries.get(&cid.0))
+            .and_then(|e| e.class_methods.get(&name).copied())
+        {
+            return f(recv, args, block);
+        }
         if let Some(lookup) = crate::builtins::class_method_table(*cid) {
             if let Some(f) = lookup(n) {
                 return f(recv, args, block);

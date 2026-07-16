@@ -118,6 +118,41 @@ pub fn safe_ident(name: &str) -> Ident {
     }
 }
 
+/// The Rust identifier for a CLASS method (`def self.x`), as distinct from
+/// an instance method of the same Ruby name.
+///
+/// Ruby keeps instance and class methods in two separate namespaces, so
+/// `def x` and `def self.x` on one class is ordinary, legal code:
+///
+/// ```ruby
+/// class C
+///   def self.x = "class-level"
+///   def x      = "instance-level"
+/// end
+/// ```
+///
+/// The generated code has no such separation -- both land in the same `impl
+/// C` (or, for a module/builtin reopen, the same `pub mod`) -- so emitting
+/// both under the bare name is a `rustc` "duplicate definitions with name
+/// `x`" error on the GENERATED program, i.e. a miscompile of a legal input.
+/// Prefixing the class-method half sidesteps it without touching the
+/// Ruby-visible name (nothing outside generated code sees this ident, unlike
+/// `class_ident`'s containers, which call sites must spell exactly).
+///
+/// `__`-prefixed, the same reserved-name convention as `__blk`/`__self`.
+///
+/// Built by prefixing `safe_ident`'s OUTPUT rather than its input, so every
+/// escape that function already does is inherited rather than re-derived:
+/// `def self.+` arrives here as `op_add` (prefixing the raw `+` would panic
+/// in `Ident::new`), and `def self.type` as the raw ident `r#type` -- whose
+/// `r#` is dropped, since `__cm_type` is not a keyword and `__cm_r#type`
+/// would not parse.
+pub fn class_method_ident(name: &str) -> Ident {
+    let base = safe_ident(name).to_string();
+    let base = base.strip_prefix("r#").unwrap_or(&base);
+    Ident::new(&format!("__cm_{base}"), Span::call_site())
+}
+
 /// `foo?` -> `foo_p`, `foo!` -> `foo_bang`, `foo=` -> `foo_set` -- but NOT
 /// operator method names that happen to end the same way (`==`, `!=`, `<=`,
 /// `>=`, `[]=`), which are fixed multi-char symbol sequences with no

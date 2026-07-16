@@ -5,6 +5,7 @@
 
 mod arith;
 mod builtins;
+mod civars;
 mod collections;
 mod constants;
 mod cvars;
@@ -55,6 +56,7 @@ pub use dispatch::{
     RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     TRUE_CLASS, YIELDER_CLASS,
 };
+pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use cvars::{cvar_get, cvar_set};
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};

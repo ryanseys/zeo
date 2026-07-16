@@ -56,6 +56,67 @@ builtin_methods! {
             recv_cid(recv),
         )))
     }
+    // Reflection over a CLASS OBJECT's own ivars -- the `@x` a `def self.x`
+    // or a class body writes (see `civars`' docs). Really `Object`'s
+    // methods, which a class inherits; they live on the Module table
+    // because that is the one a `RubyValue::Class` receiver reaches.
+    "instance_variable_get" => fn ivar_get(recv, args, _block) {
+        arity!(args, 1);
+        let name = ivar_name_arg(&args[0])?;
+        Ok(crate::civars::class_ivar_get(recv_cid(recv).0, &name))
+    }
+    "instance_variable_set" => fn ivar_set(recv, args, _block) {
+        arity!(args, 2);
+        let name = ivar_name_arg(&args[0])?;
+        crate::civars::class_ivar_set(recv_cid(recv).0, &name, args[1].clone());
+        // Answers the VALUE, not the receiver -- oracle-checked.
+        Ok(args[1].clone())
+    }
+    "instance_variable_defined?" => fn ivar_defined(recv, args, _block) {
+        arity!(args, 1);
+        let name = ivar_name_arg(&args[0])?;
+        Ok(RubyValue::Bool(
+            crate::civars::class_ivar_names(recv_cid(recv).0).contains(&name),
+        ))
+    }
+    "instance_variables" => fn ivars(recv, args, _block) {
+        arity!(args, 0);
+        let names = crate::civars::class_ivar_names(recv_cid(recv).0)
+            .into_iter()
+            .map(|n| RubyValue::Symbol(crate::Symbol::intern(&format!("@{n}"))))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(names)))
+    }
+}
+
+/// The `:@x`/`"@x"` argument of the `instance_variable_*` family, as the
+/// BARE name (`x`) the `civars` table is keyed on -- matching what codegen
+/// keys a static class-ivar access on, which is `safe_ident`'s output over
+/// an already-`@`-less HIR name.
+///
+/// Both a Symbol and a String are accepted (real Ruby takes either), and a
+/// name without the leading `@` is a NameError rather than a silent miss --
+/// oracle-verified, message shape included:
+/// `K.instance_variable_get(:a)` => `'a' is not allowed as an instance
+/// variable name`.
+fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
+    let raw = match v {
+        RubyValue::Symbol(s) => s.name().to_string(),
+        RubyValue::Str(s) => s.lock().clone(),
+        _ => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("{} is not a symbol nor a string", v.inspect_string()),
+            ))
+        }
+    };
+    match raw.strip_prefix('@') {
+        Some(name) => Ok(name.to_string()),
+        None => Err(crate::dispatch::raise_error(
+            "NameError",
+            format!("'{raw}' is not allowed as an instance variable name"),
+        )),
+    }
 }
 
 builtin_methods! {

@@ -766,8 +766,14 @@ fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
             quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
         });
     }
-    if let Some(dcid) = cx.defining_class {
-        let id = dcid.0;
+    // A class method/class body: self is the class object. `class_self`
+    // (the receiver), not `defining_class` (the lexical origin) -- they
+    // differ for an inherited or `extend`ed class method, and it is the
+    // receiver that `self` means. Falls back to `defining_class` only for a
+    // context that somehow has one without the other, which shouldn't
+    // arise; keeping the old answer there is strictly safer than panicking.
+    if let Some(cid) = cx.class_self.or(cx.defining_class) {
+        let id = cid.0;
         return Some(quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) });
     }
     Some(quote! { spinel_rt::main_object() })
@@ -876,6 +882,10 @@ pub fn emit_super_inline(
         // receiver instance throughout a chain of nested `super` calls.
         current_class: Some(receiver_class),
         defining_class: Some(new_defining_class),
+        // Inherited for the same reason `current_class` is: a `super` splice
+        // does not change WHAT `self` is, only which body is running. A
+        // `super` inside a class method still has the class object as self.
+        class_self: cx.class_self,
         current_method: Some(mname.to_string()),
         // Carried over with `self_ident` below: the splice keeps referring to
         // whichever `self` the CALLING method's body already uses, so how
@@ -1577,17 +1587,25 @@ pub fn emit_call(
         // b; end` calling `def self.b`, or the equivalent inside `class <<
         // self`) -- resolved the same way `ClassName.foo(...)` is
         // (`Compiler::class_method_in_chain`), dispatched as a direct
-        // associated-function call (`Target::b(...)`), since a class method
-        // has no dynamic dispatch table to fall back through either (see
-        // the plan's Part 6 scope-cut on first-class `Class`/`Module`
-        // values). A prior version of this function had no such branch at
-        // all, meaning `class << self` blocks whose methods called each
-        // other implicitly (the common, idiomatic reason to write several
-        // class methods together) always panicked -- found via this
-        // phase's own testing, fixed here rather than left as a silent gap
-        // in a feature this same session just shipped.
+        // associated-function call (`Target::b(...)`). A prior version of
+        // this function had no such branch at all, meaning `class << self`
+        // blocks whose methods called each other implicitly (the common,
+        // idiomatic reason to write several class methods together) always
+        // panicked.
+        //
+        // Resolved against `class_self` (the RECEIVER class), NOT
+        // `defining_class` (where the body was written): an implicit-self
+        // call is a send to `self`, and in a class method `self` is the
+        // class it was CALLED on. The two differ exactly when the method is
+        // inherited or `extend`ed in, and using the lexical one there was
+        // silently wrong in both directions -- oracle-verified:
+        //   - `class Base; def self.create; new; end; end; Sub.create`
+        //     built a Base, not a Sub;
+        //   - `module H; def helped; name; end; end; class Ext; extend H;
+        //     end; Ext.helped` answered "Helper", not "Ext".
+        // Neither raised; both just quietly produced the wrong object.
         if cx.current_class.is_none() {
-            if let Some(defining) = cx.defining_class {
+            if let Some(defining) = cx.class_self.or(cx.defining_class) {
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
                     return emit_class_method_call_on(cx, defining, name, args, kwargs, block, block_arg);
                 }
@@ -2311,7 +2329,7 @@ fn emit_class_method_call_on(
     };
     let scope = cx.compiler.scope(sid);
     let target_ident = super::ident::class_ident(cx.compiler, target);
-    let method_ident = safe_ident(name);
+    let method_ident = super::ident::class_method_ident(name);
     // Full `Params` support (P1): the same binding machinery an instance
     // call gets, through the receiverless `Callee::Bare` shape.
     super::params::emit_call_args_to(

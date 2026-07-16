@@ -703,17 +703,36 @@ pub fn emit_dynamic_trampoline(
     }
 }
 
-/// The Path 2 trampoline for a BUILTIN-REOPEN method (Phase 16.3) -- the
-/// `ValueMethodFn`-shaped counterpart of `emit_dynamic_trampoline` above
-/// (same arity checking, same keyword-parameter scope-cut), minus the
-/// `RObj` downcast: the receiver is the builtin `RubyValue` itself, cloned
-/// into the free function's `__self` first parameter. Registered from
-/// generated `main()` via `ClassRegistry::define_value_method`.
+/// Whether a `ValueMethodFn` trampoline forwards its receiver into the
+/// free function it wraps -- the one structural difference between the two
+/// kinds of free function generated code produces.
+#[derive(Clone, Copy, PartialEq)]
+pub enum RecvMode {
+    /// A BUILTIN-REOPEN instance method: the receiver is the builtin
+    /// `RubyValue` itself, cloned into the function's `__self` first
+    /// parameter (`emit_signature_params`' free shape).
+    Pass,
+    /// A CLASS method (`def self.x`): the receiver is the class object, and
+    /// the emitted function takes no receiver parameter at all
+    /// (`emit_signature_params_free`) -- which class it belongs to is
+    /// already baked into the function's own path and its `Ctx::class_self`.
+    /// Forwarding `recv` here would be an arity mismatch on the generated
+    /// program.
+    Drop,
+}
+
+/// The Path 2 trampoline for a BUILTIN-REOPEN method (Phase 16.3) or a user
+/// CLASS method -- the `ValueMethodFn`-shaped counterpart of
+/// `emit_dynamic_trampoline` above (same arity checking, same
+/// keyword-parameter scope-cut), minus the `RObj` downcast. See `RecvMode`
+/// for the receiver difference. Registered from generated `main()` via
+/// `ClassRegistry::define_value_method`/`define_class_method`.
 pub fn emit_value_trampoline(
     fn_path: &TokenStream,
     method_name: &str,
     params: &Params,
     needs_block: bool,
+    recv_mode: RecvMode,
 ) -> TokenStream {
     let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
 
@@ -749,15 +768,19 @@ pub fn emit_value_trampoline(
     let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
     let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
     let block_arg = needs_block.then(|| quote! { blk, });
+    let (recv_ident, recv_arg) = match recv_mode {
+        RecvMode::Pass => (format_ident!("recv"), Some(quote! { recv.clone(), })),
+        RecvMode::Drop => (format_ident!("_recv"), None),
+    };
 
     quote! {
-        |recv: &spinel_rt::RubyValue, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+        |#recv_ident: &spinel_rt::RubyValue, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
             #kw_preamble
             #arity_check
             #[allow(unused_variables)]
             let __opt_bound = (args.len() - #min_lit).min(#nopt);
             #fn_path(
-                recv.clone(),
+                #recv_arg
                 #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
             )
         }
@@ -1256,6 +1279,7 @@ mod tests {
             box_id: 0,
             current_class: None,
             defining_class: None,
+            class_self: None,
             current_method: None,
             local_types: std::borrow::Cow::Owned(std::collections::HashMap::new()),
             label_counter: &label_counter,

@@ -407,7 +407,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 if cx.defining_class.is_none() {
                     return quote! { spinel_rt::main_object() };
                 }
-                panic!("`self` isn't supported inside a class method/module function body yet (spike scope, no first-class Class/Module value exists)");
+                // A class method/module function/class body: `self` is the
+                // class object itself. The id is a compile-time constant --
+                // an inherited class method is materialized per subclass, so
+                // this copy's `class_self` is already the right receiver
+                // (see `Ctx::class_self`'s docs).
+                let cid = cx
+                    .class_self
+                    .expect("a body with a defining_class but no current_class is a class-level body, which always has a class self");
+                let id = cid.0;
+                return quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) };
             }
             // Unboxed `Arc<Concrete>` -- exactly what an Object-typed local
             // read (`LocalStorage::Shadowed`) already returns, and exactly
@@ -477,6 +486,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
+            // `self` is a CLASS object (a class-method body, or a class body
+            // itself): `@x` is that class object's own ivar, which lives in
+            // its own runtime table. Checked BEFORE `self_is_dynamic`
+            // because it is strictly more specific -- the class id is known
+            // statically here, so this emits a direct table hit rather than
+            // routing through `ivar_get_dyn`'s match.
+            if let Some(cid) = cx.class_self {
+                let id = cid.0;
+                let key = ident.to_string();
+                return quote! { spinel_rt::class_ivar_get(#id, #key) };
+            }
             // A dynamically-typed self (an escaping block's receiver, which
             // `instance_exec` may have rebound) has no statically-known
             // struct to take a field from -- resolve the ivar by name at
@@ -968,6 +988,19 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
 pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     let slf = &cx.self_ident;
+    // `self` is a CLASS object -- see the matching arm in `IvarRead`. No
+    // frozen guard: `Foo.freeze` has nowhere to record itself in this
+    // runtime (there is no per-class-object frozen flag), so emitting a
+    // check would be emitting a constant `false`. Tracked as a divergence
+    // rather than faked.
+    // TODO: honor `Foo.freeze` here once class objects carry a frozen flag;
+    // real Ruby raises FrozenError on a class-level ivar write to a frozen
+    // class, which this silently allows.
+    if let Some(cid) = cx.class_self {
+        let id = cid.0;
+        let key = ident.to_string();
+        return quote! { spinel_rt::class_ivar_set(#id, #key, #value); };
+    }
     // A dynamically-typed self: resolve by name at runtime (see `IvarRead`'s
     // arm). `ivar_set_dyn` carries the frozen check the static path emits
     // inline below -- it can compute the receiver's real class name for the

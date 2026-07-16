@@ -67,6 +67,26 @@ struct Ctx<'a> {
     /// like a closure's scope -- not of which concrete receiver ends up
     /// calling it).
     defining_class: Option<ClassId>,
+    /// Set while emitting a CLASS method's body (`def self.x`, a `class <<
+    /// self` def, or a module function) to the class object that is its
+    /// `self` -- `None` in every other context, which is what distinguishes
+    /// "self is a class" from "self is an instance" at every use site.
+    ///
+    /// This is the RECEIVER class, not `defining_class`: a class-level `@x`
+    /// is per-class-object storage and is NOT inherited (oracle-verified --
+    /// see `spinel_rt::civars`' docs for the `Sub.reg` => nil case that
+    /// pins this down), so an inherited class method must read the slot of
+    /// whichever class was actually called, not of the one whose body it
+    /// was written in. That falls out for free rather than needing a
+    /// runtime receiver: `analyze::mro::materialize_class_methods` emits an
+    /// inherited class method as a separate copy per subclass, so each copy
+    /// has its own, statically-correct id here.
+    ///
+    /// Deliberately NOT folded into `current_class` (which means "the
+    /// concrete struct `self` is an instance of", and drives ivar FIELD
+    /// access and Path-1 static dispatch -- neither of which a class object
+    /// has).
+    class_self: Option<ClassId>,
     /// The enclosing method/top-level scope's per-local static types (see
     /// `analyze::locals`) -- lets operator dispatch resolve `x + y` to
     /// native `Int` arithmetic for locals, not just literal operands.
@@ -404,6 +424,38 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 });
             }
         }
+        // Every `def self.x` also registers for DYNAMIC dispatch, so a class
+        // held in a variable can be sent to (`handler = H1; handler.run(...)`
+        // -- the receiver isn't a literal constant, so codegen can't emit a
+        // direct `H1::__cm_run(...)`). A statically-resolvable `H1.run(...)`
+        // still takes the direct path and never touches this table.
+        // Registered here rather than in `ruby_class!` for the same reason
+        // `mark_private` is: the macro has no channel for it, and a MODULE
+        // (`def self.x` on a module -- `Math.sqrt`-shaped) has no generated
+        // `__register` at all, yet needs its class methods reachable too.
+        for &sid in &compiler.class(ClassId(id)).class_methods {
+            let scope = compiler.scope(sid);
+            let container = ident::class_ident(compiler, ClassId(id));
+            let method_ident = ident::class_method_ident(&scope.name);
+            let fn_path = quote! { #container::#method_ident };
+            let tramp = params::emit_value_trampoline(
+                &fn_path,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                // A class method takes no receiver parameter -- see `RecvMode`.
+                params::RecvMode::Drop,
+            );
+            // Keyed on the real Ruby name, not the mangled Rust ident.
+            let key = &scope.name;
+            registrations.push(quote! {
+                __registry.define_class_method(
+                    spinel_rt::ClassId(#id),
+                    spinel_rt::Symbol::intern(#key),
+                    #tramp,
+                );
+            });
+        }
         user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
     }
 
@@ -451,6 +503,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     &scope.name,
                     &scope.params,
                     scope.needs_block_param(),
+                    params::RecvMode::Pass,
                 );
                 // The dispatch KEY is the real Ruby name, not the escaped
                 // Rust ident -- same reasoning as `emit_class`'s
@@ -515,6 +568,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         box_id: 0,
         current_class: None,
         defining_class: None,
+        // Top-level `self` is `main`, an ordinary Object -- not a class.
+        class_self: None,
         current_method: None,
         local_types: std::borrow::Cow::Borrowed(&analyzed.main_local_types),
         label_counter: &main_label_counter,
@@ -724,6 +779,10 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         // `RubyValue::Class(cid)` rather than an invalid `self.clone()`).
         current_class: None,
         defining_class: Some(cid),
+        // A class body's `self` IS the class object, so a bare `@x = 1`
+        // here is that class object's own ivar -- the same storage
+        // `def self.x; @x; end` reads.
+        class_self: Some(cid),
         current_method: None,
         local_types: std::borrow::Cow::Borrowed(&no_locals),
         label_counter: &label_counter,
@@ -782,22 +841,13 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
 
 fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> TokenStream {
     let scope = compiler.scope(sid);
-    let mut ivars = Vec::new();
-    for &n in &scope.body {
-        crate::analyze::collect_ivars(&compiler.hir, n, &mut ivars);
-    }
-    for id in scope.params.default_ids() {
-        crate::analyze::collect_ivars(&compiler.hir, id, &mut ivars);
-    }
-    if !ivars.is_empty() {
-        panic!(
-            "class method `{}` references `@{}` -- `self`/instance-variable access inside a class method (`def self.x`, or a module method pulled in via `extend`) isn't supported yet (spike scope, no class-level ivar/`class << self` state store exists)",
-            scope.name, ivars[0]
-        );
-    }
     let params = &scope.params;
     let needs_block = scope.needs_block_param();
-    let method_ident = safe_ident(&scope.name);
+    // Mangled: instance and class methods share one generated container, so
+    // a class defining both `def x` and `def self.x` (two namespaces in
+    // Ruby, ordinary code) would otherwise emit two `fn x` into the same
+    // `impl`. See `ident::class_method_ident`'s docs.
+    let method_ident = ident::class_method_ident(&scope.name);
     let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
     let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
@@ -810,6 +860,13 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         // ownership lookup (`codegen::expr::cvar_owner_id`).
         current_class: None,
         defining_class: Some(scope.defining_class),
+        // `scope.class` (the OWNER -- which class this body is emitted
+        // into), deliberately NOT `defining_class` (where it was written).
+        // The two differ exactly when a class method is inherited, and
+        // that is precisely the case class-ivar storage must tell apart:
+        // `Sub.reg` reads Sub's slot even though the body came from Base.
+        // See `Ctx::class_self`'s docs.
+        class_self: scope.class,
         current_method: Some(scope.name.clone()),
         local_types: std::borrow::Cow::Borrowed(&scope.local_types),
         label_counter: &label_counter,
@@ -922,6 +979,10 @@ fn emit_builtin_method_fn(
         box_id: compiler.class(scope.defining_class).box_id,
         current_class: Some(cid),
         defining_class: Some(scope.defining_class),
+        // An INSTANCE method: `self` is an instance of `cid`, not the class
+        // object -- so `@x` here is the instance's own field, not class-level
+        // storage.
+        class_self: None,
         current_method: Some(scope.name.clone()),
         local_types: std::borrow::Cow::Borrowed(&scope.local_types),
         label_counter: &label_counter,
@@ -1011,6 +1072,8 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             box_id: compiler.class(scope.defining_class).box_id,
             current_class: Some(cid),
             defining_class: Some(scope.defining_class),
+            // An instance method -- see the matching note in `emit_method_fn`.
+            class_self: None,
             current_method: Some(scope.name.clone()),
             local_types: std::borrow::Cow::Borrowed(&scope.local_types),
             label_counter: &method_label_counter,
