@@ -873,6 +873,24 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// Coerce a `raise <value>` operand to the exception value to raise:
+/// an Exception object raises itself, a String becomes a `RuntimeError` with
+/// that message, and anything else is CRuby's `TypeError: exception
+/// class/object expected` -- instead of panicking when the raise machinery
+/// later unwraps a non-Object. `exception_cid` is `Exception`'s (dynamically
+/// assigned) ClassId, baked in by codegen.
+pub fn coerce_raise_arg(value: RubyValue, exception_cid: ClassId) -> RubyValue {
+    let build = |class_name: &str, msg: String| match EXCEPTION_FACTORY.get() {
+        Some(factory) => factory(class_name, msg),
+        None => panic!("{class_name}: {msg}"),
+    };
+    match &value {
+        RubyValue::Object(o) if is_a(o.class_id(), exception_cid) => value,
+        RubyValue::Str(s) => build("RuntimeError", s.lock().to_utf8_lossy().into_owned()),
+        _ => build("TypeError", "exception class/object expected".to_string()),
+    }
+}
+
 /// `StopIteration` needs its own factory shape (Phase 17.2): the instance
 /// an exhausted `Enumerator#next` raises carries the underlying `each`'s
 /// return value as `#result` -- what `Kernel#loop` returns after

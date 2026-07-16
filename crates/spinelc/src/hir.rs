@@ -58,7 +58,7 @@ pub struct Hir {
     pub script_encoding: Option<String>,
     /// Extra top-level `ClassDef`s synthesized mid-lowering that must be
     /// registered as their own statements -- the hidden base classes a
-    /// `Struct`/`Data` with a custom `initialize` splits into (F1c). Spliced
+    /// `Struct`/`Data` with a custom `initialize` splits into. Spliced
     /// in right after the exception prelude by `parse_and_lower_with`, so
     /// each base is registered before the leaf that inherits it.
     pub synth_classes: Vec<NodeId>,
@@ -1015,6 +1015,11 @@ pub enum HirNode {
     /// when `zsuper` is true.
     SuperCall {
         args: Vec<NodeId>,
+        /// Explicit keyword arguments (`super(x: 1, y: 2)`); bound to the
+        /// parent's keyword params by NAME. Always empty for bare
+        /// `super` (`zsuper`), which forwards the current method's own
+        /// keywords instead.
+        kwargs: Vec<KwArg>,
         zsuper: bool,
         /// A literal block written at the `super` site (`super { ... }` /
         /// `super(x) { ... }`) -- a `HirNode::Block`, bound as the spliced

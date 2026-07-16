@@ -533,8 +533,11 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 collect_const_refs(compiler, a, cref, out);
             }
         }
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             for &a in args {
+                collect_const_refs(compiler, a, cref, out);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_const_refs(compiler, a, cref, out);
             }
             if let Some(b) = block {
@@ -769,8 +772,11 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, a, out);
             }
         }
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             for &a in args {
+                collect_cvars(hir, a, out);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_cvars(hir, a, out);
             }
             if let Some(b) = block {

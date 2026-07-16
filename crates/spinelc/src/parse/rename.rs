@@ -251,8 +251,10 @@ impl Walker {
                 self.visit_opt(hir, block_arg);
             }
             HirNode::New { args, .. } => self.visit_all(hir, &args.clone()),
-            HirNode::SuperCall { args, block, .. } => {
+            HirNode::SuperCall { args, kwargs, block, .. } => {
                 self.visit_all(hir, &args.clone());
+                let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
+                self.visit_all(hir, &kw_ids);
                 self.visit_opt(hir, block);
             }
             HirNode::Block { params, body } | HirNode::Lambda { params, body } => {

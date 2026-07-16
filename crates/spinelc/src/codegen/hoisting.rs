@@ -283,8 +283,11 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *b, out);
             }
         }
-        HirNode::New { args, .. } | HirNode::SuperCall { args, .. } => {
+        HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
             for &a in args {
+                collect_locals(compiler, a, out);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_locals(compiler, a, out);
             }
         }

@@ -888,6 +888,7 @@ fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
 pub fn emit_super_inline(
     cx: &Ctx,
     args: &[NodeId],
+    kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
 ) -> TokenStream {
@@ -993,7 +994,7 @@ pub fn emit_super_inline(
     // happening to share names with the calling method's own, since the
     // spliced body just referenced its param names directly with nothing
     // ever binding them. See `emit_super_arg_bindings`'s docs.
-    let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args, zsuper);
+    let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args, kwargs, zsuper);
     // A literal block at the `super` site becomes the spliced body's
     // `__blk` (its `yield` runs this block) -- built as a real Proc in the
     // CALLING scope (`cx`: captures resolve against the child method's own
@@ -1039,12 +1040,13 @@ fn emit_super_arg_bindings(
     parent_params: &Params,
     current_params: &Params,
     args: &[NodeId],
+    kwargs: &[KwArg],
     zsuper: bool,
 ) -> TokenStream {
     if zsuper {
         return emit_super_forwarding_bindings(inline_cx, parent_params, current_params);
     }
-    emit_super_explicit_bindings(cx, inline_cx, parent_params, args)
+    emit_super_explicit_bindings(cx, inline_cx, parent_params, args, kwargs)
 }
 
 /// Bare `super`: forwards the CURRENT method's own already-bound positional
@@ -1191,6 +1193,7 @@ fn emit_super_explicit_bindings(
     inline_cx: &Ctx,
     parent_params: &Params,
     args: &[NodeId],
+    kwargs: &[KwArg],
 ) -> TokenStream {
     let nreq = parent_params.required.len();
     let nopt = parent_params.optional.len();
@@ -1249,13 +1252,83 @@ fn emit_super_explicit_bindings(
         quote! { let #dst: spinel_rt::RubyValue = #src.clone(); }
     });
 
+    let keyword_lets = emit_super_explicit_keyword_bindings(cx, inline_cx, parent_params, kwargs);
+
     quote! {
         #(#pos_lets)*
         #(#required_lets)*
         #(#optional_lets)*
         #rest_let
         #(#post_lets)*
+        #keyword_lets
     }
+}
+
+/// Binds the parent's keyword params from an explicit `super(x: .., y: ..)`,
+/// matched by name. A required parent keyword the super omits raises
+/// CRuby's `missing keyword(s)` `ArgumentError`; an omitted optional evaluates
+/// its own default in the PARENT scope (`inline_cx`). `super(**h)` isn't
+/// modelled yet.
+fn emit_super_explicit_keyword_bindings(
+    cx: &Ctx,
+    inline_cx: &Ctx,
+    parent_params: &Params,
+    kwargs: &[KwArg],
+) -> TokenStream {
+    if parent_params.keywords.is_empty() {
+        return quote! {};
+    }
+    let mut provided: std::collections::HashMap<String, NodeId> = std::collections::HashMap::new();
+    for kw in kwargs {
+        match kw {
+            KwArg::Pair(k, v) => match &cx.compiler.hir[*k] {
+                HirNode::SymbolLit(name) => {
+                    provided.insert(name.clone(), *v);
+                }
+                _ => panic!("`super`: keyword argument names must be literal symbols (spike scope)"),
+            },
+            KwArg::DoubleSplat(_) => {
+                panic!("`super(**h)` (double-splat into super) isn't supported yet (spike scope)")
+            }
+        }
+    }
+
+    let missing: Vec<String> = parent_params
+        .keywords
+        .iter()
+        .filter_map(|kw| match kw {
+            KeywordParam::Required(name) if !provided.contains_key(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    if !missing.is_empty() {
+        let msg = if missing.len() == 1 {
+            format!("missing keyword: :{}", missing[0])
+        } else {
+            let names = missing.iter().map(|n| format!(":{n}")).collect::<Vec<_>>().join(", ");
+            format!("missing keywords: {names}")
+        };
+        return quote! { return Err(spinel_rt::raise_error("ArgumentError", #msg.to_string())); };
+    }
+
+    let lets = parent_params.keywords.iter().map(|kw| {
+        let (name, default) = match kw {
+            KeywordParam::Required(name) => (name, None),
+            KeywordParam::Optional(name, d) => (name, Some(d)),
+        };
+        let dst = safe_ident(name);
+        match provided.get(name) {
+            Some(&v) => {
+                let e = super::expr::box_if_object_typed(cx, v, emit_expr(cx, v));
+                quote! { let #dst: spinel_rt::RubyValue = #e; }
+            }
+            None => {
+                let default_expr = emit_expr(inline_cx, *default.expect("required-missing handled above"));
+                quote! { let #dst: spinel_rt::RubyValue = #default_expr; }
+            }
+        }
+    });
+    quote! { #(#lets)* }
 }
 
 /// Builds a real, escaping `spinel_rt::RubyValue::Proc` value from a literal
@@ -2824,8 +2897,20 @@ fn dispatch(
         // through whenever ANY builtin reopen defines this name: only the
         // runtime value knows its class, so the decision defers to
         // `send_value`'s own value-method-first probe.
+        //
+        // Also fall through when the class has a USER `initialize_copy`
+        // (defining class != Object's default no-op): `dup`/`clone` must
+        // run that hook, which only the runtime `Kernel#dup`/`#clone` path
+        // does. Object's own default hook changes nothing, so a class without
+        // an override keeps the unboxed fast path.
         let user_defined = match infer_any_class(cx, recv_id) {
-            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            Some(cid) => {
+                cx.compiler.method_in_chain(cid, name).is_some()
+                    || matches!(
+                        cx.compiler.method_in_chain(cid, "initialize_copy"),
+                        Some((defining, _)) if defining != crate::compiler::OBJECT_CLASS
+                    )
+            }
             None => any_builtin_overrides(cx, name),
         };
         if !user_defined {

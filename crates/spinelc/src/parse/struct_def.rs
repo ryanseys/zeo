@@ -46,7 +46,7 @@ pub(super) fn try_lower_struct_def(
 }
 
 /// `Some(..)` when `value` is a `Data.define(...)` call -- the immutable
-/// sibling of `Struct.new` (F1b).
+/// sibling of `Struct.new`.
 pub(super) fn try_lower_data_def(
     result: &ruby_prism::ParseResult<'_>,
     hir: &mut Hir,
@@ -146,7 +146,7 @@ fn lower_value_def(
         return Ok(class_id);
     }
 
-    // Two-level (F1c): a custom `initialize` in the block must be able to
+    // Two-level: a custom `initialize` in the block must be able to
     // `super` into the member-setter. So the member-setter (+ accessors,
     // deconstruct, ==, inspect...) lives on a hidden BASE class, and the
     // user-facing LEAF inherits it -- the user `initialize` overrides on the
@@ -243,7 +243,7 @@ fn append_methods(hir: &mut Hir, class_id: NodeId, extra: Vec<NodeId>) -> PResul
 /// time (members are compile-time-known), the AOT-natural monomorphization
 /// -- same philosophy as `mro::materialize`. `name` is the class being
 /// declared; `display` is the user-facing name baked into `inspect`/`==`
-/// (they differ only for the hidden base of a custom-`initialize` split, F1c).
+/// (they differ only for the hidden base of a custom-`initialize` split).
 fn struct_template(name: &str, display: &str, members: &[String], keyword_init: bool) -> String {
     let n = members.len();
     let accessors = members
@@ -382,7 +382,7 @@ end
     )
 }
 
-/// The per-Data method template (F1b) -- the immutable sibling of
+/// The per-Data method template -- the immutable sibling of
 /// `struct_template`. `Data.define`'d classes construct by keyword only
 /// (`Point.new(x: 1, y: 2)`; a missing member is CRuby's `missing keyword`),
 /// expose readers (no writers), and answer `deconstruct`/`deconstruct_keys`/

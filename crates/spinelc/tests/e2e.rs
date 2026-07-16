@@ -2045,7 +2045,7 @@ fn case_in_range_pattern() {
 
 #[test]
 fn data_define_constructs_deconstructs_and_is_immutable() {
-    // F1b: Data.define synthesizes an immutable value class with keyword
+    // Data.define synthesizes an immutable value class with keyword
     // construction, deconstruct_keys (hash patterns), to_h, with, ==, inspect.
     let result = run_ruby(
         r#"
@@ -2075,7 +2075,7 @@ fn data_define_constructs_deconstructs_and_is_immutable() {
 
 #[test]
 fn struct_custom_initialize_supers_into_the_member_setter() {
-    // F1c: a custom `initialize` in the block calls `super` (bare or explicit,
+    // A custom `initialize` in the block calls `super` (bare or explicit,
     // positional) into the synthesized member-setter, reached via a two-level
     // base/leaf hierarchy -- not the old "no initialize above" panic.
     let result = run_ruby(
@@ -2096,6 +2096,147 @@ fn struct_custom_initialize_supers_into_the_member_setter() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[1, 2, nil]\n[3, 4, 7]\n");
+}
+
+#[test]
+fn raising_a_non_exception_is_a_type_error() {
+    // `raise <non-exception>` coerces at runtime -- a String becomes a
+    // RuntimeError, everything else is CRuby's TypeError -- instead of
+    // panicking when the raise machinery unwraps a non-Object.
+    let result = run_ruby(
+        r#"
+        def try
+          yield
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        try { raise 42 }
+        try { raise nil }
+        try { raise :sym }
+        begin
+          raise "boom"
+        rescue RuntimeError => e
+          puts "RuntimeError: #{e.message}"
+        end
+        mixed = [Object.new, "msg"]
+        begin
+          raise mixed[1]
+        rescue RuntimeError => e
+          puts "poly string: #{e.message}"
+        end
+        begin
+          raise mixed[0]
+        rescue TypeError => e
+          puts "poly object: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "TypeError: exception class/object expected\n\
+         TypeError: exception class/object expected\n\
+         TypeError: exception class/object expected\n\
+         RuntimeError: boom\n\
+         poly string: msg\n\
+         poly object: exception class/object expected\n"
+    );
+}
+
+#[test]
+fn clone_runs_user_initialize_copy_hook_with_super() {
+    // clone/dup dispatch the user's initialize_copy (deep-copying a
+    // shared member), and its bare `super` resolves Object's default no-op
+    // hook instead of panicking.
+    let result = run_ruby(
+        r#"
+        class Board
+          def initialize
+            @table = [[1], [2]]
+          end
+          def initialize_copy(orig)
+            super
+            @table = @table.clone
+          end
+          def push_row
+            @table.push([9])
+          end
+          def size
+            @table.length
+          end
+        end
+        b = Board.new
+        c = b.clone
+        c.push_row
+        puts c.size
+        puts b.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n2\n");
+}
+
+#[test]
+fn reopening_object_dispatches_to_builtin_and_user_receivers() {
+    // reopening Object (with an include + a def) makes those methods
+    // dispatch on built-in AND user receivers with the real receiver as self.
+    let result = run_ruby(
+        r#"
+        module ObjectGreeting
+          def hi
+            "hi from " + self.class.name
+          end
+        end
+        class Object
+          include ObjectGreeting
+          def global_hi
+            "global " + self.class.name
+          end
+        end
+        class LocalThing
+        end
+        puts "x".hi
+        puts "x".global_hi
+        puts 1.global_hi
+        puts [1, 2].global_hi
+        puts LocalThing.new.global_hi
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hi from String\nglobal String\nglobal Integer\nglobal Array\nglobal LocalThing\n"
+    );
+}
+
+#[test]
+fn data_custom_initialize_supers_with_keyword_args() {
+    // an explicit keyword `super(x: .., y: ..)` binds the parent's
+    // keyword params by name; omitting a required one raises CRuby's
+    // `missing keyword` ArgumentError.
+    let result = run_ruby(
+        r#"
+        Point = Data.define(:x, :y) do
+          def initialize(x:, y:)
+            super(x: x * 100, y: y + 1)
+          end
+        end
+        def mk(a, b); Point.new(x: a, y: b); end
+        p mk(5, 2)
+        Pair = Data.define(:m, :n) do
+          def initialize(m:, n:)
+            super(m: m)
+          end
+        end
+        begin
+          Pair.new(m: 1, n: 2)
+        rescue ArgumentError => e
+          puts "err: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "#<data Point x=500, y=3>\nerr: missing keyword: :n\n");
 }
 
 #[test]

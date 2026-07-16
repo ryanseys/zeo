@@ -152,7 +152,7 @@ pub const FILE_STAT_CLASS: ClassId = ClassId(39);
 /// wraps an `encoding::EncodingId` in the runtime.
 pub const ENCODING_CLASS: ClassId = ClassId(40);
 /// `Data` -- superclass of every compile-time-synthesized
-/// `Name = Data.define(...)` class (F1b). Unlike `Struct`, `Data` is
+/// `Name = Data.define(...)` class. Unlike `Struct`, `Data` is
 /// immutable and NOT `Enumerable` (no `each`). The one other subclassable
 /// builtin besides `Struct`.
 pub const DATA_CLASS: ClassId = ClassId(41);

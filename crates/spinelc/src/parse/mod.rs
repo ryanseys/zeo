@@ -147,6 +147,13 @@ module Errno
   class EXDEV < SystemCallError
   end
 end
+# Object's default copy hook: a no-op -- the runtime clone/dup already
+# performed the shallow ivar copy before this user-overridable hook runs. A
+# top-level `def` lands in Object's own_methods, exactly where `super`'s
+# compile-time ancestor walk resolves a user `initialize_copy`'s bare `super`.
+def initialize_copy(orig)
+  self
+end
 "#;
 
 /// Returns the built `Hir` plus the id of its `Program` root -- `Hir` itself
@@ -233,7 +240,7 @@ pub fn parse_and_lower_with(
         load_roots,
         package_dirs,
     )?);
-    // Synthesized base classes (F1c Struct/Data super split) are spliced in
+    // Synthesized base classes (the Struct/Data super split) are spliced in
     // right after the prelude -- before every main statement -- so each base
     // is registered ahead of the leaf that inherits it.
     let synth = std::mem::take(&mut hir.synth_classes);
@@ -1495,19 +1502,25 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     if let Some(sup) = node.as_super_node() {
-        let args = match sup.arguments() {
-            None => Vec::new(),
-            Some(a) => a
-                .arguments()
-                .iter()
-                .map(|n| lower_node(result, hir, &n))
-                .collect::<PResult<Vec<_>>>()?,
-        };
+        // Positional args stay in `args`; a trailing keyword hash
+        // (`super(x: 1, y: 2)`) becomes `kwargs`, bound to the parent's
+        // keyword params by name.
+        let mut args = Vec::new();
+        let mut kwargs = Vec::new();
+        if let Some(a) = sup.arguments() {
+            for n in a.arguments().iter() {
+                if let Some(kw) = n.as_keyword_hash_node() {
+                    kwargs = lower_kwargs(result, hir, &kw.elements().iter().collect::<Vec<_>>())?;
+                } else {
+                    args.push(lower_node(result, hir, &n)?);
+                }
+            }
+        }
         let block = match sup.block() {
             None => None,
             Some(b) => Some(lower_block(result, hir, &b)?),
         };
-        return Ok(hir.push(HirNode::SuperCall { args, zsuper: false, block }));
+        return Ok(hir.push(HirNode::SuperCall { args, kwargs, zsuper: false, block }));
     }
 
     // Bare `super` (no parens) -- a distinct prism node from `super(...)`
@@ -1522,6 +1535,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         };
         return Ok(hir.push(HirNode::SuperCall {
             args: Vec::new(),
+            kwargs: Vec::new(),
             zsuper: true,
             block,
         }));

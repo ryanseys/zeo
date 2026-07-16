@@ -79,14 +79,14 @@ builtin_methods! {
     "dup" => fn dup(recv, args, _block) {
         arity!(args, 0);
         Ok(match recv {
-            RubyValue::Object(o) => RubyValue::Object(o.dup_object(false)),
+            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
             _ => recv.dup_value(false),
         })
     }
     "clone" => fn clone_m(recv, args, _block) {
         arity!(args, 0);
         Ok(match recv {
-            RubyValue::Object(o) => RubyValue::Object(o.dup_object(true)),
+            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(true)))?,
             _ => recv.dup_value(true),
         })
     }
@@ -193,6 +193,21 @@ builtin_methods! {
     }
 }
 
+/// Run the (user-overridable) `initialize_copy` hook on a freshly
+/// shallow-copied object, with the original as its argument -- real Ruby's
+/// `clone`/`dup` contract. Object's default hook is a no-op; a user
+/// override (e.g. deep-copying a shared member) runs here.
+fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Signal> {
+    let hook = Symbol::intern("initialize_copy");
+    // Only dispatch when the object actually defines the (private) hook --
+    // never let a missing one fall through to `method_missing`. In a real
+    // program Object's default no-op makes this always true; a user override
+    // runs here.
+    if crate::dispatch::responds_to(copy.class_id(), hook, true) {
+        crate::dispatch::send_value(&copy, hook, std::slice::from_ref(original), None)?;
+    }
+    Ok(copy)
+}
 
 
 /// `Kernel#Integer(arg, base = nil)` -- CRuby's strict conversion: strings

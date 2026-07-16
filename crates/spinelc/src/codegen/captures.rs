@@ -218,8 +218,13 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         }
         // A literal `super { ... }` block always escapes (see `walk`'s
         // `SuperCall` arm).
-        HirNode::SuperCall { args, block, .. } => {
-            block.is_some() || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+        HirNode::SuperCall { args, kwargs, block, .. } => {
+            block.is_some()
+                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|a| node_contains_escaping_block(compiler, a))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
@@ -400,8 +405,12 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         }),
         HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             args.iter().any(|&a| node_contains_begin(compiler, a))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|a| node_contains_begin(compiler, a))
                 || block.is_some_and(|b| match &compiler.hir[b] {
                     HirNode::Block { body, .. } => body_contains_begin(compiler, body),
                     _ => false,
@@ -729,8 +738,11 @@ fn walk(
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             for &a in args {
+                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
             // A literal `super { ... }` block is always a real, escaping

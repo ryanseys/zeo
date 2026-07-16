@@ -322,7 +322,7 @@ fn register_class(
                         // `Struct` and `Data` are the subclassable builtins:
                         // their subclasses' instances are ordinary
                         // ivar-carrying objects, so the generated Rust struct
-                        // machinery fits them exactly (Phase 17.1-H; Data F1b).
+                        // machinery fits them exactly (Phase 17.1-H).
                         if compiler.class(cid).is_builtin
                             && cid != crate::compiler::STRUCT_CLASS
                             && cid != crate::compiler::DATA_CLASS
@@ -643,12 +643,16 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
             }
             found
         }
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             match block {
                 // A literal `super { ... }` block's own `yield` refers to
                 // THIS method's block, same as any nested block literal.
                 Some(b) => {
-                    let mut found = args.iter().any(|&a| scan_bare_block_use(hir, a));
+                    let mut found = args.iter().any(|&a| scan_bare_block_use(hir, a))
+                        || kwargs
+                            .iter()
+                            .flat_map(|kw| kw.node_ids())
+                            .any(|a| scan_bare_block_use(hir, a));
                     if let HirNode::Block { body, .. } = &hir[*b] {
                         found |= scan_bare_block_use_body(hir, body);
                     }
@@ -904,8 +908,11 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, a, out);
             }
         }
-        HirNode::SuperCall { args, .. } => {
+        HirNode::SuperCall { args, kwargs, .. } => {
             for &a in args {
+                collect_ivars(hir, a, out);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_ivars(hir, a, out);
             }
         }

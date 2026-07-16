@@ -105,8 +105,11 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
                 track_node(compiler, defining, box_id, locals, a);
             }
         }
-        HirNode::SuperCall { args, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, .. } => {
             for &a in args {
+                track_node(compiler, defining, box_id, locals, a);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 track_node(compiler, defining, box_id, locals, a);
             }
             if let Some(b) = block {

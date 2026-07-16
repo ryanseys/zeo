@@ -639,8 +639,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::New { class_name, args, kwargs } => {
             super::call::emit_new(cx, class_name, args, kwargs)
         }
-        HirNode::SuperCall { args, zsuper, block } => {
-            super::call::emit_super_inline(cx, args, *zsuper, *block)
+        HirNode::SuperCall { args, kwargs, zsuper, block } => {
+            super::call::emit_super_inline(cx, args, kwargs, *zsuper, *block)
         }
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
@@ -975,15 +975,29 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         TyKind::Object(cid) => {
             let class_ident = super::ident::class_ident(cx.compiler, cid);
             let expr = emit_expr(cx, node);
-            quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#expr)) }
+            let boxed = quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#expr)) };
+            // A statically-known Exception subclass raises directly; a
+            // non-exception object is coerced at runtime to CRuby's TypeError.
+            let exc_cid = cx.resolve_class("Exception").map(|c| c.0);
+            let is_exc =
+                exc_cid.is_some_and(|e| cx.compiler.class(cid).ancestors.iter().any(|a| a.0 == e));
+            if is_exc {
+                boxed
+            } else {
+                let e = exc_cid.unwrap_or(0);
+                quote! { spinel_rt::coerce_raise_arg(#boxed, spinel_rt::ClassId(#e)) }
+            }
         }
-        // Already dynamically typed (Poly) -- used directly, assuming it's
-        // already a constructed exception value (e.g. a local variable
-        // holding one). A non-exception Poly value raised this way is a
-        // narrow, documented gap (real Ruby raises `TypeError: exception
-        // class/object expected` here) -- the general runtime coercion
-        // this needs is Phase 9 work, alongside `rescue`.
-        _ => emit_expr(cx, node),
+        // A Poly (or non-exception) operand is coerced at runtime: an
+        // Exception raises itself, a String becomes a `RuntimeError`, and
+        // everything else is CRuby's `TypeError: exception class/object
+        // expected` (previously a value smuggled into `Signal::Raise`
+        // that panicked when the machinery unwrapped a non-Object).
+        _ => {
+            let exc_cid = cx.resolve_class("Exception").map_or(0, |c| c.0);
+            let expr = emit_expr(cx, node);
+            quote! { spinel_rt::coerce_raise_arg(#expr, spinel_rt::ClassId(#exc_cid)) }
+        }
     }
 }
 

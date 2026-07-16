@@ -209,14 +209,19 @@ pub(super) fn class_ident(
         // A per-box OVERLAY (Phase 18) gets its own container module --
         // `__bm_b2_String` -- so a root reopen and any number of box
         // overlays of the same builtin coexist.
+        // A qualified builtin name (`Enumerator::Yielder`, `File::Stat`) has
+        // `::`, which isn't a legal Rust ident -- flatten it to `_` so the
+        // container module is nameable (reached when a module included into
+        // `Object` propagates a `__bm_` container to every builtin).
+        let flat = ci.name.replace("::", "_");
         if ci.box_id != 0 {
             return proc_macro2::Ident::new(
-                &format!("__bm_b{}_{}", ci.box_id, ci.name),
+                &format!("__bm_b{}_{}", ci.box_id, flat),
                 proc_macro2::Span::call_site(),
             );
         }
         return proc_macro2::Ident::new(
-            &format!("__bm_{}", ci.name),
+            &format!("__bm_{}", flat),
             proc_macro2::Span::call_site(),
         );
     }
