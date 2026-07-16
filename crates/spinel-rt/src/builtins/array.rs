@@ -955,6 +955,24 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(items)))
     }
+    // `pack`: serialize the elements per a template into a byte string (see
+    // `builtins::pack`). ASCII-8BIT unless the template is all `U` (UTF-8).
+    "pack" => fn pack(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Str(t) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(&args[0])),
+            ));
+        };
+        let template = t.lock().to_utf8_lossy().into_owned();
+        let elems = recv_array!(recv).lock().clone();
+        let bytes = crate::builtins::pack::pack(&elems, &template)?;
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            bytes,
+            crate::builtins::pack::result_encoding(&template),
+        )))
+    }
     // With a block, each element is MAPPED to its pair first -- an Array
     // yields one value per element, so the block sees the element itself
     // (`[[1, 2]].to_h { |pair| }` gets `[1, 2]`; `{ |a, b| }` auto-splats).

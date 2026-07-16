@@ -4964,6 +4964,43 @@ fn magic_comment_sets_the_script_encoding() {
 }
 
 #[test]
+fn pack_and_unpack_roundtrip_core_directives() {
+    // Array#pack / String#unpack across the integer, string, base64, hex,
+    // BER and UTF-8 directives. Verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        p [65, 66, 67].pack("C*")
+        p [258].pack("v").bytes
+        p [258].pack("S>").bytes
+        p [-1].pack("l").bytes
+        p "\x00\x00\x00\x01".unpack("N")
+        p "\xff\xff\xff\xff".unpack("l")
+        p "\xff\xff\xff\xff".unpack("L")
+        p ["hi"].pack("a5").bytes
+        p ["hi"].pack("A5").bytes
+        p "abc\0de".unpack("Z*")
+        p ["hello world"].pack("m")
+        p "aGVsbG8=\n".unpack("m")
+        p ["ff01"].pack("H*").bytes
+        p [300].pack("w").bytes
+        p [12354].pack("U")
+        p "あ".unpack("U*")
+        p [65].pack("C").encoding
+        p [12354].pack("U").encoding
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ABC\"\n[2, 1]\n[1, 2]\n[255, 255, 255, 255]\n[1]\n[-1]\n[4294967295]\n\
+         [104, 105, 0, 0, 0]\n[104, 105, 32, 32, 32]\n[\"abc\"]\n\
+         \"aGVsbG8gd29ybGQ=\\n\"\n[\"hello\"]\n[255, 1]\n[130, 44]\n\
+         \"\u{3042}\"\n[12354]\n\
+         #<Encoding:BINARY (ASCII-8BIT)>\n#<Encoding:UTF-8>\n"
+    );
+}
+
+#[test]
 fn undef_removes_a_name_including_an_inherited_one() {
     // `undef` works on a name this class only INHERITS, which is why it
     // can't be "delete the local def" -- there is none. It stays live on

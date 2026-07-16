@@ -227,6 +227,23 @@ builtin_methods! {
     "encode!" => fn encode_bang(recv, args, _block) {
         encode_impl(recv, args, true)
     }
+    // `unpack`/`unpack1`: deserialize the bytes per a template (see
+    // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
+    // first element (nil when empty).
+    "unpack" => fn unpack(recv, args, _block) {
+        arity!(args, 1);
+        let template = unpack_template(&args[0])?;
+        let bytes = recv_str!(recv).lock().bytes().to_vec();
+        let vals = crate::builtins::pack::unpack(&bytes, &template)?;
+        Ok(RubyValue::Array(crate::array_new(vals)))
+    }
+    "unpack1" => fn unpack1(recv, args, _block) {
+        arity!(args, 1);
+        let template = unpack_template(&args[0])?;
+        let bytes = recv_str!(recv).lock().bytes().to_vec();
+        let vals = crate::builtins::pack::unpack(&bytes, &template)?;
+        Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
+    }
     "scrub" => fn scrub(recv, args, _block) {
         // Rewrite every invalid byte sequence to the replacement (an explicit
         // String argument, else U+FFFD for a Unicode encoding / "?" otherwise).
@@ -955,6 +972,17 @@ fn parse_encode_opts(
         None
     };
     Ok(opts)
+}
+
+/// The template argument of `unpack`/`unpack1` as a `String`.
+fn unpack_template(v: &RubyValue) -> Result<String, Signal> {
+    match v {
+        RubyValue::Str(t) => Ok(t.lock().to_utf8_lossy().into_owned()),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+        )),
+    }
 }
 
 /// An Integer argument (a position/limit), raising CRuby's exact TypeError

@@ -45,6 +45,7 @@ pub(crate) mod file;
 pub(crate) mod gc;
 pub(crate) mod numeric;
 pub(crate) mod object;
+pub(crate) mod pack;
 pub(crate) mod process;
 pub(crate) mod time;
 pub(crate) mod range;
