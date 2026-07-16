@@ -48,8 +48,9 @@ pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, downcast_robj,
-    install_class_registry, install_exception_factory, install_stop_iteration_factory, is_a,
-    ivar_get_dyn, ivar_set_dyn, main_object,
+    install_class_registry, install_exception_factory, install_stop_iteration_factory,
+    instance_variable_get, instance_variable_set, instance_variables, is_a,
+    ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
     method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
     send, send_in, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,

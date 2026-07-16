@@ -268,6 +268,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::NativeCrate(_)
         | HirNode::NativeFunc { .. } => None,
     };
@@ -890,6 +891,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::NativeCrate(_)
         | HirNode::NativeFunc { .. } => {
             panic!("unexpected top-level-only node in expression position")

@@ -1419,6 +1419,22 @@ pub enum HirNode {
     /// this class -- which removes them from the one table both dispatch
     /// paths and `respond_to?` consult.
     Undef(Vec<String>),
+    /// `alias new old` / `alias_method :new, :old` where `old` is NOT defined
+    /// earlier in the same class/module body -- an INHERITED method (or one a
+    /// later reopen adds). Lowering can't clone the source `DefMethod` because
+    /// it isn't in this body, and it can't resolve the ancestor chain either
+    /// (ancestors are only linearized in `analyze`). So it records `(new,
+    /// old)` here; `analyze::register_class` collects it into the class's
+    /// `pending_aliases`, and `mro::resolve_aliases` (after ancestors are
+    /// computed, before methods materialize) walks the MRO's `own_methods`,
+    /// clones the source scope's params/body under `new`, and registers it --
+    /// so it then materializes onto this class AND its subclasses normally.
+    /// The same-body case stays a lowering-time `DefMethod` clone (no runtime
+    /// target needed), exactly like `alias` on a locally-defined method.
+    AliasMethod {
+        new_name: String,
+        old_name: String,
+    },
     /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
     ///
     /// NOT `GlobalRead`, even though they are spelled like globals: nothing

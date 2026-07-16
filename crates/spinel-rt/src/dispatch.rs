@@ -616,6 +616,82 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     ancestors_of_value(recv_class).contains(&target)
 }
 
+/// The bare ivar name (`x`) from a `:@x`/`"@x"` reflection argument. A
+/// non-symbol/string is a `TypeError`; a name without the leading `@` is a
+/// `NameError` -- both mirroring CRuby's own messages. Shared by the
+/// universal `Object#instance_variable_*` helpers below (the class-object
+/// table in `builtins::class_module` keeps its own parallel copy).
+pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
+    let raw = match v {
+        RubyValue::Symbol(s) => s.name().to_string(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+        _ => {
+            return Err(raise_error(
+                "TypeError",
+                format!("{} is not a symbol nor a string", v.inspect_string()),
+            ))
+        }
+    };
+    match raw.strip_prefix('@') {
+        Some(name) => Ok(name.to_string()),
+        None => Err(raise_error(
+            "NameError",
+            format!("'{raw}' is not allowed as an instance variable name"),
+        )),
+    }
+}
+
+/// `Object#instance_variable_get(:@x)` over ANY receiver: an `Object`'s named
+/// ivar, a class object's own ivar (`civars`), or `nil` for a builtin/
+/// immediate (which expose no Ruby-visible ivars in this runtime).
+pub fn instance_variable_get(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
+    let name = ivar_name_arg(name_arg)?;
+    Ok(match recv {
+        RubyValue::Object(o) => o.ivar_get_named(&name).unwrap_or(RubyValue::Nil),
+        RubyValue::Class(cid) => crate::civars::class_ivar_get(cid.0, &name),
+        _ => RubyValue::Nil,
+    })
+}
+
+/// `Object#instance_variable_set(:@x, v)` -- writes the named ivar (of an
+/// object or a class object), answering the value. A no-op on a receiver
+/// with no slot for the name.
+pub fn instance_variable_set(
+    recv: &RubyValue,
+    name_arg: &RubyValue,
+    v: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let name = ivar_name_arg(name_arg)?;
+    match recv {
+        RubyValue::Object(o) => {
+            o.ivar_set_named(&name, v.clone());
+        }
+        RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone()),
+        _ => {}
+    }
+    Ok(v)
+}
+
+/// `Object#instance_variables` -- the receiver's ivar names as `:@name`
+/// symbols in declaration order (empty for a builtin/immediate).
+pub fn instance_variables(recv: &RubyValue) -> RubyValue {
+    let names: Vec<RubyValue> = match recv {
+        // `ivar_pairs` already yields `@`-prefixed names (it backs the
+        // default `Object#inspect`); `class_ivar_names` yields bare ones.
+        RubyValue::Object(o) => o
+            .ivar_pairs()
+            .into_iter()
+            .map(|(n, _)| RubyValue::Symbol(Symbol::intern(&n)))
+            .collect(),
+        RubyValue::Class(cid) => crate::civars::class_ivar_names(cid.0)
+            .into_iter()
+            .map(|n| RubyValue::Symbol(Symbol::intern(&format!("@{n}"))))
+            .collect(),
+        _ => Vec::new(),
+    };
+    RubyValue::Array(crate::array_new(names))
+}
+
 /// `recv.respond_to?(:name)` -- MRO-faithful since Phase 17.1: walks the
 /// receiver's real ancestor chain probing, per ancestor, the registry
 /// (materialized user methods live flat on the OWN class -- the first

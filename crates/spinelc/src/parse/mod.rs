@@ -511,6 +511,43 @@ fn alias_target_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(sym.unescaped()).into_owned())
 }
 
+/// Registers `alias new old` / `alias_method :new, :old` into the current
+/// class/module body. When `old` is defined EARLIER IN THIS SAME BODY, the
+/// source `DefMethod` is cloned directly (nothing to defer -- no runtime
+/// target needed). Otherwise `old` is an INHERITED method whose definition
+/// isn't in this body and whose ancestry isn't linearized until `analyze`, so
+/// a deferred `HirNode::AliasMethod` is emitted for `mro::resolve_aliases` to
+/// resolve later. See `HirNode::AliasMethod`.
+fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: String) {
+    if let Some(&old_id) = out
+        .iter()
+        .rev()
+        .find(|&&id| matches!(&hir[id], HirNode::DefMethod { name, .. } if *name == old_name))
+    {
+        let HirNode::DefMethod {
+            params,
+            body,
+            is_class_method,
+            visibility,
+            ..
+        } = &hir[old_id]
+        else {
+            unreachable!("guarded by the `find` above")
+        };
+        let (params, body, is_class_method, visibility) =
+            (params.clone(), body.clone(), *is_class_method, *visibility);
+        out.push(hir.push(HirNode::DefMethod {
+            name: new_name,
+            params,
+            body,
+            is_class_method,
+            visibility,
+        }));
+    } else {
+        out.push(hir.push(HirNode::AliasMethod { new_name, old_name }));
+    }
+}
+
 /// `Foo::BAR` / `Foo::Bar::BAZ` (`ConstantPathNode`) -- resolves to
 /// `(scope path, name)` for a `HirNode::ConstWrite`/`QualifiedConstRead`'s
 /// fields: the LAST segment is the constant being read/written, everything
@@ -1839,6 +1876,61 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
         }
 
+        // `define_singleton_method(:literal) { block }` -- desugars to a
+        // `def self.name` on the target class. The target comes from the
+        // receiver: none / `self` (inside a class body) means the enclosing
+        // class, so a bare `DefMethod { is_class_method: true }` lands in the
+        // current body and registers there; a literal-constant / constant-
+        // path receiver (`C.` / `M::D.`) reopens that named class with an
+        // inline `ClassDef`. A computed name, a computed receiver, or a
+        // capturing block that this desugar can't model falls through to the
+        // generic (unsupported) `Call`.
+        if name == "define_singleton_method" {
+            if let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
+                let arg_list: Vec<_> = args.arguments().iter().collect();
+                if let (1, Some(sym)) = (arg_list.len(), arg_list.first().and_then(|a| a.as_symbol_node())) {
+                    let recv = call.receiver();
+                    let target = match &recv {
+                        None => Some(None),
+                        Some(r) if r.as_self_node().is_some() => Some(None),
+                        Some(r) => constant_path_name(r).ok().map(Some),
+                    };
+                    if let Some(target) = target {
+                        let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
+                        let block = block_node
+                            .as_block_node()
+                            .ok_or("define_singleton_method's argument must be a block")?;
+                        let params = match block.parameters() {
+                            None => Params::default(),
+                            Some(p) => {
+                                let bp = p
+                                    .as_block_parameters_node()
+                                    .ok_or("unsupported block parameter form")?;
+                                lower_params(result, hir, bp.parameters())?
+                            }
+                        };
+                        let body = lower_body(result, hir, block.body())?;
+                        let def = hir.push(HirNode::DefMethod {
+                            name: method_name,
+                            params,
+                            body,
+                            is_class_method: true,
+                            visibility: Visibility::Public,
+                        });
+                        return Ok(match target {
+                            None => def,
+                            Some(class_name) => hir.push(HirNode::ClassDef {
+                                name: class_name,
+                                superclass: None,
+                                body: vec![def],
+                                is_module: false,
+                            }),
+                        });
+                    }
+                }
+            }
+        }
+
         // `loop do ... end` -- `Kernel#loop` is an ordinary method call, not
         // syntax, so this is a lowering-time call-shape desugar exactly like
         // `define_method` above, not a distinct `ruby-prism` node. Only a
@@ -2581,32 +2673,7 @@ fn lower_class_body_statement(
     if let Some(alias) = node.as_alias_method_node() {
         let new_name = alias_target_name(&alias.new_name())?;
         let old_name = alias_target_name(&alias.old_name())?;
-        let Some(&old_id) = out.iter().rev().find(
-            |&&id| matches!(&hir[id], HirNode::DefMethod { name, .. } if *name == old_name),
-        ) else {
-            return Err(format!(
-                "`alias {new_name} {old_name}`: `{old_name}` must already be defined earlier in the same class/module body (spike scope) -- aliasing an inherited method isn't supported yet"
-            ));
-        };
-        let HirNode::DefMethod {
-            params,
-            body,
-            is_class_method,
-            visibility: old_vis,
-            ..
-        } = &hir[old_id]
-        else {
-            unreachable!("guarded by the `find` above")
-        };
-        let (params, body, is_class_method, old_vis) =
-            (params.clone(), body.clone(), *is_class_method, *old_vis);
-        out.push(hir.push(HirNode::DefMethod {
-            name: new_name,
-            params,
-            body,
-            is_class_method,
-            visibility: old_vis,
-        }));
+        push_alias(hir, out, new_name, old_name);
         return Ok(());
     }
 
@@ -2720,6 +2787,34 @@ fn lower_class_body_statement(
                         }
                     }
                     return Ok(());
+                }
+            }
+            // `alias_method :new, :old` -- the method-call spelling of the
+            // `alias` keyword, routed through the same `push_alias` (so an
+            // inherited source defers to `mro::resolve_aliases`). Only two
+            // literal symbol/string names; anything else falls through to a
+            // generic `Call`.
+            if name == "alias_method" {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if arg_list.len() == 2 {
+                    let names: Option<Vec<String>> = arg_list
+                        .iter()
+                        .map(|n| {
+                            n.as_symbol_node()
+                                .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                                .or_else(|| {
+                                    n.as_string_node()
+                                        .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                                })
+                        })
+                        .collect();
+                    if let Some(names) = names {
+                        push_alias(hir, out, names[0].clone(), names[1].clone());
+                        return Ok(());
+                    }
                 }
             }
             // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare

@@ -83,6 +83,11 @@ pub struct ClassInfo {
     /// class, which is what makes an INHERITED name disappear here while
     /// staying live on the ancestor that defined it.
     pub undefined: std::collections::HashSet<String>,
+    /// `(new, old)` aliases whose source method is INHERITED (not defined in
+    /// this class's own body) -- recorded by `analyze::register_class` from a
+    /// `HirNode::AliasMethod` and resolved by `mro::resolve_aliases` once the
+    /// ancestor chain is linearized. See `HirNode::AliasMethod`'s docs.
+    pub pending_aliases: Vec<(String, String)>,
     /// `true` for `module Name ... end`: never instantiated (no `Name.new`,
     /// no generated Rust struct/`impl RubyObject`/`ClassRegistry` entry --
     /// see `codegen::mod::emit_class`'s docs), used only as a source for
@@ -238,6 +243,7 @@ impl Compiler {
                 includes: Vec::new(),
                 extends: Vec::new(),
             undefined: std::collections::HashSet::new(),
+            pending_aliases: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
@@ -437,6 +443,7 @@ impl Compiler {
             includes: Vec::new(),
             extends: Vec::new(),
             undefined: std::collections::HashSet::new(),
+            pending_aliases: Vec::new(),
             is_module,
             ivars: Vec::new(),
             own_methods: Vec::new(),

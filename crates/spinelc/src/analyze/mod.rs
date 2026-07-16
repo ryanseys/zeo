@@ -420,6 +420,13 @@ fn register_class(
                 let names = names.clone();
                 compiler.classes[class_id.0 as usize].undefined.extend(names);
             }
+            // A deferred `alias`/`alias_method` of an INHERITED method --
+            // resolved by `mro::resolve_aliases` once ancestors are computed.
+            // See `HirNode::AliasMethod`.
+            HirNode::AliasMethod { new_name, old_name } => {
+                let pair = (new_name.clone(), old_name.clone());
+                compiler.classes[class_id.0 as usize].pending_aliases.push(pair);
+            }
             HirNode::Prepend(m) => {
                 let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
@@ -777,6 +784,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -1060,6 +1068,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

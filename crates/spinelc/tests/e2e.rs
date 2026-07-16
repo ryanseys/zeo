@@ -5639,7 +5639,11 @@ fn class_shift_self_methods_can_read_and_write_class_variables() {
 }
 
 #[test]
-fn aliasing_a_method_not_yet_defined_in_the_same_body_is_a_clean_lowering_error() {
+fn aliasing_a_genuinely_undefined_method_is_a_clean_error() {
+    // An `alias`/`alias_method` whose source is defined neither in this body
+    // nor anywhere in the ancestry is a clean compile error -- now raised by
+    // `mro::resolve_aliases` (which resolves inherited sources), not a
+    // lowering-time rejection.
     let err = spinelc::compile_to_rust(
         r#"
         class Foo
@@ -5648,7 +5652,7 @@ fn aliasing_a_method_not_yet_defined_in_the_same_body_is_a_clean_lowering_error(
         "#,
     )
     .unwrap_err();
-    assert!(err.contains("must already be defined earlier"), "{err}");
+    assert!(err.contains("undefined method 'undefined_method'"), "{err}");
 }
 
 #[test]
@@ -14577,4 +14581,95 @@ fn class_method_defined_and_class_variable_reflection() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\ntrue\ntrue\nfalse\ntrue\n1\n42\n");
+}
+
+#[test]
+fn instance_variable_reflection_on_objects() {
+    // get/set/list over a concrete receiver, a poly receiver, missing names,
+    // an empty object, and a malformed-name NameError.
+    let result = run_ruby(
+        r#"
+        class Box
+          def initialize(v); @v = v; @tag = "b"; end
+        end
+        b = Box.new(7)
+        p b.instance_variables
+        p b.instance_variable_get(:@v)
+        b.instance_variable_set(:@v, 70)
+        p b.instance_variable_get("@v")
+        p b.instance_variable_get(:@missing)
+        class Bare; end
+        p Bare.new.instance_variables
+        def peek(o) = o.instance_variable_get(:@v)
+        p peek(Box.new(99))
+        begin
+          b.instance_variable_get(:v)
+        rescue NameError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:@v, :@tag]\n7\n70\nnil\n[]\n99\n\
+         'v' is not allowed as an instance variable name\n"
+    );
+}
+
+#[test]
+fn define_singleton_method_forms() {
+    // In-body (bare and self), external constant receiver (with a param),
+    // and a namespaced receiver all define a class method.
+    let result = run_ruby(
+        r#"
+        class C
+          define_singleton_method(:a) { "a" }
+          self.define_singleton_method(:b) { "b" }
+        end
+        C.define_singleton_method(:c) { |n| n + 1 }
+        module M
+          class D; end
+        end
+        M::D.define_singleton_method(:d) { "nested" }
+        puts C.a
+        puts C.b
+        puts C.c(41)
+        puts M::D.d
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\nb\n42\nnested\n");
+}
+
+#[test]
+fn alias_and_alias_method_including_inherited_sources() {
+    // Same-class and inherited sources, both spellings, chained across levels.
+    let result = run_ruby(
+        r#"
+        class Base
+          def greet(who); "hi " + who; end
+          alias hail greet
+          alias_method :salute, :greet
+        end
+        class Mid < Base
+          alias_method :welcome, :greet
+          alias hey greet
+        end
+        class Leaf < Mid
+          alias again welcome
+        end
+        puts Base.new.hail("a")
+        puts Base.new.salute("b")
+        puts Mid.new.welcome("c")
+        puts Mid.new.hey("d")
+        puts Leaf.new.again("e")
+        p Leaf.method_defined?(:again)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hi a\nhi b\nhi c\nhi d\nhi e\ntrue\n"
+    );
 }

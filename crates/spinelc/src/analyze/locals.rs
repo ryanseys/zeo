@@ -351,6 +351,7 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

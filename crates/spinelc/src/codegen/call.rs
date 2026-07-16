@@ -3021,6 +3021,48 @@ fn dispatch(
         }
     }
 
+    // `.instance_variable_get(:@x)` / `.instance_variable_set(:@x, v)` /
+    // `.instance_variables` -- universal reflection over any receiver's named
+    // ivars (an `Object`'s slots, or a class object's own ivars via
+    // `civars`). A user override wins, the same fall-through the other
+    // universal arms use. The receiver is boxed to a uniform `RubyValue` so
+    // one runtime helper serves every representation.
+    if no_kwargs
+        && block.is_none()
+        && block_arg.is_none()
+        && matches!(
+            (name, args.len()),
+            ("instance_variable_get", 1) | ("instance_variable_set", 2) | ("instance_variables", 0)
+        )
+    {
+        let user_defined = match infer_any_class(cx, recv_id) {
+            Some(cid) => cx.compiler.method_in_chain(cid, name).is_some(),
+            None => any_builtin_overrides(cx, name),
+        };
+        if !user_defined {
+            let boxed = match infer_class(cx, recv_id) {
+                Some(cid) => {
+                    let class_ident = super::ident::class_ident(cx.compiler, cid);
+                    quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
+                }
+                None => quote! { (#recv_expr) },
+            };
+            return match name {
+                "instance_variable_get" => {
+                    let a = emit_expr(cx, args[0]);
+                    quote! { spinel_rt::instance_variable_get(&#boxed, &(#a))? }
+                }
+                "instance_variable_set" => {
+                    let a = emit_expr(cx, args[0]);
+                    let v = emit_expr(cx, args[1]);
+                    let v = box_if_object_typed(cx, args[1], v);
+                    quote! { spinel_rt::instance_variable_set(&#boxed, &(#a), #v)? }
+                }
+                _ => quote! { spinel_rt::instance_variables(&#boxed) },
+            };
+        }
+    }
+
     // `.dup`/`.clone` -- universal `Kernel` methods (Phase 15.2), same
     // override-respecting shape as `freeze`/`frozen?` above (they're
     // ordinary overridable `Kernel` methods in real Ruby). The single

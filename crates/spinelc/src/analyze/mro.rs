@@ -73,6 +73,16 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
         compiler.classes[cid.0 as usize].ancestors = ancestors;
     }
 
+    // Deferred `alias`/`alias_method` of an inherited method -- resolved here,
+    // after ancestors are linearized but BEFORE method materialization, so the
+    // cloned alias flattens onto this class AND its subclasses the same way any
+    // own method does. Processed in class-id order (a superclass precedes its
+    // subclasses), so an alias OF an alias resolves against the already-added
+    // one. See `HirNode::AliasMethod`.
+    for &cid in &all_ids {
+        resolve_aliases(compiler, cid)?;
+    }
+
     for &cid in &all_ids {
         if !compiler.class(cid).is_module {
             materialize_methods(compiler, cid)?;
@@ -83,6 +93,41 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
     resolve_cvars(compiler, main_statements)?;
     resolve_consts(compiler, main_statements)?;
 
+    Ok(())
+}
+
+/// Resolves this class's `pending_aliases` (see `HirNode::AliasMethod`): for
+/// each `(new, old)`, find `old` as the OWN method of some MRO ancestor
+/// (self first), clone its params/body/visibility under `new`, and add it as
+/// an own method of `class_id`. `methods` isn't materialized yet, so the
+/// search walks each ancestor's `own_methods` directly. A source that
+/// resolves nowhere is a clean compile error, mirroring real Ruby's
+/// `NameError: undefined method`.
+fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
+    let pending = std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_aliases);
+    for (new_name, old_name) in pending {
+        let ancestors = compiler.class(class_id).ancestors.clone();
+        let source = ancestors.iter().find_map(|&anc| {
+            compiler
+                .class(anc)
+                .own_methods
+                .iter()
+                .find(|&&s| compiler.scope(s).name == old_name)
+                .copied()
+        });
+        let Some(sid) = source else {
+            return Err(format!(
+                "undefined method '{old_name}' for class '{}' (aliased as '{new_name}')",
+                compiler.class(class_id).name
+            ));
+        };
+        let scope = compiler.scope(sid);
+        let (params, body, visibility) =
+            (scope.params.clone(), scope.body.clone(), scope.visibility);
+        let new_sid =
+            super::register_method(compiler, class_id, class_id, new_name, params, body, visibility)?;
+        super::add_own_method(compiler, class_id, new_sid, false);
+    }
     Ok(())
 }
 
@@ -701,6 +746,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -942,6 +988,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
