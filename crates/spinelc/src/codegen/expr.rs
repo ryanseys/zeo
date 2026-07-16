@@ -1091,14 +1091,25 @@ pub(super) fn box_for_tail_return(cx: &Ctx, id: NodeId, value: TokenStream) -> T
 /// code was WRITTEN, exactly like a closure's lexical scope, not of which
 /// concrete receiver ends up calling it.
 fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
-    let defining = cx
-        .defining_class
-        .expect("`@@` class variable referenced outside any class/module body");
+    // A bare `@@x` written outside any class/module body is legal (if
+    // unusual) Ruby; its storage lives on `Object` -- the same top-level
+    // owner a bare constant resolves to (see `const_owner_id`, and the
+    // matching `Object`-seeding in `analyze::mro::resolve_cvars`).
+    let defining = cx.defining_class.unwrap_or_else(|| {
+        if cx.box_id != 0 {
+            cx.compiler
+                .box_surrogate(cx.box_id)
+                .expect("analyze registers a surrogate for every allocated box")
+        } else {
+            crate::compiler::OBJECT_CLASS
+        }
+    });
     cx.compiler
         .class(defining)
         .cvar_owners
         .get(name)
-        .unwrap_or_else(|| panic!("internal error: `@@{name}` has no resolved owner (analyze::mro::resolve_cvars should have run)"))
+        .copied()
+        .unwrap_or(defining)
         .0
 }
 

@@ -229,6 +229,22 @@ pub fn infer_type_with_locals(
         // classes kept OUT of `HirNode::New` by parse -- see the `.new`
         // lowering's exclusion list -- so this never collides with the
         // ordinary user-class `New` arm above.)
+        // A `.new` carrying a `*args` splat or `**h` double-splat can't take
+        // the static construction path (see `parse`'s `New` lowering) -- it
+        // dispatches dynamically through `send_value`, which answers a
+        // `RubyValue`, so it must type as `Poly`, not the concrete class.
+        HirNode::Call {
+            receiver: Some(_),
+            name,
+            args,
+            kwargs,
+            ..
+        } if name == "new"
+            && (args.iter().any(|a| matches!(a, crate::hir::ArrayElem::Splat(_)))
+                || kwargs.iter().any(|k| matches!(k, crate::hir::KwArg::DoubleSplat(_)))) =>
+        {
+            TyKind::Poly
+        }
         HirNode::Call {
             receiver: Some(recv),
             name,

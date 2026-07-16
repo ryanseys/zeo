@@ -218,8 +218,16 @@ fn lower_block_methods(
                 .as_statements_node()
                 .ok_or("expected statements in the value class's block")?;
             let mut visibility = Visibility::Public;
+            let mut module_function = false;
             for stmt in statements.body().iter() {
-                lower_class_body_statement(result, hir, &stmt, &mut visibility, &mut extra)?;
+                lower_class_body_statement(
+                    result,
+                    hir,
+                    &stmt,
+                    &mut visibility,
+                    &mut module_function,
+                    &mut extra,
+                )?;
             }
         }
     }

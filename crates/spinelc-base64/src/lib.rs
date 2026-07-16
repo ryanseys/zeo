@@ -157,7 +157,7 @@ mod tests {
 
     fn out(v: Result<RubyValue, Signal>) -> String {
         match v.expect("no signal") {
-            RubyValue::Str(s) => s.lock().clone(),
+            RubyValue::Str(s) => s.lock().to_string(),
             other => panic!("expected Str, got {other:?}"),
         }
     }

@@ -555,17 +555,17 @@ fn multi_assign_with_and_without_a_splat() {
 
 #[test]
 fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // A `**h` double-splat at a `.new` call isn't supported yet (spike scope):
-    // `.new` binds on the STATIC path (`New.args` is `Vec<NodeId>`, no runtime
-    // arg-vector). Update this to another still-unsupported construct if that
-    // ever lands. A `**h` in a hash literal / ordinary call now compiles.
+    // A per-instance singleton class on a non-`self` expression (`class <<
+    // obj`) is a documented scope-cut (it needs a growable per-object method
+    // table). A clean compile error, never a panic. Update this to another
+    // still-unsupported construct if `class << obj` ever lands.
     let err = spinelc::compile_to_rust(
-        "class Foo; def initialize(a:); end; end\nh = {a: 1}\nFoo.new(**h)\n",
+        "obj = Object.new\nclass << obj\n  def hi; 1; end\nend\n",
     )
     .unwrap_err();
     assert!(
-        err.contains("double-splat"),
-        "expected a double-splat-related unsupported-syntax error, got: {err}"
+        err.contains("unsupported syntax"),
+        "expected an unsupported-syntax error, got: {err}"
     );
 }
 
@@ -14349,4 +14349,135 @@ fn string_optional_arg_arities() {
          [\"a\", \"b,c\"]\n[\"a\", \"b\"]\n[\"a\", \"b\", \"\", \"\"]\n\
          [\"a\", \"b2c3\"]\n"
     );
+}
+
+#[test]
+fn class_variables_at_module_and_top_level_scope() {
+    // `@@x` written in a module body, in a `def self.` body, and bare at
+    // the top level (whose storage lives on Object) all read back.
+    let result = run_ruby(
+        r#"
+        module Conf
+          @@secret = ""
+          def self.secret; @@secret; end
+          def self.secret=(v); @@secret = v; end
+        end
+        puts Conf.secret.length
+        Conf.secret = "hi"
+        puts Conf.secret
+        @@plain = 42
+        puts @@plain
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "0\nhi\n42\n");
+}
+
+#[test]
+fn top_level_class_variable_is_stored_on_object() {
+    // A bare `@@x` written outside any class/module body resolves its storage
+    // to Object, so a later top-level read sees the same value. NOTE a
+    // divergence: Ruby 4.0.5 itself now RAISES `RuntimeError: class variable
+    // access from toplevel` for both the write and the read here (it was a
+    // warning in older rubies). Spinel keeps the older permissive behavior to
+    // match the committed `test/module_cvars.rb` snapshot the conformance
+    // suite scores against; this test pins that intentional choice.
+    let result = run_ruby(
+        r#"
+        @@plain = 42
+        puts @@plain
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn regexp_ruby_escape_e_lowers_to_x1b() {
+    // Ruby's `\e` (ESC) isn't a Rust `regex`-crate escape; it must be
+    // translated to `\x1b`, and `#source` still shows the original `\e`.
+    let result = run_ruby(
+        r#"
+        re = /\e\[[0-9;]*m/
+        puts "\e[31mRED\e[0m".gsub(re, "")
+        puts re.source
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "RED\n\\e\\[[0-9;]*m\n");
+}
+
+#[test]
+fn module_function_promotes_bareword_and_symbol_forms() {
+    // A bare `module_function` promotes every following `def` to a module
+    // method; `module_function :name` promotes an already-defined one.
+    let result = run_ruby(
+        r#"
+        module M
+          module_function
+          def shout(s) = s.upcase
+        end
+        module N
+          def whisper(s) = s.downcase
+          module_function :whisper
+        end
+        puts M.shout("hi")
+        puts N.whisper("HI")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "HI\nhi\n");
+}
+
+#[test]
+fn splat_and_double_splat_at_a_new_call_site() {
+    // A `*args` positional splat and a `**h` double-splat at `.new`
+    // dispatch through the runtime constructor rather than being rejected.
+    let result = run_ruby(
+        r#"
+        class Point
+          def initialize(x, y); @x = x; @y = y; end
+          def to_s; "(#{@x}, #{@y})"; end
+        end
+        Pair = Data.define(:a, :b)
+        args = [1, 2]
+        h = { a: 3, b: 4 }
+        puts Point.new(*args)
+        p Pair.new(**h)
+        p Pair.new(**{ a: 5, b: 6 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "(1, 2)\n#<data Pair a=3, b=4>\n#<data Pair a=5, b=6>\n"
+    );
+}
+
+#[test]
+fn alias_under_a_static_modifier_and_if_elsif() {
+    // A statically-literal `if`/`unless` guard on an `alias` is folded at
+    // definition time: the selected branch's alias is registered.
+    let result = run_ruby(
+        r#"
+        class C
+          def one = 1
+          def two = 2
+          alias uno one if true
+          alias dos two unless false
+          alias never one if false
+          if false
+            alias chosen one
+          elsif true
+            alias chosen two
+          end
+        end
+        puts C.new.uno
+        puts C.new.dos
+        puts C.new.chosen
+        puts C.new.respond_to?(:never)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n2\n2\nfalse\n");
 }

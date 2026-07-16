@@ -2321,14 +2321,21 @@ fn emit_splat_call(
     }
     let recv_obj_expr = match receiver {
         Some(recv_id) => {
-            // Same "only an ACTUALLY-registered class/module" guard as
-            // `emit_call`'s own constant-receiver interception -- see its
-            // docs.
-            if let Some(target_path) = super::expr::const_path_of(cx, recv_id) {
-                if cx.resolve_class(&target_path).is_some() {
-                    panic!("a splat argument on a class-method call isn't supported yet (spike scope)");
-                }
-            }
+            // A class-VALUE receiver (`Point.new(*args)` / `Klass.foo(**h)`):
+            // a literal class constant, or a local statically typed as a class
+            // object, emits its `RubyValue::Class` handle directly (see
+            // `emit_expr`'s `ClassRef` arm) so the runtime dispatches `new`/the
+            // class method through `send_value`'s Class arm -- the same
+            // registry-constructor path `HirNode::New` reaches, just with a
+            // runtime-built argument vector. Same "only an ACTUALLY-registered
+            // class/module" guard as `emit_call`'s constant-receiver
+            // interception.
+            let is_class_receiver = super::expr::const_path_of(cx, recv_id)
+                .is_some_and(|p| cx.resolve_class(&p).is_some())
+                || matches!(infer(cx, recv_id), TyKind::ClassObj(_));
+            if is_class_receiver {
+                emit_expr(cx, recv_id)
+            } else {
             let recv_expr = emit_expr(cx, recv_id);
             match infer_class(cx, recv_id) {
                 Some(cid) => {
@@ -2337,6 +2344,7 @@ fn emit_splat_call(
                 }
                 None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr) },
                 None => panic!("a splat argument call on a receiver whose class isn't statically known (and isn't a `rescue` binding) isn't supported yet (spike scope)"),
+            }
             }
         }
         None => {

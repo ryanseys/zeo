@@ -55,8 +55,36 @@ pub type RMatchData = Arc<MatchDataInner>;
 /// message (not a `Signal`/`RubyValue`) -- constructing the catchable
 /// `RegexpError` VALUE needs the class registry, which only generated
 /// `spinelc` codegen has access to (see `codegen::collections::emit_regexp_lit`).
+/// Rewrites the Ruby-flavoured escapes the Rust `regex` crate doesn't
+/// recognise into equivalents it does, leaving everything else byte-for-byte
+/// untouched. Today that is just `\e` (Ruby's ESC, U+001B) -> `\x1b`; the
+/// crate already accepts `\a \f \n \r \t \v` and escaped metacharacters. A
+/// backslash always consumes the character after it, so `\\e` (an escaped
+/// backslash followed by a literal `e`) is left alone, as is an `e` inside a
+/// character class that isn't preceded by a backslash.
+fn translate_ruby_escapes(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('e') => out.push_str("\\x1b"),
+            Some(next) => {
+                out.push('\\');
+                out.push(next);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<RRegexp, String> {
-    let compiled = regex::RegexBuilder::new(source)
+    let translated = translate_ruby_escapes(source);
+    let compiled = regex::RegexBuilder::new(&translated)
         .case_insensitive(ignore_case)
         .ignore_whitespace(extended)
         .dot_matches_new_line(multiline)

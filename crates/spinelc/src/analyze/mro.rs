@@ -80,7 +80,7 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
         materialize_class_methods(compiler, cid)?;
     }
 
-    resolve_cvars(compiler)?;
+    resolve_cvars(compiler, main_statements)?;
     resolve_consts(compiler, main_statements)?;
 
     Ok(())
@@ -276,7 +276,22 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
 /// `resolve_class` resolution already requires a target to be defined
 /// earlier), so every ancestor's own `cvar_owners` is already fully
 /// resolved by the time a later class searches it.
-fn resolve_cvars(compiler: &mut Compiler) -> Result<(), String> {
+fn resolve_cvars(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result<(), String> {
+    // A bare `@@x` written outside any class/module body lives on `Object`,
+    // exactly as a top-level constant does (see `resolve_consts`). `Object`'s
+    // own bodies are scanned by the loop below too, so seeding it first makes
+    // it the owner every later reference resolves to.
+    let mut top_level_names = Vec::new();
+    for &n in main_statements {
+        collect_cvars(&compiler.hir, n, &mut top_level_names);
+    }
+    for name in top_level_names {
+        compiler.classes[OBJECT_CLASS.0 as usize]
+            .cvar_owners
+            .entry(name)
+            .or_insert(OBJECT_CLASS);
+    }
+
     let all_ids: Vec<ClassId> = (0..compiler.classes.len() as u32).map(ClassId).collect();
     for &cid in &all_ids {
         let names = own_cvar_names(compiler, cid);

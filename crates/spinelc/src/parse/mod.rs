@@ -332,6 +332,63 @@ fn lower_if_chain(
     }))
 }
 
+/// A statically-known boolean value for a class-body `if`/`unless` guard --
+/// only the literal forms real programs use to compile-time-select a `def`/
+/// `alias` (`... if true`, `... unless false`, `... if (true)`). `nil` counts
+/// as false (Ruby's own truthiness). Anything else (a method call, a
+/// constant, a comparison) is `None`, leaving the `if` to lower as an
+/// ordinary runtime conditional.
+fn static_bool(node: &Node<'_>) -> Option<bool> {
+    if node.as_true_node().is_some() {
+        return Some(true);
+    }
+    if node.as_false_node().is_some() || node.as_nil_node().is_some() {
+        return Some(false);
+    }
+    if let Some(paren) = node.as_parentheses_node() {
+        let stmts = paren.body()?.as_statements_node()?;
+        let body: Vec<_> = stmts.body().iter().collect();
+        if let [only] = body.as_slice() {
+            return static_bool(only);
+        }
+    }
+    None
+}
+
+/// Lowers the branch a statically-folded class-body `if`/`unless` selected --
+/// a `StatementsNode` (the `then`/`unless` body), an `ElseNode` (a final
+/// `else`), a nested `IfNode` (an `elsif`, re-entering the fold), or `None`
+/// (an omitted branch) -- routing each contained statement back through
+/// `lower_class_body_statement` so an `alias`/`def`/visibility directive
+/// inside the guard still registers.
+fn lower_class_body_selected(
+    result: &ParseResult,
+    hir: &mut Hir,
+    chosen: Option<Node<'_>>,
+    visibility: &mut Visibility,
+    module_function: &mut bool,
+    out: &mut Vec<NodeId>,
+) -> PResult<()> {
+    let Some(node) = chosen else { return Ok(()) };
+    if let Some(stmts) = node.as_statements_node() {
+        for stmt in stmts.body().iter() {
+            lower_class_body_statement(result, hir, &stmt, visibility, module_function, out)?;
+        }
+        return Ok(());
+    }
+    if let Some(else_node) = node.as_else_node() {
+        if let Some(stmts) = else_node.statements() {
+            for stmt in stmts.body().iter() {
+                lower_class_body_statement(result, hir, &stmt, visibility, module_function, out)?;
+            }
+        }
+        return Ok(());
+    }
+    // A nested `elsif` `IfNode`, or any single statement: re-enter the
+    // class-body path (which folds the `elsif` in turn).
+    lower_class_body_statement(result, hir, &node, visibility, module_function, out)
+}
+
 fn constant_name(node: &Node<'_>) -> PResult<String> {
     let cr = node
         .as_constant_read_node()
@@ -1670,10 +1727,30 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // `Array.new(n) { |i| ... }` likewise: its block computes
                 // each element, and routing it through `HirNode::New` would
                 // silently DROP the block and answer `[nil, nil, ...]`.
-                if !matches!(
-                    class_name.as_str(),
-                    "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array"
-                ) {
+                // A `*args` positional splat or `**h` double-splat can't bind
+                // on the STATIC `New` path (`New.args` is `Vec<NodeId>`, no
+                // runtime arg-vector, and a `**h`'s keys aren't known until
+                // runtime). Fall through to the generic `Call` lowering, which
+                // evaluates the constant to a `RubyValue::Class` and dispatches
+                // `new` through the runtime constructor (the same path a
+                // non-literal `x.new` receiver already takes).
+                let has_dynamic_args = call
+                    .arguments()
+                    .map(|a| {
+                        a.arguments().iter().any(|n| {
+                            n.as_splat_node().is_some()
+                                || n.as_keyword_hash_node().is_some_and(|kw| {
+                                    kw.elements().iter().any(|e| e.as_assoc_splat_node().is_some())
+                                })
+                        })
+                    })
+                    .unwrap_or(false);
+                if !has_dynamic_args
+                    && !matches!(
+                        class_name.as_str(),
+                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array"
+                    )
+                {
                     // A trailing keyword hash lands in `kwargs`, kept apart
                     // from the positionals exactly as an ordinary call's is,
                     // so `initialize`'s keyword params bind as keywords.
@@ -1691,15 +1768,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             if let Some(kw) = n.as_keyword_hash_node() {
                                 let elements: Vec<Node<'_>> = kw.elements().iter().collect();
                                 kwargs = lower_kwargs(result, hir, &elements)?;
-                                // `.new` binds its args on the STATIC path
-                                // (`New.args` is `Vec<NodeId>`, no runtime
-                                // arg-vector), so a `**h` double-splat -- whose
-                                // keys aren't known until runtime -- can't be
-                                // bound here. Clean rejection, not a miscompile;
-                                // the same gap as a positional splat at `.new`.
-                                if kwargs.iter().any(|k| matches!(k, KwArg::DoubleSplat(_))) {
-                                    return Err("a `**h` double-splat at a `.new` call isn't supported yet (spike scope)".to_string());
-                                }
                                 continue;
                             }
                             args.push(lower_node(result, hir, &n)?);
@@ -2401,8 +2469,9 @@ fn lower_class_body(
     // switched by a bare `private`/`public`/`protected` (no arguments) --
     // see `lower_class_body_statement`'s docs.
     let mut visibility = Visibility::Public;
+    let mut module_function = false;
     for stmt in &stmts {
-        lower_class_body_statement(result, hir, stmt, &mut visibility, &mut out)?;
+        lower_class_body_statement(result, hir, stmt, &mut visibility, &mut module_function, &mut out)?;
     }
     Ok(out)
 }
@@ -2437,6 +2506,7 @@ fn lower_class_body_statement(
     hir: &mut Hir,
     node: &Node<'_>,
     visibility: &mut Visibility,
+    module_function: &mut bool,
     out: &mut Vec<NodeId>,
 ) -> PResult<()> {
     // `alias new_name old_name` / `alias :new_name :old_name` (`AliasMethodNode`
@@ -2455,6 +2525,33 @@ fn lower_class_body_statement(
     // gives each name as a SymbolNode either way), so it reuses
     // `alias_target_name`. Recorded rather than resolved here: see
     // `HirNode::Undef` for why the inherited case rules out deleting a def.
+    // A class-body `if`/`unless` guarding a `def`/`alias`/visibility directive
+    // with a statically-literal predicate (`alias a b if true`) is folded at
+    // definition time -- real Ruby runs these guards while the class body
+    // executes, and an `alias`/`def` inside one has no ordinary value-`if`
+    // lowering (they're class-body-only keywords). A dynamic predicate falls
+    // through to the generic value-`if` path unchanged.
+    if let Some(if_node) = node.as_if_node() {
+        if let Some(cond) = static_bool(&if_node.predicate()) {
+            let chosen = if cond {
+                if_node.statements().map(|s| s.as_node())
+            } else {
+                if_node.subsequent()
+            };
+            return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+        }
+    }
+    if let Some(unless_node) = node.as_unless_node() {
+        if let Some(cond) = static_bool(&unless_node.predicate()) {
+            let chosen = if !cond {
+                unless_node.statements().map(|s| s.as_node())
+            } else {
+                unless_node.else_clause().map(|e| e.as_node())
+            };
+            return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+        }
+    }
+
     if let Some(undef) = node.as_undef_node() {
         let names = undef
             .names()
@@ -2572,6 +2669,42 @@ fn lower_class_body_statement(
                 }
                 // Falls through to the generic `Call` lowering below --
                 // a dynamic/computed argument (e.g. `private(*names)`).
+            }
+            // `module_function` -- recognized in the same two forms as
+            // `private`/`public`/`protected`: (1) a bare call switches a mode
+            // so every subsequent `def` in this body becomes a MODULE method
+            // (`Mod.name`); (2) `module_function :a, :b` retroactively
+            // promotes already-defined method(s) of those names. Real Ruby
+            // ALSO keeps a private instance copy for `include`-mixin; spinel
+            // models only the module-method form (see
+            // `module_function_namespace.rb`), so promotion is an in-place
+            // retag to `is_class_method`, not an added copy -- which also
+            // lets an uncalled module function be dead-code-eliminated
+            // exactly like any other uncalled class method. A dynamic/
+            // computed argument falls through to a generic `Call`.
+            if name == "module_function" {
+                let arg_list: Vec<_> = call
+                    .arguments()
+                    .map(|a| a.arguments().iter().collect())
+                    .unwrap_or_default();
+                if arg_list.is_empty() {
+                    *module_function = true;
+                    return Ok(());
+                }
+                if arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                    for n in &arg_list {
+                        let target = String::from_utf8_lossy(
+                            n.as_symbol_node().expect("checked above").unescaped(),
+                        )
+                        .into_owned();
+                        if let Some(&id) = out.iter().rev().find(|&&id| {
+                            matches!(&hir[id], HirNode::DefMethod { name: existing, .. } if *existing == target)
+                        }) {
+                            hir.set_method_is_class_method(id);
+                        }
+                    }
+                    return Ok(());
+                }
             }
             // `include Mod`/`extend Mod`/`prepend Mod` -- one or more bare
             // constant arguments, applied left-to-right (see `HirNode::
@@ -2703,6 +2836,11 @@ fn lower_class_body_statement(
         let id = lower_node(result, hir, node)?;
         if *visibility != Visibility::Public {
             hir.set_method_visibility(id, *visibility);
+        }
+        // Under a bare `module_function`, every following `def` is promoted
+        // to a module method (see the recognizer above).
+        if *module_function {
+            hir.set_method_is_class_method(id);
         }
         out.push(id);
         return Ok(());
