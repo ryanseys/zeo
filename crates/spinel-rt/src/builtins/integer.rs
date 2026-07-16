@@ -673,7 +673,7 @@ builtin_methods! {
             panic!("Integer#times receiver exceeds i64 (unrunnable iteration count)");
         };
         for i in 0..*n {
-            p(&[RubyValue::Int(i)])?;
+            p.call(&[RubyValue::Int(i)])?;
         }
         Ok(recv.clone())
     }
@@ -684,7 +684,7 @@ builtin_methods! {
             panic!("Integer#upto beyond i64 isn't supported (unrunnable iteration count)");
         };
         for i in *a..=*b {
-            p(&[RubyValue::Int(i)])?;
+            p.call(&[RubyValue::Int(i)])?;
         }
         Ok(recv.clone())
     }
@@ -696,7 +696,7 @@ builtin_methods! {
         };
         let mut i = *a;
         while i >= *b {
-            p(&[RubyValue::Int(i)])?;
+            p.call(&[RubyValue::Int(i)])?;
             i -= 1;
         }
         Ok(recv.clone())

@@ -403,7 +403,7 @@ builtin_methods! {
                 Some(Some(_)) => {}
                 _ => break,
             }
-            p(std::slice::from_ref(&cur))?;
+            p.call(std::slice::from_ref(&cur))?;
             cur = num_add(&cur, &step).expect("numeric step operands")?;
         }
         Ok(recv.clone())

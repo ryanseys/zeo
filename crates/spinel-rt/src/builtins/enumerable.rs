@@ -187,7 +187,7 @@ fn map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     for_each(recv, move |yielded| {
-        let v = blk(yielded)?;
+        let v = blk.call(yielded)?;
         out2.lock().push(v);
         Ok(RubyValue::Nil)
     })?;
@@ -211,7 +211,7 @@ fn select(
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
     for_each(recv, move |yielded| {
-        if blk(yielded)?.truthy() == keep {
+        if blk.call(yielded)?.truthy() == keep {
             out2.lock().push(pack(yielded));
         }
         Ok(RubyValue::Nil)
@@ -264,7 +264,7 @@ fn count(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resu
             Ok(RubyValue::Nil)
         })?,
         (0, Some(RubyValue::Proc(blk))) => for_each(recv, move |yielded| {
-            if blk(yielded)?.truthy() {
+            if blk.call(yielded)?.truthy() {
                 *n2.lock() += 1;
             }
             Ok(RubyValue::Nil)
@@ -315,7 +315,7 @@ fn any_all(
     };
     let test = move |yielded: &[RubyValue]| -> Result<bool, Signal> {
         match &blk {
-            Some(b) => Ok(b(yielded)?.truthy()),
+            Some(b) => Ok(b.call(yielded)?.truthy()),
             None => Ok(pack(yielded).truthy()),
         }
     };
@@ -389,7 +389,7 @@ fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resul
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let hit2 = hit.clone();
     for_each(recv, move |yielded| {
-        if blk(yielded)?.truthy() {
+        if blk.call(yielded)?.truthy() {
             *hit2.lock() = Some(pack(yielded));
             return Err(Signal::Break(RubyValue::Nil));
         }
@@ -481,7 +481,7 @@ fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
                 // Enumerable machinery.
                 drop(a);
                 let next = match &step {
-                    Step::Block(b) => b(&[current, elem])?,
+                    Step::Block(b) => b.call(&[current, elem])?,
                     Step::Op(op) => send_value(&current, *op, &[elem], None)?,
                 };
                 *acc2.lock() = Some(next);
@@ -513,7 +513,7 @@ fn each_with_index(
             *n += 1;
             i
         };
-        blk(&[pack(yielded), RubyValue::Int(i)])?;
+        blk.call(&[pack(yielded), RubyValue::Int(i)])?;
         Ok(RubyValue::Nil)
     })?;
     Ok(recv.clone())
@@ -598,7 +598,7 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
     for_each(recv, move |yielded| {
         let mut elem = pack(yielded);
         if let Some(b) = &blk {
-            elem = b(&[elem])?;
+            elem = b.call(&[elem])?;
         }
         let current = acc2.lock().take().expect("accumulator always present");
         let next = current.add(elem)?;
@@ -673,7 +673,7 @@ fn min_max(
                     Some(cmp) => {
                         let current = current.clone();
                         drop(b);
-                        let r = cmp(&[elem.clone(), current])?;
+                        let r = cmp.call(&[elem.clone(), current])?;
                         b = best2.lock();
                         match r {
                             RubyValue::Int(n) => n,
@@ -754,7 +754,7 @@ fn sort_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Re
     // Decorate-sort-undecorate, keys ordered by rb_cmp.
     let mut decorated: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
     for e in items {
-        let key = blk(&e.raw)?;
+        let key = blk.call(&e.raw)?;
         decorated.push((key, e.packed));
     }
     let mut failure = false;
@@ -787,7 +787,7 @@ fn min_max_by(
     let items = collect_elements(recv)?;
     let mut best: Option<(RubyValue, RubyValue)> = None;
     for e in items {
-        let key = blk(&e.raw)?;
+        let key = blk.call(&e.raw)?;
         let e = e.packed;
         let better = match &best {
             None => true,
@@ -816,7 +816,7 @@ fn group_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
     let items = collect_elements(recv)?;
     let groups = crate::hash_new(Vec::new());
     for e in items {
-        let key = blk(&e.raw)?;
+        let key = blk.call(&e.raw)?;
         let e = e.packed;
         let bucket = crate::hash_get(&groups, &key);
         match bucket {
@@ -837,7 +837,7 @@ fn partition(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
     let items = collect_elements(recv)?;
     let (mut yes, mut no) = (Vec::new(), Vec::new());
     for e in items {
-        if blk(&e.raw)?.truthy() {
+        if blk.call(&e.raw)?.truthy() {
             yes.push(e.packed);
         } else {
             no.push(e.packed);
@@ -855,7 +855,7 @@ fn flat_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
     let items = collect_elements(recv)?;
     let mut out = Vec::new();
     for e in items {
-        match blk(&e.raw)? {
+        match blk.call(&e.raw)? {
             // ONE level of flattening (real Ruby's rule).
             RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
             other => out.push(other),
@@ -870,7 +870,7 @@ fn filter_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
     let items = collect_elements(recv)?;
     let mut out = Vec::new();
     for e in items {
-        let mapped = blk(&e.raw)?;
+        let mapped = blk.call(&e.raw)?;
         if mapped.truthy() {
             out.push(mapped);
         }
@@ -896,7 +896,7 @@ fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
     let blk = block_or_enum!(recv, "each_slice", args, block);
     let items = collect_packed(recv)?;
     for chunk in items.chunks(n) {
-        blk(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
+        blk.call(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
     }
     Ok(RubyValue::Nil)
 }
@@ -907,7 +907,7 @@ fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
     let items = collect_packed(recv)?;
     if items.len() >= n {
         for window in items.windows(n) {
-            blk(&[RubyValue::Array(array_new(window.to_vec()))])?;
+            blk.call(&[RubyValue::Array(array_new(window.to_vec()))])?;
         }
     }
     Ok(RubyValue::Nil)
@@ -921,7 +921,7 @@ fn each_with_object(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValu
     let memo = args[0].clone();
     let items = collect_packed(recv)?;
     for e in items {
-        blk(&[e, memo.clone()])?;
+        blk.call(&[e, memo.clone()])?;
     }
     Ok(memo)
 }
@@ -973,7 +973,7 @@ fn take_drop_while(
     let items = collect_elements(recv)?;
     let mut boundary = items.len();
     for (i, e) in items.iter().enumerate() {
-        if !blk(&e.raw)?.truthy() {
+        if !blk.call(&e.raw)?.truthy() {
             boundary = i;
             break;
         }
@@ -1033,7 +1033,7 @@ pub(crate) fn to_h_pairs<'a>(
     let mut pairs = Vec::new();
     for (i, (raw, packed)) in elements.enumerate() {
         let e = match block {
-            Some(RubyValue::Proc(p)) => p(raw)?,
+            Some(RubyValue::Proc(p)) => p.call(raw)?,
             _ => packed.clone(),
         };
         let RubyValue::Array(pair) = &e else {
@@ -1062,7 +1062,7 @@ fn reverse_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) 
     let blk = block_or_enum!(recv, "reverse_each", args, block);
     let items = collect_elements(recv)?;
     for e in items.iter().rev() {
-        blk(&e.raw)?;
+        blk.call(&e.raw)?;
     }
     Ok(recv.clone())
 }
@@ -1076,7 +1076,7 @@ fn enum_find_index(
     let items = collect_elements(recv)?;
     if let Some(RubyValue::Proc(p)) = &block {
         for (i, e) in items.iter().enumerate() {
-            if p(&e.raw)?.truthy() {
+            if p.call(&e.raw)?.truthy() {
                 return Ok(RubyValue::Int(i as i64));
             }
         }

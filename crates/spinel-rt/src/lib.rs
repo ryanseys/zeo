@@ -41,7 +41,8 @@ pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::BuiltinMethodFn;
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, downcast_robj, install_class_registry,
-    install_exception_factory, install_stop_iteration_factory, is_a, main_object,
+    install_exception_factory, install_stop_iteration_factory, is_a, ivar_get_dyn, ivar_set_dyn,
+    main_object,
     method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
     send, send_in, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
@@ -239,6 +240,24 @@ macro_rules! ruby_class {
             fn set_frozen(&self) { self.__frozen.store(true, std::sync::atomic::Ordering::Relaxed) }
             fn ivar_values(&self) -> Vec<$crate::RubyValue> {
                 vec![ $( self.$ivar.lock().clone() ),* ]
+            }
+            // By-NAME ivar access, for receivers whose concrete class codegen
+            // couldn't know statically (`instance_exec`'s rebound self). The
+            // field idents ARE the ivar names minus the `@` (codegen's
+            // `safe_ident`), so `stringify!` recovers them with no extra list
+            // to keep in sync. See the trait's docs for the invented-ivar
+            // TODO.
+            fn ivar_get_named(&self, name: &str) -> Option<$crate::RubyValue> {
+                match name {
+                    $( stringify!($ivar) => Some(self.$ivar.lock().clone()), )*
+                    _ => None,
+                }
+            }
+            fn ivar_set_named(&self, name: &str, v: $crate::RubyValue) -> bool {
+                match name {
+                    $( stringify!($ivar) => { *self.$ivar.lock() = v; true } )*
+                    _ => false,
+                }
             }
             // `Kernel#dup`/`#clone`'s shallow copy (see the trait method's
             // docs): fresh struct, each ivar's CURRENT value cloned (a

@@ -452,6 +452,44 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
 /// block's own body (directly, or through an inline `.times` block nested
 /// inside one) -- only then do `LocalRead`/`LocalWrite`/`IvarRead`/
 /// `IvarWrite` actually register as captures. `param_exclusions`: every
+/// The receiverless names codegen emits as DIRECT calls to a runtime free
+/// function, never as a dispatch on `self` (`codegen::call`'s
+/// `fallible_fn`/`never_fn`/`plain_fn` tables and the `proc`/`lambda`/
+/// `at_exit`/`__method__` forms it intercepts just above them). Mentioning
+/// one inside a block therefore doesn't make the block need a receiver.
+///
+/// Kept deliberately CONSERVATIVE: a name wrongly listed here loses its
+/// receiver (a real bug -- an `instance_exec`'d block calling it would
+/// dispatch on the wrong object); a name wrongly MISSING just makes some
+/// block carry a self it never reads, which costs nothing but a moved
+/// `RubyValue`. So when in doubt, leave it out. `method`/`send`/`raise` are
+/// deliberately absent: they genuinely consult the implicit receiver.
+fn is_kernel_free_fn(name: &str) -> bool {
+    matches!(
+        name,
+        "puts"
+            | "p"
+            | "pp"
+            | "print"
+            | "warn"
+            | "format"
+            | "sprintf"
+            | "printf"
+            | "rand"
+            | "srand"
+            | "sleep"
+            | "exit"
+            | "abort"
+            | "Integer"
+            | "Float"
+            | "Rational"
+            | "Complex"
+            | "String"
+            | "Array"
+            | "Hash"
+    )
+}
+
 /// name bound by an ENCLOSING block's own params, of ANY kind (`.times`
 /// inline or a real escaping block) -- accumulated (unioned) as the walk
 /// descends into ANY block, regardless of `in_escaping`, so a name shadowed
@@ -718,18 +756,22 @@ fn walk(
             }
         }
         HirNode::Call { receiver, name, args, kwargs, kwargs_splat, block, block_arg, .. } => {
-            // A receiverless call that resolves to a method on the enclosing
-            // class (`self_class`) dispatches on `self` (see `emit_call`'s
+            // A receiverless call dispatches on `self` (see `emit_call`'s
             // implicit-self branch) -- inside an escaping block that's a
             // `self` capture exactly like an ivar reference, otherwise the
             // closure `move`s the method's own `self` binding out from under
             // the code after it (E0382).
-            if receiver.is_none() && in_escaping {
-                if let Some(cls) = self_class {
-                    if compiler.method_in_chain(cls, name).is_some() {
-                        caps.self_captured = true;
-                    }
-                }
+            //
+            // NOT conditioned on the name resolving against the enclosing
+            // class: a name that resolves nowhere lexically is exactly the
+            // `instance_exec` case (`obj.instance_exec { helper }` -- `helper`
+            // is on OBJ's class, invisible from where the block is written),
+            // and it still dispatches on self, so the block still needs one.
+            // Kernel free functions (`puts`) are excluded: codegen emits them
+            // as direct calls that never consult a receiver, so capturing self
+            // for them would be dead weight on almost every block in a program.
+            if receiver.is_none() && in_escaping && !is_kernel_free_fn(name) {
+                caps.self_captured = true;
             }
             if let Some(r) = receiver {
                 walk(compiler, *r, in_escaping, param_exclusions, caps, self_class);

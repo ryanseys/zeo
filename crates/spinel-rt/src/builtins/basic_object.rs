@@ -1,8 +1,17 @@
 //! `BasicObject` -- the true root's 8 methods (CRuby object.c). Owns
 //! `==`/`!=` (funneling to `rb_eq`, whose recursion guard lives in
-//! `value.rs`), `!`, `equal?` (reference identity), and `__send__`.
-//! `instance_eval`/`instance_exec` are compile-time rejections (dynamic
-//! self-rebinding is a permanent AOT exclusion); `__id__` is Tier B.
+//! `value.rs`), `!`, `equal?` (reference identity), `__send__`, and
+//! `instance_eval`/`instance_exec`. `__id__` is Tier B.
+//!
+//! `instance_eval`/`instance_exec` were long documented here as "compile-time
+//! rejections (dynamic self-rebinding is a permanent AOT exclusion)". That
+//! was conflating two different things: rebinding self in a BLOCK needs no
+//! eval and no runtime compilation -- the block is ordinary compiled code,
+//! and the only question is which receiver it runs under. Once a proc takes
+//! its self as a PARAMETER instead of capturing it (`RProc::with_self`),
+//! answering that question is a function call. What stays excluded is the
+//! STRING form (`instance_eval("@x + 1")`), which genuinely needs the eval
+//! VM -- it raises NotImplementedError below, like every other eval path.
 
 use crate::builtins::{arity, builtin_methods};
 use crate::{RubyValue, Symbol};
@@ -48,6 +57,53 @@ builtin_methods! {
             }
         };
         crate::dispatch::send_value(recv, sym, rest, block)
+    }
+    // `instance_exec(*args) { |*a| ... }` -- run the block with `self`
+    // rebound to the receiver, forwarding args to the block's params.
+    // Arity is NOT checked against the block's params: a non-lambda block is
+    // lenient (extra args dropped, missing ones nil), exactly as `yield` is.
+    "instance_exec" => fn instance_exec(recv, args, block) {
+        let blk = block_proc(block, "instance_exec")?;
+        blk.call_with_self(recv, args)
+    }
+    // `instance_eval { ... }` -- the block form only. Real Ruby yields the
+    // receiver to the block as well as rebinding self, which is what makes
+    // `obj.instance_eval { |o| o == self }` true.
+    "instance_eval" => fn instance_eval(recv, args, block) {
+        if let Some(arg) = args.first() {
+            // The string form is the eval VM's, not ours.
+            if matches!(arg, RubyValue::Str(_)) {
+                return Err(crate::dispatch::raise_error(
+                    "NotImplementedError",
+                    "instance_eval with a string requires the eval VM (not compiled in)"
+                        .to_string(),
+                ));
+            }
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into String",
+                    crate::builtins::class_name_of(arg)
+                ),
+            ));
+        }
+        let blk = block_proc(block, "instance_eval")?;
+        blk.call_with_self(recv, std::slice::from_ref(recv))
+    }
+}
+
+/// The block argument `instance_exec`/`instance_eval` require, or real
+/// Ruby's own no-block error.
+fn block_proc(
+    block: Option<RubyValue>,
+    method: &str,
+) -> Result<crate::RProc, crate::Signal> {
+    match block {
+        Some(RubyValue::Proc(p)) => Ok(p),
+        _ => Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            format!("tried to create Proc object without a block (in `{method}')"),
+        )),
     }
 }
 

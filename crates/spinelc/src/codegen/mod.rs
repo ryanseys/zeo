@@ -137,6 +137,21 @@ struct Ctx<'a> {
     /// see `HirNode::Return`'s docs for why a literal Rust `return` stops
     /// being correct exactly at this boundary.
     in_real_proc: bool,
+    /// Whether `self_ident` names a `RubyValue` whose concrete class isn't
+    /// statically known, rather than an `Arc<Concrete>`/`self`. True exactly
+    /// inside an escaping Proc that captured `self`: such a block's receiver
+    /// is a closure PARAMETER (`RProc::with_self`), because `instance_exec`
+    /// can run the very same block body under a different one -- so nothing
+    /// about the receiver's class is known until the call happens.
+    ///
+    /// Ivar access consults this (`expr`'s `IvarRead`/`IvarWrite`): a
+    /// statically-typed self reads a struct FIELD, a dynamic one goes
+    /// through `spinel_rt::ivar_get_dyn`/`ivar_set_dyn`'s name-keyed lookup.
+    /// So does implicit-self dispatch (`call`'s `boxed_implicit_self`).
+    /// Inline-spliced blocks (`.times` and friends) are NOT affected: they
+    /// are not `Proc`s, can't be handed to `instance_exec`, and keep the
+    /// static field fast path.
+    self_is_dynamic: bool,
 }
 
 impl<'a> Ctx<'a> {
@@ -224,6 +239,9 @@ impl<'a> Ctx<'a> {
                 self.self_ident.clone()
             },
             in_real_proc: true,
+            // A captured self arrives as `&RubyValue` (the closure's own
+            // first parameter) -- see the field's docs.
+            self_is_dynamic: needs_self_capture || self.self_is_dynamic,
             ..self.clone()
         }
     }
@@ -478,6 +496,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         captured_locals: &main_captures.locals,
         self_ident: format_ident!("self"),
         in_real_proc: false,
+        self_is_dynamic: false,
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
@@ -681,6 +700,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         captured_locals: &no_captures,
         self_ident: format_ident!("self"),
         in_real_proc: false,
+        self_is_dynamic: false,
     };
     let exprs = stmts.iter().map(|&id| expr::emit_expr(&cx, id));
     quote! { #(#exprs;)* }
@@ -766,6 +786,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         captured_locals: &no_captures.locals,
         self_ident: format_ident!("self"),
         in_real_proc: false,
+        self_is_dynamic: false,
     };
     let prologue = params::emit_prologue(&cx, &scope.params);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -877,6 +898,15 @@ fn emit_builtin_method_fn(
         captured_locals: &method_captures.locals,
         self_ident: format_ident!("__self"),
         in_real_proc: false,
+        // `__self` here is the `RubyValue` receiver parameter, not an
+        // `Arc<Concrete>` -- a reopened builtin has no generated struct to
+        // take ivar fields from, and for an `Object` reopen (which is where
+        // TOP-LEVEL `def`s live) the receiver is the `main` object, whose
+        // ivars are name-keyed. This is what used to be rejected as
+        // "instance variable `@c` in a top-level method (or `Object` reopen)
+        // isn't supported yet (the `main` object has no ivar storage)"; it
+        // has storage now (`dispatch::Object`).
+        self_is_dynamic: true,
     };
     let prologue = params::emit_prologue(&cx, &scope.params);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -957,6 +987,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             captured_locals: &method_captures.locals,
             self_ident: format_ident!("self"),
             in_real_proc: false,
+            self_is_dynamic: false,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body_with_extra_roots(

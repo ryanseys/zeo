@@ -87,7 +87,7 @@ static NEXT_FIBER_ID: AtomicU64 = AtomicU64::new(1);
 pub fn fiber_new(block: RubyValue) -> RubyValue {
     let body = block.as_proc_unchecked();
     let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
-    let coro = spinel_fiber::new_fiber(move |args: Vec<RubyValue>| body(&args));
+    let coro = spinel_fiber::new_fiber(move |args: Vec<RubyValue>| body.call(&args));
     FIBERS.with(|f| f.borrow_mut().insert(id, coro));
     RubyValue::Fiber(Arc::new(FiberHandle {
         id,

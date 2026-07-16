@@ -64,7 +64,7 @@ pub fn run_at_exit() {
     loop {
         let Some(h) = AT_EXIT.lock().pop() else { break };
         if let RubyValue::Proc(p) = h {
-            let _ = p(&[]);
+            let _ = p.call(&[]);
         }
     }
 }

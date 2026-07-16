@@ -179,7 +179,7 @@ builtin_methods! {
         };
         let bytes: Vec<u8> = recv_str!(recv).lock().bytes().collect();
         for b in bytes {
-            p(&[RubyValue::Int(b as i64)])?;
+            p.call(&[RubyValue::Int(b as i64)])?;
         }
         Ok(recv.clone())
     }
@@ -314,7 +314,7 @@ builtin_methods! {
         let p = block_or_enum!(recv, "each_char", args, block);
         let cs: Vec<char> = recv_str!(recv).lock().chars().collect();
         for c in cs {
-            p(&[str_value(c.to_string())])?;
+            p.call(&[str_value(c.to_string())])?;
         }
         Ok(recv.clone())
     }
@@ -323,7 +323,7 @@ builtin_methods! {
         let p = block_or_enum!(recv, "each_line", args, block);
         let ls = split_lines(&recv_str!(recv).lock());
         for l in ls {
-            p(&[l])?;
+            p.call(&[l])?;
         }
         Ok(recv.clone())
     }
@@ -881,7 +881,7 @@ fn sub_gsub(
                     Some(pos) if !pattern.is_empty() => {
                         out.push_str(&rest[..pos]);
                         let replaced =
-                            p(&[RubyValue::Str(crate::string_new(pattern.clone()))])?;
+                            p.call(&[RubyValue::Str(crate::string_new(pattern.clone()))])?;
                         out.push_str(&replaced.to_display_string());
                         rest = &rest[pos + pattern.len()..];
                         if !global {

@@ -18,7 +18,7 @@ builtin_methods! {
     pub(crate) fn lookup;
 
     "call" | "()" | "[]" | "yield" | "===" => fn call(recv, args, _block) {
-        recv_proc(recv)(args)
+        recv_proc(recv).call(args)
     }
     "to_proc" => fn to_proc(recv, args, _block) {
         crate::builtins::arity!(args, 0);
@@ -70,7 +70,7 @@ fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> Ruby
             let mut have = collected.clone();
             have.extend(args.iter().cloned());
             if have.len() >= want {
-                return target(&have);
+                return target.call(&have);
             }
             Ok(curried(target.clone(), have, want))
         },

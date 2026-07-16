@@ -30,7 +30,19 @@ use std::sync::Arc;
 /// `Symbol#to_proc`, ...) use `RProc::new`'s var-args default, which is
 /// what CRuby reports for a comparable C-implemented proc anyway.
 pub struct ProcData {
-    pub f: Box<dyn Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync>,
+    /// Takes the `self` to run under as its FIRST parameter rather than
+    /// capturing it, which is what makes `instance_exec` possible: a Ruby
+    /// block's self is not fixed at creation: `obj.instance_exec { @x }`
+    /// runs this same proc body under a DIFFERENT receiver. A captured
+    /// `self` could only be rebound by mutating shared state (every clone
+    /// of the proc shares one `Arc<ProcData>`, so that would race, and a
+    /// save/restore around the call would corrupt any concurrent use). A
+    /// parameter is immutable, reentrant, and thread-safe by construction.
+    f: Box<dyn Fn(&RubyValue, &[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync>,
+    /// The block's LEXICAL self -- the receiver `#call` runs under, i.e.
+    /// what `self` meant where the block was written. `instance_exec`
+    /// bypasses it; everything else uses it.
+    self_val: RubyValue,
     /// CRuby's encoding: a required-only signature is the positive count;
     /// any optional/rest param makes it `-(required + 1)`.
     pub arity: i32,
@@ -46,28 +58,75 @@ pub struct ProcData {
 pub struct RProc(Arc<ProcData>);
 
 impl RProc {
-    /// A runtime-internal proc: var-args arity (`-1`), not a lambda.
+    /// A runtime-internal proc: var-args arity (`-1`), not a lambda. Its
+    /// body has no Ruby `self` to speak of (Enumerator shuttles,
+    /// `Symbol#to_proc`, ...), so it ignores the receiver and reports nil as
+    /// its lexical self.
     pub fn new(
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(f),
+            f: Box::new(move |_self, args| f(args)),
+            self_val: RubyValue::Nil,
             arity: -1,
             is_lambda: false,
         }))
     }
 
-    /// A proc built from Ruby source, whose `Params` codegen knows.
+    /// A proc built from Ruby source, whose `Params` codegen knows, and
+    /// whose body never mentions `self` (no ivars, no implicit-self call) --
+    /// so there is nothing for `instance_exec` to rebind.
     pub fn with_meta(
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(f),
+            f: Box::new(move |_self, args| f(args)),
+            self_val: RubyValue::Nil,
             arity,
             is_lambda,
         }))
+    }
+
+    /// A proc built from Ruby source whose body DOES use `self` -- codegen
+    /// emits this form, passing the block's lexical self as `self_val`. The
+    /// closure reads its receiver from the parameter, so `instance_exec` can
+    /// supply a different one (see `call_with_self`).
+    pub fn with_self(
+        f: impl Fn(&RubyValue, &[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
+        self_val: RubyValue,
+        arity: i32,
+        is_lambda: bool,
+    ) -> RProc {
+        RProc(Arc::new(ProcData {
+            f: Box::new(f),
+            self_val,
+            arity,
+            is_lambda,
+        }))
+    }
+
+    /// Invoke under the block's own lexical self -- ordinary `#call`/`yield`.
+    pub fn call(&self, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+        (self.0.f)(&self.0.self_val, args)
+    }
+
+    /// Invoke with `self` REBOUND to `recv` -- `instance_exec`/`instance_eval`.
+    /// Leaves this proc untouched and is safe to call concurrently: the
+    /// receiver is a parameter, never stored.
+    pub fn call_with_self(
+        &self,
+        recv: &RubyValue,
+        args: &[RubyValue],
+    ) -> Result<RubyValue, Signal> {
+        (self.0.f)(recv, args)
+    }
+
+    /// The block's lexical self -- `Proc#binding`-adjacent reflection, and
+    /// what `instance_exec` restores nothing to (it simply doesn't consult it).
+    pub fn self_val(&self) -> &RubyValue {
+        &self.0.self_val
     }
 
     pub fn arity(&self) -> i32 {
@@ -84,14 +143,21 @@ impl RProc {
     pub fn ptr_eq(&self, other: &RProc) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
-}
 
-impl std::ops::Deref for RProc {
-    type Target = dyn Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync;
-    fn deref(&self) -> &Self::Target {
-        &*self.0.f
+    /// This proc's allocation address, as `Hash`-key identity and
+    /// `#object_id` need it -- the same notion `ptr_eq` compares, exposed as
+    /// a value. (Previously spelled `&**p` at the call sites, via a `Deref`
+    /// that no longer exists.)
+    pub fn ptr_id(&self) -> usize {
+        Arc::as_ptr(&self.0) as *const () as usize
     }
 }
+
+// No `Deref` to the inner closure (it existed to keep bare `p(&args)` call
+// sites working): the closure now takes `self` first, so a call expression
+// can't stand in for a decision about WHICH receiver to run under. Every
+// invocation goes through `call` (lexical self) or `call_with_self`
+// (rebound) and thereby states which one it means.
 
 /// A non-lambda block's AUTO-SPLAT (CRuby `setup_parameters_complex`'s
 /// `arg_setup_block` path): a block yielded EXACTLY ONE argument that is an
@@ -223,7 +289,7 @@ mod tests {
     #[test]
     fn a_proc_is_callable_through_the_newtype() {
         let p = RProc::new(|args: &[RubyValue]| Ok(args[0].clone()));
-        let out = p(&[RubyValue::Int(7)]).unwrap();
+        let out = p.call(&[RubyValue::Int(7)]).unwrap();
         assert_eq!(out.to_display_string(), "7");
     }
 
@@ -291,7 +357,7 @@ mod tests {
             .expect("a Symbol converts");
         let RubyValue::Proc(p) = out else { panic!("expected a Proc") };
         let s = RubyValue::Str(string_new("hi".to_string()));
-        assert_eq!(p(&[s]).unwrap().to_display_string(), "HI");
+        assert_eq!(p.call(&[s]).unwrap().to_display_string(), "HI");
     }
 
     #[test]

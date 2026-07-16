@@ -6,16 +6,15 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 335 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
-| ? | spike-misc | 124 | arg_assigned_in_sequence | spinelc: parenthesized multi-statement expressions aren't supported yet (spike scope) |
+| P | missing-builtin-method | 318 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
+| ? | spike-misc | 125 | arg_assigned_in_sequence | spinelc: parenthesized multi-statement expressions aren't supported yet (spike scope) |
 | P | missing-core-const | 49 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | g | arity-panic | 37 | array_callforms_strbuf_cycle | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | ? | unknown-class | 31 | bundle_tiny_misc | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | d | class-level-state | 24 | block_param_into_thread | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 19 | arity_keyword_argument_errors | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ! | rustc-failure | 17 | bm_instance_eval | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-29714efa3ec10fdb.rs) |
 | a | param-shapes | 16 | block_param_destructure | spinelc: only plain required parameters are supported before a `*rest` (spike scope) |
-| ? | auto-2b9e30a9 | 7 | bundle_classd_04 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ! | rustc-failure | 16 | bundle_class_14 | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-4f0b670ceb17f2d1.rs) |
 | ? | auto-14bb593e | 5 | bundle_misc_c_26 | spinelc: unsupported syntax at "$1" (spike handles only what the 7 example programs need) |
 | k | pattern-shapes | 5 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-1dc88be1 | 4 | ffi_poly_int_array | spinelc: cannot load such file -- json |
@@ -23,6 +22,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-f715b554 | 4 | i1017 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | interpolation-shapes | 4 | embedded_var | spinelc: unsupported string interpolation part (spike scope) |
 | ? | toplevel-node-in-expr | 4 | class_eval_reopen | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-2b9e30a9 | 3 | const_env_defined_parity | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-56c6c16e | 3 | defined_classification | spinelc: unsupported syntax at "__FILE__" (spike handles only what the 7 example programs need) |
 | ? | auto-74de9804 | 3 | module_function_str_method_param | error: unrecognized escape sequence |
 | ? | alias-inherited | 2 | alias_attr_reader_source | spinelc: `alias title name`: `name` must already be defined earlier in the same class/module body (spike scope) -- aliasing an inherited method isn't supported yet |
@@ -43,7 +43,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-0f30f7e4 | 1 | post_execution | spinelc: unsupported syntax at "END {\n  puts \"last-1\"\n}" (spike handles only what the 7 example programs need) |
 | ? | auto-176da354 | 1 | range_and_array_range_args | uncaught exception: invalid argument - 1..6 |
 | ? | auto-1ce7f942 | 1 | string_multiply_overflow | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | auto-20576ab1 | 1 | raise_non_exception_typeerror | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-20dcf25f | 1 | anon_struct_local | spinelc: `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-221106e8 | 1 | numeric_coerce | uncaught exception: Money can't be coerced into Integer |
 | ? | auto-2d0f16c6 | 1 | ffi_gem_compat | spinelc: cannot load such file -- ffi |
@@ -88,6 +87,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-93fff1fc | 1 | alias_global | spinelc: unsupported syntax at "alias $copy $orig" (spike handles only what the 7 example programs need) |
 | ? | auto-94cf42d6 | 1 | hash_shorthand | spinelc: unsupported syntax at "x:" (spike handles only what the 7 example programs need) |
 | ? | auto-981fd6c7 | 1 | string_index_assign_forms | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-9b378cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') |
 | ? | auto-a2980bed | 1 | require_io_console_winsize | spinelc: cannot load such file -- io/console |
 | ? | auto-a7cbe375 | 1 | module_cvars | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-a8d5a4ab | 1 | symbol_to_proc_after_positional | spinelc: define_method's second argument must be a block |

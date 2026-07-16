@@ -164,13 +164,13 @@ builtin_methods! {
     "tap" => fn tap(recv, args, block) {
         arity!(args, 0);
         let p = need_block!(block);
-        p(std::slice::from_ref(recv))?;
+        p.call(std::slice::from_ref(recv))?;
         Ok(recv.clone())
     }
     "then" | "yield_self" => fn then_m(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "then", args, block);
-        p(std::slice::from_ref(recv))
+        p.call(std::slice::from_ref(recv))
     }
     // `x.to_enum(:meth, *args)` -- captures exactly (receiver, method,
     // args), CRuby's obj_to_enum (Phase 17.2). The block-as-size-proc
@@ -575,7 +575,7 @@ pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signa
     let RubyValue::Proc(p) = &block else {
         panic!("Kernel#catch requires a block");
     };
-    match p(std::slice::from_ref(&tag)) {
+    match p.call(std::slice::from_ref(&tag)) {
         Err(Signal::Throw(t, v)) if t.rb_eq(&tag) => Ok(v),
         other => other,
     }

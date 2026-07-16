@@ -28,7 +28,7 @@ builtin_methods! {
                 let last = if exclusive { *e - 1 } else { *e };
                 let mut i = *s;
                 while i <= last {
-                    p(&[RubyValue::Int(i)])?;
+                    p.call(&[RubyValue::Int(i)])?;
                     i += 1;
                 }
             }
@@ -45,7 +45,7 @@ builtin_methods! {
                     if exclusive && cur == end {
                         break;
                     }
-                    p(&[RubyValue::Str(crate::string_new(cur.clone()))])?;
+                    p.call(&[RubyValue::Str(crate::string_new(cur.clone()))])?;
                     if cur == end {
                         break;
                     }
@@ -128,7 +128,7 @@ builtin_methods! {
         let last = if exclusive { e - 1 } else { *e };
         let mut i = *s;
         while i <= last {
-            p(&[RubyValue::Int(i)])?;
+            p.call(&[RubyValue::Int(i)])?;
             i += by;
         }
         Ok(recv.clone())

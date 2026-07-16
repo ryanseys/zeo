@@ -301,7 +301,7 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
         let m = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m.start()]);
         let matched = RubyValue::Str(string_new(m.as_str().to_string()));
-        let replaced = blk(&[matched])?;
+        let replaced = blk.call(&[matched])?;
         out.push_str(&replaced.to_display_string());
         last_end = m.end();
     }
@@ -316,7 +316,7 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
         Some(caps) => {
             let m = caps.get(0).expect("group 0 is always the whole match");
             let matched = RubyValue::Str(string_new(m.as_str().to_string()));
-            let replaced = blk(&[matched])?;
+            let replaced = blk.call(&[matched])?;
             let mut out = String::new();
             out.push_str(&haystack[..m.start()]);
             out.push_str(&replaced.to_display_string());

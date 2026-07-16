@@ -39,6 +39,15 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
     // implicit-self dispatch resolve Path 1 exactly like any other
     // statically-known-class receiver.
     if matches!(cx.compiler.hir[id], HirNode::SelfRef) {
+        // Inside an escaping block, `self` is a `RubyValue` parameter whose
+        // class isn't knowable at compile time -- `instance_exec` can run the
+        // block under any receiver at all. `Poly` is exactly that ("dispatch
+        // dynamically"), and it's what keeps `self.foo` inside a block from
+        // compiling to a Path 1 direct call on a class the receiver may not
+        // even be.
+        if cx.self_is_dynamic {
+            return TyKind::Poly;
+        }
         if let Some(cid) = cx.current_class {
             // Inside a reopened BUILTIN class's method (Phase 16.3), `self`
             // is the receiver VALUE (the free function's `__self:
@@ -373,6 +382,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::NilLit => quote! { spinel_rt::RubyValue::Nil },
         HirNode::BoolLit(b) => quote! { spinel_rt::RubyValue::Bool(#b) },
         HirNode::SelfRef => {
+            // Inside an escaping block, `self` is the closure's own receiver
+            // parameter -- checked FIRST, because the top-level arm below
+            // would otherwise answer `main_object()` for a block written at
+            // the top level and then `instance_eval`'d onto something else
+            // (`cfg.instance_eval { self.port = 8080 }`), silently sending to
+            // `main` instead of `cfg`.
+            if cx.self_is_dynamic {
+                let slf = &cx.self_ident;
+                return quote! { (#slf).clone() };
+            }
             // Only meaningful inside an ordinary instance method body (see
             // `hir::HirNode::SelfRef`'s docs) -- a class method/module
             // function has no `self: Arc<Self>` receiver at all in its Rust
@@ -458,6 +477,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
+            // A dynamically-typed self (an escaping block's receiver, which
+            // `instance_exec` may have rebound) has no statically-known
+            // struct to take a field from -- resolve the ivar by name at
+            // runtime. The key is the MANGLED ident, matching what
+            // `ruby_class!` keys its own `ivar_get_named` arms on
+            // (`stringify!($ivar)` over the same `safe_ident` output).
+            if cx.self_is_dynamic {
+                let slf = &cx.self_ident;
+                let key = ident.to_string();
+                return quote! { spinel_rt::ivar_get_dyn(#slf, #key) };
+            }
             // `cx.self_ident` is ordinarily the literal `self`, but becomes a
             // fresh capture-alias identifier while emitting an escaping
             // block's own body that captured `self` (see `Ctx::in_proc`'s
@@ -697,7 +727,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 .iter()
                 .map(|&a| box_if_object_typed(cx, a, emit_expr(cx, a)));
             quote! {
-                (__blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked())(&[#(#arg_exprs),*])?
+                (__blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked()).call(&[#(#arg_exprs),*])?
             }
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
@@ -938,6 +968,14 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
 pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     let slf = &cx.self_ident;
+    // A dynamically-typed self: resolve by name at runtime (see `IvarRead`'s
+    // arm). `ivar_set_dyn` carries the frozen check the static path emits
+    // inline below -- it can compute the receiver's real class name for the
+    // message, which is exactly what a statically-unknown self couldn't.
+    if cx.self_is_dynamic {
+        let key = ident.to_string();
+        return quote! { spinel_rt::ivar_set_dyn(#slf, #key, #value)?; };
+    }
     // The `.freeze` guard (Phase 13.1) -- checked at the top of every ivar
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
     // The message's `#<Class>` receiver rendering is a fully-static

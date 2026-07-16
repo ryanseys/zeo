@@ -128,7 +128,7 @@ mod tests {
         let p = symbol_to_proc(Symbol::intern("length"));
         let RubyValue::Proc(p) = p else { panic!() };
         let s = RubyValue::Str(crate::string_new("abc".to_string()));
-        let r = p(&[s]).unwrap();
+        let r = p.call(&[s]).unwrap();
         assert!(matches!(r, RubyValue::Int(3)));
     }
 }

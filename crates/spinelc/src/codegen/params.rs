@@ -1154,6 +1154,7 @@ mod tests {
             captured_locals: &empty,
             self_ident: quote::format_ident!("__self"),
             in_real_proc: false,
+            self_is_dynamic: false,
         };
         emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda).to_string()
     }

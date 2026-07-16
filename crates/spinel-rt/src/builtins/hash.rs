@@ -52,7 +52,7 @@ builtin_methods! {
             return Ok(default.clone());
         }
         if let Some(RubyValue::Proc(p)) = &block {
-            return p(std::slice::from_ref(&args[0]));
+            return p.call(std::slice::from_ref(&args[0]));
         }
         Err(crate::dispatch::raise_error(
             "KeyError",
@@ -159,7 +159,7 @@ builtin_methods! {
         let keys: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(k, _)| k.clone()).collect();
         for k in keys {
-            p(&[k])?;
+            p.call(&[k])?;
         }
         Ok(recv.clone())
     }
@@ -169,7 +169,7 @@ builtin_methods! {
         let vals: Vec<RubyValue> =
             recv_hash!(recv).lock().values().map(|(_, v)| v.clone()).collect();
         for v in vals {
-            p(&[v])?;
+            p.call(&[v])?;
         }
         Ok(recv.clone())
     }
@@ -190,7 +190,7 @@ builtin_methods! {
             recv_hash!(recv).lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
-            out.push((k, p(&[v])?));
+            out.push((k, p.call(&[v])?));
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
@@ -201,7 +201,7 @@ builtin_methods! {
             recv_hash!(recv).lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
-            out.push((p(&[k])?, v));
+            out.push((p.call(&[k])?, v));
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
@@ -222,7 +222,7 @@ builtin_methods! {
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         for (k, v) in pairs {
-            p(&[k, v])?;
+            p.call(&[k, v])?;
         }
         Ok(recv.clone())
     }
@@ -254,7 +254,7 @@ fn merge_into(
             let value = match block {
                 Some(RubyValue::Proc(p)) if crate::hash_has_key(target, &k) => {
                     let old = crate::hash_get(target, &k);
-                    p(&[k.clone(), old, v])?
+                    p.call(&[k.clone(), old, v])?
                 }
                 _ => v,
             };
@@ -278,7 +278,7 @@ fn hash_filter(
     let pairs: Vec<(RubyValue, RubyValue)> = handle.lock().values().cloned().collect();
     let mut out = Vec::new();
     for (k, v) in pairs {
-        if p(&[k.clone(), v.clone()])?.truthy() == keep {
+        if p.call(&[k.clone(), v.clone()])?.truthy() == keep {
             out.push((k, v));
         }
     }

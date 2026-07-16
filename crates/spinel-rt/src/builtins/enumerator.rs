@@ -200,7 +200,7 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
         }
         EnumSource::Generator { block: generator } => {
             let each_block = block.as_proc_unchecked();
-            generator(&[RubyValue::Yielder(each_block)])
+            generator.call(&[RubyValue::Yielder(each_block)])
         }
     }
 }
@@ -415,7 +415,7 @@ fn drive_with_index(
             *c += 1;
             i
         };
-        blk(&[el, RubyValue::Int(i)])
+        blk.call(&[el, RubyValue::Int(i)])
     });
     internal_each(&e.source, RubyValue::Proc(wrapper))
 }
@@ -437,7 +437,7 @@ fn drive_with_object(
     let memo = args[0].clone();
     let memo_for_block = memo.clone();
     let wrapper: RProc =
-        RProc::new(move |raw: &[RubyValue]| blk(&[pack(raw), memo_for_block.clone()]));
+        RProc::new(move |raw: &[RubyValue]| blk.call(&[pack(raw), memo_for_block.clone()]));
     internal_each(&e.source, RubyValue::Proc(wrapper))?;
     Ok(memo)
 }
@@ -562,13 +562,13 @@ builtin_methods! {
     // `y << v` forwards to the consumer's block and returns the yielder
     // (chainable: `y << 1 << 2`).
     "<<" => fn yielder_push(recv, args, _block) {
-        recv_yielder(recv)(args)?;
+        recv_yielder(recv).call(args)?;
         Ok(recv.clone())
     }
 
     // `y.yield(*vs)` forwards and returns the block's own return value.
     "yield" => fn yielder_yield(recv, args, _block) {
-        recv_yielder(recv)(args)
+        recv_yielder(recv).call(args)
     }
 
     "to_proc" => fn yielder_to_proc(recv, args, _block) {
@@ -645,9 +645,9 @@ mod tests {
         let gen: RProc = RProc::new(|args: &[RubyValue]| {
             let y = &args[0];
             let RubyValue::Yielder(f) = y else { panic!("expected a Yielder") };
-            f(&[])?;
-            f(&[RubyValue::Nil])?;
-            f(&[RubyValue::Int(1), RubyValue::Int(2)])?;
+            f.call(&[])?;
+            f.call(&[RubyValue::Nil])?;
+            f.call(&[RubyValue::Int(1), RubyValue::Int(2)])?;
             Ok(RubyValue::Nil)
         });
         let e = enumerator_new(&[], Some(RubyValue::Proc(gen))).unwrap();
@@ -665,7 +665,7 @@ mod tests {
         // error, next again -> a fresh fiber restarting at 1 (oracle).
         let gen: RProc = RProc::new(|args: &[RubyValue]| {
             let RubyValue::Yielder(f) = &args[0] else { panic!() };
-            f(&[RubyValue::Int(1)])?;
+            f.call(&[RubyValue::Int(1)])?;
             Err(Signal::Raise(RubyValue::Int(99)))
         });
         let e = enumerator_new(&[], Some(RubyValue::Proc(gen))).unwrap();

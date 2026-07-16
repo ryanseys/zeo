@@ -562,7 +562,7 @@ fn try_proc_dispatch(
         let e = emit_expr(cx, a);
         box_if_object_typed(cx, a, e)
     });
-    Some(quote! { ((#recv_expr).as_proc_unchecked())(&[#(#arg_exprs),*])? })
+    Some(quote! { ((#recv_expr).as_proc_unchecked()).call(&[#(#arg_exprs),*])? })
 }
 
 pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId]) -> TokenStream {
@@ -749,6 +749,14 @@ fn bind_new_args(
 /// at the top level. Every implicit-self dynamic-dispatch site routes
 /// through this rather than re-deriving the rule.
 fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
+    // Already a `RubyValue`, and the ONLY correct answer inside an escaping
+    // block: `instance_exec` may have rebound the receiver, so an implicit-
+    // self call there (`obj.instance_exec { helper }`) must dispatch on the
+    // block's actual runtime self, not on whatever `self` meant lexically.
+    if cx.self_is_dynamic {
+        let slf = &cx.self_ident;
+        return Some(quote! { (#slf).clone() });
+    }
     if let Some(cid) = cx.current_class {
         let slf = &cx.self_ident;
         return Some(if cx.compiler.value_backed(cid) {
@@ -869,6 +877,10 @@ pub fn emit_super_inline(
         current_class: Some(receiver_class),
         defining_class: Some(new_defining_class),
         current_method: Some(mname.to_string()),
+        // Carried over with `self_ident` below: the splice keeps referring to
+        // whichever `self` the CALLING method's body already uses, so how
+        // that self is typed carries over with it.
+        self_is_dynamic: cx.self_is_dynamic,
         local_types: std::borrow::Cow::Borrowed(&defining_scope.local_types),
         label_counter: cx.label_counter,
         loop_labels: cx.loop_labels.clone(),
@@ -1247,26 +1259,16 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
     let blk_clone = crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body)
         .then(|| quote! { let __blk = __blk.clone(); });
 
+    // A block that mentions `self` (an ivar, a bare `self`, an implicit-self
+    // call) does NOT capture it: it takes it as the closure's first
+    // parameter, and the value below is only the DEFAULT -- the lexical self
+    // that ordinary `#call`/`yield` runs under. `instance_exec` passes a
+    // different one. `boxed_implicit_self` is exactly the "self here, as a
+    // RubyValue" rule this needs, so it isn't re-derived.
     let needs_self = block_caps.self_captured;
-    let self_clone = needs_self.then(|| {
-        let slf = &cx.self_ident;
-        // Inside a REOPENED builtin's (or `Object`'s) method (Phase 16.3),
-        // `self` is the `__self: RubyValue` parameter -- a plain
-        // `RubyValue::clone`, not an `Arc<Concrete>` (`Arc::clone(&__self)`
-        // wouldn't typecheck). The alias deliberately shadows: the closure
-        // captures the fresh `__self` binding by move either way.
-        if cx.current_class.is_none() && cx.defining_class.is_none() {
-            // The TOP LEVEL has no `self` binding at all -- `self` there is
-            // the shared runtime `main` object.
-            quote! { let __self = spinel_rt::main_object(); }
-        } else if cx
-            .current_class
-            .is_some_and(|c| cx.compiler.value_backed(c))
-        {
-            quote! { let __self = (#slf).clone(); }
-        } else {
-            quote! { let __self = ::std::sync::Arc::clone(&#slf); }
-        }
+    let self_default = needs_self.then(|| {
+        let boxed = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
+        quote! { let __self_default = #boxed; }
     });
 
     let proc_cx = cx.in_proc(needs_self);
@@ -1300,12 +1302,25 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
     // `Proc#arity`/`#lambda?`/`#curry` read these -- a Rust closure can't
     // answer them about itself (see `spinel_rt::ProcData`).
     let arity = super::params::proc_arity(params, is_lambda);
+    // Two shapes, differing only in whether the body needs a receiver:
+    // `with_self` takes one as a parameter (so `instance_exec` can rebind
+    // it); `with_meta` is for a body that never mentions `self` and so has
+    // nothing to rebind.
+    let (ctor, self_param) = if needs_self {
+        (
+            quote! { spinel_rt::RProc::with_self },
+            quote! { __self: &spinel_rt::RubyValue, },
+        )
+    } else {
+        (quote! { spinel_rt::RProc::with_meta }, quote! {})
+    };
+    let default_arg = needs_self.then(|| quote! { __self_default, });
     quote! {
         {
             #(#capture_clones)*
             #blk_clone
-            #self_clone
-            spinel_rt::RubyValue::Proc(spinel_rt::RProc::with_meta(move |__args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            #self_default
+            spinel_rt::RubyValue::Proc(#ctor(move |#self_param __args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 #redo_label: loop {
                     let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                         #arity_check
@@ -1319,7 +1334,7 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
                         #terminal_arm
                     }
                 }
-            }, #arity, #is_lambda))
+            }, #default_arg #arity, #is_lambda))
         }
     }
 }
@@ -1525,7 +1540,18 @@ pub fn emit_call(
                 };
                 return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
             }
-            if let Some((_, sid)) = cx.compiler.method_in_chain(cid, name) {
+            // The Path 1 direct call needs `self` to BE an `Arc<Concrete>` of
+            // this class -- true in a method body, false inside an escaping
+            // block, whose self is a `RubyValue` parameter that
+            // `instance_exec` may have pointed at another class entirely.
+            // There, fall through to the dynamic dispatch below: the sibling
+            // method is then resolved against the receiver actually passed,
+            // which is the whole point of rebinding.
+            if let Some((_, sid)) = cx
+                .compiler
+                .method_in_chain(cid, name)
+                .filter(|_| !cx.self_is_dynamic)
+            {
                 let scope = cx.compiler.scope(sid);
                 let slf = &cx.self_ident;
                 let recv_expr = quote! { #slf.clone() };
@@ -1605,13 +1631,12 @@ pub fn emit_call(
                 let mod_ident =
                     super::ident::class_ident(cx.compiler, crate::compiler::OBJECT_CLASS);
                 let method_ident = safe_ident(name);
-                let recv = match cx.defining_class {
-                    None => quote! { spinel_rt::main_object() },
-                    Some(dcid) => {
-                        let id = dcid.0;
-                        quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
-                    }
-                };
+                // `boxed_implicit_self` IS this rule ("self here, boxed"),
+                // including the case this used to get wrong: inside an
+                // escaping block it answers the block's own receiver, so a
+                // top-level def called from an `instance_exec`'d block runs
+                // against the rebound self rather than always `main`.
+                let recv = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
                 return super::params::emit_call_args_to(
                     cx,
                     &super::params::Callee::FreeFn {
@@ -2867,7 +2892,7 @@ fn dispatch(
                             return Err(spinel_rt::Signal::Raise(#lock_err));
                         }
                         let __blk = (#proc).as_proc_unchecked();
-                        let __r = spinel_rt::catch_break(__blk(&[]));
+                        let __r = spinel_rt::catch_break(__blk.call(&[]));
                         let _ = spinel_rt::mutex_unlock(&__m);
                         match __r {
                             Ok(__v) => __v,

@@ -524,7 +524,7 @@ builtin_methods! {
         let items = recv_array!(recv).lock().clone();
         if let Some(RubyValue::Proc(p)) = &block {
             for (i, e) in items.iter().enumerate() {
-                if p(std::slice::from_ref(e))?.truthy() {
+                if p.call(std::slice::from_ref(e))?.truthy() {
                     return Ok(RubyValue::Int(i as i64));
                 }
             }
@@ -580,7 +580,7 @@ builtin_methods! {
             return Ok(default.clone());
         }
         if let Some(RubyValue::Proc(p)) = &block {
-            return p(&[RubyValue::Int(i)]);
+            return p.call(&[RubyValue::Int(i)]);
         }
         Err(crate::dispatch::raise_error(
             "IndexError",
@@ -760,7 +760,7 @@ builtin_methods! {
         let items = recv_array!(recv).lock().clone();
         let mut out = Vec::with_capacity(items.len());
         for e in items {
-            out.push(p(&[e])?);
+            out.push(p.call(&[e])?);
         }
         *recv_array!(recv).lock() = out;
         Ok(recv.clone())
@@ -834,7 +834,7 @@ builtin_methods! {
         // live-view semantics).
         let elems: Vec<RubyValue> = recv_array!(recv).lock().clone();
         for e in elems {
-            p(&[e])?;
+            p.call(&[e])?;
         }
         Ok(recv.clone())
     }
@@ -930,7 +930,7 @@ pub(crate) fn sort_items(
             if failure.is_some() {
                 return std::cmp::Ordering::Equal;
             }
-            match p(&[a.clone(), b.clone()]) {
+            match p.call(&[a.clone(), b.clone()]) {
                 Ok(RubyValue::Int(c)) => c.cmp(&0),
                 Ok(_) => {
                     failure = Some(crate::dispatch::raise_error(
@@ -992,7 +992,7 @@ fn in_place_filter(
     let items = handle.lock().clone();
     let mut out = Vec::with_capacity(items.len());
     for e in items.iter() {
-        if p(std::slice::from_ref(e))?.truthy() == keep {
+        if p.call(std::slice::from_ref(e))?.truthy() == keep {
             out.push(e.clone());
         }
     }

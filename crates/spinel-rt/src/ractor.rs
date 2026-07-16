@@ -72,7 +72,7 @@ pub fn ractor_new(block: RubyValue, args: Vec<RubyValue>) -> Result<RubyValue, S
     let (tx, rx) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         CURRENT_INCOMING.with(|c| *c.borrow_mut() = Some(rx));
-        body(&crossed)
+        body.call(&crossed)
     });
     Ok(RubyValue::Ractor(Arc::new(RactorData {
         incoming: tx,

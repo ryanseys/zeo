@@ -73,7 +73,7 @@ pub type RThread = Arc<ThreadData>;
 /// matching CRuby.
 pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let body = block.as_proc_unchecked();
-    let handle = may::go!(move || body(&args));
+    let handle = may::go!(move || body.call(&args));
     RubyValue::Thread(Arc::new(ThreadData {
         state: PlMutex::new(Some(ThreadState::Running(handle))),
     }))
