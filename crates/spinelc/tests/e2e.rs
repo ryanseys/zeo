@@ -8257,6 +8257,81 @@ fn new_with_the_wrong_arity_raises_a_rescuable_runtime_error() {
 }
 
 #[test]
+fn dynamic_dispatch_wrong_arity_raises_a_rescuable_argument_error() {
+    // `send` routes through `emit_dynamic_trampoline`, whose arity guard used
+    // to `panic!` -- a process abort where Ruby raises a RESCUABLE
+    // ArgumentError. Now it emits `return Err(raise_error("ArgumentError",
+    // ...))`, so the program survives every mismatch and the final line
+    // prints. All three message shapes -- fixed `N`, range `N..M`, and the
+    // rest form `N+` -- are oracle-verified against ruby 4.0.5.
+    let result = run_ruby(
+        r##"
+        class A
+          def fixed(a) = a
+          def rng(a, b = 2) = a + b
+          def restp(a, *b) = a
+        end
+        o = A.new
+        [[:fixed, []], [:fixed, [1, 2]], [:rng, []], [:rng, [1, 2, 3]], [:restp, []]].each do |m, args|
+          begin
+            o.send(m, *args)
+          rescue ArgumentError => e
+            puts "#{m}: #{e.message}"
+          end
+        end
+        puts "survived"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "fixed: wrong number of arguments (given 0, expected 1)\n\
+         fixed: wrong number of arguments (given 2, expected 1)\n\
+         rng: wrong number of arguments (given 0, expected 1..2)\n\
+         rng: wrong number of arguments (given 3, expected 1..2)\n\
+         restp: wrong number of arguments (given 0, expected 1+)\n\
+         survived\n"
+    );
+}
+
+#[test]
+fn value_trampoline_wrong_arity_raises_a_rescuable_argument_error() {
+    // The `ValueMethodFn` trampoline (`emit_value_trampoline`) backs both a
+    // user CLASS method reached dynamically and a reopened-builtin instance
+    // method. Its arity guard shared the same `panic!` bug as the dynamic
+    // trampoline; both now raise a rescuable ArgumentError. Oracle-verified.
+    let result = run_ruby(
+        r##"
+        class A
+          def self.cm(a, b) = a + b
+        end
+        class Integer
+          def double(a); self * 2; end
+        end
+        k = A
+        begin
+          k.send(:cm, 1)
+        rescue ArgumentError => e
+          puts "cm: #{e.message}"
+        end
+        begin
+          5.send(:double)
+        rescue ArgumentError => e
+          puts "double: #{e.message}"
+        end
+        puts "survived"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "cm: wrong number of arguments (given 1, expected 2)\n\
+         double: wrong number of arguments (given 0, expected 1)\n\
+         survived\n"
+    );
+}
+
+#[test]
 fn initialize_takes_the_full_param_shapes() {
     // `.new` was the last call site still binding arguments by hand, and it
     // only handled required + optional -- `def initialize(*values)` was a

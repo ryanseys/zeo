@@ -665,6 +665,53 @@ fn dynamic_kwargs_binding(
     (Some(preamble), kw_args)
 }
 
+/// The rescuable-`ArgumentError` arity guard shared by both dynamic-dispatch
+/// trampolines (`emit_dynamic_trampoline`/`emit_value_trampoline`). Ruby
+/// resolves arity at RUNTIME and the error is rescuable, so this emits a
+/// `return Err(raise_error("ArgumentError", …))` -- NOT a `panic!`, which
+/// would abort the process where a `rescue ArgumentError` should catch it.
+///
+/// Emits nothing when the method accepts any count (no required/post params
+/// and an unbounded rest). The compile-time `expected` description matches
+/// CRuby's exact shapes (oracle-verified against ruby 4.0.5): `N` fixed,
+/// `N..M` bounded range, `N+` when a rest param leaves the upper bound open.
+/// Both trampolines build their argument bindings identically below, so the
+/// `Option`-built bounds keep a missing lower/upper bound from emitting a
+/// dangling `||` (an `args.len() < 0` useless-comparison lint).
+fn emit_arity_check(params: &Params) -> TokenStream {
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let has_rest = params.rest.is_some();
+    let min_lit = nreq + npost;
+    let min_cond = (min_lit > 0).then(|| quote! { args.len() < #min_lit });
+    let max_cond = (!has_rest).then(|| {
+        let max_lit = nreq + nopt + npost;
+        quote! { args.len() > #max_lit }
+    });
+    let cond = match (min_cond, max_cond) {
+        (None, None) => return quote! {},
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (Some(a), Some(b)) => quote! { #a || #b },
+    };
+    let expected = if has_rest {
+        format!("{min_lit}+")
+    } else if nopt == 0 {
+        format!("{min_lit}")
+    } else {
+        format!("{min_lit}..{}", nreq + nopt + npost)
+    };
+    quote! {
+        if #cond {
+            return Err(spinel_rt::raise_error(
+                "ArgumentError",
+                format!("wrong number of arguments (given {}, expected {})", args.len(), #expected),
+            ));
+        }
+    }
+}
+
 pub fn emit_dynamic_trampoline(
     class_ident: &proc_macro2::Ident,
     method_name: &str,
@@ -677,26 +724,8 @@ pub fn emit_dynamic_trampoline(
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
-    let has_rest = params.rest.is_some();
     let min_lit = nreq + npost;
-    // `args.len() < 0` is always false (a useless-comparison lint) when a
-    // method has no required/post params -- each bound is built as an
-    // `Option`, so a missing bound doesn't leave a dangling `||`, and the
-    // whole check is skipped when NEITHER bound applies (no required/post
-    // params and an unbounded rest).
-    let min_cond = (min_lit > 0).then(|| quote! { args.len() < #min_lit });
-    let max_cond = (!has_rest).then(|| {
-        let max_lit = nreq + nopt + npost;
-        quote! { args.len() > #max_lit }
-    });
-    let arity_check = match (min_cond, max_cond) {
-        (None, None) => quote! {},
-        (Some(a), None) => quote! { if #a { panic!("wrong number of arguments for {}", #method_name); } },
-        (None, Some(b)) => quote! { if #b { panic!("wrong number of arguments for {}", #method_name); } },
-        (Some(a), Some(b)) => {
-            quote! { if #a || #b { panic!("wrong number of arguments for {}", #method_name); } }
-        }
-    };
+    let arity_check = emit_arity_check(params);
 
     let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
     let optional_args = (0..nopt).map(|i| {
@@ -769,23 +798,8 @@ pub fn emit_value_trampoline(
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
-    let has_rest = params.rest.is_some();
     let min_lit = nreq + npost;
-    // Same `Option`-built bounds as `emit_dynamic_trampoline` -- see its
-    // comment for why a missing bound is skipped entirely.
-    let min_cond = (min_lit > 0).then(|| quote! { args.len() < #min_lit });
-    let max_cond = (!has_rest).then(|| {
-        let max_lit = nreq + nopt + npost;
-        quote! { args.len() > #max_lit }
-    });
-    let arity_check = match (min_cond, max_cond) {
-        (None, None) => quote! {},
-        (Some(a), None) => quote! { if #a { panic!("wrong number of arguments for {}", #method_name); } },
-        (None, Some(b)) => quote! { if #b { panic!("wrong number of arguments for {}", #method_name); } },
-        (Some(a), Some(b)) => {
-            quote! { if #a || #b { panic!("wrong number of arguments for {}", #method_name); } }
-        }
-    };
+    let arity_check = emit_arity_check(params);
 
     let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
     let optional_args = (0..nopt).map(|i| {
