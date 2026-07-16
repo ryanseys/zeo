@@ -231,18 +231,14 @@ mod tests {
 }
 
 macro_rules! cpx_op_row {
-    ($args:ident, $recv:ident, $num_fn:ident) => {{
+    ($args:ident, $recv:ident, $num_fn:ident, $op:literal) => {{
         arity!($args, 1);
-        match crate::builtins::numeric::$num_fn($recv, &$args[0]) {
-            Some(r) => r,
-            None => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} can't be coerced into Complex",
-                    crate::builtins::class_name_of(&$args[0])
-                ),
-            )),
-        }
+        crate::builtins::numeric::num_coerce_bin(
+            $recv,
+            &$args[0],
+            crate::builtins::numeric::$num_fn($recv, &$args[0]),
+            $op,
+        )
     }};
 }
 
@@ -261,11 +257,11 @@ fn abs_f64(c: &RComplexData) -> f64 {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "+" => fn add(recv, args, _block) { cpx_op_row!(args, recv, num_add) }
-    "-" => fn sub(recv, args, _block) { cpx_op_row!(args, recv, num_sub) }
-    "*" => fn mul(recv, args, _block) { cpx_op_row!(args, recv, num_mul) }
-    "/" => fn div(recv, args, _block) { cpx_op_row!(args, recv, num_div) }
-    "**" => fn pow(recv, args, _block) { cpx_op_row!(args, recv, num_pow) }
+    "+" => fn add(recv, args, _block) { cpx_op_row!(args, recv, num_add, "+") }
+    "-" => fn sub(recv, args, _block) { cpx_op_row!(args, recv, num_sub, "-") }
+    "*" => fn mul(recv, args, _block) { cpx_op_row!(args, recv, num_mul, "*") }
+    "/" => fn div(recv, args, _block) { cpx_op_row!(args, recv, num_div, "/") }
+    "**" => fn pow(recv, args, _block) { cpx_op_row!(args, recv, num_pow, "**") }
     "-@" => fn neg(recv, args, _block) {
         arity!(args, 0);
         cpx_sub(&complex_new(RubyValue::Int(0), RubyValue::Int(0))?, recv)

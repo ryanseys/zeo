@@ -129,6 +129,130 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
+/// `String#[]`/`slice` with a Regexp: the whole match or a named/numbered
+/// capture group. `None` group arg means the whole match.
+fn regexp_index(re: &crate::RRegexp, text: &str, group: Option<&RubyValue>) -> RubyValue {
+    let RubyValue::MatchData(m) = crate::regexp_match(re, text) else {
+        return RubyValue::Nil;
+    };
+    match group {
+        None => crate::matchdata_group(&m, 0),
+        Some(RubyValue::Int(n)) => crate::matchdata_group(&m, *n),
+        Some(RubyValue::Str(name)) => {
+            crate::matchdata_group_by_name(&m, &name.lock().to_utf8_lossy())
+        }
+        Some(RubyValue::Symbol(s)) => crate::matchdata_group_by_name(&m, &s.name()),
+        _ => RubyValue::Nil,
+    }
+}
+
+/// `String#oct`/`#hex`: a leading integer in `default_base`, honoring an
+/// explicit `0x`/`0b`/`0o`/`0d` prefix, underscores between digits, and a
+/// leading sign; stops at the first invalid digit (0 when none), never
+/// raising -- CRuby's lenient parse. BigInt-accumulated, so large inputs stay
+/// exact.
+fn parse_int_lenient(text: &str, default_base: u32) -> RubyValue {
+    use num_bigint::BigInt;
+    let s = text.trim_start();
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let (base, s) = if let Some(r) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        (16, r)
+    } else if let Some(r) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        (2, r)
+    } else if let Some(r) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        (8, r)
+    } else if let Some(r) = s.strip_prefix("0d").or_else(|| s.strip_prefix("0D")) {
+        (10, r)
+    } else {
+        (default_base, s)
+    };
+    let mut val = BigInt::from(0);
+    let big_base = BigInt::from(base);
+    for c in s.chars() {
+        if c == '_' {
+            continue;
+        }
+        match c.to_digit(base) {
+            Some(d) => val = val * &big_base + BigInt::from(d),
+            None => break,
+        }
+    }
+    crate::builtins::integer::int_value(if neg { -val } else { val })
+}
+
+/// `String#slice!`: removes the matched span from `recv` in place and returns
+/// it. Supports the `(index[, len])` / `(range)` / `(substring)` forms
+/// (Regexp/`slice!` is a documented gap).
+fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let handle = recv_str!(recv);
+    let mut chars: Vec<char> = handle.lock().char_vec();
+    let n = chars.len() as i64;
+    let norm = |i: i64| if i < 0 { i + n } else { i };
+    // Resolve the [start, end) character span to remove.
+    let (start, end) = match (&args[0], args.get(1)) {
+        (RubyValue::Int(i), Some(RubyValue::Int(len))) => {
+            let start = norm(*i);
+            if start < 0 || start > n || *len < 0 {
+                return Ok(RubyValue::Nil);
+            }
+            (start as usize, (start + *len).min(n) as usize)
+        }
+        (RubyValue::Int(i), None) => {
+            let start = norm(*i);
+            if start < 0 || start >= n {
+                return Ok(RubyValue::Nil);
+            }
+            (start as usize, (start + 1) as usize)
+        }
+        (RubyValue::Range(s, e, exclusive), None) => {
+            let start = match s.as_deref() {
+                Some(RubyValue::Int(v)) => norm(*v),
+                None => 0,
+                _ => return Ok(RubyValue::Nil),
+            };
+            let end = match e.as_deref() {
+                Some(RubyValue::Int(v)) => {
+                    let v = norm(*v);
+                    if *exclusive {
+                        v
+                    } else {
+                        v + 1
+                    }
+                }
+                None => n,
+                _ => return Ok(RubyValue::Nil),
+            };
+            if start < 0 || start > n {
+                return Ok(RubyValue::Nil);
+            }
+            (start as usize, end.clamp(start, n) as usize)
+        }
+        (RubyValue::Str(sub), None) => {
+            let needle: Vec<char> = sub.lock().to_utf8_lossy().chars().collect();
+            match find_subslice(&chars, &needle) {
+                Some(pos) => (pos, pos + needle.len()),
+                None => return Ok(RubyValue::Nil),
+            }
+        }
+        _ => return Ok(RubyValue::Nil),
+    };
+    let removed: String = chars[start..end].iter().collect();
+    chars.drain(start..end);
+    handle.lock().replace_utf8(chars.into_iter().collect());
+    Ok(str_value(removed))
+}
+
+/// The first index of `needle` within `haystack` (both char slices), or None.
+fn find_subslice(haystack: &[char], needle: &[char]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -432,6 +556,20 @@ builtin_methods! {
                     // whitespace-run splitting, real Ruby's awk rule.
                     return Ok(str_array(awk_split(&text, limit)));
                 }
+                if sep.is_empty() {
+                    // An empty separator splits into characters (Rust's own
+                    // `split("")` would emit spurious leading/trailing empties).
+                    let chars: Vec<char> = text.chars().collect();
+                    let parts: Vec<String> = if limit > 0 && (limit as usize) < chars.len() {
+                        let head = limit as usize - 1;
+                        let mut v: Vec<String> = chars[..head].iter().map(|c| c.to_string()).collect();
+                        v.push(chars[head..].iter().collect());
+                        v
+                    } else {
+                        chars.iter().map(|c| c.to_string()).collect()
+                    };
+                    return Ok(str_array(parts));
+                }
                 let mut parts: Vec<String> = if limit > 0 {
                     text.splitn(limit as usize, sep.as_str()).map(str::to_string).collect()
                 } else {
@@ -553,6 +691,12 @@ builtin_methods! {
     // stays BINARY; a UTF-8 multibyte char is one index).
     "[]" | "slice" => fn index_op(recv, args, _block) {
         arity!(args, 1..=2);
+        // Regexp indexing: `s[/re/]` is the whole match; `s[/re/, n]`/`s[/re/,
+        // :name]` is that capture group (nil when the pattern doesn't match).
+        if let RubyValue::Regexp(re) = &args[0] {
+            let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+            return Ok(regexp_index(re, &text, args.get(1)));
+        }
         let s = recv_str!(recv).lock();
         let n = s.char_len() as i64;
         let wrap = |buf: Option<crate::encoding::StrBuf>| match buf {
@@ -597,6 +741,40 @@ builtin_methods! {
                 ),
             )),
         }
+    }
+    // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
+    // (Unicode-aware) sibling. A non-String argument answers nil.
+    "casecmp" => fn casecmp(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
+        let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
+        let b = o.lock().to_utf8_lossy().to_lowercase();
+        Ok(RubyValue::Int(a.cmp(&b) as i64))
+    }
+    "casecmp?" => fn casecmp_p(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
+        let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
+        let b = o.lock().to_utf8_lossy().to_lowercase();
+        Ok(RubyValue::Bool(a == b))
+    }
+    // `oct`/`hex` parse a leading integer in base 8/16, honoring an explicit
+    // `0x`/`0b`/`0o`/`0d` radix prefix and stopping at the first invalid
+    // digit (0 when there is none) -- CRuby's lenient rule.
+    "oct" => fn oct(recv, args, _block) {
+        arity!(args, 0);
+        Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 8))
+    }
+    "hex" => fn hex(recv, args, _block) {
+        arity!(args, 0);
+        Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 16))
+    }
+    // `slice!(index[, len])` / `slice!(range)` / `slice!(substring)`: removes
+    // the matched portion from the receiver IN PLACE and returns it (nil when
+    // nothing matched).
+    "slice!" => fn slice_bang(recv, args, _block) {
+        arity!(args, 1..=2);
+        slice_bang_impl(recv, args)
     }
     // `sub`/`gsub`: String or Regexp pattern; String replacement or block.
     "sub" => fn sub(recv, args, block) {
@@ -1169,23 +1347,34 @@ fn sub_gsub(
         crate::builtins::arity!(args, 2);
     }
     match (&args[0], block_proc) {
-        (RubyValue::Regexp(re), None) => {
-            let RubyValue::Str(replacement) = &args[1] else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(&args[1])
-                    ),
-                ));
-            };
-            let replacement = replacement.lock().to_utf8_lossy().into_owned();
-            Ok(if global {
-                crate::regexp_gsub(re, &text, &replacement)
-            } else {
-                crate::regexp_sub(re, &text, &replacement)
-            })
-        }
+        (RubyValue::Regexp(re), None) => match &args[1] {
+            RubyValue::Str(replacement) => {
+                let replacement = replacement.lock().to_utf8_lossy().into_owned();
+                Ok(if global {
+                    crate::regexp_gsub(re, &text, &replacement)
+                } else {
+                    crate::regexp_sub(re, &text, &replacement)
+                })
+            }
+            // A Hash replacement maps each matched substring to `hash[match]`
+            // (a missing key stringifies to ""), exactly a block that looks the
+            // match up -- so it rides the existing block-substitution path.
+            RubyValue::Hash(h) => {
+                let table = h.clone();
+                let p = crate::RProc::new(move |a: &[RubyValue]| {
+                    Ok(crate::hash_get(&table, &a[0]))
+                });
+                if global {
+                    crate::regexp_gsub_block(re, &text, &p)
+                } else {
+                    crate::regexp_sub_block(re, &text, &p)
+                }
+            }
+            other => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            )),
+        },
         (RubyValue::Regexp(re), Some(p)) => {
             if global {
                 crate::regexp_gsub_block(re, &text, &p)
@@ -1347,6 +1536,47 @@ mod tests {
 
     fn show(r: Result<RubyValue, Signal>) -> String {
         r.unwrap().inspect_string()
+    }
+
+    #[test]
+    fn oct_and_hex_honor_prefixes_and_stop_at_garbage() {
+        assert_eq!(show(oct(&s("777"), &[], None)), "511");
+        assert_eq!(show(oct(&s("0x1f"), &[], None)), "31"); // 0x prefix overrides base 8
+        assert_eq!(show(hex(&s("ff"), &[], None)), "255");
+        assert_eq!(show(hex(&s("0xff"), &[], None)), "255");
+        assert_eq!(show(oct(&s("12 z9"), &[], None)), "10"); // stops at 'z'
+        assert_eq!(show(hex(&s(""), &[], None)), "0");
+    }
+
+    #[test]
+    fn casecmp_families() {
+        assert_eq!(show(casecmp(&s("Hello"), &[s("hello")], None)), "0");
+        assert_eq!(show(casecmp(&s("A"), &[s("b")], None)), "-1");
+        assert_eq!(show(casecmp_p(&s("Hello"), &[s("HELLO")], None)), "true");
+        assert_eq!(show(casecmp_p(&s("a"), &[s("b")], None)), "false");
+    }
+
+    #[test]
+    fn slice_bang_removes_in_place_and_returns_the_slice() {
+        let str = s("hello");
+        assert_eq!(show(slice_bang(&str, &[RubyValue::Int(1), RubyValue::Int(2)], None)), "\"el\"");
+        assert_eq!(str.to_display_string(), "hlo");
+        let str2 = s("hello");
+        assert_eq!(show(slice_bang(&str2, &[s("ll")], None)), "\"ll\"");
+        assert_eq!(str2.to_display_string(), "heo");
+    }
+
+    #[test]
+    fn split_empty_separator_yields_characters() {
+        assert_eq!(show(split(&s("hello"), &[s("")], None)), "[\"h\", \"e\", \"l\", \"l\", \"o\"]");
+        assert_eq!(show(split(&s("hello"), &[s(""), RubyValue::Int(2)], None)), "[\"h\", \"ello\"]");
+    }
+
+    #[test]
+    fn index_with_regexp_and_group() {
+        let re = RubyValue::Regexp(crate::regexp_new("(\\w+) (\\w+)", false, false, false).unwrap());
+        assert_eq!(show(index_op(&s("hello world foo"), &[re.clone()], None)), "\"hello world\"");
+        assert_eq!(show(index_op(&s("hello world"), &[re, RubyValue::Int(2)], None)), "\"world\"");
     }
 
     #[test]

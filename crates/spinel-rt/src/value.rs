@@ -814,6 +814,27 @@ impl RubyValue {
                 let b = b.lock().to_utf8_lossy().into_owned();
                 Some(a.cmp(&b) as i64)
             }
+            // Symbols order by their names, CRuby's `Symbol#<=>` -- what makes
+            // `%i[b a].sort` and `{b: 1, a: 2}.sort` (which orders `[:key, v]`
+            // pairs) work.
+            (RubyValue::Symbol(a), RubyValue::Symbol(b)) => {
+                Some(a.name().cmp(&b.name()) as i64)
+            }
+            // Arrays order lexicographically, element by element (CRuby's
+            // `Array#<=>`) -- what lets `[[:b, 2], [:a, 1]].sort` and hence
+            // `Hash#sort` work, since the generic comparison drivers use
+            // `rb_cmp` rather than dispatching `Array#<=>`.
+            (RubyValue::Array(a), RubyValue::Array(b)) => {
+                let (a, b) = (a.lock().clone(), b.lock().clone());
+                for (x, y) in a.iter().zip(b.iter()) {
+                    match x.rb_cmp(y) {
+                        Some(0) => continue,
+                        Some(c) => return Some(c),
+                        None => return None,
+                    }
+                }
+                Some((a.len() as i64 - b.len() as i64).signum())
+            }
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(o, "<=>", std::slice::from_ref(other)) {
                     Some(Ok(RubyValue::Int(i))) => Some(i.signum()),
@@ -1050,6 +1071,21 @@ mod tests {
 
     fn sym(name: &str) -> RubyValue {
         RubyValue::Symbol(Symbol::intern(name))
+    }
+
+    #[test]
+    fn rb_cmp_orders_symbols_and_arrays() {
+        assert_eq!(sym("a").rb_cmp(&sym("b")), Some(-1));
+        assert_eq!(sym("b").rb_cmp(&sym("a")), Some(1));
+        assert_eq!(sym("x").rb_cmp(&sym("x")), Some(0));
+        // Arrays order lexicographically -- the pair shape `Hash#sort` needs.
+        let p1 = RubyValue::Array(array_new(vec![sym("a"), RubyValue::Int(1)]));
+        let p2 = RubyValue::Array(array_new(vec![sym("b"), RubyValue::Int(2)]));
+        assert_eq!(p1.rb_cmp(&p2), Some(-1));
+        // A shorter prefix sorts before its extension.
+        let short = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
+        let long = RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(0)]));
+        assert_eq!(short.rb_cmp(&long), Some(-1));
     }
 
     /// Phase 15.2: every expected string below is oracle-verified against

@@ -410,6 +410,47 @@ builtin_methods! {
     }
 }
 
+/// CRuby's `rb_num_coerce_bin` for a binary numeric operator: given the
+/// native-tower result (`Some` when both operands fit the built-in numeric
+/// types), pass it through; otherwise fall back to the `coerce` protocol --
+/// ask `arg` to `coerce(recv)`, then apply `op` to the returned `[a, b]`
+/// pair. This is what lets a user numeric type (a `Money`, a `Vector`) join
+/// arithmetic with a built-in: `5 + Money.new(...)` becomes
+/// `Money.new(...).coerce(5) => [a, b]; a + b`. A non-numeric operand that
+/// doesn't answer `coerce` raises the ordinary coercion TypeError.
+pub(crate) fn num_coerce_bin(
+    recv: &RubyValue,
+    arg: &RubyValue,
+    computed: Option<Result<RubyValue, Signal>>,
+    op: &str,
+) -> Result<RubyValue, Signal> {
+    if let Some(r) = computed {
+        return r;
+    }
+    let coerce = crate::Symbol::intern("coerce");
+    if crate::dispatch::responds_to(arg.class_id(), coerce, false) {
+        let pair =
+            crate::dispatch::send_value(arg, coerce, std::slice::from_ref(recv), None)?;
+        if let RubyValue::Array(a) = &pair {
+            let items: Vec<RubyValue> = a.lock().iter().cloned().collect();
+            if items.len() == 2 {
+                return crate::dispatch::send_value(
+                    &items[0],
+                    crate::Symbol::intern(op),
+                    std::slice::from_ref(&items[1]),
+                    None,
+                );
+            }
+        }
+        // `coerce` must answer a 2-element Array (CRuby's exact TypeError).
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            "coerce must return [x, y]".to_string(),
+        ));
+    }
+    Err(coercion_error(recv, arg))
+}
+
 /// The coercion TypeError a generic Numeric row raises (named by the
 /// RECEIVER's class, CRuby's shape).
 fn coercion_error(recv: &RubyValue, arg: &RubyValue) -> Signal {
@@ -435,6 +476,16 @@ mod tests {
 
     fn rat(n: i64, d: i64) -> RubyValue {
         rational_new(BigInt::from(n), BigInt::from(d)).unwrap()
+    }
+
+    #[test]
+    fn num_coerce_bin_passes_a_native_result_through_untouched() {
+        // When the native tower already handled the operands, `num_coerce_bin`
+        // returns that result without consulting the coerce protocol (which
+        // would need a registry). The retry path is covered by the e2e suite.
+        let native = num_add(&RubyValue::Int(2), &RubyValue::Int(3));
+        let r = num_coerce_bin(&RubyValue::Int(2), &RubyValue::Int(3), native, "+").unwrap();
+        assert!(matches!(r, RubyValue::Int(5)));
     }
 
     #[test]

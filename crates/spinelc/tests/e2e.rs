@@ -14760,3 +14760,67 @@ fn lazy_enumerator_over_infinite_and_finite_sources() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[4, 16, 36]\n[2, 3, 4, 5]\n\"Enumerator::Lazy\"\n");
 }
+
+#[test]
+fn numeric_coerce_protocol_for_user_types() {
+    let result = run_ruby(
+        r#"
+        class Money
+          attr_reader :cents
+          def initialize(c); @cents = c; end
+          def coerce(o); [Money.new(o * 100), self]; end
+          def +(o); Money.new(@cents + o.cents); end
+          def cents_s; @cents.to_s; end
+        end
+        puts((5 + Money.new(250)).cents_s)
+        puts((2 + 3))
+        begin; 1 + "x"; rescue TypeError => e; puts e.message; end
+        class Bad; def coerce(o); 42; end; end
+        begin; 1 + Bad.new; rescue TypeError; puts "bad"; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "750\n5\nString can't be coerced into Integer\nbad\n"
+    );
+}
+
+#[test]
+fn format_directives_named_positional_star_and_alternate_form() {
+    let result = run_ruby(
+        r#"
+        puts format("%<name>s is %<age>d", name: "Ada", age: 36)
+        puts format("%#b / %#x", 10, 255)
+        puts format("%*d|", 5, 42)
+        puts format("%2$s %1$s", "world", "hello")
+        puts format("%a", 0.5)
+        puts("%<x>05.2f" % { x: 3.14159 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Ada is 36\n0b1010 / 0xff\n   42|\nhello world\n0x1p-1\n03.14\n"
+    );
+}
+
+#[test]
+fn string_and_hash_leaf_methods() {
+    let result = run_ruby(
+        r#"
+        puts "hello world".gsub(/[aeiou]/, "a" => "1", "e" => "2", "o" => "3")
+        p "hello".split("")
+        p "hello world"[/(\w+) (\w+)/, 2]
+        p "Hello".casecmp?("HELLO")
+        p "0x1f".oct
+        s = "hello"; s.slice!(1, 2); p s
+        p({ b: 2, a: 1 }.sort)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "h2ll3 w3rld\n[\"h\", \"e\", \"l\", \"l\", \"o\"]\n\"world\"\ntrue\n31\n\"hlo\"\n[[:a, 1], [:b, 2]]\n"
+    );
+}

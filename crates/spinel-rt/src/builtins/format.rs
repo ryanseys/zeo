@@ -5,14 +5,31 @@
 
 use crate::{RubyValue, Signal};
 
+#[derive(Default)]
 struct Spec {
     minus: bool,
     plus: bool,
     zero: bool,
     space: bool,
+    /// The `#` alternate-form flag: a `0x`/`0`/`0b` radix prefix for `x`/`o`/`b`.
+    alt: bool,
     width: Option<usize>,
     precision: Option<usize>,
     conv: char,
+}
+
+/// A rendered directive split into its `head` (sign and any `#` radix prefix)
+/// and `body` (the digits/text). Zero-padding fills BETWEEN the two, so
+/// `%#08x` of 255 is `0x0000ff`, not `00000xff`.
+struct Rendered {
+    head: String,
+    body: String,
+}
+
+impl Rendered {
+    fn plain(body: String) -> Rendered {
+        Rendered { head: String::new(), body }
+    }
 }
 
 fn arg_error(msg: String) -> Signal {
@@ -49,39 +66,55 @@ fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
     }
 }
 
-/// Renders one directive's body (before width padding).
-fn render(spec: &Spec, arg: &RubyValue) -> Result<String, Signal> {
+/// Renders one directive into its head/body split (before width padding).
+fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
     Ok(match spec.conv {
         's' => {
             let mut s = arg.to_display_string();
             if let Some(p) = spec.precision {
                 s = s.chars().take(p).collect();
             }
-            s
+            Rendered::plain(s)
         }
-        'p' => arg.inspect_string(),
-        'd' | 'i' => {
+        'p' => Rendered::plain(arg.inspect_string()),
+        'd' | 'i' | 'u' => {
             let n = to_int_for_format(arg)?;
-            let body = n.magnitude().to_string();
-            sign_prefix(spec, n.sign() == num_bigint::Sign::Minus) + &body
+            let mut body = n.magnitude().to_string();
+            if let Some(p) = spec.precision {
+                if body.len() < p {
+                    body = "0".repeat(p - body.len()) + &body;
+                }
+            }
+            Rendered { head: sign_prefix(spec, n.sign() == num_bigint::Sign::Minus), body }
         }
-        'x' | 'o' | 'b' => {
+        'x' | 'X' | 'o' | 'b' | 'B' => {
             let n = to_int_for_format(arg)?;
-            let radix = match spec.conv {
-                'x' => 16,
-                'o' => 8,
-                _ => 2,
+            let (radix, prefix) = match spec.conv {
+                'x' => (16, "0x"),
+                'X' => (16, "0X"),
+                'o' => (8, "0"),
+                'b' => (2, "0b"),
+                _ => (2, "0B"),
             };
-            let body = n.magnitude().to_str_radix(radix);
-            sign_prefix(spec, n.sign() == num_bigint::Sign::Minus) + &body
+            let mut body = n.magnitude().to_str_radix(radix);
+            if spec.conv == 'X' {
+                body = body.to_uppercase();
+            }
+            let mut head = sign_prefix(spec, n.sign() == num_bigint::Sign::Minus);
+            if spec.alt && n.sign() != num_bigint::Sign::NoSign {
+                head.push_str(prefix);
+            }
+            Rendered { head, body }
         }
         'f' => {
             let f = to_f64_for_format(arg)?;
             let prec = spec.precision.unwrap_or(6);
-            let body = format!("{:.prec$}", f.abs());
-            sign_prefix(spec, f.is_sign_negative() && f != 0.0) + &body
+            Rendered {
+                head: sign_prefix(spec, f.is_sign_negative() && f != 0.0),
+                body: format!("{:.prec$}", f.abs()),
+            }
         }
-        'e' => {
+        'e' | 'E' => {
             let f = to_f64_for_format(arg)?;
             let prec = spec.precision.unwrap_or(6);
             let body = format!("{:.prec$e}", f.abs());
@@ -91,15 +124,16 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<String, Signal> {
                 Some(d) => ('-', d),
                 None => ('+', exp),
             };
-            sign_prefix(spec, f.is_sign_negative())
-                + &format!("{mant}e{exp_sign}{:0>2}", exp_digits)
+            let e_char = if spec.conv == 'E' { 'E' } else { 'e' };
+            Rendered {
+                head: sign_prefix(spec, f.is_sign_negative()),
+                body: format!("{mant}{e_char}{exp_sign}{:0>2}", exp_digits),
+            }
         }
-        'g' => {
+        'g' | 'G' => {
             let f = to_f64_for_format(arg)?;
-            // C's %g: shortest of %e/%f with default precision 6,
-            // trailing zeros trimmed. Approximated via Rust's shortest
-            // repr with the same e-threshold rules.
             let abs = f.abs();
+            let e_char = if spec.conv == 'G' { 'E' } else { 'e' };
             let body = if abs != 0.0 && !(1e-4..1e6).contains(&abs) {
                 let e = format!("{abs:e}");
                 let (mant, exp) = e.split_once('e').expect("exponent");
@@ -107,14 +141,20 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<String, Signal> {
                     Some(d) => ('-', d),
                     None => ('+', exp),
                 };
-                format!("{mant}e{exp_sign}{:0>2}", exp_digits)
+                format!("{mant}{e_char}{exp_sign}{:0>2}", exp_digits)
             } else {
                 let s = format!("{abs}");
                 s.trim_end_matches(".0").to_string()
             };
-            sign_prefix(spec, f.is_sign_negative()) + &body
+            Rendered { head: sign_prefix(spec, f.is_sign_negative()), body }
         }
-        'c' => match arg {
+        // C99 hexadecimal float (`%a`/`%A`): `0x1.5p+2`-style. Rare; a
+        // straightforward mantissa/exponent decomposition of the IEEE bits.
+        'a' | 'A' => {
+            let f = to_f64_for_format(arg)?;
+            render_hexfloat(spec, f)
+        }
+        'c' => Rendered::plain(match arg {
             RubyValue::Str(s) => s.lock().chars().next().map(String::from).unwrap_or_default(),
             RubyValue::Int(i) => u32::try_from(*i)
                 .ok()
@@ -127,9 +167,45 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<String, Signal> {
                     other.inspect_string()
                 )))
             }
-        },
+        }),
         other => return Err(arg_error(format!("malformed format string - %{other}"))),
     })
+}
+
+/// `%a`/`%A`: an IEEE-754 double as C99 hex float, e.g. `1.0 -> 0x1p+0`,
+/// `0.5 -> 0x1p-1`. Subnormals/zero render as `0x0p+0`.
+fn render_hexfloat(spec: &Spec, f: f64) -> Rendered {
+    let neg = f.is_sign_negative();
+    let head = sign_prefix(spec, neg && f != 0.0);
+    let a = f.abs();
+    let body = if a == 0.0 {
+        "0x0p+0".to_string()
+    } else {
+        let bits = a.to_bits();
+        let exp_field = ((bits >> 52) & 0x7ff) as i64;
+        let mantissa = bits & 0xf_ffff_ffff_ffff;
+        // Normalized doubles have an implicit leading 1; the exponent is
+        // biased by 1023.
+        let (lead, unbiased) = if exp_field == 0 {
+            (0u64, -1022) // subnormal
+        } else {
+            (1u64, exp_field - 1023)
+        };
+        // 13 hex digits of mantissa, trailing zeros trimmed.
+        let mut hex = format!("{mantissa:013x}");
+        while hex.ends_with('0') {
+            hex.pop();
+        }
+        let frac = if hex.is_empty() { String::new() } else { format!(".{hex}") };
+        let sign = if unbiased < 0 { "-" } else { "+" };
+        let out = format!("0x{lead}{frac}p{sign}{}", unbiased.abs());
+        if spec.conv == 'A' {
+            out.to_uppercase()
+        } else {
+            out
+        }
+    };
+    Rendered { head, body }
 }
 
 fn sign_prefix(spec: &Spec, negative: bool) -> String {
@@ -144,88 +220,185 @@ fn sign_prefix(spec: &Spec, negative: bool) -> String {
     }
 }
 
-/// The engine: `sprintf("%05.1f|%x", args)`.
+/// The Hash a template's `%<name>`/`%{name}` references read from -- the first
+/// Hash among the arguments (from `str % {..}` or `format(.., k: v)`'s kwargs).
+fn named_source(args: &[RubyValue]) -> Option<&crate::RHash> {
+    args.iter().find_map(|a| match a {
+        RubyValue::Hash(h) => Some(h),
+        _ => None,
+    })
+}
+
+fn named_get(args: &[RubyValue], name: &str) -> Result<RubyValue, Signal> {
+    let source = named_source(args)
+        .ok_or_else(|| arg_error("one hash required".to_string()))?;
+    let key = RubyValue::Symbol(crate::Symbol::intern(name));
+    if crate::collections::hash_has_key(source, &key) {
+        Ok(crate::collections::hash_get(source, &key))
+    } else {
+        Err(crate::dispatch::raise_error("KeyError", format!("key<{name}> not found")))
+    }
+}
+
+/// Reads a `*` width/precision argument (an Integer) from the sequential
+/// argument stream.
+fn star_int(args: &[RubyValue], next_arg: &mut usize) -> Result<i64, Signal> {
+    let v = args.get(*next_arg).ok_or_else(|| arg_error("too few arguments".to_string()))?;
+    *next_arg += 1;
+    match v {
+        RubyValue::Int(n) => Ok(*n),
+        other => Err(arg_error(format!("invalid width/precision: {}", other.inspect_string()))),
+    }
+}
+
+/// The engine: `sprintf("%05.1f|%<x>d", args)`. Supports flags (`-+ 0#`),
+/// width/precision (fixed, `*`-from-arg), positional (`%2$s`) and named
+/// (`%<name>d` / `%{name}`) argument references.
 pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
     let mut out = String::new();
     let mut chars = template.chars().peekable();
     let mut next_arg = 0usize;
-    while let Some(c) = chars.next() {
+    'directive: while let Some(c) = chars.next() {
         if c != '%' {
             out.push(c);
             continue;
         }
-        let mut spec = Spec {
-            minus: false,
-            plus: false,
-            zero: false,
-            space: false,
-            width: None,
-            precision: None,
-            conv: '%',
-        };
-        // Flags.
+        let mut spec = Spec::default();
+        let mut named: Option<String> = None;
+        let mut arg_index: Option<usize> = None;
+        // The flag/width/precision/reference loop -- broken by the conversion
+        // char. Order is loose (CRuby's own), except `.precision` after width.
         loop {
-            match chars.peek() {
-                Some('-') => spec.minus = true,
-                Some('+') => spec.plus = true,
-                Some('0') => spec.zero = true,
-                Some(' ') => spec.space = true,
+            match chars.peek().copied() {
+                Some('-') => {
+                    spec.minus = true;
+                    chars.next();
+                }
+                Some('+') => {
+                    spec.plus = true;
+                    chars.next();
+                }
+                Some(' ') => {
+                    spec.space = true;
+                    chars.next();
+                }
+                Some('#') => {
+                    spec.alt = true;
+                    chars.next();
+                }
+                Some('0') => {
+                    spec.zero = true;
+                    chars.next();
+                }
+                Some('<') => {
+                    chars.next();
+                    named = Some(read_until(&mut chars, '>')?);
+                }
+                Some('{') => {
+                    // `%{name}` is a complete directive: the value as-is (`%s`).
+                    chars.next();
+                    let name = read_until(&mut chars, '}')?;
+                    out.push_str(&named_get(args, &name)?.to_display_string());
+                    continue 'directive;
+                }
+                Some('*') => {
+                    chars.next();
+                    let n = star_int(args, &mut next_arg)?;
+                    if n < 0 {
+                        spec.minus = true;
+                        spec.width = Some((-n) as usize);
+                    } else {
+                        spec.width = Some(n as usize);
+                    }
+                }
+                Some('.') => {
+                    chars.next();
+                    if chars.peek() == Some(&'*') {
+                        chars.next();
+                        spec.precision = Some(star_int(args, &mut next_arg)?.max(0) as usize);
+                    } else {
+                        let mut prec = String::new();
+                        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                            prec.push(chars.next().expect("peeked"));
+                        }
+                        spec.precision = Some(prec.parse().unwrap_or(0));
+                    }
+                }
+                Some(d) if d.is_ascii_digit() => {
+                    let mut num = String::new();
+                    while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        num.push(chars.next().expect("peeked"));
+                    }
+                    if chars.peek() == Some(&'$') {
+                        chars.next();
+                        arg_index = Some(num.parse::<usize>().unwrap_or(0));
+                    } else {
+                        spec.width = num.parse().ok();
+                    }
+                }
                 _ => break,
             }
-            chars.next();
-        }
-        // Width.
-        let mut width = String::new();
-        while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-            width.push(chars.next().expect("peeked"));
-        }
-        if !width.is_empty() {
-            spec.width = width.parse().ok();
-        }
-        // Precision.
-        if chars.peek() == Some(&'.') {
-            chars.next();
-            let mut prec = String::new();
-            while chars.peek().is_some_and(|c| c.is_ascii_digit()) {
-                prec.push(chars.next().expect("peeked"));
-            }
-            spec.precision = Some(prec.parse().unwrap_or(0));
         }
         let Some(conv) = chars.next() else {
-            return Err(arg_error("incomplete format specifier; use %% (double %) instead".to_string()));
+            return Err(arg_error(
+                "incomplete format specifier; use %% (double %) instead".to_string(),
+            ));
         };
         if conv == '%' {
             out.push('%');
             continue;
         }
         spec.conv = conv;
-        let Some(arg) = args.get(next_arg) else {
-            return Err(arg_error("too few arguments".to_string()));
+        // Pick the argument: a named reference, an explicit `N$` position, or
+        // the next sequential argument.
+        let arg = if let Some(name) = &named {
+            named_get(args, name)?
+        } else if let Some(i) = arg_index {
+            args.get(i.wrapping_sub(1))
+                .cloned()
+                .ok_or_else(|| arg_error("too few arguments".to_string()))?
+        } else {
+            let a = args
+                .get(next_arg)
+                .cloned()
+                .ok_or_else(|| arg_error("too few arguments".to_string()))?;
+            next_arg += 1;
+            a
         };
-        next_arg += 1;
-        let body = render(&spec, arg)?;
-        // Width padding: `-` left-justifies; `0` zero-pads numerics AFTER
-        // any sign.
+        let Rendered { head, body } = render(&spec, &arg)?;
+        let visible = head.chars().count() + body.chars().count();
         let padded = match spec.width {
-            Some(w) if body.chars().count() < w => {
-                let pad = w - body.chars().count();
+            Some(w) if visible < w => {
+                let pad = w - visible;
                 if spec.minus {
-                    format!("{body}{}", " ".repeat(pad))
-                } else if spec.zero && spec.conv != 's' && spec.conv != 'p' {
-                    let (sign, digits) = match body.strip_prefix(['-', '+', ' ']) {
-                        Some(rest) => (body[..1].to_string(), rest.to_string()),
-                        None => (String::new(), body),
-                    };
-                    format!("{sign}{}{digits}", "0".repeat(pad))
+                    format!("{head}{body}{}", " ".repeat(pad))
+                } else if spec.zero && !matches!(spec.conv, 's' | 'p' | 'c') {
+                    // Zero-pad BETWEEN the head (sign/radix prefix) and body.
+                    format!("{head}{}{body}", "0".repeat(pad))
                 } else {
-                    format!("{}{body}", " ".repeat(pad))
+                    format!("{}{head}{body}", " ".repeat(pad))
                 }
             }
-            _ => body,
+            _ => format!("{head}{body}"),
         };
         out.push_str(&padded);
     }
     Ok(out)
+}
+
+/// Consumes chars up to (and including) `end`, returning the text between.
+fn read_until(
+    chars: &mut std::iter::Peekable<std::str::Chars>,
+    end: char,
+) -> Result<String, Signal> {
+    let mut name = String::new();
+    for c in chars.by_ref() {
+        if c == end {
+            return Ok(name);
+        }
+        name.push(c);
+    }
+    Err(arg_error(format!("malformed name - unmatched delimiter, expected '{end}'")))
 }
 
 #[cfg(test)]
@@ -265,5 +438,49 @@ mod tests {
     fn too_few_arguments_is_an_argument_error() {
         let r = std::panic::catch_unwind(|| sprintf("%d %d", &[RubyValue::Int(1)]));
         assert!(r.is_err()); // registry-less: ArgumentError panics
+    }
+
+    fn named(pairs: &[(&str, RubyValue)]) -> RubyValue {
+        RubyValue::Hash(crate::hash_new(
+            pairs
+                .iter()
+                .map(|(k, v)| (RubyValue::Symbol(crate::Symbol::intern(k)), v.clone()))
+                .collect(),
+        ))
+    }
+
+    #[test]
+    fn named_references_angle_and_brace() {
+        let h = named(&[("x", RubyValue::Int(42)), ("y", s("hi"))]);
+        assert_eq!(sprintf("%<x>d and %<y>s", &[h.clone()]).unwrap(), "42 and hi");
+        assert_eq!(sprintf("%{y}!", &[h.clone()]).unwrap(), "hi!");
+        // Named references carry flags/width/precision.
+        assert_eq!(sprintf("%<x>05d", &[h]).unwrap(), "00042");
+    }
+
+    #[test]
+    fn alternate_form_and_uppercase_radix() {
+        assert_eq!(sprintf("%#b", &[RubyValue::Int(10)]).unwrap(), "0b1010");
+        assert_eq!(sprintf("%#x", &[RubyValue::Int(255)]).unwrap(), "0xff");
+        assert_eq!(sprintf("%#o", &[RubyValue::Int(8)]).unwrap(), "010");
+        assert_eq!(sprintf("%X", &[RubyValue::Int(255)]).unwrap(), "FF");
+        // The `0x` prefix counts toward width; zero-padding fills after it.
+        assert_eq!(sprintf("%#08x", &[RubyValue::Int(255)]).unwrap(), "0x0000ff");
+    }
+
+    #[test]
+    fn star_width_and_positional_and_precision() {
+        assert_eq!(sprintf("%*d", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(), "   42");
+        assert_eq!(sprintf("%-*d|", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(), "42   |");
+        assert_eq!(sprintf("%2$s %1$s", &[s("a"), s("b")]).unwrap(), "b a");
+        assert_eq!(sprintf("%.3d", &[RubyValue::Int(7)]).unwrap(), "007");
+        assert_eq!(sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(3.14159)]).unwrap(), "3.14");
+    }
+
+    #[test]
+    fn hexadecimal_float() {
+        assert_eq!(sprintf("%a", &[RubyValue::Float(1.0)]).unwrap(), "0x1p+0");
+        assert_eq!(sprintf("%a", &[RubyValue::Float(0.5)]).unwrap(), "0x1p-1");
+        assert_eq!(sprintf("%a", &[RubyValue::Float(0.0)]).unwrap(), "0x0p+0");
     }
 }

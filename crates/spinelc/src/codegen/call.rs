@@ -2025,7 +2025,14 @@ pub fn emit_call(
         block: Option<NodeId>,
         block_arg: Option<NodeId>,
     ) -> Option<TokenStream> {
-        if !kwargs.is_empty() || block.is_some() || block_arg.is_some() {
+        if block.is_some() || block_arg.is_some() {
+            return None;
+        }
+        // The format family accepts keyword references (`format("%<x>d", x: 1)`);
+        // its keywords become a trailing options Hash the sprintf engine reads.
+        // Every other Kernel function here takes no keywords, so bail for them.
+        let is_format_family = matches!(name, "format" | "sprintf" | "printf");
+        if !kwargs.is_empty() && !is_format_family {
             return None;
         }
         let plain_fn: Option<&str> = None;
@@ -2062,13 +2069,25 @@ pub fn emit_call(
         if plain_fn.is_none() && fallible_fn.is_none() && never_fn.is_none() {
             return None;
         }
-        let arg_exprs: Vec<TokenStream> = args
+        let mut arg_exprs: Vec<TokenStream> = args
             .iter()
             .map(|&a| {
                 let e = emit_expr(cx, a);
                 box_if_object_typed(cx, a, e)
             })
             .collect();
+        // Format-family keywords ride along as one trailing Hash (the G2 ABI),
+        // which the sprintf engine consults for `%<name>`/`%{name}` references.
+        if !kwargs.is_empty() {
+            let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
+            arg_exprs.push(quote! {
+                {
+                    let __kw = spinel_rt::hash_new(vec![]);
+                    #inserts
+                    spinel_rt::RubyValue::Hash(__kw)
+                }
+            });
+        }
         if let Some(f) = plain_fn {
             let func = format_ident!("{f}");
             return Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*]) });
