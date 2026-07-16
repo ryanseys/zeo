@@ -319,11 +319,14 @@ fn register_class(
                         let cid = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
                             format!("unknown superclass `{s}` (must be defined earlier in the file)")
                         })?;
-                        // `Struct` is the ONE subclassable builtin (Phase
-                        // 17.1-H): a Struct subclass's instances are
-                        // ordinary ivar-carrying objects, so the generated
-                        // Rust struct machinery fits them exactly.
-                        if compiler.class(cid).is_builtin && cid != crate::compiler::STRUCT_CLASS {
+                        // `Struct` and `Data` are the subclassable builtins:
+                        // their subclasses' instances are ordinary
+                        // ivar-carrying objects, so the generated Rust struct
+                        // machinery fits them exactly (Phase 17.1-H; Data F1b).
+                        if compiler.class(cid).is_builtin
+                            && cid != crate::compiler::STRUCT_CLASS
+                            && cid != crate::compiler::DATA_CLASS
+                        {
                             return Err(format!(
                                 "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
                             ));

@@ -2044,6 +2044,61 @@ fn case_in_range_pattern() {
 }
 
 #[test]
+fn data_define_constructs_deconstructs_and_is_immutable() {
+    // F1b: Data.define synthesizes an immutable value class with keyword
+    // construction, deconstruct_keys (hash patterns), to_h, with, ==, inspect.
+    let result = run_ruby(
+        r#"
+        Coord = Data.define(:x, :y)
+        c = Coord.new(x: 1, y: 2)
+        p c
+        p c.x
+        p c.to_h
+        p c.with(y: 9)
+        p c
+        puts(c == Coord.new(x: 1, y: 2))
+        def take(d); case d; in {x:, y:}; x + y; end; end
+        p take(c)
+        begin
+          Coord.new(x: 1)
+        rescue ArgumentError => e
+          puts "err: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<data Coord x=1, y=2>\n1\n{x: 1, y: 2}\n#<data Coord x=1, y=9>\n#<data Coord x=1, y=2>\ntrue\n3\nerr: missing keyword: :y\n"
+    );
+}
+
+#[test]
+fn struct_custom_initialize_supers_into_the_member_setter() {
+    // F1c: a custom `initialize` in the block calls `super` (bare or explicit,
+    // positional) into the synthesized member-setter, reached via a two-level
+    // base/leaf hierarchy -- not the old "no initialize above" panic.
+    let result = run_ruby(
+        r#"
+        Trip = Struct.new(:x, :y, :z) do
+          def initialize(x, y)
+            super
+          end
+        end
+        p Trip.new(1, 2).to_a
+        V = Struct.new(:a, :b, :c) do
+          def initialize(a, b)
+            super(a, b, a + b)
+          end
+        end
+        p V.new(3, 4).to_a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2, nil]\n[3, 4, 7]\n");
+}
+
+#[test]
 fn case_in_range_pattern_covers_float_poly_and_open_bounds() {
     // A range pattern is Range#=== (rb_case_eq/range_covers), so a Float or
     // Poly scrutinee, an exclusive bound, and a beginless/endless range all

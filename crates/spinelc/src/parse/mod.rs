@@ -233,6 +233,14 @@ pub fn parse_and_lower_with(
         load_roots,
         package_dirs,
     )?);
+    // Synthesized base classes (F1c Struct/Data super split) are spliced in
+    // right after the prelude -- before every main statement -- so each base
+    // is registered ahead of the leaf that inherits it.
+    let synth = std::mem::take(&mut hir.synth_classes);
+    if !synth.is_empty() {
+        let at = hir.prelude_len;
+        statements.splice(at..at, synth);
+    }
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root))
 }
@@ -1175,6 +1183,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // (Phase 17.1-H): the whole statement becomes an ordinary
         // ClassDef; no constant write remains (the class IS the constant).
         if let Some(class_def) = struct_def::try_lower_struct_def(result, hir, &name, &cw.value()) {
+            return class_def;
+        }
+        if let Some(class_def) = struct_def::try_lower_data_def(result, hir, &name, &cw.value()) {
             return class_def;
         }
         let value = lower_node(result, hir, &cw.value())?;

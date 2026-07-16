@@ -18,6 +18,15 @@ use super::{lower_class_body_statement, lower_node, PResult};
 use crate::hir::{Hir, HirNode, NodeId, Visibility};
 use ruby_prism::Node;
 
+/// Whether a synthesized value class is a mutable `Struct` (positional
+/// nil-filling `new`, `Enumerable`, writers) or an immutable `Data`
+/// (keyword `new`, no `each`, readers only + `with`).
+#[derive(Clone, Copy, PartialEq)]
+enum ValueKind {
+    Struct,
+    Data,
+}
+
 /// `Some(..)` when `value` is a `Struct.new(...)` call (the caller is
 /// lowering `const_name = value`); `None` lets the ordinary ConstWrite
 /// lowering proceed.
@@ -33,15 +42,33 @@ pub(super) fn try_lower_struct_def(
     if recv.name().as_slice() != b"Struct" || call.name().as_slice() != b"new" {
         return None;
     }
-    Some(lower_struct_def(result, hir, const_name, &call))
+    Some(lower_value_def(ValueKind::Struct, result, hir, const_name, &call))
 }
 
-fn lower_struct_def(
+/// `Some(..)` when `value` is a `Data.define(...)` call -- the immutable
+/// sibling of `Struct.new` (F1b).
+pub(super) fn try_lower_data_def(
     result: &ruby_prism::ParseResult<'_>,
     hir: &mut Hir,
     const_name: &str,
-    call: &ruby_prism::CallNode<'_>,
-) -> PResult<NodeId> {
+    value: &Node<'_>,
+) -> Option<PResult<NodeId>> {
+    let call = value.as_call_node()?;
+    let recv = call.receiver()?;
+    let recv = recv.as_constant_read_node()?;
+    if recv.name().as_slice() != b"Data" || call.name().as_slice() != b"define" {
+        return None;
+    }
+    Some(lower_value_def(ValueKind::Data, result, hir, const_name, &call))
+}
+
+/// Parse the member symbols (and, for `Struct`, an optional literal
+/// `keyword_init:`). Shared by both value-class kinds.
+fn parse_members(kind: ValueKind, call: &ruby_prism::CallNode<'_>) -> PResult<(Vec<String>, bool)> {
+    let ctor = match kind {
+        ValueKind::Struct => "Struct.new",
+        ValueKind::Data => "Data.define",
+    };
     let mut members: Vec<String> = Vec::new();
     let mut keyword_init = false;
     if let Some(arguments) = call.arguments() {
@@ -51,10 +78,13 @@ fn lower_struct_def(
                 continue;
             }
             if let Some(kw) = arg.as_keyword_hash_node() {
+                if kind == ValueKind::Data {
+                    return Err("Data.define takes only member symbols (no keyword options)".to_string());
+                }
                 for pair in kw.elements().iter() {
-                    let assoc = pair.as_assoc_node().ok_or(
-                        "Struct.new keyword arguments must be literal (spike scope)",
-                    )?;
+                    let assoc = pair
+                        .as_assoc_node()
+                        .ok_or("Struct.new keyword arguments must be literal (spike scope)")?;
                     let key = assoc
                         .key()
                         .as_symbol_node()
@@ -79,67 +109,142 @@ fn lower_struct_def(
                 }
                 continue;
             }
-            return Err(
-                "Struct.new members must be literal symbols (spike scope; the `Struct.new(\"Name\", ...)` string form isn't supported)"
-                    .to_string(),
-            );
+            return Err(format!(
+                "{ctor} members must be literal symbols (spike scope; the `{ctor}(\"Name\", ...)` string form isn't supported)"
+            ));
         }
     }
     if members.is_empty() {
-        return Err("Struct.new needs at least one member symbol (spike scope)".to_string());
+        return Err(format!("{ctor} needs at least one member symbol (spike scope)"));
+    }
+    Ok((members, keyword_init))
+}
+
+fn lower_value_def(
+    kind: ValueKind,
+    result: &ruby_prism::ParseResult<'_>,
+    hir: &mut Hir,
+    const_name: &str,
+    call: &ruby_prism::CallNode<'_>,
+) -> PResult<NodeId> {
+    let (members, keyword_init) = parse_members(kind, call)?;
+
+    // Lower the user block's `def`s first (with the ORIGINAL parse result);
+    // whether one of them is a custom `initialize` decides the class shape.
+    let extra = lower_block_methods(result, hir, call)?;
+    let has_custom_init = extra
+        .iter()
+        .any(|&id| matches!(&hir[id], HirNode::DefMethod { name, .. } if name.as_str() == "initialize"));
+
+    if !has_custom_init {
+        // Single-level: the template's own member-setter `initialize` is the
+        // only one (`super` is never needed), so the user-facing class IS the
+        // synthesized class. No spurious ancestor -- the common case.
+        let src = value_template(kind, const_name, const_name, &members, keyword_init);
+        let class_id = lower_synth_class(hir, &src, const_name)?;
+        append_methods(hir, class_id, extra)?;
+        return Ok(class_id);
     }
 
-    // The synthesized class -- ordinary Ruby source, monomorphized for
-    // this exact member list, fed back through the ordinary parser.
-    let src = struct_template(const_name, &members, keyword_init);
+    // Two-level (F1c): a custom `initialize` in the block must be able to
+    // `super` into the member-setter. So the member-setter (+ accessors,
+    // deconstruct, ==, inspect...) lives on a hidden BASE class, and the
+    // user-facing LEAF inherits it -- the user `initialize` overrides on the
+    // leaf and its `super` resolves the base's member-setter through the
+    // ordinary ancestor walk. Real Ruby puts the member-setter on
+    // `Struct`/`Data` itself; the base is our monomorphized stand-in for it.
+    let base_name = format!("{const_name}__ValueBase");
+    let base_src = value_template(kind, &base_name, const_name, &members, keyword_init);
+    let base_id = lower_synth_class(hir, &base_src, const_name)?;
+    hir.synth_classes.push(base_id);
+
+    let leaf_src = format!("class {const_name} < {base_name}\nend\n");
+    let leaf_id = lower_synth_class(hir, &leaf_src, const_name)?;
+    append_methods(hir, leaf_id, extra)?;
+    Ok(leaf_id)
+}
+
+/// The per-kind template dispatcher (`class_name` is declared; `display` is
+/// baked into `inspect`/`==`/`with` -- they differ for a two-level base).
+fn value_template(
+    kind: ValueKind,
+    class_name: &str,
+    display: &str,
+    members: &[String],
+    keyword_init: bool,
+) -> String {
+    match kind {
+        ValueKind::Struct => struct_template(class_name, display, members, keyword_init),
+        ValueKind::Data => data_template(class_name, display, members),
+    }
+}
+
+/// Parse one synthesized single-class Ruby source and lower its class
+/// statement into `hir`.
+fn lower_synth_class(hir: &mut Hir, src: &str, ctx: &str) -> PResult<NodeId> {
     let parsed = ruby_prism::parse(src.as_bytes());
     if parsed.errors().next().is_some() {
         return Err(format!(
-            "internal error: the synthesized Struct template for `{const_name}` failed to parse"
+            "internal error: the synthesized value-class template for `{ctx}` failed to parse"
         ));
     }
     let program = parsed
         .node()
         .as_program_node()
-        .ok_or("internal error: Struct template has no program root")?;
-    let statements = program.statements();
-    let class_stmt = statements
+        .ok_or("internal error: value-class template has no program root")?;
+    let class_stmt = program
+        .statements()
         .body()
         .iter()
         .next()
-        .ok_or("internal error: Struct template is empty")?;
-    let class_id = lower_node(&parsed, hir, &class_stmt)?;
+        .ok_or("internal error: value-class template is empty")?;
+    lower_node(&parsed, hir, &class_stmt)
+}
 
-    // The block-with-methods form: `Point = Struct.new(:x, :y) do ... end`
-    // -- its defs lower with the ORIGINAL parse result and append after
-    // the template's (later-def-wins lets them override).
+/// Lower the `do ... end` block's method defs (the block-with-methods form),
+/// with the ORIGINAL parse result. Empty when there's no block.
+fn lower_block_methods(
+    result: &ruby_prism::ParseResult<'_>,
+    hir: &mut Hir,
+    call: &ruby_prism::CallNode<'_>,
+) -> PResult<Vec<NodeId>> {
+    let mut extra = Vec::new();
     if let Some(block) = call.block() {
         let block = block
             .as_block_node()
-            .ok_or("Struct.new's block can't be a block-argument forward (spike scope)")?;
-        let mut extra = Vec::new();
+            .ok_or("a value class's block can't be a block-argument forward (spike scope)")?;
         if let Some(body) = block.body() {
             let statements = body
                 .as_statements_node()
-                .ok_or("expected statements in Struct.new's block")?;
+                .ok_or("expected statements in the value class's block")?;
             let mut visibility = Visibility::Public;
             for stmt in statements.body().iter() {
                 lower_class_body_statement(result, hir, &stmt, &mut visibility, &mut extra)?;
             }
         }
-        let HirNode::ClassDef { body, .. } = &mut hir[class_id] else {
-            return Err("internal error: Struct template didn't lower to a class".to_string());
-        };
-        body.extend(extra);
     }
+    Ok(extra)
+}
 
-    Ok(class_id)
+/// Append the user block's method defs to a synthesized class body
+/// (later-def-wins lets a user `def` override a template method).
+fn append_methods(hir: &mut Hir, class_id: NodeId, extra: Vec<NodeId>) -> PResult<()> {
+    if extra.is_empty() {
+        return Ok(());
+    }
+    let HirNode::ClassDef { body, .. } = &mut hir[class_id] else {
+        return Err("internal error: value-class template didn't lower to a class".to_string());
+    };
+    body.extend(extra);
+    Ok(())
 }
 
 /// The per-struct method template. Everything specializes at generation
-/// time (members are compile-time-known), the AOT-natural
-/// monomorphization -- same philosophy as `mro::materialize`.
-fn struct_template(name: &str, members: &[String], keyword_init: bool) -> String {
+/// time (members are compile-time-known), the AOT-natural monomorphization
+/// -- same philosophy as `mro::materialize`. `name` is the class being
+/// declared; `display` is the user-facing name baked into `inspect`/`==`
+/// (they differ only for the hidden base of a custom-`initialize` split, F1c).
+fn struct_template(name: &str, display: &str, members: &[String], keyword_init: bool) -> String {
     let n = members.len();
     let accessors = members
         .iter()
@@ -237,7 +342,7 @@ fn struct_template(name: &str, members: &[String], keyword_init: bool) -> String
     to_h
   end
   def ==(other)
-    other.is_a?({name}) && other.to_a == to_a
+    other.is_a?({display}) && other.to_a == to_a
   end
   def each
     return to_enum(:each) unless block_given?
@@ -266,12 +371,100 @@ fn struct_template(name: &str, members: &[String], keyword_init: bool) -> String
     end
   end
   def inspect
-    "#<struct {name} {inspect_parts}>"
+    "#<struct {display} {inspect_parts}>"
   end
   def to_s
     inspect
   end
   attr_accessor {accessors}
+end
+"##
+    )
+}
+
+/// The per-Data method template (F1b) -- the immutable sibling of
+/// `struct_template`. `Data.define`'d classes construct by keyword only
+/// (`Point.new(x: 1, y: 2)`; a missing member is CRuby's `missing keyword`),
+/// expose readers (no writers), and answer `deconstruct`/`deconstruct_keys`/
+/// `to_h`/`members`/`with`/`==`/`hash`/`inspect`. Not `Enumerable` (no
+/// `each`). Positional construction (`Point.new(1, 2)`) is a documented
+/// follow-on -- keyword construction is what real code and every test uses.
+fn data_template(name: &str, display: &str, members: &[String]) -> String {
+    let init_params = members
+        .iter()
+        .map(|m| format!("{m}:"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let init_body = members
+        .iter()
+        .map(|m| format!("    @{m} = {m}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let accessors = members
+        .iter()
+        .map(|m| format!(":{m}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let member_list = accessors.clone();
+    let ivar_list = members
+        .iter()
+        .map(|m| format!("@{m}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let hash_pairs = members
+        .iter()
+        .map(|m| format!("{m}: @{m}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // `with` maps each member from the changes hash, defaulting to the
+    // current value -- monomorphized to explicit keywords so it needs no
+    // `**h`-at-`.new` (which lands in F6).
+    let with_args = members
+        .iter()
+        .map(|m| format!("{m}: changes.fetch(:{m}, @{m})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let inspect_parts = members
+        .iter()
+        .map(|m| format!("{m}=#{{@{m}.inspect}}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r##"class {name} < Data
+  def initialize({init_params})
+{init_body}
+  end
+  def members
+    [{member_list}]
+  end
+  def to_h
+    {{ {hash_pairs} }}
+  end
+  def deconstruct
+    [{ivar_list}]
+  end
+  def deconstruct_keys(keys)
+    to_h
+  end
+  def with(changes = {{}})
+    {display}.new({with_args})
+  end
+  def ==(other)
+    other.is_a?({display}) && other.to_h == to_h
+  end
+  def eql?(other)
+    self == other
+  end
+  def hash
+    to_h.hash
+  end
+  def inspect
+    "#<data {display} {inspect_parts}>"
+  end
+  def to_s
+    inspect
+  end
+  attr_reader {accessors}
 end
 "##
     )

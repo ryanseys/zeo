@@ -56,6 +56,12 @@ pub struct Hir {
     /// the UTF-8 default. Governs `__ENCODING__` and the encoding tag of
     /// string literals.
     pub script_encoding: Option<String>,
+    /// Extra top-level `ClassDef`s synthesized mid-lowering that must be
+    /// registered as their own statements -- the hidden base classes a
+    /// `Struct`/`Data` with a custom `initialize` splits into (F1c). Spliced
+    /// in right after the exception prelude by `parse_and_lower_with`, so
+    /// each base is registered before the leaf that inherits it.
+    pub synth_classes: Vec<NodeId>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.

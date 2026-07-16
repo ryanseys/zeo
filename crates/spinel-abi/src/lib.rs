@@ -151,6 +151,11 @@ pub const FILE_STAT_CLASS: ClassId = ClassId(39);
 /// `Encoding` -- what `String#encoding` answers and `Encoding::UTF_8` names;
 /// wraps an `encoding::EncodingId` in the runtime.
 pub const ENCODING_CLASS: ClassId = ClassId(40);
+/// `Data` -- superclass of every compile-time-synthesized
+/// `Name = Data.define(...)` class (F1b). Unlike `Struct`, `Data` is
+/// immutable and NOT `Enumerable` (no `each`). The one other subclassable
+/// builtin besides `Struct`.
+pub const DATA_CLASS: ClassId = ClassId(41);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -199,6 +204,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: PROCESS_CLASS, name: "Process", is_module: true, superclass: None, includes: &[] },
     BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
     BuiltinClass { id: ENCODING_CLASS, name: "Encoding", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

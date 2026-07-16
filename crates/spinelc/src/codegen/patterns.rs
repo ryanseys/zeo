@@ -394,9 +394,16 @@ fn emit_array_binding(
             let #arr_ident: Vec<spinel_rt::RubyValue> =
                 (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().clone();
         }),
+        // A Poly scrutinee that isn't a runtime Array dispatches
+        // `#deconstruct` (real Ruby's array-pattern protocol) when it responds
+        // to it; anything else simply doesn't match (no raise).
         TyKind::Poly => Some(quote! {
             let #arr_ident: Vec<spinel_rt::RubyValue> = match &(#scrutinee) {
                 spinel_rt::RubyValue::Array(__arc) => __arc.lock().clone(),
+                __v if spinel_rt::responds_to(__v.class_id(), spinel_rt::Symbol::intern("deconstruct"), false) => {
+                    spinel_rt::send_value(__v, spinel_rt::Symbol::intern("deconstruct"), &[], None)?
+                        .as_array_unchecked().lock().clone()
+                }
                 _ => break #label false,
             };
         }),
@@ -423,9 +430,16 @@ fn emit_hash_binding(
             let #h_ident: spinel_rt::RHash =
                 (#scrutinee.clone()).deconstruct_keys(spinel_rt::RubyValue::Nil)?.as_hash_unchecked();
         }),
+        // A Poly scrutinee that isn't a runtime Hash dispatches
+        // `#deconstruct_keys` (real Ruby's hash-pattern protocol) when it
+        // responds to it; anything else simply doesn't match (no raise).
         TyKind::Poly => Some(quote! {
             let #h_ident: spinel_rt::RHash = match &(#scrutinee) {
                 spinel_rt::RubyValue::Hash(__rc) => __rc.clone(),
+                __v if spinel_rt::responds_to(__v.class_id(), spinel_rt::Symbol::intern("deconstruct_keys"), false) => {
+                    spinel_rt::send_value(__v, spinel_rt::Symbol::intern("deconstruct_keys"), &[spinel_rt::RubyValue::Nil], None)?
+                        .as_hash_unchecked()
+                }
                 _ => break #label false,
             };
         }),
