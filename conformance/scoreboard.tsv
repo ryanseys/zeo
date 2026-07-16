@@ -1,5 +1,5 @@
-# suite=spinel corpus=1819 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8208425
-# FAIL_COMPILE=285 FAIL_OUTPUT=600 FAIL_RUN=1 FAIL_RUSTC=19 PASS=912 TIMEOUT_RUN=2
+# suite=spinel corpus=1819 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=2c7aab6
+# FAIL_COMPILE=285 FAIL_OUTPUT=604 FAIL_RUN=1 FAIL_RUSTC=17 PASS=910 TIMEOUT_RUN=2
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	FAIL_COMPILE	compile	alias-inherited
 alias_global	FAIL_COMPILE	compile	auto-93fff1fc
@@ -145,7 +145,7 @@ bignum_query_to_i	PASS	-	-
 bignum_rational_arith	PASS	-	-
 bignum_rational_basic	FAIL_OUTPUT	expect	missing-builtin-method
 bignum_receiver_bitwise	PASS	-	-
-bignum_receiver_methods	FAIL_RUSTC	compile	rustc-failure
+bignum_receiver_methods	FAIL_OUTPUT	expect	auto-02ee698a
 bignum_recv_int_ord_float_toi	FAIL_OUTPUT	expect	-
 bignum_to_f	PASS	-	-
 binary_string_length_bytes	FAIL_OUTPUT	expect	missing-builtin-method
@@ -386,7 +386,7 @@ compile_time_attributes	FAIL_OUTPUT	expect	missing-builtin-method
 compile_time_define_method_direct	FAIL_OUTPUT	expect	missing-builtin-method
 compile_time_define_method_int	FAIL_OUTPUT	expect	missing-builtin-method
 compile_time_define_method_predicates	FAIL_OUTPUT	expect	missing-builtin-method
-compile_time_define_method_strings	FAIL_RUSTC	compile	rustc-failure
+compile_time_define_method_strings	FAIL_OUTPUT	expect	missing-builtin-method
 complex_arithmetic	PASS	-	-
 complex_component_class	FAIL_OUTPUT	expect	missing-builtin-method
 complex_division	FAIL_OUTPUT	expect	-
@@ -440,7 +440,7 @@ default_arg_ivar_module_subclass	PASS	-	-
 default_arg_ivar_value_receiver	PASS	-	-
 default_args	PASS	-	-
 default_nil_param_with_str_return	PASS	-	-
-define_singleton_method_literal	FAIL_RUSTC	compile	rustc-failure
+define_singleton_method_literal	FAIL_OUTPUT	expect	missing-builtin-method
 defined_classification	FAIL_COMPILE	compile	auto-56c6c16e
 defined_const_fallback	FAIL_COMPILE	compile	unknown-class
 defined_globals_methods	FAIL_OUTPUT	expect	-
@@ -456,7 +456,7 @@ dir_methods	FAIL_OUTPUT	expect	missing-core-const
 dispatch_unused_param_nil	PASS	-	-
 dotdotdot_leading_param_forward	FAIL_OUTPUT	expect	arity-panic
 double_splat_kwargs	PASS	-	-
-dynamic_class_new	FAIL_RUSTC	compile	rustc-failure
+dynamic_class_new	PASS	-	-
 dynamic_is_a	PASS	-	-
 dynamic_send	PASS	-	-
 each_cons_block_destructure	PASS	-	-
@@ -673,7 +673,7 @@ gc_root_ptr_array_literal	FAIL_COMPILE	compile	spike-misc
 gc_rooted_builders	FAIL_OUTPUT	expect	missing-core-const
 gc_stat_string_heap	FAIL_OUTPUT	expect	missing-builtin-method
 gc_str_arg_rooted	FAIL_OUTPUT	expect	missing-builtin-method
-global_multi_assign	PASS	-	-
+global_multi_assign	FAIL_RUSTC	compile	rustc-failure
 global_var	PASS	-	-
 global_var_punct	FAIL_OUTPUT	expect	-
 grapheme_clusters_alias	FAIL_OUTPUT	expect	missing-builtin-method
@@ -866,7 +866,7 @@ instance_exec_nested	FAIL_OUTPUT	expect	missing-builtin-method
 instance_exec_next	FAIL_OUTPUT	expect	missing-builtin-method
 instance_exec_nonlocal_return	FAIL_OUTPUT	expect	missing-builtin-method
 instance_exec_numbered	FAIL_RUSTC	compile	rustc-failure
-instance_exec_override	FAIL_RUSTC	compile	rustc-failure
+instance_exec_override	PASS	-	-
 instance_exec_parity	FAIL_OUTPUT	expect	missing-builtin-method
 instance_exec_return	FAIL_RUSTC	compile	rustc-failure
 instance_exec_splat	FAIL_RUSTC	compile	rustc-failure
@@ -977,7 +977,7 @@ kwargs_merge_default_hash	FAIL_OUTPUT	expect	auto-321aa719
 kwargs_param	PASS	-	-
 kwargs_param_widen	PASS	-	-
 kwargs_splat_unknown_keyword	FAIL_OUTPUT	expect	-
-kwsplat_forward_defaults	PASS	-	-
+kwsplat_forward_defaults	FAIL_RUSTC	compile	rustc-failure
 kwsplat_literal	FAIL_OUTPUT	expect	-
 kwsplat_yield_inline_bind	PASS	-	-
 lambda_arrow_string_return	PASS	-	-
@@ -1201,7 +1201,7 @@ param_narrow_from_body_call	PASS	-	-
 param_ptr_from_callee_slot	PASS	-	-
 param_widens_when_body_assigns_string	PASS	-	-
 parser_long_ast_record	PASS	-	-
-pattern	FAIL_RUSTC	compile	rustc-failure
+pattern	PASS	-	-
 pattern_deconstruct	FAIL_COMPILE	compile	unknown-class
 pattern_element_subpatterns	PASS	-	-
 pattern_implicit_rest	FAIL_COMPILE	compile	splat
@@ -1296,7 +1296,7 @@ poly_recv_map_join	PASS	-	-
 poly_recv_range_sym_hash_dispatch	PASS	-	-
 poly_recv_two_arg_slice	PASS	-	-
 poly_return_value_class	PASS	-	-
-poly_self_deref	PASS	-	-
+poly_self_deref	FAIL_RUSTC	compile	rustc-failure
 poly_slice_assign	PASS	-	-
 poly_str_append	FAIL_COMPILE	compile	spike-misc
 poly_str_delete_chain	PASS	-	-
@@ -1322,7 +1322,7 @@ prepend_super_multi	PASS	-	-
 prepend_super_subclass	PASS	-	-
 primitive_eq_user_class	FAIL_COMPILE	compile	spike-misc
 primitive_method_shadow	PASS	-	-
-primitive_method_shadow_int_recv	PASS	-	-
+primitive_method_shadow_int_recv	FAIL_RUSTC	compile	rustc-failure
 print_puts_expression_and_kinds	FAIL_OUTPUT	expect	-
 print_range_argument	PASS	-	-
 printf_percent_b	FAIL_OUTPUT	expect	auto-ceeff52b
@@ -1401,7 +1401,7 @@ range_cycle_block	FAIL_OUTPUT	expect	missing-builtin-method
 range_each_fusion	FAIL_COMPILE	compile	spike-misc
 range_each_no_block	PASS	-	-
 range_each_slice_cons	PASS	-	-
-range_enum_family	FAIL_RUSTC	compile	rustc-failure
+range_enum_family	FAIL_OUTPUT	expect	missing-builtin-method
 range_enumerable	FAIL_OUTPUT	expect	missing-builtin-method
 range_enumerable_blocks	FAIL_OUTPUT	expect	missing-builtin-method
 range_enumerable_finite	PASS	-	-
@@ -1420,7 +1420,7 @@ range_sum_endless_wave10	FAIL_OUTPUT	expect	range-shapes
 range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
-rational_complex_literals	PASS	-	-
+rational_complex_literals	FAIL_RUSTC	compile	rustc-failure
 rational_complex_wave9	FAIL_OUTPUT	expect	arity-panic
 rational_ctor_exact	FAIL_OUTPUT	expect	auto-dd0fbc13
 rational_div_family	FAIL_OUTPUT	expect	missing-builtin-method

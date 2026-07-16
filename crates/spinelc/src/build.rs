@@ -121,19 +121,41 @@ pub fn build_binary_with_deps(
     let rlib = rlib_for("spinel-rt")?;
     let deps_dir = target_dir().join("debug").join("deps");
 
-    let src_path = std::env::temp_dir().join(format!(
-        "spinelc-gen-{}-{}.rs",
+    let cached = cache_path(rust_source, native_deps)?;
+    // A failed link is treated as a miss rather than an error: a concurrent
+    // process pruning a stale generation can unlink an entry between the check
+    // and the link, and rebuilding is always a correct answer.
+    if cached.exists() && link_or_copy(&cached, output).is_ok() {
+        return Ok(());
+    }
+
+    // rustc writes into a private directory under a STABLE basename, then the
+    // finished binary is renamed into place. The basename has to be the cache
+    // key rather than something per-invocation: macOS ad-hoc-signs every arm64
+    // binary and the signature's identifier defaults to the output filename, so
+    // a unique filename here would make otherwise-identical builds differ.
+    // Staging lives OUTSIDE the cache: a sweep of a stale generation is a
+    // `remove_dir_all`, and when staging sat inside the cache that could delete
+    // a directory another process was still writing rustc output into.
+    let staging = std::env::temp_dir().join(format!(
+        "spinelc-staging-{}-{}",
         std::process::id(),
         thread_unique_suffix()
     ));
-    std::fs::write(&src_path, rust_source).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&staging).map_err(|e| format!("creating {}: {e}", staging.display()))?;
+    let staged = staging.join(cached.file_name().expect("cache_path always has a file name"));
+
+    let src_path = generated_source_path(rust_source);
+    write_atomically(&src_path, rust_source)?;
 
     let mut cmd = std::process::Command::new("rustc");
     cmd.arg("--edition")
         .arg("2021")
+        .arg("--crate-name")
+        .arg(GENERATED_CRATE_NAME)
         .arg(&src_path)
         .arg("-o")
-        .arg(output)
+        .arg(&staged)
         .arg("--extern")
         .arg(format!("spinel_rt={}", rlib.display()))
         .arg("-L")
@@ -146,18 +168,213 @@ pub fn build_binary_with_deps(
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
+        let _ = std::fs::remove_dir_all(&staging);
         return Err(format!(
-            "rustc failed compiling the generated program (source left at {})",
+            "rustc failed compiling the generated program (source at {})",
             src_path.display()
         ));
     }
-    let _ = std::fs::remove_file(&src_path);
-    Ok(())
+    // Publish atomically. A concurrent build of the same source raced us to the
+    // same key; since the key covers the whole input, whichever lands is
+    // byte-identical to ours, so the loser is harmless.
+    std::fs::rename(&staged, &cached)
+        .map_err(|e| format!("publishing {}: {e}", cached.display()))?;
+    let _ = std::fs::remove_dir_all(&staging);
+    link_or_copy(&cached, output)
 }
 
-/// Multiple tests in the same test-binary process share `process::id()`; a
-/// per-thread suffix keeps their temp source files from colliding when the
-/// test runner parallelizes `#[test]` functions.
+/// Where compiled generated programs are kept, keyed by their full input.
+///
+/// Lives under `target/` so `cargo clean` reaps it and it stays out of
+/// `$TMPDIR`.
+fn cache_dir() -> PathBuf {
+    target_dir().join("spinelc-bin-cache")
+}
+
+/// The cache slot for this exact program: `<rlib generation>/<source hash>`.
+///
+/// Split in two so a generation can be swept wholesale. Every entry under a
+/// generation dies the moment the runtime is rebuilt -- generated programs link
+/// `libspinel_rt.rlib` statically -- and each generation is ~4GB across the test
+/// suite, so a flat keyspace grew by that much per commit and never shrank.
+///
+/// The rlibs are keyed by len+mtime rather than content: `spinelc` runs as a
+/// fresh process per case under the conformance harness, so a content hash of
+/// the 32MB rlib could not be amortized and would cost more than it saves.
+/// Cargo does not touch mtimes on a no-op rebuild, so this only
+/// over-invalidates when the runtime genuinely got rebuilt.
+fn cache_path(rust_source: &str, native_deps: &[String]) -> Result<PathBuf, String> {
+    let mut generation = 0xcbf2_9ce4_8422_2325;
+    for name in std::iter::once("spinel-rt").chain(native_deps.iter().map(String::as_str)) {
+        let rlib = rlib_for(name)?;
+        let meta = std::fs::metadata(&rlib).map_err(|e| format!("stat {}: {e}", rlib.display()))?;
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        generation = fnv1a64_with(generation, format!("{name}:{}:{mtime};", meta.len()).as_bytes());
+    }
+    let root = cache_dir();
+    std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
+    let dir = root.join(format!("{generation:016x}"));
+    // `create_dir`, not `create_dir_all`: the AlreadyExists error is the signal
+    // for whether this process is the one that opened a new generation.
+    let we_created = match std::fs::create_dir(&dir) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(e) => return Err(format!("creating {}: {e}", dir.display())),
+    };
+    if we_created {
+        sweep_stale_generations(&dir);
+    }
+    Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
+}
+
+/// Best-effort removal of cache generations that are provably not in use, run
+/// only by whichever process first creates a new generation.
+///
+/// Two guards, because a sweep is a `remove_dir_all` and the harness runs a
+/// dozen `spinelc` processes at once:
+///
+/// - only the process that actually created the new generation sweeps, so 1800
+///   conformance cases don't each race to delete the same directories;
+/// - a generation is only swept once nothing has touched it for an hour.
+///   Writing an entry bumps the directory's mtime, so a generation any live run
+///   is publishing into is never a candidate. Without this, a process whose
+///   runtime rebuild landed a moment earlier would delete the generation its
+///   siblings were still building into, and their `rustc` output would vanish
+///   mid-write (seen as spurious FAIL_RUSTC across the conformance corpus).
+///
+/// A generation that stays warm is simply swept on some later run; the cost of
+/// waiting is disk, and the cost of being wrong is a broken build.
+fn sweep_stale_generations(live: &Path) {
+    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+    let Ok(entries) = std::fs::read_dir(cache_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.path() == live {
+            continue;
+        }
+        let untouched_for = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| t.elapsed().unwrap_or_default());
+        if matches!(untouched_for, Ok(d) if d > STALE_AFTER) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Hard-links the cached binary to where the caller wanted it, falling back to
+/// a copy across filesystems.
+///
+/// A link rather than a copy so that re-running the same program reuses one
+/// inode -- the OS malware scan is per-file, so a fresh copy can be treated as
+/// never-before-seen content and re-scanned. Callers that `remove_file` their
+/// output only drop their own link; the cache entry survives.
+fn link_or_copy(from: &Path, to: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_file(to);
+    match std::fs::hard_link(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| format!("copying {} -> {}: {e}", from.display(), to.display())),
+    }
+}
+
+/// Passed to `rustc --crate-name` so the generated program's identity never
+/// depends on the temp file it happened to be written to. Without this,
+/// `rustc` derives the crate name from the source FILENAME, so the old
+/// pid+thread temp name leaked into every mangled symbol and identical Ruby
+/// produced different bytes on every run (visible as
+/// `<output>.spinelc_gen_18719_ThreadId1...rcgu.o` intermediates).
+///
+/// Pinning it makes the output a pure function of the generated source, which
+/// a content-addressed binary cache needs in order to hit, and which lets the
+/// OS scan a given program exactly once instead of on every rebuild.
+///
+/// Note the output PATH still leaks into the ad-hoc code signature's
+/// identifier (macOS signs every arm64 binary, and the identifier defaults to
+/// the output filename), so byte-identical results also require callers to
+/// pick a stable output path.
+///
+/// A fixed crate name also makes `-C incremental` theoretically useful here,
+/// since ~99% of any two generated programs is the identical exception prelude
+/// and a shared crate identity lets `rustc` reuse one program's codegen units
+/// for another (measured in isolation: 514ms -> 246ms). It is deliberately NOT
+/// enabled: `libtest` runs each `#[test]` on its own thread, so any per-thread
+/// keying produces one cold directory per test (measured: 449 directories,
+/// 7.7GB, and a 10s NET LOSS on the e2e suite). Reuse would need a fixed-size
+/// pool of directories leased across tests, since `rustc` locks each one
+/// exclusively -- the shared-prelude work in `docs/todo/runtime-exception-model.md`
+/// addresses the same duplication structurally instead.
+const GENERATED_CRATE_NAME: &str = "spinelc_gen";
+
+/// Where the generated source is written, named by a hash of its own content.
+///
+/// The path is deliberately a pure function of `rust_source`, because `rustc`
+/// embeds the source path in the binary as panic-location metadata (`file!()`
+/// data, which is runtime state and so survives the default `debuginfo=0`).
+/// The previous pid+thread name therefore leaked into the output, and two runs
+/// of the same program produced different bytes -- which defeats a
+/// content-addressed binary cache and makes the OS treat every rebuild as
+/// never-before-seen content to re-scan.
+///
+/// Content-addressing also makes the path in a `rustc` failure stable and
+/// findable, rather than naming a file a previous run had already deleted.
+fn generated_source_path(rust_source: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("spinelc-gen-{:016x}.rs", fnv1a64(rust_source.as_bytes())))
+}
+
+/// Writes via a per-writer temp file + rename, so that concurrent compiles of
+/// the same source (which content-addressing points at one path) can't observe
+/// a partially-written file. Rename is atomic within a directory, and the bytes
+/// are identical either way, so the loser of the race is harmless.
+///
+/// The temp name must be unique per THREAD, not just per process: two `#[test]`
+/// threads compiling the same source share a pid, and a pid-only name let one
+/// rename the other's half-written file into place for `rustc` to read.
+///
+/// The destination is left behind on purpose: it is content-addressed, so it
+/// can only ever be rewritten with the same bytes, and deleting it would race a
+/// concurrent `rustc` still reading it. `$TMPDIR` is reaped by the OS.
+fn write_atomically(path: &Path, contents: &str) -> Result<(), String> {
+    let tmp = path.with_extension(format!(
+        "{}-{}.tmp",
+        std::process::id(),
+        thread_unique_suffix()
+    ));
+    std::fs::write(&tmp, contents).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+    let renamed = std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("renaming into {}: {e}", path.display())
+    });
+    renamed
+}
+
+/// FNV-1a. Small, stable across processes and toolchain versions -- unlike
+/// `DefaultHasher`, whose output is explicitly not guaranteed between releases,
+/// which would silently break byte-identical rebuilds after a Rust upgrade.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    fnv1a64_with(0xcbf2_9ce4_8422_2325, bytes)
+}
+
+/// `fnv1a64` continued from an existing hash, for mixing several inputs into
+/// one key.
+fn fnv1a64_with(seed: u64, bytes: &[u8]) -> u64 {
+    let mut hash = seed;
+    for b in bytes {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    hash
+}
+
+/// Threads within one process stage their `rustc` output in separate
+/// directories, since the test runner parallelizes `#[test]` functions.
 fn thread_unique_suffix() -> String {
     format!("{:?}", std::thread::current().id())
         .chars()

@@ -6,14 +6,14 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 332 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
+| P | missing-builtin-method | 335 | alias_method_dispatch | uncaught exception: undefined method 'vocalize' for an instance of Animal |
 | ? | spike-misc | 124 | arg_assigned_in_sequence | spinelc: parenthesized multi-statement expressions aren't supported yet (spike scope) |
 | P | missing-core-const | 49 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | g | arity-panic | 37 | array_callforms_strbuf_cycle | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | ? | unknown-class | 31 | bundle_tiny_misc | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | d | class-level-state | 24 | block_param_into_thread | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ! | rustc-failure | 19 | bignum_receiver_methods | spinelc: rustc failed compiling the generated program (source left at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-79474-ThreadId1.rs) |
 | a | splat | 19 | arity_keyword_argument_errors | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ! | rustc-failure | 17 | bm_instance_eval | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-29714efa3ec10fdb.rs) |
 | a | param-shapes | 16 | block_param_destructure | spinelc: only plain required parameters are supported before a `*rest` (spike scope) |
 | ? | auto-2b9e30a9 | 7 | bundle_classd_04 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-14bb593e | 5 | bundle_misc_c_26 | spinelc: unsupported syntax at "$1" (spike handles only what the 7 example programs need) |
@@ -36,6 +36,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-f82b092f | 2 | i1015 | uncaught exception: no implicit conversion of Regexp into Integer |
 | f | dynamic-require | 2 | for_over_hash_and_bigint_when | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | h | range-shapes | 2 | range_size_infinite_local | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-02ee698a | 1 | bignum_receiver_methods | uncaught exception: Integer can't be coerced into Integer |
 | ? | auto-0746d056 | 1 | interp_symbol | spinelc: unsupported syntax at ":\"hello_#{x}\"" (spike handles only what the 7 example programs need) |
 | ? | auto-0b8761b3 | 1 | case_in_range_pattern | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-0f1fc15b | 1 | when_splat_rational_complex | spinelc: unsupported syntax at "*a" (spike handles only what the 7 example programs need) |
