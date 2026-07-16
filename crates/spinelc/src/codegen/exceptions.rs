@@ -294,7 +294,10 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::CaseWhen { subject, arms, else_body } => {
             subject.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))
                 || arms.iter().any(|(values, body)| {
-                    values.iter().any(|&v| node_contains_bare_loop_jump(compiler, v))
+                    values.iter().any(|e| {
+                        let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                        node_contains_bare_loop_jump(compiler, *v)
+                    })
                         || body_contains_bare_loop_jump(compiler, body)
                 })
                 || body_contains_bare_loop_jump(compiler, else_body)
@@ -336,7 +339,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => node_contains_bare_loop_jump(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_bare_loop_jump(compiler, *value),
-        HirNode::Seq(body) => body_contains_bare_loop_jump(compiler, body),
+        HirNode::PreExec(body) | HirNode::Seq(body) => body_contains_bare_loop_jump(compiler, body),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_bare_loop_jump(compiler, *n)

@@ -73,12 +73,48 @@ use std::path::{Path, PathBuf};
 // single-threaded; the stack is empty outside `lower_file_statements`.
 thread_local! {
     static BOX_BINDINGS: RefCell<Vec<HashMap<String, u32>>> = const { RefCell::new(Vec::new()) };
+    /// The path of the file currently being lowered -- a stack for the same
+    /// reason `BOX_BINDINGS` is one: `require` splices a child file's
+    /// statements into the parent's list mid-walk, so the "current file"
+    /// has to restore when that splice finishes. Consulted by
+    /// `parse::mod`'s `__FILE__`/`__LINE__`/`__dir__` recognizers.
+    ///
+    /// This is what makes `__FILE__` name the file the code was WRITTEN in
+    /// rather than the main program: every file's statements end up in one
+    /// merged `Program`, so by codegen time there is nothing left to tell
+    /// them apart.
+    static SOURCE_FILE: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The box bound to local `name` in the file currently being lowered, if
 /// any -- consulted by `parse::mod`'s `box::X`/`box.eval` recognizers.
 pub(super) fn current_box_binding(name: &str) -> Option<u32> {
     BOX_BINDINGS.with(|b| b.borrow().last().and_then(|m| m.get(name).copied()))
+}
+
+/// The file currently being lowered -- `None` when compiling a source
+/// string with no path at all (`compile_to_rust`'s bare form, and the
+/// exception prelude), where real Ruby's own answer would be `"-e"`.
+pub(super) fn current_source_file() -> Option<PathBuf> {
+    SOURCE_FILE.with(|f| f.borrow().last().cloned())
+}
+
+/// Pushes the file being lowered; pops on drop (including the error path).
+/// Same RAII shape as `BindingsFrame`.
+pub(super) struct SourceFileFrame;
+impl SourceFileFrame {
+    pub(super) fn push(path: Option<&Path>) -> Option<SourceFileFrame> {
+        let path = path?;
+        SOURCE_FILE.with(|f| f.borrow_mut().push(path.to_path_buf()));
+        Some(SourceFileFrame)
+    }
+}
+impl Drop for SourceFileFrame {
+    fn drop(&mut self) {
+        SOURCE_FILE.with(|f| {
+            f.borrow_mut().pop();
+        });
+    }
 }
 
 /// Pushes a fresh bindings frame for one file's lowering; pops on drop
@@ -179,6 +215,9 @@ pub(super) fn lower_main_file(
         .node()
         .as_program_node()
         .ok_or("expected a top-level ProgramNode")?;
+    // The main file is `__FILE__`'s answer for its own statements -- held
+    // for exactly this lowering, and restored by the guard's Drop.
+    let _file = SourceFileFrame::push(input_path);
     loader.lower_file_statements(
         hir,
         &result,
@@ -408,6 +447,10 @@ impl Loader {
             .as_program_node()
             .ok_or_else(|| format!("{}: expected a top-level ProgramNode", canonical.display()))?;
         self.splicing.push(canonical.to_path_buf());
+        // A required file's `__FILE__` is ITSELF, not whoever required it.
+        // Popped by the guard's Drop, so the parent's own statements after
+        // the splice see their own path again.
+        let _file = SourceFileFrame::push(Some(canonical));
         let statements = self
             .lower_file_statements(
                 hir,

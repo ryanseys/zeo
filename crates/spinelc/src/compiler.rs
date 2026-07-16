@@ -78,6 +78,11 @@ pub struct ClassInfo {
     /// all (extend only affects this class's own `class_methods`
     /// materialization, never instance-method resolution or `is_a?`).
     pub extends: Vec<ClassId>,
+    /// Names this class's body `undef`'d -- see `HirNode::Undef`.
+    /// `mro::materialize_methods` refuses to materialize them onto this
+    /// class, which is what makes an INHERITED name disappear here while
+    /// staying live on the ancestor that defined it.
+    pub undefined: std::collections::HashSet<String>,
     /// `true` for `module Name ... end`: never instantiated (no `Name.new`,
     /// no generated Rust struct/`impl RubyObject`/`ClassRegistry` entry --
     /// see `codegen::mod::emit_class`'s docs), used only as a source for
@@ -232,6 +237,7 @@ impl Compiler {
                 prepends: Vec::new(),
                 includes: Vec::new(),
                 extends: Vec::new(),
+            undefined: std::collections::HashSet::new(),
                 is_module: false,
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
@@ -430,6 +436,7 @@ impl Compiler {
             prepends: Vec::new(),
             includes: Vec::new(),
             extends: Vec::new(),
+            undefined: std::collections::HashSet::new(),
             is_module,
             ivars: Vec::new(),
             own_methods: Vec::new(),

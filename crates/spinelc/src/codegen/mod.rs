@@ -424,6 +424,22 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 });
             }
         }
+        // Every `undef name` in this class's body is recorded so
+        // `respond_to?` stops its ancestor walk here -- dispatch itself
+        // needs nothing, since `mro::materialize_methods` already left the
+        // name out of this class's table. See `ClassEntry::undefined_methods`.
+        // Sorted: a HashSet has no stable order, and generated source should
+        // not vary between compiles of the same program.
+        let mut undefined: Vec<&String> = compiler.class(ClassId(id)).undefined.iter().collect();
+        undefined.sort();
+        for key in undefined {
+            registrations.push(quote! {
+                __registry.mark_undefined(
+                    spinel_rt::ClassId(#id),
+                    spinel_rt::Symbol::intern(#key),
+                );
+            });
+        }
         // Every `def self.x` also registers for DYNAMIC dispatch, so a class
         // held in a variable can be sent to (`handler = H1; handler.run(...)`
         // -- the receiver isn't a literal constant, so codegen can't emit a

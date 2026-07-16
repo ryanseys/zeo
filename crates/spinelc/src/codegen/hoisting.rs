@@ -183,8 +183,9 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *s, out);
             }
             for (values, body) in arms {
-                for &v in values {
-                    collect_locals(compiler, v, out);
+                for e in values {
+                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                    collect_locals(compiler, *v, out);
                 }
                 for &n in body {
                     collect_locals(compiler, n, out);
@@ -234,7 +235,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         }
         HirNode::GlobalWrite(_, value) => collect_locals(compiler, *value, out),
         HirNode::ConstWrite { value, .. } => collect_locals(compiler, *value, out),
-        HirNode::Seq(body) => {
+        HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 collect_locals(compiler, n, out);
             }
@@ -430,6 +431,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::BlockGiven

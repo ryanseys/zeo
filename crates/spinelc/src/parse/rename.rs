@@ -167,6 +167,7 @@ impl Walker {
             }
             HirNode::Program(body)
             | HirNode::Eval(body)
+            | HirNode::PreExec(body)
             | HirNode::Seq(body)
             | HirNode::BoxScope { body, .. } => {
                 self.visit_all(hir, &body.clone())
@@ -192,7 +193,14 @@ impl Walker {
             } => {
                 self.visit_opt(hir, subject);
                 for (values, body) in arms.iter() {
-                    self.visit_all(hir, values);
+                    let ids: Vec<_> = values
+                        .iter()
+                        .map(|e| {
+                            let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                            *v
+                        })
+                        .collect();
+                    self.visit_all(hir, &ids);
                     self.visit_all(hir, body);
                 }
                 self.visit_all(hir, &else_body.clone());
@@ -342,6 +350,8 @@ impl Walker {
             | HirNode::ClassRef(_)
             | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
             | HirNode::QualifiedConstRead(..)
             | HirNode::ConstReadOrNil(..)
             | HirNode::Include(_)

@@ -122,6 +122,21 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
             if !seen.insert(name.clone()) {
                 continue; // a closer ancestor already won this name
             }
+            // `undef name` in THIS class's body: the name is not
+            // materialized onto it at all, from any ancestor -- which
+            // removes it from the one table both dispatch paths and
+            // `respond_to?` read, so it raises NoMethodError here while
+            // staying live on whichever ancestor defined it (that ancestor's
+            // own materialization is a separate pass over its own
+            // `undefined`, which doesn't contain the name).
+            //
+            // `seen` is inserted FIRST, deliberately: an undef'd name must
+            // also block a FURTHER ancestor from supplying it. `class C < B;
+            // undef m; end` where both B and Object define `m` must find
+            // neither.
+            if compiler.class(class_id).undefined.contains(&name) {
+                continue;
+            }
             if anc_id == class_id {
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
@@ -483,8 +498,9 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 collect_const_refs(compiler, *s, cref, out);
             }
             for (values, body) in arms {
-                for &v in values {
-                    collect_const_refs(compiler, v, cref, out);
+                for e in values {
+                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                    collect_const_refs(compiler, *v, cref, out);
                 }
                 for &n in body {
                     collect_const_refs(compiler, n, cref, out);
@@ -588,7 +604,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
             collect_const_refs(compiler, *value, cref, out);
             targets.for_each_node(&mut |n| collect_const_refs(compiler, n, cref, out));
         }
-        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_const_refs(compiler, n, cref, out);
             }
@@ -671,6 +687,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::ClassVarRead(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -721,8 +739,9 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, *s, out);
             }
             for (values, body) in arms {
-                for &v in values {
-                    collect_cvars(hir, v, out);
+                for e in values {
+                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                    collect_cvars(hir, *v, out);
                 }
                 for &n in body {
                     collect_cvars(hir, n, out);
@@ -828,7 +847,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         }
         HirNode::GlobalWrite(_, value) => collect_cvars(hir, *value, out),
         HirNode::ConstWrite { value, .. } => collect_cvars(hir, *value, out),
-        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
             for &n in body {
                 collect_cvars(hir, n, out);
             }
@@ -911,6 +930,8 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

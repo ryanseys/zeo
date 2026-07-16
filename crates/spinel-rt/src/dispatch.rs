@@ -424,6 +424,17 @@ struct ClassEntry {
     /// (`puts`/`p`/...) aren't here -- they have no registry entry at all
     /// and are special-cased in `responds_to`.
     private_methods: HashSet<Symbol>,
+    /// Names this class's body `undef`'d. Mirrors CRuby, where `undef`
+    /// inserts an "undefined" method entry that TERMINATES the lookup
+    /// rather than deleting anything -- so an inherited name stops
+    /// resolving here while staying live on the ancestor that defined it.
+    ///
+    /// Dispatch itself needs no check: `mro::materialize_methods` already
+    /// refuses to materialize an undef'd name onto this class, and dispatch
+    /// only ever reads this class's own table. `respond_to?` is the one
+    /// consumer, because it WALKS the ancestors and would otherwise find
+    /// the ancestor's still-live definition.
+    undefined_methods: HashSet<Symbol>,
     /// This class's own CLASS methods (`def self.x`, `class << self`,
     /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
     /// dynamically (`handler.run(...)`, where `handler` holds a class), the
@@ -475,6 +486,7 @@ impl ClassRegistry {
                 methods: HashMap::new(),
                 value_methods: HashMap::new(),
                 private_methods: HashSet::new(),
+                undefined_methods: HashSet::new(),
                 class_methods: HashMap::new(),
                 constructor,
             },
@@ -510,6 +522,23 @@ impl ClassRegistry {
             .expect("class must be registered before defining value methods on it")
             .value_methods
             .insert((box_id, name), f);
+    }
+
+    /// Records an `undef name` -- see `ClassEntry::undefined_methods`.
+    pub fn mark_undefined(&mut self, id: ClassId, name: Symbol) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before undefining methods on it")
+            .undefined_methods
+            .insert(name);
+    }
+
+    /// Whether `id`'s own body `undef`'d `name` -- the lookup TERMINATOR
+    /// `respond_to?`'s ancestor walk consults.
+    fn is_undefined(&self, id: ClassId, name: Symbol) -> bool {
+        self.entries
+            .get(&id.0)
+            .is_some_and(|e| e.undefined_methods.contains(&name))
     }
 
     /// Registers one `def self.x` for dynamic dispatch -- see
@@ -585,6 +614,12 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
     let n = n.as_str();
     for &anc in ancestors_of_value(recv_class) {
         if let Some(r) = REGISTRY.get() {
+            // `undef` TERMINATES the walk at the class that wrote it --
+            // an ancestor's still-live definition must not answer for a
+            // descendant that undef'd the name.
+            if r.is_undefined(anc, name) {
+                return false;
+            }
             if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
                 if !include_all && r.is_private(anc, name) {
                     // A private method of this ancestor doesn't answer, but

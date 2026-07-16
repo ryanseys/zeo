@@ -91,8 +91,9 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
             }
             let mut branches: Vec<&[NodeId]> = Vec::with_capacity(arms.len() + 1);
             for (values, body) in arms {
-                for &v in values {
-                    track_node(compiler, defining, box_id, locals, v);
+                for e in values {
+                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                    track_node(compiler, defining, box_id, locals, *v);
                 }
                 branches.push(body);
             }
@@ -214,7 +215,7 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         }
         HirNode::GlobalWrite(_, value) => track_node(compiler, defining, box_id, locals, *value),
         HirNode::ConstWrite { value, .. } => track_node(compiler, defining, box_id, locals, *value),
-        HirNode::Seq(body) => {
+        HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 track_node(compiler, defining, box_id, locals, n);
             }
@@ -352,6 +353,8 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

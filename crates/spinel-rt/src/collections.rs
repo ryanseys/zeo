@@ -236,15 +236,58 @@ pub fn array_len(arr: &RArray) -> i64 {
     arr.lock().len() as i64
 }
 
-/// Flattens a `*splat` array-literal element in place -- panics (not a
-/// silent no-op) if the splatted value isn't actually an `Array`, since
-/// there's no static type-checker here to catch that earlier (same posture
-/// as `RubyValue::as_int_unchecked` etc.).
-pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) {
+/// Flattens a `*splat` element in place, with Ruby's own coercion rules --
+/// splatting a non-Array is ordinary Ruby, not an error. It used to panic
+/// ("expected an Array to splat"), which took down `a, b = *1`.
+///
+/// The rules, all oracle-verified:
+///
+/// ```text
+/// [*[1, 2]]        => [1, 2]      an Array is itself
+/// [*nil]           => []          nil splats to NOTHING
+/// [*1]             => [1]         no to_a: wrapped
+/// [*(1..3)]        => [1, 2, 3]   Range#to_a
+/// [*{a: 1}]        => [[:a, 1]]   Hash#to_a
+/// [*"str"]         => ["str"]     NOT chars -- String has no to_a
+/// ```
+///
+/// `"str"` is the case worth stating: it looks like it should splat into
+/// characters, and it doesn't, because modern Ruby's String simply has no
+/// `to_a`. Probing `respond_to?` rather than special-casing types is what
+/// gets that right for free -- and gets a user class with its own `to_a`
+/// right too.
+///
+/// Fallible now: `to_a` is a real dispatch and can raise.
+pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) -> Result<(), crate::Signal> {
     match value {
         RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
-        other => panic!("expected an Array to splat, got {}", other.to_display_string()),
+        RubyValue::Nil => {}
+        other => {
+            let to_a = crate::Symbol::intern("to_a");
+            if crate::dispatch::responds_to(other.class_id(), to_a, false) {
+                let arr = crate::dispatch::send_value(other, to_a, &[], None)?;
+                match arr {
+                    RubyValue::Array(a) => out.extend(a.lock().iter().cloned()),
+                    // A `to_a` that doesn't answer an Array is CRuby's
+                    // "can't convert X to Array" TypeError.
+                    bad => {
+                        return Err(crate::dispatch::raise_error(
+                            "TypeError",
+                            format!(
+                                "can't convert {} to Array ({}#to_a gives {})",
+                                crate::builtins::class_name_of(other),
+                                crate::builtins::class_name_of(other),
+                                crate::builtins::class_name_of(&bad)
+                            ),
+                        ))
+                    }
+                }
+            } else {
+                out.push(other.clone());
+            }
+        }
     }
+    Ok(())
 }
 
 fn resolve_index(index: i64, len: usize) -> Option<usize> {
@@ -476,5 +519,55 @@ mod multi_assign_tests {
 
         let (before, ..) = multi_assign(&ints(&[1]), 2, false, 0);
         assert_eq!(display(&before), ["1", ""]); // nil-padded
+    }
+
+    /// Splatting a non-Array is ordinary Ruby, not an error -- this used to
+    /// panic ("expected an Array to splat"), which took down `a, b = *1`.
+    /// Every case here is oracle-verified against ruby 4.0.5.
+    #[test]
+    fn splatting_an_array_flattens_it_and_nil_contributes_nothing() {
+        let mut out = Vec::new();
+        let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]));
+        array_splat_into(&mut out, &arr).unwrap();
+        assert_eq!(display(&out), ["1", "2"]);
+
+        // `[*nil]` is `[]` -- nil splats to NOTHING; it is not wrapped.
+        let mut out = Vec::new();
+        array_splat_into(&mut out, &RubyValue::Nil).unwrap();
+        assert!(out.is_empty());
+    }
+
+    /// A value with no `to_a` is WRAPPED, not rejected: `[*1]` is `[1]`.
+    #[test]
+    fn splatting_a_value_without_to_a_wraps_it() {
+        let mut out = Vec::new();
+        array_splat_into(&mut out, &RubyValue::Int(1)).unwrap();
+        assert_eq!(display(&out), ["1"]);
+    }
+
+    /// The case that looks wrong and isn't: `[*"str"]` is `["str"]`, NOT
+    /// its characters -- modern Ruby's String simply has no `to_a`. This is
+    /// exactly why the implementation asks `respond_to?(:to_a)` instead of
+    /// special-casing types: getting String right falls out of asking, and
+    /// so does getting a user class with its own `to_a` right.
+    #[test]
+    fn splatting_a_string_wraps_it_rather_than_splitting_into_chars() {
+        let mut out = Vec::new();
+        let s = RubyValue::Str(string_new("str".to_string()));
+        array_splat_into(&mut out, &s).unwrap();
+        assert_eq!(display(&out), ["str"]);
+    }
+
+    /// A Range DOES have `to_a`, so it splats through it.
+    #[test]
+    fn splatting_a_range_goes_through_its_to_a() {
+        let mut out = Vec::new();
+        let r = RubyValue::Range(
+            Some(Box::new(RubyValue::Int(1))),
+            Some(Box::new(RubyValue::Int(3))),
+            false,
+        );
+        array_splat_into(&mut out, &r).unwrap();
+        assert_eq!(display(&out), ["1", "2", "3"]);
     }
 }

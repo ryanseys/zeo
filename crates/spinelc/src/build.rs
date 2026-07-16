@@ -200,7 +200,13 @@ pub fn build_binary_with_deps(
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
-    if cached.exists() && link_or_copy(&cached, output).is_ok() {
+    //
+    // `is_usable_entry`, not a bare `exists()`: existence is not validity, and
+    // treating it as validity makes any corrupt entry STICKY -- it is served
+    // as a successful build forever, and the program silently does nothing.
+    // That cost real debugging time (two examples "regressed" to empty output
+    // with a green exit code). A miss is always safe; a false hit never is.
+    if is_usable_entry(&cached) && link_or_copy(&cached, output).is_ok() {
         return Ok(());
     }
 
@@ -262,8 +268,54 @@ pub fn build_binary_with_deps(
     // byte-identical to ours, so the loser is harmless.
     std::fs::rename(&staged, &cached)
         .map_err(|e| format!("publishing {}: {e}", cached.display()))?;
+    seal(&cached);
     let _ = std::fs::remove_dir_all(&staging);
     link_or_copy(&cached, output)
+}
+
+/// Marks a published cache entry read-only.
+///
+/// Not hygiene -- this closes a real corruption channel. `link_or_copy` hands
+/// the caller a HARD LINK to this very inode, so the cache entry and the
+/// caller's output file are the same bytes. Anything that then writes to that
+/// output IN PLACE (a shell redirect, an interrupted writer, two concurrent
+/// builds racing on one `-o` path) truncates the SHARED entry, and the cache
+/// serves the wreckage to every later build of that program.
+///
+/// Reproduced exactly that way: `spinelc x.rb -o x.bin` then `: > x.bin` left
+/// the cache entry at 0 bytes, and every subsequent build of `x.rb` "succeeded"
+/// instantly with an empty binary.
+///
+/// Read-only makes that write fail instead of silently succeeding. `0o555`
+/// keeps the execute bit, which the caller's output still needs; replacing an
+/// output is unaffected, since unlinking depends on the DIRECTORY's permissions
+/// rather than the file's (`link_or_copy` unlinks before linking).
+///
+/// Best-effort: a filesystem that refuses the chmod costs us the hardening, not
+/// the build -- and `is_usable_entry` still catches the damage on read.
+fn seal(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o555));
+    }
+}
+
+/// Whether a cache entry can be served as a finished build.
+///
+/// A zero-length file is never a valid executable, so it can only be damage --
+/// see `seal` for the channel that produced one. Treating it as a miss makes
+/// the cache self-healing: the entry is rebuilt and republished, and an already
+/// poisoned cache recovers on the next build rather than needing a manual
+/// sweep.
+///
+/// Length is the whole check on purpose. Anything stronger (a hash of the
+/// contents) would re-read every cached binary on every hit -- megabytes per
+/// lookup, which is precisely the cost the cache exists to avoid -- to defend
+/// against corruption shapes that have never occurred. The cheap check covers
+/// the one that has.
+fn is_usable_entry(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() > 0)
 }
 
 /// Where compiled generated programs are kept, keyed by their full input.
@@ -471,4 +523,85 @@ fn thread_unique_suffix() -> String {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("spinelc-build-test-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("entry")
+    }
+
+    /// A zero-length entry is damage, never a build -- see `seal` for the
+    /// channel that produces one. Serving it would make the corruption
+    /// STICKY: every later build of that program "succeeds" instantly with
+    /// an empty binary. Rejecting it makes the cache self-healing.
+    #[test]
+    fn a_zero_length_entry_is_not_usable() {
+        let p = tmp("zero");
+        std::fs::write(&p, b"").unwrap();
+        assert!(!is_usable_entry(&p));
+    }
+
+    #[test]
+    fn a_nonempty_file_is_usable_and_a_missing_one_is_not() {
+        let p = tmp("ok");
+        std::fs::write(&p, b"\x7fELF").unwrap();
+        assert!(is_usable_entry(&p));
+        std::fs::remove_file(&p).unwrap();
+        assert!(!is_usable_entry(&p));
+    }
+
+    /// A DIRECTORY at the entry's path is not a build either -- `exists()`
+    /// would have said yes.
+    #[test]
+    fn a_directory_is_not_usable() {
+        let p = tmp("dir");
+        let _ = std::fs::remove_file(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        assert!(!is_usable_entry(&p));
+    }
+
+    /// The corruption channel, end to end: `link_or_copy` hands the caller a
+    /// HARD LINK to the cache's own inode, so an in-place write to the
+    /// caller's output would truncate the shared entry. Sealing makes that
+    /// write fail. Reproduced exactly this way before the fix.
+    #[cfg(unix)]
+    #[test]
+    fn a_sealed_entry_survives_an_in_place_write_through_a_hard_link() {
+        let entry = tmp("sealed");
+        std::fs::write(&entry, b"a real binary's bytes").unwrap();
+        seal(&entry);
+
+        let output = entry.with_file_name("output");
+        link_or_copy(&entry, &output).unwrap();
+
+        // What poisoned the cache: truncating the OUTPUT, which is the same
+        // inode as the entry.
+        let truncate = std::fs::OpenOptions::new().write(true).truncate(true).open(&output);
+        assert!(truncate.is_err(), "an in-place write to a sealed entry must fail");
+        assert!(is_usable_entry(&entry), "the cache entry must survive intact");
+
+        // The output is still executable/readable -- sealing keeps 0o555.
+        assert_eq!(std::fs::read(&output).unwrap(), b"a real binary's bytes");
+    }
+
+    /// Replacing an output is unaffected by the seal: unlinking depends on
+    /// the DIRECTORY's permissions, not the file's, and `link_or_copy`
+    /// unlinks first.
+    #[cfg(unix)]
+    #[test]
+    fn a_sealed_entry_can_still_be_relinked_over_an_existing_output() {
+        let entry = tmp("relink");
+        std::fs::write(&entry, b"payload").unwrap();
+        seal(&entry);
+        let output = entry.with_file_name("relink-out");
+        link_or_copy(&entry, &output).unwrap();
+        // Second link over the existing (read-only) output must succeed.
+        link_or_copy(&entry, &output).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), b"payload");
+    }
 }

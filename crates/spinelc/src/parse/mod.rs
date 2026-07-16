@@ -975,6 +975,87 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let rhs = lower_node(result, hir, &op.value())?;
         return Ok(lower_or_write(hir, Storage::Global(name), rhs));
     }
+    // `BEGIN { ... }` -- hoisted by `analyze`; see `HirNode::PreExec`.
+    if let Some(pre) = node.as_pre_execution_node() {
+        let body = lower_body(result, hir, pre.statements().map(|s| s.as_node()))?;
+        return Ok(hir.push(HirNode::PreExec(body)));
+    }
+
+    // `END { ... }` -- `at_exit { ... }` exactly, down to the reverse-order
+    // rule (oracle-verified: two ENDs run last-written-first, identical to
+    // two at_exits). Rewritten into that call rather than given a node of
+    // its own, so it inherits the registration and the exit-time driver
+    // already behind `at_exit`.
+    if let Some(post) = node.as_post_execution_node() {
+        let body = lower_body(result, hir, post.statements().map(|s| s.as_node()))?;
+        let block = hir.push(HirNode::Block {
+            params: Params::default(),
+            body,
+        });
+        return Ok(hir.push(HirNode::Call {
+            receiver: None,
+            name: "at_exit".to_string(),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: Some(block),
+            block_arg: None,
+            safe: false,
+        }));
+    }
+
+    // `alias $new $old` -- an expression, not a class-body-only statement
+    // (unlike `alias` on a method), so it lowers here. prism gives both
+    // names as GlobalVariableReadNodes.
+    if let Some(alias) = node.as_alias_global_variable_node() {
+        let name_of = |n: &Node<'_>| -> PResult<String> {
+            let g = n
+                .as_global_variable_read_node()
+                .ok_or("`alias`'s global targets must both be plain `$name` globals (spike scope)")?;
+            Ok(String::from_utf8_lossy(g.name().as_slice()).into_owned())
+        };
+        let new_name = name_of(&alias.new_name())?;
+        let old_name = name_of(&alias.old_name())?;
+        return Ok(hir.push(HirNode::AliasGlobal(new_name, old_name)));
+    }
+
+    // Hash shorthand -- `{x:, name:}`, the value-omitted form. prism wraps
+    // the value it filled in (a local read, or a method call when no such
+    // local exists) in an `ImplicitNode`; unwrapping it here means the
+    // shorthand works everywhere a hash does -- literals, keyword
+    // arguments, pattern matching -- rather than needing each site to know
+    // about it.
+    if let Some(implicit) = node.as_implicit_node() {
+        return lower_node(result, hir, &implicit.value());
+    }
+
+    // `__FILE__` / `__LINE__` / `__ENCODING__` -- resolved HERE, at lowering
+    // time, into ordinary literals. That is not a shortcut: they are
+    // compile-time constants in real Ruby too, fixed by where the code was
+    // WRITTEN. Deferring them to codegen would be strictly worse, since
+    // `require` merges every file's statements into one `Program` and by
+    // then nothing distinguishes them (see `loader`'s SOURCE_FILE stack).
+    if node.as_source_file_node().is_some() {
+        return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(current_file_str()?)])));
+    }
+    if node.as_source_line_node().is_some() {
+        let line = line_of(result, node.location().start_offset());
+        return Ok(hir.push(HirNode::IntegerLit(line)));
+    }
+    // `__ENCODING__` would be `Encoding::UTF_8` (this compiler is UTF-8-only
+    // throughout), but no `Encoding` CLASS exists yet to answer with -- it
+    // is the encoding phase's own deliverable (plan Part 4: an RObj wrapping
+    // an EncodingId, with `Encoding::UTF_8` et al as real constants).
+    // Rejected rather than stubbed: inventing a placeholder Encoding now
+    // would pre-empt that design, and `__ENCODING__` is only useful if the
+    // object it answers actually behaves like one.
+    if node.as_source_encoding_node().is_some() {
+        return Err(
+            "`__ENCODING__` isn't supported yet (spike scope: no `Encoding` class exists -- see the encoding phase)"
+                .to_string(),
+        );
+    }
+
     // `$1`..`$9` -- prism gives these their own node kind, not a global
     // read, because nothing can assign them.
     if let Some(nref) = node.as_numbered_reference_read_node() {
@@ -1288,10 +1369,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             let when = cond
                 .as_when_node()
                 .ok_or("expected a `when` clause inside `case` (spike scope)")?;
+            // `lower_array_elem`, not a bare `lower_node`: `when *a` is a
+            // SplatNode, structurally identical to `[*a]`'s element.
             let values = when
                 .conditions()
                 .iter()
-                .map(|n| lower_node(result, hir, &n))
+                .map(|n| lower_array_elem(result, hir, &n))
                 .collect::<PResult<Vec<_>>>()?;
             let body = lower_body(result, hir, when.statements().map(|s| s.as_node()))?;
             arms.push((values, body));
@@ -1658,6 +1741,24 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 return Ok(hir.push(HirNode::BlockGiven));
             }
         }
+        // `__dir__` -- a `Kernel` METHOD (not a keyword like `__FILE__`), but
+        // one whose answer is fixed by where it was written, so it folds to
+        // the same kind of literal. Defined as
+        // `File.dirname(File.realpath(__FILE__))`, oracle-verified:
+        // `__dir__ == File.dirname(File.expand_path(__FILE__))`.
+        //
+        // Folded rather than implemented as a runtime row, because a runtime
+        // one could only ever answer the MAIN file's directory -- by then
+        // every required file's statements share one `Program` and the
+        // authorship is gone. That would be silently wrong for a `__dir__`
+        // inside a required file, which is the main reason to write one.
+        if name == "__dir__" && call.receiver().is_none() {
+            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            if no_args && call.block().is_none() {
+                let dir = current_dir_str()?;
+                return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(dir)])));
+            }
+        }
 
         // `lambda { ... }` / `lambda do ... end` -- an alternate spelling of
         // `-> { ... }` (an ordinary `Kernel` method call with a block, not a
@@ -1843,6 +1944,30 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(content)])));
     }
 
+    // `:"hello_#{x}"` -- an interpolated symbol is exactly its interpolated
+    // STRING, interned. Lowered as that string plus a `to_sym` call rather
+    // than given its own HIR node: the parts are the same shape, and the
+    // name isn't known until runtime anyway, so there is nothing a
+    // dedicated node could do that this doesn't.
+    if let Some(isym) = node.as_interpolated_symbol_node() {
+        let parts = isym
+            .parts()
+            .iter()
+            .map(|part| lower_string_part(result, hir, &part))
+            .collect::<PResult<Vec<_>>>()?;
+        let text = hir.push(HirNode::StringLit(parts));
+        return Ok(hir.push(HirNode::Call {
+            receiver: Some(text),
+            name: "to_sym".to_string(),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: None,
+            block_arg: None,
+            safe: false,
+        }));
+    }
+
     if let Some(istr) = node.as_interpolated_string_node() {
         let parts = istr
             .parts()
@@ -1909,16 +2034,18 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         );
     }
 
-    // `/(?<name>...)/  =~ str` -- the named-capture auto-binding sugar
-    // (`MatchWriteNode`), which synthesizes local-variable writes for every
-    // named group. An ordinary `=~` with NO named captures is just a plain
-    // `CallNode` (falls through to the generic `Call` handling further below,
-    // dispatched by `codegen::call`'s Regexp/String arms) -- only this
-    // auto-binding sugar itself is out of scope.
-    if node.as_match_write_node().is_some() {
-        return Err(
-            "`=~`'s named-capture auto-binding sugar (synthesizing a local per named group) isn't supported yet (spike scope) -- bind the `MatchData` explicitly via `#match`/`#[]` instead".to_string(),
-        );
+    // `/(?<name>...)/ =~ str` -- named-capture AUTO-BINDING: real Ruby
+    // assigns each named group to a LOCAL of that name. prism hands this
+    // over as its own `MatchWriteNode`, having already worked out both the
+    // match call and the target names -- so this is a pure desugar over a
+    // known list, with no pattern-scanning of our own.
+    //
+    // Only the literal-on-the-LEFT form is this node at all: `str =~
+    // /(?<a>.)/` is an ordinary `CallNode` and binds nothing
+    // (oracle-verified). That asymmetry is Ruby's, not an approximation --
+    // the parser can only declare the locals when it can see the names.
+    if let Some(mw) = node.as_match_write_node() {
+        return lower_named_capture_match(result, hir, &mw);
     }
 
     if let Some(arr) = node.as_array_node() {
@@ -2261,6 +2388,20 @@ fn lower_class_body_statement(
     // the alias is just a second `DefMethod` node under a different name --
     // no new analyze-phase machinery, no shared-body indirection to keep in
     // sync with `super`/materialization.
+    // `undef foo, bar` -- a keyword like `alias`, same target shape (prism
+    // gives each name as a SymbolNode either way), so it reuses
+    // `alias_target_name`. Recorded rather than resolved here: see
+    // `HirNode::Undef` for why the inherited case rules out deleting a def.
+    if let Some(undef) = node.as_undef_node() {
+        let names = undef
+            .names()
+            .iter()
+            .map(|n| alias_target_name(&n))
+            .collect::<PResult<Vec<_>>>()?;
+        out.push(hir.push(HirNode::Undef(names)));
+        return Ok(());
+    }
+
     if let Some(alias) = node.as_alias_method_node() {
         let new_name = alias_target_name(&alias.new_name())?;
         let old_name = alias_target_name(&alias.old_name())?;
@@ -3172,6 +3313,93 @@ fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
         }
     }
     Ok(())
+}
+
+/// The `/(?<a>..)/ =~ str` desugar: run the match (which records `$~`, as
+/// every match does), then assign each named group to a local of that name.
+///
+/// Emitted as a `Seq` whose LAST statement is the match RESULT, so the
+/// whole thing still answers what `=~` answers (the match index, or nil) --
+/// `if /(?<a>.)/ =~ s` has to keep working as a condition.
+///
+/// Each local reads from `$~` rather than from a saved MatchData temp,
+/// which is what makes the failed-match case need no branch: a failed match
+/// CLEARS the slot, so `$~&.[](:a)` is nil, exactly Ruby's answer
+/// (oracle-verified).
+fn lower_named_capture_match(
+    result: &ParseResult,
+    hir: &mut Hir,
+    mw: &ruby_prism::MatchWriteNode<'_>,
+) -> PResult<NodeId> {
+    // The match itself is an ordinary `=~` call -- lowered through the
+    // normal path, so it picks up the Regexp/String dispatch and the
+    // last-match recording without this desugar knowing about either.
+    let match_call = lower_node(result, hir, &mw.call().as_node())?;
+    // Bound to a temp first, so the result survives the assignments below
+    // and can be the Seq's tail.
+    let m_tmp = "__named_capture_result".to_string();
+    let mut body = vec![hir.push(HirNode::LocalWrite(m_tmp.clone(), match_call))];
+    for target in mw.targets().iter() {
+        let lvt = target.as_local_variable_target_node().ok_or(
+            "`=~`'s named-capture auto-binding only writes plain locals (spike scope)",
+        )?;
+        let name = String::from_utf8_lossy(lvt.name().as_slice()).into_owned();
+        let group = hir.push(HirNode::SymbolLit(name.clone()));
+        let last = hir.push(HirNode::LastMatchRef(LastMatch::Data));
+        let fetch = hir.push(HirNode::Call {
+            receiver: Some(last),
+            name: "[]".to_string(),
+            args: vec![ArrayElem::Single(group)],
+            kwargs: Vec::new(),
+            kwargs_splat: None,
+            block: None,
+            block_arg: None,
+            // `&.` -- nil when `$~` is nil, i.e. when the match failed.
+            safe: true,
+        });
+        body.push(hir.push(HirNode::LocalWrite(name, fetch)));
+    }
+    body.push(hir.push(HirNode::LocalRead(m_tmp)));
+    Ok(hir.push(HirNode::Seq(body)))
+}
+
+/// `__FILE__`'s answer: the path AS GIVEN on the command line, NOT an
+/// absolute one -- oracle-verified (`ruby o_leaves.rb` prints
+/// `"o_leaves.rb"`). `"-e"` when there is no file at all, which is real
+/// Ruby's own answer for `ruby -e`, and is what a bare
+/// `compile_to_rust(source)` gets.
+fn current_file_str() -> PResult<String> {
+    Ok(match loader::current_source_file() {
+        Some(p) => p.to_string_lossy().into_owned(),
+        None => "-e".to_string(),
+    })
+}
+
+/// `__dir__`'s answer: the ABSOLUTE directory holding the current file --
+/// unlike `__FILE__`, which stays as-written. Real Ruby defines it as
+/// `File.dirname(File.realpath(__FILE__))`, so it resolves symlinks too;
+/// `canonicalize` is that, and it falls back to a plain absolute path when
+/// the file can't be resolved (a source string with no file on disk).
+fn current_dir_str() -> PResult<String> {
+    let path = loader::current_source_file()
+        .ok_or("`__dir__` needs a real source file (there is none when compiling a bare string)")?;
+    let resolved = path.canonicalize().unwrap_or(path);
+    let dir = resolved
+        .parent()
+        .ok_or("the source file has no parent directory")?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// The 1-based line a byte offset falls on. `Location` only carries
+/// offsets, so this counts the newlines before it -- fine for the handful
+/// of `__LINE__`/`__dir__` sites a program has (this is not on any hot
+/// path; it runs once per occurrence, at compile time).
+fn line_of(result: &ParseResult, offset: usize) -> i64 {
+    let src = result.source();
+    1 + src[..offset.min(src.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as i64
 }
 
 /// One `parts()` entry of an `InterpolatedStringNode`:

@@ -176,7 +176,10 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::CaseWhen { subject, arms, else_body } => {
             subject.is_some_and(|s| node_contains_escaping_block(compiler, s))
                 || arms.iter().any(|(values, body)| {
-                    values.iter().any(|&v| node_contains_escaping_block(compiler, v))
+                    values.iter().any(|e| {
+                        let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                        node_contains_escaping_block(compiler, *v)
+                    })
                         || body_contains_escaping_block(compiler, body)
                 })
                 || body_contains_escaping_block(compiler, else_body)
@@ -209,7 +212,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Raise(args) => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
-        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
+        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
         HirNode::New { args, .. } => {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
@@ -282,6 +285,8 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -348,7 +353,10 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::CaseWhen { subject, arms, else_body } => {
             subject.is_some_and(|s| node_contains_begin(compiler, s))
                 || arms.iter().any(|(values, body)| {
-                    values.iter().any(|&v| node_contains_begin(compiler, v)) || body_contains_begin(compiler, body)
+                    values.iter().any(|e| {
+                        let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                        node_contains_begin(compiler, *v)
+                    }) || body_contains_begin(compiler, body)
                 })
                 || body_contains_begin(compiler, else_body)
         }
@@ -410,7 +418,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_begin(compiler, *n),
             StrPart::Lit(_) => false,
         }),
-        HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_begin(compiler, body),
+        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_begin(compiler, body),
         HirNode::Retry
         | HirNode::Redo
         | HirNode::BlockGiven
@@ -434,6 +442,8 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)
@@ -573,8 +583,9 @@ fn walk(
                 walk(compiler, *s, in_escaping, param_exclusions, caps, self_class);
             }
             for (values, body) in arms {
-                for &v in values {
-                    walk(compiler, v, in_escaping, param_exclusions, caps, self_class);
+                for e in values {
+                    let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
+                    walk(compiler, *v, in_escaping, param_exclusions, caps, self_class);
                 }
                 for &n in body {
                     walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
@@ -617,7 +628,7 @@ fn walk(
         // `ClassVarWrite` just above.
         HirNode::GlobalWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
         HirNode::ConstWrite { value, .. } => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
-        HirNode::Seq(body) => {
+        HirNode::PreExec(body) | HirNode::Seq(body) => {
             for &n in body {
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
@@ -839,6 +850,8 @@ fn walk(
         | HirNode::ClassRef(_)
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
         | HirNode::Include(_)

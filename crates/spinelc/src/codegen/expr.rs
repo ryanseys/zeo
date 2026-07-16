@@ -246,6 +246,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::GlobalWrite(..)
         | HirNode::ConstWrite { .. }
         | HirNode::ConstReadOrNil(..)
+        | HirNode::PreExec(_)
         | HirNode::Seq(_)
         | HirNode::While { .. }
         | HirNode::Loop { .. }
@@ -258,6 +259,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // narrowings (see the module docs above).
         | HirNode::Yield(_) => Some("expression"),
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
+        HirNode::AliasGlobal(..) => Some("expression"),
         HirNode::Block { .. }
         | HirNode::Program(_)
         | HirNode::ClassDef { .. }
@@ -265,6 +267,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Undef(_)
         | HirNode::NativeCrate(_)
         | HirNode::NativeFunc { .. } => None,
     };
@@ -311,7 +314,7 @@ fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -
 fn emit_case_when(
     cx: &Ctx,
     subject: Option<NodeId>,
-    arms: &[(Vec<NodeId>, Vec<NodeId>)],
+    arms: &[(Vec<ArrayElem>, Vec<NodeId>)],
     else_body: &[NodeId],
 ) -> TokenStream {
     let has_subject = subject.is_some();
@@ -322,18 +325,44 @@ fn emit_case_when(
     for (values, body) in arms.iter().rev() {
         let body_val = super::stmt::emit_body_boxed(cx, body);
         let mut check: Option<TokenStream> = None;
-        for &v in values {
-            let v_expr = box_if_object_typed(cx, v, emit_expr(cx, v));
-            let this_check = if has_subject {
-                // `rb_case_eq`, not plain `rb_eq`: a strict superset that
-                // additionally gives `when /regex/` real `Regexp#===`
-                // matching against a `String` subject (see
-                // `RubyValue::rb_case_eq`'s docs) -- every other value shape
-                // this desugar already supported behaves identically either
-                // way.
-                quote! { (#v_expr).rb_case_eq(&__subject) }
-            } else {
-                quote! { (#v_expr).truthy() }
+        for elem in values {
+            let this_check = match elem {
+                ArrayElem::Single(v) => {
+                    let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
+                    if has_subject {
+                        // `rb_case_eq`, not plain `rb_eq`: a strict superset
+                        // that additionally gives `when /regex/` real
+                        // `Regexp#===` matching against a `String` subject
+                        // (see `RubyValue::rb_case_eq`'s docs) -- every other
+                        // value shape this desugar already supported behaves
+                        // identically either way.
+                        quote! { (#v_expr).rb_case_eq(&__subject) }
+                    } else {
+                        quote! { (#v_expr).truthy() }
+                    }
+                }
+                // `when *candidates` -- the same test as a listed value,
+                // over every element, with the count known only at runtime.
+                // `any` short-circuits, so the elements after a hit are
+                // never tested, matching the `||` chain the listed form
+                // builds.
+                ArrayElem::Splat(v) => {
+                    let v_expr = emit_expr(cx, *v);
+                    if has_subject {
+                        quote! {
+                            (#v_expr).as_array_unchecked().lock().iter()
+                                .any(|__c| __c.rb_case_eq(&__subject))
+                        }
+                    } else {
+                        // A subject-less `case` tests truthiness, so a
+                        // splatted candidate list is "is any of them
+                        // truthy".
+                        quote! {
+                            (#v_expr).as_array_unchecked().lock().iter()
+                                .any(|__c| __c.truthy())
+                        }
+                    }
+                }
             };
             check = Some(match check {
                 None => this_check,
@@ -650,6 +679,19 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let bx = cx.box_id;
             quote! { spinel_rt::global_get(#bx, #name) }
         }
+        // `alias $new $old` -- registers the indirection and answers nil
+        // (real Ruby: `alias` is an expression whose value is nil). Runs
+        // where it is written, so a later re-alias replaces an earlier one,
+        // as Ruby's does. Per-box, like the table it indirects into.
+        HirNode::AliasGlobal(new_name, old_name) => {
+            let bx = cx.box_id;
+            quote! {
+                {
+                    spinel_rt::global_alias(#bx, #new_name, #old_name);
+                    spinel_rt::RubyValue::Nil
+                }
+            }
+        }
         // The last-match specials read a dedicated runtime slot, not the
         // `$foo` table -- see `HirNode::LastMatchRef` and
         // `spinel_rt::lastmatch`. Not box-scoped: a match's result belongs
@@ -706,7 +748,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // gensym'd names are unreadable outside it. `Eval` deliberately gets
         // NO overlay -- its body is arbitrary user code where "the first
         // write's type" isn't a sound stand-in for a branch-merged one.
-        HirNode::Seq(body) => {
+        HirNode::PreExec(body) | HirNode::Seq(body) => {
             let mut overlay = std::collections::HashMap::new();
             for &n in body {
                 if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[n] {
@@ -832,6 +874,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
+        | HirNode::Undef(_)
         | HirNode::NativeCrate(_)
         | HirNode::NativeFunc { .. } => {
             panic!("unexpected top-level-only node in expression position")

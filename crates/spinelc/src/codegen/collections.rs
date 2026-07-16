@@ -25,7 +25,13 @@ pub fn emit_array_lit(cx: &Ctx, elems: &[ArrayElem]) -> TokenStream {
         }
         ArrayElem::Splat(n) => {
             let v = emit_expr(cx, *n);
-            quote! { spinel_rt::array_splat_into(&mut __arr, &(#v)); }
+            // Boxed like a plain element: splatting a non-Array is ordinary
+            // Ruby (`[*obj]` consults `obj.to_a`), so the operand can be an
+            // Object-typed expression emitting a bare `Arc<Concrete>` --
+            // which `array_splat_into`'s `&RubyValue` won't take. It never
+            // came up while only Arrays could be splatted.
+            let v = box_if_object_typed(cx, *n, v);
+            quote! { spinel_rt::array_splat_into(&mut __arr, &(#v))?; }
         }
     });
     quote! {

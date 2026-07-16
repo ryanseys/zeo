@@ -844,7 +844,13 @@ pub enum HirNode {
     /// lowered to this -- see the plan's Phase 8.
     CaseWhen {
         subject: Option<NodeId>,
-        arms: Vec<(Vec<NodeId>, Vec<NodeId>)>,
+        /// Each arm's `(conditions, body)`. The conditions are
+        /// `ArrayElem`s, the same shape a call's arguments use, so
+        /// `when *candidates` needs no machinery of its own -- a `Splat`
+        /// element tests EVERY element of its array, which is exactly what
+        /// the `||` chain over the non-splat ones already does, just with
+        /// the arity known only at runtime.
+        arms: Vec<(Vec<ArrayElem>, Vec<NodeId>)>,
         else_body: Vec<NodeId>,
     },
     /// `[1, 2, *rest]` -- see `ArrayElem`'s docs for the splat handling.
@@ -1334,6 +1340,40 @@ pub enum HirNode {
         name: String,
         value: NodeId,
     },
+    /// `BEGIN { ... }` -- its body runs before ANY main statement, and
+    /// several run in source order (oracle-verified).
+    ///
+    /// A marker rather than a construct: `analyze` hoists these bodies to
+    /// the front of `main_statements` and drops the node. Nothing downstream
+    /// ever sees one, which is why there is no codegen arm for it.
+    ///
+    /// (`END { ... }` needs no node at all -- it is `at_exit` exactly,
+    /// including the reverse-order rule, so lowering rewrites it into that
+    /// call.)
+    PreExec(Vec<NodeId>),
+    /// `alias $new $old` -- makes `$new` name `$old`'s STORAGE. A real,
+    /// bidirectional alias, not a copy: oracle-verified that writing either
+    /// name is visible through the other, and that a later `$old = 9` shows
+    /// up as `$new`. So it can't lower to `$new = $old`; the runtime
+    /// resolves the indirection on every access (`spinel_rt::globals`).
+    ///
+    /// `(new, old)`. Unlike `alias` on a METHOD (which lowering resolves by
+    /// cloning the DefMethod), this needs no target to exist yet: aliasing
+    /// an unset global is legal and both names then read nil.
+    AliasGlobal(String, String),
+    /// `undef foo, bar` in a class/module body -- makes those names raise
+    /// NoMethodError on this class, INCLUDING names it only inherits
+    /// (oracle-verified: `class C < B; undef inherited_m; end` makes
+    /// `C.new.inherited_m` a NoMethodError while `B.new.inherited_m` still
+    /// works, and `C.new.respond_to?(:inherited_m)` is false).
+    ///
+    /// That inherited case is why this can't just delete a `DefMethod` from
+    /// the class body at lowering time: there is no local def to delete.
+    /// `analyze::register_class` records the names, and
+    /// `mro::materialize_methods` then refuses to materialize them onto
+    /// this class -- which removes them from the one table both dispatch
+    /// paths and `respond_to?` consult.
+    Undef(Vec<String>),
     /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
     ///
     /// NOT `GlobalRead`, even though they are spelled like globals: nothing

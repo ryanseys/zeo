@@ -64,7 +64,7 @@ pub use lastmatch::{
 };
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
-pub use globals::{global_get, global_set};
+pub use globals::{global_alias, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use ractor::{
     make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send, shareable,

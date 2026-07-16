@@ -14,6 +14,46 @@ use std::sync::LazyLock;
 static GLOBALS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// `alias $new $old` -- alias name -> the name whose STORAGE it shares.
+///
+/// A real alias, not a copy: the two names are one slot, and writing
+/// EITHER is visible through the other (oracle-verified in both
+/// directions -- `$orig = 9` makes `$copy` read 9, and `$copy = 7` makes
+/// `$orig` read 7). So this resolves on every access rather than copying a
+/// value at alias time.
+///
+/// Keyed `(box_id, name)` like `GLOBALS` itself, since an alias is
+/// per-box state exactly as the variable is.
+static ALIASES: LazyLock<Mutex<HashMap<(u32, String), String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The name whose storage `name` actually refers to -- itself, unless it
+/// was aliased. Chains are followed (`alias $b $a; alias $c $b` makes all
+/// three one slot), with a depth cap: real Ruby resolves the target AT
+/// ALIAS TIME, so a cycle can't arise from Ruby source, but a cap beats
+/// hanging if one ever did.
+fn resolve(box_id: u32, name: &str) -> String {
+    let aliases = ALIASES.lock();
+    let mut cur = name.to_string();
+    for _ in 0..16 {
+        match aliases.get(&(box_id, cur.clone())) {
+            Some(target) => cur = target.clone(),
+            None => return cur,
+        }
+    }
+    cur
+}
+
+/// `alias $new $old` -- makes `$new` name `$old`'s storage. The target is
+/// resolved through any existing alias first, so every name in a chain
+/// points at the one real slot.
+pub fn global_alias(box_id: u32, new_name: &str, old_name: &str) {
+    let target = resolve(box_id, old_name);
+    ALIASES
+        .lock()
+        .insert((box_id, new_name.to_string()), target);
+}
+
 /// `nil` for a `$foo` never yet written IN THIS BOX -- matches real Ruby's
 /// own behavior for reading a global before any assignment ran (no
 /// `NameError`, unlike an unset constant -- see `constants::const_get`'s
@@ -21,11 +61,77 @@ static GLOBALS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
 pub fn global_get(box_id: u32, name: &str) -> RubyValue {
     GLOBALS
         .lock()
-        .get(&(box_id, name.to_string()))
+        .get(&(box_id, resolve(box_id, name)))
         .cloned()
         .unwrap_or(RubyValue::Nil)
 }
 
 pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
-    GLOBALS.lock().insert((box_id, name.to_string()), value);
+    GLOBALS
+        .lock()
+        .insert((box_id, resolve(box_id, name)), value);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int_of(v: RubyValue) -> Option<i64> {
+        match v {
+            RubyValue::Int(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The property the alias table exists for, and the one a
+    /// copy-at-alias-time implementation would fail: ONE slot, two names,
+    /// and a write through EITHER is visible through the other.
+    /// Oracle-verified in both directions.
+    #[test]
+    fn an_alias_shares_storage_bidirectionally() {
+        global_set(0, "$g_orig", RubyValue::Int(5));
+        global_alias(0, "$g_copy", "$g_orig");
+        assert_eq!(int_of(global_get(0, "$g_copy")), Some(5));
+        // write through the ALIAS -> visible via the original
+        global_set(0, "$g_copy", RubyValue::Int(7));
+        assert_eq!(int_of(global_get(0, "$g_orig")), Some(7));
+        // ...and write through the ORIGINAL -> visible via the alias
+        global_set(0, "$g_orig", RubyValue::Int(9));
+        assert_eq!(int_of(global_get(0, "$g_copy")), Some(9));
+    }
+
+    /// Aliasing a never-assigned global is legal; both names then read nil,
+    /// and a later write through the target shows up.
+    #[test]
+    fn aliasing_an_unset_global_is_legal() {
+        global_alias(0, "$g_b", "$g_never_set");
+        assert!(matches!(global_get(0, "$g_b"), RubyValue::Nil));
+        global_set(0, "$g_never_set", RubyValue::Int(1));
+        assert_eq!(int_of(global_get(0, "$g_b")), Some(1));
+    }
+
+    /// A chain collapses to the one real slot: `alias $c $b` where `$b` is
+    /// already an alias of `$a` makes all three the same storage. The
+    /// target is resolved AT ALIAS TIME, mirroring Ruby.
+    #[test]
+    fn alias_chains_collapse_to_one_slot() {
+        global_set(0, "$g_a", RubyValue::Int(1));
+        global_alias(0, "$g_b2", "$g_a");
+        global_alias(0, "$g_c2", "$g_b2");
+        global_set(0, "$g_c2", RubyValue::Int(42));
+        assert_eq!(int_of(global_get(0, "$g_a")), Some(42));
+        assert_eq!(int_of(global_get(0, "$g_b2")), Some(42));
+    }
+
+    /// Aliases are per-box, exactly like the table they indirect into --
+    /// box 1 aliasing a name must not touch box 0's reading of it.
+    #[test]
+    fn aliases_are_per_box() {
+        global_set(0, "$g_box", RubyValue::Int(1));
+        global_set(1, "$g_box", RubyValue::Int(2));
+        global_alias(1, "$g_box_alias", "$g_box");
+        assert_eq!(int_of(global_get(1, "$g_box_alias")), Some(2));
+        // Box 0 never saw the alias at all.
+        assert!(matches!(global_get(0, "$g_box_alias"), RubyValue::Nil));
+    }
 }

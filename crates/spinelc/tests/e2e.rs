@@ -4798,15 +4798,260 @@ fn a_bare_regexp_literal_used_as_an_implicit_condition_is_a_clean_lowering_error
 }
 
 #[test]
-fn named_capture_auto_binding_via_match_write_is_a_clean_lowering_error() {
-    let err = spinelc::compile_to_rust(
+fn named_capture_auto_binding_assigns_a_local_per_group() {
+    // `/(?<a>..)/ =~ str` assigns each named group to a local of that name.
+    // Only with the literal on the LEFT -- `str =~ /(?<a>.)/` binds nothing,
+    // which is Ruby's own asymmetry (the parser can only declare the locals
+    // when it can see the names), not an approximation. Oracle-verified,
+    // including that a failed match leaves each name nil.
+    let result = run_ruby(
         r#"
-        /(?<name>\w+)/ =~ "hello"
-        puts name
+        if /(?<first>\w+) (?<last>\w+)/ =~ "John Smith"
+          puts first
+          puts last
+        end
+        p(/(?<n>\d+)/ =~ "abc123")
+        p n
+        /(?<z>\d+)/ =~ "none"
+        p z
         "#,
-    )
-    .unwrap_err();
-    assert!(err.contains("auto-binding"), "{err}");
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "John\nSmith\n3\n\"123\"\nnil\n");
+}
+
+#[test]
+fn file_line_and_dir_name_the_file_the_code_was_written_in() {
+    // The point of the SOURCE_FILE stack: `require` merges every file's
+    // statements into one Program, so by codegen time nothing tells them
+    // apart -- these have to be resolved at LOWERING time, per file. A
+    // `__FILE__` inside a required file must name THAT file, not the main
+    // one, and the main file's own `__FILE__` after the require must be
+    // itself again.
+    //
+    // Only basenames are compared: the harness compiles from a per-test
+    // temp dir, so the absolute paths differ per run.
+    let result = run_ruby_project(
+        &[
+            (
+                "helper.rb",
+                "def helper_file; __FILE__; end\ndef helper_line; __LINE__; end\ndef helper_dir; __dir__; end\n",
+            ),
+            (
+                "main.rb",
+                r#"
+                require_relative "helper"
+                puts File.basename(helper_file)
+                puts helper_line
+                puts File.basename(__FILE__)
+                puts __LINE__
+                puts helper_dir == __dir__
+                puts __dir__.start_with?("/")
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    // helper_line is 2 (the `def helper_line` line); the main file's
+    // `__LINE__` is on its own 6th line counting the leading newline.
+    //
+    // `__dir__` is only checked for absoluteness and for agreeing between
+    // the two files, NOT compared against `File.expand_path(__FILE__)`:
+    // `__dir__` is baked at COMPILE time while `expand_path` of a relative
+    // `__FILE__` resolves against the RUNTIME cwd, and this harness runs
+    // the binary from a different directory than it compiled in. The two
+    // agree whenever the program is run from its own directory, which is
+    // verified against the oracle separately.
+    assert_eq!(result.stdout, "helper.rb\n2\nmain.rb\n6\ntrue\ntrue\n");
+}
+
+#[test]
+fn encoding_literal_is_a_clean_rejection() {
+    // `__ENCODING__` would be `Encoding::UTF_8`, but no `Encoding` class
+    // exists yet to answer with -- it is the encoding phase's deliverable.
+    // Rejected rather than stubbed: a placeholder would pre-empt that
+    // design, and the constant is only useful if it behaves like one.
+    let err = spinelc::compile_to_rust("p __ENCODING__\n").unwrap_err();
+    assert!(err.contains("__ENCODING__"), "{err}");
+    assert!(err.contains("Encoding"), "{err}");
+}
+
+#[test]
+fn undef_removes_a_name_including_an_inherited_one() {
+    // `undef` works on a name this class only INHERITS, which is why it
+    // can't be "delete the local def" -- there is none. It stays live on
+    // the ancestor that defined it, and `respond_to?` must agree.
+    let result = run_ruby(
+        r#"
+        class B
+          def inherited_m; "from B"; end
+          def own; "own"; end
+        end
+        class C < B
+          def local_m; "local"; end
+          undef local_m
+          undef inherited_m
+        end
+        begin; C.new.local_m; rescue NoMethodError; puts "local: NoMethodError"; end
+        begin; C.new.inherited_m; rescue NoMethodError; puts "inherited: NoMethodError"; end
+        p B.new.inherited_m
+        p C.new.own
+        p C.new.respond_to?(:inherited_m)
+        class D
+          def a; 1; end
+          def b; 2; end
+          undef a, b
+        end
+        begin; D.new.a; rescue NoMethodError; puts "D#a gone"; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "local: NoMethodError\ninherited: NoMethodError\n\"from B\"\n\"own\"\nfalse\nD#a gone\n"
+    );
+}
+
+#[test]
+fn a_global_alias_shares_storage_in_both_directions() {
+    // `alias $copy $orig` is a real alias, not a copy: one slot, two names,
+    // and writing EITHER is visible through the other. Oracle-verified both
+    // ways -- which is why it can't lower to `$copy = $orig`.
+    let result = run_ruby(
+        r#"
+        $orig = 5
+        alias $copy $orig
+        $copy = 7
+        p $orig
+        p $copy
+        $orig = 9
+        p [$orig, $copy]
+        alias $b $never_set
+        p $b
+        $never_set = 1
+        p $b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n7\n[9, 9]\nnil\n1\n");
+}
+
+#[test]
+fn begin_and_end_blocks_run_before_and_after_the_main_program() {
+    // BEGIN runs first in SOURCE order; END runs at exit in REVERSE order,
+    // which is `at_exit` exactly -- so END lowers to one.
+    let result = run_ruby(
+        r#"
+        puts "main 1"
+        END { puts "end A" }
+        BEGIN { puts "begin A" }
+        puts "main 2"
+        END { puts "end B" }
+        BEGIN { puts "begin B" }
+        puts "main 3"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "begin A\nbegin B\nmain 1\nmain 2\nmain 3\nend B\nend A\n"
+    );
+}
+
+#[test]
+fn hash_shorthand_and_interpolated_symbols() {
+    let result = run_ruby(
+        r##"
+        x = 1
+        name = "n"
+        p({x:, name:})
+        def kw(a:, b:); [a, b]; end
+        a = 10
+        b = 20
+        p kw(a:, b:)
+        w = "world"
+        p :"hello_#{w}"
+        p :"a#{1 + 1}b"
+        p :"plain"
+        p :"a#{1}b".class
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{x: 1, name: \"n\"}\n[10, 20]\n:hello_world\n:a2b\n:plain\nSymbol\n"
+    );
+}
+
+#[test]
+fn splat_in_a_when_clause_tests_every_candidate() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2]
+        case 1
+        when *a then puts "hit"
+        else puts "miss"
+        end
+        case 9
+        when *a then puts "hit"
+        else puts "miss"
+        end
+        case 5
+        when 3, *a, 5 then puts "mixed hit"
+        else puts "mixed miss"
+        end
+        kinds = [Integer, String]
+        case "s"
+        when *kinds then puts "kind hit"
+        end
+        none = []
+        case 1
+        when *none then puts "never"
+        else puts "empty ok"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hit\nmiss\nmixed hit\nkind hit\nempty ok\n"
+    );
+}
+
+#[test]
+fn splatting_a_non_array_follows_rubys_to_a_rules() {
+    // Splatting a non-Array is ordinary Ruby, not an error -- it used to
+    // PANIC ("expected an Array to splat"), taking down `a, b = *1`.
+    // `[*"str"]` is the case worth pinning: it looks like it should split
+    // into characters and doesn't, because String has no `to_a`. Probing
+    // respond_to? rather than special-casing types gets that right, and
+    // gets a user class with its own to_a right too.
+    let result = run_ruby(
+        r#"
+        p [*1]
+        p [*nil]
+        p [*[1, 2]]
+        p [*{a: 1}]
+        p [*"str"]
+        p [*(1..3)]
+        class HasToA; def to_a; [7, 8]; end; end
+        p [*HasToA.new]
+        class NoToA; end
+        p([*NoToA.new].size)
+        p [*:sym]
+        a, b = *1
+        p [a, b]
+        c, d = *nil
+        p [c, d]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1]\n[]\n[1, 2]\n[[:a, 1]]\n[\"str\"]\n[1, 2, 3]\n[7, 8]\n1\n[:sym]\n[1, nil]\n[nil, nil]\n"
+    );
 }
 
 /// SEMANTICS FLIP (Phase 17.1-D): String patterns to split/gsub used to be
