@@ -4,7 +4,7 @@
 //! output against committed snapshots or the live `ruby` oracle, and ranking
 //! failures into gap buckets that drive the implementation roadmap.
 
-mod exec;
+pub(crate) mod exec;
 mod oracle;
 mod runner;
 mod scoreboard;

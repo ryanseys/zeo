@@ -5816,7 +5816,10 @@ fn class_shift_an_expression_other_than_self_is_a_clean_lowering_error() {
 }
 
 #[test]
-fn class_shift_self_containing_a_non_def_statement_is_a_clean_lowering_error() {
+fn class_shift_self_containing_an_unsupported_statement_is_a_clean_lowering_error() {
+    // `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled
+    // in `class << self`; an ivar assignment on the singleton (`@x = 1`) is not
+    // -- a clean rejection, not silently ignored.
     let err = spinelc::compile_to_rust(
         r#"
         class Foo
@@ -5827,7 +5830,53 @@ fn class_shift_self_containing_a_non_def_statement_is_a_clean_lowering_error() {
         "#,
     )
     .unwrap_err();
-    assert!(err.contains("may only contain `def`s"), "{err}");
+    assert!(err.contains("unsupported statement in `class << self`"), "{err}");
+}
+
+#[test]
+fn class_shift_self_constants_are_visible_to_the_singletons_class_methods() {
+    // #96 harness-surfaced: the dominant `class << self` stdlib idiom (e.g.
+    // URI's `class << self; RESERVED = ...; def escape; ...RESERVED...; end`)
+    // defines constants alongside the class methods that reference them. The
+    // constant is spliced onto the enclosing class, whose class methods resolve
+    // it lexically (oracle-verified).
+    let result = run_ruby(
+        r##"
+        class Config
+          class << self
+            PREFIX = "cfg:"
+            LIMIT = 3
+            def key(n); "#{PREFIX}#{n}"; end
+            def capped(n); n > LIMIT ? LIMIT : n; end
+          end
+        end
+        puts Config.key("host")
+        puts Config.capped(9)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "cfg:host\n3\n");
+}
+
+#[test]
+fn class_shift_self_include_extends_the_enclosing_class() {
+    // `include M` inside `class << self` == `extend M` on the enclosing class:
+    // the module's instance methods become the class's class methods.
+    let result = run_ruby(
+        r##"
+        module Greeter
+          def hi(n); "hi #{n}"; end
+        end
+        class Widget
+          class << self
+            include Greeter
+          end
+        end
+        puts Widget.hi("bob")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi bob\n");
 }
 
 // --- Phase 12.9: bugs found via a comprehensive sweep (fixed, not deferred) ---
@@ -8071,6 +8120,80 @@ fn plain_require_resolves_against_search_roots_including_nested_features() {
         result.stdout,
         "util/strings loaded\nutil loaded\nutil root\n42\n"
     );
+}
+
+#[test]
+fn a_stdlib_style_feature_drops_in_through_an_i_search_root() {
+    // #96: stdlib is delivered as ordinary `-I <lib>` load-path roots (no
+    // bespoke flag) -- pointing `-I` at a Ruby checkout's `lib` makes each
+    // `require "feature"` resolve a real stdlib `.rb`. This models that with a
+    // pure-Ruby "stdlib" file living under an `-I` root, required by name and
+    // compiled + run through the ordinary loader path (the same mechanism the
+    // `stdlib-status` harness drives against the installed 4.0.5 lib).
+    let result = support::run_ruby_project(
+        &[
+            (
+                "rubylib/shellish.rb",
+                r#"
+                    module Shellish
+                      def self.escape(s)
+                        s.gsub(" ", "\\ ")
+                      end
+                    end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    require "shellish"
+                    puts Shellish.escape("a b c")
+                "#,
+            ),
+        ],
+        "main.rb",
+        &["rubylib"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a\\ b\\ c\n");
+}
+
+#[test]
+fn an_earlier_i_root_shadows_a_later_same_named_stdlib_file() {
+    // The documented precedence: `-I` roots are searched in order, first hit
+    // wins (Ruby's own `$LOAD_PATH` rule) -- so a user root placed BEFORE the
+    // stdlib checkout shadows the stdlib copy of a same-named feature, and the
+    // later root's file is never loaded.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "userlib/patched.rb",
+                r#"
+                    module Patched
+                      def self.source = "user override"
+                    end
+                "#,
+            ),
+            (
+                "stdliblib/patched.rb",
+                r#"
+                    module Patched
+                      def self.source = "stdlib original"
+                    end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    require "patched"
+                    puts Patched.source
+                "#,
+            ),
+        ],
+        "main.rb",
+        &["userlib", "stdliblib"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "user override\n");
 }
 
 #[test]

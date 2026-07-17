@@ -12,8 +12,12 @@
 //!   `spinel-regen-expected-from-ruby`).
 //! - `xtask conformance <run|triage|show|oracle-verify>`: the external-corpus
 //!   conformance harness (see `conformance/mod.rs`).
+//! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
+//!   (dropped in via `-I`, no bespoke flag) and records which files `spinelc`
+//!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 
 mod conformance;
+mod stdlib_status;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -127,8 +131,9 @@ fn main() -> ExitCode {
         Some("test") => test(&root),
         Some("regen") => regen(&root),
         Some("conformance") => conformance::main(&root, &args),
+        Some("stdlib-status") => stdlib_status::main(&root, &args),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance>");
+            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance|stdlib-status>");
             ExitCode::FAILURE
         }
     }

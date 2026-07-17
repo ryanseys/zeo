@@ -2734,15 +2734,22 @@ fn lower_class_body_statement(
     // growable per-instance vtable) this spike doesn't support, matching
     // the plan's existing scope-cut on `define_singleton_method`; a clean
     // rejection, not silently ignored. The nested body is lowered through
-    // the ORDINARY class-body path (so `attr_reader`/`private`/nested
-    // `def`s all work exactly as they would directly in the class body),
-    // then every resulting `def` is retroactively corrected to a class
-    // method -- see `Hir::set_method_is_class_method`'s docs. Anything else
-    // in the body (`include`/`extend`/`prepend`/a nested `class << self`)
-    // is a clean rejection: those would need to affect the ENCLOSING
-    // class's `class_methods` materialization in a way plain
-    // `is_class_method` retagging can't express, a separate, unattempted
-    // feature.
+    // the ORDINARY class-body path (so `attr_reader`/`private`/`alias`/
+    // nested `def`s all work exactly as they would directly in the class
+    // body), then each result is mapped onto the ENCLOSING class:
+    //   - a `def`     -> retagged as a class method (`set_method_is_class_method`);
+    //   - a constant  -> spliced onto the enclosing class. Real Ruby scopes a
+    //     `class << self` constant to the SINGLETON class (so `C::NAME`
+    //     NameErrors), but its only common use is lexical reference from the
+    //     singleton's own methods -- which are now the enclosing class's class
+    //     methods, and those resolve the enclosing class's constants (verified
+    //     against the oracle). Documented divergence: external `C::NAME`
+    //     resolves here where CRuby raises.
+    //   - `include M` -> `extend M` on the enclosing class (M's instance
+    //     methods become class methods either way -- same effect).
+    // `extend`/`prepend`/a nested `class << self` inside the singleton stay a
+    // clean rejection: those act on the singleton's OWN singleton, which plain
+    // enclosing-class retagging can't express (deferred).
     if let Some(singleton) = node.as_singleton_class_node() {
         if singleton.expression().as_self_node().is_none() {
             return Err(
@@ -2751,14 +2758,34 @@ fn lower_class_body_statement(
         }
         let inner = lower_class_body(result, hir, singleton.body())?;
         for &id in &inner {
-            if !matches!(&hir[id], HirNode::DefMethod { .. }) {
-                return Err(
-                    "`class << self` may only contain `def`s (spike scope) -- `include`/`extend`/`prepend`/a nested `class << self` aren't supported inside it yet".to_string(),
-                );
+            // Classify without holding the `&hir[id]` borrow across the
+            // mutations below (`include` re-pushes a fresh `Extend` node).
+            enum Item {
+                Method,
+                Passthrough,
+                Extend(String),
+                Reject,
             }
-            hir.set_method_is_class_method(id);
+            let item = match &hir[id] {
+                HirNode::DefMethod { .. } => Item::Method,
+                HirNode::ConstWrite { .. } => Item::Passthrough,
+                HirNode::Include(m) => Item::Extend(m.clone()),
+                _ => Item::Reject,
+            };
+            match item {
+                Item::Method => {
+                    hir.set_method_is_class_method(id);
+                    out.push(id);
+                }
+                Item::Passthrough => out.push(id),
+                Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
+                Item::Reject => {
+                    return Err(
+                        "unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string(),
+                    );
+                }
+            }
         }
-        out.extend(inner);
         return Ok(());
     }
 
