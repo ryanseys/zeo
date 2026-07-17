@@ -40,9 +40,61 @@ num-traits = "0.2"
 # are the reference pure-Rust implementations of the Unicode annexes.
 unicode-normalization = "0.1"
 unicode-segmentation = "1"
+# `digest` extension hashing (RustCrypto): pure-Rust, no system libs. Optional
+# and pulled in only by the `ext-digest` cargo feature (see `[features]`), so a
+# build without that feature carries none of them.
+md-5 = { version = "0.10", optional = true }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+digest = { version = "0.10", optional = true }
+# `json` extension: serde_json parses into a `Value` tree we convert to
+# `RubyValue` (generation is hand-rolled for int/float/bignum fidelity).
+# Pulled in only by `ext-json`.
+serde_json = { version = "1", optional = true }
+# `psych`/`yaml` extension: yaml-rust2 is the maintained pure-Rust YAML 1.2
+# parser+emitter (serde_yaml is deprecated/archived). Pulled in only by
+# `ext-psych`.
+yaml-rust2 = { version = "0.10", optional = true }
 # The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
 # `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
 # already owns. Deliberately libc rather than chrono: Time's strftime and
 # zone semantics are CRuby-specific enough that a datetime crate's own
 # opinions would have to be fought, not used (see the plan's P-E note).
 libc = "0.2"
+
+# One cargo feature per in-tree `ext/` extension (CRuby's ext/ model). Each
+# feature compiles in its `ext/<name>.rs` module and its dispatch arms; with
+# the feature off, the extension's code is absent from the binary. `ext-all`
+# is the umbrella and `default` enables everything, so an out-of-the-box build
+# has every extension and `require`ing one just works. Slim a binary with
+# `--no-default-features --features ext-stringio,ext-json,...`.
+#
+# To ADD an extension, see the checklist in `src/ext/mod.rs`. In brief: an ABI
+# row (spinel-abi), an `ext/<name>.rs` module, three cfg-gated dispatch arms in
+# `builtins/mod.rs`, and one line here (+ its umbrella entry).
+[features]
+default = ["ext-all"]
+ext-all = [
+    "ext-base64",
+    "ext-stringio",
+    "ext-strscan",
+    "ext-cgi",
+    "ext-digest",
+    "ext-json",
+    "ext-date",
+    "ext-zlib",
+    "ext-psych",
+    "ext-socket",
+    "ext-openssl",
+]
+ext-base64 = []
+ext-stringio = []
+ext-strscan = []
+ext-cgi = []
+ext-digest = ["dep:md-5", "dep:sha1", "dep:sha2", "dep:digest"]
+ext-json = ["dep:serde_json"]
+ext-date = []
+ext-zlib = []
+ext-psych = ["dep:yaml-rust2"]
+ext-socket = []
+ext-openssl = []

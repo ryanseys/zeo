@@ -272,10 +272,26 @@ impl Compiler {
                 id, b.id,
                 "spinel_abi::BUILTINS must stay contiguous from ClassId(1)"
             );
+            // A nested builtin name (`"Digest::SHA256"`, `"Enumerator::Lazy"`)
+            // is stored as its LEAF under a lexical parent, so a constant path
+            // (`Digest::SHA256`) descends into it like any user-nested class.
+            // The parent is an earlier BUILTINS row (already seeded).
+            let nested = b.name.rsplit_once("::").map(|(parent, leaf)| {
+                let pid = compiler
+                    .classes
+                    .iter()
+                    .position(|c| c.is_builtin && c.name == parent)
+                    .map(|i| ClassId(i as u32));
+                (leaf.to_string(), pid)
+            });
             let ci = &mut compiler.classes[id.0 as usize];
             ci.is_builtin = true;
             ci.includes = b.includes.to_vec();
             ci.feature_gate = b.feature;
+            if let Some((leaf, pid)) = nested {
+                ci.name = leaf;
+                ci.lexical_parent = pid;
+            }
         }
         // Object's own slot in the chain (it isn't a BUILTINS row):
         // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends

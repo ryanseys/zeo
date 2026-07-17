@@ -184,6 +184,34 @@ pub const CONDITION_VARIABLE_CLASS: ClassId = ClassId(44);
 pub const UNBOUND_METHOD_CLASS: ClassId = ClassId(45);
 /// The `base64` extension's `Base64` module (require-gated, in-tree `ext/`).
 pub const BASE64_MODULE: ClassId = ClassId(46);
+/// `stringio`: an in-memory `IO`-like bytes buffer.
+pub const STRINGIO_CLASS: ClassId = ClassId(47);
+/// `strscan`: `StringScanner`, a position-tracking lexer over a String.
+pub const STRING_SCANNER_CLASS: ClassId = ClassId(48);
+/// `cgi/escape`: the `CGI` module's URL/HTML escape helpers.
+pub const CGI_MODULE: ClassId = ClassId(49);
+/// `digest`: the `Digest` framework module and its algorithm classes below.
+pub const DIGEST_MODULE: ClassId = ClassId(50);
+pub const DIGEST_MD5_CLASS: ClassId = ClassId(51);
+pub const DIGEST_SHA1_CLASS: ClassId = ClassId(52);
+pub const DIGEST_SHA256_CLASS: ClassId = ClassId(53);
+pub const DIGEST_SHA512_CLASS: ClassId = ClassId(54);
+/// `json`: the `JSON` module (parser/generator). Scaffolded (see docs/EXTENSIONS.md).
+pub const JSON_MODULE: ClassId = ClassId(55);
+/// `date`: `Date`/`DateTime`. Scaffolded.
+pub const DATE_CLASS: ClassId = ClassId(56);
+pub const DATETIME_CLASS: ClassId = ClassId(57);
+/// `zlib`: the `Zlib` compression module. Scaffolded.
+pub const ZLIB_MODULE: ClassId = ClassId(58);
+/// `psych`: the `Psych` YAML module. Scaffolded.
+pub const PSYCH_MODULE: ClassId = ClassId(59);
+/// `socket`: the `Socket` class. Scaffolded.
+pub const SOCKET_CLASS: ClassId = ClassId(60);
+/// `openssl`: the `OpenSSL` module. Scaffolded.
+pub const OPENSSL_MODULE: ClassId = ClassId(61);
+/// `yaml`: the `YAML` module -- an alias for `Psych` (Ruby's `yaml.rb` does
+/// `YAML = Psych`), so it shares the `psych` feature and dispatch.
+pub const YAML_MODULE: ClassId = ClassId(62);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -238,6 +266,31 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: UNBOUND_METHOD_CLASS, name: "UnboundMethod", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: BASE64_MODULE, name: "Base64", is_module: true, superclass: None, includes: &[], feature: Some("base64") },
+    // In-tree `ext/` extensions -- CRuby's ext/ model. Each is require-gated
+    // (its constant is invisible until its `require` fires) AND compile-gated
+    // by a per-extension cargo feature on `spinel-rt` (see that crate's
+    // `[features]` and `ext/mod.rs`). Some carry real implementations, others
+    // are scaffolded (a couple methods, the rest `todo!`) -- see
+    // `docs/EXTENSIONS.md` for the per-extension status.
+    BuiltinClass { id: STRINGIO_CLASS, name: "StringIO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: Some("stringio") },
+    BuiltinClass { id: STRING_SCANNER_CLASS, name: "StringScanner", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("strscan") },
+    BuiltinClass { id: CGI_MODULE, name: "CGI", is_module: true, superclass: None, includes: &[], feature: Some("cgi/escape") },
+    BuiltinClass { id: DIGEST_MODULE, name: "Digest", is_module: true, superclass: None, includes: &[], feature: Some("digest") },
+    BuiltinClass { id: DIGEST_MD5_CLASS, name: "Digest::MD5", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("digest") },
+    BuiltinClass { id: DIGEST_SHA1_CLASS, name: "Digest::SHA1", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("digest") },
+    BuiltinClass { id: DIGEST_SHA256_CLASS, name: "Digest::SHA256", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("digest") },
+    BuiltinClass { id: DIGEST_SHA512_CLASS, name: "Digest::SHA512", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("digest") },
+    BuiltinClass { id: JSON_MODULE, name: "JSON", is_module: true, superclass: None, includes: &[], feature: Some("json") },
+    BuiltinClass { id: DATE_CLASS, name: "Date", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: Some("date") },
+    BuiltinClass { id: DATETIME_CLASS, name: "DateTime", is_module: false, superclass: Some(DATE_CLASS), includes: &[], feature: Some("date") },
+    BuiltinClass { id: ZLIB_MODULE, name: "Zlib", is_module: true, superclass: None, includes: &[], feature: Some("zlib") },
+    BuiltinClass { id: PSYCH_MODULE, name: "Psych", is_module: true, superclass: None, includes: &[], feature: Some("psych") },
+    BuiltinClass { id: SOCKET_CLASS, name: "Socket", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("socket") },
+    BuiltinClass { id: OPENSSL_MODULE, name: "OpenSSL", is_module: true, superclass: None, includes: &[], feature: Some("openssl") },
+    // `YAML` is `Psych` under Ruby's `yaml.rb` (`YAML = Psych`); it shares the
+    // `psych` feature so `require "yaml"` (canonicalized to `psych` by the
+    // loader) makes both constants resolve, and both dispatch to `ext::psych`.
+    BuiltinClass { id: YAML_MODULE, name: "YAML", is_module: true, superclass: None, includes: &[], feature: Some("psych") },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):
@@ -301,6 +354,10 @@ mod tests {
     #[test]
     fn is_ext_feature_recognizes_only_gated_builtins() {
         assert!(is_ext_feature("base64"));
+        assert!(is_ext_feature("stringio"));
+        assert!(is_ext_feature("strscan"));
+        assert!(is_ext_feature("digest"));
+        assert!(is_ext_feature("json"));
         // Always-on core classes name no feature; core no-op requires
         // (`set`/`tmpdir`) aren't gated builtins either.
         assert!(!is_ext_feature("set"));

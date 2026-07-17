@@ -8809,6 +8809,147 @@ fn in_tree_base64_over_two_args_raises_argument_error_at_runtime() {
     assert_eq!(result.stdout, "argerr\n");
 }
 
+// ---- Wave-1 in-tree extensions (stringio/strscan/cgi/digest) + json/yaml/zlib ----
+
+#[test]
+fn stringio_reads_writes_and_tracks_position() {
+    let result = run_ruby(
+        r#"
+        require "stringio"
+        io = StringIO.new
+        io.puts "hello"
+        io.print "world"
+        puts io.string.inspect
+        io.rewind
+        puts io.gets.inspect
+        puts io.read.inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"hello\\nworld\"\n\"hello\\n\"\n\"world\"\n");
+}
+
+#[test]
+fn strscan_scans_anchored_and_until() {
+    let result = run_ruby(
+        r#"
+        require "strscan"
+        sc = StringScanner.new("foo123bar")
+        puts sc.scan(/[a-z]+/)
+        puts sc.scan(/\d+/)
+        puts sc.rest
+        sc2 = StringScanner.new("a=1;b=2")
+        puts sc2.scan_until(/;/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "foo\n123\nbar\na=1;\n");
+}
+
+#[test]
+fn cgi_escape_helpers_match_ruby() {
+    let result = run_ruby(
+        r#"
+        require "cgi/escape"
+        puts CGI.escape("a b&c=d")
+        puts CGI.escapeHTML("<x>&'")
+        puts CGI.unescape("a+b%26c")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "a+b%26c%3Dd\n&lt;x&gt;&amp;&#39;\na b&c\n");
+}
+
+#[test]
+fn digest_class_and_streaming_apis_match_ruby() {
+    let result = run_ruby(
+        r#"
+        require "digest"
+        puts Digest::SHA256.hexdigest("abc")
+        puts Digest::MD5.hexdigest("")
+        d = Digest::SHA256.new
+        d << "a"; d.update("bc")
+        puts d.hexdigest
+        puts Digest::SHA256.base64digest("abc")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n\
+         d41d8cd98f00b204e9800998ecf8427e\n\
+         ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n\
+         ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=\n"
+    );
+}
+
+#[test]
+fn json_parse_and_generate_match_ruby() {
+    let result = run_ruby(
+        r#"
+        require "json"
+        puts JSON.generate({"a" => 1, "b" => [2, 3.5, nil, true]})
+        puts JSON.parse('{"x":[1,2,3]}').inspect
+        puts JSON.pretty_generate({"k" => [1, 2]})
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{\"a\":1,\"b\":[2,3.5,null,true]}\n\
+         {\"x\" => [1, 2, 3]}\n\
+         {\n  \"k\": [\n    1,\n    2\n  ]\n}\n"
+    );
+}
+
+#[test]
+fn yaml_load_and_dump_match_ruby_via_the_psych_alias() {
+    // `require "yaml"` exposes both `YAML` and `Psych` (Ruby's `yaml.rb` is
+    // `YAML = Psych`); dump uses Psych's block style (sequences under a key
+    // stay at the key's indent).
+    let result = run_ruby(
+        r#"
+        require "yaml"
+        print YAML.dump({"a" => 1, "b" => [2, "x"]})
+        puts YAML.load("list:\n- a\n- b").inspect
+        puts Psych.load("x: 1").inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "---\na: 1\nb:\n- 2\n- x\n{\"list\" => [\"a\", \"b\"]}\n{\"x\" => 1}\n"
+    );
+}
+
+#[test]
+fn zlib_checksums_match_ruby() {
+    let result = run_ruby(
+        r#"
+        require "zlib"
+        puts Zlib.crc32("abc")
+        puts Zlib.adler32("abc")
+        puts Zlib.crc32("abc", 100)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "891568578\n38600999\n2063213118\n");
+}
+
+#[test]
+fn scaffolded_extension_constant_resolves_but_is_a_name_error_without_require() {
+    // A scaffolded ext (json) is still require-gated: its constant is a
+    // NameError until `require "json"` fires, exactly like the fully-built
+    // ones -- scaffolding changes only what the METHODS do, not the gate.
+    let result = run_ruby(r#"puts JSON.generate([1])"#);
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uninitialized constant JSON"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
 // ---- Phase 14.4: the set pure-Ruby package + the dispatch fixes it forced ----
 
 #[test]

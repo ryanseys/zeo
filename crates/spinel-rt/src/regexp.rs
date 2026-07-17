@@ -296,6 +296,27 @@ pub fn regexp_is_match(re: &RRegexp, haystack: &str) -> bool {
     re.engine.is_match(haystack)
 }
 
+/// `StringScanner`'s anchored probe: the byte length of `re`'s leftmost match
+/// when it begins exactly at the start of `haystack`, else `None`.
+/// `StringScanner#scan`/`#skip` match anchored at the scanner's current
+/// position, so the caller passes the not-yet-scanned tail and treats a
+/// `Some(len)` as "consume `len` bytes". Reuses the same `Caps` normalization
+/// every other engine consumer goes through. (Documented divergence: `^`/`\A`
+/// and look-behind see `haystack`'s start as the string start, not the
+/// original position -- acceptable for the scanner's tail-slice model.)
+pub fn regexp_anchored_len(re: &RRegexp, haystack: &str) -> Option<usize> {
+    let caps = re.engine.captures_first(haystack)?;
+    let (start, end) = caps.get(0)?;
+    (start == 0).then_some(end)
+}
+
+/// The byte span `(start, end)` of `re`'s leftmost match in `haystack`, or
+/// `None`. `StringScanner#scan_until`/`#exist?` need where the *next* match
+/// lands (not anchored), which is exactly this.
+pub fn regexp_find(re: &RRegexp, haystack: &str) -> Option<(usize, usize)> {
+    re.engine.captures_first(haystack).and_then(|c| c.get(0))
+}
+
 /// `Regexp#===` (case/when dispatch) -- same underlying check as
 /// `match?`, exposed separately so `codegen`'s `case/when`/pattern-matching
 /// desugar (`RubyValue::rb_case_eq`) has a name that reads as "the `===`

@@ -103,6 +103,21 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::SET_CLASS => set::lookup,
         spinel_abi::LAZY_CLASS => lazy::lookup,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
+        // In-tree `ext/` extensions with instances (modules like CGI/JSON have
+        // none -- they appear only in `class_method_table`).
+        #[cfg(feature = "ext-stringio")]
+        spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup,
+        #[cfg(feature = "ext-strscan")]
+        spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup,
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MD5_CLASS
+        | spinel_abi::DIGEST_SHA1_CLASS
+        | spinel_abi::DIGEST_SHA256_CLASS
+        | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup,
+        #[cfg(feature = "ext-date")]
+        spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup,
+        #[cfg(feature = "ext-socket")]
+        spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup,
         _ => return None,
     })
 }
@@ -138,7 +153,35 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::SET_CLASS => set::lookup_class,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
+        // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
+        // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
+        #[cfg(feature = "ext-base64")]
         spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
+        #[cfg(feature = "ext-stringio")]
+        spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
+        #[cfg(feature = "ext-strscan")]
+        spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class,
+        #[cfg(feature = "ext-cgi")]
+        spinel_abi::CGI_MODULE => crate::ext::cgi::lookup_class,
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MD5_CLASS
+        | spinel_abi::DIGEST_SHA1_CLASS
+        | spinel_abi::DIGEST_SHA256_CLASS
+        | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class,
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MODULE => crate::ext::digest::lookup_module,
+        #[cfg(feature = "ext-json")]
+        spinel_abi::JSON_MODULE => crate::ext::json::lookup_class,
+        #[cfg(feature = "ext-date")]
+        spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_class,
+        #[cfg(feature = "ext-zlib")]
+        spinel_abi::ZLIB_MODULE => crate::ext::zlib::lookup_class,
+        #[cfg(feature = "ext-psych")]
+        spinel_abi::PSYCH_MODULE | spinel_abi::YAML_MODULE => crate::ext::psych::lookup_class,
+        #[cfg(feature = "ext-socket")]
+        spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
+        #[cfg(feature = "ext-openssl")]
+        spinel_abi::OPENSSL_MODULE => crate::ext::openssl::lookup_class,
         _ => return None,
     })
 }
@@ -181,6 +224,19 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::ENUMERABLE_CLASS => enumerable::NAMES,
         spinel_abi::COMPARABLE_CLASS => comparable::NAMES,
         spinel_abi::MATH_CLASS => math::NAMES,
+        #[cfg(feature = "ext-stringio")]
+        spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
+        #[cfg(feature = "ext-strscan")]
+        spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_names(),
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MD5_CLASS
+        | spinel_abi::DIGEST_SHA1_CLASS
+        | spinel_abi::DIGEST_SHA256_CLASS
+        | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_names(),
+        #[cfg(feature = "ext-date")]
+        spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
+        #[cfg(feature = "ext-socket")]
+        spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
         _ => &[],
     }
 }
@@ -202,6 +258,19 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::SET_CLASS => set::lookup_class_names(),
         spinel_abi::COMPLEX_CLASS => complex::lookup_class_names(),
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
+        #[cfg(feature = "ext-base64")]
+        spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
+        #[cfg(feature = "ext-stringio")]
+        spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
+        #[cfg(feature = "ext-strscan")]
+        spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class_names(),
+        #[cfg(feature = "ext-cgi")]
+        spinel_abi::CGI_MODULE => crate::ext::cgi::lookup_class_names(),
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MD5_CLASS
+        | spinel_abi::DIGEST_SHA1_CLASS
+        | spinel_abi::DIGEST_SHA256_CLASS
+        | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class_names(),
         _ => &[],
     }
 }

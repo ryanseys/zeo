@@ -501,6 +501,12 @@ pub fn hash_values(h: &RHash) -> RubyValue {
     RubyValue::Array(array_new(h.lock().values().map(|(_, v)| v.clone()).collect()))
 }
 
+/// Every `(key, value)` pair in insertion order -- the primitive serializers
+/// (JSON/YAML) walk to emit a Hash without needing the private `map` field.
+pub fn hash_pairs(h: &RHash) -> Vec<(RubyValue, RubyValue)> {
+    h.lock().values().cloned().collect()
+}
+
 /// `Array#<<`/`#push` -- returns the array itself (Ruby's chaining
 /// contract), as an already-boxed value for dynamic-dispatch callers.
 pub fn array_push(arr: &RArray, value: RubyValue) -> RubyValue {

@@ -582,7 +582,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         })
     {
             let id = idx as u32;
-            let name = &class.name;
+            // The registered display name is the FULLY-QUALIFIED path, not the
+            // bare leaf: a nested builtin (`Enumerator::Lazy`, `Digest::SHA256`)
+            // is stored as its leaf under a lexical parent (so constant paths
+            // resolve into it), but `.name`/`.inspect` must still print the
+            // full path.
+            let name = compiler.fq_name(ClassId(id));
             let is_module = class.is_module;
             let ancestor_ids = class.ancestors.iter().map(|a| a.0);
             // A per-box OVERLAY (Phase 18) never registers a class entry of

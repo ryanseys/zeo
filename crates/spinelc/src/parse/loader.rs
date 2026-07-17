@@ -432,9 +432,12 @@ impl Loader {
             // An in-tree `ext/` feature's `require` ACTIVATES its gated
             // builtin (`require "base64"` -> `Base64` resolves); always-on
             // core no-ops (`set`/`tmpdir`) name no gated class, so nothing
-            // is recorded for them.
-            if spinel_abi::is_ext_feature(feature) {
-                hir.activate_feature(feature);
+            // is recorded for them. Alias spellings collapse first, so
+            // `require "yaml"` activates the same `psych` feature `require
+            // "psych"` does.
+            let canonical = canonical_ext_feature(feature);
+            if spinel_abi::is_ext_feature(canonical) {
+                hir.activate_feature(canonical);
             }
             return Ok(Vec::new());
         }
@@ -788,8 +791,22 @@ fn cannot_load(name: &str) -> String {
 /// ABI table (`spinel_abi::is_ext_feature`) so the loader and the constant
 /// resolver never drift; `require`ing one both short-circuits the filesystem
 /// search AND activates its gated constant (see `lower_require_statement`).
+/// Map a `require` spelling to its canonical in-tree `ext/` feature name (the
+/// ABI `feature` string). Sub-path and alias spellings of one extension
+/// collapse to a single feature: `cgi`/`cgi/util` -> `cgi/escape`,
+/// `digest/sha2` -> `digest`, and `yaml` -> `psych` (Ruby's `yaml.rb` is just
+/// `YAML = Psych`). Everything else maps to itself.
+pub(super) fn canonical_ext_feature(feature: &str) -> &str {
+    match feature {
+        "cgi" | "cgi/util" | "cgi/escape" => "cgi/escape",
+        "yaml" => "psych",
+        f if f == "digest" || f.starts_with("digest/") => "digest",
+        other => other,
+    }
+}
+
 fn is_builtin_feature(feature: &str) -> bool {
-    matches!(feature, "tmpdir" | "set") || spinel_abi::is_ext_feature(feature)
+    matches!(feature, "tmpdir" | "set") || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
 }
 
 fn with_rb_ext(feature: &str) -> String {
