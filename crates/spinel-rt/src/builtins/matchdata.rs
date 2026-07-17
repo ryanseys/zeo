@@ -40,6 +40,16 @@ builtin_methods! {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
+    // `values_at(*indices)` -- the groups at those indices (`0` is the whole
+    // match), each resolved the same way `[]` does, gathered into an Array.
+    "values_at" => fn values_at(recv, args, _block) {
+        let md = recv_md(recv);
+        let out = args
+            .iter()
+            .map(|a| crate::regexp::matchdata_get(&md, a))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
     "named_captures" => fn named_captures(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_named_captures(&recv_md(recv)))

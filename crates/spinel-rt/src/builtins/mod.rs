@@ -133,6 +133,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::GC_CLASS => gc::lookup_class,
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         spinel_abi::SET_CLASS => set::lookup_class,
+        spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         _ => return None,
     })
 }

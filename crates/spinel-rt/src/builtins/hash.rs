@@ -145,6 +145,229 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
+    // `slice(*keys)` / `except(*keys)`: a new Hash keeping (resp. dropping)
+    // the named keys, preserving the receiver's insertion order.
+    "slice" => fn slice(recv, args, _block) {
+        let src = recv_hash!(recv);
+        let pairs = src
+            .lock()
+            .values()
+            .filter(|(k, _)| args.iter().any(|a| a.rb_eq(k)))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
+    "except" => fn except(recv, args, _block) {
+        let src = recv_hash!(recv);
+        let pairs = src
+            .lock()
+            .values()
+            .filter(|(k, _)| !args.iter().any(|a| a.rb_eq(k)))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
+    // `fetch_values(*keys)`: the values for `keys` in order. A missing key
+    // yields the block's value if a block is given, else raises KeyError --
+    // exactly `fetch`'s rule applied to each key.
+    "fetch_values" => fn fetch_values(recv, args, block) {
+        let src = recv_hash!(recv);
+        let mut out = Vec::with_capacity(args.len());
+        for key in args {
+            if crate::hash_has_key(src, key) {
+                out.push(crate::hash_get(src, key));
+            } else if let Some(RubyValue::Proc(p)) = &block {
+                out.push(p.call(std::slice::from_ref(key))?);
+            } else {
+                return Err(crate::dispatch::raise_error(
+                    "KeyError",
+                    format!("key not found: {}", key.inspect_string()),
+                ));
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `flatten(depth = 1)`: the `[k, v, ...]` pairs concatenated, then
+    // flattened `depth` more levels (so `flatten(2)` also splays array
+    // values). Depth 0 leaves the pairs nested.
+    "flatten" => fn flatten(recv, args, _block) {
+        arity!(args, 0..=1);
+        let depth = match args.first() {
+            None => 1,
+            Some(RubyValue::Int(n)) => *n,
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        };
+        let mut out = Vec::new();
+        for (k, v) in recv_hash!(recv).lock().values() {
+            out.push(k.clone());
+            out.push(v.clone());
+        }
+        // The pairs are already one level of splay; each further level
+        // flattens nested arrays.
+        for _ in 1..depth {
+            let mut next = Vec::with_capacity(out.len());
+            for e in out {
+                match e {
+                    RubyValue::Array(inner) => next.extend(inner.lock().iter().cloned()),
+                    other => next.push(other),
+                }
+            }
+            out = next;
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `compact` drops nil-valued entries into a new Hash; `compact!` does it
+    // in place, answering nil when there was nothing to drop.
+    "compact" => fn compact(recv, args, _block) {
+        arity!(args, 0);
+        let pairs = recv_hash!(recv)
+            .lock()
+            .values()
+            .filter(|(_, v)| !matches!(v, RubyValue::Nil))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
+    "compact!" => fn compact_bang(recv, args, _block) {
+        arity!(args, 0);
+        let h = recv_hash!(recv);
+        let nil_keys: Vec<RubyValue> = h
+            .lock()
+            .values()
+            .filter(|(_, v)| matches!(v, RubyValue::Nil))
+            .map(|(k, _)| k.clone())
+            .collect();
+        if nil_keys.is_empty() {
+            return Ok(RubyValue::Nil);
+        }
+        for k in &nil_keys {
+            crate::hash_delete(h, k);
+        }
+        Ok(recv.clone())
+    }
+    // `values_at(*keys)`: the values for `keys` in order (the hash's default
+    // for a missing key, `nil` by default).
+    "values_at" => fn values_at(recv, args, _block) {
+        let h = recv_hash!(recv);
+        let out = args.iter().map(|k| crate::hash_get(h, k)).collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    // `assoc(key)` / `rassoc(value)`: the `[key, value]` pair matched by key
+    // (resp. value), or nil.
+    "assoc" => fn assoc(recv, args, _block) {
+        arity!(args, 1);
+        for (k, v) in recv_hash!(recv).lock().values() {
+            if k.rb_eq(&args[0]) {
+                return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+    "rassoc" => fn rassoc(recv, args, _block) {
+        arity!(args, 1);
+        for (k, v) in recv_hash!(recv).lock().values() {
+            if v.rb_eq(&args[0]) {
+                return Ok(RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])));
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `shift`: removes and returns the first `[key, value]` pair (insertion
+    // order), or nil on an empty hash.
+    "shift" => fn shift(recv, args, _block) {
+        arity!(args, 0);
+        let h = recv_hash!(recv);
+        let first = h.lock().values().next().map(|(k, v)| (k.clone(), v.clone()));
+        match first {
+            Some((k, v)) => {
+                crate::hash_delete(h, &k);
+                Ok(RubyValue::Array(crate::array_new(vec![k, v])))
+            }
+            None => Ok(RubyValue::Nil),
+        }
+    }
+    // `deconstruct_keys(keys)`: a Hash pattern matches against the hash
+    // itself, so this just answers the receiver (the `keys` hint is ignored).
+    "deconstruct_keys" => fn deconstruct_keys(recv, args, _block) {
+        arity!(args, 1);
+        Ok(recv.clone())
+    }
+    // `replace(other)`: swaps this hash's contents for `other`'s, answering
+    // the receiver.
+    "replace" => fn replace(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Hash(other) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(&args[0])),
+            ));
+        };
+        let h = recv_hash!(recv);
+        let old_keys: Vec<RubyValue> = h.lock().values().map(|(k, _)| k.clone()).collect();
+        for k in &old_keys {
+            crate::hash_delete(h, k);
+        }
+        for (k, v) in other.lock().values() {
+            crate::hash_set(h, k.clone(), v.clone());
+        }
+        Ok(recv.clone())
+    }
+    // Subset/superset by key AND value: `a <= b` iff every pair of `a` is in
+    // `b`; `<` additionally requires `a` to be strictly smaller. `>`/`>=` are
+    // the mirror.
+    "<=" => fn subset_eq(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(hash_subset(recv, &args[0], false)?))
+    }
+    "<" => fn subset(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(hash_subset(recv, &args[0], true)?))
+    }
+    ">=" => fn superset_eq(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(hash_subset(&args[0], recv, false)?))
+    }
+    ">" => fn superset(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(hash_subset(&args[0], recv, true)?))
+    }
+    // In-place filters. `select!`/`filter!`/`keep_if` keep the entries the
+    // block accepts; `reject!`/`delete_if` drop them. The `!`-suffixed forms
+    // answer nil when nothing changed; `keep_if`/`delete_if` always answer
+    // the receiver.
+    "select!" | "filter!" => fn select_bang(recv, args, block) {
+        arity!(args, 0);
+        hash_filter_bang(recv, args, block, true, true)
+    }
+    "keep_if" => fn keep_if(recv, args, block) {
+        arity!(args, 0);
+        hash_filter_bang(recv, args, block, true, false)
+    }
+    "reject!" => fn reject_bang(recv, args, block) {
+        arity!(args, 0);
+        hash_filter_bang(recv, args, block, false, true)
+    }
+    "delete_if" => fn delete_if(recv, args, block) {
+        arity!(args, 0);
+        hash_filter_bang(recv, args, block, false, false)
+    }
+    // `transform_values!` rewrites each value in place through the block,
+    // keeping keys and order; answers the receiver.
+    "transform_values!" => fn transform_values_bang(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "transform_values!", args, block);
+        let h = recv_hash!(recv);
+        let pairs: Vec<(RubyValue, RubyValue)> =
+            h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
+        for (k, v) in pairs {
+            let nv = p.call(&[v])?;
+            crate::hash_set(h, k, nv);
+        }
+        Ok(recv.clone())
+    }
     // Blockless `to_h` on a Hash is identity; with a block each entry is
     // re-mapped, the block seeing the two RAW yielded values (`{ |k, v| }`).
     // `to_hash` is the implicit-conversion protocol and never takes a block.
@@ -271,6 +494,58 @@ builtin_methods! {
 
 /// `merge`/`merge!`'s shared writer: later hashes win, unless the conflict
 /// block chooses (`old`/`new` order is real Ruby's).
+/// The in-place block filters. `keep == true` keeps the entries the block
+/// accepts (`select!`/`keep_if`), else drops them (`reject!`/`delete_if`).
+/// When `nil_if_unchanged`, answers nil if nothing was removed (the `!`
+/// forms); otherwise always the receiver (`keep_if`/`delete_if`).
+fn hash_filter_bang(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    keep: bool,
+    nil_if_unchanged: bool,
+) -> Result<RubyValue, crate::Signal> {
+    let p = block_or_enum!(recv, if keep { "select!" } else { "reject!" }, args, block);
+    let RubyValue::Hash(h) = recv else {
+        unreachable!("Hash table row dispatched on a non-Hash receiver");
+    };
+    let pairs: Vec<(RubyValue, RubyValue)> =
+        h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut removed = 0;
+    for (k, v) in pairs {
+        let accepted = p.call(&[k.clone(), v])?.truthy();
+        if accepted != keep {
+            crate::hash_delete(h, &k);
+            removed += 1;
+        }
+    }
+    if nil_if_unchanged && removed == 0 {
+        return Ok(RubyValue::Nil);
+    }
+    Ok(recv.clone())
+}
+
+/// `a <= b` (and, with `proper`, `a < b`): every pair of `a` appears in `b`
+/// with an equal value. A non-Hash `b` is a TypeError, matching CRuby.
+fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate::Signal> {
+    let (RubyValue::Hash(small), RubyValue::Hash(big)) = (a, b) else {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Hash",
+                crate::builtins::class_name_of(if matches!(a, RubyValue::Hash(_)) { b } else { a }),
+            ),
+        ));
+    };
+    if proper && crate::hash_len(small) >= crate::hash_len(big) {
+        return Ok(false);
+    }
+    let contained = small.lock().values().all(|(k, v)| {
+        crate::hash_has_key(big, k) && crate::hash_get(big, k).rb_eq(v)
+    });
+    Ok(contained)
+}
+
 fn merge_into(
     target: &RubyValue,
     args: &[RubyValue],

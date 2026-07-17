@@ -43,6 +43,15 @@ builtin_methods! {
         let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
+    // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
+    "options" => fn options_m(recv, args, _block) {
+        arity!(args, 0);
+        let re = re_of(recv);
+        let bits = (re.ignore_case as i64) * IGNORECASE
+            + (re.extended as i64) * EXTENDED
+            + (re.multiline as i64) * MULTILINE;
+        Ok(RubyValue::Int(bits))
+    }
 }
 
 /// The receiver of a Regexp instance row, already known to be a Regexp.
@@ -76,8 +85,45 @@ pub fn seed_regexp_constants() {
     crate::const_set(re, "MULTILINE", RubyValue::Int(MULTILINE));
 }
 
+/// `Regexp.escape`/`.quote`: backslash-escapes every regex metacharacter (and
+/// renders control characters as their `\t`/`\n`/... escapes) so the result
+/// matches the input literally -- CRuby's `rb_reg_quote` character set exactly.
+fn escape_regexp_source(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '[' | ']' | '(' | ')' | '{' | '}' | '.' | '?' | '+' | '*' | '^' | '$' | '|' | '#'
+            | '-' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            ' ' => out.push_str("\\ "),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\u{0b}' => out.push_str("\\v"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 builtin_methods! {
     pub(crate) fn lookup_class;
+
+    // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
+    "escape" | "quote" => fn escape_m(_recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Str(s) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(&args[0])),
+            ));
+        };
+        let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
+        Ok(RubyValue::Str(crate::string_new(escaped)))
+    }
 
     // `Regexp.new(str_or_regexp, flags = nil)` / `Regexp.compile(...)`. A
     // Regexp source is copied with its own flags; a string source takes its

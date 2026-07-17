@@ -89,6 +89,38 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
+    // `Range#bsearch` in find-minimum mode over an integer range: the block
+    // partitions the range into a false prefix then a true suffix, and the
+    // first true element is answered (`nil` if none). Binary search on the
+    // bounds -- no materialization, so a huge range is fine. A numeric block
+    // result (find-any mode) is the same documented gap as `Array#bsearch`.
+    "bsearch" => fn bsearch(recv, args, block) {
+        arity!(args, 0);
+        let p = crate::builtins::need_block!(block);
+        let (start, end, exclusive) = range_parts(recv);
+        let (Some(RubyValue::Int(lo0)), Some(RubyValue::Int(hi0))) = (start, end) else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                "can't do binary search for the given Range".to_string(),
+            ));
+        };
+        let (mut lo, mut hi) = (*lo0, if exclusive { *hi0 } else { *hi0 + 1 });
+        let mut found = None;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match p.call(&[RubyValue::Int(mid)])? {
+                RubyValue::Int(_) | RubyValue::Float(_) => {
+                    return Err(crate::dispatch::raise_error(
+                        "NotImplementedError",
+                        "Range#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope)".to_string(),
+                    ))
+                }
+                r if r.truthy() => { found = Some(mid); hi = mid; }
+                _ => lo = mid + 1,
+            }
+        }
+        Ok(found.map_or(RubyValue::Nil, RubyValue::Int))
+    }
     // `Range#===` IS `#cover?`; `include?`/`member?` differ from `cover?`
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this spike supports the

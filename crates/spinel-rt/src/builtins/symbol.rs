@@ -12,6 +12,19 @@ fn recv_sym(recv: &RubyValue) -> Symbol {
     }
 }
 
+/// Delegates a name-reading Symbol method to the same-named `String` method,
+/// evaluated over the symbol's name (`:foo.start_with?("f")` ==
+/// `"foo".start_with?("f")`).
+fn sym_via_name(
+    recv: &RubyValue,
+    method: &str,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    let name = RubyValue::Str(crate::string_new(recv_sym(recv).name()));
+    crate::dispatch::send_value(&name, Symbol::intern(method), args, block)
+}
+
 /// `Symbol#to_proc`'s conversion -- also the `&:name` block-argument path
 /// (`emit_block_option` routes every `&expr` through
 /// `block_arg_to_proc`).
@@ -68,6 +81,42 @@ builtin_methods! {
     "==" => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
+    }
+    // `sym[...]` reads a substring of the symbol's NAME, returning a String
+    // (or nil) -- identical to `sym.to_s[...]`, so it delegates to `String#[]`
+    // for the full index/length/range/regexp surface.
+    "[]" | "slice" => fn index(recv, args, _block) {
+        let name = RubyValue::Str(crate::string_new(recv_sym(recv).name()));
+        crate::dispatch::send_value(&name, crate::Symbol::intern("[]"), args, None)
+    }
+    // These read the symbol's NAME as a string, so they delegate to the
+    // matching `String` method (a Symbol is name-plus-identity).
+    "=~" => fn match_op(recv, args, block) { sym_via_name(recv, "=~", args, block) }
+    "match" => fn match_m(recv, args, block) { sym_via_name(recv, "match", args, block) }
+    "match?" => fn match_p(recv, args, block) { sym_via_name(recv, "match?", args, block) }
+    "start_with?" => fn start_with_p(recv, args, block) { sym_via_name(recv, "start_with?", args, block) }
+    "end_with?" => fn end_with_p(recv, args, block) { sym_via_name(recv, "end_with?", args, block) }
+    // Case-insensitive name comparison. `casecmp` answers -1/0/1 (nil if the
+    // argument isn't a Symbol); `casecmp?` answers true/false/nil.
+    "casecmp" => fn casecmp(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Symbol(other) = &args[0] else {
+            return Ok(RubyValue::Nil);
+        };
+        let ord = recv_sym(recv)
+            .name()
+            .to_lowercase()
+            .cmp(&other.name().to_lowercase());
+        Ok(RubyValue::Int(ord as i64))
+    }
+    "casecmp?" => fn casecmp_p(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Symbol(other) = &args[0] else {
+            return Ok(RubyValue::Nil);
+        };
+        Ok(RubyValue::Bool(
+            recv_sym(recv).name().to_lowercase() == other.name().to_lowercase(),
+        ))
     }
     "upcase" => fn upcase(recv, args, _block) {
         arity!(args, 0);

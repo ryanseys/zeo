@@ -6,15 +6,26 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 struct Args {
-    input: PathBuf,
+    /// The input source: either a `.rb` file path or, with `-e`, an inline
+    /// program string (`ruby -e`'s shape). Exactly one is required.
+    source: Source,
     output: Option<PathBuf>,
     print_rust: bool,
     load_roots: Vec<PathBuf>,
     package_dirs: Vec<PathBuf>,
 }
 
+enum Source {
+    File(PathBuf),
+    /// `-e <code>` (repeatable; joined with newlines, like `ruby -e`). Compiles
+    /// AND runs immediately, forwarding stdout/stderr and the exit status --
+    /// the shape the `ruby`-differential harness drives.
+    Eval(String),
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut input = None;
+    let mut eval: Option<String> = None;
     let mut output = None;
     let mut print_rust = false;
     let mut load_roots = Vec::new();
@@ -24,6 +35,17 @@ fn parse_args() -> Result<Args, String> {
         match arg.as_str() {
             "-o" => {
                 output = Some(PathBuf::from(iter.next().ok_or("-o requires a path")?));
+            }
+            // Inline program, `ruby -e` style: repeatable, lines joined.
+            "-e" => {
+                let code = iter.next().ok_or("-e requires a code string")?;
+                match &mut eval {
+                    Some(acc) => {
+                        acc.push('\n');
+                        acc.push_str(&code);
+                    }
+                    None => eval = Some(code),
+                }
             }
             // A `require` search root, like ruby's own -I (repeatable, first
             // hit wins in the order given) -- see `spinelc::CompileOptions`.
@@ -47,10 +69,16 @@ fn parse_args() -> Result<Args, String> {
             }
         }
     }
+    let source = match (eval, input) {
+        (Some(_), Some(_)) => return Err("cannot combine -e with a file argument".to_string()),
+        (Some(code), None) => Source::Eval(code),
+        (None, Some(path)) => Source::File(path),
+        (None, None) => return Err(
+            "usage: spinelc (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [-o <output>] [-S]".to_string(),
+        ),
+    };
     Ok(Args {
-        input: input.ok_or(
-            "usage: spinelc <input.rb> [-I <dir>]... [--packages <dir>]... [-o <output>] [-S]",
-        )?,
+        source,
         output,
         print_rust,
         load_roots,
@@ -67,9 +95,9 @@ fn parse_args() -> Result<Args, String> {
 /// (both `cargo run` and the test harness live in the repo); an installed
 /// distribution would locate it relative to the executable instead, the
 /// reference project's approach.
-fn default_package_dirs(input: &std::path::Path) -> Vec<PathBuf> {
+fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(parent) = input.parent() {
+    if let Some(parent) = input.and_then(|p| p.parent()) {
         dirs.push(parent.join("packages"));
     }
     let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -81,13 +109,19 @@ fn default_package_dirs(input: &std::path::Path) -> Vec<PathBuf> {
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
-    let source = std::fs::read_to_string(&args.input)
-        .map_err(|e| format!("reading {}: {e}", args.input.display()))?;
+    let (source, input_path) = match &args.source {
+        Source::File(path) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|e| format!("reading {}: {e}", path.display()))?;
+            (text, Some(path.clone()))
+        }
+        Source::Eval(code) => (code.clone(), None),
+    };
 
     let mut package_dirs = args.package_dirs.clone();
-    package_dirs.extend(default_package_dirs(&args.input));
+    package_dirs.extend(default_package_dirs(input_path.as_deref()));
     let opts = spinelc::CompileOptions {
-        input_path: Some(args.input.clone()),
+        input_path: input_path.clone(),
         load_roots: args.load_roots.clone(),
         package_dirs,
     };
@@ -98,8 +132,28 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    // `-e`: compile to a throwaway binary, run it, and exit with ITS status
+    // (stdout/stderr stream straight through) -- the differential-harness path.
+    if matches!(args.source, Source::Eval(_)) {
+        let bin = std::env::temp_dir().join(format!("spinelc-e-{}", std::process::id()));
+        spinelc::build::build_binary_with_deps(
+            &compiled.rust_source,
+            &compiled.native_deps,
+            &bin,
+            spinelc::build::Linkage::from_env(),
+        )?;
+        let status = std::process::Command::new(&bin)
+            .status()
+            .map_err(|e| format!("running compiled program: {e}"))?;
+        let _ = std::fs::remove_file(&bin);
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
     let output = args.output.unwrap_or_else(|| {
-        let mut p = args.input.clone();
+        let mut p = match &args.source {
+            Source::File(path) => path.clone(),
+            Source::Eval(_) => unreachable!("handled above"),
+        };
         p.set_extension("");
         p
     });

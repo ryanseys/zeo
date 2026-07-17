@@ -56,6 +56,56 @@ builtin_methods! {
             recv_cid(recv),
         )))
     }
+    // `Module`'s ancestry ordering (`rb_class_cmp`): `<`/`<=`/`>`/`>=` answer
+    // the subclass relation and `nil` when the two are UNRELATED (neither is
+    // an ancestor of the other), while a non-class/module argument is a
+    // TypeError. `<=>` is `nil` for both the unrelated and the non-module
+    // cases. All five share the one `module_cmp` ordering.
+    "<" => fn mod_lt(recv, args, _block) {
+        arity!(args, 1);
+        module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Less))
+    }
+    "<=" => fn mod_le(recv, args, _block) {
+        arity!(args, 1);
+        module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+    }
+    ">" => fn mod_gt(recv, args, _block) {
+        arity!(args, 1);
+        module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Greater))
+    }
+    ">=" => fn mod_ge(recv, args, _block) {
+        arity!(args, 1);
+        module_ordering_op(recv, &args[0], |o| matches!(o, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
+    }
+    "<=>" => fn mod_cmp(recv, args, _block) {
+        arity!(args, 1);
+        match args[0] {
+            RubyValue::Class(other) => Ok(
+                crate::dispatch::module_cmp(recv_cid(recv), other)
+                    .map_or(RubyValue::Nil, |o| RubyValue::Int(o as i64)),
+            ),
+            _ => Ok(RubyValue::Nil),
+        }
+    }
+    // `Class#subclasses`: the DIRECT, currently-registered subclasses. Order
+    // is unspecified in CRuby (a hash-set walk), so this returns them in the
+    // registry's iteration order -- tests that assert a listing sort it.
+    "subclasses" => fn subclasses(recv, args, _block) {
+        arity!(args, 0);
+        let kids = crate::dispatch::direct_subclasses(recv_cid(recv))
+            .into_iter()
+            .map(RubyValue::Class)
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(kids)))
+    }
+    // Named classes/modules are never singleton (metaclass) classes; spinel
+    // doesn't model per-object singleton classes as first-class ids, so this
+    // is `false` for every reachable `RubyValue::Class` receiver.
+    "singleton_class?" => fn singleton_class_p(recv, args, _block) {
+        arity!(args, 0);
+        let _ = recv_cid(recv);
+        Ok(RubyValue::Bool(false))
+    }
     // Reflection over a CLASS OBJECT's own ivars -- the `@x` a `def self.x`
     // or a class body writes (see `civars`' docs). Really `Object`'s
     // methods, which a class inherits; they live on the Module table
@@ -144,6 +194,26 @@ builtin_methods! {
                 .any(|&anc| crate::cvar_defined(anc.0, &name)),
         ))
     }
+}
+
+/// Shared body of `Module`'s `<`/`<=`/`>`/`>=`: a non-class/module argument
+/// is a TypeError (`compared with non class/module`), an unrelated class is
+/// `nil`, and a related one runs `pred` over the `module_cmp` ordering.
+fn module_ordering_op(
+    recv: &RubyValue,
+    arg: &RubyValue,
+    pred: impl Fn(std::cmp::Ordering) -> bool,
+) -> Result<RubyValue, crate::Signal> {
+    let RubyValue::Class(other) = arg else {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            "compared with non class/module".to_string(),
+        ));
+    };
+    Ok(match crate::dispatch::module_cmp(recv_cid(recv), *other) {
+        Some(o) => RubyValue::Bool(pred(o)),
+        None => RubyValue::Nil,
+    })
 }
 
 /// A `:name`/`"name"` method-name argument as a bare `String`. Accepts a

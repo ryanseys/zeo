@@ -129,6 +129,107 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
+/// The shared body of the in-place `!` mutators (`chomp!`/`chop!`/
+/// `delete_prefix!`/`delete_suffix!`): a frozen receiver is a FrozenError
+/// (CRuby raises on ANY bang method, modification or not), then `new_text`
+/// replaces the content and the receiver is returned -- unless the content
+/// was already `new_text`, which answers `nil` ("no modification was made").
+fn str_bang_replace(recv: &RubyValue, new_text: String) -> Result<RubyValue, Signal> {
+    let s = recv_str!(recv);
+    if s.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen String: {}", recv.inspect_string()),
+        ));
+    }
+    let unchanged = s.lock().to_utf8_lossy() == new_text;
+    if unchanged {
+        return Ok(RubyValue::Nil);
+    }
+    s.lock().replace_utf8(new_text);
+    Ok(recv.clone())
+}
+
+/// The shared body of the transform `!` mutators (`upcase!`, `gsub!`, ...):
+/// runs the non-bang `base` method (reusing all its logic, including blocks
+/// and args), then writes the result back in place -- answering `nil` when
+/// nothing changed, the receiver otherwise, per CRuby.
+fn str_bang_via(
+    recv: &RubyValue,
+    base: &str,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, crate::Signal> {
+    let produced = crate::dispatch::send_value(recv, crate::Symbol::intern(base), args, block)?;
+    match produced {
+        RubyValue::Str(s) => {
+            let text = s.lock().to_utf8_lossy().into_owned();
+            str_bang_replace(recv, text)
+        }
+        // A non-String result (e.g. a `succ` edge) can't be spliced back;
+        // fall back to leaving the receiver untouched.
+        _ => Ok(RubyValue::Nil),
+    }
+}
+
+/// `partition`/`rpartition`'s three-part split around a String or Regexp
+/// separator: `[before, match, after]`, and (`whole`, `""`, `""`) with the
+/// empty parts on `partition`'s tail / `rpartition`'s head when there's no
+/// match (`from_end` picks which). Char-index based so multibyte input keeps
+/// its boundaries.
+fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyValue; 3], Signal> {
+    let span = match sep {
+        RubyValue::Str(needle) => {
+            let needle = needle.lock().to_utf8_lossy().into_owned();
+            if from_end {
+                text.rfind(&needle).map(|b| (b, b + needle.len()))
+            } else {
+                text.find(&needle).map(|b| (b, b + needle.len()))
+            }
+        }
+        RubyValue::Regexp(re) => {
+            let idx = if from_end {
+                crate::regexp_rindex(re, text, None)
+            } else {
+                crate::regexp_match_index(re, text)
+            };
+            match idx {
+                RubyValue::Int(ci) => {
+                    // `regexp_*index` answers a CHAR index; recover the match's
+                    // byte span by re-matching the whole string.
+                    let byte_start = text.char_indices().nth(ci as usize).map_or(text.len(), |(b, _)| b);
+                    if let RubyValue::MatchData(m) = crate::regexp_match(re, &text[byte_start..]) {
+                        let matched = crate::matchdata_group(&m, 0);
+                        let len = match &matched {
+                            RubyValue::Str(s) => s.lock().to_utf8_lossy().len(),
+                            _ => 0,
+                        };
+                        Some((byte_start, byte_start + len))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("type mismatch: {} given", crate::builtins::class_name_of(other)),
+            ))
+        }
+    };
+    Ok(match span {
+        Some((start, end)) => [
+            str_value(text[..start].to_string()),
+            str_value(text[start..end].to_string()),
+            str_value(text[end..].to_string()),
+        ],
+        None if from_end => [str_value(String::new()), str_value(String::new()), str_value(text.to_string())],
+        None => [str_value(text.to_string()), str_value(String::new()), str_value(String::new())],
+    })
+}
+
 /// `String#[]`/`slice` with a Regexp: the whole match or a named/numbered
 /// capture group. `None` group arg means the whole match.
 fn regexp_index(re: &crate::RRegexp, text: &str, group: Option<&RubyValue>) -> RubyValue {
@@ -651,6 +752,213 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().reversed())))
     }
+    // In-place `chomp`/`chop`: reuse the same trailing-separator logic, then
+    // route through the shared bang mutator (frozen guard, nil when nothing
+    // changed).
+    "chomp!" => fn chomp_bang(recv, args, _block) {
+        arity!(args, 0..=1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let out = match args.first() {
+            Some(RubyValue::Str(suffix)) => {
+                let suffix = suffix.lock().to_utf8_lossy().into_owned();
+                text.strip_suffix(&suffix).unwrap_or(&text).to_string()
+            }
+            _ => text
+                .strip_suffix("\r\n")
+                .or_else(|| text.strip_suffix('\n'))
+                .or_else(|| text.strip_suffix('\r'))
+                .unwrap_or(&text)
+                .to_string(),
+        };
+        str_bang_replace(recv, out)
+    }
+    "chop!" => fn chop_bang(recv, args, _block) {
+        arity!(args, 0);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let mut cs: Vec<char> = text.chars().collect();
+        if text.ends_with("\r\n") {
+            cs.truncate(cs.len().saturating_sub(2));
+        } else {
+            cs.pop();
+        }
+        str_bang_replace(recv, cs.into_iter().collect())
+    }
+    // The transform `!` mutators: each reuses its non-bang sibling and writes
+    // the result back (nil when unchanged). Grouped here so the whole family
+    // stays one delegation path.
+    "upcase!" => fn upcase_bang(recv, args, block) { str_bang_via(recv, "upcase", args, block) }
+    "downcase!" => fn downcase_bang(recv, args, block) { str_bang_via(recv, "downcase", args, block) }
+    "capitalize!" => fn capitalize_bang(recv, args, block) { str_bang_via(recv, "capitalize", args, block) }
+    "swapcase!" => fn swapcase_bang(recv, args, block) { str_bang_via(recv, "swapcase", args, block) }
+    "reverse!" => fn reverse_bang(recv, args, block) { str_bang_via(recv, "reverse", args, block) }
+    "strip!" => fn strip_bang(recv, args, block) { str_bang_via(recv, "strip", args, block) }
+    "lstrip!" => fn lstrip_bang(recv, args, block) { str_bang_via(recv, "lstrip", args, block) }
+    "rstrip!" => fn rstrip_bang(recv, args, block) { str_bang_via(recv, "rstrip", args, block) }
+    "sub!" => fn sub_bang(recv, args, block) { str_bang_via(recv, "sub", args, block) }
+    "gsub!" => fn gsub_bang(recv, args, block) { str_bang_via(recv, "gsub", args, block) }
+    "tr!" => fn tr_bang(recv, args, block) { str_bang_via(recv, "tr", args, block) }
+    "delete!" => fn delete_bang(recv, args, block) { str_bang_via(recv, "delete", args, block) }
+    "squeeze!" => fn squeeze_bang(recv, args, block) { str_bang_via(recv, "squeeze", args, block) }
+    "succ!" | "next!" => fn succ_bang(recv, args, block) { str_bang_via(recv, "succ", args, block) }
+    // `sum` -- the CRuby checksum: the sum of the byte values, masked to `bits`
+    // (default 16) bits. `chr` is the first character as a one-char String.
+    "sum" => fn sum(recv, args, _block) {
+        arity!(args, 0..=1);
+        let bits = match args.first() {
+            None => 16,
+            Some(RubyValue::Int(n)) => *n,
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        };
+        let total: i64 = recv_str!(recv).lock().bytes().iter().map(|&b| b as i64).sum();
+        let masked = if (1..64).contains(&bits) {
+            total & ((1i64 << bits) - 1)
+        } else {
+            total
+        };
+        Ok(RubyValue::Int(masked))
+    }
+    "chr" => fn chr(recv, args, _block) {
+        arity!(args, 0);
+        let first: String = recv_str!(recv).lock().to_utf8_lossy().chars().take(1).collect();
+        Ok(str_value(first))
+    }
+    // Empties the string in place (frozen guard); always answers the receiver.
+    "clear" => fn clear(recv, args, _block) {
+        arity!(args, 0);
+        let s = recv_str!(recv);
+        if s.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+            ));
+        }
+        s.lock().replace_utf8(String::new());
+        Ok(recv.clone())
+    }
+    // The integer codepoints of each character (`each_codepoint` is the
+    // block/enumerator form over the same values).
+    "codepoints" => fn codepoints(recv, args, _block) {
+        arity!(args, 0);
+        let out = recv_str!(recv)
+            .lock()
+            .to_utf8_lossy()
+            .chars()
+            .map(|c| RubyValue::Int(c as i64))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "each_codepoint" => fn each_codepoint(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "each_codepoint", args, block);
+        for c in recv_str!(recv).lock().to_utf8_lossy().chars() {
+            p.call(&[RubyValue::Int(c as i64)])?;
+        }
+        Ok(recv.clone())
+    }
+    // `[before, sep, after]` around the first (`partition`) / last
+    // (`rpartition`) occurrence of a String or Regexp separator.
+    "partition" => fn partition(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], false)?.to_vec())))
+    }
+    "rpartition" => fn rpartition(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], true)?.to_vec())))
+    }
+    // Prefix/suffix removal -- the non-bang form always returns a new String
+    // (a copy when the affix is absent); the bang form mutates and answers
+    // `nil` when there was nothing to remove.
+    "delete_prefix" => fn delete_prefix(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        Ok(str_value(text.strip_prefix(&prefix).unwrap_or(&text).to_string()))
+    }
+    "delete_prefix!" => fn delete_prefix_bang(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        str_bang_replace(recv, text.strip_prefix(&prefix).unwrap_or(&text).to_string())
+    }
+    "delete_suffix" => fn delete_suffix(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        Ok(str_value(text.strip_suffix(&suffix).unwrap_or(&text).to_string()))
+    }
+    "delete_suffix!" => fn delete_suffix_bang(recv, args, _block) {
+        arity!(args, 1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        str_bang_replace(recv, text.strip_suffix(&suffix).unwrap_or(&text).to_string())
+    }
+    // `+@`: an unfrozen receiver is returned as-is; a frozen one yields a
+    // fresh mutable copy (the mirror of `-@`'s "freeze/dedup").
+    "+@" => fn plus_at(recv, args, _block) {
+        arity!(args, 0);
+        let s = recv_str!(recv);
+        if !s.is_frozen() {
+            return Ok(recv.clone());
+        }
+        let (bytes, enc) = {
+            let buf = s.lock();
+            (buf.bytes().to_vec(), buf.encoding())
+        };
+        Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
+    }
+    // `bytesplice(index, length, str)` / `bytesplice(range, str)`: replaces
+    // the byte span in place with `str`'s bytes and answers `str`. A frozen
+    // receiver raises. (The 5-arg `str`-sub-span form is a separate gap.)
+    "bytesplice" => fn bytesplice(recv, args, _block) {
+        arity!(args, 2..=3);
+        let s = recv_str!(recv);
+        if s.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+            ));
+        }
+        let total = s.lock().bytesize() as i64;
+        let (start, len, repl) = match args {
+            [RubyValue::Range(begin, end, exclusive), RubyValue::Str(r)] => {
+                let start = match begin.as_deref() {
+                    Some(RubyValue::Int(v)) => if *v < 0 { v + total } else { *v },
+                    None => 0,
+                    _ => return Err(crate::dispatch::raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+                };
+                let end_i = match end.as_deref() {
+                    Some(RubyValue::Int(v)) => { let v = if *v < 0 { v + total } else { *v }; if *exclusive { v } else { v + 1 } }
+                    None => total,
+                    _ => return Err(crate::dispatch::raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+                };
+                (start, (end_i - start).max(0), r.clone())
+            }
+            [idx, length, RubyValue::Str(r)] => {
+                let start = match idx { RubyValue::Int(v) => if *v < 0 { v + total } else { *v }, _ => return Err(crate::dispatch::raise_error("TypeError", "no implicit conversion into Integer".to_string())) };
+                let len = match length { RubyValue::Int(v) => *v, _ => return Err(crate::dispatch::raise_error("TypeError", "no implicit conversion into Integer".to_string())) };
+                (start, len, r.clone())
+            }
+            _ => return Err(crate::dispatch::raise_error("TypeError", "wrong arguments for bytesplice".to_string())),
+        };
+        if start < 0 || start > total || len < 0 {
+            return Err(crate::dispatch::raise_error(
+                "IndexError",
+                format!("index {start} out of string"),
+            ));
+        }
+        let start = start as usize;
+        let end = (start + len as usize).min(total as usize);
+        let (mut bytes, enc) = { let buf = s.lock(); (buf.bytes().to_vec(), buf.encoding()) };
+        let repl_bytes = repl.lock().bytes().to_vec();
+        bytes.splice(start..end, repl_bytes);
+        s.lock().replace_bytes(bytes, enc);
+        Ok(RubyValue::Str(repl))
+    }
     "index" => fn index(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
@@ -949,6 +1257,14 @@ builtin_methods! {
         Ok(RubyValue::Float(
             t[..end].trim_end_matches(['e', 'E', '-', '+']).parse().unwrap_or(0.0),
         ))
+    }
+    // `to_r` -- the leading rational (`"3/4"`, `"1.5"`, `"12"`); junk with no
+    // leading digits is `(0/1)`. Shares the parser with the `Rational` code.
+    "to_r" => fn to_r(recv, args, _block) {
+        arity!(args, 0);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let (num, den) = crate::builtins::rational::parse_str_to_r(&text);
+        crate::builtins::rational::rational_new(num, den)
     }
     "to_sym" | "intern" => fn to_sym(recv, args, _block) {
         arity!(args, 0);

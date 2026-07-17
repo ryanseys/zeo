@@ -337,3 +337,18 @@ builtin_methods! {
         Ok(recv.clone())
     }
 }
+
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Complex.rect(real, imag = 0)` / `.rectangular(...)`: the direct
+    // cartesian constructor (the class-method mirror of the `Complex(...)`
+    // Kernel form). `Complex.polar` is a separate gap (its CRuby type-exact
+    // trig is tracked with the numeric-exactness work).
+    "rect" | "rectangular" => fn rect_c(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let real = args[0].clone();
+        let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
+        complex_new(real, imag)
+    }
+}

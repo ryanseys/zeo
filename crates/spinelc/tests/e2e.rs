@@ -15009,3 +15009,271 @@ fn string_and_hash_leaf_methods() {
         "h2ll3 w3rld\n[\"h\", \"e\", \"l\", \"l\", \"o\"]\n\"world\"\ntrue\n31\n\"hlo\"\n[[:a, 1], [:b, 2]]\n"
     );
 }
+
+#[test]
+fn integer_bit_reference_operator() {
+    let result = run_ruby(
+        r#"
+        p 0b1011[0]
+        p 0b1011[2]
+        p 5[0, 2]
+        p 0b1101[1, 3]
+        p 255[0..3]
+        p 255[4..]
+        p (-2)[0]
+        p (-2)[1]
+        p 10[100]
+        p((1 << 100)[100])
+        begin
+          255[..3]
+        rescue ArgumentError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n0\n1\n6\n15\n15\n0\n1\n0\n1\nThe beginless range for Integer#[] results in infinity\n"
+    );
+}
+
+#[test]
+fn integer_bit_predicates_and_string_bytesplice() {
+    let result = run_ruby(
+        r#"
+        p 0b1010.allbits?(0b0010)
+        p 0b1010.allbits?(0b0110)
+        p 0b1010.anybits?(0b0110)
+        p 0b1010.nobits?(0b0101)
+        s = "hello"; s.bytesplice(0, 2, "XY"); p s
+        t = "hello"; t.bytesplice(1..2, "__"); p t
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\ntrue\n\"XYllo\"\n\"h__lo\"\n"
+    );
+}
+
+#[test]
+fn float_adjacent_representable_values() {
+    let result = run_ruby(
+        r#"
+        p 1.0.next_float > 1.0
+        p 1.0.prev_float < 1.0
+        p 1.0.next_float.prev_float == 1.0
+        p 3.14.next_float.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntrue\nFloat\n");
+}
+
+#[test]
+fn string_bang_mutators_and_sum_chr() {
+    let result = run_ruby(
+        r##"
+        s = "abc"; p s.upcase!; p s; p s.upcase!
+        t = "  hi  "; t.strip!; p t
+        u = "hello"; u.reverse!; p u
+        v = "a b c"; v.gsub!(" ", "-"); p v
+        w = "az"; w.succ!; p w
+        p "hello".sum
+        p "hello".chr
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ABC\"\n\"ABC\"\nnil\n\"hi\"\n\"olleh\"\n\"a-b-c\"\n\"ba\"\n532\n\"h\"\n"
+    );
+}
+
+#[test]
+fn numeric_coerce_div_and_predicates() {
+    let result = run_ruby(
+        r#"
+        p 7.coerce(2)
+        p 7.coerce(2.0)
+        p 7.ceildiv(2)
+        p((-7).ceildiv(2))
+        p 5.i
+        p 10.finite?
+        p 10.infinite?
+        p 2.0.coerce(3)
+        p 7.0.div(2)
+        p 5.0.i
+        p 1.0.next_float > 1.0
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[2, 7]\n[2.0, 7.0]\n4\n-3\n(0+5i)\ntrue\nnil\n[3.0, 2.0]\n3\n(0+5.0i)\ntrue\n"
+    );
+}
+
+#[test]
+fn hash_projection_and_inplace_methods() {
+    let result = run_ruby(
+        r#"
+        h = { a: 1, b: 2, c: 3 }
+        p h.values_at(:a, :c)
+        p h.assoc(:b)
+        p h.rassoc(2)
+        p({ a: 1, b: nil, c: 3 }.compact)
+        y = { a: 1, b: 2, c: 3 }; p y.shift; p y
+        p({ a: 1, b: 2 }.select! { |_k, v| v > 1 })
+        z = { a: 1, b: 2 }; z.transform_values! { |v| v * 10 }; p z
+        p({ a: 1, b: 2 } <= { a: 1, b: 2, c: 3 })
+        p({ a: 1, b: 2, c: 3 } > { a: 1 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 3]\n[:b, 2]\n[:b, 2]\n{a: 1, c: 3}\n[:a, 1]\n{b: 2, c: 3}\n{b: 2}\n{a: 10, b: 20}\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn array_inplace_and_universal_object_methods() {
+    let result = run_ruby(
+        r#"
+        p [1, nil, 2, nil].compact!
+        p [1, 2].compact!
+        a = [1, 2, 3, 4]; a.rotate!(2); p a
+        case [1, 2]; in [x, y]; p [x, y]; end
+        p :hello.start_with?("he")
+        p :hello.end_with?("lo")
+        p("abc" !~ /z/)
+        p "hi".display
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\nnil\n[3, 4, 1, 2]\n[1, 2]\ntrue\ntrue\ntrue\nhinil\n"
+    );
+}
+
+#[test]
+fn matchdata_values_at_and_string_to_r() {
+    let result = run_ruby(
+        r#"
+        m = "2024-01-15".match(/(\d+)-(\d+)-(\d+)/)
+        p m.values_at(1, 3)
+        p m.values_at(0, 2)
+        p "123".to_r
+        p "3/4".to_r
+        p "1.5".to_r
+        p "abc".to_r
+        p "  -12".to_r
+        p "1_000".to_r
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"2024\", \"15\"]\n[\"2024-01-15\", \"01\"]\n(123/1)\n(3/4)\n(3/2)\n(0/1)\n(-12/1)\n(1000/1)\n"
+    );
+}
+
+#[test]
+fn string_array_hash_symbol_proc_leaf_methods() {
+    let result = run_ruby(
+        r##"
+        p "hello".codepoints
+        s = "hi\n"; p s.chomp!; p s.chomp!
+        p "hello".partition("l")
+        p "hello".rpartition("l")
+        p "a.b.c".partition(/\./)
+        p "TestName".delete_prefix("Test")
+        p "file.rb".delete_suffix(".rb")
+        c = +"x"; c.clear; p c
+        p((+"y").frozen?)
+        p [1, 2].repeated_permutation(2).to_a
+        p [1, 2].repeated_combination(2).to_a
+        p [1, 2, 3].intersect?([3, 4])
+        p [1, 2].chain([3], [4]).to_a
+        p({ a: 1, b: 2, c: 3 }.slice(:a, :c))
+        p({ a: 1, b: 2 }.except(:a))
+        p({ a: 1, b: 2 }.fetch_values(:a, :b))
+        p({ a: 1, b: [2, 3] }.flatten)
+        p :hello[1, 3]
+        p :Hello.casecmp?(:hELLO)
+        f = ->(x) { x + 1 }
+        g = ->(x) { x * 2 }
+        p((f >> g).call(3))
+        p((f << g).call(3))
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[104, 101, 108, 108, 111]\n\"hi\"\nnil\n[\"he\", \"l\", \"lo\"]\n[\"hel\", \"l\", \"o\"]\n[\"a\", \".\", \"b.c\"]\n\"Name\"\n\"file\"\n\"\"\nfalse\n[[1, 1], [1, 2], [2, 1], [2, 2]]\n[[1, 1], [1, 2], [2, 2]]\ntrue\n[1, 2, 3, 4]\n{a: 1, c: 3}\n{b: 2}\n[1, 2]\n[:a, 1, :b, [2, 3]]\n\"ell\"\ntrue\n8\n7\n"
+    );
+}
+
+#[test]
+fn regexp_complex_range_leaf_methods() {
+    let result = run_ruby(
+        r#"
+        p Regexp.escape("a.b*c")
+        p Regexp.quote("1+1")
+        p(/abc/i.options)
+        p(/abc/m.options)
+        p(/abc/.options)
+        p Complex.rect(3, 4)
+        p Complex.rectangular(3)
+        p((1..10).bsearch { |x| x >= 4 })
+        p((1..100).bsearch { |x| x >= 40 })
+        p((1..10).bsearch { |x| x >= 40 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"a\\\\.b\\\\*c\"\n\"1\\\\+1\"\n1\n4\n0\n(3+4i)\n(3+0i)\n4\n40\nnil\n"
+    );
+}
+
+#[test]
+fn module_ordering_operators_and_subclasses() {
+    let result = run_ruby(
+        r#"
+        class Animal; end
+        class Dog < Animal; end
+        class Cat < Animal; end
+        p(Dog < Animal)
+        p(Animal < Dog)
+        p(Dog < Cat)
+        p(Dog <= Dog)
+        p(Animal > Dog)
+        p(Dog <=> Animal)
+        p(Dog <=> Cat)
+        p(Dog <=> 5)
+        p(Integer < Numeric)
+        begin
+          Dog < 5
+        rescue TypeError => e
+          puts e.message
+        end
+        class Base; end
+        class Kid1 < Base; end
+        class Kid2 < Base; end
+        class GKid < Kid1; end
+        p Base.subclasses.length
+        p Base.subclasses.map { |c| c.to_s }.sort
+        p Kid1.subclasses.map(&:to_s)
+        p Base.singleton_class?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\nnil\ntrue\ntrue\n-1\nnil\nnil\ntrue\ncompared with non class/module\n2\n[\"Kid1\", \"Kid2\"]\n[\"GKid\"]\nfalse\n"
+    );
+}

@@ -17,7 +17,6 @@ const CLUSTERS: &[(&str, &str, &str)] = &[
     ("receiver's class isn't statically known", "?", "dynamic-receiver-call"),
     ("unknown class", "?", "unknown-class"),
     ("must already be defined earlier", "?", "alias-inherited"),
-    ("dynamic dispatch of `_` with keyword arguments", "b", "dyn-dispatch-kwargs"),
     ("keyword arguments isn't supported", "b", "kwargs-call-shape"),
     ("forwarding isn't supported", "a", "arg-forwarding"),
     ("double-splat", "a", "double-splat"),
@@ -146,12 +145,12 @@ mod tests {
 
     #[test]
     fn classifies_panic() {
-        let stderr = "thread 'main' panicked at crates/spinelc/src/codegen/call.rs:1299:21:\n\
-                      dynamic dispatch of `foo` with keyword arguments isn't supported yet (spike scope): call it directly instead\n\
+        let stderr = "thread 'main' panicked at crates/spinelc/src/codegen/call.rs:1305:17:\n\
+                      `super(**h)` (double-splat into super) isn't supported yet (spike scope)\n\
                       note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace";
         let t = classify(stderr);
-        assert_eq!(t.cluster, "b");
-        assert_eq!(t.bucket, "dyn-dispatch-kwargs");
+        assert_eq!(t.cluster, "a");
+        assert_eq!(t.bucket, "double-splat");
     }
 
     #[test]

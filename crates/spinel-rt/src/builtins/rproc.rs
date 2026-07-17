@@ -60,6 +60,36 @@ builtin_methods! {
         };
         Ok(curried(p, Vec::new(), n as usize))
     }
+    // Function composition. `(f >> g).call(x)` is `g.call(f.call(x))`;
+    // `(f << g).call(x)` is `f.call(g.call(x))`. The other operand is any
+    // callable (Proc, Method, ...), invoked through its own `call`; the
+    // result is a var-args lambda.
+    ">>" => fn compose_forward(recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let f = recv_proc(recv).clone();
+        let g = args[0].clone();
+        Ok(RubyValue::Proc(crate::RProc::with_meta(
+            move |a: &[RubyValue]| {
+                let mid = f.call(a)?;
+                crate::dispatch::send_value(&g, crate::Symbol::intern("call"), &[mid], None)
+            },
+            -1,
+            true,
+        )))
+    }
+    "<<" => fn compose_backward(recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let f = recv_proc(recv).clone();
+        let g = args[0].clone();
+        Ok(RubyValue::Proc(crate::RProc::with_meta(
+            move |a: &[RubyValue]| {
+                let mid = crate::dispatch::send_value(&g, crate::Symbol::intern("call"), a, None)?;
+                f.call(&[mid])
+            },
+            -1,
+            true,
+        )))
+    }
 }
 
 /// One step of `Proc#curry`: a proc that either invokes the target (enough

@@ -87,6 +87,35 @@ builtin_methods! {
             RubyValue::Nil
         })
     }
+    // The adjacent representable doubles toward +/-infinity.
+    "next_float" => fn next_float(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_f64(recv).next_up()))
+    }
+    "prev_float" => fn prev_float(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_f64(recv).next_down()))
+    }
+    // `coerce(other)` promotes both operands to Float (`[Float(other), self]`).
+    "coerce" => fn coerce(recv, args, _block) {
+        arity!(args, 1);
+        let other = numeric_f64_arg(&args[0], "can't coerce")?;
+        Ok(RubyValue::Array(crate::array_new(vec![
+            RubyValue::Float(other),
+            recv.clone(),
+        ])))
+    }
+    // `div` -- floored division returning an Integer (`7.0.div(2) == 3`).
+    "div" => fn floored_div(recv, args, _block) {
+        arity!(args, 1);
+        let d = numeric_f64_arg(&args[0], "can't coerce")?;
+        float_to_integer((recv_f64(recv) / d).floor())
+    }
+    // `n.i` -- the pure-imaginary Complex `0 + n*i`.
+    "i" => fn imaginary(recv, args, _block) {
+        arity!(args, 0);
+        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
+    }
     "to_f" => fn to_f(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
@@ -136,6 +165,20 @@ fn recv_f64(recv: &RubyValue) -> f64 {
     match recv {
         RubyValue::Float(f) => *f,
         _ => unreachable!("Float table row dispatched on a non-Float receiver"),
+    }
+}
+
+/// A numeric argument as `f64` for `coerce`/`div`; a non-numeric argument is
+/// a TypeError with the given verb (`can't coerce X into Float`).
+fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
+    match v {
+        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
+            Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
+        }
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("{verb} {} into Float", crate::builtins::class_name_of(other)),
+        )),
     }
 }
 

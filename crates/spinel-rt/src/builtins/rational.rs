@@ -40,6 +40,53 @@ pub fn rational_new(num: BigInt, den: BigInt) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Rational(Arc::new(RRationalData { num: n, den: d })))
 }
 
+/// `String#to_r`'s lenient parse: a leading `[sign] digits [/ digits]` or
+/// `[sign] digits . digits` prefix as a `(num, den)` pair (unreduced --
+/// `rational_new` reduces). Anything with no leading digits is `(0, 1)`,
+/// matching CRuby's "never raises, junk tail ignored" contract.
+pub fn parse_str_to_r(s: &str) -> (BigInt, BigInt) {
+    let mut chars = s.trim_start().chars().peekable();
+    let negative = match chars.peek() {
+        Some('+') => { chars.next(); false }
+        Some('-') => { chars.next(); true }
+        _ => false,
+    };
+    let take_digits = |chars: &mut std::iter::Peekable<std::str::Chars>| {
+        let mut d = String::new();
+        while let Some(&c) = chars.peek() {
+            if c.is_ascii_digit() {
+                d.push(c);
+                chars.next();
+            } else if c == '_' && !d.is_empty() {
+                chars.next(); // Ruby allows digit-group underscores.
+            } else {
+                break;
+            }
+        }
+        d
+    };
+    let int_part = take_digits(&mut chars);
+    let sign = if negative { BigInt::from(-1) } else { BigInt::from(1) };
+    let (num, den) = match chars.peek() {
+        Some('/') => {
+            chars.next();
+            let den_digits = take_digits(&mut chars);
+            let num = int_part.parse::<BigInt>().unwrap_or_default();
+            let den = den_digits.parse::<BigInt>().unwrap_or_else(|_| BigInt::from(1));
+            (num, den)
+        }
+        Some('.') => {
+            chars.next();
+            let frac = take_digits(&mut chars);
+            let combined = format!("{int_part}{frac}").parse::<BigInt>().unwrap_or_default();
+            let den = format!("1{}", "0".repeat(frac.len())).parse::<BigInt>().unwrap_or_else(|_| BigInt::from(1));
+            (combined, den)
+        }
+        _ => (int_part.parse::<BigInt>().unwrap_or_default(), BigInt::from(1)),
+    };
+    (sign * num, den)
+}
+
 /// A `3r`/`1.5r` LITERAL (codegen's emission target) -- infallible: the
 /// denominator is positive and non-zero by Ruby syntax, digits are prism's
 /// LSB-first u32 shape.

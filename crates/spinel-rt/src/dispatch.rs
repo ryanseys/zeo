@@ -616,6 +616,50 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     ancestors_of_value(recv_class).contains(&target)
 }
 
+/// `Module#<=>`-style ordering of two class/module ids by the ancestry
+/// relation (CRuby `rb_class_cmp`): `Less` when `a` is a proper descendant of
+/// `b`, `Greater` when a proper ancestor, `Equal` when the same class, and
+/// `None` when the two are unrelated (neither appears in the other's
+/// linearized ancestors). Backs `Module`'s `<`/`<=`/`>`/`>=`/`<=>` rows.
+pub fn module_cmp(a: ClassId, b: ClassId) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let a_le_b = is_a(a, b); // b in a's ancestors: a is b-or-below
+    let b_le_a = is_a(b, a);
+    match (a_le_b, b_le_a) {
+        (true, true) => Some(Ordering::Equal),
+        (true, false) => Some(Ordering::Less),
+        (false, true) => Some(Ordering::Greater),
+        (false, false) => None,
+    }
+}
+
+/// The DIRECT subclasses of `cid` (CRuby `Class#subclasses`): every registered
+/// non-module class whose immediate superclass -- the first non-module entry
+/// after itself in its linearized ancestry -- is `cid`. Order is unspecified
+/// in CRuby, so callers that need determinism sort by name.
+pub fn direct_subclasses(cid: ClassId) -> Vec<ClassId> {
+    let Some(r) = REGISTRY.get() else {
+        return Vec::new();
+    };
+    r.entries
+        .iter()
+        .filter(|(_, e)| !e.is_module)
+        .filter_map(|(&id, e)| {
+            let self_id = ClassId(id);
+            if self_id == cid {
+                return None;
+            }
+            let sup = e
+                .ancestors
+                .iter()
+                .skip_while(|&&a| a != self_id)
+                .skip(1)
+                .find(|&&a| !class_is_module(a).unwrap_or(false))?;
+            (*sup == cid).then_some(self_id)
+        })
+        .collect()
+}
+
 /// The bare ivar name (`x`) from a `:@x`/`"@x"` reflection argument. A
 /// non-symbol/string is a `TypeError`; a name without the leading `@` is a
 /// `NameError` -- both mirroring CRuby's own messages. Shared by the

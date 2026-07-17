@@ -161,6 +161,21 @@ builtin_methods! {
         let include_all = args.get(1).is_some_and(|v| v.truthy());
         Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym, include_all)))
     }
+    // `Object#display([port])` -- writes `self.to_s` (no newline) to stdout
+    // and answers nil. The optional port argument is accepted but ignored
+    // (only the process stdout is modeled).
+    "display" => fn display(recv, args, _block) {
+        arity!(args, 0..=1);
+        kernel_print(std::slice::from_ref(recv))
+    }
+    // `Object#!~` -- the negation of `=~`, dispatched to the receiver's own
+    // `=~` (so a receiver without one raises NoMethodError, exactly as CRuby
+    // does since `Object#=~` was removed).
+    "!~" => fn not_match(recv, args, _block) {
+        arity!(args, 1);
+        let matched = crate::dispatch::send_value(recv, crate::Symbol::intern("=~"), args, None)?;
+        Ok(RubyValue::Bool(!matched.truthy()))
+    }
     "tap" => fn tap(recv, args, block) {
         arity!(args, 0);
         let p = need_block!(block);

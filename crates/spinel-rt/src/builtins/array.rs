@@ -1042,6 +1042,122 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
+    // The with-repetition siblings: `repeated_permutation` is `items`^n
+    // (order matters, repeats allowed); `repeated_combination` is the
+    // non-decreasing multisets. Both take a required length and yield tuples
+    // (or return an Enumerator without a block).
+    "repeated_permutation" => fn repeated_permutation(recv, args, block) {
+        arity!(args, 1);
+        let n = arg_int!(args, 0);
+        let p = block_or_enum!(recv, "repeated_permutation", args, block);
+        let items = recv_array!(recv).lock().clone();
+        for tuple in repeated_permutations_of(&items, n) {
+            p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
+        }
+        Ok(recv.clone())
+    }
+    "repeated_combination" => fn repeated_combination(recv, args, block) {
+        arity!(args, 1);
+        let n = arg_int!(args, 0);
+        let p = block_or_enum!(recv, "repeated_combination", args, block);
+        let items = recv_array!(recv).lock().clone();
+        for tuple in repeated_combinations_of(&items, n) {
+            p.call(&[RubyValue::Array(crate::array_new(tuple))])?;
+        }
+        Ok(recv.clone())
+    }
+    // `intersect?(other)` -- do the two arrays share any element? (uses the
+    // same `rb_eq` membership as `&`/`intersection`, no result array built).
+    "intersect?" => fn intersect_p(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Array(other) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Array",
+                    crate::builtins::class_name_of(&args[0])
+                ),
+            ));
+        };
+        let mine = recv_array!(recv).lock().clone();
+        let theirs = other.lock().clone();
+        Ok(RubyValue::Bool(
+            mine.iter().any(|e| theirs.iter().any(|x| e.rb_eq(x))),
+        ))
+    }
+    // `chain(*others)` -- an Enumerator over self followed by each argument
+    // in turn. spinel materializes it as a flat Array-backed Enumerator (the
+    // common `.chain(...).to_a`/`.each` uses); a lazy chain is a separate
+    // gap.
+    "chain" => fn chain(recv, args, _block) {
+        let mut all = recv_array!(recv).lock().clone();
+        for a in args {
+            match a {
+                RubyValue::Array(other) => all.extend(other.lock().iter().cloned()),
+                other => all.push(other.clone()),
+            }
+        }
+        let combined = RubyValue::Array(crate::array_new(all));
+        Ok(crate::builtins::enumerator::enumerator_for(&combined, "each", &[]))
+    }
+    // `compact!` drops nils in place, answering `nil` when there were none
+    // (CRuby's destructive-form convention); `rotate!` rotates in place and
+    // always answers the receiver.
+    "compact!" => fn compact_bang(recv, args, _block) {
+        arity!(args, 0);
+        let handle = recv_array!(recv);
+        let before = handle.lock().len();
+        let kept: Vec<RubyValue> = handle
+            .lock()
+            .iter()
+            .filter(|e| !matches!(e, RubyValue::Nil))
+            .cloned()
+            .collect();
+        if kept.len() == before {
+            return Ok(RubyValue::Nil);
+        }
+        *handle.lock() = kept;
+        Ok(recv.clone())
+    }
+    "rotate!" => fn rotate_bang(recv, args, _block) {
+        arity!(args, 0..=1);
+        let n = match args.first() {
+            None => 1,
+            Some(RubyValue::Int(v)) => *v,
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        };
+        let handle = recv_array!(recv);
+        let mut items = handle.lock().clone();
+        let len = items.len();
+        if len > 0 {
+            let shift = n.rem_euclid(len as i64) as usize;
+            items.rotate_left(shift);
+        }
+        *handle.lock() = items;
+        Ok(recv.clone())
+    }
+    // Pattern-matching / implicit-conversion hooks: an Array deconstructs to
+    // and converts as itself.
+    "deconstruct" | "to_ary" => fn deconstruct(recv, args, _block) {
+        arity!(args, 0);
+        Ok(recv.clone())
+    }
+    // In-place Fisher-Yates shuffle over the shared PRNG (mirrors `shuffle`
+    // but writes back and answers the receiver).
+    "shuffle!" => fn shuffle_bang(recv, args, _block) {
+        arity!(args, 0);
+        let handle = recv_array!(recv);
+        let mut items = handle.lock().clone();
+        for i in (1..items.len()).rev() {
+            let j = (crate::builtins::kernel::prng_next() % (i as u64 + 1)) as usize;
+            items.swap(i, j);
+        }
+        *handle.lock() = items;
+        Ok(recv.clone())
+    }
     // `cycle(n)` repeats the whole array n times; `cycle` with no argument
     // repeats FOREVER (so it only terminates via `break`) -- that infinite
     // form is why this can't just materialize the repeated array.
@@ -1263,6 +1379,52 @@ fn combinations_of(items: &[RubyValue], n: i64) -> Vec<Vec<RubyValue>> {
         idx[i] += 1;
         for j in i + 1..n {
             idx[j] = idx[j - 1] + 1;
+        }
+    }
+}
+
+/// Every length-`n` sequence drawn from `items` WITH repetition, in Ruby's
+/// order (`items` cycled fastest in the last position) -- `items`^n. `n <= 0`
+/// yields the single empty tuple only when `n == 0`.
+fn repeated_permutations_of(items: &[RubyValue], n: i64) -> Vec<Vec<RubyValue>> {
+    if n < 0 {
+        return Vec::new();
+    }
+    let n = n as usize;
+    let mut out = vec![Vec::new()];
+    for _ in 0..n {
+        let mut next = Vec::with_capacity(out.len() * items.len());
+        for prefix in &out {
+            for e in items {
+                let mut t = prefix.clone();
+                t.push(e.clone());
+                next.push(t);
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// Every length-`n` multiset drawn from `items` (non-decreasing index
+/// sequences) -- `repeated_combination`'s order.
+fn repeated_combinations_of(items: &[RubyValue], n: i64) -> Vec<Vec<RubyValue>> {
+    if n < 0 || (items.is_empty() && n > 0) {
+        return Vec::new();
+    }
+    let n = n as usize;
+    let mut out = Vec::new();
+    let mut idx = vec![0usize; n];
+    loop {
+        out.push(idx.iter().map(|&i| items[i].clone()).collect());
+        // Odometer over non-decreasing indices: bump the rightmost that can
+        // still grow, then flatten the tail up to its value.
+        let Some(i) = (0..n).rev().find(|&i| idx[i] + 1 < items.len()) else {
+            return out;
+        };
+        let v = idx[i] + 1;
+        for slot in idx.iter_mut().skip(i) {
+            *slot = v;
         }
     }
 }

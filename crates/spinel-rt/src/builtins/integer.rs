@@ -250,6 +250,73 @@ pub fn int_pos(a: &RubyValue) -> RubyValue {
 /// `a << b` / `a >> b` -- a negative amount redirects to the opposite
 /// shift (Ruby's rule); an amount beyond `u32` raises RangeError ("shift
 /// width too big"). Left shifts promote through bignum freely.
+/// An Integer mask argument (`allbits?`/`anybits?`/`nobits?`) as a `BigInt`.
+/// A non-Integer argument is CRuby's coercion TypeError.
+fn int_mask_arg(v: &RubyValue) -> Result<BigInt, Signal> {
+    match v {
+        RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(to_bigint(v)),
+        other => Err(coerce_error(other, "Integer")),
+    }
+}
+
+/// `Integer#[]`: extracts bit(s) from `recv`'s two's-complement (infinite for
+/// negatives) representation. Resolves the (shift, width) window from the
+/// single-index / `start, len` / range forms, then answers
+/// `(recv >> shift) & ((1 << width) - 1)`; `width = None` (an endless range)
+/// answers the whole `recv >> shift`.
+fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    use num_traits::One;
+    let val = to_bigint(recv);
+    let (shift, width): (BigInt, Option<BigInt>) = if args.len() == 2 {
+        (to_bigint(&args[0]), Some(to_bigint(&args[1])))
+    } else if let RubyValue::Range(begin, end, exclusive) = &args[0] {
+        let Some(b) = begin else {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "The beginless range for Integer#[] results in infinity".to_string(),
+            ));
+        };
+        let start = to_bigint(b);
+        match end {
+            None => (start, None),
+            Some(e) => {
+                let last = to_bigint(e);
+                let mut w = &last - &start;
+                if !*exclusive {
+                    w += 1;
+                }
+                (start, Some(w))
+            }
+        }
+    } else {
+        (to_bigint(&args[0]), Some(BigInt::one()))
+    };
+
+    // A bit position below 0 doesn't exist; a non-positive field width
+    // selects nothing. Both answer 0 (CRuby).
+    if shift.is_negative() || matches!(&width, Some(w) if !w.is_positive()) {
+        return Ok(RubyValue::Int(0));
+    }
+    let Some(shift) = shift.to_usize() else {
+        // Shifted past every bit: 0 for non-negative, all-ones (endless
+        // range) is unrepresentable but only reached for absurd inputs.
+        return Ok(RubyValue::Int(if val.is_negative() && width.is_none() {
+            -1
+        } else {
+            0
+        }));
+    };
+    let shifted = val >> shift;
+    match width {
+        None => Ok(int_value(shifted)),
+        Some(w) => {
+            let bits = w.to_usize().unwrap_or(usize::MAX);
+            let mask = (BigInt::one() << bits) - 1;
+            Ok(int_value(shifted & mask))
+        }
+    }
+}
+
 pub fn int_shl(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     let amount = to_bigint(b);
     if amount.is_negative() {
@@ -397,6 +464,81 @@ builtin_methods! {
     "~" => fn bnot(recv, args, _block) {
         arity!(args, 0);
         Ok(int_bnot(recv))
+    }
+    // `Integer#[]` -- bit reference, LSB = index 0, two's-complement sign
+    // extension for negatives. `n[i]` is a single bit; `n[start, len]` and
+    // `n[range]` extract a `len`-bit field. A beginless range is an
+    // ArgumentError (its width is infinite), matching CRuby.
+    "[]" => fn bit_ref(recv, args, _block) {
+        arity!(args, 1..=2);
+        int_bit_ref(recv, args)
+    }
+    // Bit-mask predicates: `allbits?` (every mask bit set), `anybits?` (at
+    // least one), `nobits?` (none). All via `self & mask` over the BigInt
+    // two's-complement view, so they work for fixnums and bignums alike.
+    "allbits?" => fn allbits(recv, args, _block) {
+        arity!(args, 1);
+        let mask = int_mask_arg(&args[0])?;
+        Ok(RubyValue::Bool(&(to_bigint(recv) & &mask) == &mask))
+    }
+    "anybits?" => fn anybits(recv, args, _block) {
+        arity!(args, 1);
+        let mask = int_mask_arg(&args[0])?;
+        Ok(RubyValue::Bool((to_bigint(recv) & mask) != BigInt::from(0)))
+    }
+    "nobits?" => fn nobits(recv, args, _block) {
+        arity!(args, 1);
+        let mask = int_mask_arg(&args[0])?;
+        Ok(RubyValue::Bool((to_bigint(recv) & mask) == BigInt::from(0)))
+    }
+    // Every Integer is finite and never infinite (the Float predicates,
+    // answered here so the numeric protocol is uniform).
+    "finite?" => fn finite_p(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(true))
+    }
+    "infinite?" => fn infinite_p(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Nil)
+    }
+    // `n.i` is the pure-imaginary Complex `0 + n*i`.
+    "i" => fn imaginary(recv, args, _block) {
+        arity!(args, 0);
+        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
+    }
+    // Ceiling division: the smallest integer >= self/other. `-floor(-a / b)`
+    // gives the exact result for either sign.
+    "ceildiv" => fn ceildiv(recv, args, _block) {
+        arity!(args, 1);
+        let b = int_mask_arg(&args[0])?;
+        if b.is_zero() {
+            return Err(crate::dispatch::raise_error(
+                "ZeroDivisionError",
+                "divided by 0".to_string(),
+            ));
+        }
+        let a = to_bigint(recv);
+        Ok(int_value(-((-a).div_floor(&b))))
+    }
+    // `coerce(other)`: the numeric-protocol pair. A Float partner promotes
+    // both to Float; an Integer partner keeps both integral. Answered as a
+    // two-element Array (`other`-first, CRuby's order).
+    "coerce" => fn coerce(recv, args, _block) {
+        arity!(args, 1);
+        let pair = match &args[0] {
+            RubyValue::Float(f) => vec![
+                RubyValue::Float(*f),
+                RubyValue::Float(to_bigint(recv).to_f64().unwrap_or(f64::NAN)),
+            ],
+            RubyValue::Int(_) | RubyValue::BigInt(_) => vec![args[0].clone(), recv.clone()],
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("can't coerce {} into Integer", crate::builtins::class_name_of(other)),
+                ))
+            }
+        };
+        Ok(RubyValue::Array(crate::array_new(pair)))
     }
     // Numeric-tower comparison; a non-numeric argument compares as nil
     // (real Ruby: `5 <=> "a"` is nil, never an error). Comparable's
