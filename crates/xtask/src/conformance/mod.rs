@@ -105,12 +105,17 @@ const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
   run           [--dir PATH] [--filter GLOB]... [-j N] [--timeout SECS]\n\
                 [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
-  triage        [--top N] [--bucket NAME]\n\
+  triage        [--top N] [--bucket NAME]   (--bucket lists each test + its stderr tail)\n\
   show <id>\n\
   oracle-verify [--dir PATH]\n\
+  --help, -h    show this message\n\
 corpus root: --dir, else $SPINEL_TEST_DIR";
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "--help" || a == "-h") || args.is_empty() {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let opts = match parse_opts(args) {
         Ok(o) => o,
         Err(e) => {
@@ -326,9 +331,12 @@ fn cmd_triage(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     }
 
     if let Some(bucket) = &opts.bucket {
-        println!("tests in bucket {bucket:?}:");
-        for r in results.iter().filter(|r| &r.bucket == bucket) {
-            println!("  {} ({})", r.id, r.verdict.as_str());
+        let mut rows: Vec<_> = results.iter().filter(|r| &r.bucket == bucket).collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        println!("{} test(s) in bucket {bucket:?}:", rows.len());
+        for r in rows {
+            let tail = r.stderr_tail.lines().last().unwrap_or("");
+            println!("  {:<40} {:<12} {}", r.id, r.verdict.as_str(), tail);
         }
         return Ok(ExitCode::SUCCESS);
     }
