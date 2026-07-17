@@ -159,6 +159,15 @@ impl RProc {
 // invocation goes through `call` (lexical self) or `call_with_self`
 // (rebound) and thereby states which one it means.
 
+/// Pack a logical tuple into ONE `RubyValue::Array` before invoking `p` --
+/// the uniform poly-array ABI every pair/tuple-yielding iterator uses (CRuby
+/// `Hash#each`'s shape). A `{ |k, v| }` block auto-splats the array back to
+/// `k, v`; a `{ |pair| }` block and any forwarded callable (`&method(:m)`,
+/// `&:sym`) receive the whole array as one argument.
+pub fn yield_tuple(p: &RProc, elems: Vec<RubyValue>) -> Result<RubyValue, Signal> {
+    p.call(&[RubyValue::Array(crate::array_new(elems))])
+}
+
 /// A non-lambda block's AUTO-SPLAT (CRuby `setup_parameters_complex`'s
 /// `arg_setup_block` path): a block yielded EXACTLY ONE argument that is an
 /// Array (or `to_ary`-coercible) has that array spread across its

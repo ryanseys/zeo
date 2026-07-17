@@ -166,7 +166,30 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 }
             }
         },
-        other => panic!("`for` requires an Array or Range iterable (spike scope), got {other:?}"),
+        // `for k, v in hash` / `for pair in hash`: iterate the pairs as
+        // `[k, v]` arrays and reuse the Array arm's element-write, which the
+        // shared `emit_target_write` destructures for a nested target and
+        // binds whole for a single one -- CRuby's `Hash#each` shape.
+        TyKind::Hash => quote! {
+            {
+                let __iter: Vec<spinel_rt::RubyValue> = (#iter_expr)
+                    .as_hash_unchecked()
+                    .lock()
+                    .values()
+                    .map(|(__k, __v)| {
+                        spinel_rt::RubyValue::Array(spinel_rt::array_new(vec![__k.clone(), __v.clone()]))
+                    })
+                    .collect();
+                let mut __idx: usize = 0;
+                #outer: loop {
+                    if __idx >= __iter.len() { break #outer spinel_rt::RubyValue::Nil; }
+                    #bind_array
+                    #inner
+                    __idx += 1;
+                }
+            }
+        },
+        other => panic!("`for` requires an Array, Range, or Hash iterable (spike scope), got {other:?}"),
     }
 }
 

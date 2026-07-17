@@ -259,7 +259,10 @@ builtin_methods! {
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         for (k, v) in pairs {
-            p.call(&[k, v])?;
+            // CRuby yields the pair as ONE array, so `{ |pair| }` and a
+            // forwarded 1-arg callable (`&method(:m)`) get it whole while
+            // `{ |k, v| }` auto-splats it.
+            crate::rproc::yield_tuple(&p, vec![k, v])?;
         }
         Ok(recv.clone())
     }

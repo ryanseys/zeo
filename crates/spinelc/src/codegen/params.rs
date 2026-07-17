@@ -1048,20 +1048,47 @@ pub fn emit_proc_param_bindings(
             KeywordParam::Required(n) | KeywordParam::Optional(n, _) => n.clone(),
         })
         .collect();
-    let keyword_lets = params.keywords.iter().map(|kw| {
-        let (name, default_expr) = match kw {
-            KeywordParam::Required(name) => (name, quote! { spinel_rt::RubyValue::Nil }),
-            KeywordParam::Optional(name, default) => (name, emit_expr(cx, *default)),
-        };
-        let ident = safe_ident(name);
-        quote! {
-            let #ident: spinel_rt::RubyValue = match &__kw_source {
-                Some(spinel_rt::RubyValue::Hash(__h)) => {
-                    let __v = spinel_rt::hash_get(__h, &spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)));
-                    if __v.is_nil() { #default_expr } else { __v }
-                }
-                _ => #default_expr,
-            };
+    let keyword_lets = params.keywords.iter().map(|kw| match kw {
+        // A required keyword is bound by PRESENCE (`hash_has_key`), so a
+        // supplied `k: nil` still binds nil; its absence is CRuby's
+        // `ArgumentError: missing keyword: :k`, enforced for lambdas and
+        // ordinary procs alike.
+        KeywordParam::Required(name) => {
+            let ident = safe_ident(name);
+            quote! {
+                let #ident: spinel_rt::RubyValue = match &__kw_source {
+                    Some(spinel_rt::RubyValue::Hash(__h))
+                        if spinel_rt::hash_has_key(
+                            __h,
+                            &spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)),
+                        ) =>
+                    {
+                        spinel_rt::hash_get(
+                            __h,
+                            &spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)),
+                        )
+                    }
+                    _ => {
+                        return Err(spinel_rt::raise_error(
+                            "ArgumentError",
+                            format!("missing keyword: :{}", #name),
+                        ))
+                    }
+                };
+            }
+        }
+        KeywordParam::Optional(name, default) => {
+            let ident = safe_ident(name);
+            let default_expr = emit_expr(cx, *default);
+            quote! {
+                let #ident: spinel_rt::RubyValue = match &__kw_source {
+                    Some(spinel_rt::RubyValue::Hash(__h)) => {
+                        let __v = spinel_rt::hash_get(__h, &spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)));
+                        if __v.is_nil() { #default_expr } else { __v }
+                    }
+                    _ => #default_expr,
+                };
+            }
         }
     });
     let keyword_rest_let = params.keyword_rest.iter().flatten().map(|name| {

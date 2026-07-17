@@ -1534,11 +1534,12 @@ fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::
     let nopt = params.optional.len();
     let npost = params.post.len();
     let has_rest = params.rest.is_some();
+    let has_keywords = !params.keywords.is_empty() || params.keyword_rest.is_some();
     let min_lit = nreq + npost;
-    let min_cond = (min_lit > 0).then(|| quote! { #args_ident.len() < #min_lit });
+    let min_cond = (min_lit > 0).then(|| quote! { __argc < #min_lit });
     let max_cond = (!has_rest).then(|| {
         let max_lit = nreq + nopt + npost;
-        quote! { #args_ident.len() > #max_lit }
+        quote! { __argc > #max_lit }
     });
     let cond = match (min_cond, max_cond) {
         (None, None) => return TokenStream::new(),
@@ -1546,17 +1547,32 @@ fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::
         (None, Some(b)) => b,
         (Some(a), Some(b)) => quote! { #a || #b },
     };
+    // A lambda that declares keyword params consumes a trailing kwargs Hash
+    // as keywords, not as a positional argument, so it must not count toward
+    // positional arity (mirrors `emit_proc_param_bindings`' kw-source split).
+    let argc = if has_keywords {
+        quote! {
+            let __argc = if matches!(#args_ident.last(), Some(spinel_rt::RubyValue::Hash(_))) {
+                #args_ident.len() - 1
+            } else {
+                #args_ident.len()
+            };
+        }
+    } else {
+        quote! { let __argc = #args_ident.len(); }
+    };
     let err = super::expr::emit_boxed_new(
         cx,
         "ArgumentError",
         vec![quote! {
             spinel_rt::RubyValue::Str(spinel_rt::string_new(format!(
                 "wrong number of arguments (given {}, expected {})",
-                #args_ident.len(), #min_lit
+                __argc, #min_lit
             )))
         }],
     );
     quote! {
+        #argc
         if #cond {
             return Err(spinel_rt::Signal::Raise(#err));
         }

@@ -14806,6 +14806,79 @@ fn format_directives_named_positional_star_and_alternate_form() {
 }
 
 #[test]
+fn for_loops_over_hashes_and_parenthesized_collections() {
+    let result = run_ruby(
+        r##"
+        total = 0
+        for k, v in { "a" => 1, "b" => 2, "c" => 3 }
+          total += v
+          puts "#{k}:#{v}"
+        end
+        p total
+        for pair in { x: 10, y: 20 }
+          p pair
+        end
+        for k, v in {}
+          puts "unreachable"
+        end
+        sum = 0
+        for i in (1..3)
+          sum += i
+        end
+        p sum
+        for e in ([9, 8])
+          p e
+        end
+        for last in [7, 8, 9]
+        end
+        p last
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "a:1\nb:2\nc:3\n6\n[:x, 10]\n[:y, 20]\n6\n9\n8\n9\n"
+    );
+}
+
+#[test]
+fn block_and_proc_argument_semantics() {
+    let result = run_ruby(
+        r##"
+        h = { a: 1, b: 2 }
+        h.each { |pair| p pair }
+        h.each { |k, v| puts "#{k}=#{v}" }
+        def show(pair) = p pair
+        h.each(&method(:show))
+
+        add = proc { |a:, b:| a + b }
+        p add.call(a: 1, b: 2)
+        opt = proc { |x:, y: 100| [x, y] }
+        p opt.call(x: 5)
+        begin
+          add.call(a: 1)
+        rescue ArgumentError => e
+          puts e.message
+        end
+
+        lam = ->(x:, y: 9) { [x, y] }
+        p lam.call(x: 5)
+
+        pr = proc { |a, b| [a, b] }
+        p pr.call(1, 2, 3)
+        p pr.call(1)
+        p [[1, 2], [3, 4]].map { |a, b| a + b }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:a, 1]\n[:b, 2]\na=1\nb=2\n[:a, 1]\n[:b, 2]\n3\n[5, 100]\n\
+         missing keyword: :b\n[5, 9]\n[1, 2]\n[1, nil]\n[3, 7]\n"
+    );
+}
+
+#[test]
 fn comparison_protocol_validates_spaceship_clamp_and_sort() {
     let result = run_ruby(
         r#"
