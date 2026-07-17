@@ -55,6 +55,235 @@ fn convert_name(v: &RubyValue) -> String {
     }
 }
 
+/// `String#to_c`'s lenient parse (CRuby complex.c `read_comp`, non-strict):
+/// consumes the leading `<rat>`, `<rat>i`, `<rat>@<rat>` (polar), or
+/// `<rat><sign><rat>i` form and ignores the junk tail; an unparseable head
+/// yields `(0+0i)`. A `/0` denominator raises ZeroDivisionError, matching
+/// `"1/0".to_c`.
+pub(crate) fn parse_str_to_c(input: &str) -> Result<RubyValue, Signal> {
+    let mut cur = Cur { s: input.as_bytes(), i: 0 };
+    cur.skip_ws();
+    let mut buf = String::new();
+    let sign = read_sign(&mut cur, &mut buf);
+
+    // A bare imaginary unit: "i", "+i", "-i".
+    if is_imag_unit(cur.peek()) {
+        cur.bump();
+        let n = if sign == b'-' { -1 } else { 1 };
+        return complex_new(RubyValue::Int(0), RubyValue::Int(n));
+    }
+    // No leading number ("-", "@", "foo") -> real from whatever was read.
+    if !read_rat_nos(&mut cur, &mut buf) {
+        return complex_new(str2num(&buf)?, RubyValue::Int(0));
+    }
+    let num = str2num(&buf)?;
+
+    // Pure imaginary: "3i".
+    if is_imag_unit(cur.peek()) {
+        cur.bump();
+        return complex_new(RubyValue::Int(0), num);
+    }
+    // Polar: "1@2".
+    if cur.peek() == b'@' {
+        cur.bump();
+        buf.clear();
+        read_rat(&mut cur, &mut buf);
+        if buf.is_empty() || !buf.as_bytes().last().unwrap().is_ascii_digit() {
+            return complex_new(num, RubyValue::Int(0)); // e.g. "1@-", "10@"
+        }
+        return complex_new_polar(num, str2num(&buf)?);
+    }
+    // Rectangular: "1+2i", "5+i".
+    if cur.peek() == b'+' || cur.peek() == b'-' {
+        buf.clear();
+        let sign2 = read_sign(&mut cur, &mut buf);
+        let num2 = if is_imag_unit(cur.peek()) {
+            RubyValue::Int(if sign2 == b'-' { -1 } else { 1 })
+        } else if !read_rat_nos(&mut cur, &mut buf) {
+            return complex_new(num, RubyValue::Int(0)); // e.g. "1+xi"
+        } else {
+            str2num(&buf)?
+        };
+        if !is_imag_unit(cur.peek()) {
+            return complex_new(num, RubyValue::Int(0)); // e.g. "1+3x"
+        }
+        cur.bump();
+        return complex_new(num, num2);
+    }
+    complex_new(num, RubyValue::Int(0))
+}
+
+/// A byte cursor over an ASCII numeric string; `peek()` past the end reads
+/// `0` (NUL), matching the C `**s` sentinel.
+struct Cur<'a> {
+    s: &'a [u8],
+    i: usize,
+}
+
+impl Cur<'_> {
+    fn peek(&self) -> u8 {
+        self.s.get(self.i).copied().unwrap_or(0)
+    }
+    fn bump(&mut self) {
+        if self.i < self.s.len() {
+            self.i += 1;
+        }
+    }
+    fn skip_ws(&mut self) {
+        while self.peek().is_ascii_whitespace() {
+            self.bump();
+        }
+    }
+}
+
+fn is_imag_unit(c: u8) -> bool {
+    matches!(c, b'i' | b'I' | b'j' | b'J')
+}
+
+fn read_sign(cur: &mut Cur, buf: &mut String) -> u8 {
+    let c = cur.peek();
+    if c == b'+' || c == b'-' {
+        buf.push(c as char);
+        cur.bump();
+        return c;
+    }
+    b'?'
+}
+
+/// A run of decimal digits with interior `_` group separators (a `_` is
+/// consumed only between two digits). Returns false if no digit is present.
+fn read_digits(cur: &mut Cur, buf: &mut String) -> bool {
+    if !cur.peek().is_ascii_digit() {
+        return false;
+    }
+    loop {
+        let c = cur.peek();
+        if c.is_ascii_digit() {
+            buf.push(c as char);
+            cur.bump();
+        } else if c == b'_' && cur.s.get(cur.i + 1).is_some_and(|n| n.is_ascii_digit()) {
+            cur.bump();
+        } else {
+            break;
+        }
+    }
+    true
+}
+
+/// A `digits[.digits][e[sign]digits]` real number; a dangling `.`/`e` with no
+/// following digits is left unconsumed (its buffer char popped).
+fn read_num(cur: &mut Cur, buf: &mut String) -> bool {
+    if cur.peek() != b'.' && !read_digits(cur, buf) {
+        return false;
+    }
+    if cur.peek() == b'.' {
+        buf.push('.');
+        cur.bump();
+        if !read_digits(cur, buf) {
+            buf.pop();
+            return false;
+        }
+    }
+    if matches!(cur.peek(), b'e' | b'E') {
+        buf.push(cur.peek() as char);
+        cur.bump();
+        read_sign(cur, buf);
+        if !read_digits(cur, buf) {
+            buf.pop();
+            return false;
+        }
+    }
+    true
+}
+
+/// A rational body `<num>[/<den>]` (no leading sign).
+fn read_rat_nos(cur: &mut Cur, buf: &mut String) -> bool {
+    if !read_num(cur, buf) {
+        return false;
+    }
+    if cur.peek() == b'/' {
+        buf.push('/');
+        cur.bump();
+        if !read_digits(cur, buf) {
+            buf.pop();
+            return false;
+        }
+    }
+    true
+}
+
+/// A signed rational `[sign]<num>[/<den>]`.
+fn read_rat(cur: &mut Cur, buf: &mut String) -> bool {
+    read_sign(cur, buf);
+    read_rat_nos(cur, buf)
+}
+
+/// CRuby complex.c `str2num`: a `/` head is a Rational, a `.`/`e` head a
+/// Float, otherwise an Integer. An empty buffer is Integer `0`.
+fn str2num(s: &str) -> Result<RubyValue, Signal> {
+    if s.is_empty() {
+        return Ok(RubyValue::Int(0));
+    }
+    if let Some(slash) = s.find('/') {
+        let (numer, den_str) = (&s[..slash], &s[slash + 1..]);
+        let (num, mut den) = decimal_to_rat(numer);
+        den *= den_str.parse::<BigInt>().unwrap_or_else(|_| BigInt::one());
+        return super::rational::rational_new(num, den);
+    }
+    if s.contains(['.', 'e', 'E']) {
+        return Ok(RubyValue::Float(s.parse::<f64>().unwrap_or(0.0)));
+    }
+    Ok(crate::builtins::integer::int_value(
+        s.parse::<BigInt>().unwrap_or_default(),
+    ))
+}
+
+/// An exact `(num, den)` for a `[sign]digits[.digits][e[sign]digits]` decimal
+/// -- the numerator side of `str2num`'s rational path (`"1.5/2"` -> `3/4`).
+fn decimal_to_rat(s: &str) -> (BigInt, BigInt) {
+    let neg = s.starts_with('-');
+    let body = s.trim_start_matches(['+', '-']);
+    let (mantissa, exp_str) = body.split_once(['e', 'E']).unwrap_or((body, ""));
+    let (int_part, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let mut num: BigInt = format!("{int_part}{frac}").parse().unwrap_or_default();
+    let mut den = BigInt::one();
+    let net = exp_str.parse::<i64>().unwrap_or(0) - frac.len() as i64;
+    if net >= 0 {
+        num *= BigInt::from(10).pow(net as u32);
+    } else {
+        den *= BigInt::from(10).pow((-net) as u32);
+    }
+    if neg {
+        num = -num;
+    }
+    (num, den)
+}
+
+/// CRuby `f_complex_polar_real`: build `Complex` from magnitude+angle,
+/// preserving the exact magnitude when the angle is a right-angle multiple
+/// (`"1@0"` -> `(1+0.0i)`, `"1.0@#{PI}"` -> `(-1+0.0i)`).
+fn complex_new_polar(mag: RubyValue, angle: RubyValue) -> Result<RubyValue, Signal> {
+    use crate::builtins::numeric::num_to_f64_unchecked;
+    let is_zero = |v: &RubyValue| num_to_f64_unchecked(v) == 0.0;
+    if is_zero(&mag) || is_zero(&angle) {
+        return complex_new(mag, RubyValue::Float(0.0));
+    }
+    let arg = num_to_f64_unchecked(&angle);
+    let neg = |v: &RubyValue| num_sub_or_panic(&RubyValue::Int(0), v);
+    if arg == std::f64::consts::PI {
+        return complex_new(neg(&mag)?, RubyValue::Float(0.0));
+    }
+    if arg == std::f64::consts::FRAC_PI_2 {
+        return complex_new(RubyValue::Float(0.0), mag);
+    }
+    if arg == std::f64::consts::FRAC_PI_2 + std::f64::consts::PI {
+        return complex_new(RubyValue::Float(0.0), neg(&mag)?);
+    }
+    let re = num_mul_or_panic(&mag, &RubyValue::Float(arg.cos()))?;
+    let im = num_mul_or_panic(&mag, &RubyValue::Float(arg.sin()))?;
+    complex_new(re, im)
+}
+
 /// A `4i`/`2.0i`/`3ri` LITERAL (codegen's emission target) -- infallible:
 /// the inner value is a numeric literal by syntax.
 pub fn complex_from_literal(imag: RubyValue) -> RubyValue {

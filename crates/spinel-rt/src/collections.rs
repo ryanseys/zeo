@@ -511,25 +511,6 @@ pub fn string_get(s: &RStr, index: i64) -> RubyValue {
     }
 }
 
-/// `String#[]=` with a single-character replacement value (the common case);
-/// panics if `value` isn't a `Str` or the index is out of range --
-/// multi-character splice-replace (`s[1] = "ab"`) isn't supported yet (spike
-/// scope, same posture as `array_set`'s negative-out-of-range panic).
-pub fn string_set(s: &RStr, index: i64, value: &RubyValue) -> RubyValue {
-    let RubyValue::Str(new_chars) = value else {
-        panic!("expected a String, got {}", value.to_display_string());
-    };
-    let new_chars = new_chars.lock().char_vec();
-    let mut s = s.lock();
-    let mut chars: Vec<char> = s.char_vec();
-    let i = resolve_index(index, chars.len()).unwrap_or_else(|| {
-        panic!("index {index} out of range for string of length {}", chars.len())
-    });
-    chars.splice(i..=i, new_chars);
-    s.replace_utf8(chars.into_iter().collect());
-    value.clone()
-}
-
 pub fn string_len(s: &RStr) -> i64 {
     s.lock().char_len() as i64
 }

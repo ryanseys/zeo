@@ -1005,6 +1005,11 @@ pub enum HirNode {
         class_name: String,
         args: Vec<NodeId>,
         kwargs: Vec<KwArg>,
+        /// A literal block passed to `.new` (`Foo.new(x) { ... }`), forwarded
+        /// to `initialize` so `yield`/`block_given?` inside it see the block.
+        /// A block-PASS (`Foo.new(&p)`) still routes through the generic
+        /// `Call` lowering instead (this stays `None`).
+        block: Option<NodeId>,
     },
     /// Mirrors spinel's `emit_super`: always resolved against the *static*
     /// superclass, never through the dynamic dispatch table. See codegen's

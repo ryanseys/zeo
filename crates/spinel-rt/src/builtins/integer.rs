@@ -37,6 +37,24 @@ pub fn int_from_u32_digits(negative: bool, digits: &[u32]) -> RubyValue {
     int_value(BigInt::from_slice(sign, digits))
 }
 
+/// Encodes a codepoint in `enc` for `Integer#chr(encoding)`: UTF-8 as a
+/// multibyte sequence (0..=0x10FFFF, surrogates excluded), a byte encoding as
+/// a single byte within its range. `None` when the codepoint is out of range.
+fn encode_codepoint(cp: i64, enc: crate::encoding::EncodingId) -> Option<Vec<u8>> {
+    use crate::encoding::EncKind;
+    if cp < 0 {
+        return None;
+    }
+    match enc.kind() {
+        EncKind::Utf8 => {
+            let c = char::from_u32(u32::try_from(cp).ok()?)?;
+            Some(c.to_string().into_bytes())
+        }
+        EncKind::Ascii => (cp <= 0x7F).then(|| vec![cp as u8]),
+        EncKind::Latin1 | EncKind::Binary => (cp <= 0xFF).then(|| vec![cp as u8]),
+    }
+}
+
 /// The `BigInt` view of a proven-Integer value (the cold half's working
 /// representation).
 pub(crate) fn to_bigint(v: &RubyValue) -> BigInt {
@@ -634,24 +652,40 @@ builtin_methods! {
     // ASCII only: our strings are UTF-8, so a 128..=255 chr would change
     // byte representation -- rejected loudly (spike scope), not silently
     // re-encoded. Out of byte range is real Ruby's RangeError.
+    // `chr` -> the one-character String for a codepoint. No argument: a single
+    // byte, US-ASCII for 0..=127 and ASCII-8BIT for 128..=255. With an
+    // Encoding: the codepoint encoded in it (UTF-8 multibyte, or a single byte
+    // for the byte encodings). Out-of-range is a RangeError.
     "chr" => fn chr(recv, args, _block) {
-        arity!(args, 0);
+        arity!(args, 0..=1);
         let RubyValue::Int(i) = recv else {
             return Err(crate::dispatch::raise_error(
                 "RangeError",
                 format!("{} out of char range", recv.to_display_string()),
             ));
         };
-        match u8::try_from(*i) {
-            Ok(b) if b < 128 => Ok(RubyValue::Str(crate::string_new(
-                (b as char).to_string(),
-            ))),
-            Ok(_) => panic!("Integer#chr beyond ASCII isn't supported (UTF-8 strings; spike scope)"),
-            Err(_) => Err(crate::dispatch::raise_error(
-                "RangeError",
-                format!("{i} out of char range"),
-            )),
-        }
+        let i = *i;
+        let range_err = || {
+            crate::dispatch::raise_error("RangeError", format!("{i} out of char range"))
+        };
+        let (bytes, enc) = match args.first() {
+            None => {
+                if !(0..=255).contains(&i) {
+                    return Err(range_err());
+                }
+                let enc = if i < 128 {
+                    crate::encoding::US_ASCII
+                } else {
+                    crate::encoding::ASCII_8BIT
+                };
+                (vec![i as u8], enc)
+            }
+            Some(enc_arg) => {
+                let enc = crate::builtins::encoding::arg_encoding(enc_arg)?;
+                (encode_codepoint(i, enc).ok_or_else(range_err)?, enc)
+            }
+        };
+        Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))
     }
     "ord" | "to_i" | "to_int" => fn ord(recv, args, _block) {
         arity!(args, 0);

@@ -132,6 +132,15 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
                 crate::hir::Visibility::Private,
             )?;
             add_own_method(&mut compiler, OBJECT_CLASS, sid, false);
+        } else if let HirNode::Include(m) = &compiler.hir[stmt] {
+            // A TOP-LEVEL `include M` mixes M into `Object` (real Ruby: the
+            // main object's class is Object, so `include` there adds M to
+            // every object's ancestry) -- registered here exactly like a
+            // `class Object; include M; end` reopen, so `mro::materialize`
+            // spreads M's instance methods (and constants) program-wide and a
+            // bare `M`-method call resolves through implicit self.
+            let target = resolve_module_target(&compiler, m, &[], 0)?;
+            compiler.classes[OBJECT_CLASS.0 as usize].includes.push(target);
         } else {
             main_statements.push(stmt);
         }
@@ -911,9 +920,12 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, *b, out);
             }
         }
-        HirNode::New { args, .. } => {
+        HirNode::New { args, block, .. } => {
             for &a in args {
                 collect_ivars(hir, a, out);
+            }
+            if let Some(b) = block {
+                collect_ivars(hir, *b, out);
             }
         }
         HirNode::SuperCall { args, kwargs, .. } => {

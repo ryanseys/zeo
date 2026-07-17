@@ -1153,6 +1153,15 @@ pub fn send_value_in(
                     return r;
                 }
             }
+            // `Math`'s module functions become private instance methods when
+            // `Math` is mixed in (`include Math` -> `sqrt(x)`), reached here as
+            // an ancestor of the receiver. Same `math_call` probe the class-
+            // value dispatch uses, since Math predates the per-name table.
+            MATH_CLASS => {
+                if let Some(r) = crate::builtins::math::math_call(n, args) {
+                    return r;
+                }
+            }
             _ => {
                 if let Some(table) = crate::builtins::class_table(anc) {
                     if let Some(f) = table(n) {
@@ -1241,6 +1250,13 @@ pub fn send_in(
             }
             COMPARABLE_CLASS => {
                 if let Some(r) = crate::builtins::comparable::comparable_send(&boxed, n, args) {
+                    return r;
+                }
+            }
+            // `include Math` -> its module functions as private instance
+            // methods (see the same arm in `send_value_in`).
+            MATH_CLASS => {
+                if let Some(r) = crate::builtins::math::math_call(n, args) {
                     return r;
                 }
             }

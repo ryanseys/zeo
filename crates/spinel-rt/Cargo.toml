@@ -26,6 +26,12 @@ may = "0.3"
 num-bigint = "0.5"
 num-integer = "0.1"
 num-traits = "0.2"
+# String Unicode surface: `unicode_normalize`/`unicode_normalized?` (the
+# NFC/NFD/NFKC/NFKD algorithms + their derived tables) and grapheme-cluster
+# segmentation (`grapheme_clusters`/`each_grapheme_cluster`, UAX #29). Both
+# are the reference pure-Rust implementations of the Unicode annexes.
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
 # The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
 # `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
 # already owns. Deliberately libc rather than chrono: Time's strftime and

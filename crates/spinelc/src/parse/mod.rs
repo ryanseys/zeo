@@ -449,7 +449,7 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
 /// anchor skips the lexical chain at resolution time). A dynamic parent
 /// (`something::Foo` where `something` isn't itself a constant) stays a
 /// clean rejection.
-fn constant_path_name(node: &Node<'_>) -> PResult<String> {
+pub(super) fn constant_path_name(node: &Node<'_>) -> PResult<String> {
     if node.as_constant_read_node().is_some() {
         return constant_name(node);
     }
@@ -1833,7 +1833,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         })
                     })
                     .unwrap_or(false);
+                // A LITERAL block (`Foo.new(x) { ... }`) is captured and
+                // forwarded to `initialize`; a block-PASS (`&p`) has no
+                // `.as_block_node()` and falls through to the generic `Call`
+                // lowering (its dynamic `new` dispatch threads the block arg).
+                let block_pass = call
+                    .block()
+                    .is_some_and(|b| b.as_block_node().is_none());
                 if !has_dynamic_args
+                    && !block_pass
                     && !matches!(
                         class_name.as_str(),
                         "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set"
@@ -1861,7 +1869,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             args.push(lower_node(result, hir, &n)?);
                         }
                     }
-                    let new_id = hir.push(HirNode::New { class_name, args, kwargs });
+                    let block = match call.block() {
+                        Some(b) if b.as_block_node().is_some() => {
+                            Some(lower_block(result, hir, &b)?)
+                        }
+                        _ => None,
+                    };
+                    let new_id = hir.push(HirNode::New { class_name, args, kwargs, block });
                     return Ok(match box_ctx {
                         Some((bx, _)) => {
                             hir.push(HirNode::BoxScope { box_id: bx, body: vec![new_id] })

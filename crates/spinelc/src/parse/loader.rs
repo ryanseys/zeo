@@ -312,6 +312,33 @@ impl Loader {
                     continue;
                 }
             }
+            // A top-level `include Mod` (constant arguments) mixes Mod into
+            // `Object` -- the top-level self's class. Lowered to `HirNode::
+            // Include` so `analyze` registers it on `Object` exactly as a
+            // `class Object; include Mod; end` reopen would, rather than
+            // emitting a (nonexistent) runtime `include` call on `main`.
+            if let Some(call) = n.as_call_node() {
+                if call.receiver().is_none() && call.name().as_slice() == b"include" {
+                    let arg_list: Vec<_> = call
+                        .arguments()
+                        .map(|a| a.arguments().iter().collect())
+                        .unwrap_or_default();
+                    let all_constants = !arg_list.is_empty()
+                        && arg_list.iter().all(|a| {
+                            a.as_constant_read_node().is_some()
+                                || a.as_constant_path_node().is_some()
+                        });
+                    if all_constants {
+                        for a in &arg_list {
+                            let module = super::constant_path_name(a)?;
+                            let id = hir.push(crate::hir::HirNode::Include(module));
+                            combined.push(id);
+                            own.push(id);
+                        }
+                        continue;
+                    }
+                }
+            }
             let id = lower_node(result, hir, &n)?;
             combined.push(id);
             own.push(id);

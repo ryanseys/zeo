@@ -100,9 +100,12 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
             branches.push(else_body);
             *locals = join_branches(compiler, defining, box_id, locals, &branches);
         }
-        HirNode::New { args, .. } => {
+        HirNode::New { args, block, .. } => {
             for &a in args {
                 track_node(compiler, defining, box_id, locals, a);
+            }
+            if let Some(b) = block {
+                track_node(compiler, defining, box_id, locals, *b);
             }
         }
         HirNode::SuperCall { args, kwargs, block, .. } => {

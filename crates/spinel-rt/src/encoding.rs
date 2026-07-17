@@ -529,21 +529,21 @@ impl Eq for StrBuf {}
 /// this is byte-for-byte the old `format!("{:?}", s)`.
 pub fn inspect(buf: &StrBuf) -> String {
     let mut out = String::from("\"");
-    let mut run = String::new();
-    fn flush(run: &mut String, out: &mut String) {
-        if !run.is_empty() {
-            let debug = format!("{run:?}");
-            out.push_str(&debug[1..debug.len() - 1]);
-            run.clear();
-        }
-    }
     match buf.enc.kind() {
         EncKind::Utf8 => {
-            for unit in decode_utf8(&buf.bytes) {
-                match unit {
-                    Unit::Char(c) => run.push(c),
+            let units = decode_utf8(&buf.bytes);
+            for i in 0..units.len() {
+                match &units[i] {
+                    Unit::Char(c) => {
+                        // `#` is escaped only before an interpolation sigil,
+                        // so the next unit's character is needed.
+                        let next = match units.get(i + 1) {
+                            Some(Unit::Char(nc)) => Some(*nc),
+                            _ => None,
+                        };
+                        push_inspect_char(&mut out, *c, next, true);
+                    }
                     Unit::Invalid(bytes) => {
-                        flush(&mut run, &mut out);
                         for b in bytes {
                             out.push_str(&format!("\\x{b:02X}"));
                         }
@@ -551,22 +551,60 @@ pub fn inspect(buf: &StrBuf) -> String {
                 }
             }
         }
-        // A non-Unicode encoding: ASCII bytes render literally, high bytes as
+        // A non-Unicode encoding: ASCII bytes escape as usual, high bytes as
         // `\xNN` (CRuby prints Latin-1 `0xE9` as `\xE9`, not as `é`).
         EncKind::Ascii | EncKind::Latin1 | EncKind::Binary => {
-            for &b in &buf.bytes {
+            let bytes = &buf.bytes;
+            for i in 0..bytes.len() {
+                let b = bytes[i];
                 if b < 0x80 {
-                    run.push(b as char);
+                    let next = bytes.get(i + 1).and_then(|&nb| (nb < 0x80).then_some(nb as char));
+                    push_inspect_char(&mut out, b as char, next, false);
                 } else {
-                    flush(&mut run, &mut out);
                     out.push_str(&format!("\\x{b:02X}"));
                 }
             }
         }
     }
-    flush(&mut run, &mut out);
     out.push('"');
     out
+}
+
+/// Escapes one character for `String#inspect` (CRuby `rb_str_inspect`): the
+/// named control escapes, `\uXXXX`/`\xXX` for other control bytes (Unicode vs
+/// byte encoding), `\#` before an interpolation sigil, and every other
+/// character verbatim. Non-ASCII characters print literally, matching CRuby
+/// for the printable-character common case (a documented simplification: the
+/// rare non-printable Unicode formats/separators CRuby would escape are not
+/// distinguished here).
+fn push_inspect_char(out: &mut String, c: char, next: Option<char>, is_utf8: bool) {
+    let cp = c as u32;
+    match c {
+        '"' => out.push_str("\\\""),
+        '\\' => out.push_str("\\\\"),
+        '\u{07}' => out.push_str("\\a"),
+        '\u{08}' => out.push_str("\\b"),
+        '\t' => out.push_str("\\t"),
+        '\n' => out.push_str("\\n"),
+        '\u{0B}' => out.push_str("\\v"),
+        '\u{0C}' => out.push_str("\\f"),
+        '\r' => out.push_str("\\r"),
+        '\u{1B}' => out.push_str("\\e"),
+        '#' => {
+            if matches!(next, Some('{' | '$' | '@')) {
+                out.push('\\');
+            }
+            out.push('#');
+        }
+        _ if cp < 0x20 || cp == 0x7F => {
+            if is_utf8 {
+                out.push_str(&format!("\\u{cp:04X}"));
+            } else {
+                out.push_str(&format!("\\x{cp:02X}"));
+            }
+        }
+        _ => out.push(c),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,23 @@ static CONSTANTS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
-    CONSTANTS.lock().get(&(owner_class_id, name.to_string())).cloned()
+    let map = CONSTANTS.lock();
+    if let Some(v) = map.get(&(owner_class_id, name.to_string())) {
+        return Some(v.clone());
+    }
+    // Ruby constant lookup continues into the owner's ancestry: a bare
+    // constant in a class/module that includes another (e.g. `include Math`
+    // then a bare `PI`) resolves against the included module's constants.
+    // The compile-time owner resolution can't see a builtin module's
+    // constants, so this runtime walk covers them.
+    for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
+        if anc.0 != owner_class_id {
+            if let Some(v) = map.get(&(anc.0, name.to_string())) {
+                return Some(v.clone());
+            }
+        }
+    }
+    None
 }
 
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {

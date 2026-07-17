@@ -637,8 +637,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 .0;
             quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
         }
-        HirNode::New { class_name, args, kwargs } => {
-            super::call::emit_new(cx, class_name, args, kwargs)
+        HirNode::New { class_name, args, kwargs, block } => {
+            super::call::emit_new(cx, class_name, args, kwargs, *block)
         }
         HirNode::SuperCall { args, kwargs, zsuper, block } => {
             super::call::emit_super_inline(cx, args, kwargs, *zsuper, *block)

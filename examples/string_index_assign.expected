@@ -1,0 +1,23 @@
+"Hello"
+"hellO"
+"abc"
+"aXYZc"
+"XYllo"
+"h__ello"
+"hZ"
+"helXo"
+"h__o"
+"hZlo"
+"helEND"
+"HEllo"
+"heXllo"
+"heLLo"
+"heLo"
+"hello RUBY"
+"XY"
+index 3 out of string
+index -3 out of string
+negative length -1
+string not matched
+regexp not matched
+RangeError: 10.. out of range

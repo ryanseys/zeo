@@ -213,8 +213,9 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
-        HirNode::New { args, .. } => {
-            args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+        HirNode::New { args, block, .. } => {
+            block.is_some()
+                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
         }
         // A literal `super { ... }` block always escapes (see `walk`'s
         // `SuperCall` arm).
@@ -735,9 +736,20 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::New { args, .. } => {
+        HirNode::New { args, block, .. } => {
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+            // A literal block forwarded to `initialize` is a real escaping
+            // Proc -- same treatment as `super { ... }` below.
+            if let Some(b) = block {
+                if let HirNode::Block { params, body } = &compiler.hir[*b] {
+                    let next_exclusions: HashSet<String> =
+                        param_exclusions.union(&own_param_names(params)).cloned().collect();
+                    for &n in body {
+                        walk(compiler, n, true, &next_exclusions, caps, self_class);
+                    }
+                }
             }
         }
         HirNode::SuperCall { args, kwargs, block, .. } => {

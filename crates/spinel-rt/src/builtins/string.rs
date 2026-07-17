@@ -129,6 +129,281 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
+use crate::encoding::StrBuf;
+
+/// `String#dump` (CRuby `rb_str_dump`): a re-parseable double-quoted literal.
+/// Control bytes become named `\t`/`\n`/... escapes or `\xNN`; a UTF-8
+/// string's non-ASCII characters become `\uXXXX`/`\u{...}`. `#` is escaped
+/// only before an interpolation sigil (`{`, `$`, `@`). The result keeps the
+/// receiver's (ASCII-compatible) encoding so it re-`undump`s exactly; all
+/// spinel encodings are ASCII-compatible, so the `.force_encoding(...)`
+/// suffix CRuby appends for other encodings never applies here.
+fn dump_str(buf: &StrBuf) -> crate::collections::RStr {
+    let bytes = buf.bytes();
+    let u8enc = buf.encoding() == crate::encoding::UTF_8;
+    let mut out = String::from("\"");
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        match c {
+            b'"' | b'\\' => {
+                out.push('\\');
+                out.push(c as char);
+                i += 1;
+            }
+            b'#' => {
+                if matches!(bytes.get(i + 1), Some(b'{' | b'$' | b'@')) {
+                    out.push('\\');
+                }
+                out.push('#');
+                i += 1;
+            }
+            b'\n' => { out.push_str("\\n"); i += 1; }
+            b'\r' => { out.push_str("\\r"); i += 1; }
+            b'\t' => { out.push_str("\\t"); i += 1; }
+            0x0C => { out.push_str("\\f"); i += 1; }
+            0x0B => { out.push_str("\\v"); i += 1; }
+            0x08 => { out.push_str("\\b"); i += 1; }
+            0x07 => { out.push_str("\\a"); i += 1; }
+            0x1B => { out.push_str("\\e"); i += 1; }
+            0x20..=0x7E => { out.push(c as char); i += 1; }
+            _ => {
+                if u8enc && c > 0x7F {
+                    if let Some((cp, len)) = decode_utf8_char(&bytes[i..]) {
+                        if cp <= 0xFFFF {
+                            out.push_str(&format!("\\u{cp:04X}"));
+                        } else {
+                            out.push_str(&format!("\\u{{{cp:X}}}"));
+                        }
+                        i += len;
+                        continue;
+                    }
+                }
+                out.push_str(&format!("\\x{c:02X}"));
+                i += 1;
+            }
+        }
+    }
+    out.push('"');
+    crate::string_from_bytes(out.into_bytes(), buf.encoding())
+}
+
+/// Decodes one UTF-8 character at the front of `b`, returning `(codepoint,
+/// byte_len)`, or `None` for an invalid/truncated sequence (dumped as `\xNN`).
+fn decode_utf8_char(b: &[u8]) -> Option<(u32, usize)> {
+    let len = match b[0] {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => return None,
+    };
+    let slice = b.get(..len)?;
+    let ch = std::str::from_utf8(slice).ok()?.chars().next()?;
+    Some((ch as u32, len))
+}
+
+fn runtime_err(msg: &str) -> Signal {
+    crate::dispatch::raise_error("RuntimeError", msg.to_string())
+}
+
+/// `String#undump` (CRuby `str_undump`): the inverse of `dump`. Rejects a
+/// non-ASCII or NUL-containing receiver, requires the `"..."` wrapper, and
+/// decodes each escape. A trailing `[.dup].force_encoding("ENC")` retags the
+/// result. Raises RuntimeError on any malformed input.
+fn undump_str(buf: &StrBuf) -> Result<RubyValue, Signal> {
+    if !buf.ascii_only() {
+        return Err(runtime_err("non-ASCII character detected"));
+    }
+    let bytes = buf.bytes();
+    if bytes.contains(&0) {
+        return Err(runtime_err("string contains null byte"));
+    }
+    let invalid = || {
+        runtime_err(
+            "invalid dumped string; not wrapped with '\"' nor \
+             '\"...\".force_encoding(\"...\")' form",
+        )
+    };
+    if bytes.len() < 2 || bytes[0] != b'"' {
+        return Err(invalid());
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut enc = buf.encoding();
+    let mut utf8 = false;
+    let mut binary = false;
+    let mut i = 1;
+    loop {
+        if i >= bytes.len() {
+            return Err(runtime_err("unterminated dumped string"));
+        }
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                if i == bytes.len() {
+                    break;
+                }
+                // A `[.dup].force_encoding("ENC")` epilogue.
+                if bytes[i..].starts_with(b".dup") {
+                    i += 4;
+                }
+                let prefix = b".force_encoding(\"";
+                if bytes.len() - i <= prefix.len() || !bytes[i..].starts_with(prefix) {
+                    return Err(invalid());
+                }
+                i += prefix.len();
+                if utf8 {
+                    return Err(runtime_err(
+                        "dumped string contained Unicode escape but used force_encoding",
+                    ));
+                }
+                let close = bytes[i..]
+                    .iter()
+                    .position(|&b| b == b'"')
+                    .map(|p| i + p)
+                    .ok_or_else(invalid)?;
+                if bytes.len() - close != 2 || bytes[close + 1] != b')' {
+                    return Err(invalid());
+                }
+                let name = std::str::from_utf8(&bytes[i..close]).unwrap_or("");
+                enc = crate::encoding::find(name)
+                    .ok_or_else(|| runtime_err("dumped string has unknown encoding name"))?;
+                break;
+            }
+            b'\\' => {
+                i += 1;
+                if i >= bytes.len() {
+                    return Err(runtime_err("invalid escape"));
+                }
+                undump_backslash(bytes, &mut i, &mut out, &mut enc, &mut utf8, &mut binary)?;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    Ok(RubyValue::Str(crate::string_from_bytes(out, enc)))
+}
+
+/// Reads up to `max` hex digits from the front of `b`, returning `(value,
+/// digits_consumed)`.
+fn scan_hex(b: &[u8], max: usize) -> (u32, usize) {
+    let mut value = 0u32;
+    let mut n = 0;
+    while n < max {
+        match b.get(n).and_then(|c| (*c as char).to_digit(16)) {
+            Some(d) => {
+                value = value * 16 + d;
+                n += 1;
+            }
+            None => break,
+        }
+    }
+    (value, n)
+}
+
+/// Appends the UTF-8 encoding of a `\u` codepoint, rejecting out-of-range and
+/// surrogate values.
+fn push_codepoint(out: &mut Vec<u8>, cp: u32) -> Result<(), Signal> {
+    if cp > 0x10FFFF {
+        return Err(runtime_err("invalid Unicode codepoint (too large)"));
+    }
+    match char::from_u32(cp) {
+        Some(ch) => {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+            Ok(())
+        }
+        None => Err(runtime_err("invalid Unicode codepoint")),
+    }
+}
+
+/// Decodes the escape following a `\` in `undump` (CRuby
+/// `undump_after_backslash`), advancing `*i` past it.
+fn undump_backslash(
+    bytes: &[u8],
+    i: &mut usize,
+    out: &mut Vec<u8>,
+    enc: &mut crate::encoding::EncodingId,
+    utf8: &mut bool,
+    binary: &mut bool,
+) -> Result<(), Signal> {
+    match bytes[*i] {
+        c @ (b'\\' | b'"' | b'#') => {
+            out.push(c);
+            *i += 1;
+        }
+        b'n' => { out.push(b'\n'); *i += 1; }
+        b'r' => { out.push(b'\r'); *i += 1; }
+        b't' => { out.push(b'\t'); *i += 1; }
+        b'f' => { out.push(0x0C); *i += 1; }
+        b'v' => { out.push(0x0B); *i += 1; }
+        b'b' => { out.push(0x08); *i += 1; }
+        b'a' => { out.push(0x07); *i += 1; }
+        b'e' => { out.push(0x1B); *i += 1; }
+        b'u' => {
+            if *binary {
+                return Err(runtime_err("hex escape and Unicode escape are mixed"));
+            }
+            *utf8 = true;
+            *enc = crate::encoding::UTF_8;
+            *i += 1;
+            if *i >= bytes.len() {
+                return Err(runtime_err("invalid Unicode escape"));
+            }
+            if bytes[*i] == b'{' {
+                *i += 1;
+                loop {
+                    match bytes.get(*i) {
+                        None => return Err(runtime_err("unterminated Unicode escape")),
+                        Some(b'}') => { *i += 1; break; }
+                        Some(c) if c.is_ascii_whitespace() => { *i += 1; }
+                        _ => {
+                            let (cp, hexlen) = scan_hex(&bytes[*i..], 7);
+                            if hexlen == 0 || hexlen > 6 {
+                                return Err(runtime_err("invalid Unicode escape"));
+                            }
+                            push_codepoint(out, cp)?;
+                            *i += hexlen;
+                        }
+                    }
+                }
+            } else {
+                let (cp, hexlen) = scan_hex(&bytes[*i..], 4);
+                if hexlen != 4 {
+                    return Err(runtime_err("invalid Unicode escape"));
+                }
+                push_codepoint(out, cp)?;
+                *i += 4;
+            }
+        }
+        b'x' => {
+            *i += 1;
+            let (v, hexlen) = scan_hex(&bytes[*i..], 2);
+            if hexlen != 2 {
+                return Err(runtime_err("invalid hex escape"));
+            }
+            let byte = v as u8;
+            if byte > 0x7F {
+                if *utf8 {
+                    return Err(runtime_err("hex escape and Unicode escape are mixed"));
+                }
+                *binary = true;
+            }
+            out.push(byte);
+            *i += 2;
+        }
+        c => {
+            out.push(b'\\');
+            out.push(c);
+            *i += 1;
+        }
+    }
+    Ok(())
+}
+
 /// Normalizes an optional byte-offset argument (`byteindex`/`byterindex`'s
 /// second parameter): negative counts from the end, and an out-of-range
 /// offset answers `None` (the caller returns nil).
@@ -389,6 +664,215 @@ fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Si
     Ok(str_value(removed))
 }
 
+/// The `String#[]=` engine (CRuby `rb_str_aset_m`): resolves the target
+/// character span for every index shape, then splices in the replacement.
+/// Returns the assigned value, matching Ruby's index-assignment expression.
+fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let handle = recv_str!(recv);
+    if handle.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen String: {}", recv.inspect_string()),
+        ));
+    }
+    let val = args.last().unwrap();
+    let RubyValue::Str(repl) = val else {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(val)
+            ),
+        ));
+    };
+    let repl_chars: Vec<char> = repl.lock().to_utf8_lossy().chars().collect();
+
+    let mut chars: Vec<char> = handle.lock().char_vec();
+    let n = chars.len() as i64;
+    let norm = |i: i64| if i < 0 { i + n } else { i };
+    let index_err = |msg: String| crate::dispatch::raise_error("IndexError", msg);
+
+    // Resolve the [start, end) character span to overwrite.
+    let (start, end) = if let RubyValue::Regexp(re) = &args[0] {
+        let text: String = handle.lock().to_utf8_lossy().into_owned();
+        let RubyValue::MatchData(m) = crate::regexp_match(re, &text) else {
+            return Err(index_err("regexp not matched".to_string()));
+        };
+        let span = if args.len() == 3 {
+            match &args[1] {
+                RubyValue::Int(k) => m.groups.get(*k as usize).copied().flatten(),
+                RubyValue::Str(name) => group_span_by_name(&m, &name.lock().to_utf8_lossy()),
+                RubyValue::Symbol(s) => group_span_by_name(&m, &s.name()),
+                _ => None,
+            }
+        } else {
+            m.groups.first().copied().flatten()
+        };
+        let Some((bstart, bend)) = span else {
+            return Err(index_err("regexp not matched".to_string()));
+        };
+        (text[..bstart].chars().count(), text[..bend].chars().count())
+    } else if args.len() == 3 {
+        let (i, len) = (arg_int!(args, 0), arg_int!(args, 1));
+        let start = norm(i);
+        if start < 0 || start > n {
+            return Err(index_err(format!("index {i} out of string")));
+        }
+        if len < 0 {
+            return Err(index_err(format!("negative length {len}")));
+        }
+        (start as usize, (start + len).min(n) as usize)
+    } else {
+        match &args[0] {
+            RubyValue::Int(i) => {
+                let start = norm(*i);
+                if start < 0 || start > n {
+                    return Err(index_err(format!("index {i} out of string")));
+                }
+                (start as usize, (start + 1).min(n) as usize)
+            }
+            RubyValue::Range(s, e, exclusive) => {
+                let start = match s.as_deref() {
+                    Some(RubyValue::Int(v)) => norm(*v),
+                    None => 0,
+                    _ => return Err(index_err("string not matched".to_string())),
+                };
+                if start < 0 || start > n {
+                    return Err(crate::dispatch::raise_error(
+                        "RangeError",
+                        format!("{} out of range", args[0].to_display_string()),
+                    ));
+                }
+                let end = match e.as_deref() {
+                    Some(RubyValue::Int(v)) => {
+                        let v = norm(*v);
+                        if *exclusive { v } else { v + 1 }
+                    }
+                    None => n,
+                    _ => return Err(index_err("string not matched".to_string())),
+                };
+                (start as usize, end.clamp(start, n) as usize)
+            }
+            RubyValue::Str(sub) => {
+                let needle: Vec<char> = sub.lock().to_utf8_lossy().chars().collect();
+                match find_subslice(&chars, &needle) {
+                    Some(pos) => (pos, pos + needle.len()),
+                    None => return Err(index_err("string not matched".to_string())),
+                }
+            }
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "no implicit conversion of {} into Integer",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        }
+    };
+
+    chars.splice(start..end, repl_chars);
+    handle.lock().replace_utf8(chars.into_iter().collect());
+    Ok(val.clone())
+}
+
+/// `String#crypt` (CRuby `rb_str_crypt`): validates the receiver and salt,
+/// then calls the host `crypt(3)`. The libc buffer is process-static, so the
+/// call is serialized under a mutex.
+fn crypt_impl(recv: &RubyValue, salt_arg: &RubyValue) -> Result<RubyValue, Signal> {
+    use std::ffi::{CStr, CString};
+    static CRYPT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    let key = recv_str!(recv).lock().bytes().to_vec();
+    if key.contains(&0) {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "string contains null byte".to_string(),
+        ));
+    }
+    let RubyValue::Str(salt) = salt_arg else {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(salt_arg)
+            ),
+        ));
+    };
+    let salt = salt.lock().bytes().to_vec();
+    if salt.len() < 2 || salt[0] == 0 || salt[1] == 0 {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "salt too short (need >=2 bytes)".to_string(),
+        ));
+    }
+    // `crypt` reads both arguments as C strings; the key has no NUL and the
+    // salt is truncated at its first NUL (its leading two bytes are non-zero).
+    let key_c = CString::new(key).expect("key has no interior NUL");
+    let salt_trunc: Vec<u8> = salt.into_iter().take_while(|&b| b != 0).collect();
+    let salt_c = CString::new(salt_trunc).expect("salt truncated at first NUL");
+
+    // `crypt(3)` is an XSI extension the `libc` crate doesn't declare on every
+    // target, so bind it directly (it resolves from libSystem/libcrypt).
+    extern "C" {
+        fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
+    }
+    let _guard = CRYPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let res = unsafe { crypt(key_c.as_ptr(), salt_c.as_ptr()) };
+    if res.is_null() {
+        return Err(crate::dispatch::raise_error(
+            "SystemCallError",
+            "crypt failed".to_string(),
+        ));
+    }
+    let bytes = unsafe { CStr::from_ptr(res) }.to_bytes().to_vec();
+    Ok(RubyValue::Str(crate::string_from_bytes(
+        bytes,
+        crate::encoding::ASCII_8BIT,
+    )))
+}
+
+/// Applies a Unicode normalization form named by a `:nfc`/`:nfd`/`:nfkc`/
+/// `:nfkd` symbol (or string), defaulting to NFC. An unknown form raises
+/// ArgumentError, matching CRuby's `lib/unicode_normalize`.
+fn normalize_form(text: &str, form: Option<&RubyValue>) -> Result<String, Signal> {
+    use unicode_normalization::UnicodeNormalization;
+    let name = match form {
+        None => "nfc".to_string(),
+        Some(RubyValue::Symbol(s)) => s.name().to_string(),
+        Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+        Some(other) => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into String",
+                    crate::builtins::class_name_of(other)
+                ),
+            ))
+        }
+    };
+    Ok(match name.as_str() {
+        "nfc" => text.nfc().collect(),
+        "nfd" => text.nfd().collect(),
+        "nfkc" => text.nfkc().collect(),
+        "nfkd" => text.nfkd().collect(),
+        _ => {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("Invalid normalization form {name}."),
+            ))
+        }
+    })
+}
+
+/// The byte span of a named capture group, or `None` when the name is absent
+/// or the group didn't participate in the match.
+fn group_span_by_name(m: &crate::RMatchData, name: &str) -> Option<(usize, usize)> {
+    let idx = m.names.iter().find(|(nm, _)| nm == name)?.1;
+    m.groups.get(idx).copied().flatten()
+}
+
 /// The first index of `needle` within `haystack` (both char slices), or None.
 fn find_subslice(haystack: &[char], needle: &[char]) -> Option<usize> {
     if needle.is_empty() {
@@ -559,6 +1043,52 @@ builtin_methods! {
         arity!(args, 0);
         let bytes = recv_str!(recv).lock().bytes().to_vec();
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
+    }
+    // `append_as_bytes(*args)`: appends each argument's raw bytes to the
+    // receiver in place -- an Integer contributes its low byte (`n & 0xFF`), a
+    // String its bytes verbatim -- keeping the receiver's encoding. Answers
+    // self.
+    "append_as_bytes" => fn append_as_bytes(recv, args, _block) {
+        let handle = recv_str!(recv);
+        if handle.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+            ));
+        }
+        let mut extra: Vec<u8> = Vec::new();
+        for a in args {
+            match a {
+                RubyValue::Int(i) => extra.push((*i & 0xFF) as u8),
+                RubyValue::BigInt(b) => {
+                    use num_traits::ToPrimitive;
+                    extra.push((&**b & num_bigint::BigInt::from(0xFF)).to_u8().unwrap_or(0));
+                }
+                RubyValue::Str(s) => extra.extend_from_slice(s.lock().bytes()),
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "wrong argument type {} (expected String or Integer)",
+                            crate::builtins::class_name_of(other)
+                        ),
+                    ))
+                }
+            }
+        }
+        let mut lock = handle.lock();
+        let enc = lock.encoding();
+        let mut bytes = lock.bytes().to_vec();
+        bytes.extend_from_slice(&extra);
+        lock.replace_bytes(bytes, enc);
+        Ok(recv.clone())
+    }
+    // `crypt(salt)`: the platform `crypt(3)` one-way hash (DES/MD5/... per the
+    // salt), delegated to libc so the output matches the host Ruby exactly.
+    // The result is ASCII-8BIT.
+    "crypt" => fn crypt(recv, args, _block) {
+        arity!(args, 1);
+        crypt_impl(recv, &args[0])
     }
     "ascii_only?" => fn ascii_only(recv, args, _block) {
         arity!(args, 0);
@@ -766,6 +1296,44 @@ builtin_methods! {
             p.call(&[str_value(c.to_string())])?;
         }
         Ok(recv.clone())
+    }
+    // `grapheme_clusters`: the string split into extended grapheme clusters
+    // (UAX #29) -- a base char plus its combining marks, a regional-indicator
+    // flag pair, or a ZWJ emoji sequence each count as one.
+    "grapheme_clusters" => fn grapheme_clusters(recv, args, _block) {
+        arity!(args, 0);
+        use unicode_segmentation::UnicodeSegmentation;
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let out = text.graphemes(true).map(|g| str_value(g.to_string())).collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "each_grapheme_cluster" => fn each_grapheme_cluster(recv, args, block) {
+        arity!(args, 0);
+        use unicode_segmentation::UnicodeSegmentation;
+        let p = block_or_enum!(recv, "each_grapheme_cluster", args, block);
+        let clusters: Vec<String> = recv_str!(recv)
+            .lock()
+            .to_utf8_lossy()
+            .graphemes(true)
+            .map(str::to_string)
+            .collect();
+        for g in clusters {
+            p.call(&[str_value(g)])?;
+        }
+        Ok(recv.clone())
+    }
+    // `unicode_normalize(form = :nfc)`: NFC/NFD/NFKC/NFKD normalization;
+    // `unicode_normalized?(form = :nfc)` tests whether the receiver already is
+    // in that form. An unknown form raises ArgumentError.
+    "unicode_normalize" => fn unicode_normalize(recv, args, _block) {
+        arity!(args, 0..=1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        Ok(str_value(normalize_form(&text, args.first())?))
+    }
+    "unicode_normalized?" => fn unicode_normalized_p(recv, args, _block) {
+        arity!(args, 0..=1);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Bool(text == normalize_form(&text, args.first())?))
     }
     // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
     // occurrence on each piece, exactly like the default `"\n"`.
@@ -1202,6 +1770,16 @@ builtin_methods! {
             )),
         }
     }
+    // `[]=`: index assignment across the same shapes as `[]`/`slice` --
+    // `s[i] = v`, `s[i, len] = v`, `s[range] = v`, `s[substr] = v`,
+    // `s[/re/[, group]] = v`. Replaces the matched span with `v` and answers
+    // `v` (Ruby's index-assignment expression value). Out-of-range integers/
+    // substrings raise IndexError; an out-of-range range begin raises
+    // RangeError.
+    "[]=" => fn index_set(recv, args, _block) {
+        arity!(args, 2..=3);
+        index_set_impl(recv, args)
+    }
     // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
     // (Unicode-aware) sibling. A non-String argument answers nil.
     "casecmp" => fn casecmp(recv, args, _block) {
@@ -1405,6 +1983,19 @@ builtin_methods! {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let (num, den) = crate::builtins::rational::parse_str_to_r(&text);
         crate::builtins::rational::rational_new(num, den)
+    }
+    "to_c" => fn to_c(recv, args, _block) {
+        arity!(args, 0);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        crate::builtins::complex::parse_str_to_c(&text)
+    }
+    "dump" => fn dump(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(dump_str(&recv_str!(recv).lock())))
+    }
+    "undump" => fn undump(recv, args, _block) {
+        arity!(args, 0);
+        undump_str(&recv_str!(recv).lock())
     }
     "to_sym" | "intern" => fn to_sym(recv, args, _block) {
         arity!(args, 0);

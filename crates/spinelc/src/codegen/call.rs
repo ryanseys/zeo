@@ -316,23 +316,6 @@ fn try_collection_dispatch(
             let idx = emit_expr(cx, args[0]);
             quote! { spinel_rt::string_get(&(#recv_expr).as_str_unchecked(), (#idx).as_int_unchecked()) }
         }
-        (TyKind::Str, "[]=", 2) => {
-            let idx = emit_expr(cx, args[0]);
-            let val = emit_expr(cx, args[1]);
-            let frozen_error =
-                emit_frozen_error(cx, "String", quote! { spinel_rt::RubyValue::Str(__recv.clone()) });
-            quote! {
-                {
-                    let __recv = (#recv_expr).as_str_unchecked();
-                    let __idx = (#idx).as_int_unchecked();
-                    let __val = #val;
-                    if __recv.is_frozen() {
-                        return Err(spinel_rt::Signal::Raise(#frozen_error));
-                    }
-                    spinel_rt::string_set(&__recv, __idx, &__val)
-                }
-            }
-        }
         (TyKind::Str, "length" | "size", 0) => {
             quote! { spinel_rt::RubyValue::Int(spinel_rt::string_len(&(#recv_expr).as_str_unchecked())) }
         }
@@ -419,6 +402,27 @@ fn try_regexp_dispatch(
                 let guard = str_guard(args[0], "__h")?;
                 return Some(quote! {
                     { #guard spinel_rt::regexp_match_index(&(#recv_expr).as_regexp_unchecked(), &__h) }
+                });
+            }
+            // `~ rxp` matches the pattern against `$_` (the last input line),
+            // returning the match position or nil and setting `$~`. A non-
+            // String `$_` clears the match and answers nil.
+            ("~", 0) => {
+                let bx = cx.box_id;
+                return Some(quote! {
+                    {
+                        match spinel_rt::global_get(#bx, "$_") {
+                            spinel_rt::RubyValue::Str(__s) => {
+                                let __g = __s.lock();
+                                let __h = __g.to_utf8_lossy();
+                                spinel_rt::regexp_match_index(&(#recv_expr).as_regexp_unchecked(), &__h)
+                            }
+                            _ => {
+                                spinel_rt::set_last_match(None);
+                                spinel_rt::RubyValue::Nil
+                            }
+                        }
+                    }
                 });
             }
             ("!~", 1) => {
@@ -577,7 +581,13 @@ fn try_proc_dispatch(
     Some(quote! { ((#recv_expr).as_proc_unchecked()).call(&[#(#arg_exprs),*])? })
 }
 
-pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[KwArg]) -> TokenStream {
+pub fn emit_new(
+    cx: &Ctx,
+    class_name: &str,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    block: Option<NodeId>,
+) -> TokenStream {
     // A USER class with a real `initialize`: bind its arguments through the
     // SAME `emit_call_args_to` machinery every other call site uses, so
     // `initialize` gets the full `Params` surface (splat/post/keyword/block)
@@ -601,10 +611,9 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[KwArg]) -
             // `ruby_class!`'s docs), so it would move `__obj` -- clone the
             // handle (a refcount bump) to keep `__obj` returnable.
             //
-            // `.new` still forwards no BLOCK (`&blk`/`yield` inside
-            // `initialize` sees none) -- a narrower, pre-existing gap;
-            // `needs_block` here only makes the callee's own block slot
-            // line up.
+            // A literal block passed to `.new` is forwarded to `initialize`
+            // (so `yield`/`block_given?` inside it see it); `needs_block`
+            // keeps the callee's block slot lined up either way.
             let init = super::params::emit_call_args_to(
                 cx,
                 &super::params::Callee::Method(quote! { __obj.clone() }),
@@ -612,9 +621,9 @@ pub fn emit_new(cx: &Ctx, class_name: &str, args: &[NodeId], kwargs: &[KwArg]) -
                 &scope.params,
                 args,
                 kwargs,
+                block,
                 None,
-                None,
-                scope.needs_block_param(),
+                scope.needs_block_param() || block.is_some(),
             );
             return quote! { { let __obj = #ctor; #init; __obj } };
         }
@@ -1818,7 +1827,7 @@ pub fn emit_call(
                     // Boxed: this Call node infers as `Poly` (only a
                     // literal `HirNode::New` infers `Object(cid)`), so the
                     // expression must be a `RubyValue`.
-                    let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs);
+                    let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
                     let class_ident = super::ident::class_ident(cx.compiler, defining);
                     return quote! {
                         spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor))
@@ -2331,7 +2340,7 @@ pub fn emit_call(
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
             if name == "new" && !cx.compiler.class(target).is_module && !cx.compiler.class(target).is_builtin {
                 let recv_expr = emit_expr(cx, recv_id);
-                let ctor = emit_new(cx, &cx.compiler.fq_name(target), args, kwargs);
+                let ctor = emit_new(cx, &cx.compiler.fq_name(target), args, kwargs, None);
                 return quote! { { let _ = #recv_expr; #ctor } };
             }
             if cx.compiler.class_method_in_chain(target, name).is_some() {
