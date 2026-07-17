@@ -184,7 +184,7 @@ fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
 
 /// A finite float's integral value as an Integer (bignum-capable:
 /// `1e20.to_i` works); non-finite raises real Ruby's FloatDomainError.
-fn float_to_integer(f: f64) -> Result<RubyValue, Signal> {
+pub(crate) fn float_to_integer(f: f64) -> Result<RubyValue, Signal> {
     use num_traits::FromPrimitive;
     if !f.is_finite() {
         return Err(crate::dispatch::raise_error(

@@ -596,6 +596,19 @@ builtin_methods! {
             None => RubyValue::Nil,
         })
     }
+    // `rfind` is `find` scanning from the right -- the last element the block
+    // accepts (nil if none); a blockless call answers an Enumerator.
+    "rfind" => fn rfind(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "rfind", args, block);
+        let items = recv_array!(recv).lock().clone();
+        for e in items.iter().rev() {
+            if p.call(std::slice::from_ref(e))?.truthy() {
+                return Ok(e.clone());
+            }
+        }
+        Ok(RubyValue::Nil)
+    }
     "dig" => fn dig(recv, args, _block) {
         if args.is_empty() {
             return Err(crate::dispatch::raise_error(
@@ -638,6 +651,34 @@ builtin_methods! {
             "IndexError",
             format!("index {i} outside of array bounds: {}...{n}", -n),
         ))
+    }
+    // `fetch_values(*indices)` -- each index fetched strictly (an out-of-range
+    // index raises IndexError, or is passed to the block if one is given).
+    "fetch_values" => fn fetch_values(recv, args, block) {
+        let items = recv_array!(recv).lock().clone();
+        let n = items.len() as i64;
+        let mut out = Vec::with_capacity(args.len());
+        for arg in args {
+            let i = match arg {
+                RubyValue::Int(i) => *i,
+                other => return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                )),
+            };
+            let idx = if i < 0 { i + n } else { i };
+            if (0..n).contains(&idx) {
+                out.push(items[idx as usize].clone());
+            } else if let Some(RubyValue::Proc(p)) = &block {
+                out.push(p.call(&[RubyValue::Int(i)])?);
+            } else {
+                return Err(crate::dispatch::raise_error(
+                    "IndexError",
+                    format!("index {i} outside of array bounds: {}...{n}", -n),
+                ));
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
     }
     "delete" => fn delete(recv, args, _block) {
         arity!(args, 1);

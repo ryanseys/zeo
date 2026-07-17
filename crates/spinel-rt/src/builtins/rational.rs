@@ -332,4 +332,65 @@ builtin_methods! {
             m
         }))
     }
+    // A Rational is always a finite value.
+    "finite?" => fn finite_p(recv, args, _block) {
+        arity!(args, 0);
+        let _ = recv;
+        Ok(RubyValue::Bool(true))
+    }
+    "infinite?" => fn infinite_p(recv, args, _block) {
+        arity!(args, 0);
+        let _ = recv;
+        Ok(RubyValue::Nil)
+    }
+    // `coerce(other)`: a Float partner pulls both operands to Float; any
+    // other numeric promotes to Rational (`(3/2).coerce(2) == [(2/1), (3/2)]`).
+    "coerce" => fn coerce(recv, args, _block) {
+        arity!(args, 1);
+        let pair = match &args[0] {
+            RubyValue::Float(f) => vec![
+                RubyValue::Float(*f),
+                RubyValue::Float(rat_to_f64(recv_rational(recv))),
+            ],
+            RubyValue::Int(_) | RubyValue::BigInt(_) => vec![
+                rational_new(crate::builtins::integer::to_bigint(&args[0]), 1.into())?,
+                recv.clone(),
+            ],
+            RubyValue::Rational(_) => vec![args[0].clone(), recv.clone()],
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "{} can't be coerced into Rational",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        };
+        Ok(RubyValue::Array(crate::array_new(pair)))
+    }
+    // `div` -- floored integer division (`Rational(7,2).div(2) == 1`).
+    "div" => fn int_div(recv, args, _block) {
+        arity!(args, 1);
+        let q = crate::builtins::numeric::num_div(recv, &args[0])
+            .ok_or_else(|| crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "{} can't be coerced into Rational",
+                    crate::builtins::class_name_of(&args[0])
+                ),
+            ))??;
+        match q {
+            RubyValue::Rational(r) => {
+                Ok(crate::builtins::integer::int_value(r.num.div_floor(&r.den)))
+            }
+            RubyValue::Float(f) => crate::builtins::float::float_to_integer(f.floor()),
+            other => Ok(other),
+        }
+    }
+    // `n.i` -- the pure-imaginary Complex `0 + n*i`.
+    "i" => fn imaginary(recv, args, _block) {
+        arity!(args, 0);
+        crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
+    }
 }

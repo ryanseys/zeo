@@ -129,6 +129,49 @@ fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
 
+/// Normalizes an optional byte-offset argument (`byteindex`/`byterindex`'s
+/// second parameter): negative counts from the end, and an out-of-range
+/// offset answers `None` (the caller returns nil).
+fn byte_offset_arg(arg: Option<&RubyValue>, len: usize) -> Result<Option<usize>, Signal> {
+    match arg {
+        None => Ok(Some(0)),
+        Some(v) => {
+            let p = int_arg(v)?;
+            let p = if p < 0 { p + len as i64 } else { p };
+            Ok(if p < 0 || p > len as i64 {
+                None
+            } else {
+                Some(p as usize)
+            })
+        }
+    }
+}
+
+/// First byte offset `>= start` where `needle` occurs in `hay` (an empty
+/// needle matches at `start`).
+fn byte_find(hay: &[u8], needle: &[u8], start: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(start.min(hay.len()));
+    }
+    if start > hay.len() {
+        return None;
+    }
+    hay[start..]
+        .windows(needle.len())
+        .position(|w| w == needle)
+        .map(|i| i + start)
+}
+
+/// Last byte offset `<= before` where `needle` starts in `hay` (an empty
+/// needle matches at `before`).
+fn byte_rfind(hay: &[u8], needle: &[u8], before: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(before.min(hay.len()));
+    }
+    let last_start = before.min(hay.len().saturating_sub(needle.len()));
+    (0..=last_start).rev().find(|&i| hay[i..].starts_with(needle))
+}
+
 /// The shared body of the in-place `!` mutators (`chomp!`/`chop!`/
 /// `delete_prefix!`/`delete_suffix!`): a frozen receiver is a FrozenError
 /// (CRuby raises on ANY bang method, modification or not), then `new_text`
@@ -436,6 +479,68 @@ builtin_methods! {
         }
         s.lock().setbyte(idx as usize, (b & 0xff) as u8);
         Ok(args[1].clone())
+    }
+    // `byteslice(offset[, len])` -- a substring cut on BYTE boundaries (one
+    // byte when `len` is omitted), tagged with the receiver's encoding; nil
+    // when `offset` is out of range. Negative offsets count from the end.
+    "byteslice" => fn byteslice(recv, args, _block) {
+        arity!(args, 1..=2);
+        let (bytes, enc) = {
+            let s = recv_str!(recv).lock();
+            (s.bytes().to_vec(), s.encoding())
+        };
+        let n = bytes.len() as i64;
+        let off = arg_int!(args, 0);
+        let off = if off < 0 { off + n } else { off };
+        if off < 0 || off > n {
+            return Ok(RubyValue::Nil);
+        }
+        let len = match args.get(1) {
+            Some(v) => {
+                let l = int_arg(v)?;
+                if l < 0 {
+                    return Ok(RubyValue::Nil);
+                }
+                l
+            }
+            None => 1,
+        };
+        let end = (off + len).min(n) as usize;
+        Ok(RubyValue::Str(crate::string_from_bytes(
+            bytes[off as usize..end].to_vec(),
+            enc,
+        )))
+    }
+    // `byteindex`/`byterindex(str[, offset])` -- the BYTE offset of the first
+    // (respectively last) occurrence of a String needle, or nil.
+    "byteindex" => fn byteindex(recv, args, _block) {
+        arity!(args, 1..=2);
+        let hay = recv_str!(recv).lock().bytes().to_vec();
+        let needle = arg_str!(args, 0).lock().bytes().to_vec();
+        let start = byte_offset_arg(args.get(1), hay.len())?;
+        let Some(start) = start else { return Ok(RubyValue::Nil) };
+        Ok(match byte_find(&hay, &needle, start) {
+            Some(i) => RubyValue::Int(i as i64),
+            None => RubyValue::Nil,
+        })
+    }
+    "byterindex" => fn byterindex(recv, args, _block) {
+        arity!(args, 1..=2);
+        let hay = recv_str!(recv).lock().bytes().to_vec();
+        let needle = arg_str!(args, 0).lock().bytes().to_vec();
+        // Omitted position searches the whole string (from the end); an
+        // explicit one bounds the match start (negative counts from the end).
+        let before = match args.get(1) {
+            None => hay.len(),
+            Some(v) => match byte_offset_arg(Some(v), hay.len())? {
+                Some(p) => p,
+                None => return Ok(RubyValue::Nil),
+            },
+        };
+        Ok(match byte_rfind(&hay, &needle, before) {
+            Some(i) => RubyValue::Int(i as i64),
+            None => RubyValue::Nil,
+        })
     }
     // --- Encoding surface -------------------------------------------------
     "encoding" => fn encoding_m(recv, args, _block) {
@@ -1275,6 +1380,33 @@ builtin_methods! {
     "succ" | "next" => fn succ(recv, args, _block) {
         arity!(args, 0);
         Ok(str_value(succ_str(&recv_str!(recv).lock().to_utf8_lossy())))
+    }
+    // `upto(other[, exclusive])` -- yields successive `succ` values from self
+    // through `other` (excluding `other` when `exclusive`); a blockless call
+    // answers an Enumerator. Stops once a value grows past `other`.
+    "upto" => fn upto(recv, args, block) {
+        arity!(args, 1..=2);
+        let exclusive = args.get(1).is_some_and(|v| v.truthy());
+        let limit = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        let p = block_or_enum!(recv, "upto", args, block);
+        let mut cur = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        loop {
+            if cur.as_str() > limit.as_str() {
+                break;
+            }
+            if exclusive && cur == limit {
+                break;
+            }
+            p.call(&[str_value(cur.clone())])?;
+            if !exclusive && cur == limit {
+                break;
+            }
+            cur = succ_str(&cur);
+            if cur.len() > limit.len() {
+                break;
+            }
+        }
+        Ok(recv.clone())
     }
     "center" => fn center(recv, args, _block) {
         arity!(args, 1..=2)

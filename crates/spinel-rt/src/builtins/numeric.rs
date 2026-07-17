@@ -300,6 +300,23 @@ builtin_methods! {
         arity!(args, 0);
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
+    // A real number's cartesian view is `[self, 0]`.
+    "rect" | "rectangular" => fn rect(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
+    }
+    // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
+    "polar" => fn polar(recv, args, _block) {
+        arity!(args, 0);
+        let magnitude =
+            crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
+        let angle = if matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1))) {
+            RubyValue::Float(std::f64::consts::PI)
+        } else {
+            RubyValue::Int(0)
+        };
+        Ok(RubyValue::Array(crate::array_new(vec![magnitude, angle])))
+    }
     "abs2" => fn abs2(recv, args, _block) {
         arity!(args, 0);
         num_mul(recv, recv).expect("numeric receiver")

@@ -45,6 +45,11 @@ builtin_methods! {
         arity!(args, 0);
         crate::builtins::complex::complex_new(RubyValue::Int(0), RubyValue::Int(0))
     }
+    // `nil =~ anything` is always nil (nil matches no pattern).
+    "=~" => fn nil_match(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Nil)
+    }
 }
 
 builtin_methods! {

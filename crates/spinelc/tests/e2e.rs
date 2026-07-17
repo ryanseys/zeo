@@ -15241,6 +15241,97 @@ fn regexp_complex_range_leaf_methods() {
 }
 
 #[test]
+fn rational_complex_numeric_leaf_methods() {
+    let result = run_ruby(
+        r#"
+        r = Rational(3, 2)
+        p r.finite?
+        p r.infinite?
+        p r.coerce(2)
+        p r.coerce(2.0)
+        p r.div(1)
+        p Rational(7, 2).div(2)
+        p r.i
+        c = Complex(6, 0)
+        p c.finite?
+        p c.infinite?
+        p c.to_f
+        p c.to_i
+        p c.to_r
+        p c.coerce(3)
+        p Complex(3, 4).finite?
+        p Complex(3, 4).numerator
+        p Complex(3, 4).denominator
+        p Complex(Rational(2, 3), Rational(3, 4)).numerator
+        p Complex(Rational(2, 3), Rational(3, 4)).denominator
+        begin
+          Complex(3, 4).to_f
+        rescue RangeError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nnil\n[(2/1), (3/2)]\n[2.0, 1.5]\n1\n1\n(0+(3/2)*i)\ntrue\nnil\n6.0\n6\n(6/1)\n[(3+0i), (6+0i)]\ntrue\n(3+4i)\n1\n(8+9i)\n12\ncan't convert 3+4i into Float\n"
+    );
+}
+
+#[test]
+fn numeric_rect_polar_and_collection_leaf_methods() {
+    let result = run_ruby(
+        r#"
+        p 5.rect
+        p 5.polar
+        p((-5).polar)
+        p 2.5.polar
+        p 5.rationalize
+        p Rational(3, 2).polar
+        p(nil =~ /x/)
+        p [1, 2, 3, 4].rfind { |x| x.even? }
+        p [10, 20, 30].fetch_values(0, 2)
+        p([10, 20, 30].fetch_values(0, 5) { |i| i * 100 })
+        p({ a: 1, b: 2 }.to_proc.call(:b))
+        p({ a: 1, b: 2 }.transform_keys!(&:to_s))
+        p((1..5).overlap?(5..8))
+        p((1...5).overlap?(5..8))
+        p((1..5).overlap?(6..8))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[5, 0]\n[5, 0]\n[5, 3.141592653589793]\n[2.5, 0]\n(5/1)\n[(3/2), 0]\nnil\n4\n[10, 30]\n[10, 500]\n2\n{\"a\" => 1, \"b\" => 2}\ntrue\nfalse\nfalse\n"
+    );
+}
+
+#[test]
+fn string_upto_and_byte_indexing_methods() {
+    let result = run_ruby(
+        r#"
+        p "a8".upto("b1").to_a
+        r = []
+        "a".upto("e") { |x| r << x }
+        p r
+        p "hello".byteindex("l")
+        p "hello".byteindex("l", 3)
+        p "hello".byterindex("l")
+        p "hello".byterindex("l", 2)
+        p "hello".byteslice(1, 3)
+        p "café".byteslice(0, 3)
+        p "hello".byteslice(-2, 2)
+        p "hello".byteslice(10)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"a8\", \"a9\", \"b0\", \"b1\"]\n[\"a\", \"b\", \"c\", \"d\", \"e\"]\n2\n3\n3\n2\n\"ell\"\n\"caf\"\n\"lo\"\nnil\n"
+    );
+}
+
+#[test]
 fn module_ordering_operators_and_subclasses() {
     let result = run_ruby(
         r#"

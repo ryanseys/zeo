@@ -652,8 +652,10 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Float(crate::builtins::numeric::num_to_f64_unchecked(recv)))
     }
-    "to_r" => fn to_r(recv, args, _block) {
-        arity!(args, 0);
+    // An Integer is already exact, so `rationalize([eps])` ignores its
+    // optional precision argument and equals `to_r`.
+    "to_r" | "rationalize" => fn to_r(recv, args, _block) {
+        arity!(args, 0..=1);
         crate::builtins::rational::rational_new(to_bigint(recv), BigInt::from(1))
     }
     "numerator" => fn numerator(recv, args, _block) {

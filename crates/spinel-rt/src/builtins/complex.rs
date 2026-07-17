@@ -336,6 +336,134 @@ builtin_methods! {
         arity!(args, 0);
         Ok(recv.clone())
     }
+    // A Complex is finite iff both components are (only a Float component can
+    // be infinite/NaN); a real Complex reports `nil` from `infinite?`.
+    "finite?" => fn finite_p(recv, args, _block) {
+        arity!(args, 0);
+        let c = recv_complex(recv);
+        Ok(RubyValue::Bool(
+            component_finite(&c.real) && component_finite(&c.imag),
+        ))
+    }
+    "infinite?" => fn infinite_p(recv, args, _block) {
+        arity!(args, 0);
+        let c = recv_complex(recv);
+        Ok(if component_finite(&c.real) && component_finite(&c.imag) {
+            RubyValue::Nil
+        } else {
+            RubyValue::Int(1)
+        })
+    }
+    // `coerce(other)`: lift a real numeric to `Complex(other, 0)`, pass a
+    // Complex through unchanged; the result is `[coerced_other, self]`.
+    "coerce" => fn coerce(recv, args, _block) {
+        arity!(args, 1);
+        let other = match &args[0] {
+            RubyValue::Complex(_) => args[0].clone(),
+            v if is_component(v) => complex_new(v.clone(), RubyValue::Int(0))?,
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "{} can't be coerced into Complex",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        };
+        Ok(RubyValue::Array(crate::array_new(vec![other, recv.clone()])))
+    }
+    // The real-projection conversions raise CRuby's RangeError unless the
+    // imaginary part is an exact zero (an Integer or Rational `0`; a Float
+    // `0.0` still raises).
+    "to_f" => fn to_f(recv, args, _block) {
+        arity!(args, 0);
+        real_projection(recv, "to_f")
+    }
+    "to_i" | "to_int" => fn to_i(recv, args, _block) {
+        arity!(args, 0);
+        real_projection(recv, "to_i")
+    }
+    "to_r" => fn to_r(recv, args, _block) {
+        arity!(args, 0);
+        real_projection(recv, "to_r")
+    }
+    "rationalize" => fn rationalize(recv, args, _block) {
+        arity!(args, 0..=1);
+        real_projection(recv, "to_r")
+    }
+    // `denominator` = lcm of the two components' denominators; `numerator`
+    // scales both components up to that shared denominator (CRuby complex.c).
+    "denominator" => fn denominator(recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::builtins::integer::int_value(complex_denominator(recv_complex(recv))?))
+    }
+    "numerator" => fn numerator(recv, args, _block) {
+        arity!(args, 0);
+        let c = recv_complex(recv);
+        let cd = complex_denominator(c)?;
+        let real = scale_numerator(&c.real, &cd)?;
+        let imag = scale_numerator(&c.imag, &cd)?;
+        complex_new(real, imag)
+    }
+}
+
+/// A component's `denominator` as a BigInt (`Integer` -> 1, `Rational` -> den).
+fn component_denominator(v: &RubyValue) -> Result<BigInt, Signal> {
+    let d = crate::dispatch::send_value(v, crate::Symbol::intern("denominator"), &[], None)?;
+    Ok(crate::builtins::integer::to_bigint(&d))
+}
+
+/// `lcm(real.denominator, imag.denominator)` -- the complex's shared denominator.
+fn complex_denominator(c: &RComplexData) -> Result<BigInt, Signal> {
+    use num_integer::Integer as _;
+    Ok(component_denominator(&c.real)?.lcm(&component_denominator(&c.imag)?))
+}
+
+/// A component scaled to the shared denominator: `numerator * (cd / own_den)`.
+fn scale_numerator(v: &RubyValue, cd: &BigInt) -> Result<RubyValue, Signal> {
+    let num = crate::dispatch::send_value(v, crate::Symbol::intern("numerator"), &[], None)?;
+    let scaled = crate::builtins::integer::to_bigint(&num) * (cd / component_denominator(v)?);
+    Ok(crate::builtins::integer::int_value(scaled))
+}
+
+/// A Complex component is finite unless it is a non-finite Float.
+fn component_finite(v: &RubyValue) -> bool {
+    !matches!(v, RubyValue::Float(f) if !f.is_finite())
+}
+
+/// True for an EXACT zero (`Integer`/`Rational` zero) -- a Float `0.0` is
+/// deliberately excluded (`Complex(6, 0.0).to_i` raises, per CRuby).
+fn imag_is_exact_zero(v: &RubyValue) -> bool {
+    use num_traits::Zero;
+    match v {
+        RubyValue::Int(0) => true,
+        RubyValue::BigInt(b) => b.is_zero(),
+        RubyValue::Rational(r) => r.num.is_zero(),
+        _ => false,
+    }
+}
+
+/// `to_f`/`to_i`/`to_r` on a real-valued Complex: forward the real component
+/// to its own conversion, else raise CRuby's "can't convert to X" RangeError.
+fn real_projection(recv: &RubyValue, conv: &str) -> Result<RubyValue, Signal> {
+    let c = recv_complex(recv);
+    if !imag_is_exact_zero(&c.imag) {
+        return Err(crate::dispatch::raise_error(
+            "RangeError",
+            format!("can't convert {} into {}", recv.to_display_string(), conv_target(conv)),
+        ));
+    }
+    crate::dispatch::send_value(&c.real, crate::Symbol::intern(conv), &[], None)
+}
+
+/// The Ruby class named in the RangeError for each real-projection verb.
+fn conv_target(conv: &str) -> &'static str {
+    match conv {
+        "to_f" => "Float",
+        "to_i" => "Integer",
+        _ => "Rational",
+    }
 }
 
 builtin_methods! {

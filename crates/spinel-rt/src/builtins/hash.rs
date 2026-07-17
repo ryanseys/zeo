@@ -471,6 +471,39 @@ builtin_methods! {
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
+    // In-place `transform_keys` -- rebuilds the hash with each key mapped
+    // through the block, keeping insertion order and answering the receiver.
+    "transform_keys!" => fn transform_keys_bang(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "transform_keys!", args, block);
+        let h = recv_hash!(recv);
+        let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
+        let mut out = Vec::with_capacity(pairs.len());
+        for (k, v) in pairs {
+            out.push((p.call(&[k])?, v));
+        }
+        h.lock().clear();
+        for (k, v) in out {
+            crate::hash_set(h, k, v);
+        }
+        Ok(recv.clone())
+    }
+    // `to_proc` yields a lambda that looks a key up in this hash (`h.to_proc`
+    // is `->(k) { h[k] }`); the hash is captured by identity, so later
+    // mutations are visible through the proc.
+    "to_proc" => fn to_proc(recv, args, _block) {
+        arity!(args, 0);
+        let h = recv_hash!(recv).clone();
+        let p = crate::RProc::with_meta(
+            move |args: &[RubyValue]| {
+                let key = args.first().cloned().unwrap_or(RubyValue::Nil);
+                crate::hash_index(&h, &key)
+            },
+            1,
+            true,
+        );
+        Ok(RubyValue::Proc(p))
+    }
     "clear" => fn clear(recv, args, _block) {
         arity!(args, 0);
         recv_hash!(recv).lock().clear();

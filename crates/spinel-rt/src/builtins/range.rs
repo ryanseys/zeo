@@ -132,6 +132,37 @@ builtin_methods! {
             start, end, exclusive, &args[0],
         )))
     }
+    // `overlap?(other)` -- do two ranges share at least one element? False
+    // when either range lies wholly beyond the other's end (CRuby range.c's
+    // empty-region test); a beginless/endless bound never bounds that side.
+    "overlap?" => fn overlap_p(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Range(ob, oe, ox) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "wrong argument type {} (expected Range)",
+                    crate::builtins::class_name_of(&args[0])
+                ),
+            ));
+        };
+        let (sb, se, sx) = range_parts(recv);
+        let (ob, oe, ox) = (ob.as_deref(), oe.as_deref(), *ox);
+        // `empty_region(beg, end, excl)`: beg lies past end, so nothing between.
+        let empty_region = |beg: Option<&RubyValue>, end: Option<&RubyValue>, excl: bool| {
+            match (beg, end) {
+                (None, _) | (_, None) => false,
+                (Some(RubyValue::Nil), _) | (_, Some(RubyValue::Nil)) => false,
+                (Some(b), Some(e)) => match b.rb_cmp(e) {
+                    Some(c) => c > 0 || (excl && c == 0),
+                    None => false,
+                },
+            }
+        };
+        Ok(RubyValue::Bool(
+            !empty_region(sb, oe, ox) && !empty_region(ob, se, sx),
+        ))
+    }
     "last" => fn last_m(recv, args, _block) {
         arity!(args, 0..=1);
         let (start, end, exclusive) = range_parts(recv);
