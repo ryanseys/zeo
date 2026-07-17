@@ -361,8 +361,6 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }

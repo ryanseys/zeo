@@ -315,7 +315,7 @@ fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> Test
 /// per-process anyway).
 pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
     let status = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "spinelc", "-p", "spinel-rt", "-p", "spinelc-base64"])
+        .args(["build", "--quiet", "-p", "spinelc", "-p", "spinel-rt"])
         .current_dir(workspace_root)
         .status()
         .map_err(|e| format!("running cargo build: {e}"))?;

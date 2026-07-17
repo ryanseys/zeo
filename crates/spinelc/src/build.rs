@@ -175,28 +175,12 @@ fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
 }
 
 pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Result<(), String> {
-    build_binary_with_deps(rust_source, &[], output, linkage)
-}
-
-/// `build_binary` plus the extra workspace lib crates (`native_deps`, cargo
-/// package names -- see `spinelc::CompileOutput`) the generated program
-/// references: each is `cargo build`-built once and linked with its own
-/// `--extern`, exactly the shape `spinel-rt` itself uses.
-pub fn build_binary_with_deps(
-    rust_source: &str,
-    native_deps: &[String],
-    output: &Path,
-    linkage: Linkage,
-) -> Result<(), String> {
     ensure_crate_built("spinel-rt")?;
-    for dep in native_deps {
-        ensure_crate_built(dep)?;
-    }
 
     let runtime = linkable_for("spinel-rt", linkage)?;
     let deps_dir = target_dir().join("debug").join("deps");
 
-    let cached = cache_path(rust_source, native_deps, linkage)?;
+    let cached = cache_path(rust_source, linkage)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -241,11 +225,6 @@ pub fn build_binary_with_deps(
         .arg(format!("spinel_rt={}", runtime.display()))
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
-    for dep in native_deps {
-        let dep_lib = linkable_for(dep, linkage)?;
-        cmd.arg("--extern")
-            .arg(format!("{}={}", dep.replace('-', "_"), dep_lib.display()));
-    }
     if linkage == Linkage::Dynamic {
         // Matches how the workspace builds the dylib (`.cargo/config.toml`).
         // Required rather than cosmetic: a Rust `dylib` embeds its own `std`
@@ -338,17 +317,14 @@ fn cache_dir() -> PathBuf {
 /// the 32MB rlib could not be amortized and would cost more than it saves.
 /// Cargo does not touch mtimes on a no-op rebuild, so this only
 /// over-invalidates when the runtime genuinely got rebuilt.
-fn cache_path(
-    rust_source: &str,
-    native_deps: &[String],
-    linkage: Linkage,
-) -> Result<PathBuf, String> {
+fn cache_path(rust_source: &str, linkage: Linkage) -> Result<PathBuf, String> {
     // Linkage is part of the generation, not just a detail: the same source
     // compiles to a 9.8MB self-contained binary or a 616K one that needs the
     // dylib, and handing a caller the wrong kind would either bloat their
     // output or hand them something that dies in `dyld`.
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, linkage.tag());
-    for name in std::iter::once("spinel-rt").chain(native_deps.iter().map(String::as_str)) {
+    {
+        let name = "spinel-rt";
         let lib = linkable_for(name, linkage)?;
         let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
         let mtime = meta

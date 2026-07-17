@@ -268,9 +268,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. } => None,
+        | HirNode::AliasMethod { .. } => None,
     };
     match classification {
         Some(s) => quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) },
@@ -891,9 +889,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
         | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. } => {
+        | HirNode::AliasMethod { .. } => {
             panic!("unexpected top-level-only node in expression position")
         }
     }

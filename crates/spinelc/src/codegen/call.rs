@@ -2300,20 +2300,13 @@ pub fn emit_call(
                 return folded;
             }
             // Path 1 only when the class actually DEFINES a matching class
-            // method (or native function). Anything else falls through to
-            // the generic dynamic path with the receiver as a first-class
-            // Class VALUE (Phase 16.1): `Widget == Widget`, `Widget.name`,
-            // `Widget.ancestors` resolve in `send_value`'s Class arm, and
-            // a genuinely unknown method is a real runtime NoMethodError
-            // ("for class Widget") -- real Ruby's behavior, replacing the
-            // old compile-time rejection.
-            let is_static = cx.compiler.class_method_in_chain(target, name).is_some()
-                || cx
-                    .compiler
-                    .class(target)
-                    .native_methods
-                    .iter()
-                    .any(|(n, _)| n == name);
+            // method. Anything else falls through to the generic dynamic path
+            // with the receiver as a first-class Class VALUE (Phase 16.1):
+            // `Widget == Widget`, `Widget.name`, `Widget.ancestors` resolve
+            // in `send_value`'s Class arm, and a genuinely unknown method is a
+            // real runtime NoMethodError ("for class Widget") -- real Ruby's
+            // behavior, replacing the old compile-time rejection.
+            let is_static = cx.compiler.class_method_in_chain(target, name).is_some();
             if is_static {
                 if safe {
                     panic!("safe-navigation on a class-method call isn't supported yet (spike scope)");
@@ -2637,34 +2630,6 @@ fn emit_class_method_call_on(
     block_arg: Option<NodeId>,
 ) -> TokenStream {
     let target_name = &cx.compiler.class(target).name;
-    // A `native_func` module function (Phase 14.3): a direct call into the
-    // backing Rust crate's free function -- `spinelc_base64::encode64(arg)?`
-    // -- linked only when the declaring package was `require`d (see
-    // `Hir::native_deps`). Same Path-1-only posture as every other module
-    // function; only the ARITY is checked here (the native fn itself
-    // runtime-checks its `RubyValue` argument kinds).
-    {
-        let ci = cx.compiler.class(target);
-        if let Some(&(_, arity)) = ci.native_methods.iter().find(|(n, _)| n == name) {
-            let crate_path = ci
-                .native_crate
-                .as_ref()
-                .expect("validated in analyze::register_class");
-            if !kwargs.is_empty() || args.len() != arity {
-                panic!(
-                    "wrong number of arguments for native `{target_name}.{name}`: expected {arity}, got {} (keyword arguments unsupported)",
-                    args.len()
-                );
-            }
-            let crate_ident = safe_ident(crate_path);
-            let method_ident = safe_ident(name);
-            let arg_exprs = args.iter().map(|&a| {
-                let e = emit_expr(cx, a);
-                box_if_object_typed(cx, a, e)
-            });
-            return quote! { #crate_ident::#method_ident(#(#arg_exprs),*)? };
-        }
-    }
     let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
         panic!(
             "unsupported call `{target_name}.{name}` (spike scope, or no such class method is defined)"

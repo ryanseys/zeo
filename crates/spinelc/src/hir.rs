@@ -33,12 +33,15 @@ pub struct Hir {
     /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
     /// loader rework (see `parse::loader`).
     pub loaded_files: Vec<LoadedFile>,
-    /// Workspace lib crates the compiled program must link (`--extern`),
-    /// recorded when a `require` resolves into a package whose `spin.toml`
-    /// declares `[native] crate = "..."` (Phase 14.3) -- "only link the
-    /// crate when the feature actually fired", the reference project's own
-    /// `.o`-linking rule. See `add_native_dep`.
-    pub native_deps: Vec<String>,
+    /// In-tree `ext/` features (`spinel_abi::is_ext_feature`) whose `require`
+    /// fired anywhere in the program -- the set that makes a require-gated
+    /// builtin's constant resolvable (`Compiler::resolve_class`'s feature
+    /// gate). Whole-program AOT: activation is program-GLOBAL (a `require
+    /// "base64"` in any file exposes `Base64` everywhere), a documented
+    /// simplification of CRuby's file-ordered visibility that matches how
+    /// this loader already splices requires program-wide. See
+    /// `activate_feature`.
+    pub activated_features: std::collections::HashSet<String>,
     /// How many of the root `Program`'s leading statements came from the
     /// built-in exception prelude (`parse::EXCEPTION_PRELUDE`), set by
     /// `parse_and_lower_with` (Phase 15.1). `analyze` marks the classes
@@ -92,15 +95,10 @@ pub struct LoadedFile {
 }
 
 impl Hir {
-    /// Records that the compiled program must link `crate_name` (a
-    /// workspace lib crate named by a required package's `[native]` table,
-    /// Phase 14.3) -- deduped; consumed by `compile_to_rust_with` into
-    /// `CompileOutput::native_deps` and ultimately `build::
-    /// build_binary_with_deps`'s extra `--extern`s.
-    pub fn add_native_dep(&mut self, crate_name: &str) {
-        if !self.native_deps.iter().any(|d| d == crate_name) {
-            self.native_deps.push(crate_name.to_string());
-        }
+    /// Records that an in-tree `ext/` feature's `require` fired -- exposes
+    /// the gated builtin's constant program-wide (see `activated_features`).
+    pub fn activate_feature(&mut self, feature: &str) {
+        self.activated_features.insert(feature.to_string());
     }
 }
 
@@ -1102,24 +1100,6 @@ pub enum HirNode {
     /// the class itself in the linearized `ancestors` list, so its methods
     /// take precedence over the class's own (reachable via `super`).
     Prepend(String),
-    /// `native_crate "rust_crate_path"` -- a module-body-only declaration
-    /// (Phase 14.3, the native-package DSL) naming the Rust path (crate
-    /// name with underscores) whose free functions back this module's
-    /// `native_func`s. Recognized by name during class-body lowering,
-    /// exactly like `attr_accessor` (see `parse::lower_class_body_statement`);
-    /// consumed by `analyze::register_class` into `ClassInfo::native_crate`,
-    /// never reaching codegen as an expression. The crate itself is linked
-    /// only when the declaring package was actually `require`d -- see
-    /// `Hir::native_deps`.
-    NativeCrate(String),
-    /// `native_func :name, [ArgType, ...], ReturnType` -- declares one
-    /// Ruby-visible module function implemented as
-    /// `<native_crate>::<name>(RubyValue, ...) -> Result<RubyValue, Signal>`
-    /// in the backing Rust crate. Only the ARITY is load-bearing (checked
-    /// at each call site at compile time); the type constants are
-    /// declaration-file documentation, matching the reference project's
-    /// `native_func` DSL shape. See `NativeCrate`.
-    NativeFunc { name: String, arity: usize },
     /// `while cond ... end` / `until cond ... end` (+ modifier forms
     /// `stmt while cond` / `stmt until cond`) -- `until` folds in here as
     /// `negate: true`, exactly like `unless` folds into `If` by swapping

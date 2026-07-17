@@ -359,8 +359,6 @@ impl Walker {
             | HirNode::Include(_)
             | HirNode::Extend(_)
             | HirNode::Prepend(_)
-            | HirNode::NativeCrate(_)
-            | HirNode::NativeFunc { .. }
             | HirNode::Redo
             | HirNode::Retry
             | HirNode::BlockGiven

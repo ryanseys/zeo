@@ -136,9 +136,8 @@ fn run() -> Result<(), String> {
     // (stdout/stderr stream straight through) -- the differential-harness path.
     if matches!(args.source, Source::Eval(_)) {
         let bin = std::env::temp_dir().join(format!("spinelc-e-{}", std::process::id()));
-        spinelc::build::build_binary_with_deps(
+        spinelc::build::build_binary(
             &compiled.rust_source,
-            &compiled.native_deps,
             &bin,
             spinelc::build::Linkage::from_env(),
         )?;
@@ -157,9 +156,8 @@ fn run() -> Result<(), String> {
         p.set_extension("");
         p
     });
-    spinelc::build::build_binary_with_deps(
+    spinelc::build::build_binary(
         &compiled.rust_source,
-        &compiled.native_deps,
         &output,
         spinelc::build::Linkage::from_env(),
     )

@@ -49,9 +49,8 @@ pub fn run_ruby_packages(
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::build_binary_with_deps(
+    spinelc::build::build_binary(
         rust_source,
-        &compiled.native_deps,
         &bin,
         spinelc::build::Linkage::Dynamic,
     )

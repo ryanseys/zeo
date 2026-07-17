@@ -11,6 +11,7 @@ mod constants;
 mod cvars;
 mod dispatch;
 pub mod encoding;
+mod ext;
 mod exec;
 mod fiber;
 mod globals;

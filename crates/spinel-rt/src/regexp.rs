@@ -21,7 +21,7 @@ use crate::{RProc, RubyValue, Signal};
 use std::sync::Arc;
 
 pub struct RegexpData {
-    pub compiled: regex::Regex,
+    pub engine: Engine,
     pub source: String,
     pub ignore_case: bool,
     pub extended: bool,
@@ -29,6 +29,99 @@ pub struct RegexpData {
 }
 
 pub type RRegexp = Arc<RegexpData>;
+
+/// The two backing engines. `Fast` is the linear-time `regex` crate (the
+/// overwhelmingly common case); `Fancy` is the backtracking `fancy-regex`,
+/// selected only when a pattern uses a construct `regex` structurally can't do
+/// (in-pattern backreferences, look-around, atomic/possessive groups,
+/// `(?#comment)`). Both are `Send + Sync` and immutable after construction.
+pub enum Engine {
+    Fast(regex::Regex),
+    Fancy(fancy_regex::Regex),
+}
+
+/// One match normalized to byte-offset group spans (index 0 = whole match;
+/// `None` = a non-participating optional group). This is the single shape both
+/// engines' `Captures` collapse to, so every downstream consumer
+/// (`build_match_data`, `scan`, `split`, `gsub`/`sub`) is engine-agnostic.
+pub struct Caps {
+    spans: Vec<Option<(usize, usize)>>,
+}
+
+impl Caps {
+    /// The byte span of group `i`, or `None` if absent/non-participating.
+    pub fn get(&self, i: usize) -> Option<(usize, usize)> {
+        self.spans.get(i).copied().flatten()
+    }
+    pub fn len(&self) -> usize {
+        self.spans.len()
+    }
+    /// The matched substring of group `i` (empty for an absent group).
+    fn str<'h>(&self, i: usize, haystack: &'h str) -> Option<&'h str> {
+        self.get(i).map(|(s, e)| &haystack[s..e])
+    }
+}
+
+impl Engine {
+    pub fn is_match(&self, haystack: &str) -> bool {
+        match self {
+            Engine::Fast(r) => r.is_match(haystack),
+            // A runtime error (e.g. backtrack-limit) counts as "no match" --
+            // rare, documented; CRuby would raise on catastrophic backtracking.
+            Engine::Fancy(r) => r.is_match(haystack).unwrap_or(false),
+        }
+    }
+
+    /// The first match's group spans, or `None` when the pattern doesn't match.
+    fn captures_first(&self, haystack: &str) -> Option<Caps> {
+        match self {
+            Engine::Fast(r) => r.captures(haystack).map(|c| Caps {
+                spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+            }),
+            Engine::Fancy(r) => r.captures(haystack).ok().flatten().map(|c| Caps {
+                spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+            }),
+        }
+    }
+
+    /// Every non-overlapping match's group spans, left to right.
+    fn captures_all(&self, haystack: &str) -> Vec<Caps> {
+        match self {
+            Engine::Fast(r) => r
+                .captures_iter(haystack)
+                .map(|c| Caps {
+                    spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                })
+                .collect(),
+            Engine::Fancy(r) => r
+                .captures_iter(haystack)
+                .filter_map(|c| c.ok())
+                .map(|c| Caps {
+                    spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn captures_len(&self) -> usize {
+        match self {
+            Engine::Fast(r) => r.captures_len(),
+            Engine::Fancy(r) => r.captures_len(),
+        }
+    }
+
+    pub fn capture_names(&self) -> Vec<(String, usize)> {
+        let names: Vec<Option<String>> = match self {
+            Engine::Fast(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
+            Engine::Fancy(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
+        };
+        names
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, n)| n.map(|n| (n, i)))
+            .collect()
+    }
+}
 
 /// A successful `Regexp#match`/`String#match` result. `groups[0]` is always
 /// the whole match (real Ruby: `MatchData#[0]` == the whole matched
@@ -82,17 +175,87 @@ fn translate_ruby_escapes(source: &str) -> String {
     out
 }
 
+/// Whether `pattern` uses a construct the linear-time `regex` crate cannot
+/// compile, so the backtracking `fancy-regex` engine must back it: an
+/// in-pattern backreference (`\1`..`\9`, `\k<name>`), any look-around
+/// (`(?=` `(?!` `(?<=` `(?<!`), an atomic group `(?>`, an inline comment
+/// `(?#`, or a possessive quantifier (`*+` `++` `?+` `}+`). Scanned on the
+/// ALREADY-escape-translated pattern; a `\\` consumes its next char so an
+/// escaped backslash before a digit isn't mistaken for a backreference.
+fn needs_fancy(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => {
+                if let Some(&n) = bytes.get(i + 1) {
+                    // `\1`..`\9` (backref) or `\k` (named backref).
+                    if n.is_ascii_digit() || n == b'k' {
+                        return true;
+                    }
+                }
+                i += 2; // skip the escaped char
+                continue;
+            }
+            b'(' if bytes.get(i + 1) == Some(&b'?') => {
+                match bytes.get(i + 2) {
+                    Some(b'=') | Some(b'!') | Some(b'>') | Some(b'#') => return true,
+                    Some(b'<') if matches!(bytes.get(i + 3), Some(b'=') | Some(b'!')) => {
+                        return true
+                    }
+                    _ => {}
+                }
+            }
+            // Possessive quantifiers: a quantifier immediately followed by `+`.
+            b'+' if i > 0 && matches!(bytes[i - 1], b'*' | b'+' | b'?' | b'}') => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Builds the `fancy-regex` engine, applying Ruby's flag semantics via inline
+/// flag groups (fancy-regex's builder exposes only case-insensitivity): `(?m)`
+/// is unconditional (Ruby's `^`/`$` are always line-anchored), `s` maps Ruby's
+/// `/m` (dot matches newline), `x` maps `/x`.
+fn build_fancy(translated: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<fancy_regex::Regex, String> {
+    let mut flags = String::from("m");
+    if multiline {
+        flags.push('s');
+    }
+    if ignore_case {
+        flags.push('i');
+    }
+    if extended {
+        flags.push('x');
+    }
+    fancy_regex::Regex::new(&format!("(?{flags}){translated}")).map_err(|e| e.to_string())
+}
+
 pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<RRegexp, String> {
     let translated = translate_ruby_escapes(source);
-    let compiled = regex::RegexBuilder::new(&translated)
-        .case_insensitive(ignore_case)
-        .ignore_whitespace(extended)
-        .dot_matches_new_line(multiline)
-        .multi_line(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+    let engine = if needs_fancy(&translated) {
+        Engine::Fancy(build_fancy(&translated, ignore_case, extended, multiline)?)
+    } else {
+        match regex::RegexBuilder::new(&translated)
+            .case_insensitive(ignore_case)
+            .ignore_whitespace(extended)
+            .dot_matches_new_line(multiline)
+            .multi_line(true)
+            .build()
+        {
+            Ok(r) => Engine::Fast(r),
+            // The pre-scan missed something the fast engine still rejects
+            // (e.g. a construct only its parser flags): fall back to fancy.
+            Err(fast_err) => Engine::Fancy(
+                build_fancy(&translated, ignore_case, extended, multiline)
+                    .map_err(|_| fast_err.to_string())?,
+            ),
+        }
+    };
     Ok(Arc::new(RegexpData {
-        compiled,
+        engine,
         source: source.to_string(),
         ignore_case,
         extended,
@@ -100,25 +263,18 @@ pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bo
     }))
 }
 
-fn build_match_data(re: &RRegexp, haystack: &str, caps: &regex::Captures) -> RMatchData {
-    let groups = (0..caps.len()).map(|i| caps.get(i).map(|m| (m.start(), m.end()))).collect();
-    let names = re
-        .compiled
-        .capture_names()
-        .enumerate()
-        .filter_map(|(i, n)| n.map(|n| (n.to_string(), i)))
-        .collect();
+fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
     Arc::new(MatchDataInner {
         haystack: haystack.to_string(),
-        groups,
-        names,
+        groups: caps.spans.clone(),
+        names: re.engine.capture_names(),
     })
 }
 
 /// `Regexp#match`/`String#match` -- a real `MatchData`, or `nil` if the
 /// pattern doesn't match at all.
 pub fn regexp_match(re: &RRegexp, haystack: &str) -> RubyValue {
-    match re.compiled.captures(haystack) {
+    match re.engine.captures_first(haystack) {
         Some(caps) => {
             let m = build_match_data(re, haystack, &caps);
             crate::lastmatch::set_last_match(Some(m.clone()));
@@ -137,7 +293,7 @@ pub fn regexp_match(re: &RRegexp, haystack: &str) -> RubyValue {
 /// allocated (mirrors real Ruby: `match?` is specifically the
 /// no-side-effect, no-allocation probe).
 pub fn regexp_is_match(re: &RRegexp, haystack: &str) -> bool {
-    re.compiled.is_match(haystack)
+    re.engine.is_match(haystack)
 }
 
 /// `Regexp#===` (case/when dispatch) -- same underlying check as
@@ -160,9 +316,9 @@ fn char_index(haystack: &str, byte_idx: usize) -> i64 {
 /// `$~`/`$1`/... -- the whole point of `if s =~ /(\d+)/ then $1 end`, and
 /// the groups don't exist without capturing them.
 pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
-    match re.compiled.captures(haystack) {
+    match re.engine.captures_first(haystack) {
         Some(caps) => {
-            let start = caps.get(0).expect("group 0 always exists on a match").start();
+            let start = caps.get(0).expect("group 0 always exists on a match").0;
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
             RubyValue::Int(char_index(haystack, start))
         }
@@ -178,8 +334,8 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
 /// whole string), or `nil`. Records `$~` like the leftward probes.
 pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> RubyValue {
     let mut last = None;
-    for caps in re.compiled.captures_iter(haystack) {
-        let start_char = char_index(haystack, caps.get(0).expect("group 0 exists").start());
+    for caps in re.engine.captures_all(haystack) {
+        let start_char = char_index(haystack, caps.get(0).expect("group 0 exists").0);
         if before.is_some_and(|lim| start_char as usize > lim) {
             break;
         }
@@ -187,7 +343,7 @@ pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> Rub
     }
     match last {
         Some(caps) => {
-            let start = caps.get(0).expect("group 0 exists").start();
+            let start = caps.get(0).expect("group 0 exists").0;
             crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
             RubyValue::Int(char_index(haystack, start))
         }
@@ -249,19 +405,19 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
 /// of the captured groups (nil for a non-participating optional group) if it
 /// does -- matches real Ruby's own shape-switching behavior exactly.
 pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
-    let has_groups = re.compiled.captures_len() > 1;
+    let has_groups = re.engine.captures_len() > 1;
     let mut results = Vec::new();
-    for caps in re.compiled.captures_iter(haystack) {
+    for caps in re.engine.captures_all(haystack) {
         if has_groups {
             let group_vals: Vec<RubyValue> = (1..caps.len())
-                .map(|i| match caps.get(i) {
-                    Some(m) => RubyValue::Str(string_new(m.as_str().to_string())),
+                .map(|i| match caps.str(i, haystack) {
+                    Some(s) => RubyValue::Str(string_new(s.to_string())),
                     None => RubyValue::Nil,
                 })
                 .collect();
             results.push(RubyValue::Array(array_new(group_vals)));
         } else {
-            let whole = caps.get(0).expect("group 0 is always the whole match").as_str();
+            let whole = caps.str(0, haystack).expect("group 0 is always the whole match");
             results.push(RubyValue::Str(string_new(whole.to_string())));
         }
     }
@@ -279,19 +435,19 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
     let mut segments: Vec<String> = Vec::new();
     let mut last_end = 0usize;
     let mut fields = 0i64;
-    for caps in re.compiled.captures_iter(haystack) {
+    for caps in re.engine.captures_all(haystack) {
         if limit > 0 && fields + 1 >= limit {
             break;
         }
-        let m = caps.get(0).expect("group 0 is always the whole match");
-        segments.push(haystack[last_end..m.start()].to_string());
+        let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+        segments.push(haystack[last_end..m_start].to_string());
         fields += 1;
         for i in 1..caps.len() {
-            if let Some(g) = caps.get(i) {
-                segments.push(g.as_str().to_string());
+            if let Some(g) = caps.str(i, haystack) {
+                segments.push(g.to_string());
             }
         }
-        last_end = m.end();
+        last_end = m_end;
     }
     segments.push(haystack[last_end..].to_string());
     if limit == 0 {
@@ -312,7 +468,7 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
 /// supported despite the pattern-matching engine itself having no
 /// backreference support -- a replacement string's `\1` just indexes into
 /// the ALREADY-COMPUTED `Captures`, no re-matching involved.
-fn expand_replacement(template: &str, caps: &regex::Captures, haystack: &str, match_start: usize, match_end: usize) -> String {
+fn expand_replacement(template: &str, caps: &Caps, haystack: &str, match_start: usize, match_end: usize) -> String {
     let mut out = String::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -323,8 +479,8 @@ fn expand_replacement(template: &str, caps: &regex::Captures, haystack: &str, ma
         match chars.next() {
             Some(d) if d.is_ascii_digit() => {
                 let idx = d.to_digit(10).expect("guarded by is_ascii_digit") as usize;
-                if let Some(g) = caps.get(idx) {
-                    out.push_str(g.as_str());
+                if let Some(g) = caps.str(idx, haystack) {
+                    out.push_str(g);
                 }
             }
             Some('&') => out.push_str(&haystack[match_start..match_end]),
@@ -345,11 +501,11 @@ fn expand_replacement(template: &str, caps: &regex::Captures, haystack: &str, ma
 pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue {
     let mut out = String::new();
     let mut last_end = 0usize;
-    for caps in re.compiled.captures_iter(haystack) {
-        let m = caps.get(0).expect("group 0 is always the whole match");
-        out.push_str(&haystack[last_end..m.start()]);
-        out.push_str(&expand_replacement(replacement, &caps, haystack, m.start(), m.end()));
-        last_end = m.end();
+    for caps in re.engine.captures_all(haystack) {
+        let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+        out.push_str(&haystack[last_end..m_start]);
+        out.push_str(&expand_replacement(replacement, &caps, haystack, m_start, m_end));
+        last_end = m_end;
     }
     out.push_str(&haystack[last_end..]);
     RubyValue::Str(string_new(out))
@@ -357,13 +513,13 @@ pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue
 
 /// `String#sub(regexp, replacement)` -- only the FIRST match replaced.
 pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue {
-    match re.compiled.captures(haystack) {
+    match re.engine.captures_first(haystack) {
         Some(caps) => {
-            let m = caps.get(0).expect("group 0 is always the whole match");
+            let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
             let mut out = String::new();
-            out.push_str(&haystack[..m.start()]);
-            out.push_str(&expand_replacement(replacement, &caps, haystack, m.start(), m.end()));
-            out.push_str(&haystack[m.end()..]);
+            out.push_str(&haystack[..m_start]);
+            out.push_str(&expand_replacement(replacement, &caps, haystack, m_start, m_end));
+            out.push_str(&haystack[m_end..]);
             RubyValue::Str(string_new(out))
         }
         None => RubyValue::Str(string_new(haystack.to_string())),
@@ -379,13 +535,13 @@ pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue 
 pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<RubyValue, Signal> {
     let mut out = String::new();
     let mut last_end = 0usize;
-    for caps in re.compiled.captures_iter(haystack) {
-        let m = caps.get(0).expect("group 0 is always the whole match");
-        out.push_str(&haystack[last_end..m.start()]);
-        let matched = RubyValue::Str(string_new(m.as_str().to_string()));
+    for caps in re.engine.captures_all(haystack) {
+        let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+        out.push_str(&haystack[last_end..m_start]);
+        let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
         let replaced = blk.call(&[matched])?;
         out.push_str(&replaced.to_display_string());
-        last_end = m.end();
+        last_end = m_end;
     }
     out.push_str(&haystack[last_end..]);
     Ok(RubyValue::Str(string_new(out)))
@@ -394,15 +550,15 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
 /// `String#sub(regexp) { |whole_match| ... }` -- see `regexp_gsub_block`'s
 /// docs; only the first match is replaced.
 pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<RubyValue, Signal> {
-    match re.compiled.captures(haystack) {
+    match re.engine.captures_first(haystack) {
         Some(caps) => {
-            let m = caps.get(0).expect("group 0 is always the whole match");
-            let matched = RubyValue::Str(string_new(m.as_str().to_string()));
+            let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+            let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
             let replaced = blk.call(&[matched])?;
             let mut out = String::new();
-            out.push_str(&haystack[..m.start()]);
+            out.push_str(&haystack[..m_start]);
             out.push_str(&replaced.to_display_string());
-            out.push_str(&haystack[m.end()..]);
+            out.push_str(&haystack[m_end..]);
             Ok(RubyValue::Str(string_new(out)))
         }
         None => Ok(RubyValue::Str(string_new(haystack.to_string()))),
@@ -508,6 +664,51 @@ mod tests {
     /// currently distinguish "empty array" from "array of one empty string"
     /// (a separate, pre-existing, unrelated `Kernel#puts` gap), so this is
     /// the one place the empty-haystack case is actually verified.
+    #[test]
+    fn needs_fancy_detects_only_unsupported_constructs() {
+        // Fancy-only constructs.
+        for p in [
+            r"(\w)\1",       // backreference
+            r"foo(?=bar)",   // lookahead
+            r"foo(?!bar)",   // negative lookahead
+            r"(?<=\$)\d+",   // lookbehind
+            r"(?<!x)y",      // negative lookbehind
+            r"(?>ab)",       // atomic group
+            r"a(?#note)b",   // inline comment
+            r"a++",          // possessive
+            r"(?<n>\w)\k<n>", // named backref
+        ] {
+            assert!(needs_fancy(p), "{p} should need fancy");
+        }
+        // Plain patterns stay on the fast engine.
+        for p in [
+            r"\d+",
+            r"(?<year>\d{4})", // named GROUP is fine on regex
+            r"[a-z]\\1",        // an escaped backslash then literal 1, not a backref
+            r"a|b",
+            r"(?i)abc",         // inline flag, supported by regex
+        ] {
+            assert!(!needs_fancy(p), "{p} should NOT need fancy");
+        }
+    }
+
+    #[test]
+    fn backreferences_and_lookaround_match_via_fancy_engine() {
+        let dbl = regexp_new(r"(\w)\1", false, false, false).unwrap();
+        assert!(matches!(dbl.engine, Engine::Fancy(_)));
+        assert!(regexp_is_match(&dbl, "hello"));
+        assert!(!regexp_is_match(&dbl, "abc"));
+
+        let plain = regexp_new(r"\d+", false, false, false).unwrap();
+        assert!(matches!(plain.engine, Engine::Fast(_)));
+
+        let look = regexp_new(r"(?<=\$)\d+", false, false, false).unwrap();
+        let RubyValue::Str(s) = regexp_gsub(&look, "$100 and $5", "N") else {
+            panic!("expected a Str")
+        };
+        assert_eq!(s.lock().to_utf8_lossy(), "$N and $N");
+    }
+
     #[test]
     fn split_matches_real_ruby_leniency() {
         let comma = regexp_new(",", false, false, false).unwrap();

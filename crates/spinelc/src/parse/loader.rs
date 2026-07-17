@@ -149,13 +149,6 @@ pub(super) struct Package {
     name: String,
     /// Absolute, existence-checked root directories, in manifest order.
     roots: Vec<PathBuf>,
-    /// `[native] crate = "..."` (Phase 14.3): the WORKSPACE lib crate the
-    /// compiled program must link when this package is `require`d --
-    /// recorded into `Hir::native_deps` at first resolution into this
-    /// package, consumed by `build::build_binary_with_deps` as an extra
-    /// `--extern` against the shared `target/` (the same pre-built-rlib
-    /// shape `spinel-rt` itself is linked with).
-    native_crate: Option<String>,
 }
 
 pub(super) struct Loader {
@@ -398,6 +391,13 @@ impl Loader {
         // to a no-op before any filesystem search (CRuby's own built-in-feature
         // rule). `tmpdir` (Dir.mktmpdir) is compiled in.
         if name == "require" && is_builtin_feature(&feature) {
+            // An in-tree `ext/` feature's `require` ACTIVATES its gated
+            // builtin (`require "base64"` -> `Base64` resolves); always-on
+            // core no-ops (`set`/`tmpdir`) name no gated class, so nothing
+            // is recorded for them.
+            if spinel_abi::is_ext_feature(&feature) {
+                hir.activate_feature(&feature);
+            }
             return Ok(Vec::new());
         }
 
@@ -411,19 +411,6 @@ impl Loader {
             "require_relative" => (resolve_require_relative(&feature, dir)?, inherited),
             _ => (self.resolve_load(&feature, dir)?, inherited),
         };
-        // "Only link the crate when the feature actually fired" (the
-        // reference project's `.o` rule): a resolved-into-native-package
-        // require records its `[native]` crate as a link dependency.
-        if let Some(pkg_name) = &package {
-            if let Some(nc) = self
-                .packages
-                .iter()
-                .find(|p| p.name == *pkg_name)
-                .and_then(|p| p.native_crate.as_deref())
-            {
-                hir.add_native_dep(nc);
-            }
-        }
         let canonical = path
             .canonicalize()
             .map_err(|e| format!("resolving {}: {e}", path.display()))?;
@@ -743,30 +730,9 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Package> {
             }
         })
         .collect::<PResult<Vec<PathBuf>>>()?;
-    let native_crate = match table.get("native") {
-        None => None,
-        Some(v) => {
-            let native = v.as_table().ok_or_else(|| {
-                format!("{}: [native] must be a table", manifest_path.display())
-            })?;
-            Some(
-                native
-                    .get("crate")
-                    .and_then(|c| c.as_str())
-                    .ok_or_else(|| {
-                        format!(
-                            "{}: [native] needs a string `crate` (the workspace lib crate to link)",
-                            manifest_path.display()
-                        )
-                    })?
-                    .to_string(),
-            )
-        }
-    };
     Ok(Package {
         name: name.to_string(),
         roots,
-        native_crate,
     })
 }
 
@@ -779,8 +745,12 @@ fn cannot_load(name: &str) -> String {
 /// `require`ing it is a no-op (nothing to splice). `tmpdir` (`Dir.mktmpdir`)
 /// and `set` (the `Set` core class) are both compiled in -- `Set` is now an
 /// autoloaded core class in real Ruby, so `require "set"` is a no-op there too.
+/// In-tree `ext/` modules (`base64`, ...) are recognized straight from the
+/// ABI table (`spinel_abi::is_ext_feature`) so the loader and the constant
+/// resolver never drift; `require`ing one both short-circuits the filesystem
+/// search AND activates its gated constant (see `lower_require_statement`).
 fn is_builtin_feature(feature: &str) -> bool {
-    matches!(feature, "tmpdir" | "set")
+    matches!(feature, "tmpdir" | "set") || spinel_abi::is_ext_feature(feature)
 }
 
 fn with_rb_ext(feature: &str) -> String {

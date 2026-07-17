@@ -1070,7 +1070,7 @@ impl RubyValue {
     /// function's own no-panic-on-mismatched-shape posture.
     pub fn rb_case_eq(&self, subject: &RubyValue) -> bool {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
-            return re.compiled.is_match(&s.lock().to_utf8_lossy());
+            return re.engine.is_match(&s.lock().to_utf8_lossy());
         }
         // `Range#===` is `#cover?` (Phase 17.1, fixing `when 1..5` -- which
         // previously fell to `rb_eq` and silently never matched): each

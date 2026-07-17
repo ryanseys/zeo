@@ -570,7 +570,16 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         // mapping since Phase 17.1: its ancestors are COMPUTED
         // (`[Object, Kernel, BasicObject]`), no longer a hardcoded
         // `vec![Object]` in `main()`.
-        .filter(|&(idx, class)| class.is_builtin || idx == 0)
+        //
+        // A require-gated builtin whose feature never fired
+        // (`feature_active` false) is SKIPPED: no `require` means no code can
+        // resolve its constant (`resolve_class` gates it too), so its
+        // registry entry would be pure dead weight -- omitting it is the
+        // "register only enabled features" rule that lets an unused extension
+        // fall away from the binary.
+        .filter(|&(idx, class)| {
+            (class.is_builtin || idx == 0) && compiler.feature_active(ClassId(idx as u32))
+        })
     {
             let id = idx as u32;
             let name = &class.name;

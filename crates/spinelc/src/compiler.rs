@@ -143,16 +143,6 @@ pub struct ClassInfo {
     /// once from generated `main()` right after this class's own
     /// `__register()` call (see `codegen::mod::codegen`).
     pub class_body_stmts: Vec<NodeId>,
-    /// The Rust crate path (underscored, e.g. `spinelc_base64`) backing
-    /// this module's `native_func`s -- from a `native_crate "..."`
-    /// declaration in the module body (Phase 14.3). `None` for every
-    /// ordinary class/module.
-    pub native_crate: Option<String>,
-    /// `(ruby_name, arity)` per `native_func` declaration -- dispatched by
-    /// `codegen::call::emit_class_method_call_on` as a direct
-    /// `<native_crate>::<name>(...)` call (Path 1 only, like every other
-    /// module function).
-    pub native_methods: Vec<(String, usize)>,
     /// The full linearized ancestor chain (this class/module first,
     /// prepends before it, includes/superclass after -- see
     /// `analyze::mro::compute_ancestors`), computed once. Empty until
@@ -174,6 +164,14 @@ pub struct ClassInfo {
     /// box_id)`, while instances keep the ROOT's ClassId (`box::String ==
     /// String`). `None` for every ordinary class, including root builtins.
     pub builtin_overlay: Option<ClassId>,
+    /// `Some(feature)` for a require-gated builtin (`Base64`, gated by
+    /// `"base64"`) -- mirrored from `spinel_abi::BuiltinClass::feature`. Its
+    /// constant is INVISIBLE to `resolve_class` until `feature` has been
+    /// activated by a `require` somewhere in the program
+    /// (`Hir::activated_features`), so referencing it un-`require`d NameErrors
+    /// exactly as in CRuby (see `Compiler::feature_active`). `None` for every
+    /// always-on class (all user classes and all core builtins).
+    pub feature_gate: Option<&'static str>,
 }
 
 pub struct Scope {
@@ -253,11 +251,10 @@ impl Compiler {
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
-                native_crate: None,
-                native_methods: Vec::new(),
                 ancestors: Vec::new(),
                 is_builtin: false,
                 builtin_overlay: None,
+                feature_gate: None,
             }],
             scopes: Vec::new(),
             box_surrogates: HashMap::new(),
@@ -278,6 +275,7 @@ impl Compiler {
             let ci = &mut compiler.classes[id.0 as usize];
             ci.is_builtin = true;
             ci.includes = b.includes.to_vec();
+            ci.feature_gate = b.feature;
         }
         // Object's own slot in the chain (it isn't a BUILTINS row):
         // `Object < BasicObject`, `include Kernel` -- so EVERY chain ends
@@ -335,6 +333,22 @@ impl Compiler {
         Some(self.class(cur).builtin_overlay.unwrap_or(cur))
     }
 
+    /// Whether `cid`'s constant is currently VISIBLE to name resolution: a
+    /// require-gated builtin (`feature_gate: Some(_)`) is invisible until its
+    /// feature has been activated by a `require` (see `ClassInfo::feature_gate`
+    /// and `Hir::activated_features`); every ungated class is always visible.
+    /// The gate is applied only on the BOOTSTRAP-fallback resolution paths
+    /// (`resolve_unqualified`), not on `class_in_scope`'s raw name lookup --
+    /// reopen detection must still SEE the gated slot to attach to it.
+    /// `pub(crate)` so codegen skips a gated-inactive builtin's runtime
+    /// `ClassRegistry` registration (nothing can reference it, so it's dead).
+    pub(crate) fn feature_active(&self, cid: ClassId) -> bool {
+        match self.class(cid).feature_gate {
+            None => true,
+            Some(feature) => self.hir.activated_features.contains(feature),
+        }
+    }
+
     /// `resolve_class`'s single-segment core -- see its docs for the rule.
     fn resolve_unqualified(&self, name: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
         for &scope in cref.iter().rev() {
@@ -342,7 +356,10 @@ impl Compiler {
                 return Some(cid);
             }
         }
-        if let Some(cid) = self.class_in_scope(None, name, box_id) {
+        if let Some(cid) = self
+            .class_in_scope(None, name, box_id)
+            .filter(|&c| self.feature_active(c))
+        {
             return Some(cid);
         }
         if box_id != 0 {
@@ -355,7 +372,8 @@ impl Compiler {
                         && c.lexical_parent.is_none()
                         && (c.is_builtin || c.is_bootstrap)
                 })
-                .map(|i| ClassId(i as u32));
+                .map(|i| ClassId(i as u32))
+                .filter(|&c| self.feature_active(c));
         }
         None
     }
@@ -453,11 +471,10 @@ impl Compiler {
             cvar_owners: HashMap::new(),
             const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
-            native_crate: None,
-            native_methods: Vec::new(),
             ancestors: Vec::new(),
             is_builtin: false,
             builtin_overlay: None,
+            feature_gate: None,
         });
         ClassId((self.classes.len() - 1) as u32)
     }

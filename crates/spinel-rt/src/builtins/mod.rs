@@ -138,6 +138,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::SET_CLASS => set::lookup_class,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
+        spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
         _ => return None,
     })
 }

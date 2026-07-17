@@ -59,26 +59,24 @@ builtin_methods! {
     "names" => fn names_m(recv, args, _block) {
         arity!(args, 0);
         let out = re_of(recv)
-            .compiled
+            .engine
             .capture_names()
-            .flatten()
-            .map(|n| RubyValue::Str(crate::string_new(n.to_string())))
+            .into_iter()
+            .map(|(n, _)| RubyValue::Str(crate::string_new(n)))
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "named_captures" => fn named_captures_m(recv, args, _block) {
         arity!(args, 0);
         let pairs = re_of(recv)
-            .compiled
+            .engine
             .capture_names()
-            .enumerate()
-            .filter_map(|(i, name)| {
-                name.map(|n| {
-                    (
-                        RubyValue::Str(crate::string_new(n.to_string())),
-                        RubyValue::Array(crate::array_new(vec![RubyValue::Int(i as i64)])),
-                    )
-                })
+            .into_iter()
+            .map(|(n, i)| {
+                (
+                    RubyValue::Str(crate::string_new(n)),
+                    RubyValue::Array(crate::array_new(vec![RubyValue::Int(i as i64)])),
+                )
             })
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))

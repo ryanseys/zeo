@@ -4516,6 +4516,33 @@ fn hash_keyed_by_an_array_hashes_structurally_not_by_identity() {
 }
 
 #[test]
+fn regex_backreferences_and_lookaround_via_fancy_engine() {
+    // Constructs the linear-time `regex` crate can't do; a backtracking engine
+    // transparently backs them. The fast path stays unaffected.
+    let result = run_ruby(
+        r#"
+        puts("hello" =~ /(\w)\1/)             # 2
+        p("abc" =~ /(\w)\1/)                  # nil
+        puts "foobar".match?(/foo(?=bar)/)    # true
+        puts "foobaz".match?(/foo(?=bar)/)    # false
+        puts "$100".gsub(/(?<=\$)\d+/, "N")   # $N
+        puts "catfish".match?(/cat(?!fish)/)  # false
+        puts "abc".match?(/a(?#c)bc/)         # true
+        puts "book".match?(/(?<c>o)\k<c>/)    # true
+        # fast path unaffected
+        m = "2024-01-15".match(/(\d+)-(\d+)-(\d+)/)
+        puts m[2]                             # 01
+        p "a,b,c".split(/,/)                  # ["a", "b", "c"]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2\nnil\ntrue\nfalse\n$N\nfalse\ntrue\ntrue\n01\n[\"a\", \"b\", \"c\"]\n"
+    );
+}
+
+#[test]
 fn method_arity_parameters_and_unbound_bind() {
     let result = run_ruby(
         r#"
@@ -8516,56 +8543,67 @@ fn base64_package_matches_real_ruby() {
     );
 }
 
-#[test]
-fn native_crate_is_linked_only_when_its_package_is_required() {
-    // The reference project's ".o rule": the [native] crate appears in the
-    // link manifest iff the require actually fired.
-    let (with_require, dir) = support::compile_packages(
-        &[("main.rb", "require \"base64\"\nputs Base64.strict_encode64(\"x\")\n")],
-        "main.rb",
-        &[],
-        &[REPO_PACKAGES],
-    )
-    .expect("compiles");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(with_require.native_deps, vec!["spinelc-base64".to_string()]);
-
-    let (without_require, dir) = support::compile_packages(
-        &[("main.rb", "puts :no_base64\n")],
-        "main.rb",
-        &[],
-        &[REPO_PACKAGES],
-    )
-    .expect("compiles");
-    let _ = std::fs::remove_dir_all(&dir);
-    assert!(without_require.native_deps.is_empty());
-}
+// (Removed: `native_crate_is_linked_only_when_its_package_is_required` and
+// `native_func_arity_is_checked_at_compile_time` -- both asserted the retired
+// native-DSL linking behavior for `base64`, which is now an in-tree `ext/`
+// module. `base64_package_matches_real_ruby` above now validates the in-tree
+// path, and arity is enforced at runtime via `arity!` -> ArgumentError.)
 
 #[test]
-#[should_panic(expected = "wrong number of arguments for native `Base64.encode64`")]
-fn native_func_arity_is_checked_at_compile_time() {
-    let _ = support::compile_packages(
-        &[("main.rb", "require \"base64\"\nputs Base64.encode64(\"a\", \"b\")\n")],
-        "main.rb",
-        &[],
-        &[REPO_PACKAGES],
+fn require_gated_extension_constant_is_a_name_error_without_its_require() {
+    // The ext require-gate (#92): a require-gated builtin's constant
+    // (`Base64`, gated by `"base64"`) is INVISIBLE until `require "base64"`
+    // activates it -- referencing it un-required raises `NameError:
+    // uninitialized constant Base64`, oracle-verified against ruby 4.0.5
+    // (`uninitialized constant Base64 (NameError)`). The gate rides the
+    // ordinary `resolve_class` -> unset-constant path, so it's a rescuable
+    // RUNTIME NameError, not a compile error.
+    let result = run_ruby(r#"puts Base64.strict_encode64("hi")"#);
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uninitialized constant Base64"),
+        "stderr: {}",
+        result.stderr
     );
 }
 
 #[test]
-fn native_dsl_misuse_is_a_clean_compile_error() {
-    // native_func without a native_crate naming the backing crate.
-    let err = spinelc::compile_to_rust(
-        "module M\n  native_func :f, [String], String\nend\n",
-    )
-    .unwrap_err();
-    assert!(err.contains("no `native_crate`"), "unexpected error: {err}");
+fn require_gated_extension_name_error_is_rescuable() {
+    // Same gate, caught: since the miss surfaces through the runtime
+    // constant path it's an ordinary rescuable `NameError` (oracle prints
+    // `rescued: uninitialized constant Base64`). This program NEVER requires
+    // base64, so activation stays off -- avoiding the documented
+    // program-global-activation divergence (a `require` anywhere activates
+    // the constant everywhere, unlike CRuby's file-ordered visibility).
+    let result = run_ruby(
+        r#"
+        begin
+          Base64.strict_encode64("hi")
+        rescue NameError => e
+          puts "rescued: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued: uninitialized constant Base64\n");
+}
 
-    // Malformed native_func shapes.
-    let err = spinelc::compile_to_rust("module M\n  native_func :f\nend\n").unwrap_err();
-    assert!(err.contains("`native_func` takes"), "unexpected error: {err}");
-    let err = spinelc::compile_to_rust("module M\n  native_crate :not_a_string\nend\n").unwrap_err();
-    assert!(err.contains("`native_crate` takes"), "unexpected error: {err}");
+#[test]
+fn in_tree_base64_over_two_args_raises_argument_error_at_runtime() {
+    // The in-tree Base64 ext checks arity at runtime (a rescuable
+    // ArgumentError) via `arity!`.
+    let result = run_ruby(
+        r#"
+        require "base64"
+        begin
+          Base64.encode64("a", "b")
+        rescue ArgumentError
+          puts "argerr"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "argerr\n");
 }
 
 // ---- Phase 14.4: the set pure-Ruby package + the dispatch fixes it forced ----

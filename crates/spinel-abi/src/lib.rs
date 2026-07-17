@@ -46,6 +46,25 @@ pub struct BuiltinClass {
     /// CRuby's own mixins, in source order (oracle-verified): e.g.
     /// `Numeric` includes `Comparable`, `Array` includes `Enumerable`.
     pub includes: &'static [ClassId],
+    /// The `require`-able feature that must be activated before this class's
+    /// constant resolves -- CRuby's ext/ model, where `require "base64"`
+    /// exposes `Base64`. `None` for always-on core classes (every current
+    /// row except the in-tree `ext/` modules); `Some("base64")` for a
+    /// require-gated extension. Referencing a gated class without its
+    /// `require` is a `NameError`, exactly as in CRuby (see
+    /// `spinelc::Compiler::resolve_class`'s feature gate).
+    pub feature: Option<&'static str>,
+}
+
+/// Whether `name` is an in-tree `ext/` feature whose `require` activates a
+/// gated builtin (`"base64"` -> `Base64`). The ABI table is the single
+/// source of truth for the feature -> class mapping, so the compiler's
+/// require loader and its constant resolver stay in lockstep automatically
+/// as extensions are added. Distinct from always-on core no-op requires
+/// (`"set"`, `"tmpdir"`), which name no gated class and are handled
+/// separately by the loader.
+pub fn is_ext_feature(name: &str) -> bool {
+    BUILTINS.iter().any(|b| b.feature == Some(name))
 }
 
 /// `ClassId(0)`, always present: the root every class ultimately chains up
@@ -163,6 +182,8 @@ pub const LAZY_CLASS: ClassId = ClassId(43);
 pub const CONDITION_VARIABLE_CLASS: ClassId = ClassId(44);
 /// `Module#instance_method`'s result -- a `Method` not yet bound to a receiver.
 pub const UNBOUND_METHOD_CLASS: ClassId = ClassId(45);
+/// The `base64` extension's `Base64` module (require-gated, in-tree `ext/`).
+pub const BASE64_MODULE: ClassId = ClassId(46);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -171,51 +192,52 @@ pub const UNBOUND_METHOD_CLASS: ClassId = ClassId(45);
 /// edges may point FORWARD in the table (`Integer(1)` -> `Numeric(26)`);
 /// consumers store the edge and linearize later.
 pub const BUILTINS: &[BuiltinClass] = &[
-    BuiltinClass { id: INTEGER_CLASS, name: "Integer", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[] },
-    BuiltinClass { id: FLOAT_CLASS, name: "Float", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[] },
-    BuiltinClass { id: STRING_CLASS, name: "String", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
-    BuiltinClass { id: SYMBOL_CLASS, name: "Symbol", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
-    BuiltinClass { id: ARRAY_CLASS, name: "Array", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: HASH_CLASS, name: "Hash", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: RANGE_CLASS, name: "Range", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: NIL_CLASS, name: "NilClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: TRUE_CLASS, name: "TrueClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: FALSE_CLASS, name: "FalseClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: PROC_CLASS, name: "Proc", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: REGEXP_CLASS, name: "Regexp", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: MATCH_DATA_CLASS, name: "MatchData", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: FIBER_CLASS, name: "Fiber", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: THREAD_CLASS, name: "Thread", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: MUTEX_CLASS, name: "Mutex", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: QUEUE_CLASS, name: "Queue", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: RACTOR_CLASS, name: "Ractor", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: CLASS_CLASS, name: "Class", is_module: false, superclass: Some(MODULE_CLASS), includes: &[] },
-    BuiltinClass { id: MODULE_CLASS, name: "Module", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: COMPARABLE_CLASS, name: "Comparable", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: ENUMERATOR_CLASS, name: "Enumerator", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: BASIC_OBJECT_CLASS, name: "BasicObject", is_module: false, superclass: None, includes: &[] },
-    BuiltinClass { id: KERNEL_CLASS, name: "Kernel", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: NUMERIC_CLASS, name: "Numeric", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
-    BuiltinClass { id: RATIONAL_CLASS, name: "Rational", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[] },
-    BuiltinClass { id: COMPLEX_CLASS, name: "Complex", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[] },
-    BuiltinClass { id: MATH_CLASS, name: "Math", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: STRUCT_CLASS, name: "Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: GC_CLASS, name: "GC", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: METHOD_CLASS, name: "Method", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: FILE_CLASS, name: "File", is_module: false, superclass: Some(IO_CLASS), includes: &[] },
-    BuiltinClass { id: DIR_CLASS, name: "Dir", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: TIME_CLASS, name: "Time", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
-    BuiltinClass { id: PROCESS_CLASS, name: "Process", is_module: true, superclass: None, includes: &[] },
-    BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS] },
-    BuiltinClass { id: ENCODING_CLASS, name: "Encoding", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: SET_CLASS, name: "Set", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: LAZY_CLASS, name: "Enumerator::Lazy", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
-    BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
-    BuiltinClass { id: UNBOUND_METHOD_CLASS, name: "UnboundMethod", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: INTEGER_CLASS, name: "Integer", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: FLOAT_CLASS, name: "Float", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: STRING_CLASS, name: "String", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    BuiltinClass { id: SYMBOL_CLASS, name: "Symbol", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    BuiltinClass { id: ARRAY_CLASS, name: "Array", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: HASH_CLASS, name: "Hash", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: RANGE_CLASS, name: "Range", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: NIL_CLASS, name: "NilClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: TRUE_CLASS, name: "TrueClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: FALSE_CLASS, name: "FalseClass", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: PROC_CLASS, name: "Proc", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: REGEXP_CLASS, name: "Regexp", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MATCH_DATA_CLASS, name: "MatchData", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: FIBER_CLASS, name: "Fiber", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: THREAD_CLASS, name: "Thread", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MUTEX_CLASS, name: "Mutex", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: QUEUE_CLASS, name: "Queue", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: RACTOR_CLASS, name: "Ractor", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: CLASS_CLASS, name: "Class", is_module: false, superclass: Some(MODULE_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MODULE_CLASS, name: "Module", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: COMPARABLE_CLASS, name: "Comparable", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: ENUMERATOR_CLASS, name: "Enumerator", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: BASIC_OBJECT_CLASS, name: "BasicObject", is_module: false, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: KERNEL_CLASS, name: "Kernel", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: NUMERIC_CLASS, name: "Numeric", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    BuiltinClass { id: RATIONAL_CLASS, name: "Rational", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: COMPLEX_CLASS, name: "Complex", is_module: false, superclass: Some(NUMERIC_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MATH_CLASS, name: "Math", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: STRUCT_CLASS, name: "Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: YIELDER_CLASS, name: "Enumerator::Yielder", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: GC_CLASS, name: "GC", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: IO_CLASS, name: "IO", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: METHOD_CLASS, name: "Method", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: FILE_CLASS, name: "File", is_module: false, superclass: Some(IO_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: DIR_CLASS, name: "Dir", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: TIME_CLASS, name: "Time", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    BuiltinClass { id: PROCESS_CLASS, name: "Process", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: FILE_STAT_CLASS, name: "File::Stat", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    BuiltinClass { id: ENCODING_CLASS, name: "Encoding", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: SET_CLASS, name: "Set", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: LAZY_CLASS, name: "Enumerator::Lazy", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: UNBOUND_METHOD_CLASS, name: "UnboundMethod", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: BASE64_MODULE, name: "Base64", is_module: true, superclass: None, includes: &[], feature: Some("base64") },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):
@@ -274,6 +296,17 @@ mod tests {
         for &inc in OBJECT_INCLUDES {
             assert!(exists(inc));
         }
+    }
+
+    #[test]
+    fn is_ext_feature_recognizes_only_gated_builtins() {
+        assert!(is_ext_feature("base64"));
+        // Always-on core classes name no feature; core no-op requires
+        // (`set`/`tmpdir`) aren't gated builtins either.
+        assert!(!is_ext_feature("set"));
+        assert!(!is_ext_feature("tmpdir"));
+        assert!(!is_ext_feature("Integer"));
+        assert!(!is_ext_feature("nonesuch"));
     }
 
     #[test]

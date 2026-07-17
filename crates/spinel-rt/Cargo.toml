@@ -16,6 +16,10 @@ spinel-abi = { path = "../spinel-abi" }
 parking_lot = "0.12"
 indexmap = "2"
 regex = "1"
+# Backtracking regex engine for the constructs the linear-time `regex` crate
+# structurally can't do -- in-pattern backreferences and look-around. Selected
+# per-pattern (a pre-scan) so the common case keeps `regex`'s fast path.
+fancy-regex = "0.14"
 spinel-fiber = { path = "../spinel-fiber" }
 may = "0.3"
 # Ident concatenation in `builtin_methods!` so each method table also emits a

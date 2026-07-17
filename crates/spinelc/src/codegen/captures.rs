@@ -300,8 +300,6 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -464,8 +462,6 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => false,
     }
@@ -882,8 +878,6 @@ fn walk(
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)
-        | HirNode::NativeCrate(_)
-        | HirNode::NativeFunc { .. }
         | HirNode::ClassDef { .. }
         | HirNode::DefMethod { .. } => {}
     }
