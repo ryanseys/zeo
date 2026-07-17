@@ -14806,6 +14806,70 @@ fn format_directives_named_positional_star_and_alternate_form() {
 }
 
 #[test]
+fn array_and_hash_to_s_use_inspect_form_only_puts_flattens() {
+    let result = run_ruby(
+        r##"
+        p [1, 2].to_s
+        print [1, 2]; puts
+        puts "i #{[1, 2]}"
+        puts [1, 2]
+        p({ a: 1 }.to_s)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"[1, 2]\"\n[1, 2]\ni [1, 2]\n1\n2\n\"{a: 1}\"\n"
+    );
+}
+
+#[test]
+fn frozen_string_dedup_intern_and_mutation_guard() {
+    let result = run_ruby(
+        r#"
+        p((-"hello").equal?(-"hello"))
+        p("a".dedup.equal?("a".dedup))
+        p(("he" + "llo").dedup.equal?("hello".dedup))
+        a = "abc".freeze
+        p((-a).equal?(a))
+        p((-"x").equal?(-"y"))
+        p((-"frozen").frozen?)
+        nul = "a b"
+        p nul.bytesize
+        p("a b".dedup.equal?("a b".dedup))
+        begin
+          (-"immutable") << "!"
+        rescue FrozenError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\ntrue\ntrue\nfalse\ntrue\n3\ntrue\n\
+         can't modify frozen String: \"immutable\"\n"
+    );
+}
+
+#[test]
+fn frozen_string_literal_pragma_freezes_literals() {
+    let result = run_ruby(
+        "# frozen_string_literal: true\n\
+         p \"abc\".frozen?\n\
+         p \"interp #{1 + 1}\".frozen?\n\
+         p \"abc\".dup.frozen?\n\
+         buf = \"abc\"\n\
+         begin; buf << \"y\"; rescue FrozenError => e; puts e.message; end\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\nfalse\ncan't modify frozen String: \"abc\"\n"
+    );
+}
+
+#[test]
 fn for_loops_over_hashes_and_parenthesized_collections() {
     let result = run_ruby(
         r##"

@@ -156,6 +156,16 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
         };
     }
     if let [StrPart::Lit(s)] = parts {
+        // `# frozen_string_literal: true`: a non-interpolated literal is its
+        // interned, frozen twin (equal literals share one object, and
+        // mutation raises). Interpolated literals below stay mutable.
+        if cx.compiler.hir.frozen_string_literal {
+            return quote! {
+                spinel_rt::RubyValue::Str(spinel_rt::intern_frozen(
+                    spinel_rt::encoding::StrBuf::from_utf8(#s.to_string()),
+                ))
+            };
+        }
         return quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(#s.to_string())) };
     }
     if let [StrPart::Bytes(b)] = parts {

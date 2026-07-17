@@ -458,6 +458,31 @@ pub fn string_new(s: String) -> RStr {
     Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)))
 }
 
+/// The process-lifetime pool of immortal frozen strings (CRuby's fstring
+/// table), keyed by `(bytes, encoding)` -- see [`intern_frozen`].
+static FROZEN_STRINGS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<(Vec<u8>, crate::encoding::EncodingId), RStr>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Intern a string by CONTENT: two strings with equal `(bytes, encoding)`
+/// return the SAME immortal frozen `RStr`, so `"x".dedup.equal?("x".dedup)`
+/// and a `# frozen_string_literal: true` literal share one object. The
+/// pool holds every interned string for the process lifetime, matching the
+/// immortality real Ruby gives its fstrings. NUL bytes are safe -- the key
+/// is the full byte vector, never a C string. Backs `String#-@`/`#dedup`
+/// and the frozen-string-literal codegen path.
+pub fn intern_frozen(buf: crate::encoding::StrBuf) -> RStr {
+    let key = (buf.bytes().to_vec(), buf.encoding());
+    let mut pool = FROZEN_STRINGS.lock();
+    if let Some(existing) = pool.get(&key) {
+        return existing.clone();
+    }
+    let s = Arc::new(Freezable::new(buf));
+    s.set_frozen();
+    pool.insert(key, s.clone());
+    s
+}
+
 /// A string from raw bytes tagged with an explicit encoding -- what
 /// `String#b`, `force_encoding`, IO byte reads, and `\xNN`-bearing literals
 /// build (the byte-level sibling of `string_new`'s UTF-8 text path).
@@ -677,5 +702,23 @@ mod multi_assign_tests {
         );
         array_splat_into(&mut out, &r).unwrap();
         assert_eq!(display(&out), ["1", "2", "3"]);
+    }
+
+    #[test]
+    fn intern_frozen_returns_one_frozen_object_per_content() {
+        use crate::encoding::StrBuf;
+        let a = intern_frozen(StrBuf::from_utf8("hi".to_string()));
+        let b = intern_frozen(StrBuf::from_utf8("hi".to_string()));
+        assert!(a.is_frozen());
+        // Equal content interns to the very same allocation.
+        assert!(Arc::ptr_eq(&a, &b));
+        // NUL bytes are part of the key, never a truncation point.
+        let n1 = intern_frozen(StrBuf::from_utf8("a\0b".to_string()));
+        let n2 = intern_frozen(StrBuf::from_utf8("a\0b".to_string()));
+        assert!(Arc::ptr_eq(&n1, &n2));
+        assert_eq!(n1.lock().bytesize(), 3);
+        // Different content, different object.
+        let c = intern_frozen(StrBuf::from_utf8("bye".to_string()));
+        assert!(!Arc::ptr_eq(&a, &c));
     }
 }

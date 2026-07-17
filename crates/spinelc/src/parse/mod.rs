@@ -203,6 +203,34 @@ fn magic_encoding_comment(source: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// A `# frozen_string_literal: true` magic comment in the leading comment
+/// block (after an optional shebang). CRuby only honors it there, before any
+/// code; a blank or code line ends the region.
+fn magic_frozen_string_literal(source: &str) -> bool {
+    for (i, line) in source.lines().enumerate() {
+        let line = line.trim_start();
+        if i == 0 && line.starts_with("#!") {
+            continue;
+        }
+        if !line.starts_with('#') {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(idx) = lower.find("frozen_string_literal") {
+            let rest = line[idx + "frozen_string_literal".len()..].trim_start();
+            if let Some(rest) = rest.strip_prefix(':') {
+                let value: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .collect();
+                return value.eq_ignore_ascii_case("true");
+            }
+        }
+    }
+    false
+}
+
 /// Maps a magic-comment encoding name to its `Encoding::` constant spelling
 /// (`None` = the UTF-8 default, needing no override), rejecting an
 /// unsupported encoding with a clean compile error.
@@ -246,6 +274,7 @@ pub fn parse_and_lower_with(
     if let Some(name) = magic_encoding_comment(source) {
         hir.script_encoding = encoding_const_name(&name)?.map(str::to_string);
     }
+    hir.frozen_string_literal = magic_frozen_string_literal(source);
     let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
         .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
     hir.prelude_len = statements.len();

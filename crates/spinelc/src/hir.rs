@@ -56,6 +56,11 @@ pub struct Hir {
     /// the UTF-8 default. Governs `__ENCODING__` and the encoding tag of
     /// string literals.
     pub script_encoding: Option<String>,
+    /// Set by a `# frozen_string_literal: true` magic comment: every
+    /// single-segment (non-interpolated) string literal is then emitted as
+    /// its interned, frozen twin. `false` (the default) keeps literals
+    /// mutable.
+    pub frozen_string_literal: bool,
     /// Extra top-level `ClassDef`s synthesized mid-lowering that must be
     /// registered as their own statements -- the hidden base classes a
     /// `Struct`/`Data` with a custom `initialize` splits into. Spliced

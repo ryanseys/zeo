@@ -248,20 +248,24 @@ impl RubyValue {
             // element on its own line (not `[1, 2, 3]`, which is `inspect`'s
             // job, not `to_s`'s) -- real, verified CRuby behavior, not a
             // simplification.
+            // `Array#to_s` IS `#inspect` (`[1, 2]`), and so are `print`/
+            // string interpolation of an Array. Only `puts` flattens onto
+            // separate lines, and it does that in `io::render_puts`, never
+            // through this display path.
             RubyValue::Array(a) => {
                 let ptr = container_identity(self).expect("Array is a container");
                 if seen.contains(&ptr) {
                     return "[...]".to_string();
                 }
                 seen.push(ptr);
-                let out = a
+                let body = a
                     .lock()
                     .iter()
-                    .map(|e| e.display_with(seen))
+                    .map(|e| e.inspect_with(seen))
                     .collect::<Vec<_>>()
-                    .join("\n");
+                    .join(", ");
                 seen.pop();
-                out
+                format!("[{body}]")
             }
             // An approximation of `Hash#inspect` (symbol keys as `key:
             // value`, everything else as `key => value`) -- good enough for
@@ -275,12 +279,14 @@ impl RubyValue {
                     return "{...}".to_string();
                 }
                 seen.push(ptr);
+                // `Hash#to_s` IS `#inspect`, so keys and values render in
+                // their inspect form (`{a: "x"}`, not `{a: x}`) here too.
                 let body = h
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.display_with(seen)),
-                        _ => format!("{} => {}", k.display_with(seen), v.display_with(seen)),
+                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.inspect_with(seen)),
+                        _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -1282,14 +1288,15 @@ mod tests {
         assert_eq!(RubyValue::Array(b).inspect_string(), "[1, {x: [...]}]");
     }
 
-    /// `puts`'s display path shares the guard: one line per element, the
-    /// cycle rendered as its marker.
+    /// `Array#to_s`/`print`/interpolation share `inspect`'s bracketed form
+    /// (only `puts` flattens, in `io::render_puts`); the cycle guard renders
+    /// the self-reference as its marker.
     #[test]
     fn display_marks_a_self_referential_array() {
         let a = array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]);
         array_push(&a, RubyValue::Array(a.clone()));
 
-        assert_eq!(RubyValue::Array(a).to_display_string(), "1\n2\n[...]");
+        assert_eq!(RubyValue::Array(a).to_display_string(), "[1, 2, [...]]");
     }
 
     /// The visited set is a traversal STACK, not a permanent "seen" set: a

@@ -272,6 +272,23 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_str!(recv).lock().bytesize() as i64))
     }
+    // `String#-@` / `#dedup`: an already-frozen receiver is returned as-is
+    // (CRuby #2630); otherwise the content is interned to its immortal
+    // frozen twin, so two dedups of equal content are the same object.
+    "-@" | "dedup" => fn dedup(recv, args, _block) {
+        arity!(args, 0);
+        let s = recv_str!(recv);
+        if s.is_frozen() {
+            return Ok(recv.clone());
+        }
+        let (bytes, enc) = {
+            let buf = s.lock();
+            (buf.bytes().to_vec(), buf.encoding())
+        };
+        Ok(RubyValue::Str(crate::intern_frozen(
+            crate::encoding::StrBuf::from_bytes(bytes, enc),
+        )))
+    }
     "bytes" => fn bytes(recv, args, _block) {
         arity!(args, 0);
         let out = recv_str!(recv)
@@ -424,7 +441,17 @@ builtin_methods! {
                 ))
             }
         };
-        recv_str!(recv).lock().push_str(&addition);
+        let s = recv_str!(recv);
+        // Frozen check at the mutator (CRuby's `rb_str_modify`): `<<`/`concat`
+        // dispatch through this one row for every receiver shape, so guarding
+        // here covers them all -- including a `frozen_string_literal` literal.
+        if s.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+            ));
+        }
+        s.lock().push_str(&addition);
         Ok(recv.clone())
     }
     "*" => fn times(recv, args, _block) {
