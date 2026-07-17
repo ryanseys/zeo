@@ -43,6 +43,46 @@ builtin_methods! {
         let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
+    // `casefold?` reports the `/i` flag; `fixed_encoding?` is always false
+    // (spinel regexps are encoding-agnostic over the supported set).
+    "casefold?" => fn casefold_p(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(re_of(recv).ignore_case))
+    }
+    "fixed_encoding?" => fn fixed_encoding_p(recv, args, _block) {
+        arity!(args, 0);
+        let _ = re_of(recv);
+        Ok(RubyValue::Bool(false))
+    }
+    // `names` lists the named capture groups in order; `named_captures` maps
+    // each name to its 1-based capture position(s).
+    "names" => fn names_m(recv, args, _block) {
+        arity!(args, 0);
+        let out = re_of(recv)
+            .compiled
+            .capture_names()
+            .flatten()
+            .map(|n| RubyValue::Str(crate::string_new(n.to_string())))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "named_captures" => fn named_captures_m(recv, args, _block) {
+        arity!(args, 0);
+        let pairs = re_of(recv)
+            .compiled
+            .capture_names()
+            .enumerate()
+            .filter_map(|(i, name)| {
+                name.map(|n| {
+                    (
+                        RubyValue::Str(crate::string_new(n.to_string())),
+                        RubyValue::Array(crate::array_new(vec![RubyValue::Int(i as i64)])),
+                    )
+                })
+            })
+            .collect();
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
     "options" => fn options_m(recv, args, _block) {
         arity!(args, 0);

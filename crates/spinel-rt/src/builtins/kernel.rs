@@ -116,6 +116,19 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
+    // The default `Object#<=>`: `0` when the two are `==`, else `nil` (no
+    // ordering). Classes with a real ordering (Integer/String/Array/... )
+    // define their own `<=>`, which the MRO walk reaches before this Kernel
+    // fallback, so this only answers for the un-ordered types (Hash, Range,
+    // Regexp, nil, true/false, Proc, Complex).
+    "<=>" => fn spaceship(recv, args, _block) {
+        arity!(args, 1);
+        Ok(if recv.rb_eq(&args[0]) {
+            RubyValue::Int(0)
+        } else {
+            RubyValue::Nil
+        })
+    }
     // `eql?`: same class AND `==` (what makes `1.eql?(1.0)` false while
     // `1 == 1.0` is true -- oracle-verified).
     "eql?" => fn eql_p(recv, args, _block) {

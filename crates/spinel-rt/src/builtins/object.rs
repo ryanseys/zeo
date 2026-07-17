@@ -36,6 +36,15 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Float(0.0))
     }
+    // `nil` converts to the zero of each numeric tower.
+    "to_r" | "rationalize" => fn nil_to_r(_recv, args, _block) {
+        arity!(args, 0..=1);
+        crate::builtins::rational::rational_new(0.into(), 1.into())
+    }
+    "to_c" => fn nil_to_c(_recv, args, _block) {
+        arity!(args, 0);
+        crate::builtins::complex::complex_new(RubyValue::Int(0), RubyValue::Int(0))
+    }
 }
 
 builtin_methods! {

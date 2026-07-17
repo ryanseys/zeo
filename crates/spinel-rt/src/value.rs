@@ -721,6 +721,22 @@ impl RubyValue {
                     && a.extended == b.extended
                     && a.multiline == b.multiline
             }
+            // `Range#==`: equal (by `==`) endpoints and the same exclusivity.
+            (
+                RubyValue::Range(a_start, a_end, a_excl),
+                RubyValue::Range(b_start, b_end, b_excl),
+            ) => {
+                let bounds_eq = |x: &Option<Box<RubyValue>>,
+                                 y: &Option<Box<RubyValue>>,
+                                 seen: &mut Vec<(usize, usize)>| match (x, y) {
+                    (None, None) => true,
+                    (Some(x), Some(y)) => x.rb_eq_guarded(y, seen),
+                    _ => false,
+                };
+                a_excl == b_excl
+                    && bounds_eq(a_start, b_start, seen)
+                    && bounds_eq(a_end, b_end, seen)
+            }
             (RubyValue::Array(a), RubyValue::Array(b)) => {
                 if std::sync::Arc::ptr_eq(a, b) {
                     return true;
