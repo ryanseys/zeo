@@ -49,6 +49,8 @@ fn parse_args() -> Result<Args, String> {
             }
             // A `require` search root, like ruby's own -I (repeatable, first
             // hit wins in the order given) -- see `spinelc::CompileOptions`.
+            // The attached form `-I<dir>` is handled in the catch-all below,
+            // matching ruby (both `-I lib` and `-Ilib` work).
             "-I" => {
                 load_roots.push(PathBuf::from(iter.next().ok_or("-I requires a directory")?));
             }
@@ -62,10 +64,14 @@ fn parse_args() -> Result<Args, String> {
             }
             "-S" => print_rust = true,
             other => {
-                if input.is_some() {
+                // Attached `-I<dir>` (ruby's own spelling, no space).
+                if let Some(dir) = other.strip_prefix("-I").filter(|d| !d.is_empty()) {
+                    load_roots.push(PathBuf::from(dir));
+                } else if input.is_some() {
                     return Err(format!("unexpected argument `{other}`"));
+                } else {
+                    input = Some(PathBuf::from(other));
                 }
-                input = Some(PathBuf::from(other));
             }
         }
     }

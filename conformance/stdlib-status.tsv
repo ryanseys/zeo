@@ -26,7 +26,7 @@ bundler/cli/info.rb	fail	unknown class/module `CLI` in `CLI::Info` (must be defi
 bundler/cli/init.rb	fail	unknown class/module `CLI` in `CLI::Init` (must be defined earlier in the file)
 bundler/cli/install.rb	fail	unsupported string interpolation part (spike scope)
 bundler/cli/issue.rb	fail	cannot load such file
-bundler/cli/list.rb	fail	`autoload` isn't supported (spike scope)
+bundler/cli/list.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 bundler/cli/lock.rb	fail	unknown class/module `CLI` in `CLI::Lock` (must be defined earlier in the file)
 bundler/cli/open.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/cli/outdated.rb	fail	unsupported string interpolation part (spike scope)
@@ -81,13 +81,13 @@ bundler/match_platform.rb	fail	panic: unknown class/module `Gem`
 bundler/match_remote_metadata.rb	fail	unknown module `MatchMetadata` (must be defined earlier in the file)
 bundler/materialization.rb	fail	panic: unknown class `LazySpecification`
 bundler/mirror.rb	fail	`require "socket.so"`: native (.so/.bundle) features aren't supported (spike scope)
-bundler/plugin.rb	fail	`autoload` isn't supported (spike scope)
-bundler/plugin/api.rb	fail	`autoload` isn't supported (spike scope)
+bundler/plugin.rb	fail	`load` is only supported as a top-level statement with a single string-literal argument (spike scope…
+bundler/plugin/api.rb	fail	panic: `super`: no `method_missing` found above API
 bundler/plugin/api/source.rb	pass	
 bundler/plugin/dsl.rb	fail	unknown superclass `Bundler::Dsl` (must be defined earlier in the file)
 bundler/plugin/events.rb	pass	
 bundler/plugin/index.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
-bundler/plugin/installer.rb	fail	`autoload` isn't supported (spike scope)
+bundler/plugin/installer.rb	fail	`def` with an explicit non-`self` receiver isn't supported yet (spike scope)
 bundler/plugin/installer/git.rb	fail	unknown superclass `Bundler::Source::Git` (must be defined earlier in the file)
 bundler/plugin/installer/path.rb	fail	unknown superclass `Bundler::Source::Path` (must be defined earlier in the file)
 bundler/plugin/installer/rubygems.rb	fail	unknown superclass `Bundler::Source::Rubygems` (must be defined earlier in the file)
@@ -111,26 +111,26 @@ bundler/rubygems_integration.rb	fail	`require` is only supported as a top-level 
 bundler/runtime.rb	fail	unsupported string interpolation part (spike scope)
 bundler/safe_marshal.rb	fail	panic: unknown class/module `Gem`
 bundler/self_manager.rb	fail	unsupported string interpolation part (spike scope)
-bundler/settings.rb	fail	`autoload` isn't supported (spike scope)
+bundler/settings.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
 bundler/settings/validator.rb	fail	panic: `raise Class, message` requires a literal class name (spike scope)
 bundler/setup.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/shared_helpers.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
-bundler/source.rb	fail	`autoload` isn't supported (spike scope)
+bundler/source.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/source/gemspec.rb	fail	unknown superclass `Path` (must be defined earlier in the file)
 bundler/source/git.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/source/git/git_proxy.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/source/metadata.rb	fail	panic: unknown class `Gem::Specification`
-bundler/source/path.rb	fail	`autoload` isn't supported (spike scope)
+bundler/source/path.rb	fail	unsupported string interpolation part (spike scope)
 bundler/source/path/installer.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/source/rubygems.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/source/rubygems/remote.rb	fail	panic: unknown class `Gem::URI::InvalidComponentError` in a `rescue` clause (must be defined earlier in the…
-bundler/source/rubygems_aggregate.rb	fail	panic: a nested escaping block capturing its enclosing BLOCK's own local `dependency_names` isn't supported…
+bundler/source/rubygems_aggregate.rb	fail	panic: a nested escaping block capturing its enclosing BLOCK's own local `idx` isn't supported yet (spike s…
 bundler/source_list.rb	fail	unsupported string interpolation part (spike scope)
 bundler/source_map.rb	fail	panic: a nested escaping block capturing its enclosing BLOCK's own local `source` isn't supported yet (spik…
 bundler/spec_set.rb	fail	unsupported string interpolation part (spike scope)
 bundler/stub_specification.rb	fail	unsupported string interpolation part (spike scope)
-bundler/ui.rb	fail	`autoload` isn't supported (spike scope)
-bundler/ui/rg_proxy.rb	fail	`autoload` isn't supported (spike scope)
+bundler/ui.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
+bundler/ui/rg_proxy.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/ui/shell.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
 bundler/ui/silent.rb	pass	
 bundler/uri_credentials_filter.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
@@ -198,21 +198,21 @@ bundler/vendor/thor/lib/thor/shell/wrapped_printer.rb	fail	unsupported syntax at
 bundler/vendor/thor/lib/thor/util.rb	fail	cannot load such file
 bundler/vendor/thor/lib/thor/version.rb	fail	unknown class/module `Bundler` in `Bundler::Thor` (must be defined earlier in the file)
 bundler/vendor/tsort/lib/tsort.rb	fail	unknown class/module `Bundler` in `Bundler::TSort` (must be defined earlier in the file)
-bundler/vendor/uri/lib/uri.rb	fail	`autoload` isn't supported (spike scope)
+bundler/vendor/uri/lib/uri.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 bundler/vendor/uri/lib/uri/common.rb	fail	unknown class/module `Bundler` in `Bundler::URI` (must be defined earlier in the file)
-bundler/vendor/uri/lib/uri/file.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/ftp.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/generic.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/http.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/https.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/ldap.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/ldaps.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/mailto.rb	fail	`autoload` isn't supported (spike scope)
+bundler/vendor/uri/lib/uri/file.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/ftp.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/generic.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/http.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/https.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/ldap.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/ldaps.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/mailto.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 bundler/vendor/uri/lib/uri/rfc2396_parser.rb	fail	unknown class/module `Bundler` in `Bundler::URI` (must be defined earlier in the file)
 bundler/vendor/uri/lib/uri/rfc3986_parser.rb	fail	unknown class/module `Bundler` in `Bundler::URI` (must be defined earlier in the file)
 bundler/vendor/uri/lib/uri/version.rb	fail	unknown class/module `Bundler` in `Bundler::URI` (must be defined earlier in the file)
-bundler/vendor/uri/lib/uri/ws.rb	fail	`autoload` isn't supported (spike scope)
-bundler/vendor/uri/lib/uri/wss.rb	fail	`autoload` isn't supported (spike scope)
+bundler/vendor/uri/lib/uri/ws.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+bundler/vendor/uri/lib/uri/wss.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 bundler/vendored_fileutils.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/vendored_net_http.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 bundler/vendored_persistent.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
@@ -269,12 +269,12 @@ error_highlight/formatter.rb	fail	`require` is only supported as a top-level sta
 error_highlight/version.rb	pass	
 expect.rb	fail	instance variable `@unusedBuf` in a method of the reopened built-in class `IO` isn't supported (spik…
 fileutils.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
-find.rb	fail	panic: a nested escaping block capturing its enclosing BLOCK's own local `file` isn't supported yet (spike …
+find.rb	fail	panic: a nested escaping block capturing its enclosing BLOCK's own local `enc` isn't supported yet (spike s…
 forwardable.rb	fail	expected `*name` as a multi-assignment's splat target
 forwardable/impl.rb	fail	panic: unknown class/module `RubyVM`
 io/console/size.rb	fail	`def` with an explicit non-`self` receiver isn't supported yet (spike scope)
 ipaddr.rb	fail	`require "socket.so"`: native (.so/.bundle) features aren't supported (spike scope)
-json.rb	fail	`autoload` isn't supported (spike scope)
+json.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 json/add/bigdecimal.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 json/add/complex.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 json/add/core.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
@@ -290,8 +290,8 @@ json/add/string.rb	fail	`require` is only supported as a top-level statement wit
 json/add/struct.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 json/add/symbol.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 json/add/time.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
-json/common.rb	fail	`autoload` isn't supported (spike scope)
-json/ext.rb	fail	`autoload` isn't supported (spike scope)
+json/common.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+json/ext.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 json/ext/generator/state.rb	pass	
 json/generic_object.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 json/version.rb	pass	
@@ -311,7 +311,7 @@ net/https.rb	fail	`require "socket.so"`: native (.so/.bundle) features aren't su
 net/protocol.rb	fail	`require "socket.so"`: native (.so/.bundle) features aren't supported (spike scope)
 objspace.rb	fail	`require "objspace.so"`: native (.so/.bundle) features aren't supported (spike scope)
 objspace/trace.rb	fail	`require "objspace.so"`: native (.so/.bundle) features aren't supported (spike scope)
-open-uri.rb	fail	`autoload` isn't supported (spike scope)
+open-uri.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 open3.rb	fail	expected `*name` as a multi-assignment's splat target
 open3/version.rb	pass	
 openssl.rb	fail	`require "openssl.so"`: native (.so/.bundle) features aren't supported (spike scope)
@@ -338,7 +338,7 @@ optparse/version.rb	fail	unsupported syntax at "class << OptionParser\n  #\n  # 
 pathname.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 pp.rb	fail	`def` with an explicit non-`self` receiver isn't supported yet (spike scope)
 prettyprint.rb	fail	`def` with an explicit non-`self` receiver isn't supported yet (spike scope)
-prism.rb	fail	`autoload` isn't supported (spike scope)
+prism.rb	fail	unsupported syntax at "*msgs" (spike handles only what the 7 example programs need)
 prism/compiler.rb	fail	unknown superclass `Visitor` (must be defined earlier in the file)
 prism/desugar_compiler.rb	fail	unknown module `DSL` (must be defined earlier in the file)
 prism/dispatcher.rb	fail	unknown superclass `Visitor` (must be defined earlier in the file)
@@ -352,7 +352,7 @@ prism/mutation_compiler.rb	fail	unknown superclass `Compiler` (must be defined e
 prism/node.rb	fail	panic: unknown class/module `Location`
 prism/node_ext.rb	fail	panic: unknown class/module `RegularExpressionFlags`
 prism/pack.rb	pass	
-prism/parse_result.rb	fail	`autoload` isn't supported (spike scope)
+prism/parse_result.rb	fail	cannot load such file
 prism/parse_result/comments.rb	fail	unknown superclass `Result` (must be defined earlier in the file)
 prism/parse_result/errors.rb	fail	cannot load such file
 prism/parse_result/newlines.rb	fail	unknown superclass `Result` (must be defined earlier in the file)
@@ -366,16 +366,16 @@ prism/reflection.rb	pass
 prism/relocation.rb	fail	unsupported string interpolation part (spike scope)
 prism/serialize.rb	fail	cannot load such file
 prism/string_query.rb	pass	
-prism/translation.rb	fail	`autoload` isn't supported (spike scope)
+prism/translation.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 prism/translation/parser.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 prism/translation/parser/builder.rb	fail	expected `*name` as a multi-assignment's splat target
 prism/translation/parser/compiler.rb	fail	unknown superclass `::Prism::Compiler` (must be defined earlier in the file)
 prism/translation/parser/lexer.rb	fail	cannot load such file
 prism/translation/parser_current.rb	fail	unsupported string interpolation part (spike scope)
 prism/translation/parser_versions.rb	fail	unknown superclass `Parser` (must be defined earlier in the file)
-prism/translation/ripper.rb	fail	`autoload` isn't supported (spike scope)
-prism/translation/ripper/lexer.rb	fail	`autoload` isn't supported (spike scope)
-prism/translation/ripper/sexp.rb	fail	`autoload` isn't supported (spike scope)
+prism/translation/ripper.rb	fail	unknown superclass `Compiler` (must be defined earlier in the file)
+prism/translation/ripper/lexer.rb	fail	unknown superclass `Compiler` (must be defined earlier in the file)
+prism/translation/ripper/sexp.rb	fail	unknown superclass `Compiler` (must be defined earlier in the file)
 prism/translation/ripper/shim.rb	fail	panic: unknown class/module `Prism::Translation`
 prism/translation/ruby_parser.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 prism/visitor.rb	pass	
@@ -498,9 +498,9 @@ rubygems/install_message.rb	fail	cannot load such file
 rubygems/install_update_options.rb	fail	cannot load such file
 rubygems/installer.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 rubygems/installer_uninstaller_utils.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
-rubygems/local_remote_options.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/local_remote_options.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 rubygems/name_tuple.rb	fail	unknown class/module `Gem` in `Gem::NameTuple` (must be defined earlier in the file)
-rubygems/openssl.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/openssl.rb	fail	`require "openssl.so"`: native (.so/.bundle) features aren't supported (spike scope)
 rubygems/package.rb	fail	cannot load such file
 rubygems/package/digest_io.rb	fail	unknown class/module `Gem::Package` in `Gem::Package::DigestIO` (must be defined earlier in the file…
 rubygems/package/file_source.rb	fail	unknown class/module `Gem::Package` in `Gem::Package::FileSource` (must be defined earlier in the fi…
@@ -515,7 +515,7 @@ rubygems/package_task.rb	fail	cannot load such file
 rubygems/path_support.rb	fail	unknown class/module `Gem` in `Gem::PathSupport` (must be defined earlier in the file)
 rubygems/platform.rb	fail	unknown class/module `Gem` in `Gem::Platform` (must be defined earlier in the file)
 rubygems/psych_tree.rb	pass	
-rubygems/query_utils.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/query_utils.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 rubygems/rdoc.rb	fail	cannot load such file
 rubygems/remote_fetcher.rb	fail	cannot load such file
 rubygems/request.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
@@ -530,7 +530,7 @@ rubygems/request_set/lockfile/tokenizer.rb	fail	unsupported string interpolation
 rubygems/requirement.rb	fail	`Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`)
 rubygems/resolver.rb	fail	unsupported string interpolation part (spike scope)
 rubygems/resolver/activation_request.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
-rubygems/resolver/api_set.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/resolver/api_set.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::APISet` (must be defined earlier in the file…
 rubygems/resolver/api_set/gem_parser.rb	fail	unknown class/module `Gem::Resolver::APISet` in `Gem::Resolver::APISet::GemParser` (must be defined …
 rubygems/resolver/api_specification.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::APISpecification` (must be defined earlier i…
 rubygems/resolver/best_set.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::BestSet` (must be defined earlier in the fil…
@@ -555,7 +555,7 @@ rubygems/resolver/specification.rb	fail	`require_relative` is only supported as 
 rubygems/resolver/stats.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::Stats` (must be defined earlier in the file)
 rubygems/resolver/vendor_set.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::VendorSet` (must be defined earlier in the f…
 rubygems/resolver/vendor_specification.rb	fail	unknown class/module `Gem::Resolver` in `Gem::Resolver::VendorSpecification` (must be defined earlie…
-rubygems/s3_uri_signer.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/s3_uri_signer.rb	fail	`require "openssl.so"`: native (.so/.bundle) features aren't supported (spike scope)
 rubygems/safe_marshal.rb	fail	cannot load such file
 rubygems/safe_marshal/elements.rb	pass	
 rubygems/safe_marshal/reader.rb	fail	panic: unknown class/module `Marshal`
@@ -563,7 +563,7 @@ rubygems/safe_marshal/visitors/stream_printer.rb	fail	unknown class/module `Gem:
 rubygems/safe_marshal/visitors/to_ruby.rb	fail	unknown class/module `Gem::SafeMarshal` in `Gem::SafeMarshal::Visitors` (must be defined earlier in …
 rubygems/safe_marshal/visitors/visitor.rb	fail	unknown class/module `Gem::SafeMarshal` in `Gem::SafeMarshal::Visitors` (must be defined earlier in …
 rubygems/safe_yaml.rb	pass	
-rubygems/security.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/security.rb	fail	`require "openssl.so"`: native (.so/.bundle) features aren't supported (spike scope)
 rubygems/security/policies.rb	fail	unknown class/module `Gem` in `Gem::Security` (must be defined earlier in the file)
 rubygems/security/policy.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 rubygems/security/signer.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
@@ -639,21 +639,21 @@ rubygems/vendor/resolv/lib/resolv.rb	fail	`require "socket.so"`: native (.so/.bu
 rubygems/vendor/securerandom/lib/securerandom.rb	fail	unsupported syntax at "alias gen_random gen_random_urandom" (spike handles only what the 7 example p…
 rubygems/vendor/timeout/lib/timeout.rb	fail	unknown class/module `Gem` in `Gem::Timeout` (must be defined earlier in the file)
 rubygems/vendor/tsort/lib/tsort.rb	fail	unknown class/module `Gem` in `Gem::TSort` (must be defined earlier in the file)
-rubygems/vendor/uri/lib/uri.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/vendor/uri/lib/uri.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 rubygems/vendor/uri/lib/uri/common.rb	fail	unknown class/module `Gem` in `Gem::URI` (must be defined earlier in the file)
-rubygems/vendor/uri/lib/uri/file.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/ftp.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/generic.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/http.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/https.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/ldap.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/ldaps.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/mailto.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/vendor/uri/lib/uri/file.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/ftp.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/generic.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/http.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/https.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/ldap.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/ldaps.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/mailto.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 rubygems/vendor/uri/lib/uri/rfc2396_parser.rb	fail	unknown class/module `Gem` in `Gem::URI` (must be defined earlier in the file)
 rubygems/vendor/uri/lib/uri/rfc3986_parser.rb	fail	unknown class/module `Gem` in `Gem::URI` (must be defined earlier in the file)
 rubygems/vendor/uri/lib/uri/version.rb	fail	unknown class/module `Gem` in `Gem::URI` (must be defined earlier in the file)
-rubygems/vendor/uri/lib/uri/ws.rb	fail	`autoload` isn't supported (spike scope)
-rubygems/vendor/uri/lib/uri/wss.rb	fail	`autoload` isn't supported (spike scope)
+rubygems/vendor/uri/lib/uri/ws.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+rubygems/vendor/uri/lib/uri/wss.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 rubygems/vendored_molinillo.rb	fail	unsupported string interpolation part (spike scope)
 rubygems/vendored_net_http.rb	fail	`require_relative` is only supported as a top-level statement with a single string-literal argument …
 rubygems/vendored_optparse.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
@@ -707,21 +707,21 @@ tsort.rb	pass
 un.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 unicode_normalize/normalize.rb	fail	unsupported string interpolation part (spike scope)
 unicode_normalize/tables.rb	fail	unsupported string interpolation part (spike scope)
-uri.rb	fail	`autoload` isn't supported (spike scope)
+uri.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 uri/common.rb	fail	reopening the built-in module `Kernel` isn't supported yet (spike scope)
-uri/file.rb	fail	`autoload` isn't supported (spike scope)
-uri/ftp.rb	fail	`autoload` isn't supported (spike scope)
-uri/generic.rb	fail	`autoload` isn't supported (spike scope)
-uri/http.rb	fail	`autoload` isn't supported (spike scope)
-uri/https.rb	fail	`autoload` isn't supported (spike scope)
-uri/ldap.rb	fail	`autoload` isn't supported (spike scope)
-uri/ldaps.rb	fail	`autoload` isn't supported (spike scope)
-uri/mailto.rb	fail	`autoload` isn't supported (spike scope)
+uri/file.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/ftp.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/generic.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/http.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/https.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/ldap.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/ldaps.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/mailto.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 uri/rfc2396_parser.rb	fail	panic: `raise Class, message` requires a literal class name (spike scope)
 uri/rfc3986_parser.rb	fail	panic: `raise Class, message` requires a literal class name (spike scope)
 uri/version.rb	pass	
-uri/ws.rb	fail	`autoload` isn't supported (spike scope)
-uri/wss.rb	fail	`autoload` isn't supported (spike scope)
+uri/ws.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
+uri/wss.rb	fail	expected a constant name or path (e.g. `Foo` or `Foo::Bar`)
 weakref.rb	fail	unsupported syntax at "alias __raise__ raise" (spike handles only what the 7 example programs need)
 yaml.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…
 yaml/dbm.rb	fail	`require` is only supported as a top-level statement with a single string-literal argument (spike sc…

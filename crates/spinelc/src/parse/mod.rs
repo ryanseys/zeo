@@ -15,7 +15,7 @@ use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, KeywordParam, KwArg, LastMatch, NodeId, Params,
     Pattern, PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
 };
-use ruby_prism::{Node, ParseResult};
+use ruby_prism::{CallNode, Node, ParseResult};
 
 type PResult<T> = Result<T, String>;
 
@@ -2134,16 +2134,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 "`{name}` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
             ));
         }
-        // `autoload` registers a constant-triggered LAZY require -- the
-        // trigger point (first constant ACCESS, from anywhere, at runtime)
-        // has no faithful compile-time equivalent (eager splicing changes
-        // top-level side-effect ordering; `defined?` doesn't trigger it) --
-        // a clean rejection, not an approximation.
+        // `autoload :Const, "feature"` -- the loader's eager pre-pass
+        // (`Loader::lower_file_statements`) has already SPLICED the feature
+        // file so `Const` is defined, treating autoload as a compile-time
+        // require. The call itself is therefore a runtime no-op. We still
+        // validate the target resolves at compile time here (`autoload_feature`
+        // errors on a dynamic path/symbol, exactly like a non-top-level
+        // `require`), so a genuinely dynamic autoload is a clean rejection
+        // rather than a silently-undefined constant.
         if name == "autoload" && call.receiver().is_none() {
-            return Err(
-                "`autoload` isn't supported (spike scope) -- its lazy, first-constant-access trigger has no compile-time equivalent; use an explicit `require`"
-                    .to_string(),
-            );
+            autoload_feature(&call)?;
+            return Ok(hir.push(HirNode::NilLit));
         }
 
         // Phase 18 guard rails. `Ruby::Box` class-method calls outside the
@@ -3701,6 +3702,78 @@ fn current_file_str() -> PResult<String> {
         Some(p) => p.to_string_lossy().into_owned(),
         None => "-e".to_string(),
     })
+}
+
+/// The require-style feature an `autoload(:Const, <path>)` names, resolved at
+/// compile time for the loader's eager-splice model (see
+/// `Loader::lower_file_statements`). Two path forms are supported: a plain
+/// string literal, and `File.expand_path("<literal>", __dir__)` (computed from
+/// the current source file's directory -- the idiom stdlib/bundler use for a
+/// sibling file). Any other path expression, or a non-two-arg call, is a clean
+/// error: the splice target must be known at compile time (like a
+/// non-top-level `require`). The caller has already confirmed `call` is a
+/// receiver-less `autoload`. `pub(super)` for the loader's pre-pass.
+pub(super) fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
+    let args: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    if args.len() != 2 {
+        return Err(
+            "`autoload` takes exactly two arguments (`autoload :Const, \"feature\"`)".to_string(),
+        );
+    }
+    if let Some(lit) = args[1].as_string_node() {
+        return Ok(String::from_utf8_lossy(lit.unescaped()).into_owned());
+    }
+    if let Some(feature) = expand_path_dir_feature(&args[1])? {
+        return Ok(feature);
+    }
+    Err(
+        "`autoload` with a non-literal feature isn't supported (spike scope) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string(),
+    )
+}
+
+/// Recognizes `File.expand_path("<literal>", __dir__)` and computes the
+/// absolute feature path from the current file's directory; `None` for any
+/// other expression (so `autoload_feature` can fall through to its error).
+fn expand_path_dir_feature(node: &Node<'_>) -> PResult<Option<String>> {
+    let Some(call) = node.as_call_node() else {
+        return Ok(None);
+    };
+    if call.name().as_slice() != b"expand_path" {
+        return Ok(None);
+    }
+    let on_file = call
+        .receiver()
+        .and_then(|r| r.as_constant_read_node())
+        .is_some_and(|c| c.name().as_slice() == b"File");
+    if !on_file {
+        return Ok(None);
+    }
+    let args: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    if args.len() != 2 {
+        return Ok(None);
+    }
+    let Some(rel) = args[0].as_string_node() else {
+        return Ok(None);
+    };
+    // The base must be `__dir__` (a receiver-less call), the only base whose
+    // value is compile-time-known to be this file's directory.
+    let base_is_dir = args[1]
+        .as_call_node()
+        .is_some_and(|c| c.receiver().is_none() && c.name().as_slice() == b"__dir__");
+    if !base_is_dir {
+        return Ok(None);
+    }
+    let rel = String::from_utf8_lossy(rel.unescaped()).into_owned();
+    // An absolute `<dir>/<rel>`; `resolve_require` appends `.rb` and the OS
+    // resolves any embedded `..`. `File.expand_path` would normalize `..`
+    // lexically, but a filesystem check is equivalent for a real file.
+    Ok(Some(format!("{}/{rel}", current_dir_str()?)))
 }
 
 /// `__dir__`'s answer: the ABSOLUTE directory holding the current file --

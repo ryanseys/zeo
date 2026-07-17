@@ -8197,6 +8197,86 @@ fn an_earlier_i_root_shadows_a_later_same_named_stdlib_file() {
 }
 
 #[test]
+fn autoload_nested_in_a_module_eagerly_splices_the_feature_file() {
+    // #101: `autoload :Const, "feature"` is treated as a compile-time
+    // require -- the loader's eager pre-pass splices the feature file (at any
+    // structural nesting) so the constant is defined; the `autoload` call
+    // itself is a no-op. Documented divergence from CRuby's laziness (loads at
+    // the autoload site, not first access), but observationally identical for
+    // a definitional autoloaded file.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "lib/greeter.rb",
+                r##"
+                    module App
+                      module Greeter
+                        def self.hi(n); "hi #{n}"; end
+                      end
+                    end
+                "##,
+            ),
+            (
+                "main.rb",
+                r#"
+                    module App
+                      autoload :Greeter, "greeter"
+                    end
+                    puts App::Greeter.hi("bob")
+                "#,
+            ),
+        ],
+        "main.rb",
+        &["lib"],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi bob\n");
+}
+
+#[test]
+fn autoload_with_file_expand_path_dir_resolves_a_sibling_file() {
+    // The dominant stdlib/bundler idiom: `autoload :C, File.expand_path("c",
+    // __dir__)` -- a computed sibling path. Resolved at compile time from the
+    // requiring file's directory.
+    let result = support::run_ruby_project(
+        &[
+            (
+                "mirror.rb",
+                r#"
+                    class Config
+                      class Mirror
+                        def self.name; "mirror!"; end
+                      end
+                    end
+                "#,
+            ),
+            (
+                "main.rb",
+                r#"
+                    class Config
+                      autoload :Mirror, File.expand_path("mirror", __dir__)
+                    end
+                    puts Config::Mirror.name
+                "#,
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "mirror!\n");
+}
+
+#[test]
+fn autoload_with_a_dynamic_feature_is_a_clean_compile_error() {
+    // The splice target must be compile-time-known; a computed path that
+    // isn't the `File.expand_path(..., __dir__)` idiom is a clean rejection
+    // (like a non-top-level `require`), not a silently-undefined constant.
+    let err = spinelc::compile_to_rust("autoload :X, some_method_call").unwrap_err();
+    assert!(err.contains("must resolve at compile time"), "unexpected error: {err}");
+}
+
+#[test]
 fn a_required_files_top_level_locals_are_isolated_from_the_main_file() {
     // Real Ruby gives every file its own top-level local scope: main's
     // `count` and the lib's `count` (mutated through a block, exercising
@@ -8350,10 +8430,10 @@ fn pathless_require_relative_cannot_infer_basepath() {
 }
 
 #[test]
-fn autoload_and_load_wrap_are_clean_rejections() {
-    let err = spinelc::compile_to_rust("autoload :Foo, \"foo\"\n").unwrap_err();
-    assert!(err.contains("autoload"), "unexpected error: {err}");
-
+fn load_with_a_wrap_argument_is_a_clean_rejection() {
+    // (`autoload` is now supported via the loader's eager splice -- see the
+    // `autoload_*` tests above.) `load "file", wrap` still needs load-time
+    // anonymous-module scoping this compiler lacks.
     let err = support::compile_project(
         &[
             ("w.rb", "puts 1\n"),
@@ -11304,6 +11384,21 @@ fn string_breadth_matches_the_oracle() {
          \"003.1|ff|10|101|1.234568e+04|1e-05|%\"\n\"**hi***\"\n\"hi...\"\n\"...hi\"\n\
          \"heo\"\n\"abc\"\n\"abbcc\"\n5\n\"xyz\"\n\"xyz!\"\n\"abxyz!\"\n"
     );
+}
+
+#[test]
+fn string_tr_duplicate_from_char_uses_the_last_mapping() {
+    // A char repeated in `from` takes its LAST corresponding `to` char
+    // (CRuby's rule) -- previously the FIRST mapping wrongly won.
+    let result = support::run_ruby(
+        r#"
+        p "a___b".tr("___", ".+-")
+        p "abcaa".tr("aa", "xy")
+        p "abcd".tr("abc", "x")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"a---b\"\n\"ybcyy\"\n\"xxxd\"\n");
 }
 
 /// Symbol Tier A + the `&:sym` block-argument conversion

@@ -1866,7 +1866,10 @@ builtin_methods! {
         let out = recv_str!(recv)
             .lock()
             .chars()
-            .map(|c| match from.iter().position(|&f| f == c) {
+            // A char repeated in `from` takes its LAST mapping (`rposition`),
+            // matching CRuby: `"_".tr("___", ".+-") == "-"`. A `to` shorter
+            // than `from` repeats its final char (`.or(to.last())`).
+            .map(|c| match from.iter().rposition(|&f| f == c) {
                 Some(i) => *to.get(i).or(to.last()).unwrap_or(&c),
                 None => c,
             })
@@ -2712,6 +2715,13 @@ mod tests {
         assert_eq!(show(tr(&s("hello"), &[s("el"), s("ip")], None)), "\"hippo\"");
         assert_eq!(show(tr(&s("hello"), &[s("a-y"), s("b-z")], None)), "\"ifmmp\"");
         assert_eq!(show(tr(&s("a-b_c"), &[s("-_"), s(" ")], None)), "\"a b c\"");
+    }
+
+    #[test]
+    fn tr_duplicate_from_char_uses_the_last_mapping() {
+        // CRuby: a char repeated in `from` takes its LAST corresponding `to`.
+        assert_eq!(show(tr(&s("a___b"), &[s("___"), s(".+-")], None)), "\"a---b\"");
+        assert_eq!(show(tr(&s("abcaa"), &[s("aa"), s("xy")], None)), "\"ybcyy\"");
     }
 
     #[test]

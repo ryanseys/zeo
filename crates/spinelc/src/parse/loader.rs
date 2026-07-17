@@ -340,6 +340,28 @@ impl Loader {
             rename::isolate_file_locals(hir, &own, idx);
         }
         drop(frame);
+
+        // Eager `autoload` (any structural nesting): every `autoload :C, path`
+        // names a file that PROVIDES `C`; splice each so `C` is defined, like a
+        // `require`. The autoload CALL itself lowers to a no-op (see
+        // `parse::autoload_feature`). This is the compile-time stand-in for
+        // CRuby's lazy first-access trigger -- documented divergences: the
+        // file loads relative to THIS file's position (not at first constant
+        // access), and even if `C` is never referenced. `SourceFileFrame` is
+        // still this file (the splice guard outlives this call), so the
+        // `File.expand_path("...", __dir__)` form resolves against the right
+        // directory. Deduped through the shared `required` table, so two
+        // constants autoloaded from one file splice it once.
+        let mut autoloads = Vec::new();
+        for n in body.iter() {
+            collect_autoloads(&n, &mut autoloads);
+        }
+        for call in &autoloads {
+            let feature = super::autoload_feature(call)?;
+            let spliced =
+                self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
+            combined.extend(spliced);
+        }
         Ok(combined)
     }
 
@@ -386,17 +408,33 @@ impl Loader {
                 "`{name}` with a non-literal argument isn't supported (spike scope) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
             ));
         };
+        self.splice_feature(hir, &feature, name, dir, file_idx, current_box)
+    }
 
+    /// The resolve-and-splice core shared by `require`/`require_relative`/
+    /// `load` and eager top-level `autoload`: given an already-extracted
+    /// literal `feature` and the resolution flavor `name`, short-circuit a
+    /// built-in feature, resolve the file, dedup, and splice it into the
+    /// arena.
+    fn splice_feature(
+        &mut self,
+        hir: &mut Hir,
+        feature: &str,
+        name: &str,
+        dir: Option<&Path>,
+        file_idx: Option<usize>,
+        current_box: u32,
+    ) -> PResult<Vec<NodeId>> {
         // Features spinel already provides natively -- `require` short-circuits
         // to a no-op before any filesystem search (CRuby's own built-in-feature
         // rule). `tmpdir` (Dir.mktmpdir) is compiled in.
-        if name == "require" && is_builtin_feature(&feature) {
+        if name == "require" && is_builtin_feature(feature) {
             // An in-tree `ext/` feature's `require` ACTIVATES its gated
             // builtin (`require "base64"` -> `Base64` resolves); always-on
             // core no-ops (`set`/`tmpdir`) name no gated class, so nothing
             // is recorded for them.
-            if spinel_abi::is_ext_feature(&feature) {
-                hir.activate_feature(&feature);
+            if spinel_abi::is_ext_feature(feature) {
+                hir.activate_feature(feature);
             }
             return Ok(Vec::new());
         }
@@ -407,9 +445,9 @@ impl Loader {
         // files are part of the package, however they're reached).
         let inherited = file_idx.and_then(|i| hir.loaded_files[i].package.clone());
         let (path, package) = match name {
-            "require" => self.resolve_require(&feature)?,
-            "require_relative" => (resolve_require_relative(&feature, dir)?, inherited),
-            _ => (self.resolve_load(&feature, dir)?, inherited),
+            "require" => self.resolve_require(feature)?,
+            "require_relative" => (resolve_require_relative(feature, dir)?, inherited),
+            _ => (self.resolve_load(feature, dir)?, inherited),
         };
         let canonical = path
             .canonicalize()
@@ -427,6 +465,7 @@ impl Loader {
         }
         self.splice_file(hir, &canonical, file_idx, package, current_box)
     }
+
 
     /// Parses and lowers one resolved file into the arena, recording its
     /// provenance -- one `LoadedFile` per SPLICE INSTANCE (see
@@ -763,4 +802,37 @@ fn with_rb_ext(feature: &str) -> String {
 
 fn is_native_feature(feature: &str) -> bool {
     feature.ends_with(".so") || feature.ends_with(".o") || feature.ends_with(".bundle")
+}
+
+/// Collects every receiver-less `autoload` call in a statement tree,
+/// descending through the STRUCTURAL containers stdlib nests them in --
+/// `module`/`class`/`class << self` bodies (e.g. `module URI; autoload
+/// :Generic, "uri/generic"; end`, `module Bundler; class Settings; autoload
+/// :Mirror, File.expand_path("mirror", __dir__); end; end`). An `autoload`
+/// inside a method/block/conditional body isn't collected here (it's
+/// genuinely runtime-dynamic, like a non-top-level `require`); it lowers to a
+/// no-op without a splice, so its constant stays undefined -- a loud
+/// NameError on reference, not silent, and documented.
+fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::CallNode<'a>>) {
+    if let Some(stmts) = node.as_statements_node() {
+        for n in stmts.body().iter() {
+            collect_autoloads(&n, out);
+        }
+    } else if let Some(m) = node.as_module_node() {
+        if let Some(body) = m.body() {
+            collect_autoloads(&body, out);
+        }
+    } else if let Some(c) = node.as_class_node() {
+        if let Some(body) = c.body() {
+            collect_autoloads(&body, out);
+        }
+    } else if let Some(sc) = node.as_singleton_class_node() {
+        if let Some(body) = sc.body() {
+            collect_autoloads(&body, out);
+        }
+    } else if let Some(call) = node.as_call_node() {
+        if call.receiver().is_none() && call.name().as_slice() == b"autoload" {
+            out.push(call);
+        }
+    }
 }
