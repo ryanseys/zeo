@@ -29,6 +29,14 @@ fn domain_error(fn_name: &str) -> Signal {
     )
 }
 
+/// Every Math module function -- the reflection surface for
+/// `Math.instance_methods` / `include Math` name enumeration. Must mirror
+/// `math_call`'s match arms (the single dispatch source of truth).
+pub(crate) const NAMES: &[&str] = &[
+    "sqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log2",
+    "log10", "log", "atan2", "hypot",
+];
+
 /// One Math module function -- `None` when `name` isn't one (the caller
 /// falls to its NoMethodError path). Arity is validated per function.
 pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {

@@ -607,6 +607,16 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     })
 }
 
+/// Reflection companion to `lookup` (hand-written table).
+pub fn lookup_names() -> &'static [&'static str] {
+    &[
+        "puts", "print", "write", "<<", "flush", "fileno", "to_i", "tty?", "isatty",
+        "inspect", "to_s", "sync", "sync=", "path", "to_path", "read", "gets",
+        "readlines", "each_line", "each", "seek", "tell", "pos", "rewind", "eof?",
+        "eof", "close", "closed?",
+    ]
+}
+
 /// The `IO::SEEK_*` constants -- seeded from generated `main()` beside the
 /// stdio ones.
 pub fn seed_io_constants() {

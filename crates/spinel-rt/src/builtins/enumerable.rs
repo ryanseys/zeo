@@ -128,35 +128,36 @@ pub(crate) fn enumerable_send(
 /// Name membership for `respond_to?`'s MRO walk (Phase 17.1) -- kept next
 /// to `enumerable_send`'s match, which stays the single source of truth
 /// for what actually DISPATCHES; this list must mirror its arms.
+pub(crate) const NAMES: &[&str] = &[
+    "map", "collect",
+    "select", "filter", "find_all",
+    "reject",
+    "to_a", "entries",
+    "include?", "member?",
+    "count",
+    "any?", "all?", "none?", "one?",
+    "find", "detect",
+    "first",
+    "reduce", "inject",
+    "each_with_index",
+    "sum",
+    "min", "max",
+    "sort", "sort_by",
+    "min_by", "max_by", "minmax",
+    "group_by", "partition",
+    "flat_map", "collect_concat", "filter_map",
+    "each_slice", "each_cons", "each_with_object",
+    "take", "drop", "take_while", "drop_while",
+    "find_index",
+    "tally", "uniq", "to_h", "reverse_each",
+    "grep", "grep_v",
+    "chunk_while", "slice_when", "slice_before", "slice_after",
+    "minmax_by", "each_entry", "chunk", "lazy", "zip",
+    "compact", "cycle", "chain", "to_set",
+];
+
 pub(crate) fn responds(name: &str) -> bool {
-    matches!(
-        name,
-        "map" | "collect"
-            | "select" | "filter" | "find_all"
-            | "reject"
-            | "to_a" | "entries"
-            | "include?" | "member?"
-            | "count"
-            | "any?" | "all?" | "none?" | "one?"
-            | "find" | "detect"
-            | "first"
-            | "reduce" | "inject"
-            | "each_with_index"
-            | "sum"
-            | "min" | "max"
-            | "sort" | "sort_by"
-            | "min_by" | "max_by" | "minmax"
-            | "group_by" | "partition"
-            | "flat_map" | "collect_concat" | "filter_map"
-            | "each_slice" | "each_cons" | "each_with_object"
-            | "take" | "drop" | "take_while" | "drop_while"
-            | "find_index"
-            | "tally" | "uniq" | "to_h" | "reverse_each"
-            | "grep" | "grep_v"
-            | "chunk_while" | "slice_when" | "slice_before" | "slice_after"
-            | "minmax_by" | "each_entry" | "chunk" | "lazy" | "zip"
-            | "compact" | "cycle" | "chain" | "to_set"
-    )
+    NAMES.contains(&name)
 }
 
 /// CRuby's `rb_enum_values_pack` rule -- see the module docs. Shared

@@ -16,6 +16,7 @@ mod fiber;
 mod globals;
 mod handling;
 mod lastmatch;
+mod method_params;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -64,6 +65,7 @@ pub use dispatch::{
 };
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_set};
+pub use method_params::{register_params, ParamKind};
 pub use lastmatch::{
     last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
 };

@@ -54,6 +54,24 @@ builtin_methods! {
         }
         Ok(args[0].clone())
     }
+    // Switch to identity keying (`equal?`/`object_id` instead of `eql?`/`hash`);
+    // re-projects existing entries so keys stay reachable by their own object.
+    "compare_by_identity" => fn compare_by_identity(recv, args, _block) {
+        arity!(args, 0);
+        let h = recv_hash!(recv);
+        if h.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen Hash: {}", recv.inspect_string()),
+            ));
+        }
+        crate::hash_enable_compare_by_identity(h);
+        Ok(recv.clone())
+    }
+    "compare_by_identity?" => fn compare_by_identity_p(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(recv_hash!(recv).lock().compare_by_identity))
+    }
     "[]=" | "store" => fn index_set(recv, args, _block) {
         arity!(args, 2);
         Ok(crate::hash_set(recv_hash!(recv), args[0].clone(), args[1].clone()))

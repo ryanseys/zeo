@@ -51,6 +51,7 @@ pub(crate) mod process;
 pub(crate) mod time;
 pub(crate) mod range;
 pub(crate) mod rational;
+pub(crate) mod condition_variable;
 pub(crate) mod set;
 pub(crate) mod regexp;
 pub(crate) mod fiber;
@@ -95,11 +96,13 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup,
         spinel_abi::METHOD_CLASS => method_obj::lookup,
+        spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         spinel_abi::FIBER_CLASS => fiber::lookup,
         spinel_abi::TIME_CLASS => time::lookup,
         spinel_abi::ENCODING_CLASS => encoding::lookup,
         spinel_abi::SET_CLASS => set::lookup,
         spinel_abi::LAZY_CLASS => lazy::lookup,
+        spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
         _ => return None,
     })
 }
@@ -134,8 +137,72 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         spinel_abi::SET_CLASS => set::lookup_class,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
+        spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
         _ => return None,
     })
+}
+
+/// `class_table`'s reflection companion: the instance-method NAMES a builtin
+/// class exposes (for `instance_methods`/`methods`). Mirrors `class_table`'s
+/// arms exactly -- each `<mod>::lookup` has a paste-generated `<mod>::lookup_names`.
+pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
+    match id {
+        spinel_abi::INTEGER_CLASS => integer::lookup_names(),
+        spinel_abi::FLOAT_CLASS => float::lookup_names(),
+        spinel_abi::NUMERIC_CLASS => numeric::lookup_names(),
+        spinel_abi::RATIONAL_CLASS => rational::lookup_names(),
+        spinel_abi::COMPLEX_CLASS => complex::lookup_names(),
+        spinel_abi::STRING_CLASS => string::lookup_names(),
+        spinel_abi::SYMBOL_CLASS => symbol::lookup_names(),
+        spinel_abi::ARRAY_CLASS => array::lookup_names(),
+        spinel_abi::HASH_CLASS => hash::lookup_names(),
+        spinel_abi::RANGE_CLASS => range::lookup_names(),
+        spinel_abi::PROC_CLASS => rproc::lookup_names(),
+        spinel_abi::REGEXP_CLASS => regexp::lookup_names(),
+        spinel_abi::MATCH_DATA_CLASS => matchdata::lookup_names(),
+        spinel_abi::CLASS_CLASS => class_module::lookup_class_names(),
+        spinel_abi::MODULE_CLASS => class_module::lookup_module_names(),
+        spinel_abi::NIL_CLASS => object::lookup_nil_names(),
+        spinel_abi::TRUE_CLASS | spinel_abi::FALSE_CLASS => object::lookup_bool_names(),
+        spinel_abi::KERNEL_CLASS => kernel::lookup_names(),
+        spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
+        spinel_abi::ENUMERATOR_CLASS => enumerator::lookup_names(),
+        spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
+        spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup_names(),
+        spinel_abi::METHOD_CLASS => method_obj::lookup_names(),
+        spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
+        spinel_abi::FIBER_CLASS => fiber::lookup_names(),
+        spinel_abi::TIME_CLASS => time::lookup_names(),
+        spinel_abi::ENCODING_CLASS => encoding::lookup_names(),
+        spinel_abi::SET_CLASS => set::lookup_names(),
+        spinel_abi::LAZY_CLASS => lazy::lookup_names(),
+        spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
+        spinel_abi::ENUMERABLE_CLASS => enumerable::NAMES,
+        spinel_abi::COMPARABLE_CLASS => comparable::NAMES,
+        spinel_abi::MATH_CLASS => math::NAMES,
+        _ => &[],
+    }
+}
+
+/// `class_method_table`'s reflection companion: the CLASS-method NAMES a
+/// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
+pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
+    match id {
+        spinel_abi::ARRAY_CLASS => array::lookup_class_names(),
+        spinel_abi::STRING_CLASS => string::lookup_class_names(),
+        spinel_abi::HASH_CLASS => hash::lookup_class_names(),
+        spinel_abi::REGEXP_CLASS => regexp::lookup_class_names(),
+        spinel_abi::FILE_CLASS => file::lookup_class_names(),
+        spinel_abi::DIR_CLASS => dir::lookup_class_names(),
+        spinel_abi::TIME_CLASS => time::lookup_class_names(),
+        spinel_abi::PROCESS_CLASS => process::lookup_class_names(),
+        spinel_abi::GC_CLASS => gc::lookup_class_names(),
+        spinel_abi::ENCODING_CLASS => encoding::lookup_class_names(),
+        spinel_abi::SET_CLASS => set::lookup_class_names(),
+        spinel_abi::COMPLEX_CLASS => complex::lookup_class_names(),
+        spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
+        _ => &[],
+    }
 }
 
 /// Registry-FREE ancestor chains for the builtin classes, computed once
@@ -210,6 +277,17 @@ macro_rules! builtin_methods {
             match name {
                 $( $($mname)|+ => Some($fname), )*
                 _ => None,
+            }
+        }
+        paste::paste! {
+            /// Every method name this table exposes (each alias enumerated) --
+            /// the reflection surface for `instance_methods`/`methods`. Derived
+            /// from the same rows as the `lookup` above, so it can't drift.
+            /// `allow(dead_code)`: a few tables (e.g. the `ENV` singleton, whose
+            /// class is `Object`) never feed reflection, so their slice is unused.
+            #[allow(dead_code)]
+            $lookup_vis fn [<$lookup _names>]() -> &'static [&'static str] {
+                &[ $( $($mname),+ ),* ]
             }
         }
     };

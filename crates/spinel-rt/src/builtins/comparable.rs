@@ -122,10 +122,14 @@ pub(crate) fn comparable_send(
     Some(result)
 }
 
+/// Every method `Comparable` mixes in -- the single source of truth for both
+/// `respond_to?`'s MRO walk and `instance_methods` reflection.
+pub(crate) const NAMES: &[&str] = &["<", "<=", ">", ">=", "==", "between?", "clamp"];
+
 /// Name membership for `respond_to?`'s MRO walk (argument counts aren't
 /// its concern -- real `respond_to?` is name-only too).
 pub(crate) fn responds(name: &str) -> bool {
-    matches!(name, "<" | "<=" | ">" | ">=" | "==" | "between?" | "clamp")
+    NAMES.contains(&name)
 }
 
 #[cfg(test)]

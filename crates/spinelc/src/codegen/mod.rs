@@ -294,6 +294,56 @@ impl<'a> Ctx<'a> {
     }
 }
 
+/// The `spinel_rt::register_params` entries for one method's `Params`, in
+/// Ruby's canonical `#parameters` order (required, optional, rest, post,
+/// keywords, keyword-rest, block). Internal destructure-slot names
+/// (`__destr_N`) are emitted anonymous, matching CRuby's nameless `[:req]`
+/// for a `|(a, b)|` slot.
+fn param_descriptor_entries(params: &crate::hir::Params) -> Vec<TokenStream> {
+    use crate::hir::KeywordParam;
+    fn entry(kind: &str, name: Option<&str>) -> TokenStream {
+        let k = format_ident!("{}", kind);
+        match name {
+            Some(n) if !n.starts_with("__") => {
+                quote! { (spinel_rt::ParamKind::#k, Some(#n.to_string())) }
+            }
+            _ => quote! { (spinel_rt::ParamKind::#k, None) },
+        }
+    }
+    let mut out = Vec::new();
+    for r in &params.required {
+        out.push(entry("Req", Some(r)));
+    }
+    for (o, _) in &params.optional {
+        out.push(entry("Opt", Some(o)));
+    }
+    match &params.rest {
+        Some(Some(n)) => out.push(entry("Rest", Some(n))),
+        Some(None) => out.push(entry("Rest", None)),
+        None => {}
+    }
+    for p in &params.post {
+        out.push(entry("Req", Some(p)));
+    }
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(n) => out.push(entry("KeyReq", Some(n))),
+            KeywordParam::Optional(n, _) => out.push(entry("Key", Some(n))),
+        }
+    }
+    match &params.keyword_rest {
+        Some(Some(n)) => out.push(entry("KeyRest", Some(n))),
+        Some(None) => out.push(entry("KeyRest", None)),
+        None => {}
+    }
+    match &params.block {
+        Some(Some(n)) => out.push(entry("Block", Some(n))),
+        Some(None) => out.push(entry("Block", None)),
+        None => {}
+    }
+    out
+}
+
 pub fn codegen_to_string(analyzed: &Analyzed) -> Result<String, String> {
     let tokens = codegen(analyzed);
     let file: syn::File = syn::parse2(tokens)
@@ -423,6 +473,36 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     );
                 });
             }
+        }
+        // Each method DEFINED DIRECTLY on this class (not materialized from an
+        // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
+        // can report own methods only -- the materialized `methods` list above
+        // flattens inheritance in. Sorted for stable generated source.
+        let mut own: Vec<&String> = compiler
+            .class(ClassId(id))
+            .own_methods
+            .iter()
+            .map(|&sid| &compiler.scope(sid).name)
+            .collect();
+        own.sort();
+        for key in own {
+            registrations.push(quote! {
+                __registry.mark_own(
+                    spinel_rt::ClassId(#id),
+                    spinel_rt::Symbol::intern(#key),
+                );
+            });
+        }
+        // The signature of each own method, baked for `Method#arity`/
+        // `#parameters` / `UnboundMethod` reflection (the dispatch tables carry
+        // only fn pointers). Emitted in Ruby's canonical `#parameters` order.
+        for &sid in &compiler.class(ClassId(id)).own_methods {
+            let scope = compiler.scope(sid);
+            let name = &scope.name;
+            let entries = param_descriptor_entries(&scope.params);
+            registrations.push(quote! {
+                spinel_rt::register_params(#id, #name, vec![ #(#entries),* ]);
+            });
         }
         // Every `undef name` in this class's body is recorded so
         // `respond_to?` stops its ancestor walk here -- dispatch itself

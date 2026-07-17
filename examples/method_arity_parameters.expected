@@ -1,0 +1,18 @@
+7
+2
+[[:req, :a], [:req, :b]]
+-2
+[[:req, :x], [:opt, :factor]]
+-3
+[[:req, :first], [:rest, :rest], [:req, :last]]
+2
+[[:req, :x], [:keyreq, :y], [:key, :z]]
+0
+UnboundMethod
+:add
+2
+Method
+30
+11
+UnboundMethod
+TypeError

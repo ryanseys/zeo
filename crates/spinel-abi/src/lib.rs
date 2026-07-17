@@ -158,6 +158,11 @@ pub const ENCODING_CLASS: ClassId = ClassId(40);
 pub const DATA_CLASS: ClassId = ClassId(41);
 pub const SET_CLASS: ClassId = ClassId(42);
 pub const LAZY_CLASS: ClassId = ClassId(43);
+/// Ruby's `Thread::ConditionVariable` (exposed top-level as `ConditionVariable`,
+/// matching how `Mutex`/`Queue` are already simplified from `Thread::*`).
+pub const CONDITION_VARIABLE_CLASS: ClassId = ClassId(44);
+/// `Module#instance_method`'s result -- a `Method` not yet bound to a receiver.
+pub const UNBOUND_METHOD_CLASS: ClassId = ClassId(45);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -209,6 +214,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
     BuiltinClass { id: SET_CLASS, name: "Set", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
     BuiltinClass { id: LAZY_CLASS, name: "Enumerator::Lazy", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS] },
+    BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
+    BuiltinClass { id: UNBOUND_METHOD_CLASS, name: "UnboundMethod", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[] },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

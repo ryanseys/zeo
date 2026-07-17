@@ -18,6 +18,10 @@ indexmap = "2"
 regex = "1"
 spinel-fiber = { path = "../spinel-fiber" }
 may = "0.3"
+# Ident concatenation in `builtin_methods!` so each method table also emits a
+# companion `<lookup>_names()` slice (the reflection surface for
+# `instance_methods`/`methods`), keeping the names derived from the same rows.
+paste = "1"
 # The numeric tower (Phase 17.1): arbitrary-precision Integer. num-bigint
 # over malachite (LGPL) / ibig (unmaintained); pure Rust, MIT/Apache, and
 # BigInt's bitwise ops already implement Ruby's infinite-two's-complement

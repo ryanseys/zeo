@@ -40,6 +40,11 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     })
 }
 
+/// Reflection companion to `lookup` (hand-written table).
+pub fn lookup_names() -> &'static [&'static str] {
+    &["resume", "alive?"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

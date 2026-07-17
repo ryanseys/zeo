@@ -14,6 +14,18 @@
 use crate::builtins::{arity, block_or_enum, builtin_methods, need_block};
 use crate::{RubyValue, Signal, Symbol};
 
+/// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
+fn syms_to_array(names: Vec<Symbol>) -> RubyValue {
+    RubyValue::Array(crate::array_new(names.into_iter().map(RubyValue::Symbol).collect()))
+}
+
+/// Order-preserving dedup for a combined symbol list (each of the two source
+/// lists is already internally deduped; this merges them).
+fn dedup_syms(names: Vec<Symbol>) -> Vec<Symbol> {
+    let mut seen = std::collections::HashSet::new();
+    names.into_iter().filter(|s| seen.insert(*s)).collect()
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -204,12 +216,50 @@ builtin_methods! {
             .any(|v| matches!(v, RubyValue::Symbol(s) if *s == sym));
         Ok(RubyValue::Bool(found))
     }
-    // Per-object singleton methods are out of scope for this runtime's value
-    // model, so every receiver reports an empty list (the honest answer for
-    // the immutable value types; user objects define no per-object methods).
-    "singleton_methods" => fn singleton_methods_m(_recv, args, _block) {
+    // `obj.methods` -- public+protected names callable on the receiver: its
+    // class's instance methods across the ancestry, plus (for a class/module
+    // receiver) that class's own `def self.` methods. A builtin's list is a
+    // subset of CRuby's (this runtime implements a subset), so callers assert
+    // membership; a plain user object's list is exact.
+    "methods" | "public_methods" => fn methods_m(recv, args, _block) {
         arity!(args, 0..=1);
-        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+        let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+        let mut names = Vec::new();
+        if let RubyValue::Class(cid) = recv {
+            names.extend(crate::dispatch::class_method_names(*cid));
+        }
+        names.extend(crate::dispatch::instance_method_names(
+            recv.class_id(),
+            crate::dispatch::MethodVisibility::Public,
+            inherit,
+        ));
+        Ok(syms_to_array(dedup_syms(names)))
+    }
+    "private_methods" => fn private_methods_m(recv, args, _block) {
+        arity!(args, 0..=1);
+        let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+        let names = crate::dispatch::instance_method_names(
+            recv.class_id(),
+            crate::dispatch::MethodVisibility::Private,
+            inherit,
+        );
+        Ok(syms_to_array(names))
+    }
+    // No separate protected tracking in this runtime (documented) -- empty.
+    "protected_methods" => fn protected_methods_m(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Ok(syms_to_array(Vec::new()))
+    }
+    // A class/module receiver's own singleton methods are its `def self.`
+    // methods; other receivers have no per-object singletons in this runtime's
+    // value model, so they report an empty list.
+    "singleton_methods" => fn singleton_methods_m(recv, args, _block) {
+        arity!(args, 0..=1);
+        let names = match recv {
+            RubyValue::Class(cid) => crate::dispatch::class_method_names(*cid),
+            _ => Vec::new(),
+        };
+        Ok(syms_to_array(names))
     }
     // `Object#display([port])` -- writes `self.to_s` (no newline) to stdout
     // and answers nil. The optional port argument is accepted but ignored

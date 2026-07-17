@@ -16,6 +16,17 @@ fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     }
 }
 
+/// The optional `inherit` boolean of `instance_methods`/`methods` (default
+/// true) -- only an explicit `false`/`nil` narrows to own methods.
+fn inherit_flag(args: &[RubyValue]) -> bool {
+    !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
+}
+
+/// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
+fn syms_to_array(names: Vec<crate::Symbol>) -> RubyValue {
+    RubyValue::Array(crate::array_new(names.into_iter().map(RubyValue::Symbol).collect()))
+}
+
 builtin_methods! {
     pub(crate) fn lookup_module;
 
@@ -150,6 +161,40 @@ builtin_methods! {
             crate::Symbol::intern(&name),
             false,
         )))
+    }
+    // `instance_methods(inherit=true)` -- public+protected names of the
+    // module/class (and its ancestors unless `inherit` is false). A builtin's
+    // list is a subset of CRuby's (this runtime implements a subset), so
+    // callers assert membership; a user class's own list is exact.
+    "instance_methods" | "public_instance_methods" => fn instance_methods(recv, args, _block) {
+        arity!(args, 0..=1);
+        let names = crate::dispatch::instance_method_names(
+            recv_cid(recv),
+            crate::dispatch::MethodVisibility::Public,
+            inherit_flag(args),
+        );
+        Ok(syms_to_array(names))
+    }
+    "private_instance_methods" => fn private_instance_methods(recv, args, _block) {
+        arity!(args, 0..=1);
+        let names = crate::dispatch::instance_method_names(
+            recv_cid(recv),
+            crate::dispatch::MethodVisibility::Private,
+            inherit_flag(args),
+        );
+        Ok(syms_to_array(names))
+    }
+    // This runtime tracks no separate `protected` visibility, so the protected
+    // set is always empty (documented divergence; protected methods surface as
+    // public in `instance_methods`).
+    "protected_instance_methods" => fn protected_instance_methods(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Ok(syms_to_array(Vec::new()))
+    }
+    // `Module#instance_method(:name)` -> an UnboundMethod for the module/class.
+    "instance_method" => fn instance_method(recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::method_obj::unbound_method_new(recv_cid(recv), &args[0])
     }
     // `Module#class_variable_get/set/defined?` over the linearized ancestry
     // (a `@@x` is owned by the nearest ancestor that first assigned it --

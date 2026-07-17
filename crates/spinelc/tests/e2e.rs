@@ -4516,6 +4516,121 @@ fn hash_keyed_by_an_array_hashes_structurally_not_by_identity() {
 }
 
 #[test]
+fn method_arity_parameters_and_unbound_bind() {
+    let result = run_ruby(
+        r#"
+        class C
+          def a(x, y); x + y; end
+          def b(x, y=1); end
+          def d(x, y:, z: 2); end
+          def f(x, *r, z, k:, **o, &blk); end
+          def g; end
+        end
+        o = C.new
+        puts o.method(:a).arity                 # 2
+        puts o.method(:a).parameters.inspect     # [[:req, :x], [:req, :y]]
+        puts o.method(:b).arity                 # -2
+        puts o.method(:d).arity                 # 2
+        puts o.method(:d).parameters.inspect     # [[:req,:x],[:keyreq,:y],[:key,:z]]
+        puts o.method(:f).arity                 # -4
+        puts o.method(:g).arity                 # 0
+        um = C.instance_method(:a)
+        puts um.class                           # UnboundMethod
+        puts um.name                            # a
+        puts um.arity                           # 2
+        puts um.bind(o).call(2, 3)              # 5
+        puts um.bind_call(o, 4, 5)              # 9
+        puts o.method(:a).unbind.class          # UnboundMethod
+        begin
+          um.bind(42)
+        rescue TypeError
+          puts "typeerror"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2\n[[:req, :x], [:req, :y]]\n-2\n2\n[[:req, :x], [:keyreq, :y], [:key, :z]]\n-4\n0\nUnboundMethod\na\n2\n5\n9\nUnboundMethod\ntypeerror\n"
+    );
+}
+
+#[test]
+fn methods_and_instance_methods_reflect_names_with_visibility_and_inheritance() {
+    let result = run_ruby(
+        r#"
+        module M
+          def helper; end
+        end
+        class Base
+          def pub; end
+          private
+          def priv; end
+        end
+        class Sub < Base
+          include M
+          def own; end
+          def pub; end          # override
+          def self.factory; end
+        end
+        puts Sub.instance_methods(false).sort.inspect   # [:own, :pub]
+        puts Sub.instance_methods.include?(:helper)      # true (module)
+        puts Sub.instance_methods.include?(:pub)         # true
+        puts Sub.instance_methods.include?(:priv)        # false (private)
+        puts Base.private_instance_methods(false).inspect # [:priv]
+        puts M.instance_methods.inspect                  # [:helper]
+        puts Sub.singleton_methods.inspect               # [:factory]
+        o = Sub.new
+        puts o.methods.include?(:own)                    # true
+        puts o.methods.include?(:factory)                # false
+        puts o.private_methods.include?(:priv)           # true
+        puts "s".methods.include?(:upcase)               # true
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:own, :pub]\ntrue\ntrue\nfalse\n[:priv]\n[:helper]\n[:factory]\ntrue\nfalse\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn hash_compare_by_identity_keys_by_object_not_value() {
+    let result = run_ruby(
+        r#"
+        h = {}
+        puts h.compare_by_identity?          # false
+        puts h.compare_by_identity.equal?(h) # true (returns self)
+        puts h.compare_by_identity?          # true
+        a = "x" + ""
+        b = "x" + ""
+        h[a] = 1
+        h[b] = 2
+        puts h.size                          # 2 (distinct identities)
+        puts h[a]                            # 1
+        p h["x" + ""]                        # nil (fresh object)
+        # immediates still key by value
+        hi = {}.compare_by_identity
+        hi[1] = "one"; hi[1] = "ONE"
+        hi[:s] = 9; hi[:s] = 10
+        puts hi.size                         # 2 (1 and :s)
+        puts hi[1]                           # ONE
+        # frozen raises
+        begin
+          {}.freeze.compare_by_identity
+        rescue => e
+          puts e.class                       # FrozenError
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "false\ntrue\ntrue\n2\n1\nnil\n2\nONE\nFrozenError\n"
+    );
+}
+
+#[test]
 fn is_a_and_kind_of_against_a_statically_known_int_local() {
     let result = run_ruby(
         r#"
@@ -6770,6 +6885,41 @@ fn queue_producer_consumer_rendezvous_with_close() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "3\n");
+}
+
+#[test]
+fn condition_variable_wait_signal_and_broadcast_coordinate_threads() {
+    // signal/broadcast return self; wait releases the mutex, parks
+    // (coroutine-yielding) until broadcast, then re-acquires. The handoff is
+    // deterministic via the shared `ready` flag under the mutex.
+    let result = run_ruby(
+        r#"
+        cv = ConditionVariable.new
+        puts cv.signal.equal?(cv)
+        puts cv.broadcast.equal?(cv)
+        # a lone wait with a timeout returns (does not hang)
+        m0 = Mutex.new
+        m0.synchronize { cv.wait(m0, 0.01) }
+        puts "timeout-ok"
+
+        mutex = Mutex.new
+        ready = false
+        worker = Thread.new do
+          mutex.synchronize do
+            cv.wait(mutex) until ready
+          end
+          puts "woke"
+        end
+        mutex.synchronize do
+          ready = true
+          cv.broadcast
+        end
+        worker.join
+        puts "joined"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\ntimeout-ok\nwoke\njoined\n");
 }
 
 #[test]

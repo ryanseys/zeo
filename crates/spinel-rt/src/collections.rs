@@ -117,7 +117,41 @@ pub enum HashKey {
     Complex(Box<(HashKey, HashKey)>),
 }
 
+/// The structural projection (the default, `eql?`/`hash`-based). Every
+/// context-free caller -- `Object#hash`, symbol-key rebuild, `Lazy#uniq` --
+/// wants this, never identity.
 pub(crate) fn hash_key(v: &RubyValue) -> HashKey {
+    hash_key_in(v, false)
+}
+
+/// Projects a value to its `IndexMap` key. `by_identity` (a hash's
+/// `compare_by_identity` flag) makes the heap value-like kinds -- `Str`,
+/// `Array`, `Range`, `BigInt`, `Rational`, `Complex`, and any `Object`
+/// (ignoring a user `#hash`) -- key by object identity instead of structure.
+/// Immediates (`Nil`/`Bool`/`Int`/`Float`/`Symbol`/`Class`) have identity ==
+/// value in Ruby, so they stay structural; the reference kinds (`Hash`/`Proc`/
+/// `Regexp`/...) already key by identity in the structural path below.
+pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
+    if by_identity {
+        let ident = match v {
+            RubyValue::Str(s) => Some(Arc::as_ptr(s) as *const () as usize),
+            RubyValue::Array(a) => Some(Arc::as_ptr(a) as *const () as usize),
+            RubyValue::BigInt(b) => Some(Arc::as_ptr(b) as *const () as usize),
+            RubyValue::Rational(r) => Some(Arc::as_ptr(r) as *const () as usize),
+            RubyValue::Complex(c) => Some(Arc::as_ptr(c) as *const () as usize),
+            RubyValue::Object(o) => Some(Arc::as_ptr(o) as *const () as usize),
+            // `Range` is a value type (inline `Box`es), not an `Arc`-shared
+            // object, so it has no stable shared identity: two distinct
+            // `Range` values key apart (matching `(1..2).equal?(1..2)` being
+            // false), but a reused `Range` binding will NOT alias itself here.
+            // Rare enough to accept; documented.
+            RubyValue::Range(..) => Some(v as *const RubyValue as usize),
+            _ => None,
+        };
+        if let Some(p) = ident {
+            return HashKey::Identity(p);
+        }
+    }
     match v {
         RubyValue::Nil => HashKey::Nil,
         RubyValue::Bool(b) => HashKey::Bool(*b),
@@ -208,11 +242,19 @@ pub struct RHashData {
     map: IndexMap<HashKey, (RubyValue, RubyValue)>,
     pub default: RubyValue,
     pub default_proc: Option<RubyValue>,
+    /// `Hash#compare_by_identity`: when set, keys project by object identity
+    /// (`equal?`/`object_id`) instead of structure -- see `hash_key_in`.
+    pub compare_by_identity: bool,
 }
 
 impl RHashData {
     fn new() -> RHashData {
-        RHashData { map: IndexMap::new(), default: RubyValue::Nil, default_proc: None }
+        RHashData {
+            map: IndexMap::new(),
+            default: RubyValue::Nil,
+            default_proc: None,
+            compare_by_identity: false,
+        }
     }
 }
 
@@ -345,7 +387,12 @@ pub fn hash_new(pairs: Vec<(RubyValue, RubyValue)>) -> RHash {
 /// default block (`Hash.new { |h, k| ... }`) -- the constructor behind
 /// `Hash.new`'s two argument shapes.
 pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>) -> RHash {
-    Arc::new(Freezable::new(RHashData { map: IndexMap::new(), default, default_proc }))
+    Arc::new(Freezable::new(RHashData {
+        map: IndexMap::new(),
+        default,
+        default_proc,
+        compare_by_identity: false,
+    }))
 }
 
 /// A plain lookup: the stored value, or `nil` for a missing key -- WITHOUT
@@ -354,7 +401,9 @@ pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>
 /// hash's default in real Ruby. The default-triggering `Hash#[]` is
 /// `hash_index`.
 pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
-    h.lock().get(&hash_key(key)).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
+    let g = h.lock();
+    let k = hash_key_in(key, g.compare_by_identity);
+    g.get(&k).map(|(_, v)| v.clone()).unwrap_or(RubyValue::Nil)
 }
 
 /// `Hash#[]`: the stored value, or the per-instance default on a miss -- the
@@ -363,8 +412,12 @@ pub fn hash_get(h: &RHash, key: &RubyValue) -> RubyValue {
 /// lock is released before the proc runs, since the proc commonly writes back
 /// into the same hash (`Hash.new { |h, k| h[k] = ... }`).
 pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal> {
-    if let Some((_, v)) = h.lock().get(&hash_key(key)) {
-        return Ok(v.clone());
+    {
+        let g = h.lock();
+        let k = hash_key_in(key, g.compare_by_identity);
+        if let Some((_, v)) = g.get(&k) {
+            return Ok(v.clone());
+        }
     }
     let (default, proc) = {
         let g = h.lock();
@@ -386,7 +439,9 @@ pub fn hash_index(h: &RHash, key: &RubyValue) -> Result<RubyValue, crate::Signal
 /// the end -- `IndexMap::insert`'s own documented behavior for a
 /// re-inserted, already-present key.
 pub fn hash_set(h: &RHash, key: RubyValue, value: RubyValue) -> RubyValue {
-    h.lock().insert(hash_key(&key), (key, value.clone()));
+    let mut g = h.lock();
+    let k = hash_key_in(&key, g.compare_by_identity);
+    g.insert(k, (key, value.clone()));
     value
 }
 
@@ -400,7 +455,9 @@ pub fn hash_len(h: &RHash) -> i64 {
 /// PATTERN matching (`case/in`): `in {a: nil}` must fail against `{}`, which
 /// a `hash_get(...).is_nil()`-based check alone couldn't distinguish.
 pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
-    h.lock().contains_key(&hash_key(key))
+    let g = h.lock();
+    let k = hash_key_in(key, g.compare_by_identity);
+    g.contains_key(&k)
 }
 
 /// `Hash#delete`: removes the entry, returning its value (`nil` when the
@@ -408,10 +465,30 @@ pub fn hash_has_key(h: &RHash, key: &RubyValue) -> bool {
 /// `shift_remove` (not plain `swap_remove`) preserves the remaining
 /// entries' insertion order, Ruby's own guarantee.
 pub fn hash_delete(h: &RHash, key: &RubyValue) -> RubyValue {
-    h.lock()
-        .shift_remove(&hash_key(key))
-        .map(|(_, v)| v)
-        .unwrap_or(RubyValue::Nil)
+    let mut g = h.lock();
+    let k = hash_key_in(key, g.compare_by_identity);
+    g.shift_remove(&k).map(|(_, v)| v).unwrap_or(RubyValue::Nil)
+}
+
+/// `Hash#compare_by_identity`: switch the hash to identity keying and
+/// re-project every existing entry's stored key by identity, so keys inserted
+/// under the old structural regime remain reachable by their own object (and
+/// distinct-but-equal keys no longer collide). Returns nothing -- the caller
+/// row returns `self`. The frozen check is the caller's (only codegen/the row
+/// can render the `FrozenError` receiver).
+pub fn hash_enable_compare_by_identity(h: &RHash) {
+    let mut g = h.lock();
+    if g.compare_by_identity {
+        return;
+    }
+    g.compare_by_identity = true;
+    // Rebuild the map keyed by identity, preserving insertion order.
+    let old: Vec<(RubyValue, RubyValue)> = g.map.values().cloned().collect();
+    g.map.clear();
+    for (k, v) in old {
+        let ik = hash_key_in(&k, true);
+        g.map.insert(ik, (k, v));
+    }
 }
 
 /// `Hash#keys` -- the ORIGINAL key values, in insertion order.
@@ -451,7 +528,12 @@ pub fn hash_except_keys(h: &RHash, keys: &[&str]) -> RHash {
         .filter(|(k, _)| !excluded.contains(k))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    Arc::new(Freezable::new(RHashData { map: pairs, default: RubyValue::Nil, default_proc: None }))
+    Arc::new(Freezable::new(RHashData {
+        map: pairs,
+        default: RubyValue::Nil,
+        default_proc: None,
+        compare_by_identity: false,
+    }))
 }
 
 pub fn string_new(s: String) -> RStr {
@@ -701,5 +783,86 @@ mod multi_assign_tests {
         // Different content, different object.
         let c = intern_frozen(StrBuf::from_utf8("bye".to_string()));
         assert!(!Arc::ptr_eq(&a, &c));
+    }
+}
+
+#[cfg(test)]
+mod compare_by_identity_tests {
+    use super::*;
+
+    fn s(text: &str) -> RubyValue {
+        RubyValue::Str(string_new(text.to_string()))
+    }
+
+    fn is_int(v: &RubyValue, n: i64) -> bool {
+        matches!(v, RubyValue::Int(i) if *i == n)
+    }
+
+    /// Immediates (Int/Symbol/nil/bool/Float) key by VALUE even under
+    /// identity mode -- identity == value for them in Ruby.
+    #[test]
+    fn immediates_stay_structural_under_identity() {
+        for v in [
+            RubyValue::Int(7),
+            RubyValue::Symbol(crate::Symbol::intern("x")),
+            RubyValue::Nil,
+            RubyValue::Bool(true),
+            RubyValue::Float(1.5),
+        ] {
+            assert!(hash_key_in(&v, true) == hash_key_in(&v, false));
+        }
+    }
+
+    /// Two equal-but-distinct Strings collapse to one structural key but stay
+    /// two distinct identity keys.
+    #[test]
+    fn equal_strings_split_under_identity() {
+        let a = s("hi");
+        let b = s("hi");
+        assert!(hash_key_in(&a, false) == hash_key_in(&b, false));
+        assert!(hash_key_in(&a, true) != hash_key_in(&b, true));
+        // The SAME object keys to itself either way.
+        assert!(hash_key_in(&a, true) == hash_key_in(&a, true));
+    }
+
+    /// `Hash#[]`/`#[]=`/`#delete`/`#key?` honor the flag once set, and
+    /// enabling it re-projects pre-existing entries so the stored object
+    /// still hits.
+    #[test]
+    fn ops_honor_identity_and_reprojection() {
+        let h = hash_new(vec![]);
+        let a = s("k");
+        let b = s("k");
+        hash_set(&h, a.clone(), RubyValue::Int(1));
+        hash_set(&h, b.clone(), RubyValue::Int(2));
+        // Structural: same key, size 1, last write wins.
+        assert_eq!(hash_len(&h), 1);
+
+        let h2 = hash_new(vec![]);
+        hash_set(&h2, a.clone(), RubyValue::Int(1));
+        hash_enable_compare_by_identity(&h2);
+        // The very object inserted before the switch still resolves.
+        assert!(is_int(&hash_get(&h2, &a), 1));
+        // A different, equal String misses.
+        assert!(matches!(hash_get(&h2, &b), RubyValue::Nil));
+        assert!(hash_has_key(&h2, &a));
+        assert!(!hash_has_key(&h2, &b));
+        // Two distinct equal Strings now coexist.
+        hash_set(&h2, b.clone(), RubyValue::Int(2));
+        assert_eq!(hash_len(&h2), 2);
+        assert!(is_int(&hash_delete(&h2, &a), 1));
+        assert_eq!(hash_len(&h2), 1);
+    }
+
+    /// Enabling identity is idempotent and never loses entries.
+    #[test]
+    fn enable_is_idempotent() {
+        let h = hash_new(vec![]);
+        hash_set(&h, s("a"), RubyValue::Int(1));
+        hash_enable_compare_by_identity(&h);
+        let n = hash_len(&h);
+        hash_enable_compare_by_identity(&h);
+        assert_eq!(hash_len(&h), n);
+        assert!(h.lock().compare_by_identity);
     }
 }

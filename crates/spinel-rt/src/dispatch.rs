@@ -470,6 +470,13 @@ struct ClassEntry {
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
     class_methods: HashMap<Symbol, ValueMethodFn>,
+    /// The names DEFINED DIRECTLY on this class (not materialized from an
+    /// ancestor) -- what `instance_methods(false)` needs, since `methods`
+    /// above holds the flattened, fully-materialized set (dispatch's own
+    /// requirement -- see `ancestors`' docs). Populated by codegen's
+    /// `mark_own` beside `mark_private`. Empty means "unknown/none recorded",
+    /// in which case reflection falls back to the materialized set.
+    own_methods: HashSet<Symbol>,
     constructor: Option<ConstructorFn>,
 }
 
@@ -506,9 +513,19 @@ impl ClassRegistry {
                 private_methods: HashSet::new(),
                 undefined_methods: HashSet::new(),
                 class_methods: HashMap::new(),
+                own_methods: HashSet::new(),
                 constructor,
             },
         );
+    }
+
+    /// Records `name` as DEFINED DIRECTLY on `id` (not inherited) -- emitted by
+    /// codegen for each of the class's own `def`s, beside `mark_private`. See
+    /// `ClassEntry::own_methods`.
+    pub fn mark_own(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.own_methods.insert(name);
+        }
     }
 
     /// Registers a builtin-reopen method (Phase 16.3) -- called from
@@ -583,6 +600,54 @@ impl ClassRegistry {
 
     fn lookup(&self, id: ClassId, name: Symbol) -> Option<MethodFn> {
         self.entries.get(&id.0)?.methods.get(&name).copied()
+    }
+
+    /// This class's registered instance-method names, each tagged private/not,
+    /// excluding `undef`'d names -- the registry half of `instance_methods`/
+    /// `methods` reflection. `own_only` narrows the user-method set to those
+    /// DEFINED DIRECTLY on the class (for `instance_methods(false)`); builtin
+    /// reopens (`value_methods`) are always own. When `own_only` is set but the
+    /// class recorded no own-set (e.g. a builtin with no reopens), nothing is
+    /// dropped only because there is nothing to drop.
+    fn own_instance_method_names(&self, id: ClassId, own_only: bool) -> Vec<(Symbol, bool)> {
+        let Some(e) = self.entries.get(&id.0) else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        let consider = |name: Symbol, seen: &mut HashSet<Symbol>, out: &mut Vec<(Symbol, bool)>| {
+            if e.undefined_methods.contains(&name) || !seen.insert(name) {
+                return;
+            }
+            out.push((name, e.private_methods.contains(&name)));
+        };
+        // `own_methods` is the authoritative "defined directly here" set --
+        // and the ONLY reliable source for a MODULE, whose instance methods
+        // live on its includers rather than its own `methods` map.
+        for &name in &e.own_methods {
+            consider(name, &mut seen, &mut out);
+        }
+        // Builtin-reopen methods are always own to the reopened class.
+        for (_, name) in e.value_methods.keys() {
+            consider(*name, &mut seen, &mut out);
+        }
+        if !own_only {
+            // The materialized set adds the inherited methods flattened onto a
+            // concrete class at compile time.
+            for name in e.methods.keys().copied() {
+                consider(name, &mut seen, &mut out);
+            }
+        }
+        out
+    }
+
+    /// This class's OWN `def self.x` names -- the registry half of
+    /// `SomeClass.singleton_methods`/`.methods`.
+    fn own_class_method_names(&self, id: ClassId) -> Vec<Symbol> {
+        self.entries
+            .get(&id.0)
+            .map(|e| e.class_methods.keys().copied().collect())
+            .unwrap_or_default()
     }
 
     /// The `(caller's box, name)` probe with the root fallback -- CRuby's
@@ -816,6 +881,90 @@ pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
         }
     }
     crate::builtins::fallback_ancestors(id)
+}
+
+/// Visibility filter for the method-name reflection below. This runtime
+/// tracks only private-vs-not (no separate protected set), so `Public` means
+/// "public or protected" -- CRuby folds protected into `instance_methods`'s
+/// result anyway, and a dedicated `protected_*` query answers empty here.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MethodVisibility {
+    Public,
+    Private,
+}
+
+/// Kernel's C-implemented private functions -- present in the runtime's
+/// `kernel::lookup` table (reachable via implicit self / `send`) but INVISIBLE
+/// to reflection and `respond_to?`, exactly as in CRuby. Mirrors the
+/// special-case in `responds_to`.
+fn is_hidden_kernel_private(name: &str) -> bool {
+    matches!(name, "puts" | "print" | "p" | "pp" | "warn")
+}
+
+/// The instance-method names of `class` and -- when `inherit` -- its
+/// ancestors, as interned Symbols in MRO order, deduped (a nearer class's
+/// definition shadows a farther one). Combines the registry (user methods +
+/// builtin reopens) with the builtin method tables and the
+/// Enumerable/Comparable/Math name sets. `vis` selects public(+protected) or
+/// private-only.
+///
+/// The builtin tables are a SUBSET of CRuby's (this runtime implements a
+/// subset of each class's methods), so a builtin class's list won't equal
+/// CRuby's exactly -- reflection callers assert membership, not equality. A
+/// user class's own list (`inherit=false`) is exact.
+pub fn instance_method_names(class: ClassId, vis: MethodVisibility, inherit: bool) -> Vec<Symbol> {
+    let chain: Vec<ClassId> =
+        if inherit { ancestors_of_value(class).to_vec() } else { vec![class] };
+    let reg = REGISTRY.get();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for anc in chain {
+        if let Some(r) = reg {
+            // `inherit=false` restricts the user-method set to this class's own
+            // definitions (materialization otherwise flattens inherited in).
+            for (name, is_private) in r.own_instance_method_names(anc, !inherit) {
+                let want = if vis == MethodVisibility::Private { is_private } else { !is_private };
+                if want && seen.insert(name) {
+                    out.push(name);
+                }
+            }
+        }
+        // Builtin-table methods are all public; skip them for a private query.
+        if vis == MethodVisibility::Public {
+            for &n in crate::builtins::class_table_names(anc) {
+                if anc == KERNEL_CLASS && is_hidden_kernel_private(n) {
+                    continue;
+                }
+                let sym = Symbol::intern(n);
+                if seen.insert(sym) {
+                    out.push(sym);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The CLASS-method (`def self.x` + builtin class-method) names of `class`,
+/// deduped -- backs `SomeClass.singleton_methods` and the class-method half
+/// of `SomeClass.methods`.
+pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    if let Some(r) = REGISTRY.get() {
+        for name in r.own_class_method_names(class) {
+            if seen.insert(name) {
+                out.push(name);
+            }
+        }
+    }
+    for &n in crate::builtins::class_method_table_names(class) {
+        let sym = Symbol::intern(n);
+        if seen.insert(sym) {
+            out.push(sym);
+        }
+    }
+    out
 }
 
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
