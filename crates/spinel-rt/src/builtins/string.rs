@@ -607,6 +607,26 @@ builtin_methods! {
             .map_err(|e| e.into_signal())?;
         Ok(RubyValue::Str(crate::string_from_bytes(out, s.encoding())))
     }
+    // `scrub!` scrubs in place and ALWAYS answers the receiver (unlike the
+    // other bang mutators, which answer nil when nothing changed).
+    "scrub!" => fn scrub_bang(recv, args, _block) {
+        arity!(args, 0..=1);
+        let scrubbed = crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), args, None)?;
+        let s = recv_str!(recv);
+        if s.is_frozen() {
+            return Err(crate::dispatch::raise_error(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+            ));
+        }
+        if let RubyValue::Str(new) = &scrubbed {
+            let g = new.lock();
+            let (bytes, enc) = (g.bytes().to_vec(), g.encoding());
+            drop(g);
+            s.lock().replace_bytes(bytes, enc);
+        }
+        Ok(recv.clone())
+    }
     "include?" => fn include_p(recv, args, _block) {
         arity!(args, 1);
         let needle = arg_str!(args, 0);
@@ -1275,6 +1295,21 @@ builtin_methods! {
             .collect();
         Ok(str_value(out))
     }
+    // `tr_s(from, to)` -- like `tr`, but each RUN of a translated character
+    // collapses to one (`"hello".tr_s("l","r") == "hero"`). Delegating to
+    // `tr` then `squeeze(to)` reproduces this: only the `to` characters are
+    // squeezed, and an empty `to` (a delete) squeezes nothing.
+    "tr_s" => fn tr_s(recv, args, _block) {
+        arity!(args, 2);
+        let translated = crate::dispatch::send_value(recv, crate::Symbol::intern("tr"), args, None)?;
+        crate::dispatch::send_value(
+            &translated,
+            crate::Symbol::intern("squeeze"),
+            std::slice::from_ref(&args[1]),
+            None,
+        )
+    }
+    "tr_s!" => fn tr_s_bang(recv, args, block) { str_bang_via(recv, "tr_s", args, block) }
     // `delete`/`count` take ONE OR MORE char-set specs; a char is selected
     // only when it satisfies EVERY spec (CRuby's intersection rule), each of
     // which may itself be negated with a leading `^` or use `a-z` ranges.

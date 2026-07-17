@@ -15332,6 +15332,122 @@ fn string_upto_and_byte_indexing_methods() {
 }
 
 #[test]
+fn enumerable_zip_compact_cycle_chain_over_range_and_hash() {
+    let result = run_ruby(
+        r#"
+        p (1..3).zip([4, 5, 6], [7, 8, 9])
+        p (1..5).compact
+        p (1..3).chain([4, 5]).to_a
+        seen = []
+        (1..3).cycle(2) { |x| seen << x }
+        p seen
+        p({ a: 1, b: 2 }.zip([10, 20]))
+        p({ a: 1 }.rehash)
+        p "hello".tr_s("l", "r")
+        p "aabbcc".tr_s("a-c", "x")
+        s = "hello"
+        p s.tr_s!("l", "r")
+        p s
+        p "clean".scrub!
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[1, 4, 7], [2, 5, 8], [3, 6, 9]]\n[1, 2, 3, 4, 5]\n[1, 2, 3, 4, 5]\n[1, 2, 3, 1, 2, 3]\n[[[:a, 1], 10], [[:b, 2], 20]]\n{a: 1}\n\"hero\"\n\"x\"\n\"hero\"\n\"hero\"\n\"clean\"\n"
+    );
+}
+
+#[test]
+fn numeric_tower_exactness() {
+    let result = run_ruby(
+        r#"
+        p 42.size
+        p (2**64).size
+        p (2**64 - 1).size
+        p (2**128).size
+        p 0.3.rationalize
+        p 2.5.rationalize
+        p 3.14159.rationalize
+        p 1.333.rationalize(0.01)
+        p Rational(2.5)
+        p Rational(1.5, 0.5)
+        begin
+          Complex(nil)
+        rescue TypeError => e
+          puts e.message
+        end
+        p 2 ** Complex(0, 1)
+        p Complex(6, 0).to_r
+        p Complex(3, 4).numerator
+        p 7.div(Rational(2))
+        p 10.div(Rational(3, 2))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "8\n9\n8\n17\n(3/10)\n(5/2)\n(314159/100000)\n(4/3)\n(5/2)\n(3/1)\ncan't convert nil into Complex\n(0.7692389013639721+0.6389612763136348i)\n(6/1)\n(3+4i)\n3\n6\n"
+    );
+}
+
+#[test]
+fn pack_float_native_and_encoding_directives() {
+    let result = run_ruby(
+        r#"
+        p [1.5].pack("D").bytes
+        p [1.5].pack("G").bytes
+        p [3.14].pack("d").unpack("d")
+        p [1].pack("l!").bytesize
+        p [1].pack("i").bytesize
+        p [1].pack("j").bytesize
+        p ["hello world"].pack("M")
+        p ["hi there folks"].pack("u").unpack("u")
+        p(["hi there folks"].pack("u").unpack("u") == ["hi there folks"])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[0, 0, 0, 0, 0, 0, 248, 63]\n[63, 248, 0, 0, 0, 0, 0, 0]\n[3.14]\n8\n4\n8\n\"hello world=\\n\"\n[\"hi there folks\"]\ntrue\n"
+    );
+}
+
+#[test]
+fn universal_reflection_and_to_set() {
+    let result = run_ruby(
+        r#"
+        class Point
+          def initialize(x, y)
+            @x = x
+            @y = y
+          end
+        end
+        pt = Point.new(3, 4)
+        p pt.instance_variables
+        p pt.instance_variable_set(:@x, 99)
+        p pt.instance_variable_get(:@x)
+        p pt.instance_variable_defined?(:@y)
+        p pt.instance_variable_defined?(:@z)
+        p 42.instance_variables
+        p 42.singleton_methods
+        p 42.respond_to?(:instance_variable_get)
+        p 42.send(:instance_variables)
+        p [1, 2, 2, 3].to_set
+        p (1..3).to_set
+        p({ a: 1, b: 2 }.to_set.size)
+        p(/x/.timeout)
+        p Regexp.timeout
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:@x, :@y]\n99\n99\ntrue\nfalse\n[]\n[]\ntrue\n[]\nSet[1, 2, 3]\nSet[1, 2, 3]\n2\nnil\nnil\n"
+    );
+}
+
+#[test]
 fn module_ordering_operators_and_subclasses() {
     let result = run_ruby(
         r#"

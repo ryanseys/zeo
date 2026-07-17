@@ -115,6 +115,11 @@ pub(crate) fn enumerable_send(
         "minmax_by" => minmax_by(recv, args, block),
         "each_entry" => each_entry(recv, args, block),
         "chunk" => chunk(recv, args, block),
+        "zip" => zip(recv, args, block),
+        "compact" => compact(recv, args),
+        "cycle" => cycle(recv, args, block),
+        "chain" => chain(recv, args),
+        "to_set" => to_set(recv, args),
         "lazy" => Ok(crate::builtins::lazy::make_lazy(recv)),
         _ => return None,
     })
@@ -149,7 +154,8 @@ pub(crate) fn responds(name: &str) -> bool {
             | "tally" | "uniq" | "to_h" | "reverse_each"
             | "grep" | "grep_v"
             | "chunk_while" | "slice_when" | "slice_before" | "slice_after"
-            | "minmax_by" | "each_entry" | "chunk" | "lazy"
+            | "minmax_by" | "each_entry" | "chunk" | "lazy" | "zip"
+            | "compact" | "cycle" | "chain" | "to_set"
     )
 }
 
@@ -243,6 +249,143 @@ fn to_a(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     })?;
     let items = std::mem::take(&mut *out.lock());
     Ok(RubyValue::Array(array_new(items)))
+}
+
+/// `zip(*others)` -- pairs each element of the receiver with the same-index
+/// element of every `other` (nil past an `other`'s end), returning the Array
+/// of tuples, or yielding each tuple to a block and answering nil.
+fn zip(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let RubyValue::Array(base) = to_a(recv, &[])? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let base = base.lock().clone();
+    let mut others: Vec<Vec<RubyValue>> = Vec::with_capacity(args.len());
+    for other in args {
+        let arr = match other {
+            RubyValue::Array(a) => a.lock().clone(),
+            _ => {
+                let v = send_value(other, crate::Symbol::intern("to_a"), &[], None)?;
+                match v {
+                    RubyValue::Array(a) => a.lock().clone(),
+                    _ => Vec::new(),
+                }
+            }
+        };
+        others.push(arr);
+    }
+    let tuples: Vec<RubyValue> = base
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let mut tuple = Vec::with_capacity(1 + others.len());
+            tuple.push(e.clone());
+            for o in &others {
+                tuple.push(o.get(i).cloned().unwrap_or(RubyValue::Nil));
+            }
+            RubyValue::Array(array_new(tuple))
+        })
+        .collect();
+    if let Some(RubyValue::Proc(p)) = &block {
+        for t in tuples {
+            p.call(&[t])?;
+        }
+        return Ok(RubyValue::Nil);
+    }
+    Ok(RubyValue::Array(array_new(tuples)))
+}
+
+/// `chain(*others)` -- an Enumerator over this collection's elements followed
+/// by each `other`'s (materialized eagerly; the enumerator drives `each`).
+fn chain(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let RubyValue::Array(base) = to_a(recv, &[])? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let mut combined = base.lock().clone();
+    for other in args {
+        let arr = match other {
+            RubyValue::Array(a) => a.lock().clone(),
+            _ => match send_value(other, crate::Symbol::intern("to_a"), &[], None)? {
+                RubyValue::Array(a) => a.lock().clone(),
+                _ => Vec::new(),
+            },
+        };
+        combined.extend(arr);
+    }
+    Ok(crate::builtins::enumerator::enumerator_for(
+        &RubyValue::Array(array_new(combined)),
+        "each",
+        &[],
+    ))
+}
+
+/// `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).
+fn to_set(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    reject_args(args, "to_set", "arguments");
+    let RubyValue::Array(all) = to_a(recv, &[])? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let items = all.lock().clone();
+    Ok(crate::builtins::set::set_from(items))
+}
+
+/// `compact` -- the receiver's elements as an Array with every `nil` dropped.
+fn compact(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    reject_args(args, "compact", "arguments");
+    let RubyValue::Array(all) = to_a(recv, &[])? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let kept: Vec<RubyValue> = all.lock().iter().filter(|e| !e.is_nil()).cloned().collect();
+    Ok(RubyValue::Array(array_new(kept)))
+}
+
+/// `cycle([n]) { ... }` -- yields every element `n` times (forever when `n`
+/// is omitted); a blockless call answers an Enumerator. An empty receiver
+/// (or `n <= 0`) yields nothing and returns nil.
+fn cycle(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let times = match args.first() {
+        None | Some(RubyValue::Nil) => None,
+        Some(RubyValue::Int(n)) => Some(*n),
+        Some(other) => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::class_name_of(other)
+                ),
+            ))
+        }
+    };
+    let p = block_or_enum!(recv, "cycle", args, block);
+    let RubyValue::Array(all) = to_a(recv, &[])? else {
+        unreachable!("to_a always answers an Array")
+    };
+    let items = all.lock().clone();
+    if items.is_empty() {
+        return Ok(RubyValue::Nil);
+    }
+    match times {
+        Some(n) => {
+            for _ in 0..n.max(0) {
+                for e in &items {
+                    p.call(std::slice::from_ref(e))?;
+                }
+            }
+        }
+        None => loop {
+            for e in &items {
+                p.call(std::slice::from_ref(e))?;
+            }
+        },
+    }
+    Ok(RubyValue::Nil)
 }
 
 /// `==`-based membership (`rb_equal`, enum.c:2960) with break-on-hit.

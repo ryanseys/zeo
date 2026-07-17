@@ -83,6 +83,13 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
+    // `#timeout` -- this pattern's per-match timeout; spinel sets none, so
+    // it reports the global default (`nil`, "no timeout").
+    "timeout" => fn timeout_m(recv, args, _block) {
+        arity!(args, 0);
+        let _ = re_of(recv);
+        Ok(RubyValue::Nil)
+    }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
     "options" => fn options_m(recv, args, _block) {
         arity!(args, 0);
@@ -151,6 +158,13 @@ fn escape_regexp_source(s: &str) -> String {
 
 builtin_methods! {
     pub(crate) fn lookup_class;
+
+    // `Regexp.timeout` -- the process-wide default match timeout; spinel
+    // enforces none, so it is always `nil`.
+    "timeout" => fn timeout_c(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Nil)
+    }
 
     // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
     "escape" | "quote" => fn escape_m(_recv, args, _block) {

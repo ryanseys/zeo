@@ -79,7 +79,7 @@ fn empty_set() -> RubyValue {
 }
 
 /// A Set value seeded with `elements` (deduplicated by the insert path).
-fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
+pub(crate) fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
     let s = RSet { hash: crate::hash_new(vec![]), frozen: AtomicBool::new(false) };
     for e in elements {
         s.insert(e);

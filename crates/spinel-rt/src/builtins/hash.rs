@@ -504,6 +504,13 @@ builtin_methods! {
         );
         Ok(RubyValue::Proc(p))
     }
+    // `rehash` recomputes key digests after in-place key mutation. Spinel
+    // hashes digest each key on lookup, so nothing is cached to rebuild --
+    // it is a self-returning no-op here.
+    "rehash" => fn rehash(recv, args, _block) {
+        arity!(args, 0);
+        Ok(recv.clone())
+    }
     "clear" => fn clear(recv, args, _block) {
         arity!(args, 0);
         recv_hash!(recv).lock().clear();

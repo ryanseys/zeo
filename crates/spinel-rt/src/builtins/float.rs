@@ -129,6 +129,13 @@ builtin_methods! {
         arity!(args, 0);
         float_to_rational(recv_f64(recv))
     }
+    // `rationalize([eps])` -- the SIMPLEST rational within half a ULP of this
+    // double (no arg), or within `eps` (with arg). Port of CRuby's
+    // `float_rationalize` (numeric.c) + `nurat_rationalize_internal`.
+    "rationalize" => fn rationalize(recv, args, _block) {
+        arity!(args, 0..=1);
+        float_rationalize(recv_f64(recv), args.first())
+    }
     "numerator" => fn numerator(recv, args, _block) {
         arity!(args, 0);
         match float_to_rational(recv_f64(recv))? {
@@ -232,6 +239,121 @@ fn float_to_rational(f: f64) -> Result<RubyValue, Signal> {
     }
     let (num, den) = float_exact_parts(f);
     crate::builtins::rational::rational_new(num, den)
+}
+
+/// The `(significand, exponent)` of `|d|` such that `|d| == significand *
+/// 2^exp` -- the `frexp`/`ldexp` decomposition CRuby's `float_decode_internal`
+/// produces (`significand` is the raw 53-bit mantissa, sign dropped).
+fn frexp_parts(ad: f64) -> (num_bigint::BigInt, i64) {
+    use num_bigint::BigInt;
+    let bits = ad.to_bits();
+    let exp_field = ((bits >> 52) & 0x7ff) as i64;
+    let mant = bits & 0xf_ffff_ffff_ffff;
+    if exp_field == 0 {
+        // Subnormal: no implicit leading bit, fixed exponent.
+        (BigInt::from(mant), -1074)
+    } else {
+        (BigInt::from(mant | 0x10_0000_0000_0000), exp_field - 1075)
+    }
+}
+
+/// The simplest rational `p/q` in the CLOSED interval `[a, b]` (`a <= b`, each
+/// a `(num, den)` pair with `den > 0`) -- CRuby's `nurat_rationalize_internal`
+/// continued-fraction (Stern-Brocot) search.
+fn simplest_between(
+    mut a: (num_bigint::BigInt, num_bigint::BigInt),
+    mut b: (num_bigint::BigInt, num_bigint::BigInt),
+) -> (num_bigint::BigInt, num_bigint::BigInt) {
+    use num_bigint::BigInt;
+    use num_integer::Integer as _;
+    use num_traits::{One, Zero};
+    // `d/n` normalized to a positive denominator.
+    fn recip(n: BigInt, d: BigInt) -> (BigInt, BigInt) {
+        if n.sign() == num_bigint::Sign::Minus {
+            (-d, -n)
+        } else {
+            (d, n)
+        }
+    }
+    let (mut p0, mut p1) = (BigInt::zero(), BigInt::one());
+    let (mut q0, mut q1) = (BigInt::one(), BigInt::zero());
+    loop {
+        let c = a.0.div_ceil(&a.1);
+        // Break once `ceil(a) < b`; the result uses this `c`.
+        if &c * &b.1 < b.0 {
+            return (&c * &p1 + &p0, &c * &q1 + &q0);
+        }
+        let k = &c - 1;
+        let p2 = &k * &p1 + &p0;
+        let q2 = &k * &q1 + &q0;
+        let t = recip(&b.0 - &k * &b.1, b.1.clone());
+        b = recip(&a.0 - &k * &a.1, a.1.clone());
+        a = t;
+        (p0, q0, p1, q1) = (p1, q1, p2, q2);
+    }
+}
+
+/// `|eps|` as an exact `(num, den)` rational (`den > 0`), for the eps form.
+fn exact_abs_rational(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
+    use num_bigint::BigInt;
+    use num_traits::{One, Signed};
+    Ok(match v {
+        RubyValue::Int(_) | RubyValue::BigInt(_) => {
+            (crate::builtins::integer::to_bigint(v).abs(), BigInt::one())
+        }
+        RubyValue::Float(f) => float_exact_parts(f.abs()),
+        RubyValue::Rational(r) => (r.num.abs(), r.den.clone()),
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("can't convert {} into Float", crate::builtins::class_name_of(other)),
+            ))
+        }
+    })
+}
+
+/// The full `Float#rationalize` body.
+fn float_rationalize(d: f64, eps: Option<&RubyValue>) -> Result<RubyValue, Signal> {
+    use num_bigint::BigInt;
+    use num_traits::{One, Zero};
+    if !d.is_finite() {
+        return Err(crate::dispatch::raise_error(
+            "FloatDomainError",
+            RubyValue::Float(d).to_display_string(),
+        ));
+    }
+    let neg = d < 0.0;
+    let ad = d.abs();
+    let (p, q) = match eps {
+        // `[|d| - |eps|, |d| + |eps|]` over exact rationals.
+        Some(e) => {
+            let (fn_, fd) = float_exact_parts(ad);
+            let (en, ed) = exact_abs_rational(e)?;
+            // a = f - e, b = f + e over the common denominator fd*ed.
+            let den = &fd * &ed;
+            let lo = &fn_ * &ed - &en * &fd;
+            let hi = &fn_ * &ed + &en * &fd;
+            if lo == hi {
+                // eps == 0: fall back to the exact dyadic value.
+                float_exact_parts(ad)
+            } else {
+                simplest_between((lo, den.clone()), (hi, den))
+            }
+        }
+        // Half-ULP interval `[(2f-1)/2^(1-n), (2f+1)/2^(1-n)]`.
+        None => {
+            let (f, n) = frexp_parts(ad);
+            if f.is_zero() || n >= 0 {
+                let val = if n >= 0 { f << (n as usize) } else { BigInt::zero() };
+                (val, BigInt::one())
+            } else {
+                let two_f = &f * 2;
+                let den = BigInt::one() << ((1 - n) as usize);
+                simplest_between((&two_f - 1, den.clone()), (&two_f + 1, den))
+            }
+        }
+    };
+    crate::builtins::rational::rational_new(if neg { -p } else { p }, q)
 }
 
 fn float_round_family(

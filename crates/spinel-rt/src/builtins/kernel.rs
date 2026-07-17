@@ -174,6 +174,43 @@ builtin_methods! {
         let include_all = args.get(1).is_some_and(|v| v.truthy());
         Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym, include_all)))
     }
+    // Universal named-ivar reflection over ANY receiver (an `Object`'s or a
+    // class object's ivars; a builtin/immediate exposes none). Registering
+    // these on Kernel is also what makes `respond_to?(:instance_variable_get)`
+    // and a dynamic `send(:instance_variables)` resolve them uniformly -- the
+    // static codegen path (call.rs) is just a fast path over the same helpers.
+    "instance_variables" => fn instance_variables_m(recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::dispatch::instance_variables(recv))
+    }
+    "instance_variable_get" => fn instance_variable_get_m(recv, args, _block) {
+        arity!(args, 1);
+        crate::dispatch::instance_variable_get(recv, &args[0])
+    }
+    "instance_variable_set" => fn instance_variable_set_m(recv, args, _block) {
+        arity!(args, 2);
+        crate::dispatch::instance_variable_set(recv, &args[0], args[1].clone())
+    }
+    "instance_variable_defined?" => fn instance_variable_defined_m(recv, args, _block) {
+        arity!(args, 1);
+        let name = crate::dispatch::ivar_name_arg(&args[0])?;
+        let sym = Symbol::intern(&format!("@{name}"));
+        let RubyValue::Array(vars) = crate::dispatch::instance_variables(recv) else {
+            unreachable!("instance_variables always answers an Array")
+        };
+        let found = vars
+            .lock()
+            .iter()
+            .any(|v| matches!(v, RubyValue::Symbol(s) if *s == sym));
+        Ok(RubyValue::Bool(found))
+    }
+    // Per-object singleton methods are out of scope for this runtime's value
+    // model, so every receiver reports an empty list (the honest answer for
+    // the immutable value types; user objects define no per-object methods).
+    "singleton_methods" => fn singleton_methods_m(_recv, args, _block) {
+        arity!(args, 0..=1);
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
     // `Object#display([port])` -- writes `self.to_s` (no newline) to stdout
     // and answers nil. The optional port argument is accepted but ignored
     // (only the process stdout is modeled).
@@ -385,6 +422,9 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
                 Ok(crate::builtins::rational::as_ratio(v))
             }
+            // A Float contributes its EXACT dyadic value (`Rational(0.3)` is
+            // the true `5404.../18014...`, not `3/10`).
+            RubyValue::Float(f) => Ok(crate::builtins::float::float_exact_parts(*f)),
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(

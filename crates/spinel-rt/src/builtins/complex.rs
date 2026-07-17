@@ -31,17 +31,28 @@ fn is_component(v: &RubyValue) -> bool {
     )
 }
 
-/// THE Complex constructor -- TypeError (CRuby's "not a real" shape) for a
-/// non-numeric component.
+/// THE Complex constructor -- CRuby's "can't convert X into Complex"
+/// TypeError for a non-numeric component.
 pub fn complex_new(real: RubyValue, imag: RubyValue) -> Result<RubyValue, Signal> {
     if !is_component(&real) || !is_component(&imag) {
         let bad = if is_component(&real) { &imag } else { &real };
         return Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("not a real: {}", bad.inspect_string()),
+            format!("can't convert {} into Complex", convert_name(bad)),
         ));
     }
     Ok(RubyValue::Complex(Arc::new(RComplexData { real, imag })))
+}
+
+/// The name a "can't convert X into Y" TypeError uses -- CRuby prints the
+/// value for `nil`/`true`/`false`, otherwise the class name.
+fn convert_name(v: &RubyValue) -> String {
+    match v {
+        RubyValue::Nil => "nil".to_string(),
+        RubyValue::Bool(true) => "true".to_string(),
+        RubyValue::Bool(false) => "false".to_string(),
+        _ => crate::builtins::class_name_of(v).to_string(),
+    }
 }
 
 /// A `4i`/`2.0i`/`3ri` LITERAL (codegen's emission target) -- infallible:
@@ -108,8 +119,8 @@ pub(crate) fn cpx_div(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
 }
 
 /// `complex ** integer` stays exact via square-and-multiply over the exact
-/// component ops; other exponent shapes are a documented Tier B follow-up
-/// (polar-form f64), raised loudly.
+/// component ops; every other exponent shape takes the polar-form path
+/// `z ** w == exp(w * log z)` in `f64` (CRuby's `rb_complex_pow`).
 pub(crate) fn cpx_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
     match b {
         RubyValue::Int(_) | RubyValue::BigInt(_) => {
@@ -132,9 +143,23 @@ pub(crate) fn cpx_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
                 Ok(acc)
             }
         }
-        _ => panic!(
-            "Complex ** with a non-Integer exponent isn't supported yet (polar-form result; spike scope)"
-        ),
+        // z^w = exp(w * log z), with log z = ln|z| + i*arg(z).
+        _ => {
+            let f = crate::builtins::numeric::num_to_f64_unchecked;
+            let (ar, ai) = as_components(a);
+            let (br, bi) = as_components(b);
+            let (ar, ai, br, bi) = (f(&ar), f(&ai), f(&br), f(&bi));
+            let ln_r = ar.hypot(ai).ln();
+            let theta = ai.atan2(ar);
+            // w * log z
+            let re = br * ln_r - bi * theta;
+            let im = br * theta + bi * ln_r;
+            let scale = re.exp();
+            complex_new(
+                RubyValue::Float(scale * im.cos()),
+                RubyValue::Float(scale * im.sin()),
+            )
+        }
     }
 }
 

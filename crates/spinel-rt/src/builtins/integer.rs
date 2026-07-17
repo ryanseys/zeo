@@ -573,6 +573,15 @@ builtin_methods! {
                 };
                 Ok(RubyValue::Int((a / f).floor() as i64))
             }
+            // A Rational divisor: `(self / other).floor` stays exact.
+            RubyValue::Rational(_) => {
+                let q = crate::builtins::numeric::num_div(recv, &args[0])
+                    .expect("Integer / Rational is defined")?;
+                match q {
+                    RubyValue::Rational(r) => Ok(int_value(r.num.div_floor(&r.den))),
+                    other => Ok(other),
+                }
+            }
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!("{} can't be coerced into Integer", crate::builtins::class_name_of(other)),
@@ -755,11 +764,15 @@ builtin_methods! {
         let measured = if n.is_negative() { !n } else { n };
         Ok(RubyValue::Int(measured.bits() as i64))
     }
-    "size" => fn size(_recv, args, _block) {
+    "size" => fn size(recv, args, _block) {
         arity!(args, 0);
-        // Machine-word size for fixnums; bignums report their limb bytes
-        // in CRuby -- 8 is the honest fixnum answer, kept uniform here.
-        Ok(RubyValue::Int(8))
+        // A value in the machine-word range answers `sizeof(long)` (8 here,
+        // like CRuby's `fix_size`); a bignum reports its magnitude's byte
+        // width, `ceil(bit_length(|n|) / 8)` (CRuby's `BIGSIZE`).
+        Ok(RubyValue::Int(match recv {
+            RubyValue::BigInt(b) => (b.bits().div_ceil(8)) as i64,
+            _ => 8,
+        }))
     }
     // `pow(e)` == `**`; `pow(e, m)` is modular exponentiation.
     "pow" => fn pow_m(recv, args, _block) {

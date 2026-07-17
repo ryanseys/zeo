@@ -32,3 +32,18 @@ p "hello".byteindex("l")
 p "hello".byterindex("l")
 p "café".byteslice(0, 3)
 p "hello".byteslice(-2, 2)
+
+# tr_s squeezes translated runs; scrub! returns self.
+p "hello".tr_s("l", "r")
+p "aabbcc".tr_s("a-c", "x")
+p "clean".scrub!
+
+# Enumerable methods now reach Range and Hash.
+p (1..3).zip([4, 5, 6], [7, 8, 9])
+p (1..5).compact
+p (1..3).chain([4, 5]).to_a
+seen = []
+(1..3).cycle(2) { |x| seen << x }
+p seen
+p({ a: 1, b: 2 }.zip([10, 20]))
+p({ a: 1 }.rehash)
