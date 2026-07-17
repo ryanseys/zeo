@@ -138,13 +138,18 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
     let bind_array = emit_target_write(cx, target, quote! { __iter[__idx].clone() });
     let bind_range = emit_target_write(cx, target, quote! { spinel_rt::RubyValue::Int(__i) });
 
+    // `for` evaluates to the collection it iterated (CRuby: `for x in c; end`
+    // returns `c`, the same object), unless the body `break`s with a value.
+    // `__coll` holds that collection once; each arm derives its iteration
+    // state from it and breaks with `__coll.clone()` on natural completion.
     match iterable_ty {
         TyKind::Array => quote! {
             {
-                let __iter = (#iter_expr).as_array_unchecked().lock().clone();
+                let __coll = #iter_expr;
+                let __iter = __coll.as_array_unchecked().lock().clone();
                 let mut __idx: usize = 0;
                 #outer: loop {
-                    if __idx >= __iter.len() { break #outer spinel_rt::RubyValue::Nil; }
+                    if __idx >= __iter.len() { break #outer __coll.clone(); }
                     #bind_array
                     #inner
                     __idx += 1;
@@ -153,13 +158,13 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
         },
         TyKind::Range => quote! {
             {
-                let __iter = #iter_expr;
-                let __exclusive = __iter.range_exclude_end();
-                let __end = __iter.range_last().as_int_unchecked();
-                let mut __i = __iter.range_first().as_int_unchecked();
+                let __coll = #iter_expr;
+                let __exclusive = __coll.range_exclude_end();
+                let __end = __coll.range_last().as_int_unchecked();
+                let mut __i = __coll.range_first().as_int_unchecked();
                 #outer: loop {
                     let __in_range = if __exclusive { __i < __end } else { __i <= __end };
-                    if !__in_range { break #outer spinel_rt::RubyValue::Nil; }
+                    if !__in_range { break #outer __coll.clone(); }
                     #bind_range
                     #inner
                     __i += 1;
@@ -172,7 +177,8 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
         // binds whole for a single one -- CRuby's `Hash#each` shape.
         TyKind::Hash => quote! {
             {
-                let __iter: Vec<spinel_rt::RubyValue> = (#iter_expr)
+                let __coll = #iter_expr;
+                let __iter: Vec<spinel_rt::RubyValue> = __coll
                     .as_hash_unchecked()
                     .lock()
                     .values()
@@ -182,7 +188,7 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                     .collect();
                 let mut __idx: usize = 0;
                 #outer: loop {
-                    if __idx >= __iter.len() { break #outer spinel_rt::RubyValue::Nil; }
+                    if __idx >= __iter.len() { break #outer __coll.clone(); }
                     #bind_array
                     #inner
                     __idx += 1;

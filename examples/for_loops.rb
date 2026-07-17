@@ -32,3 +32,8 @@ p psum
 for e in ([9, 8])
   p e
 end
+
+# A `for` loop evaluates to the collection it iterated (unless the body
+# `break`s with a value).
+p(for x in [1, 2, 3]; end)     # [1, 2, 3]
+p(for x in [1, 2]; break :done; end)   # :done
