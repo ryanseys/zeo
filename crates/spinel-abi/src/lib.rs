@@ -31,6 +31,16 @@
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ClassId(pub u32);
 
+/// The first id handed out to a class created at RUNTIME (`Class.new`, and any
+/// future eval-defined class -- see the runtime overlay in
+/// `spinel-rt/src/runtime_meta.rs`). Compile-time ids are dense and small:
+/// builtins occupy `0..~60` and user classes count up from there by program
+/// size, so a `1 << 30` base leaves the entire low range to the AOT compiler
+/// while staying trivially distinguishable at runtime (`id.0 >= this` answers
+/// "was this class born at runtime?", which selects the overlay's ancestor-
+/// walking resolution instead of the frozen flat-table fast path).
+pub const RUNTIME_CLASS_ID_BASE: u32 = 1 << 30;
+
 /// One reserved built-in class/module -- see [`BUILTINS`].
 pub struct BuiltinClass {
     pub id: ClassId,

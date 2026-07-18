@@ -882,9 +882,40 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             ensure_body,
         } => super::exceptions::emit_begin(cx, body, rescues, else_body, ensure_body),
         HirNode::Retry => super::exceptions::emit_retry(),
+        // A `def` / literal `define_method(:sym){...}` in EXPRESSION position --
+        // i.e. inside a block, most notably a `Class.new { ... }` body (#97 F4).
+        // It installs on the current runtime `self` (the anonymous class):
+        //   self.define_method(:name, ->(params){ body })      (instance method)
+        //   self.define_singleton_method(:name, ...)            (`def self.x`)
+        // A lambda body gives method-like arity/`return`; the runtime rebinds
+        // `self` to the receiver when the method runs. Only reachable with a
+        // runtime (dynamic) self -- a block's -- since a class body / top-level
+        // `def` is handled before ever reaching expression position.
+        HirNode::DefMethod { name, params, body, is_class_method, .. } => {
+            let Some(self_val) = super::call::boxed_implicit_self(cx) else {
+                panic!("a `def` in expression position needs a runtime self (only supported inside a block, e.g. `Class.new {{ ... }}`)");
+            };
+            // The body becomes a lambda with no slot for the method's own block
+            // (same limit as a singleton `def obj.name`), so `yield`/
+            // `block_given?`/`&block` inside a `def` in a `Class.new` block is
+            // rejected rather than emitting invalid `__blk`-referencing code.
+            if crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body) {
+                panic!("a `def` inside a `Class.new` block that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- use `define_method` on a named class, or thread the block explicitly");
+            }
+            let proc = super::call::emit_proc_or_lambda_value(cx, params, body, true);
+            let installer =
+                if *is_class_method { "define_singleton_method" } else { "define_method" };
+            quote! {
+                spinel_rt::send_value(
+                    &#self_val,
+                    spinel_rt::Symbol::intern(#installer),
+                    &[spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)), #proc],
+                    None,
+                )?
+            }
+        }
         HirNode::Program(_)
         | HirNode::ClassDef { .. }
-        | HirNode::DefMethod { .. }
         | HirNode::Include(_)
         | HirNode::Extend(_)
         | HirNode::Prepend(_)

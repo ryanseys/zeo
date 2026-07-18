@@ -882,14 +882,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     }
 }
 
-/// See `ClassInfo::class_body_stmts`'s docs -- only a bare `@@x = expr`
-/// written directly in a class/module body, run once (for its side effect
-/// on cvar storage) from generated `main()`, in file order, right after
-/// this class/module's own dispatch-table registration (if any). No
-/// `Signal`/`Result` propagation exists at this position (unlike an
-/// ordinary method body) -- an expression here that needed `?` would be a
-/// compile-time error, not silent wrongness, and nothing in this narrow,
-/// documented scope-cut needs one.
+/// Every statement written directly in a class/module body -- cvar/const/ivar
+/// writes AND general code (a method call, an `each` loop, a runtime
+/// `define_method`) -- run once at class-definition time, in file order, with
+/// `self` = the class object (`class_self: Some(cid)`). Emitted inside
+/// `run_main`'s fallible closure (see the call site), so a fallible statement
+/// propagates its `Signal` through `?` like any method-body statement (#97
+/// F2a). Runs right after this class/module's own dispatch-table registration.
 fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let stmts = &compiler.class(cid).class_body_stmts;
     if stmts.is_empty() {
@@ -923,8 +922,14 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         in_real_proc: false,
         self_is_dynamic: false,
     };
-    let exprs = stmts.iter().map(|&id| expr::emit_expr(&cx, id));
-    quote! { #(#exprs;)* }
+    // Hoist the class body's own locals and emit its statements as a scoped
+    // block that evaluates to `Result` -- `?` propagates a raised Signal into
+    // the enclosing `run_main` closure, and the block scopes the locals so they
+    // don't leak into `main_body` (a class body is its own scope in Ruby). The
+    // `wrap_ok` tail is discarded by `?;` -- class-body statements run for
+    // effect; `main_body` supplies the program's tail.
+    let body = hoisting::emit_hoisted_body(&cx, stmts, true);
+    quote! { { #body }?; }
 }
 
 /// Class methods (`def self.x`, `extend`) -- see `ClassInfo::class_methods`'s

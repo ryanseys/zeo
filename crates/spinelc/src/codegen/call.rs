@@ -599,9 +599,37 @@ pub fn emit_new(
     // dynamically; `Object.new`'s copy is a free function in a container).
     // They keep the token path below, which is also the one `raise`'s
     // synthetic-argument caller needs.
-    let cid = cx
-        .resolve_class(class_name)
-        .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+    let Some(cid) = cx.resolve_class(class_name) else {
+        // Not a compile-time class -- a constant bound to a RUNTIME class
+        // (`Foo = Class.new`, #97 F4). Read the constant at runtime and
+        // dispatch `.new` dynamically; a truly-undefined constant raises
+        // NameError via `const_get`, matching Ruby. Positional args + block
+        // are threaded; kwargs on a runtime-class `.new` are a fast-follow.
+        let arg_exprs = args.iter().map(|&a| {
+            let e = emit_expr(cx, a);
+            box_if_object_typed(cx, a, e)
+        });
+        let block_expr = match block {
+            Some(b) => {
+                let p = emit_proc_value(cx, b);
+                quote! { Some(#p) }
+            }
+            None => quote! { None },
+        };
+        return quote! {
+            {
+                let __rtclass = spinel_rt::const_get(0, #class_name).ok_or_else(|| {
+                    spinel_rt::raise_error("NameError", format!("uninitialized constant {}", #class_name))
+                })?;
+                spinel_rt::send_value(
+                    &__rtclass,
+                    spinel_rt::Symbol::intern("new"),
+                    &[#(#arg_exprs),*],
+                    #block_expr,
+                )?
+            }
+        };
+    };
     let ci = cx.compiler.class(cid);
     if cx.compiler.has_generated_struct(cid) {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
@@ -879,7 +907,7 @@ fn bind_new_args(
 /// (both have no `self: Arc<Self>` binding), and the shared `main` object
 /// at the top level. Every implicit-self dynamic-dispatch site routes
 /// through this rather than re-deriving the rule.
-fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
+pub(crate) fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
     // Already a `RubyValue`, and the ONLY correct answer inside an escaping
     // block: `instance_exec` may have rebound the receiver, so an implicit-
     // self call there (`obj.instance_exec { helper }`) must dispatch on the
@@ -1576,7 +1604,7 @@ pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStr
     emit_proc_or_lambda_value(cx, params, body, true)
 }
 
-fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool) -> TokenStream {
+pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool) -> TokenStream {
     let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
 
     let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
@@ -1640,7 +1668,48 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
 
     // The block's OWN parameter names shadow the enclosing scope's metadata
     // for them -- see `Ctx::in_proc`.
-    let proc_cx = cx.in_proc(needs_self, &super::captures::own_param_names(params));
+    // Names THIS block binds (its own params or own locals) that a NESTED
+    // escaping block captures (#97 F2b) -- e.g. the `m` in
+    // `each { |m| define_method(m) { m } }`. They must become shared
+    // `Arc<Mutex<RubyValue>>` cells so the inner closure can `Arc::clone` them,
+    // exactly like a method promotes its OWN captured params (see
+    // `params::emit_prologue`'s `captured_param_wraps`). Without this the inner
+    // block would fresh-declare the name and read `nil` -- the case the panic
+    // just below used to reject outright.
+    let own_params = super::captures::own_param_names(params);
+    let nested_captured: std::collections::HashSet<String> =
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+            .locals;
+    let mut proc_cx = cx.in_proc(needs_self, &own_params);
+    if !nested_captured.is_empty() {
+        proc_cx.captured_locals.to_mut().extend(nested_captured.iter().cloned());
+    }
+    // Cell-wrap this block's own PARAMS that a nested block captures (after the
+    // plain param binding reads its value).
+    let mut nested_param_names: Vec<&String> =
+        own_params.iter().filter(|n| nested_captured.contains(*n)).collect();
+    nested_param_names.sort();
+    let nested_param_wraps = nested_param_names.into_iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: ::std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                ::std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(#ident));
+        }
+    });
+    // Declare cells for this block's own LOCALS (not params, not already an
+    // enclosing-scope cell) that a nested block captures.
+    let mut nested_local_names: Vec<&String> = nested_captured
+        .iter()
+        .filter(|n| !own_params.contains(*n) && !cx.captured_locals.contains(*n))
+        .collect();
+    nested_local_names.sort();
+    let nested_local_decls = nested_local_names.into_iter().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            let #ident: ::std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                ::std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil));
+        }
+    });
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
     let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =
@@ -1695,6 +1764,8 @@ fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lamb
                         #arity_check
                         #own_locals_prelude
                         #param_bindings
+                        #(#nested_param_wraps)*
+                        #(#nested_local_decls)*
                         #body_tokens
                     })();
                     match __result {
@@ -2994,9 +3065,23 @@ fn dispatch(
     // receiver's actual runtime `class_id()`.
     if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
         if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            let target = cx
-                .resolve_class(&target_name)
-                .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+            let Some(target) = cx.resolve_class(&target_name) else {
+                // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
+                // F4): resolve it at runtime and ancestry-check its id.
+                let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+                return quote! {
+                    {
+                        let __rtc = spinel_rt::const_get(0, #target_name).ok_or_else(|| {
+                            spinel_rt::raise_error("NameError", format!("uninitialized constant {}", #target_name))
+                        })?;
+                        match __rtc {
+                            spinel_rt::RubyValue::Class(__tid) => spinel_rt::RubyValue::Bool(
+                                spinel_rt::is_a((#recv_boxed).class_id(), __tid)),
+                            _ => return Err(spinel_rt::raise_error("TypeError", "class or module required".to_string())),
+                        }
+                    }
+                };
+            };
             let target_id = target.0;
             // `infer_any_class` (not `infer_class`): a statically-known
             // BUILT-IN-typed receiver (e.g. `TyKind::Int`) must also
@@ -3061,9 +3146,23 @@ fn dispatch(
     // the dynamic path (`send`/`send_value`'s Class-argument arms).
     if no_kwargs && name == "instance_of?" && args.len() == 1 {
         if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            let target = cx
-                .resolve_class(&target_name)
-                .unwrap_or_else(|| panic!("unknown class/module `{target_name}`"));
+            let Some(target) = cx.resolve_class(&target_name) else {
+                // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
+                // F4): resolve it at runtime and check EXACT class identity.
+                let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
+                return quote! {
+                    {
+                        let __rtc = spinel_rt::const_get(0, #target_name).ok_or_else(|| {
+                            spinel_rt::raise_error("NameError", format!("uninitialized constant {}", #target_name))
+                        })?;
+                        match __rtc {
+                            spinel_rt::RubyValue::Class(__tid) => spinel_rt::RubyValue::Bool(
+                                (#recv_boxed).class_id() == __tid),
+                            _ => return Err(spinel_rt::raise_error("TypeError", "class or module required".to_string())),
+                        }
+                    }
+                };
+            };
             let target_id = target.0;
             return match infer_any_class(cx, recv_id) {
                 Some(recv_class) => {
@@ -3127,18 +3226,14 @@ fn dispatch(
             }
             None => quote! { false },
         };
-        let class_id_expr = match infer_any_class(cx, recv_id) {
-            Some(cid) => {
-                let id = cid.0;
-                // Same "evaluate the receiver for its side effects even
-                // though the class id itself is compile-time-known" reasoning
-                // as `is_a?`/`kind_of?` above.
-                quote! { { let _ = #recv_expr; spinel_rt::ClassId(#id) } }
-            }
-            None => quote! { (#recv_expr).class_id() },
-        };
+        // Box the receiver to a `RubyValue` and route through
+        // `responds_to_value`, which also honors a per-object singleton method
+        // (#97 F3) -- keyed by object identity, so a class-id-only probe can't
+        // see it. The singleton fast path (`is_live()`) means an ordinary
+        // program pays only one predictable atomic here.
+        let boxed_recv = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
         return quote! {
-            spinel_rt::RubyValue::Bool(spinel_rt::responds_to(#class_id_expr, #sym_expr, #include_all))
+            spinel_rt::RubyValue::Bool(spinel_rt::responds_to_value(&#boxed_recv, #sym_expr, #include_all))
         };
     }
 

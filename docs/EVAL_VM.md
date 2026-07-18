@@ -104,10 +104,32 @@ then the interpreter loop over `Hir`, then wiring a non-literal `eval` call
 to it, then the `MethodFn` widening for full bidirectional interop last
 (compiled-calls-eval'd-def is the hardest, least essential slice).
 
+## Runtime metaprogramming without a parser (#97, stage 1 — shipped)
+
+Some of what this doc once listed as "permanently out of scope" turned out NOT
+to need the parser at all — a compiled block is already an `Arc<dyn Fn>`, so a
+class/method defined at runtime *from a block* needs only a runtime-mutable
+method registry, not an interpreter. That foundation shipped as #97 stage 1
+(see `spinel-rt/src/runtime_meta.rs`): a lock-guarded overlay beside the frozen
+`OnceLock` registry, gated by a single `is_live()` atomic so parser-free
+programs pay nothing. On it:
+
+- **Runtime `define_method`** (computed name, in a class-body `each` loop) —
+  the block becomes a `MethodImpl::Dynamic`. Class-body statements now execute
+  (they were silently dropped), and a nested block may capture the enclosing
+  block's own local (both were pre-existing codegen gaps, fixed here).
+- **Per-object singletons** (`def obj.foo`, `class << obj`,
+  `obj.define_singleton_method`) — an identity-keyed overlay table.
+- **`Class.new(Super) { … }`** — a runtime class id + a name-keyed `DynObject`
+  instance type.
+
+**Documented boundary (inherent to AOT):** a runtime `define_method` that
+*overrides* a method the compiler dispatched *statically* (a direct
+`Klass::m` call, not through `send`) is invisible at that call site.
+
 ## Non-goals, still
 
-Nothing above changes this project's existing permanently-out-of-scope
-list — `Class.new` at runtime, `TracePoint`/`ObjectSpace`, Ractors, general
-reflection with non-literal names. Those stay out of scope even once a VM
-exists; the VM is specifically about executing *runtime-known Ruby source*,
-not about making the object model itself dynamically reconfigurable.
+`TracePoint`/`ObjectSpace`, Ractors, refinements, and reflection/`eval` with a
+*non-literal, runtime-computed* method name or source string stay out of scope
+until the interpreter (stage 2) exists — the VM is specifically about executing
+*runtime-known Ruby source*, which the overlay above deliberately does not do.

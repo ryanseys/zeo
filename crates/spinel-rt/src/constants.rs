@@ -41,6 +41,13 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
 }
 
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
+    // Naming an anonymous runtime class (`Foo = Class.new`, #97 F4): the FIRST
+    // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`
+    // / `puts Foo` report `"Foo"` rather than `#<Class:...>`. A no-op for a
+    // frozen class id or an already-named one.
+    if let RubyValue::Class(cid) = &value {
+        crate::runtime_meta::name_runtime_class_if_anonymous(*cid, name);
+    }
     CONSTANTS.lock().insert((owner_class_id, name.to_string()), value);
 }
 

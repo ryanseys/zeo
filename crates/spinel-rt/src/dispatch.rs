@@ -416,11 +416,15 @@ pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyVal
 /// bare `fn` pointer cannot represent. Nothing constructs `Dynamic` yet; it
 /// exists so the registry's method table and every dispatch site already speak
 /// the widened shape when that phase lands, with no further dispatch rewrite.
+#[derive(Clone)]
 pub enum MethodImpl {
     Static(MethodFn),
-    // Nothing constructs this yet -- it's the eval VM's seam (see the type doc).
-    // The `#[cfg(test)]` dispatch test does exercise it.
-    #[allow(dead_code)]
+    // The runtime-metaprogramming seam (#97): a compiled block captured as an
+    // `Arc<dyn Fn>` that a bare `fn` pointer cannot represent, built by
+    // `runtime_meta::dynamic_from_proc` for a runtime `define_method`. `Clone`
+    // is cheap on both arms (a `fn` copy / an `Arc` bump) -- the overlay
+    // resolvers clone an entry out and drop their lock BEFORE dispatching, so a
+    // runtime method that itself defines another method can't deadlock.
     Dynamic(Arc<dyn Fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync>),
 }
 
@@ -910,10 +914,28 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
 /// `respond_to?`'s answer: does `recv_class` (or any ancestor) provide
 /// `name`? `include_all` is the method's own second parameter -- false (the
 /// default) skips PRIVATE methods, exactly as in CRuby.
+/// `respond_to?` on a VALUE receiver -- like `responds_to` but also honors a
+/// per-object singleton method (#97 F3), which is keyed by object identity and
+/// so invisible to the class-id-only `responds_to`. Codegen's `respond_to?`
+/// fast path routes here so a `def obj.foo` singleton answers `true`.
+pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
+    if crate::runtime_meta::is_live() && crate::runtime_meta::object_has_singleton_method(recv, name)
+    {
+        return true;
+    }
+    responds_to(recv.class_id(), name, include_all)
+}
+
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     let n = name.name();
     let n = n.as_str();
+    let overlay_live = crate::runtime_meta::is_live();
     for &anc in ancestors_of_value(recv_class) {
+        // A method defined at runtime (#97: `define_method`, a runtime class's
+        // own method) answers `respond_to?` on every ancestor it lands on.
+        if overlay_live && crate::runtime_meta::overlay_has_instance_method(anc, name) {
+            return true;
+        }
         if let Some(r) = REGISTRY.get() {
             // `undef` TERMINATES the walk at the class that wrote it --
             // an ancestor's still-live definition must not answer for a
@@ -975,6 +997,13 @@ pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     if let Some(r) = REGISTRY.get() {
         let chain = r.ancestors_of(id);
         if !chain.is_empty() {
+            return chain;
+        }
+    }
+    // A class BORN AT RUNTIME (`Class.new`) has no frozen entry; its linearized
+    // chain lives (leaked to `&'static`) in the overlay.
+    if crate::runtime_meta::is_live() {
+        if let Some(chain) = crate::runtime_meta::overlay_ancestors(id) {
             return chain;
         }
     }
@@ -1068,7 +1097,16 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
 /// `None` for modules, builtins without allocators, or a missing registry.
 pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
-    REGISTRY.get()?.entries.get(&id.0)?.constructor
+    if let Some(c) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).and_then(|e| e.constructor) {
+        return Some(c);
+    }
+    // A runtime class (`Class.new`) registers its generic constructor in the
+    // overlay, so `RuntimeClass.new` flows through the same `Class#new` ->
+    // `construct_by_class_id` path frozen classes use.
+    if crate::runtime_meta::is_live() {
+        return crate::runtime_meta::overlay_constructor(id);
+    }
+    None
 }
 
 /// Construct an instance of the class with id `id`, running its `initialize`.
@@ -1150,19 +1188,42 @@ pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<Val
     REGISTRY.get()?.lookup_value_method(id, box_id, name)
 }
 
+/// The frozen registry's own instance method for `id`, CLONED out (a `fn`
+/// copy or an `Arc` bump). The runtime overlay (`runtime_meta`) uses this to
+/// walk a runtime class's frozen ancestors -- a `RuntimeClass < SomeUserClass`
+/// instance inherits `SomeUserClass`'s materialized methods, which live in the
+/// frozen table and can't be reached by the overlay's own maps. `None` when no
+/// registry is installed (this crate's unit tests) or the class has no such
+/// method.
+pub(crate) fn registry_lookup_cloned(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    REGISTRY.get()?.lookup(id, name).cloned()
+}
+
 /// The registered Ruby-visible (fully-qualified) name of `id` -- `None`
 /// when the registry isn't installed yet or has no such entry (this
 /// crate's own unit tests; a real generated program registers everything
 /// before any statement runs). See `RubyValue::Class`'s display arms for
 /// the fallback rendering.
 pub fn class_name(id: ClassId) -> Option<String> {
-    Some(REGISTRY.get()?.entries.get(&id.0)?.name.clone())
+    if let Some(name) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).map(|e| e.name.clone()) {
+        return Some(name);
+    }
+    if crate::runtime_meta::is_live() {
+        return crate::runtime_meta::overlay_class_name(id);
+    }
+    None
 }
 
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
 /// `Enumerable.class` -> `Module`) -- same graceful `None` as `class_name`.
 pub fn class_is_module(id: ClassId) -> Option<bool> {
-    Some(REGISTRY.get()?.entries.get(&id.0)?.is_module)
+    if let Some(m) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).map(|e| e.is_module) {
+        return Some(m);
+    }
+    if crate::runtime_meta::is_live() {
+        return crate::runtime_meta::overlay_is_module(id);
+    }
+    None
 }
 
 /// A registry probe-and-call for the runtime PROTOCOL dispatches (Phase
@@ -1395,6 +1456,16 @@ pub fn send_value_in(
     // methods, and a `RubyValue::Class`'s own chain runs over Class/Module --
     // it would never reach File's or Math's rows.
     if let RubyValue::Class(cid) = recv {
+        // A class/singleton method DEFINED AT RUNTIME (#97:
+        // `define_singleton_method` on a class, a runtime `def self.x`) wins
+        // over both the frozen `def self.x` and the builtin `Class#new`/`#name`,
+        // matching Ruby's "closest singleton" placement. Runs under the class
+        // value itself. Only probed once something is defined at runtime.
+        if crate::runtime_meta::is_live() {
+            if let Some(p) = crate::runtime_meta::overlay_class_method(*cid, name) {
+                return p.call_with_self(recv, args);
+            }
+        }
         // A USER `def self.x` first -- ahead of the builtin table below, so
         // a class defining its own `self.name`/`self.new` overrides
         // `Class#name`/`Class#new` rather than being shadowed by them. Real
@@ -1507,6 +1578,16 @@ pub fn send_in(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
+    // Runtime metaprogramming (#97): a per-object singleton, a runtime
+    // `define_method` override, or a runtime-class instance's own/inherited
+    // methods -- probed first (Ruby: a runtime `define_method` REPLACES), but
+    // only once anything has been defined at runtime (`is_live`), so the frozen
+    // lock-free fast path below is untouched for all existing code.
+    if crate::runtime_meta::is_live() {
+        if let Some(m) = crate::runtime_meta::resolve_dynamic(recv, id, name) {
+            return m.call(recv, args, block);
+        }
+    }
     if let Some(f) = registry().lookup(id, name) {
         return f.call(recv, args, block);
     }

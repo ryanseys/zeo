@@ -529,6 +529,50 @@ pub(super) fn lower_box_eval_body(
     parse_and_lower_into(hir, &src).map_err(|e| format!("Ruby::Box#eval: {e}"))
 }
 
+/// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver (#97 F3):
+/// desugar each `def` in the singleton body into a runtime
+/// `obj.define_singleton_method(:a, ->(params) { body })`, the same shape
+/// `def obj.a` uses. Returns the desugared statement nodes (empty for an empty
+/// body). The receiver is re-lowered per def -- exact for the usual simple
+/// receiver (a local, `@ivar`, or constant); a side-effecting receiver
+/// EXPRESSION would re-evaluate (rare, documented divergence). Caller must have
+/// already checked the receiver is not a bare `self`.
+fn desugar_singleton_class_defs(
+    result: &ruby_prism::ParseResult,
+    hir: &mut Hir,
+    singleton: &ruby_prism::SingletonClassNode<'_>,
+) -> PResult<Vec<NodeId>> {
+    let recv_node = singleton.expression();
+    let inner = lower_class_body(result, hir, singleton.body())?;
+    let mut out = Vec::with_capacity(inner.len());
+    for &id in &inner {
+        let (mname, params, body) = match &hir[id] {
+            HirNode::DefMethod { name, params, body, is_class_method: false, .. } => {
+                (name.clone(), params.clone(), body.clone())
+            }
+            _ => {
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string());
+            }
+        };
+        if crate::analyze::scan_bare_block_use_body(hir, &body) {
+            return Err("a singleton method in `class << obj` that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install".to_string());
+        }
+        let recv = lower_node(result, hir, &recv_node)?;
+        let lambda = hir.push(HirNode::Lambda { params, body });
+        let sym = hir.push(HirNode::SymbolLit(mname));
+        out.push(hir.push(HirNode::Call {
+            receiver: Some(recv),
+            name: "define_singleton_method".to_string(),
+            args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+            kwargs: vec![],
+            block: None,
+            block_arg: None,
+            safe: false,
+        }));
+    }
+    Ok(out)
+}
+
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
@@ -1726,8 +1770,40 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let is_class_method = match def.receiver() {
             None => false,
             Some(r) if r.as_self_node().is_some() => true,
-            Some(_) => {
-                return Err("`def` with an explicit non-`self` receiver isn't supported yet (spike scope) -- only `def self.name` inside the class/module's own body".to_string());
+            Some(r) => {
+                // `def obj.name` on a NON-`self` receiver (#97 F3) -- a
+                // per-object singleton method. Desugar to a runtime install:
+                //   RECV.define_singleton_method(:name, ->(params) { body })
+                // A lambda body gives method-like strict arity and
+                // `return`-exits-the-method semantics; `define_singleton_method`
+                // rebinds `self` to RECV when the method runs (see
+                // `runtime_meta::dynamic_from_proc`). Documented divergence: a
+                // real `def` opens a FRESH scope, but the lambda closes over
+                // enclosing locals -- so a body referencing an enclosing local
+                // reads it here rather than raising `NameError` (rare; the
+                // common `@ivar`/param/`self` uses are exact).
+                let recv = lower_node(result, hir, &r)?;
+                let params = lower_params(result, hir, def.parameters())?;
+                let body = lower_body(result, hir, def.body())?;
+                // The lambda body can't receive the METHOD's block (the runtime
+                // install has no block slot), so `yield`/`block_given?`/`&block`
+                // inside a singleton `def obj.name` is a clean rejection (#97
+                // fast-follow), not the invalid `__blk`-referencing code it
+                // would otherwise emit.
+                if crate::analyze::scan_bare_block_use_body(hir, &body) {
+                    return Err("a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install".to_string());
+                }
+                let lambda = hir.push(HirNode::Lambda { params, body });
+                let sym = hir.push(HirNode::SymbolLit(name));
+                return Ok(hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "define_singleton_method".to_string(),
+                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
             }
         };
         let params = lower_params(result, hir, def.parameters())?;
@@ -1746,6 +1822,20 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             // node's `visibility` field once it sees the enclosing call).
             visibility: Visibility::Public,
         }));
+    }
+
+    // `class << obj` at expression/statement position (#97 F3) -- top level or
+    // inside a method body. A non-`self` receiver desugars to a sequence of
+    // per-object `define_singleton_method` installs; its value is the last
+    // (Ruby's own rule, the last `def`'s symbol). `class << self` here isn't
+    // supported (it reopens the enclosing `self`'s singleton, which at these
+    // positions has no compile-time class to attach to).
+    if let Some(singleton) = node.as_singleton_class_node() {
+        if singleton.expression().as_self_node().is_some() {
+            return Err("`class << self` at this position isn't supported yet (spike scope) -- use it inside a class/module body".to_string());
+        }
+        let stmts = desugar_singleton_class_defs(result, hir, &singleton)?;
+        return Ok(hir.push(HirNode::Seq(stmts)));
     }
 
     // A bare constant used as a VALUE -- currently only meaningful as a call
@@ -1844,7 +1934,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     && !block_pass
                     && !matches!(
                         class_name.as_str(),
-                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set"
+                        // `Class.new(Super) { body }` (#97 F4) keeps its block --
+                        // the block IS the anonymous class's body; `HirNode::New`
+                        // has no slot for it, so it falls through to the generic
+                        // `Call` and the runtime `Class#new`.
+                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class"
                     )
                 {
                     // A trailing keyword hash lands in `kwargs`, kept apart
@@ -2753,9 +2847,11 @@ fn lower_class_body_statement(
     // enclosing-class retagging can't express (deferred).
     if let Some(singleton) = node.as_singleton_class_node() {
         if singleton.expression().as_self_node().is_none() {
-            return Err(
-                "`class << obj` (a per-instance singleton class, `obj` other than a bare `self`) isn't supported yet (spike scope)".to_string(),
-            );
+            // `class << obj` on a NON-`self` receiver (#97 F3): each `def` in
+            // the body is a per-object singleton method (see
+            // `desugar_singleton_class_defs`).
+            out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
+            return Ok(());
         }
         let inner = lower_class_body(result, hir, singleton.body())?;
         for &id in &inner {

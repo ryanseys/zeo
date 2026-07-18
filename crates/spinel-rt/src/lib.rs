@@ -22,6 +22,7 @@ mod method_params;
 mod ractor;
 mod regexp;
 mod rproc;
+mod runtime_meta;
 mod signal;
 mod symbol;
 mod thread;
@@ -52,7 +53,8 @@ pub use dispatch::{
     downcast_robj, install_class_registry,
     instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
-    method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
+    method_name_symbol, raise_error, raise_stop_iteration, responds_to, responds_to_value,
+    run_initialize,
     send, send_in, send_super_from, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
@@ -78,6 +80,10 @@ pub use ractor::{
 };
 pub use regexp::*;
 pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, RProc};
+pub use runtime_meta::{
+    name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
+    runtime_define_singleton_method,
+};
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use thread::{

@@ -537,7 +537,18 @@ fn register_class(
                     .class_body_stmts
                     .push(stmt);
             }
-            _ => {}
+            // Any OTHER class-body statement -- a method call, conditional,
+            // loop, a runtime `define_method` inside an `each`, etc. -- is real
+            // code that runs ONCE at class-definition time with `self` = the
+            // class object (#97 F2a). Collected here and emitted from
+            // `emit_class_body_stmts` inside `run_main`'s fallible closure.
+            // Before this it fell through and was SILENTLY DROPPED, so a
+            // class-body `[:a].each { define_method(...) }` never ran.
+            _ => {
+                compiler.classes[class_id.0 as usize]
+                    .class_body_stmts
+                    .push(stmt);
+            }
         }
     }
     Ok(())

@@ -554,18 +554,18 @@ fn multi_assign_with_and_without_a_splat() {
 }
 
 #[test]
-fn unsupported_syntax_is_a_clean_error_not_a_panic() {
-    // A per-instance singleton class on a non-`self` expression (`class <<
-    // obj`) is a documented scope-cut (it needs a growable per-object method
-    // table). A clean compile error, never a panic. Update this to another
-    // still-unsupported construct if `class << obj` ever lands.
+fn class_shift_self_at_top_level_is_a_clean_error() {
+    // `class << obj` on a non-`self` receiver now works (#97 F3), but
+    // `class << self` at an EXPRESSION/statement position (top level, method
+    // body) still isn't supported -- there's no compile-time class to attach
+    // the reopened singleton to. A clean compile error, never a panic.
     let err = spinelc::compile_to_rust(
-        "obj = Object.new\nclass << obj\n  def hi; 1; end\nend\n",
+        "class << self\n  def hi; 1; end\nend\n",
     )
     .unwrap_err();
     assert!(
-        err.contains("unsupported syntax"),
-        "expected an unsupported-syntax error, got: {err}"
+        err.contains("class << self"),
+        "expected a `class << self` scope-cut error, got: {err}"
     );
 }
 
@@ -1131,14 +1131,121 @@ fn a_block_escaping_from_inside_another_escaping_block_works() {
 }
 
 #[test]
-#[should_panic(expected = "capturing its enclosing BLOCK's own local `n`")]
-fn a_nested_block_capturing_the_outer_blocks_own_local_is_a_clean_compile_error() {
-    // The one nesting sub-case still rejected (see
-    // `codegen::call::emit_proc_or_lambda_value`'s guard): the INNER block
-    // reads the OUTER block's own param/local -- a plain per-invocation
-    // binding, not a shared cell, which a `move` closure can't share
-    // correctly. Clean codegen-time panic, not a silent nil.
-    let _ = spinelc::compile_to_rust(
+fn runtime_define_method_in_a_class_body_loop() {
+    // #97 F2: a class-body `each` loop (F2a: class-body statements now run)
+    // whose `define_method` block captures the loop variable (F2b: nested
+    // block capturing the outer block's own local) installs each method into
+    // the runtime overlay, reachable on every instance and by `respond_to?`.
+    let result = run_ruby(
+        r##"
+        class Robot
+          [:beep, :boop].each do |sound|
+            define_method(sound) { "#{sound}!" }
+          end
+        end
+        r = Robot.new
+        puts r.beep
+        puts r.boop
+        puts r.respond_to?(:beep)
+        puts r.respond_to?(:whir)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "beep!\nboop!\ntrue\nfalse\n");
+}
+
+#[test]
+fn define_singleton_method_on_object_and_class() {
+    // #97 F2: a per-object singleton (only that object responds) and a
+    // class-level singleton method (a class method).
+    let result = run_ruby(
+        r#"
+        class Widget; end
+        a = Widget.new
+        a.define_singleton_method(:special) { "just me" }
+        puts a.special
+        puts Widget.new.respond_to?(:special)
+        Widget.define_singleton_method(:factory) { "built" }
+        puts Widget.factory
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "just me\nfalse\nbuilt\n");
+}
+
+#[test]
+fn class_new_creates_an_anonymous_runtime_class() {
+    // #97 F4: `Class.new(Super) { ... }` mints a runtime class. The block body
+    // runs against the new class (`define_method` and `def` both install on
+    // it); a constant binding names it; is_a?/instance_of?/superclass and a
+    // runtime superclass chain all resolve.
+    let result = run_ruby(
+        r#"
+        Widget = Class.new do
+          define_method(:kind) { "widget" }
+          def size
+            10
+          end
+        end
+        w = Widget.new
+        puts w.kind
+        puts w.size
+        puts w.is_a?(Widget)
+        puts Widget.name
+        Gadget = Class.new(Widget) do
+          define_method(:extra) { "gadget" }
+        end
+        g = Gadget.new
+        puts g.kind
+        puts g.extra
+        puts g.is_a?(Widget)
+        puts g.instance_of?(Widget)
+        puts Gadget.superclass.name
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "widget\n10\ntrue\nWidget\nwidget\ngadget\ntrue\nfalse\nWidget\n"
+    );
+}
+
+#[test]
+fn def_on_an_object_defines_a_per_object_singleton() {
+    // #97 F3: `def obj.name` and `class << obj` install per-object singleton
+    // methods (identity-keyed overlay), reaching `@ivar`/`self`/params and
+    // answering `respond_to?` only on that object.
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        obj.instance_variable_set(:@n, 10)
+        def obj.double
+          @n * 2
+        end
+        class << obj
+          def plus(k)
+            @n + k
+          end
+        end
+        puts obj.double
+        puts obj.plus(5)
+        puts obj.respond_to?(:double)
+        puts obj.respond_to?(:plus)
+        puts Object.new.respond_to?(:double)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n15\ntrue\ntrue\nfalse\n");
+}
+
+#[test]
+fn a_nested_block_captures_the_outer_blocks_own_local() {
+    // #97 F2b: the INNER block reads the OUTER block's own param `n`. The outer
+    // block promotes `n` to a shared `Arc<Mutex>` cell (see
+    // `codegen::call::emit_proc_or_lambda_value`'s `nested_captured`), so the
+    // inner `move` closure clone-captures it -- previously a clean rejection,
+    // now the real Ruby behavior. Oracle: n=1 -> 3+1,4+1; n=2 -> 3+2,4+2.
+    let result = run_ruby(
         r#"
         class Collector
           def each_num(a, b)
@@ -1150,6 +1257,8 @@ fn a_nested_block_capturing_the_outer_blocks_own_local_is_a_clean_compile_error(
         c.each_num(1, 2) { |n| c.each_num(3, 4) { |m| puts m + n } }
         "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4\n5\n5\n6\n");
 }
 
 #[test]
@@ -6188,8 +6297,10 @@ fn aliasing_a_genuinely_undefined_method_is_a_clean_error() {
 }
 
 #[test]
-fn class_shift_an_expression_other_than_self_is_a_clean_lowering_error() {
-    let err = spinelc::compile_to_rust(
+fn class_shift_a_constant_object_defines_its_singleton() {
+    // #97 F3: `class << CONST` on a constant-bound object installs per-object
+    // singleton methods on it (previously a clean rejection).
+    let result = run_ruby(
         r#"
         class Foo
           ANOTHER = Object.new
@@ -6199,10 +6310,11 @@ fn class_shift_an_expression_other_than_self_is_a_clean_lowering_error() {
             end
           end
         end
+        puts Foo::ANOTHER.hi
         "#,
-    )
-    .unwrap_err();
-    assert!(err.contains("per-instance singleton class"), "{err}");
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi\n");
 }
 
 #[test]

@@ -54,6 +54,17 @@ builtin_methods! {
         arity!(args, 1);
         crate::builtins::method_obj::method_new(recv, &args[0])
     }
+    // `Object#define_singleton_method(name) { body }` (#97) -- a per-object
+    // singleton on an ordinary receiver, or a class/singleton method when the
+    // receiver is a `Class`. Universal (this Kernel row is reached by every
+    // receiver's MRO walk, including a class value). A singleton on an
+    // immediate (Integer/Symbol/nil/...) is a `TypeError`, like CRuby.
+    "define_singleton_method" => fn define_singleton_method(recv, args, block) {
+        arity!(args, 1..=2);
+        let name = crate::runtime_meta::coerce_method_name(args.first())?;
+        let body = crate::runtime_meta::coerce_method_body(args, &block)?;
+        crate::runtime_define_singleton_method(recv, name, body)
+    }
     "class" => fn class(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))
@@ -184,6 +195,13 @@ builtin_methods! {
             }
         };
         let include_all = args.get(1).is_some_and(|v| v.truthy());
+        // A per-object singleton method (#97 F3) answers first -- it's keyed by
+        // object identity, invisible to the class-ancestry walk below.
+        if crate::runtime_meta::is_live()
+            && crate::runtime_meta::object_has_singleton_method(recv, sym)
+        {
+            return Ok(RubyValue::Bool(true));
+        }
         Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym, include_all)))
     }
     // Universal named-ivar reflection over ANY receiver (an `Object`'s or a

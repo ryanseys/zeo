@@ -85,9 +85,10 @@ pub enum RubyValue {
     /// collections. `Copy` payload, always frozen (like the immediates);
     /// its Ruby-visible name/module-ness live in the `ClassRegistry`
     /// (`dispatch::class_name`/`class_is_module`), installed before any
-    /// generated statement runs. `Class.new`-style runtime class CREATION
-    /// is a permanent AOT exclusion; this value is a handle to a
-    /// compile-time-known class, never a way to mint one.
+    /// generated statement runs -- OR, for a class minted at runtime by
+    /// `Class.new` (#97 F4), in the `runtime_meta` overlay (an id at/above
+    /// `spinel_abi::RUNTIME_CLASS_ID_BASE`), which those same accessors
+    /// consult. A runtime class's instances are `runtime_meta::DynObject`s.
     Class(ClassId),
 }
 

@@ -196,6 +196,16 @@ builtin_methods! {
         arity!(args, 1);
         crate::builtins::method_obj::unbound_method_new(recv_cid(recv), &args[0])
     }
+    // `Module#define_method(name) { body }` (#97) -- install/override an
+    // instance method AT RUNTIME (a computed name, or inside an `each` loop).
+    // The literal `define_method(:sym) { ... }` form is desugared to a `def` at
+    // compile time in spinelc; this row serves everything that isn't literal.
+    "define_method" => fn define_method(recv, args, block) {
+        arity!(args, 1..=2);
+        let name = crate::runtime_meta::coerce_method_name(args.first())?;
+        let body = crate::runtime_meta::coerce_method_body(args, &block)?;
+        Ok(crate::runtime_define_method(recv_cid(recv), name, body))
+    }
     // `Module#class_variable_get/set/defined?` over the linearized ancestry
     // (a `@@x` is owned by the nearest ancestor that first assigned it --
     // see `cvars`' docs). `get` on a never-assigned name is a `NameError`,
@@ -326,6 +336,20 @@ builtin_methods! {
     // edge cases) raises real Ruby's NoMethodError shape for its kind.
     "new" => fn new_m(recv, args, block) {
         let cid = recv_cid(recv);
+        // `Class.new(superclass) { body }` (#97 F4) -- `recv` is `Class`
+        // itself, so its `.new` mints a fresh ANONYMOUS class rather than an
+        // instance. The block is the class body, run with `self` bound to the
+        // new class (so `define_method`/`include`/const-assign inside populate
+        // it). A literal `def` inside the block is a documented fast-follow
+        // (use `define_method`).
+        if cid == spinel_abi::CLASS_CLASS {
+            let superclass = args.first().cloned();
+            let body = match &block {
+                Some(RubyValue::Proc(p)) => Some(p.clone()),
+                _ => None,
+            };
+            return crate::runtime_class_new(superclass, body);
+        }
         // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
         // runtime allocator (Phase 17.2); parse deliberately skips the
         // static `New` node for it so the block arrives here.
