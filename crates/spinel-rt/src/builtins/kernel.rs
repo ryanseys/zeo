@@ -65,6 +65,26 @@ builtin_methods! {
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
+    // `eval(str)` (#97 stage 2) -- runtime string eval through the eval VM
+    // (feature-gated: a build without `eval-vm` answers NotImplementedError).
+    // `self` is the CALLER's own, since this universal Kernel row is reached
+    // through the receiver's MRO walk -- so `eval("@x")` at the top level reads
+    // the main object's ivar, and the same call inside a method reads that
+    // receiver's. The binding/filename/lineno arguments are the next
+    // increment: an explicit non-nil binding is a clean NotImplementedError,
+    // filename/lineno are accepted and ignored.
+    "eval" => fn eval(recv, args, _block) {
+        arity!(args, 1..=4);
+        if let Some(binding) = args.get(1) {
+            if !binding.is_nil() {
+                return Err(crate::dispatch::raise_error(
+                    "NotImplementedError",
+                    "eval with an explicit binding is not supported yet".to_string(),
+                ));
+            }
+        }
+        crate::eval_value(args[0].clone(), recv.clone(), 0)
+    }
     "class" => fn class(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))

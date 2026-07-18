@@ -12,6 +12,10 @@ mod constants;
 mod cvars;
 mod dispatch;
 pub mod encoding;
+// Runtime string `eval` (#97 stage 2). Always compiled -- the module's public
+// `eval_string` is the stub-or-real entry, gating only its prism-backed
+// interpreter internals behind the `eval-vm` feature.
+mod eval_vm;
 mod ext;
 mod exec;
 mod fiber;
@@ -64,6 +68,7 @@ pub use dispatch::{
     RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     TRUE_CLASS, YIELDER_CLASS,
 };
+pub use eval_vm::{eval_string, eval_value};
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_set};
 pub use method_params::{register_params, ParamKind};

@@ -618,30 +618,32 @@ fn eval_can_write_an_ivar_on_self() {
 }
 
 #[test]
-fn eval_of_invalid_syntax_is_a_clean_compile_error() {
-    let err = spinelc::compile_to_rust(r#"eval("1 +")"#).unwrap_err();
-    assert!(
-        err.contains("eval") && err.contains("parse error"),
-        "expected eval's inner parse error to surface, got: {err}"
-    );
+fn eval_of_invalid_literal_source_raises_a_catchable_syntax_error() {
+    // A literal `eval("...")` whose source doesn't parse no longer fails the
+    // COMPILE (#97 stage 2): it falls through to the runtime eval VM and raises
+    // a catchable SyntaxError, exactly as CRuby does.
+    let result = run_ruby(r#"begin; eval("1 +"); rescue SyntaxError; puts "caught"; end"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught\n");
 }
 
 #[test]
-fn eval_of_a_non_literal_argument_is_a_clean_compile_error() {
-    let err = spinelc::compile_to_rust("y = 1\neval(y.to_s)\n").unwrap_err();
-    assert!(
-        err.contains("non-literal argument"),
-        "expected the non-literal-eval rejection, got: {err}"
-    );
+fn eval_of_a_non_literal_argument_runs_in_the_vm() {
+    // A non-literal source is no longer rejected at compile time; it runs
+    // through the eval VM. (`y` is interpolated INTO the source string, not
+    // referenced inside the eval.)
+    let result = run_ruby("y = 40\nputs eval(\"#{y} + 2\")\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
 }
 
 #[test]
-fn eval_of_a_top_level_class_is_a_clean_compile_error() {
-    let err = spinelc::compile_to_rust(r#"eval("class Foo; end")"#).unwrap_err();
-    assert!(
-        err.contains("top-level `class`/`def`"),
-        "expected the top-level-def rejection, got: {err}"
-    );
+fn eval_of_a_class_definition_is_not_a_compile_error() {
+    // The inline path can't express a top-level `class`/`def`, so a literal
+    // `eval("class Foo; end")` falls through to the runtime VM instead of
+    // failing the compile. (Actually DEFINING a class inside eval is a later
+    // increment; the point here is that it compiles.)
+    assert!(spinelc::compile_to_rust(r#"eval("class Foo; end")"#).is_ok());
 }
 
 #[test]
@@ -16540,4 +16542,209 @@ fn module_ordering_operators_and_subclasses() {
         result.stdout,
         "true\nfalse\nnil\ntrue\ntrue\n-1\nnil\nnil\ntrue\ncompared with non class/module\n2\n[\"Kid1\", \"Kid2\"]\n[\"GKid\"]\nfalse\n"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Runtime string `eval` / `instance_eval` (#97 stage 2 -- the eval VM).
+//
+// Every source below is held in a VARIABLE (or built with `.dup`/`+`), so it is
+// NOT a string literal and therefore runs through the runtime eval VM (a
+// tree-walking interpreter over prism), not the compile-time inline path a
+// string literal takes. That is the surface these tests are here to cover.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn eval_dynamic_arithmetic_honours_precedence() {
+    let result = run_ruby(r#"code = "1 + 2 * 3"; puts eval(code)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn eval_dynamic_method_call_on_evaluated_receiver() {
+    let result = run_ruby(r#"src = "[3, 1, 2].sort.inspect"; puts eval(src)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2, 3]\n");
+}
+
+#[test]
+fn eval_locals_defined_and_read_within_one_scope() {
+    let result = run_ruby(r#"src = "a = 4; b = 5; a * b"; puts eval(src)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n");
+}
+
+#[test]
+fn eval_string_interpolation_inside_source() {
+    let result = run_ruby(r#"code = 'n = 6; "n=#{n * n}"'; puts eval(code)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "n=36\n");
+}
+
+#[test]
+fn eval_source_assembled_at_runtime() {
+    let result = run_ruby(r#"op = "-"; puts eval("10 #{op} 3")"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n");
+}
+
+#[test]
+fn eval_control_flow_yields_last_expression() {
+    let result = run_ruby(r#"src = "if 1 < 2 then :yes else :no end"; puts eval(src)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "yes\n");
+}
+
+#[test]
+fn eval_while_loop_in_the_vm() {
+    let result = run_ruby(
+        r#"src = "s = 0; i = 1; while i <= 4; s = s + i; i = i + 1; end; s"; puts eval(src)"#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n");
+}
+
+#[test]
+fn eval_short_circuit_returns_the_operand() {
+    let result = run_ruby(r#"src = "nil || 'fallback'"; puts eval(src)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "fallback\n");
+}
+
+#[test]
+fn eval_resolves_builtin_class_and_module_constants() {
+    let result = run_ruby(
+        r#"
+        puts eval("Integer".dup)
+        puts eval("Math::PI".dup).round(2)
+        puts eval("Math.sqrt(81)".dup)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Integer\n3.14\n9.0\n");
+}
+
+#[test]
+fn eval_resolves_user_constants_and_classes() {
+    let result = run_ruby(
+        r#"
+        FOO = 42
+        class Widget; end
+        puts eval("FOO".dup)
+        puts eval("Widget".dup)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\nWidget\n");
+}
+
+#[test]
+fn eval_collections_arrays_hashes_ranges() {
+    let result = run_ruby(
+        r#"
+        puts eval("[1, 2, 3, 4].length".dup)
+        puts eval("{ a: 1, b: 2 }.length".dup)
+        puts eval("(1..5).to_a.inspect".dup)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4\n2\n[1, 2, 3, 4, 5]\n");
+}
+
+#[test]
+fn eval_sees_globals_and_main_object_ivars() {
+    let result = run_ruby(
+        r#"
+        $g = "global"
+        @iv = 41
+        puts eval("$g".dup)
+        puts eval("@iv + 1".dup)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "global\n42\n");
+}
+
+#[test]
+fn eval_non_string_argument_is_a_type_error() {
+    let result = run_ruby(
+        r#"
+        begin
+          eval(123)
+        rescue TypeError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "no implicit conversion of Integer into String\n"
+    );
+}
+
+#[test]
+fn eval_syntax_error_is_catchable_at_runtime() {
+    let result = run_ruby(
+        r#"
+        bad = "1 +"
+        begin
+          eval(bad)
+        rescue SyntaxError
+          puts "caught"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught\n");
+}
+
+#[test]
+fn eval_value_is_usable_in_the_surrounding_expression() {
+    let result = run_ruby(r#"a = "6"; b = "7"; puts(eval(a) * eval(b))"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
+fn instance_eval_string_reads_the_receivers_ivars() {
+    let result = run_ruby(
+        r#"
+        class Account
+          def initialize(n)
+            @balance = n
+          end
+        end
+        acct = Account.new(100)
+        src = "@balance + 5"
+        puts acct.instance_eval(src)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "105\n");
+}
+
+#[test]
+fn instance_eval_string_rebinds_self_to_a_literal_receiver() {
+    let result = run_ruby(r#"src = "upcase.reverse"; puts "hello".instance_eval(src)"#);
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "OLLEH\n");
+}
+
+#[test]
+fn instance_eval_string_mutates_an_ivar() {
+    let result = run_ruby(
+        r#"
+        class Counter
+          def initialize
+            @n = 0
+          end
+        end
+        c = Counter.new
+        c.instance_eval("@n = @n + 3")
+        puts c.instance_eval("@n")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "3\n");
 }

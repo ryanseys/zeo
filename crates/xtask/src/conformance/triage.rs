@@ -84,7 +84,12 @@ pub fn classify(stderr: &str) -> Triage {
     }
 }
 
-fn extract_message(stderr: &str) -> String {
+/// The salient one-line failure message from a stage's stderr -- the Rust
+/// PANIC body (not the useless `note: run with RUST_BACKTRACE=1` trailer), a
+/// clean `spinelc: <msg>` rejection, or the last non-empty line. Public so the
+/// scoreboard shows the SAME actionable text triage clusters on, instead of
+/// whatever line happened to be last.
+pub fn extract_message(stderr: &str) -> String {
     let lines: Vec<&str> = stderr.lines().collect();
     // Prefer the message body after the last `panicked at` header.
     if let Some(pos) = lines.iter().rposition(|l| l.contains("panicked at")) {

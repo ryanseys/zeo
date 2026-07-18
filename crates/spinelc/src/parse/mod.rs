@@ -2279,20 +2279,37 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         }
 
         if name == "eval" && call.receiver().is_none() {
+            // A single string-LITERAL argument keeps the zero-cost AOT path:
+            // the source is parsed and INLINED at compile time (`HirNode::Eval`),
+            // needs no runtime parser, and can even see the surrounding scope's
+            // locals. Every other shape -- a non-literal source expression, or
+            // the `binding`/`filename`/`lineno` argument forms -- falls through
+            // to the ordinary implicit-self `Call` lowering below, which
+            // dispatches `Kernel#eval` into the runtime eval VM (#97 stage 2;
+            // feature-gated, so a build without it raises NotImplementedError
+            // at the call). The VM runs in a top-level-first scope: correct
+            // `self`, but no access to the caller's own locals (a first-class
+            // `binding` is the next increment).
             let arg_list: Vec<_> = call
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
-            if arg_list.len() != 1 {
-                return Err("`eval` is only supported with exactly one string-literal argument (spike scope) -- the `binding`/`filename`/`lineno` forms need `binding` support, which doesn't exist yet".to_string());
+            if arg_list.len() == 1 {
+                if let Some(s) = arg_list[0].as_string_node() {
+                    let src = String::from_utf8_lossy(s.unescaped()).into_owned();
+                    // Try the zero-cost AOT inline path. If the literal source
+                    // doesn't parse, or defines at the top level (which the
+                    // inline path can't express), DON'T fail the compile: fall
+                    // through to the runtime eval VM so the program still
+                    // builds and the error/behaviour surfaces at runtime,
+                    // catchably, exactly as CRuby's `eval` does.
+                    if let Ok(body) = parse_and_lower_into(hir, &src) {
+                        if reject_top_level_defs(hir, &body).is_ok() {
+                            return Ok(hir.push(HirNode::Eval(body)));
+                        }
+                    }
+                }
             }
-            let arg_id = lower_node(result, hir, &arg_list[0])?;
-            let Some(src) = literal_string_text(hir, arg_id) else {
-                return Err("`eval` with a non-literal argument isn't supported yet (spike scope) -- only a plain string literal, e.g. `eval(\"1 + 2\")`, is currently accepted; dynamic `eval` needs a runtime parser/interpreter (see docs/EVAL_VM.md)".to_string());
-            };
-            let body = parse_and_lower_into(hir, &src).map_err(|e| format!("eval(\"...\"): {e}"))?;
-            reject_top_level_defs(hir, &body)?;
-            return Ok(hir.push(HirNode::Eval(body)));
         }
 
         let receiver = match call.receiver() {

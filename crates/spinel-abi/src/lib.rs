@@ -388,6 +388,13 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     ExceptionClass { id: ClassId(106), name: "Errno::ESPIPE", superclass: Some(ClassId(94)), is_module: false },
     ExceptionClass { id: ClassId(107), name: "Errno::EXDEV", superclass: Some(ClassId(94)), is_module: false },
     ExceptionClass { id: ClassId(108), name: "Math::DomainError", superclass: Some(ClassId(67)), is_module: false },
+    // `SyntaxError < ScriptError` (#97 stage 2) -- raised by the runtime eval VM
+    // when a dynamically-eval'd string fails to parse. Appended AFTER
+    // `Math::DomainError` so every pre-existing exception id stays put; like
+    // `Math::DomainError` it is registered in the compiler's exception-tail pin
+    // rather than in `BUILTIN_EXCEPTIONS_RB` (id-ordering, not a semantic
+    // difference).
+    ExceptionClass { id: ClassId(109), name: "SyntaxError", superclass: Some(ClassId(64)), is_module: false },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

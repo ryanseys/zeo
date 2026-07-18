@@ -1214,6 +1214,15 @@ pub fn class_name(id: ClassId) -> Option<String> {
     None
 }
 
+/// Reverse of `class_name`: the id a fully-qualified class/module NAME is
+/// registered under (`"Integer"`, `"Math"`, a user `"Widget"`), or `None`.
+/// The eval VM uses this to resolve a bare class-name constant like
+/// `eval("Integer")` -- codegen resolves those statically and so never
+/// `const_set`s them, leaving the runtime constants table without them.
+pub fn class_id_by_name(name: &str) -> Option<ClassId> {
+    REGISTRY.get().and_then(|r| r.by_name.get(name)).map(|&id| ClassId(id))
+}
+
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
 /// `Enumerable.class` -> `Module`) -- same graceful `None` as `class_name`.
 pub fn class_is_module(id: ClassId) -> Option<bool> {

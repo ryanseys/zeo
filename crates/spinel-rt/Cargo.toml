@@ -13,6 +13,13 @@ crate-type = ["rlib", "dylib"]
 
 [dependencies]
 spinel-abi = { path = "../spinel-abi" }
+# Runtime string `eval` (#97 stage 2): the SAME parser the compiler uses,
+# linked into the runtime behind the `eval-vm` feature so a program that never
+# evals a dynamic string carries none of it. The interpreter (`eval_vm.rs`)
+# walks prism's `Node` tree directly against the existing dispatch/runtime
+# primitives -- no shared HIR crate, no compile-time-resolved assumptions to
+# undo.
+ruby-prism = { version = "1.9.0", optional = true }
 parking_lot = "0.12"
 indexmap = "2"
 regex = "1"
@@ -72,8 +79,15 @@ libc = "0.2"
 # To ADD an extension, see the checklist in `src/ext/mod.rs`. In brief: an ABI
 # row (spinel-abi), an `ext/<name>.rs` module, three cfg-gated dispatch arms in
 # `builtins/mod.rs`, and one line here (+ its umbrella entry).
+# Runtime string `eval`/`instance_eval`/`class_eval` (#97 stage 2) is ON by
+# default: `eval` is core CRuby, not an in-tree extension, and the north star
+# is full parity. A lean, parser-free binary is the explicit opt-OUT
+# (`--no-default-features --features ext-all`); without `eval-vm` every
+# dynamic-eval site answers `NotImplementedError`. Kept as its OWN feature
+# (not folded into `ext-all`) so that opt-out is a single flag.
 [features]
-default = ["ext-all"]
+default = ["ext-all", "eval-vm"]
+eval-vm = ["dep:ruby-prism"]
 ext-all = [
     "ext-base64",
     "ext-stringio",

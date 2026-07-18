@@ -71,21 +71,12 @@ builtin_methods! {
     // `obj.instance_eval { |o| o == self }` true.
     "instance_eval" => fn instance_eval(recv, args, block) {
         if let Some(arg) = args.first() {
-            // The string form is the eval VM's, not ours.
-            if matches!(arg, RubyValue::Str(_)) {
-                return Err(crate::dispatch::raise_error(
-                    "NotImplementedError",
-                    "instance_eval with a string requires the eval VM (not compiled in)"
-                        .to_string(),
-                ));
-            }
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::class_name_of(arg)
-                ),
-            ));
+            // The string form (`obj.instance_eval("...")`) runs the source
+            // through the eval VM (#97 stage 2) with `self` rebound to the
+            // receiver, so `@ivar`/implicit-self calls resolve against `obj`.
+            // A non-String argument keeps Ruby's own TypeError (handled by
+            // `eval_value`'s coercion).
+            return crate::eval_value(arg.clone(), recv.clone(), 0);
         }
         let blk = block_proc(block, "instance_eval")?;
         blk.call_with_self(recv, std::slice::from_ref(recv))

@@ -18,7 +18,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-20dcf25f | 3 | anon_struct_local | spinelc: `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3d0c6827 | 3 | array_fill_block_form | uncaught exception: no implicit conversion of Range into Integer |
 | ? | auto-3e862739 | 3 | array_cycle_bounded | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ! | rustc-failure | 3 | exception_object_surface | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-c4eddc98c2cb04ca.rs) |
+| ! | rustc-failure | 3 | exception_object_surface | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-35228dba4d70930c.rs) |
 | ? | auto-03f2cac6 | 2 | enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-176da354 | 2 | rand_prng_stream | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-1b4f9693 | 2 | range_float_type | uncaught exception: can't iterate from the given Range |

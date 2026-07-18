@@ -220,7 +220,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
 /// anchors the definition at the top level from any nesting depth.
 /// Register everything that belongs in id-space right after the built-in
 /// exceptions and before any user class, so those exceptions keep their fixed
-/// `spinel-abi` id block (63..108):
+/// `spinel-abi` id block (63..109):
 ///
 /// 1. `Math::DomainError` (Phase 17.1) -- the one exception class nested under a
 ///    BUILTIN module, registered programmatically (`BUILTIN_EXCEPTIONS_RB` is
@@ -239,6 +239,19 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         compiler,
         "Math::DomainError".to_string(),
         Some("StandardError".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
+    // `SyntaxError < ScriptError` (#97 stage 2) -- the eval VM's parse-failure
+    // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
+    // immediately after `Math::DomainError`, leaving every other exception id
+    // fixed; `spinel-abi::EXCEPTION_CLASSES` reserves the matching id.
+    register_class(
+        compiler,
+        "SyntaxError".to_string(),
+        Some("ScriptError".to_string()),
         false,
         &[],
         &[],

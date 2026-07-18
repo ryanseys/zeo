@@ -773,6 +773,7 @@ dependencies = [
  "parking_lot",
  "paste",
  "regex",
+ "ruby-prism",
  "serde_json",
  "sha1",
  "sha2",

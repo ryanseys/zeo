@@ -1,0 +1,20 @@
+7
+[1, 2, 3]
+RUBY
+5
+30
+x squared is 25
+42
+yes
+15
+fallback
+Integer
+3.142
+12.0
+4
+2
+[1, 2, 3, 4, 5]
+hi
+42
+no implicit conversion of Integer into String
+caught SyntaxError
