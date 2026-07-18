@@ -6,20 +6,21 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
-| P | missing-builtin-method | 165 | array_conformance_batch | uncaught exception: undefined method 'try_convert' for class Array |
-| ? | spike-misc | 48 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
+| P | missing-builtin-method | 176 | analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class BadAttributes |
 | g | arity-panic | 33 | bool_nil_immediate_edges | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| ? | unknown-class | 21 | catch_throw_ensure | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| P | missing-core-const | 16 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
+| ? | spike-misc | 30 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
+| P | missing-core-const | 20 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | k | pattern-shapes | 8 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | unknown-class | 8 | catch_throw_ensure | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-362e8305 | 6 | bundle_classd_13 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 5 | enum_chain_splat_sliceb_wave6 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | h | range-shapes | 4 | bundle_tiny_num | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | toplevel-node-in-expr | 4 | class_eval_reopen | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-20dcf25f | 3 | anon_struct_local | spinelc: `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3d0c6827 | 3 | array_fill_block_form | uncaught exception: no implicit conversion of Range into Integer |
 | ? | auto-3e862739 | 3 | array_cycle_bounded | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ! | rustc-failure | 3 | exception_object_surface | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-c4eddc98c2cb04ca.rs) |
 | ? | auto-03f2cac6 | 2 | enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
+| ? | auto-176da354 | 2 | rand_prng_stream | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-1b4f9693 | 2 | range_float_type | uncaught exception: can't iterate from the given Range |
 | ? | auto-3fa590af | 2 | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
@@ -27,9 +28,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33 | spinelc: cannot load such file -- time |
 | ? | auto-d46bf646 | 2 | proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
 | f | dynamic-require | 2 | require_parent | spinelc: /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
-| d | singleton-class | 2 | singleton_class_block | spinelc: unsupported syntax at "class << Greeter\n  def hello; \"hello\"; end\nend" (spike handles only what the 7 example programs need) |
 | ? | auto-02ee698a | 1 | bignum_receiver_methods | uncaught exception: Integer can't be coerced into Integer |
-| ? | auto-176da354 | 1 | range_and_array_range_args | uncaught exception: invalid argument - 1..6 |
 | ? | auto-1ce7f942 | 1 | string_multiply_overflow | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-1e00ef9d | 1 | super_missing_hash_slot | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-27bada46 | 1 | warn_category | {category: :deprecated} |
@@ -62,6 +61,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-ba7c5361 | 1 | struct_inherit | spinelc: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-c7d3b59c | 1 | kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-cd5e05c6 | 1 | hash_dig | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ? | auto-ceefc00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
 | ? | auto-d04215d7 | 1 | bignum_downto_upto_to_a | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | ? | auto-d453bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
 | ? | auto-d7c58806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |

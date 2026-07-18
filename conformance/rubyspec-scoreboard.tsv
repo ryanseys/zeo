@@ -1,11 +1,11 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=d93b6b8
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=00a8a4d
 # PASS=3 FAIL_OUTPUT=1 FAIL_COMPILE=62 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_COMPILE	compile	auto-6a6cde2b
 END_spec	FAIL_RUN	run	auto-f0c6b32f
-alias_spec	FAIL_COMPILE	compile	singleton-class
+alias_spec	FAIL_COMPILE	compile	spike-misc
 and_spec	FAIL_COMPILE	compile	spike-misc
 array_spec	FAIL_COMPILE	compile	spike-misc
-assignments_spec	FAIL_COMPILE	compile	spike-misc
+assignments_spec	FAIL_COMPILE	compile	auto-bcd16e8b
 block_spec	FAIL_COMPILE	compile	auto-619a71ee
 break_spec	FAIL_COMPILE	compile	auto-4e7163de
 case_spec	FAIL_COMPILE	compile	auto-bd09d25d
@@ -24,8 +24,8 @@ for_spec	FAIL_COMPILE	compile	splat
 hash_spec	FAIL_COMPILE	compile	spike-misc
 heredoc_spec	FAIL_COMPILE	compile	auto-411aa863
 if_spec	FAIL_COMPILE	compile	spike-misc
-it_parameter_spec	FAIL_COMPILE	compile	spike-misc
-keyword_arguments_spec	FAIL_COMPILE	compile	singleton-class
+it_parameter_spec	FAIL_COMPILE	compile	auto-1cd8ccca
+keyword_arguments_spec	FAIL_COMPILE	compile	spike-misc
 lambda_spec	FAIL_COMPILE	compile	spike-misc
 line_spec	FAIL_COMPILE	compile	spike-misc
 loop_spec	FAIL_COMPILE	compile	spike-misc
@@ -38,7 +38,7 @@ next_spec	FAIL_COMPILE	compile	spike-misc
 not_spec	PASS	-	-
 numbered_parameters_spec	FAIL_COMPILE	compile	auto-01a86947
 numbers_spec	FAIL_COMPILE	compile	auto-77e4ce34
-optional_assignments_spec	FAIL_COMPILE	compile	spike-misc
+optional_assignments_spec	FAIL_COMPILE	compile	compound-assign
 or_spec	FAIL_COMPILE	compile	spike-misc
 order_spec	FAIL_COMPILE	compile	spike-misc
 pattern_matching_spec	FAIL_COMPILE	compile	pattern-shapes
@@ -57,13 +57,13 @@ safe_spec	PASS	-	-
 send_spec	FAIL_COMPILE	compile	auto-21cbb640
 singleton_class_spec	FAIL_COMPILE	compile	auto-d6827073
 source_encoding_spec	FAIL_COMPILE	compile	spike-misc
-string_spec	FAIL_COMPILE	compile	singleton-class
+string_spec	FAIL_COMPILE	compile	spike-misc
 super_spec	FAIL_COMPILE	compile	super-arity
 symbol_spec	FAIL_COMPILE	compile	auto-b326665a
 throw_spec	FAIL_COMPILE	compile	spike-misc
 undef_spec	FAIL_COMPILE	compile	auto-bf7964ee
 unless_spec	PASS	-	-
 until_spec	FAIL_COMPILE	compile	spike-misc
-variables_spec	FAIL_COMPILE	compile	singleton-class
+variables_spec	FAIL_COMPILE	compile	splat
 while_spec	FAIL_COMPILE	compile	spike-misc
 yield_spec	FAIL_COMPILE	compile	spike-misc
