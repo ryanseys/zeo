@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1539/1986 passing (77.5%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `10bfe81`
+Suite `spinel` — **1540/1986 passing (77.5%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `977cb73`
 
 | verdict | count |
 |---|---|
-| PASS | 1539 |
-| FAIL_OUTPUT | 378 |
+| PASS | 1540 |
+| FAIL_OUTPUT | 377 |
 | FAIL_COMPILE | 61 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
@@ -25,10 +25,10 @@ Suite `spinel` — **1539/1986 passing (77.5%)** — oracle `ruby 4.0.5 (2026-05
 | 6 | auto-362e8305 | ? | bundle_hash | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
 | 5 | missing-method:ffi_lib | P | ffi_const_nested_module_path | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | 5 | splat | a | pattern_rightward_oneline | expected a `*name` splat in this array pattern (spike scope) |
-| 4 | arity-panic | g | bundle_tiny_string | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | 4 | missing-method:[]= | P | bundle_misc_c_10 | uncaught exception: undefined method '[]=' for class Fiber |
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | 4 | missing-method:current | P | bundle_misc_a | uncaught exception: undefined method 'current' for class Fiber |
+| 3 | arity-panic | g | str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 0, expected 1+) |
 
 ## Skipped tests
 

@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=10bfe81
-# PASS=1539 FAIL_OUTPUT=378 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=977cb73
+# PASS=1540 FAIL_OUTPUT=377 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1202,7 +1202,7 @@ multi_write_scalar_rhs	PASS	-	-
 mutable_str_alias_uaf	PASS	-	-
 mutable_str_force_encoding_return	PASS	-	-
 mutable_str_into_str_array	PASS	-	-
-mutator_value_forms_bang_nil	FAIL_OUTPUT	expect	arity-panic
+mutator_value_forms_bang_nil	PASS	-	-
 mutex_synchronize_block	FAIL_COMPILE	compile	auto-5c693233
 mutex_synchronize_ensure	FAIL_OUTPUT	expect	missing-method:synchronize
 narrow_and_predicate	PASS	-	-

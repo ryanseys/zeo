@@ -12,10 +12,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-362e8305 | 6 | bundle_hash, fiber_nested_block, proc_nonlocal_return | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | a | splat | 5 | pattern_rightward_oneline, proc_call_kw_and_lead_splat, proc_call_splat | expected a `*name` splat in this array pattern (spike scope) |
-| g | arity-panic | 4 | bundle_tiny_string, mutator_value_forms_bang_nil, str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | P | missing-method:[]= | 4 | bundle_misc_c_10, fiber_storage_nil, bundle_misc_c_08 | uncaught exception: undefined method '[]=' for class Fiber |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:current | 4 | bundle_misc_a, fiber_class_reflection, fiber_transfer_root | uncaught exception: undefined method 'current' for class Fiber |
+| g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, bundle_tiny_string | uncaught exception: wrong number of arguments (given 0, expected 1+) |
 | ? | auto-20dcf25f | 3 | data_define_inline_receiver, anon_struct_local, data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3e862739 | 3 | error_protocol_edges, poly_array_readers, array_cycle_bounded | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |

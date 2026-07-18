@@ -17022,6 +17022,29 @@ fn exception_cause_chains_from_active_rescue() {
 }
 
 #[test]
+fn string_lines_chomp_and_prepend_variadic() {
+    let result = run_ruby(
+        r#"
+        p "a\nb\nc".lines
+        p "a\nb\nc".lines(chomp: true)
+        p "a\r\nb\r\nc\r\n".lines(chomp: true)
+        p "a-b-c".lines("-")
+        collected = []
+        "x\ny\n".each_line(chomp: true) { |l| collected << l }
+        p collected
+        t = "world"
+        t.prepend("hello ", "big ")
+        p t
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"a\\n\", \"b\\n\", \"c\"]\n[\"a\", \"b\", \"c\"]\n[\"a\", \"b\", \"c\"]\n[\"a-\", \"b-\", \"c\"]\n[\"x\", \"y\"]\n\"hello big world\"\n"
+    );
+}
+
+#[test]
 fn time_at_units_matchdata_slice_and_float_exponent() {
     let result = run_ruby(
         r#"

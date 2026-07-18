@@ -1338,11 +1338,12 @@ builtin_methods! {
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     // `lines` keeps each separator (`["a\n", "b\n", "c"]`).
+    // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
+    // separator unless `chomp:` strips it.
     "lines" => fn lines(recv, args, _block) {
-        arity!(args, 0);
-        Ok(RubyValue::Array(crate::array_new(split_lines(
-            &recv_str!(recv).lock().to_utf8_lossy(),
-        ))))
+        arity!(args, 0..=2);
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Array(crate::array_new(lines_from_args(&text, args))))
     }
     "each_char" => fn each_char(recv, args, block) {
         arity!(args, 0);
@@ -1394,16 +1395,10 @@ builtin_methods! {
     // `each_line` / `each_line(sep)`: a custom separator keeps its trailing
     // occurrence on each piece, exactly like the default `"\n"`.
     "each_line" => fn each_line(recv, args, block) {
-        arity!(args, 0..=1);
+        arity!(args, 0..=2);
         let p = block_or_enum!(recv, "each_line", args, block);
-        let ls = match args.first() {
-            Some(RubyValue::Str(sep)) => split_lines_sep(
-                &recv_str!(recv).lock().to_utf8_lossy(),
-                &sep.lock().to_utf8_lossy(),
-            ),
-            _ => split_lines(&recv_str!(recv).lock().to_utf8_lossy()),
-        };
-        for l in ls {
+        let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        for l in lines_from_args(&text, args) {
             p.call(&[l])?;
         }
         Ok(recv.clone())
@@ -2185,13 +2180,27 @@ builtin_methods! {
         drop(guard);
         Ok(recv.clone())
     }
+    // `prepend(*strs)` -- insert every argument, in order, at the front.
     "prepend" => fn prepend(recv, args, _block) {
-        arity!(args, 1);
-        let addition = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
+        let mut prefix = String::new();
+        for a in args {
+            match a {
+                RubyValue::Str(s) => prefix.push_str(&s.lock().to_utf8_lossy()),
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "no implicit conversion of {} into String",
+                            crate::builtins::class_name_of(other)
+                        ),
+                    ))
+                }
+            }
+        }
         let handle = recv_str!(recv);
         let mut guard = handle.lock();
         let mut txt = guard.to_utf8_lossy().into_owned();
-        txt.insert_str(0, &addition);
+        txt.insert_str(0, &prefix);
         guard.replace_utf8(txt);
         drop(guard);
         Ok(recv.clone())
@@ -2507,21 +2516,49 @@ fn str_array(parts: Vec<String>) -> RubyValue {
 
 /// `each_line(sep)`: like `split_lines` but on an arbitrary separator, each
 /// piece keeping its trailing separator.
-fn split_lines_sep(text: &str, sep: &str) -> Vec<RubyValue> {
+/// `lines`/`each_line`'s shared split: an optional `sep` positional and a
+/// `chomp:` keyword (a trailing Hash). Split keeps the separator unless chomped;
+/// the default separator also strips a preceding `\r` when chomping.
+fn lines_from_args(text: &str, args: &[RubyValue]) -> Vec<RubyValue> {
+    let mut chomp = false;
+    let mut positional = args;
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        if let RubyValue::Bool(b) =
+            crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
+        {
+            chomp = b;
+        }
+        positional = &args[..args.len() - 1];
+    }
+    let sep = match positional.first() {
+        Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+        _ => "\n".to_string(),
+    };
     if sep.is_empty() {
         return vec![RubyValue::Str(crate::string_new(text.to_string()))];
     }
-    let mut out = Vec::new();
+    let mut pieces = Vec::new();
     let mut rest = text;
-    while let Some(i) = rest.find(sep) {
+    while let Some(i) = rest.find(&sep) {
         let end = i + sep.len();
-        out.push(RubyValue::Str(crate::string_new(rest[..end].to_string())));
+        pieces.push(&rest[..end]);
         rest = &rest[end..];
     }
     if !rest.is_empty() {
-        out.push(RubyValue::Str(crate::string_new(rest.to_string())));
+        pieces.push(rest);
     }
-    out
+    pieces
+        .into_iter()
+        .map(|l| {
+            let cut = if chomp {
+                let l = l.strip_suffix(&sep).unwrap_or(l);
+                if sep == "\n" { l.strip_suffix('\r').unwrap_or(l) } else { l }
+            } else {
+                l
+            };
+            RubyValue::Str(crate::string_new(cut.to_string()))
+        })
+        .collect()
 }
 
 pub(crate) fn split_lines(text: &str) -> Vec<RubyValue> {
