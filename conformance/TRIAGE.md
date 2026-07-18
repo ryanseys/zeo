@@ -11,7 +11,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | g | arity-panic | 33 | bool_nil_immediate_edges | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | ? | unknown-class | 19 | catch_throw_ensure | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | P | missing-core-const | 15 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |
-| ! | rustc-failure | 15 | array_slice_when_chunk | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-806d9223b5f07f03.rs) |
 | k | pattern-shapes | 8 | array_conformance_batch5 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | a | splat | 6 | enum_chain_splat_sliceb_wave6 | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | h | range-shapes | 4 | bundle_tiny_num | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
@@ -19,8 +18,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-20dcf25f | 3 | anon_struct_local | spinelc: `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3d0c6827 | 3 | array_fill_block_form | uncaught exception: no implicit conversion of Range into Integer |
 | ? | auto-3e862739 | 3 | array_cycle_bounded | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
+| ! | rustc-failure | 3 | exception_object_surface | spinelc: rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-b94f1f62f17ab2db.rs) |
 | ? | auto-03f2cac6 | 2 | enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-1b4f9693 | 2 | range_float_type | uncaught exception: can't iterate from the given Range |
+| ? | auto-3fa590af | 2 | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-5acee2ea | 2 | matchdata_value_varargs_symstr | uncaught exception: no implicit conversion of Regexp into String |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33 | spinelc: cannot load such file -- time |
@@ -35,7 +36,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-2d4c0f69 | 1 | bundle_io_sys | spinelc: unsupported syntax at "`printf \'AB\\\\000CD\\\\000EF\' > #{path}`" (spike handles only what the 7 example programs need) |
 | ? | auto-3814d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
 | ? | auto-3afe88d5 | 1 | cmethod_super | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
-| ? | auto-3fa590af | 1 | bundle_array_a | uncaught exception: index -5 too small for array; minimum: -3 |
 | ? | auto-41318f62 | 1 | integer_shift_float_and_coerce | uncaught exception: Float can't be coerced into Integer |
 | ? | auto-454832aa | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
 | ? | auto-5c693233 | 1 | mutex_synchronize_block | spinelc: cannot load such file -- monitor |

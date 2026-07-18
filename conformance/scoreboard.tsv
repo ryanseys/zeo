@@ -1,5 +1,5 @@
-# suite=spinel corpus=1968 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=1531147
-# PASS=1430 FAIL_OUTPUT=428 FAIL_COMPILE=91 FAIL_RUSTC=15 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=1968
+# suite=spinel corpus=1968 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=381df57
+# PASS=1440 FAIL_OUTPUT=429 FAIL_COMPILE=91 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1968
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -99,18 +99,18 @@ array_slice_bang	PASS	-	-
 array_slice_before_after	PASS	-	-
 array_slice_sample_methods	PASS	-	-
 array_slice_start_oob_nil	PASS	-	-
-array_slice_when_chunk	FAIL_RUSTC	compile	rustc-failure
-array_sort_by_bang	FAIL_RUSTC	compile	rustc-failure
-array_sort_by_schwartzian	FAIL_RUSTC	compile	rustc-failure
-array_spaceship	FAIL_RUSTC	compile	rustc-failure
-array_splice	FAIL_RUSTC	compile	rustc-failure
-array_splice_exceptions	FAIL_RUSTC	compile	rustc-failure
-array_splice_to_ary	FAIL_RUSTC	compile	rustc-failure
-array_splice_widen	FAIL_RUSTC	compile	rustc-failure
-array_sum_concat_init	FAIL_RUSTC	compile	rustc-failure
-array_sum_float_init	FAIL_RUSTC	compile	rustc-failure
-array_sum_kahan	FAIL_RUSTC	compile	rustc-failure
-array_to_h_pairs	FAIL_RUSTC	compile	rustc-failure
+array_slice_when_chunk	PASS	-	-
+array_sort_by_bang	PASS	-	-
+array_sort_by_schwartzian	PASS	-	-
+array_spaceship	TIMEOUT_RUN	run	-
+array_splice	PASS	-	-
+array_splice_exceptions	FAIL_OUTPUT	expect	auto-3fa590af
+array_splice_to_ary	PASS	-	-
+array_splice_widen	PASS	-	-
+array_sum_concat_init	PASS	-	-
+array_sum_float_init	PASS	-	-
+array_sum_kahan	PASS	-	-
+array_to_h_pairs	PASS	-	-
 array_to_h_sort_bang_block	PASS	-	-
 array_transpose_poly_elements	PASS	-	-
 array_transpose_typed_elements	PASS	-	-
