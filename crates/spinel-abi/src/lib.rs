@@ -299,6 +299,91 @@ pub const BUILTINS: &[BuiltinClass] = &[
 pub const OBJECT_SUPERCLASS: ClassId = BASIC_OBJECT_CLASS;
 pub const OBJECT_INCLUDES: &[ClassId] = &[KERNEL_CLASS];
 
+/// The first id the exception prelude occupies -- immediately after the last
+/// [`BUILTINS`] row (`YAML_MODULE` = 62). See [`EXCEPTION_PRELUDE_CLASSES`].
+pub const FIRST_PRELUDE_ID: u32 = 63;
+
+/// `Exception`, the root of the whole hierarchy.
+pub const EXCEPTION_CLASS: ClassId = ClassId(FIRST_PRELUDE_ID);
+
+/// One row of the built-in exception hierarchy -- the shared source of truth
+/// for the ids both sides bake in.
+pub struct PreludeClass {
+    pub id: ClassId,
+    /// Fully-qualified Ruby name (`"ArgumentError"`, `"Encoding::CompatibilityError"`).
+    pub name: &'static str,
+    /// Superclass id. `None` only for the `Errno` MODULE (a namespace, not a
+    /// class); every real exception class has one, up to `Exception`, whose
+    /// superclass is `Object`.
+    pub superclass: Option<ClassId>,
+    /// `true` for the `Errno` namespace module.
+    pub is_module: bool,
+}
+
+/// The built-in exception hierarchy, in the exact order the compiler registers
+/// it (the [`EXCEPTION_PRELUDE`](../spinelc/parse) Ruby source, then the pinned
+/// `Math::DomainError`). Ids are contiguous from [`FIRST_PRELUDE_ID`] (asserted
+/// below), so index `i` has id `63 + i`. This is what lets `spinel-rt`'s
+/// `register_prelude` install these classes at ids the compiler independently
+/// assigns the same way -- `spinelc` asserts the agreement at analyze time.
+///
+/// Superclass edges may point earlier in the table only (the source defines a
+/// parent before its children); `register_prelude` linearizes ancestors by
+/// walking them up to `Object`.
+pub const EXCEPTION_PRELUDE_CLASSES: &[PreludeClass] = &[
+    PreludeClass { id: ClassId(63), name: "Exception", superclass: Some(OBJECT_CLASS), is_module: false },
+    PreludeClass { id: ClassId(64), name: "ScriptError", superclass: Some(ClassId(63)), is_module: false },
+    PreludeClass { id: ClassId(65), name: "NotImplementedError", superclass: Some(ClassId(64)), is_module: false },
+    PreludeClass { id: ClassId(66), name: "LoadError", superclass: Some(ClassId(64)), is_module: false },
+    PreludeClass { id: ClassId(67), name: "StandardError", superclass: Some(ClassId(63)), is_module: false },
+    PreludeClass { id: ClassId(68), name: "ArgumentError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(69), name: "EncodingError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(70), name: "Encoding::UndefinedConversionError", superclass: Some(ClassId(69)), is_module: false },
+    PreludeClass { id: ClassId(71), name: "Encoding::InvalidByteSequenceError", superclass: Some(ClassId(69)), is_module: false },
+    PreludeClass { id: ClassId(72), name: "Encoding::CompatibilityError", superclass: Some(ClassId(69)), is_module: false },
+    PreludeClass { id: ClassId(73), name: "Encoding::ConverterNotFoundError", superclass: Some(ClassId(69)), is_module: false },
+    PreludeClass { id: ClassId(74), name: "IOError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(75), name: "EOFError", superclass: Some(ClassId(74)), is_module: false },
+    PreludeClass { id: ClassId(76), name: "IndexError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(77), name: "KeyError", superclass: Some(ClassId(76)), is_module: false },
+    PreludeClass { id: ClassId(78), name: "StopIteration", superclass: Some(ClassId(76)), is_module: false },
+    PreludeClass { id: ClassId(79), name: "NameError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(80), name: "NoMethodError", superclass: Some(ClassId(79)), is_module: false },
+    PreludeClass { id: ClassId(81), name: "RangeError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(82), name: "FloatDomainError", superclass: Some(ClassId(81)), is_module: false },
+    PreludeClass { id: ClassId(83), name: "LocalJumpError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(84), name: "RegexpError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(85), name: "RuntimeError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(86), name: "FrozenError", superclass: Some(ClassId(85)), is_module: false },
+    PreludeClass { id: ClassId(87), name: "NoMatchingPatternError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(88), name: "FiberError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(89), name: "ThreadError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(90), name: "ClosedQueueError", superclass: Some(ClassId(78)), is_module: false },
+    PreludeClass { id: ClassId(91), name: "RactorError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(92), name: "TypeError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(93), name: "ZeroDivisionError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(94), name: "SystemCallError", superclass: Some(ClassId(67)), is_module: false },
+    PreludeClass { id: ClassId(95), name: "Errno", superclass: None, is_module: true },
+    PreludeClass { id: ClassId(96), name: "Errno::ENOENT", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(97), name: "Errno::EACCES", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(98), name: "Errno::EEXIST", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(99), name: "Errno::ENOTDIR", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(100), name: "Errno::EISDIR", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(101), name: "Errno::ENOTEMPTY", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(102), name: "Errno::EPIPE", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(103), name: "Errno::EINVAL", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(104), name: "Errno::EAGAIN", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(105), name: "Errno::EBADF", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(106), name: "Errno::ESPIPE", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(107), name: "Errno::EXDEV", superclass: Some(ClassId(94)), is_module: false },
+    PreludeClass { id: ClassId(108), name: "Math::DomainError", superclass: Some(ClassId(67)), is_module: false },
+];
+
+/// The tail every exception's linearized ancestors ends with, after its own
+/// superclass chain reaches `Exception`: `Object`'s own ancestors. Oracle:
+/// `StandardError.ancestors[-3..] == [Object, Kernel, BasicObject]`.
+pub const OBJECT_ANCESTRY_TAIL: &[ClassId] = &[OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS];
+
 /// The Ruby-visible name of any builtin id, `Object` included. `None` for
 /// user-class ids. Retires the runtime's hand-maintained variant->name
 /// match (NoMethodError messages, registry-less display).
@@ -324,6 +409,26 @@ mod tests {
     fn builtin_ids_are_contiguous_from_one() {
         for (i, b) in BUILTINS.iter().enumerate() {
             assert_eq!(b.id.0 as usize, i + 1, "{} out of order", b.name);
+        }
+    }
+
+    /// The exception prelude starts right after the last builtin and is
+    /// contiguous, so `register_prelude` (runtime) and the compiler's own
+    /// sequential assignment land on the same id for each name.
+    #[test]
+    fn prelude_ids_are_contiguous_after_the_builtins() {
+        assert_eq!(
+            FIRST_PRELUDE_ID as usize,
+            BUILTINS.len() + 1,
+            "the prelude must start right after the last builtin"
+        );
+        for (i, c) in EXCEPTION_PRELUDE_CLASSES.iter().enumerate() {
+            assert_eq!(
+                c.id.0,
+                FIRST_PRELUDE_ID + i as u32,
+                "{} out of order",
+                c.name
+            );
         }
     }
 

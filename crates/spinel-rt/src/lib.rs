@@ -18,6 +18,7 @@ mod globals;
 mod handling;
 mod lastmatch;
 mod method_params;
+mod prelude;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -49,9 +50,10 @@ pub use builtins::encoding::seed_encoding_constants;
 pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::regexp::seed_regexp_constants;
 pub use builtins::BuiltinMethodFn;
+pub use prelude::register_prelude;
 pub use dispatch::{
-    bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, downcast_robj,
-    install_class_registry, install_exception_factory, install_stop_iteration_factory,
+    bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
+    downcast_robj, install_class_registry,
     instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
     method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
@@ -225,6 +227,12 @@ macro_rules! ruby_class {
             /// use (see `$crate::run_initialize` for the no-initialize
             /// rule). Static `Widget.new(...)` call sites never come here.
             pub fn __construct(
+                // A generated class has its own Rust type, so it ignores the
+                // id the `ConstructorFn` contract passes and uses its own
+                // `Self::CLASS_ID`. The parameter exists so ONE native
+                // constructor can back many classes (the exception prelude);
+                // see `ConstructorFn`.
+                _class: $crate::ClassId,
                 args: &[$crate::RubyValue],
                 block: Option<$crate::RubyValue>,
             ) -> Result<$crate::RubyValue, $crate::Signal> {

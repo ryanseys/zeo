@@ -35,20 +35,25 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let statements = statements.clone();
     let prelude_len = compiler.hir.prelude_len;
 
-    // One top-level surrogate per allocated box (Phase 18) -- created up
-    // front so a handle-only box (`box = Ruby::Box.new` and nothing else)
-    // still has the ClassId its `BoxHandle` value needs.
-    for b in 1..=compiler.hir.boxes {
-        compiler.ensure_box_surrogate(b);
-    }
-
     let mut main_statements = Vec::new();
     // `BEGIN { ... }` bodies, hoisted to run before ANY main statement --
     // collected in source order here and prepended below, which is the
     // order real Ruby runs several of them in (oracle-verified). See
     // `HirNode::PreExec`.
     let mut pre_exec = Vec::new();
+    // Everything that must be registered right after the exception prelude and
+    // before any user class -- `Math::DomainError` and the per-box surrogates
+    // (Phase 18) -- so the prelude keeps the FIXED id block `spinel-abi`
+    // reserves for it (63..108) regardless of box or user-class count. The box
+    // surrogates used to be created before the whole analyze pass, which stole
+    // the prelude's ids the moment a program allocated a box. See
+    // `pin_prelude_tail`.
+    let mut prelude_tail_pinned = false;
     for (idx, stmt) in statements.into_iter().enumerate() {
+        if idx >= prelude_len && !prelude_tail_pinned {
+            pin_prelude_tail(&mut compiler)?;
+            prelude_tail_pinned = true;
+        }
         if let HirNode::PreExec(body) = &compiler.hir[stmt] {
             pre_exec.extend(body.clone());
             continue;
@@ -153,24 +158,25 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
         main_statements = pre_exec;
     }
 
-    // `Math::DomainError` (Phase 17.1) -- the one exception class nested
-    // under a BUILTIN module, registered programmatically (the exception
-    // prelude is ordinary Ruby source and `module Math` reopens are
-    // rejected). Bootstrap like the prelude classes: visible in every box.
-    {
-        let before = compiler.classes.len();
-        register_class(
-            &mut compiler,
-            "Math::DomainError".to_string(),
-            Some("StandardError".to_string()),
-            false,
-            &[],
-            &[],
-            0,
-        )?;
-        for c in &mut compiler.classes[before..] {
-            c.is_bootstrap = true;
-        }
+    // A program with no user statements after the prelude never tripped the
+    // in-loop pin above -- run it now.
+    if !prelude_tail_pinned {
+        pin_prelude_tail(&mut compiler)?;
+    }
+
+    // Stage C invariant: the ids the compiler just assigned the exception
+    // prelude MUST match `spinel-abi`'s table, because `spinel-rt`'s
+    // `register_prelude` installs those classes at those ids and generated code
+    // bakes them in. A drift (someone reorders `EXCEPTION_PRELUDE` without
+    // updating the table) would make `rescue`/`raise`/`is_a?` silently target
+    // the wrong class -- so fail the compile loudly instead.
+    for row in spinel_abi::EXCEPTION_PRELUDE_CLASSES {
+        let got = compiler.fq_name(ClassId(row.id.0));
+        assert_eq!(
+            got, row.name,
+            "exception-prelude id {} drift: compiler assigned {:?}, spinel-abi::EXCEPTION_PRELUDE_CLASSES expects {:?} -- update one to match",
+            row.id.0, got, row.name
+        );
     }
 
     // Ancestor linearization + method/class-method materialization + class
@@ -203,6 +209,40 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
 /// namespace parent, and the class is marked `qualified_def` so its cref
 /// is just itself (see `ClassInfo::qualified_def`'s docs). A leading `::`
 /// anchors the definition at the top level from any nesting depth.
+/// Register everything that belongs in id-space right after the exception
+/// prelude and before any user class, so the prelude keeps its fixed
+/// `spinel-abi` id block (63..108):
+///
+/// 1. `Math::DomainError` (Phase 17.1) -- the one exception class nested under a
+///    BUILTIN module, registered programmatically (the prelude is ordinary Ruby
+///    source and `module Math` reopens are rejected). Bootstrap like the prelude
+///    classes. `Math` is always present and `StandardError` is already registered.
+///    It must land at id 108, immediately after the last prelude class.
+/// 2. One top-level surrogate per allocated box (Phase 18) -- created here (not
+///    before the whole pass) so a handle-only box (`box = Ruby::Box.new`) still
+///    has its `BoxHandle`'s ClassId, WITHOUT stealing the prelude's ids. Boxes
+///    thus start after `Math::DomainError`; their ids are looked up, never baked,
+///    so the shift is invisible.
+fn pin_prelude_tail(compiler: &mut Compiler) -> Result<(), String> {
+    let before = compiler.classes.len();
+    register_class(
+        compiler,
+        "Math::DomainError".to_string(),
+        Some("StandardError".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
+    for c in &mut compiler.classes[before..] {
+        c.is_bootstrap = true;
+    }
+    for b in 1..=compiler.hir.boxes {
+        compiler.ensure_box_surrogate(b);
+    }
+    Ok(())
+}
+
 fn register_class(
     compiler: &mut Compiler,
     name: String,

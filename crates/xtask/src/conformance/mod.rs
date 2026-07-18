@@ -271,6 +271,15 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
         println!("{v:>16} {n}");
     }
     println!("{:>16} {}", "TOTAL", results.len());
+    // Pass RATE, so a run ends with the one number that should climb over time.
+    let passed = results.iter().filter(|r| r.verdict == Verdict::Pass).count();
+    let total = results.len();
+    let pct = if total > 0 {
+        passed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+    println!("{:>16} {passed}/{total} ({pct:.1}%)", "PASS RATE");
 
     let ranked = scoreboard::ranked_buckets(&results);
     if !ranked.is_empty() {
@@ -278,6 +287,28 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
         println!("{:>8}  {:<28} {}", "blocked", "bucket", "sample");
         for b in ranked.iter().take(10) {
             println!("{:>8}  {:<28} {}", b.count, b.bucket, b.sample_id);
+        }
+    }
+
+    // The slowest tests by wall time -- surfaces a single pathological compile
+    // or run that stalls a worker while the rest fly by (the "bursty" feel).
+    // `compile` is `spinelc` + `rustc`; `run` is the compiled program. A high
+    // `compile` points at a program spinelc generates a lot of Rust for; a high
+    // `run` at a genuinely slow (or nearly-hanging) program.
+    let mut by_time: Vec<&TestResult> = results.iter().collect();
+    by_time.sort_by_key(|r| std::cmp::Reverse(r.compile_ms + r.run_ms));
+    let slowest = by_time.len().min(15);
+    if slowest > 0 && by_time[0].compile_ms + by_time[0].run_ms > 0 {
+        println!("\ntop {slowest} slowest tests (ms):");
+        println!("{:>10} {:>10} {:>10}  {}", "total", "compile", "run", "test");
+        for r in by_time.iter().take(slowest) {
+            println!(
+                "{:>10} {:>10} {:>10}  {}",
+                r.compile_ms + r.run_ms,
+                r.compile_ms,
+                r.run_ms,
+                r.id
+            );
         }
     }
 

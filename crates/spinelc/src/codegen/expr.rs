@@ -1031,6 +1031,12 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
     let cid = cx
         .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+    // A BOOTSTRAP exception class has no generated struct to `new_handle` --
+    // `emit_new_with_arg_tokens` already returns a fully-boxed `RubyValue` built
+    // by the runtime, so hand it back directly.
+    if cx.compiler.class(cid).is_bootstrap {
+        return super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+    }
     let class_ident = super::ident::class_ident(cx.compiler, cid);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }

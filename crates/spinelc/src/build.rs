@@ -232,6 +232,21 @@ pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Resul
         // second copy -- rustc rejects that outright ("cannot satisfy
         // dependencies so `std` only shows up once").
         cmd.arg("-C").arg("prefer-dynamic");
+        // Link with `lld` when it's on PATH. The dominant cost of a generated
+        // program's build is NOT rustc's own codegen (~2s of CPU) but the link
+        // step: the default macOS linker resolving the ~20MB `libspinel_rt.dylib`
+        // plus ad-hoc codesigning the output. Measured, this takes a `puts 1`
+        // build from ~7-8s to ~3s and a trivial one-liner from ~5.9s to ~2.4s.
+        //
+        // Scoped to Dynamic (the harness path) on purpose: `Static` produces the
+        // shippable, self-contained binary a user runs, and its link is a
+        // different, less hot code path. `lld` is a build-time-only choice with
+        // no effect on the produced binary's behaviour, so a machine without it
+        // just falls back to the default linker and builds the same program,
+        // slower. See `lld_available`.
+        if lld_available() {
+            cmd.arg("-C").arg("link-arg=-fuse-ld=lld");
+        }
     }
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
@@ -490,6 +505,33 @@ fn fnv1a64_with(seed: u64, bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x1000_0000_01b3);
     }
     hash
+}
+
+/// Whether `lld` is on `PATH`, so `rustc`'s link step can use it instead of the
+/// default system linker (see the dynamic-linkage branch of `build_binary`).
+///
+/// Probed once per process and cached: this is called on every cache miss, and
+/// the answer can't change under a running process. The probe matches what
+/// clang's `-fuse-ld=lld` actually does -- it looks up the `ld64.lld` (Mach-O)
+/// or generic `lld` dispatcher on `PATH` -- so if this says yes, the flag works,
+/// and if it says no, we omit the flag and fall back to the default linker
+/// rather than handing rustc a flag whose linker isn't installed.
+fn lld_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        // Escape hatch: force the default linker without a rebuild -- for
+        // A/B benchmarking the linker's contribution, or working around an
+        // lld/toolchain incompatibility.
+        if std::env::var_os("SPINELC_NO_LLD").is_some() {
+            return false;
+        }
+        let Some(path) = std::env::var_os("PATH") else {
+            return false;
+        };
+        std::env::split_paths(&path).any(|dir| {
+            dir.join("ld64.lld").is_file() || dir.join("lld").is_file()
+        })
+    })
 }
 
 /// Threads within one process stage their `rustc` output in separate

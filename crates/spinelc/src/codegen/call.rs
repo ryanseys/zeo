@@ -603,7 +603,7 @@ pub fn emit_new(
         .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
     let ci = cx.compiler.class(cid);
-    if !ci.is_builtin && !ci.is_module && cid != crate::compiler::OBJECT_CLASS {
+    if !ci.is_builtin && !ci.is_module && !ci.is_bootstrap && cid != crate::compiler::OBJECT_CLASS {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
             let scope = cx.compiler.scope(sid);
             let ctor = emit_ctor_struct(cx, cid);
@@ -710,12 +710,23 @@ pub fn emit_new_with_arg_tokens(
     if cx.compiler.class(cid).is_builtin || cx.compiler.class(cid).is_module {
         let id = cid.0;
         return quote! {
-            spinel_rt::send_value_in(#__bx, 
+            spinel_rt::send_value_in(#__bx,
                 &spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)),
                 spinel_rt::Symbol::intern("new"),
                 &[#(#arg_exprs),*],
                 None,
             )?
+        };
+    }
+    // A BOOTSTRAP exception class: no generated struct exists (the exception
+    // prelude lives in `spinel-rt` now), so construct it through the runtime by
+    // id. Returns a boxed `RubyValue`, matching its `Poly` static type -- and
+    // runs `initialize` (the message assignment) exactly as the old struct
+    // literal's inline `.initialize(...)?` did.
+    if cx.compiler.class(cid).is_bootstrap {
+        let id = cid.0;
+        return quote! {
+            spinel_rt::construct_by_class_id(spinel_rt::ClassId(#id), &[#(#arg_exprs),*], None)?
         };
     }
     // `Object.new` -- a bare sentinel instance of the runtime root

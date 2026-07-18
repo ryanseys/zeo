@@ -392,8 +392,14 @@ pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyVal
 /// and runs its `initialize` (if any) -- what makes `x = Widget;
 /// x.new(...)` work when the class is only known at runtime as a
 /// `RubyValue::Class` value. Generated per class by `ruby_class!`
-/// (`__construct`); `None` for modules and builtins.
-pub type ConstructorFn = fn(&[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
+/// (`__construct`, which ignores the id and uses its own `Self::CLASS_ID`);
+/// `None` for modules and builtins.
+///
+/// The leading `ClassId` lets ONE constructor back many classes -- the native
+/// exception prelude registers every exception class with the same
+/// `RubyException`-allocating fn, which reads the id from here instead of a
+/// per-class Rust type (see `crate::prelude`).
+pub type ConstructorFn = fn(ClassId, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 /// A method defined by REOPENING a builtin class (Phase 16.3, `class String;
 /// def blank?; ...`): the receiver is the builtin VALUE itself (`&RubyValue`,
@@ -483,6 +489,11 @@ struct ClassEntry {
 #[derive(Default)]
 pub struct ClassRegistry {
     entries: HashMap<u32, ClassEntry>,
+    /// Fully-qualified class NAME -> id, so the runtime can construct an
+    /// exception by name (`raise_error("ArgumentError", ...)`) without the
+    /// generated program installing a name->constructor factory. Populated by
+    /// `register` alongside `entries`. See `construct_exception`.
+    by_name: HashMap<String, u32>,
 }
 
 impl ClassRegistry {
@@ -502,6 +513,7 @@ impl ClassRegistry {
         ancestors: Vec<ClassId>,
         constructor: Option<ConstructorFn>,
     ) {
+        self.by_name.insert(name.to_string(), id.0);
         self.entries.insert(
             id.0,
             ClassEntry {
@@ -517,6 +529,36 @@ impl ClassRegistry {
                 constructor,
             },
         );
+    }
+
+    /// Build an exception instance from a class NAME + message -- the runtime's
+    /// own replacement for the exception factory that generated `main()` used
+    /// to install. Every prelude exception class registers its `__construct`
+    /// `ConstructorFn` through `ruby_class!`'s `__register`, so the runtime can
+    /// construct the object itself: allocate the struct and run `initialize(msg)`
+    /// through the SAME trampoline `SomeError.new(msg)` uses. An unknown name is
+    /// a spinel-rt bug (a `raise_error` site naming a class no prelude defines),
+    /// exactly as the old factory's `panic!` arm caught. `Exception#initialize`
+    /// only assigns `@message` and cannot signal, so a `Signal` here is a bug.
+    pub fn construct_exception(&self, class_name: &str, msg: String) -> RubyValue {
+        let id = self.by_name.get(class_name).copied();
+        let ctor = id
+            .and_then(|id| self.entries.get(&id))
+            .and_then(|entry| entry.constructor);
+        match (id, ctor) {
+            (Some(id), Some(ctor)) => ctor(
+                ClassId(id),
+                &[RubyValue::Str(crate::string_new(msg))],
+                None,
+            )
+            .expect("Exception#initialize can't signal"),
+            // No such class registered: a `raise_error` site naming a class no
+            // prelude defines (a spinel-rt bug), or a partial test registry.
+            // Panic with the full message -- the same uncatchable fallback the
+            // old registry-less `raise_error` used, so the real error still
+            // surfaces rather than being masked by an "unknown class" note.
+            _ => panic!("{class_name}: {msg}"),
+        }
     }
 
     /// Records `name` as DEFINED DIRECTLY on `id` (not inherited) -- emitted by
@@ -973,6 +1015,22 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
     REGISTRY.get()?.entries.get(&id.0)?.constructor
 }
 
+/// Construct an instance of the class with id `id`, running its `initialize`.
+/// Codegen calls this at every raise/construct site for a BOOTSTRAP exception
+/// class, since those classes no longer have a generated Rust struct to name --
+/// the native prelude registered their `ConstructorFn` (see `crate::prelude`).
+/// A missing constructor is a spinelc bug (a bootstrap id with no registrar).
+pub fn construct_by_class_id(
+    id: ClassId,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    match constructor_of(id) {
+        Some(ctor) => ctor(id, args, block),
+        None => panic!("no constructor registered for class id {}", id.0),
+    }
+}
+
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:
 /// Symbol or String (real Ruby accepts both), anything else raising
 /// CRuby's exact TypeError shape.
@@ -1114,30 +1172,15 @@ pub fn install_class_registry(registry: ClassRegistry) {
         .unwrap_or_else(|_| panic!("class registry installed twice"));
 }
 
-/// Builds an exception value from a class NAME + message -- installed once
-/// from generated `main()` (alongside the registry), because this crate
-/// cannot construct exception OBJECTS itself: the exception classes are
-/// ordinary generated `ruby_class!` structs living in the generated
-/// program's own crate (the same division of labor as `array_set`'s
-/// `IndexError` contract). Began life as a `NoMethodError`-only factory
-/// (Phase 13.7, replacing a whole-process `exit(1)` over one bad dispatch);
-/// generalized in Phase 17.1 so the builtin method tables can raise real,
-/// rescuable `ArgumentError`/`TypeError`/`ZeroDivisionError`/... with
-/// CRuby's own message shapes instead of panicking.
-static EXCEPTION_FACTORY: OnceLock<fn(&str, String) -> RubyValue> = OnceLock::new();
-
-pub fn install_exception_factory(factory: fn(&str, String) -> RubyValue) {
-    EXCEPTION_FACTORY
-        .set(factory)
-        .unwrap_or_else(|_| panic!("exception factory installed twice"));
-}
-
 /// THE runtime raise channel: a rescuable `Signal::Raise` carrying a
-/// `class_name` exception when the factory is installed (every generated
-/// program), a loud panic otherwise (this crate's own unit tests).
+/// `class_name` exception once the registry is installed (every generated
+/// program), a loud panic otherwise (this crate's own unit tests, which run
+/// registry-less). The registry constructs the object itself via the class's
+/// registered `ConstructorFn` -- see `ClassRegistry::construct_exception` for
+/// why the runtime no longer needs a factory installed from generated `main()`.
 pub fn raise_error(class_name: &str, msg: String) -> Signal {
-    match EXCEPTION_FACTORY.get() {
-        Some(factory) => Signal::Raise(factory(class_name, msg)),
+    match REGISTRY.get() {
+        Some(reg) => Signal::Raise(reg.construct_exception(class_name, msg)),
         None => panic!("{class_name}: {msg}"),
     }
 }
@@ -1146,11 +1189,11 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
 /// an Exception object raises itself, a String becomes a `RuntimeError` with
 /// that message, and anything else is CRuby's `TypeError: exception
 /// class/object expected` -- instead of panicking when the raise machinery
-/// later unwraps a non-Object. `exception_cid` is `Exception`'s (dynamically
-/// assigned) ClassId, baked in by codegen.
+/// later unwraps a non-Object. `exception_cid` is `Exception`'s ClassId,
+/// baked in by codegen.
 pub fn coerce_raise_arg(value: RubyValue, exception_cid: ClassId) -> RubyValue {
-    let build = |class_name: &str, msg: String| match EXCEPTION_FACTORY.get() {
-        Some(factory) => factory(class_name, msg),
+    let build = |class_name: &str, msg: String| match REGISTRY.get() {
+        Some(reg) => reg.construct_exception(class_name, msg),
         None => panic!("{class_name}: {msg}"),
     };
     match &value {
@@ -1160,27 +1203,28 @@ pub fn coerce_raise_arg(value: RubyValue, exception_cid: ClassId) -> RubyValue {
     }
 }
 
-/// `StopIteration` needs its own factory shape (Phase 17.2): the instance
-/// an exhausted `Enumerator#next` raises carries the underlying `each`'s
-/// return value as `#result` -- what `Kernel#loop` returns after
-/// swallowing it (CRuby kernel.rb:151). The general factory above can't
-/// thread that value, so generated `main()` installs this second builder
-/// (constructs `StopIteration.new(msg)` then `__set_result`s it).
-static STOP_ITERATION_FACTORY: OnceLock<fn(String, RubyValue) -> RubyValue> = OnceLock::new();
-
-pub fn install_stop_iteration_factory(factory: fn(String, RubyValue) -> RubyValue) {
-    STOP_ITERATION_FACTORY
-        .set(factory)
-        .unwrap_or_else(|_| panic!("StopIteration factory installed twice"));
-}
-
-/// The exhausted-iteration raise: a rescuable `StopIteration` whose
-/// `result` is `result` (a fresh instance per raise -- CRuby rebuilds one
-/// from `stop_exc` each time too). Loud panic registry-less (unit tests).
+/// The exhausted-iteration raise (Phase 17.2): a rescuable `StopIteration`
+/// whose `result` is `result` (a fresh instance per raise -- CRuby rebuilds
+/// one from `stop_exc` each time too). Constructs `StopIteration.new(msg)` via
+/// the registry, then stamps the result through the prelude class's own
+/// `__set_result` -- the logic generated `main()` used to install as a second
+/// factory, now that the runtime constructs exceptions itself. Loud panic
+/// registry-less (unit tests).
 pub fn raise_stop_iteration(result: RubyValue) -> Signal {
-    match STOP_ITERATION_FACTORY.get() {
-        Some(factory) => {
-            Signal::Raise(factory("iteration reached an end".to_string(), result))
+    match REGISTRY.get() {
+        Some(reg) => {
+            let exc = reg.construct_exception(
+                "StopIteration",
+                "iteration reached an end".to_string(),
+            );
+            send(
+                &exc.as_object_unchecked(),
+                Symbol::intern("__set_result"),
+                std::slice::from_ref(&result),
+                None,
+            )
+            .expect("StopIteration#__set_result can't signal");
+            Signal::Raise(exc)
         }
         None => panic!("StopIteration: iteration reached an end"),
     }

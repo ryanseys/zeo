@@ -333,7 +333,7 @@ builtin_methods! {
             return crate::builtins::enumerator::enumerator_new(args, block);
         }
         match crate::dispatch::constructor_of(cid) {
-            Some(ctor) => ctor(args, block),
+            Some(ctor) => ctor(cid, args, block),
             None => {
                 let is_module = crate::dispatch::class_is_module(cid).unwrap_or(false);
                 let kind = if is_module { "module" } else { "class" };

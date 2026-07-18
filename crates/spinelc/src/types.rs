@@ -197,9 +197,14 @@ pub fn infer_type_with_locals(
                 //     Typing it `Object(TIME_CLASS)` made codegen try to box
                 //     the result through a `__bm_Time::new_handle` that does
                 //     not exist.
+                //   - a BOOTSTRAP exception class: its structs moved into
+                //     `spinel-rt`, so a `raise ArgumentError.new(...)` is a
+                //     boxed `RubyValue` built by `construct_by_class_id`, not
+                //     an unboxed `Arc<ArgumentError>` (there is no such struct).
                 Some(cid)
                     if !compiler.class(cid).is_module
                         && !compiler.class(cid).is_builtin
+                        && !compiler.class(cid).is_bootstrap
                         && cid != crate::compiler::OBJECT_CLASS =>
                 {
                     TyKind::Object(cid)
@@ -264,6 +269,7 @@ pub fn infer_type_with_locals(
                 TyKind::ClassObj(cid)
                     if !compiler.class(cid).is_module
                         && !compiler.class(cid).is_builtin
+                        && !compiler.class(cid).is_bootstrap
                         && cid != crate::compiler::OBJECT_CLASS =>
                 {
                     TyKind::Object(cid)

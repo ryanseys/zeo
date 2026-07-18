@@ -371,11 +371,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // via hardcoded codegen paths rather than the dynamic registry, so
     // `respond_to?` against one always reports `false`, a separate,
     // pre-existing-shaped scope-cut, not a regression this introduces).
+    // BOOTSTRAP classes (the exception prelude) are excluded too: their
+    // structs/impls/registration now live once in `spinel-rt`, installed by
+    // `spinel_rt::register_prelude` (see `main` below). The compiler still keeps
+    // their HIR for name resolution, `super` inlining, and materializing user
+    // subclasses -- it just no longer EMITS them into every program.
     let classes = compiler
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, class)| idx != 0 && !class.is_module && !class.is_builtin)
+        .filter(|&(idx, class)| {
+            idx != 0 && !class.is_module && !class.is_builtin && !class.is_bootstrap
+        })
         .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)));
 
     // Class methods (`def self.x`, and instance methods pulled in via
@@ -389,7 +396,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, class)| idx != 0 && !class.is_builtin && !class.class_methods.is_empty())
+        .filter(|&(idx, class)| {
+            idx != 0 && !class.is_builtin && !class.is_bootstrap && !class.class_methods.is_empty()
+        })
         .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)));
 
     // A REOPENED builtin class (Phase 16.3): one `pub mod __bm_<Name>`
@@ -429,7 +438,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
     let mut registrations: Vec<TokenStream> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
-        if idx == 0 || class.is_builtin {
+        // BOOTSTRAP classes are registered by `spinel_rt::register_prelude`, not
+        // per-program -- skip their whole registration/metadata block here.
+        if idx == 0 || class.is_builtin || class.is_bootstrap {
             continue;
         }
         let register = if class.is_module {
@@ -692,70 +703,13 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
-    // The exception factory's construction arms (Phase 17.1, generalizing
-    // 13.7's NoMethodError-only factory): one match arm per exception class
-    // the RUNTIME can raise (`spinel_rt::raise_error`'s reachable set) --
-    // each built by the SAME `emit_boxed_new` chokepoint every other
-    // codegen-raised exception uses (deriving the ivar layout from the
-    // class info rather than hardcoding it here), wrapped to absorb
-    // `initialize`'s `?` (an Exception constructor can't signal). An
-    // unknown name is a bug in spinel-rt, not user error -- a loud panic.
-    // Every BOOTSTRAP Exception descendant gets an arm, derived from the
-    // class table rather than a hand-maintained list: `spinel-rt` raises by
-    // NAME (`raise_error("NameError", ...)`), so every name it can produce
-    // must be constructible here or the program dies with "unknown class"
-    // -- exactly how a missing `NameError` arm surfaced.
-    //
-    // Bootstrap-only (the exception prelude plus `Math::DomainError`) is
-    // both necessary and sufficient: those are precisely the classes the
-    // runtime names, they all take the prelude's `initialize(msg = nil)`,
-    // and they're all in box 0. A USER subclass must be excluded -- its
-    // `initialize` may take any arguments at all (a 2-parameter one made
-    // this a compile error), and the runtime never asks for it by name.
-    let exception_cid = cx
-        .resolve_class("Exception")
-        .expect("the exception prelude always defines Exception");
-    let mut exception_names: Vec<String> = compiler
-        .classes
-        .iter()
-        .enumerate()
-        .filter(|(idx, ci)| {
-            ci.is_bootstrap
-                && !ci.is_module
-                && !ci.is_builtin
-                && (ClassId(*idx as u32) == exception_cid || ci.ancestors.contains(&exception_cid))
-        })
-        .map(|(idx, _)| compiler.fq_name(ClassId(idx as u32)))
-        .collect();
-    exception_names.sort();
-    exception_names.dedup();
-    let exception_arms = exception_names
-        .iter()
-        .map(|exc_name| {
-        let exc_name = exc_name.as_str();
-        let ctor = expr::emit_boxed_new(
-            &cx,
-            exc_name,
-            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
-        );
-        quote! {
-            #exc_name => (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#ctor) })()
-                .expect("Exception#initialize can't signal"),
-        }
-    })
-    .collect::<Vec<_>>();
-
-    let stop_iteration_ctor = {
-        let ctor = expr::emit_boxed_new(
-            &cx,
-            "StopIteration",
-            vec![quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new(__msg)) }],
-        );
-        quote! {
-            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { Ok(#ctor) })()
-                .expect("Exception#initialize can't signal")
-        }
-    };
+    // The exception factory that generated `main()` used to install (one arm
+    // per runtime-raisable exception class, each an `emit_boxed_new`) is gone:
+    // `spinel-rt` now constructs exceptions by NAME from the registered classes
+    // (`ClassRegistry::construct_exception`), so this ~1,130-line block no
+    // longer bloats every binary. The prelude classes still register their
+    // `ConstructorFn` via `ruby_class!`'s `__register`, which is what the
+    // runtime construction path uses.
 
     quote! {
         #(#classes)*
@@ -765,6 +719,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
             #(#builtin_registrations)*
+            // The built-in exception hierarchy (`Exception`, `StandardError`,
+            // the whole tree) -- installed once from `spinel-rt` instead of the
+            // ~6,600 lines of `ruby_class!` blocks every program used to emit.
+            // Its ids are the ones `spinel-abi` reserves and the compiler
+            // asserts it assigned identically (see `analyze`).
+            spinel_rt::register_prelude(&mut __registry);
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
             // Float::INFINITY/NAN/EPSILON/... and Math::PI/E (Phase 17.1)
@@ -787,32 +747,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // runtime-fallback story as ARGV/STDOUT above.
             spinel_rt::seed_env();
             spinel_rt::seed_process();
-            // Lets the runtime raise real, catchable exceptions
-            // (NoMethodError since Phase 13.7; the whole ArgumentError/
-            // TypeError/... set since 17.1) -- spinel-rt can't construct
-            // exception objects itself (see `raise_error`'s docs).
-            spinel_rt::install_exception_factory(|__class, __msg| {
-                match __class {
-                    #(#exception_arms)*
-                    other => panic!("exception factory: spinel-rt raised an unknown class {other}"),
-                }
-            });
-            // StopIteration's dedicated builder (Phase 17.2): the instance
-            // an exhausted `Enumerator#next` raises carries the underlying
-            // `each`'s return value as `#result` -- what a `loop`'s rescue
-            // returns. Built like the arms above, then stamped through the
-            // prelude class's own `__set_result`.
-            spinel_rt::install_stop_iteration_factory(|__msg, __result| {
-                let __exc = #stop_iteration_ctor;
-                spinel_rt::send(
-                    &__exc.as_object_unchecked(),
-                    spinel_rt::Symbol::intern("__set_result"),
-                    std::slice::from_ref(&__result),
-                    None,
-                )
-                .expect("StopIteration#__set_result can't signal");
-                __exc
-            });
+            // The runtime raises real, catchable exceptions (NoMethodError,
+            // ArgumentError, TypeError, StopIteration, ...) by constructing
+            // them itself from the registered classes -- see
+            // `ClassRegistry::construct_exception`. No per-program factory is
+            // installed anymore: it was ~1,130 lines of identical machinery in
+            // every binary (the single largest slice after the prelude classes).
 
             // The whole top level runs as `may`'s first coroutine (Phase
             // 13.4) -- see `spinel_rt::run_main`'s docs for the worker-count

@@ -69,10 +69,15 @@ impl Runner {
                         }
                     };
                     let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    // Per-test compile/run timing inline, so a single slow case
+                    // stands out in the stream (the "many fast, then one stalls"
+                    // pattern) instead of only showing up in the ranking below.
                     println!(
-                        "[{n}/{total}] {} {}{}",
+                        "[{n}/{total}] {} {} (c:{}ms r:{}ms){}",
                         result.verdict.as_str(),
                         result.id,
+                        result.compile_ms,
+                        result.run_ms,
                         if result.cached { " (cached)" } else { "" }
                     );
                     if fail_fast && result.verdict != Verdict::Pass {

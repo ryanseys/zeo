@@ -57,9 +57,14 @@ fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
         .iter()
         .find(|(v, _)| *v == "PASS")
         .map_or(0, |(_, n)| *n);
+    let pct = if total > 0 {
+        passed as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
     let mut out = format!(
         "# Conformance scoreboard\n\n\
-         Suite `{}` — **{passed}/{total} passing** — oracle `{}` — spinel-rs `{}`\n\n\
+         Suite `{}` — **{passed}/{total} passing ({pct:.1}%)** — oracle `{}` — spinel-rs `{}`\n\n\
          | verdict | count |\n|---|---|\n",
         meta.suite, meta.ruby_version, meta.git_sha
     );
