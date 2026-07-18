@@ -1,5 +1,5 @@
-# suite=spinel corpus=1968 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=381df57
-# PASS=1440 FAIL_OUTPUT=429 FAIL_COMPILE=91 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1968
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=ebc830d
+# PASS=1453 FAIL_OUTPUT=432 FAIL_COMPILE=93 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -357,6 +357,7 @@ class_hierarchy_builtin	PASS	-	-
 class_hierarchy_module	PASS	-	-
 class_in_collection	PASS	-	-
 class_ivar_in_class_method	PASS	-	-
+class_ivar_not_inherited	PASS	-	-
 class_ivar_save_restore	PASS	-	-
 class_lt_builtin_parent	FAIL_COMPILE	compile	spike-misc
 class_method_open_class_call	PASS	-	-
@@ -536,6 +537,7 @@ empty_hash_method_return	PASS	-	-
 empty_hash_poly_keys	PASS	-	-
 empty_hash_receiver_call	PASS	-	-
 empty_hash_takes_return_type	PASS	-	-
+empty_hash_yield_wrapper_seed	PASS	-	-
 empty_int_array_min_max	PASS	-	-
 empty_literal_receiver	PASS	-	-
 empty_method_returns_nil	PASS	-	-
@@ -744,7 +746,7 @@ gsub_with_hash_replacement	PASS	-	-
 gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
 hangs_548	FAIL_COMPILE	compile	spike-misc
-harness_batch_2453_2456	FAIL_COMPILE	compile	spike-misc
+harness_batch_2453_2456	FAIL_COMPILE	compile	unknown-class
 hash_all_pattern	FAIL_OUTPUT	expect	pattern-shapes
 hash_array_string_batch8	FAIL_OUTPUT	expect	missing-builtin-method
 hash_block_methods_variants	PASS	-	-
@@ -1019,6 +1021,19 @@ issue229_uncalled_cls_method	PASS	-	-
 issue236_chain_empty_literal	PASS	-	-
 issue239_cls_method_default_args	PASS	-	-
 issue_266_def_length_inference	PASS	-	-
+issue_2863	PASS	-	-
+issue_2864	PASS	-	-
+issue_2865	PASS	-	-
+issue_2866	FAIL_OUTPUT	expect	missing-builtin-method
+issue_2868	FAIL_OUTPUT	expect	-
+issue_2869	FAIL_OUTPUT	expect	missing-core-const
+issue_2870	PASS	-	-
+issue_2871	PASS	-	-
+issue_2872	PASS	-	-
+issue_2873	PASS	-	-
+issue_2874	FAIL_COMPILE	compile	spike-misc
+issue_2875	PASS	-	-
+issue_2876	PASS	-	-
 iter_block_autosplat	PASS	-	-
 ivar_assign_and_expr	PASS	-	-
 ivar_conditional_nil	PASS	-	-
@@ -1491,10 +1506,11 @@ puts_nil	PASS	-	-
 puts_object_nested_new_arg	PASS	-	-
 raise_non_exception_typeerror	PASS	-	-
 raise_reraise_in_def	PASS	-	-
-raise_shortform_default_args	FAIL_COMPILE	compile	splat
+raise_shortform_default_args	PASS	-	-
 raise_unless_isa_narrow	PASS	-	-
 rand_prng_stream	FAIL_COMPILE	compile	unknown-class
 random_bignum_seed	FAIL_COMPILE	compile	unknown-class
+random_float_seed	FAIL_COMPILE	compile	unknown-class
 random_inspect	FAIL_COMPILE	compile	unknown-class
 random_methods	FAIL_COMPILE	compile	unknown-class
 random_rand_argument	FAIL_COMPILE	compile	unknown-class
@@ -1644,6 +1660,7 @@ shareable_constant	PASS	-	-
 signal_module_surface	FAIL_COMPILE	compile	unknown-class
 signal_trap_stub	FAIL_OUTPUT	expect	missing-builtin-method
 singleton_class_block	FAIL_COMPILE	compile	singleton-class
+singleton_class_object	FAIL_COMPILE	compile	singleton-class
 singleton_method_object	FAIL_COMPILE	compile	spike-misc
 sized_poly_array_nil_n	PASS	-	-
 sleep_poly_arg	PASS	-	-
@@ -1958,6 +1975,7 @@ yield_inline_ctor_self	PASS	-	-
 yield_inline_divergent_accumulator	PASS	-	-
 yield_inline_divergent_block_map	PASS	-	-
 yield_inline_receiver_self	PASS	-	-
+yield_into_local_divergent	PASS	-	-
 yield_method_call_in_method_body	PASS	-	-
 yield_mixed_block_types	PASS	-	-
 yield_no_block_raises	FAIL_OUTPUT	expect	auto-f715b554

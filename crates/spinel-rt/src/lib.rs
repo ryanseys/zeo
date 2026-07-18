@@ -44,7 +44,7 @@ pub use builtins::kernel::{
 pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
 pub use builtins::BuiltinMethodFn;
-pub use builtins::exception::register_exceptions;
+pub use builtins::exception::{register_exception_subclass, register_exceptions};
 pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
@@ -52,7 +52,7 @@ pub use dispatch::{
     instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
     method_name_symbol, raise_error, raise_stop_iteration, responds_to, run_initialize,
-    send, send_in, send_value, send_value_in,
+    send, send_in, send_super_from, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,

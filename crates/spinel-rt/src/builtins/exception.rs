@@ -23,8 +23,8 @@ use parking_lot::Mutex;
 use spinel_abi::{declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES};
 
 use crate::dispatch::{
-    class_name, downcast_robj, raise_error, run_initialize, ClassRegistry, ConstructorFn, RObj,
-    RubyObject,
+    class_name, downcast_robj, raise_error, run_initialize, send, ClassRegistry, ConstructorFn,
+    RObj, RubyObject,
 };
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -172,9 +172,12 @@ fn exc_to_s(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result
     }
 }
 
-/// `def message; to_s; end`
-fn exc_message(recv: &RObj, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    exc_to_s(recv, args, blk)
+/// `def message; to_s; end` -- a DYNAMIC send, so a subclass that overrides
+/// `to_s` (but not `message`) has its `to_s` honored here, exactly as in CRuby
+/// (`Custom#message` follows `Custom#to_s`). Calling `exc_to_s` directly would
+/// bypass the override.
+fn exc_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    send(recv, Symbol::intern("to_s"), &[], None)
 }
 
 /// `def backtrace; []; end`
@@ -186,7 +189,8 @@ fn exc_backtrace(_recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
 fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let name = class_name(e.class_id).unwrap_or_default();
-    let msg = exc_to_s(recv, &[], None)?.to_display_string();
+    // Dynamic `to_s` (honors a subclass override), matching `#message`/`#inspect`.
+    let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
     Ok(RubyValue::Str(string_new(format!("{name}: {msg}"))))
 }
 
@@ -195,7 +199,10 @@ fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -
 fn exc_inspect(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let name = class_name(e.class_id).unwrap_or_default();
-    let s = exc_to_s(recv, &[], None)?.to_display_string();
+    // `#inspect` reads `to_s` (NOT `message`) -- oracle: a `message`-only
+    // override does not change `inspect`, but a `to_s` override does. Dynamic
+    // so the subclass's `to_s` is honored.
+    let s = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
     let out = if s.is_empty() {
         name
     } else if s.contains('\n') {
@@ -247,27 +254,48 @@ pub fn register_exceptions(registry: &mut ClassRegistry) {
             registry.register(row.id, row.name, true, ancestors, None);
             continue;
         }
-        let carries_result = ancestors.contains(&STOP_ITERATION_ID);
-        registry.register(
-            row.id,
-            row.name,
-            false,
-            ancestors,
-            Some(exception_construct as ConstructorFn),
-        );
-        // Flat dispatch: every class needs the full materialized method set on
-        // its own id (the same shape the compiler emits per generated class).
-        registry.define_method(row.id, Symbol::intern("initialize"), exc_initialize);
-        registry.define_method(row.id, Symbol::intern("message"), exc_message);
-        registry.define_method(row.id, Symbol::intern("to_s"), exc_to_s);
-        registry.define_method(row.id, Symbol::intern("backtrace"), exc_backtrace);
-        registry.define_method(row.id, Symbol::intern("full_message"), exc_full_message);
-        registry.define_method(row.id, Symbol::intern("inspect"), exc_inspect);
-        if carries_result {
-            registry.define_method(row.id, Symbol::intern("__set_result"), stop_set_result);
-            registry.define_method(row.id, Symbol::intern("result"), stop_result);
-        }
+        register_exception_subclass(registry, row.id, row.name, ancestors);
     }
     // A guard for future edits: `Exception` must be the first exception id.
     debug_assert_eq!(EXCEPTION_CLASSES[0].id, EXCEPTION_CLASS);
+}
+
+/// Install ONE exception class's registry entry plus the native `Exception`
+/// method set on its own id: the shared `RubyException` constructor and the six
+/// `Exception` methods (`initialize`/`message`/`to_s`/`backtrace`/`full_message`/
+/// `inspect`), plus StopIteration's `result`/`__set_result` when the class
+/// descends from it. Shared by `register_exceptions` (the built-in hierarchy,
+/// from `with_core`) and, for D3, by generated `main()` for each USER
+/// `class MyErr < StandardError` -- unifying user exception subclasses onto the
+/// same native `RubyException` rather than a divergent generated struct. The
+/// subclass's own `def`s then `define_method` OVER these defaults (an override)
+/// or beside them (an addition). `ancestors` is the full linearized chain, so
+/// `carries_result` is decided the same way for a user `class Done < StopIteration`
+/// as for the built-in tree.
+pub fn register_exception_subclass(
+    registry: &mut ClassRegistry,
+    id: ClassId,
+    name: &str,
+    ancestors: Vec<ClassId>,
+) {
+    let carries_result = ancestors.contains(&STOP_ITERATION_ID);
+    registry.register(
+        id,
+        name,
+        false,
+        ancestors,
+        Some(exception_construct as ConstructorFn),
+    );
+    // Flat dispatch: every class needs the full materialized method set on
+    // its own id (the same shape the compiler emits per generated class).
+    registry.define_method(id, Symbol::intern("initialize"), exc_initialize);
+    registry.define_method(id, Symbol::intern("message"), exc_message);
+    registry.define_method(id, Symbol::intern("to_s"), exc_to_s);
+    registry.define_method(id, Symbol::intern("backtrace"), exc_backtrace);
+    registry.define_method(id, Symbol::intern("full_message"), exc_full_message);
+    registry.define_method(id, Symbol::intern("inspect"), exc_inspect);
+    if carries_result {
+        registry.define_method(id, Symbol::intern("__set_result"), stop_set_result);
+        registry.define_method(id, Symbol::intern("result"), stop_result);
+    }
 }

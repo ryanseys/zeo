@@ -7,6 +7,7 @@
 pub(crate) mod exec;
 mod oracle;
 mod runlock;
+mod rubyspec_suite;
 mod runner;
 mod scoreboard;
 mod skiplist;
@@ -20,10 +21,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
-use suite::{Suite, TestCase, TestResult, Verdict};
+use suite::{TestCase, TestResult, Verdict};
 
 struct Opts {
     command: String,
+    /// `--suite <name>` pins the run to one suite; `None` means "every suite"
+    /// for `run` and defaults to `spinel` for the single-suite subcommands
+    /// (triage/show/oracle-verify).
+    suite: Option<String>,
     dir: Option<PathBuf>,
     filters: Vec<String>,
     jobs: usize,
@@ -42,6 +47,7 @@ struct Opts {
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
     let mut opts = Opts {
         command: args.first().cloned().ok_or(USAGE)?,
+        suite: None,
         dir: None,
         filters: Vec::new(),
         jobs: std::thread::available_parallelism().map_or(4, |n| n.get()),
@@ -89,9 +95,12 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--bucket" => opts.bucket = Some(value("--bucket")?),
             "--suite" => {
                 let s = value("--suite")?;
-                if s != "spinel" {
-                    return Err(format!("suite {s:?} isn't implemented yet (only `spinel`)"));
+                if s != "spinel" && s != "rubyspec" {
+                    return Err(format!(
+                        "unknown suite {s:?} (expected `spinel` or `rubyspec`)"
+                    ));
                 }
+                opts.suite = Some(s);
             }
             other if !other.starts_with('-') && opts.test_id.is_none() => {
                 opts.test_id = Some(other.to_owned())
@@ -103,15 +112,17 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
-  run           [--dir PATH] [--filter GLOB]... [-j N] [--timeout SECS]\n\
-                [--compile-timeout SECS] [--force] [--fail-fast]\n\
+  run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
+                [--timeout SECS] [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
-  triage        [--top N] [--bucket NAME]   (--bucket lists each test + its stderr tail)\n\
-  show <id>\n\
-  oracle-verify [--dir PATH]\n\
+  triage        [--suite NAME] [--top N] [--bucket NAME]\n\
+  show <id>     [--suite NAME]\n\
+  oracle-verify [--suite NAME] [--dir PATH]\n\
   clean-cache   remove the compiled-program cache (target/spinelc-bin-cache)\n\
   --help, -h    show this message\n\
-corpus root: --dir, else $SPINEL_TEST_DIR";
+run with no --suite exercises every suite (spinel, then rubyspec); each suite's\n\
+corpus comes from --dir, else its $ENV (SPINEL_TEST_DIR / RUBYSPEC_DIR), else its\n\
+conventional ~/dev path -- a suite whose corpus is absent is skipped.";
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     if args.iter().any(|a| a == "--help" || a == "-h") || args.is_empty() {
@@ -143,7 +154,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 }
 
 struct Session {
-    suite: spinel_suite::SpinelSuite,
+    suite: Box<dyn suite::Suite>,
     cases: Vec<TestCase>,
     stamps: stamps::StampStore,
     oracle: oracle::Oracle,
@@ -151,25 +162,73 @@ struct Session {
     skiplist: Vec<skiplist::SkipEntry>,
 }
 
-fn open_session(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, String> {
-    let suite = spinel_suite::SpinelSuite;
-    let corpus_dir = match &opts.dir {
-        Some(d) => d.clone(),
-        None => std::env::var_os(suite.root_env_var())
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                format!(
-                    "no corpus root: pass --dir or set ${}",
-                    suite.root_env_var()
-                )
-            })?,
-    };
-    let cases = suite.discover(&corpus_dir)?;
+fn make_suite(name: &str, root: &Path) -> Box<dyn suite::Suite> {
+    match name {
+        "rubyspec" => Box::new(rubyspec_suite::RubySpecSuite {
+            repo_root: root.to_path_buf(),
+        }),
+        _ => Box::new(spinel_suite::SpinelSuite),
+    }
+}
+
+/// The suites a `run` targets: the one named by `--suite`, else every suite.
+/// Order matters -- `spinel` (the core corpus) runs first.
+fn selected_suites(opts: &Opts) -> Vec<&'static str> {
+    match opts.suite.as_deref() {
+        Some("rubyspec") => vec!["rubyspec"],
+        Some(_) => vec!["spinel"],
+        None => vec!["spinel", "rubyspec"],
+    }
+}
+
+/// Locate a suite's corpus: `--dir` wins, then `$ENV`, then the conventional
+/// `default_root()`. In a multi-suite run a suite whose corpus can't be found is
+/// skipped (`Ok(None)`); a single explicitly-selected suite errors instead.
+fn resolve_corpus(
+    opts: &Opts,
+    suite: &dyn suite::Suite,
+    allow_skip: bool,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(d) = &opts.dir {
+        return Ok(Some(d.clone()));
+    }
+    if let Some(v) = std::env::var_os(suite.root_env_var()) {
+        if !v.is_empty() {
+            return Ok(Some(PathBuf::from(v)));
+        }
+    }
+    if let Some(def) = suite.default_root() {
+        if def.is_dir() {
+            return Ok(Some(def));
+        }
+    }
+    if allow_skip {
+        Ok(None)
+    } else {
+        Err(format!(
+            "no corpus root for suite `{}`: pass --dir or set ${}",
+            suite.name(),
+            suite.root_env_var()
+        ))
+    }
+}
+
+fn open_session(
+    root: &Path,
+    opts: &Opts,
+    suite_name: &str,
+    corpus_dir: &Path,
+    prebuild: bool,
+) -> Result<Session, String> {
+    let suite = make_suite(suite_name, root);
+    // A driver-synthesizing suite (rubyspec) writes into the work dir, so it
+    // must exist before `discover`.
+    let work_dir = root.join("target/conformance").join(suite.name());
+    let cases = suite.discover(corpus_dir, &work_dir)?;
 
     if prebuild {
         runner::prebuild(root)?;
     }
-    let work_dir = root.join("target/conformance").join(suite.name());
     let oracle = oracle::Oracle::new(
         root.join("target/conformance/oracle"),
         opts.run_timeout,
@@ -181,6 +240,9 @@ fn open_session(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, Str
         diff_dir: work_dir.join("diffs"),
         compile_timeout: opts.compile_timeout,
         run_timeout: opts.run_timeout,
+        // The rubyspec driver's `require_relative '../spec_helper'` (real mspec)
+        // must collapse to a no-op -- the mspec_lite shim supplies the DSL.
+        mspec_stubs: suite_name == "rubyspec",
     };
     let skiplist = skiplist::load(&root.join("conformance/skiplist.tsv"))?;
     Ok(Session {
@@ -191,6 +253,19 @@ fn open_session(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, Str
         runner,
         skiplist,
     })
+}
+
+/// Open the single suite the non-`run` subcommands operate on: the one named by
+/// `--suite`, else `spinel`.
+fn open_single(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, String> {
+    let name = match opts.suite.as_deref() {
+        Some("rubyspec") => "rubyspec",
+        _ => "spinel",
+    };
+    let suite = make_suite(name, root);
+    let corpus = resolve_corpus(opts, suite.as_ref(), false)?
+        .expect("resolve_corpus with allow_skip=false is Some or Err");
+    open_session(root, opts, name, &corpus, prebuild)
 }
 
 /// The workspace target directory (honoring `CARGO_TARGET_DIR`, else
@@ -263,6 +338,49 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     // can't silently contend on the shared target/binary-cache or race the
     // scoreboard. Released when `_lock` drops at the end of this function.
     let _lock = runlock::RunLock::acquire(&target_dir(root))?;
+
+    let suites = selected_suites(opts);
+    if opts.dir.is_some() && suites.len() > 1 {
+        return Err(
+            "--dir names a single corpus; pass --suite to pick which suite it applies to".to_owned(),
+        );
+    }
+
+    // Prebuild (spinelc + spinel-rt) once, before the first suite that actually
+    // runs; later suites reuse the built artifacts.
+    let mut prebuilt = false;
+    for (i, &name) in suites.iter().enumerate() {
+        let suite = make_suite(name, root);
+        let corpus = match resolve_corpus(opts, suite.as_ref(), suites.len() > 1)? {
+            Some(c) => c,
+            None => {
+                println!(
+                    "\n=== suite `{name}` skipped: no corpus (pass --dir or set ${}) ===",
+                    suite.root_env_var()
+                );
+                continue;
+            }
+        };
+        if suites.len() > 1 {
+            println!(
+                "\n{}=== suite `{name}` (corpus {}) ===",
+                if i == 0 { "" } else { "\n" },
+                corpus.display()
+            );
+        }
+        run_one_suite(root, opts, name, &corpus, !prebuilt)?;
+        prebuilt = true;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_one_suite(
+    root: &Path,
+    opts: &Opts,
+    suite_name: &str,
+    corpus: &Path,
+    prebuild: bool,
+) -> Result<ExitCode, String> {
     let Session {
         suite,
         cases,
@@ -270,7 +388,7 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
         oracle,
         runner,
         skiplist,
-    } = open_session(root, opts, true)?;
+    } = open_session(root, opts, suite_name, corpus, prebuild)?;
     let suite_name = suite.name();
     let all_ids: Vec<String> = cases.iter().map(|c| c.id.clone()).collect();
 
@@ -416,13 +534,19 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
             git_sha: &git_sha(root),
         };
         scoreboard::write_all(&root.join("conformance"), &meta, &all_results)?;
-        println!("\nwrote conformance/scoreboard.tsv, SCOREBOARD.md, TRIAGE.md");
+        let prefix = if suite_name == "spinel" { "" } else { suite_name };
+        let sep = if prefix.is_empty() { "" } else { "-" };
+        println!(
+            "\nwrote conformance/{p}{s}scoreboard.tsv, {p}{s}SCOREBOARD.md, {p}{s}TRIAGE.md",
+            p = prefix,
+            s = sep
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_triage(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
-    let session = open_session(root, opts, false)?;
+    let session = open_single(root, opts, false)?;
     let mut results = Vec::new();
     for case in &session.cases {
         if let Some(r) = session.stamps.load_any(&case.id) {
@@ -459,7 +583,7 @@ fn cmd_triage(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
 
 fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     let id = opts.test_id.as_deref().ok_or("show requires a test id")?;
-    let session = open_session(root, opts, false)?;
+    let session = open_single(root, opts, false)?;
     let Some(r) = session.stamps.load_any(id) else {
         return Err(format!("no stamp for {id:?} -- run `conformance run` first"));
     };
@@ -483,7 +607,7 @@ fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
 }
 
 fn cmd_oracle_verify(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
-    let session = open_session(root, opts, false)?;
+    let session = open_single(root, opts, false)?;
     let live: Vec<_> = session
         .cases
         .iter()

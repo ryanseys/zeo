@@ -1,0 +1,13 @@
+app error 7
+7
+[:@code]
+nil
+app error 404
+404
+here
+true
+true
+app error 9
+rescued NotFound: app error 404
+plain msg
+[]

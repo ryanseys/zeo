@@ -380,9 +380,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .classes
         .iter()
         .enumerate()
-        .filter(|&(idx, class)| {
-            idx != 0 && !class.is_module && !class.is_builtin && !class.is_bootstrap
-        })
+        .filter(|&(idx, _)| compiler.has_generated_struct(ClassId(idx as u32)))
         .map(|(idx, _)| emit_class(compiler, ClassId(idx as u32)));
 
     // Class methods (`def self.x`, and instance methods pulled in via
@@ -459,6 +457,25 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     true,
                     vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
                     None,
+                );
+            }
+        } else if compiler.is_exception_backed(ClassId(idx as u32)) {
+            // A user `class MyErr < StandardError` (D3): no generated struct --
+            // its instances are the native `RubyException`. Install the runtime
+            // entry + native `Exception` default method set on its id; the
+            // subclass's own `def`s then `define_method` OVER these as deltas
+            // (see the exception-delta loop below). The full linearized
+            // `ancestors` let the runtime decide `carries_result`
+            // (StopIteration descendants) exactly as the built-in tree does.
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                spinel_rt::register_exception_subclass(
+                    &mut __registry,
+                    spinel_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
                 );
             }
         } else {
@@ -566,16 +583,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
     }
 
-    // Native-exception reopen/subclass DELTAS (D3): the pristine exception
-    // hierarchy is installed by `with_core()`, so codegen emits only the user
-    // methods that reopen/override it. In this stage only BOOTSTRAP classes are
-    // reached (a user `class MyErr < StandardError` still takes the generated-
-    // struct path); a later stage widens this to every `is_exception_backed`
-    // class. Each delta `define_method`s over the native entry AFTER `with_core`,
-    // so an override replaces it and an addition extends it.
+    // Native-exception reopen/subclass DELTAS (D3): the native default method
+    // set is installed on every exception id -- the built-in tree by
+    // `with_core()`, each user `class MyErr < StandardError` by the
+    // `register_exception_subclass` call emitted above. Codegen then emits only
+    // the user methods (`!native_default`): a REOPEN of a built-in exception, or
+    // a user subclass's own `def`s. Each delta `define_method`s over the native
+    // entry AFTER registration, so an override replaces it and an addition
+    // extends it -- for the bootstrap classes AND the unified user subclasses
+    // alike (`is_exception_backed` spans both).
     let mut exc_containers: Vec<TokenStream> = Vec::new();
-    for (idx, class) in compiler.classes.iter().enumerate() {
-        if !class.is_bootstrap {
+    for (idx, _) in compiler.classes.iter().enumerate() {
+        if !compiler.is_exception_backed(ClassId(idx as u32)) {
             continue;
         }
         if let Some((container, regs)) = emit_exception_deltas(compiler, ClassId(idx as u32)) {
@@ -890,7 +909,11 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
     let fns = ci.class_methods.iter().map(|&sid| emit_class_method_fn(compiler, sid));
-    if ci.is_module {
+    // A module has no struct to attach an `impl` to -- and neither does an
+    // EXCEPTION-BACKED class (D3): its instances are the native `RubyException`,
+    // so `def self.x` emits into a `pub mod` of free functions, reached at the
+    // call site as `#name::x(...)` exactly like a module's (see below).
+    if ci.is_module || compiler.is_exception_backed(cid) {
         // Ruby module names are conventionally PascalCase (matching a Rust
         // struct/type's own convention), which `rustc` otherwise flags as
         // non-idiomatic for a `mod` (conventionally snake_case) -- silenced

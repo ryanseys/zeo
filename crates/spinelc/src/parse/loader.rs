@@ -425,6 +425,16 @@ impl Loader {
         file_idx: Option<usize>,
         current_box: u32,
     ) -> PResult<Vec<NodeId>> {
+        // Conformance-harness support (mspec_lite): ruby/spec files
+        // `require_relative '../spec_helper'`, which pulls in the real `mspec`
+        // framework spinel can't compile. Under `SPINELC_MSPEC_STUBS` (set only
+        // by the rubyspec conformance suite), such a require is a no-op -- the
+        // driver's own `require_relative <mspec_lite>` supplies the DSL. Off by
+        // default, so ordinary compiles are unaffected.
+        if is_mspec_stub_feature(feature) {
+            return Ok(Vec::new());
+        }
+
         // Features spinel already provides natively -- `require` short-circuits
         // to a no-op before any filesystem search (CRuby's own built-in-feature
         // rule). `tmpdir` (Dir.mktmpdir) is compiled in.
@@ -807,6 +817,18 @@ pub(super) fn canonical_ext_feature(feature: &str) -> &str {
 
 fn is_builtin_feature(feature: &str) -> bool {
     matches!(feature, "tmpdir" | "set") || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
+}
+
+/// Whether `feature` is a mspec/spec_helper require the rubyspec conformance
+/// suite stubs out (see `splice_feature`). Gated on `SPINELC_MSPEC_STUBS` so it
+/// never affects a normal compile. Matched by basename, so `../spec_helper`,
+/// `spec/spec_helper`, `mspec`, and `mspec/guards/version` all collapse.
+fn is_mspec_stub_feature(feature: &str) -> bool {
+    if std::env::var_os("SPINELC_MSPEC_STUBS").is_none() {
+        return false;
+    }
+    let base = feature.rsplit('/').next().unwrap_or(feature);
+    base == "spec_helper" || feature == "mspec" || feature.starts_with("mspec/")
 }
 
 fn with_rb_ext(feature: &str) -> String {

@@ -18,9 +18,12 @@ pub struct RunMeta<'a> {
 
 pub fn write_all(dir: &Path, meta: &RunMeta, results: &[TestResult]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
-    write(dir.join("scoreboard.tsv"), tsv(meta, results))?;
-    write(dir.join("SCOREBOARD.md"), summary_md(meta, results))?;
-    write(dir.join("TRIAGE.md"), triage_md(meta, results))?;
+    // Each suite gets its own committed artifacts so they don't clobber each
+    // other; the original `spinel` suite keeps the historical unprefixed names.
+    let prefix = if meta.suite == "spinel" { String::new() } else { format!("{}-", meta.suite) };
+    write(dir.join(format!("{prefix}scoreboard.tsv")), tsv(meta, results))?;
+    write(dir.join(format!("{prefix}SCOREBOARD.md")), summary_md(meta, results))?;
+    write(dir.join(format!("{prefix}TRIAGE.md")), triage_md(meta, results))?;
     Ok(())
 }
 

@@ -537,13 +537,20 @@ impl Compiler {
     /// static `(recv).method()` call. False for the four kinds that have none,
     /// each of which is instead a boxed `RubyValue` dispatched dynamically:
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
-    /// `Object` (the runtime root, name-keyed ivars), and -- since the built-in
-    /// exceptions moved into `spinel-rt` -- BOOTSTRAP classes (constructed via
-    /// `construct_by_class_id`). The single source of truth for "is there a
-    /// struct here?", which several `TyKind::Object` and `.new` sites gate on.
+    /// `Object` (the runtime root, name-keyed ivars), BOOTSTRAP classes (the
+    /// built-in exceptions, now in `spinel-rt`), and -- since D3 -- every
+    /// EXCEPTION-BACKED user subclass (`class MyErr < StandardError`), whose
+    /// instances are the native `RubyException` constructed via
+    /// `construct_by_class_id`, not a per-class struct. The single source of
+    /// truth for "is there a struct here?", which several `TyKind::Object` and
+    /// `.new` sites gate on.
     pub fn has_generated_struct(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
-        !ci.is_module && !ci.is_builtin && !ci.is_bootstrap && cid != OBJECT_CLASS
+        !ci.is_module
+            && !ci.is_builtin
+            && !ci.is_bootstrap
+            && cid != OBJECT_CLASS
+            && !self.is_exception_backed(cid)
     }
 
     /// Whether `cid`'s instances are the native `RubyException` (D3): the

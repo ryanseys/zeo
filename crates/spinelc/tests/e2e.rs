@@ -2581,6 +2581,147 @@ fn native_exception_hides_its_message_ivar() {
     assert_eq!(result.stdout, "[]\nnil\nboom\n");
 }
 
+/// A USER exception subclass is backed by the native `RubyException` (D3): a
+/// custom ivar, `super` into the native `initialize` (which stores the message
+/// in its hidden slot), and reflection all match CRuby -- `instance_variables`
+/// is `[:@code]` only (NOT `@message`), and `@message` reads nil while
+/// `#message` returns the super-provided text.
+#[test]
+fn user_exception_subclass_uses_native_representation() {
+    let result = run_ruby(
+        r##"
+        class MyErr < StandardError
+          def initialize(code)
+            @code = code
+            super("boom #{code}")
+          end
+          def code
+            @code
+          end
+        end
+
+        e = MyErr.new(42)
+        puts e.message
+        puts e.code
+        puts e.is_a?(StandardError)
+        p e.instance_variables
+        p e.instance_variable_get(:@message)
+        p e.instance_variable_get(:@code)
+        begin
+          raise MyErr, "direct"
+        rescue StandardError => ex
+          puts "#{ex.class}: #{ex.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "boom 42\n42\ntrue\n[:@code]\nnil\n42\nMyErr: boom direct\n"
+    );
+}
+
+/// A user exception subclass with NO `initialize` inherits the native default:
+/// `Plain.new(msg)` stores the message in the hidden slot, so `#message`
+/// returns it and `instance_variables` is empty. Multi-level `super` chains
+/// (`B < A < StandardError`, bare `super` forwarding) also resolve natively.
+#[test]
+fn user_exception_subclass_super_chain_and_inherited_initialize() {
+    let result = run_ruby(
+        r#"
+        class Plain < RuntimeError
+        end
+        p1 = Plain.new("hi")
+        puts p1.message
+        p p1.instance_variables
+
+        class A < StandardError
+          def initialize(msg = "a-default")
+            super
+          end
+        end
+        class B < A
+          def initialize
+            super()
+            @tag = "b"
+          end
+          def tag; @tag; end
+        end
+        b = B.new
+        puts b.message
+        puts b.tag
+        puts b.is_a?(A)
+
+        class Done < StopIteration
+        end
+        puts Done.new("stop").message
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hi\n[]\na-default\nb\ntrue\nstop\n"
+    );
+}
+
+/// An exception subclass whose `initialize` takes KEYWORD arguments (D3): the
+/// runtime construction path (`construct_by_class_id`) must carry keywords as
+/// the trailing-Hash the trampoline expects, or `code:` would default. Two
+/// sibling subclasses -- neither's `message` param pinned to a String -- also
+/// exercise the poly `super(message)` coercion into the native message slot.
+#[test]
+fn user_exception_subclass_keyword_initialize() {
+    let result = run_ruby(
+        r#"
+        class AError < StandardError
+          attr_reader :code
+          def initialize(message, code: 3)
+            super(message)
+            @code = code
+          end
+        end
+        class BError < StandardError
+          attr_reader :level
+          def initialize(message, level = 7)
+            super(message)
+            @level = level
+          end
+        end
+        a = AError.new("boom", code: 9)
+        puts a.code
+        puts a.message
+        b = BError.new("bad", 5)
+        puts b.level
+        puts b.message
+        puts AError.new("d").code
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "9\nboom\n5\nbad\n3\n");
+}
+
+/// A `def self.x` on an exception subclass emits into a `pub mod` (no struct to
+/// attach an `impl` to), and a bare `new` inside it constructs via the runtime
+/// (D3) -- `Self.new` there yields the native `RubyException`, not a `new_handle`.
+#[test]
+fn user_exception_subclass_class_method_constructs_via_runtime() {
+    let result = run_ruby(
+        r#"
+        class D < StandardError
+          def self.build(n)
+            new("built-#{n}")
+          end
+        end
+        e = D.build(3)
+        puts e.message
+        puts e.class
+        puts e.is_a?(StandardError)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "built-3\nD\ntrue\n");
+}
+
 /// Reopening a builtin MODULE (D3): the added method reaches every includer --
 /// Enumerable across Array/Hash, Comparable across Integer.
 #[test]

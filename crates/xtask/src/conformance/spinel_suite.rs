@@ -12,9 +12,9 @@
 //! - `test/rbs*` (RBS extraction) is out of scope and not discovered; a
 //!   standing skiplist entry documents the decision.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::suite::{Expectation, Suite, TestCase};
+use super::suite::{home, Expectation, Suite, TestCase};
 
 pub struct SpinelSuite;
 
@@ -27,7 +27,11 @@ impl Suite for SpinelSuite {
         "SPINEL_TEST_DIR"
     }
 
-    fn discover(&self, root: &Path) -> Result<Vec<TestCase>, String> {
+    fn default_root(&self) -> Option<PathBuf> {
+        home().map(|h| h.join("dev/spinel/test"))
+    }
+
+    fn discover(&self, root: &Path, _work_dir: &Path) -> Result<Vec<TestCase>, String> {
         if !root.join("analyze_fail").is_dir() {
             return Err(format!(
                 "{} doesn't look like the spinel test corpus (no analyze_fail/ subdir); \

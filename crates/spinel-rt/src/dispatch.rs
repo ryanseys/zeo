@@ -1068,6 +1068,44 @@ pub fn construct_by_class_id(
     }
 }
 
+/// The `super` dispatch for an exception-backed receiver (D3): resume the MRO
+/// walk in the RECEIVER's own ancestors at the entry AFTER `defining_class`
+/// (the class whose body this `super` is lexically written in) and invoke the
+/// first `name` registered there -- a native default or a user delta,
+/// uniformly. This is the runtime counterpart of codegen's `emit_super_inline`
+/// HIR splice, which CANNOT serve a `super` into a native exception method: an
+/// exception's message lives in a hidden slot, independent of any `@message`
+/// ivar, so the retained `Exception#initialize` HIR (a fictional `@message =
+/// msg`) would set a visible ivar and leave the real message untouched. Walking
+/// the registry -- where every exception id carries the native `exc_*` fns --
+/// runs the true behavior instead. Also the exact shape #97's eval VM needs for
+/// `super`, so it lands here rather than as a codegen special case.
+pub fn send_super_from(
+    recv: &RubyValue,
+    defining_class: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let obj = recv.as_object_unchecked();
+    let ancestors = ancestors_of_value(obj.class_id());
+    // Resume AFTER the class this `super` is written in; an unrecognized
+    // `defining_class` (never expected) degrades to a full walk from the top.
+    let start = ancestors
+        .iter()
+        .position(|&a| a == defining_class)
+        .map_or(0, |p| p + 1);
+    for &anc in &ancestors[start..] {
+        if let Some(f) = registry().lookup(anc, name) {
+            return f.call(&obj, args, block);
+        }
+    }
+    Err(raise_error(
+        "NoMethodError",
+        format!("super: no superclass method '{name}'"),
+    ))
+}
+
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:
 /// Symbol or String (real Ruby accepts both), anything else raising
 /// CRuby's exact TypeError shape.

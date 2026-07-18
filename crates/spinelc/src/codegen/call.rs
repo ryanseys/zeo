@@ -642,10 +642,15 @@ pub fn emit_new(
         })
         .collect();
     // A builtin/module `.new` dispatches dynamically through `send_value_in`,
-    // whose ABI carries keywords as one trailing Hash (the G2 convention) --
-    // so `String.new(s, encoding:)`/`Hash.new`'s options reach the runtime row.
-    // (A user class binds keywords through `emit_call_args_to` above, not here.)
-    if !kwargs.is_empty() && (ci.is_builtin || ci.is_module) {
+    // and an EXCEPTION-BACKED subclass's `.new` runs its `initialize` through
+    // the runtime (`construct_by_class_id` -> the `emit_exc_trampoline`
+    // trampoline) -- both carry keywords as one trailing Hash (the G2
+    // convention), so `AError.new(msg, code: 9)`'s options reach the row.
+    // (A struct-backed user class binds keywords through `emit_call_args_to`
+    // above, not here.)
+    if !kwargs.is_empty()
+        && (ci.is_builtin || ci.is_module || cx.compiler.is_exception_backed(cid))
+    {
         let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
         arg_exprs.push(quote! {
             {
@@ -718,12 +723,13 @@ pub fn emit_new_with_arg_tokens(
             )?
         };
     }
-    // A BOOTSTRAP exception class: no generated struct exists (the exception
-    // prelude lives in `spinel-rt` now), so construct it through the runtime by
-    // id. Returns a boxed `RubyValue`, matching its `Poly` static type -- and
-    // runs `initialize` (the message assignment) exactly as the old struct
-    // literal's inline `.initialize(...)?` did.
-    if cx.compiler.class(cid).is_bootstrap {
+    // An EXCEPTION-BACKED class (a bootstrap exception OR a user `class MyErr <
+    // StandardError`, D3): no generated struct exists -- its instances are the
+    // native `RubyException` -- so construct it through the runtime by id.
+    // Returns a boxed `RubyValue`, matching its `Poly` static type, and runs the
+    // registered `initialize` (the native default, or the subclass's own delta)
+    // exactly as the old struct literal's inline `.initialize(...)?` did.
+    if cx.compiler.is_exception_backed(cid) {
         let id = cid.0;
         return quote! {
             spinel_rt::construct_by_class_id(spinel_rt::ClassId(#id), &[#(#arg_exprs),*], None)?
@@ -978,6 +984,19 @@ pub fn emit_super_inline(
         });
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
+    // `super` into a NATIVE exception method (D3): the resolved parent is a
+    // pristine `BUILTIN_EXCEPTIONS_RB` body (`native_default`) whose real
+    // behavior lives in a `spinel-rt` fn, not the retained HIR -- splicing that
+    // HIR would set a visible `@message` ivar and miss the hidden message slot.
+    // Dispatch through the runtime instead, resuming the MRO walk after
+    // `defining_class` (`native_default` is only ever set on bootstrap-exception
+    // scopes, so this can't fire for an ordinary struct class). A user
+    // exception parent's own method (`!native_default`) still splices below --
+    // its HIR body runs correctly against the dynamic-self receiver.
+    if cx.compiler.scope(sid).native_default {
+        return emit_super_native(cx, mname, &current_params, args, kwargs, zsuper, block);
+    }
+
     let defining_scope = cx.compiler.scope(sid);
     let body = defining_scope.body.clone();
     // `loop_labels`/`label_counter` carry over from `cx` unchanged: the
@@ -1055,6 +1074,97 @@ pub fn emit_super_inline(
         false,
     );
     quote! { { #bindings #blk_binding #inlined } }
+}
+
+/// `super` from an exception-backed method into a NATIVE default parent
+/// (`native_default`), dispatched through `spinel_rt::send_super_from` rather
+/// than spliced (see `emit_super_inline`'s native-branch comment for why).
+/// Builds the forwarded argument slice -- explicit `super(a, b)` args, or, for
+/// bare `super`, the current method's own positional parameters (required /
+/// optional / splatted `*rest` / post) -- then resumes the receiver's MRO walk
+/// after `defining_class`. Keyword arguments append as one trailing Hash (the
+/// runtime's G2 convention); the native `Exception` methods take none, so this
+/// only matters for a user parent reached transitively, which the runtime walk
+/// resolves correctly.
+fn emit_super_native(
+    cx: &Ctx,
+    mname: &str,
+    current_params: &Params,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    zsuper: bool,
+    block: Option<NodeId>,
+) -> TokenStream {
+    let self_ident = &cx.self_ident;
+    let def_id = cx.defining_class.expect("`super` outside a method").0;
+
+    let mut pushes: Vec<TokenStream> = Vec::new();
+    if zsuper {
+        // Bare `super`: forward the current method's own already-bound
+        // positional parameters, in Ruby order.
+        for name in &current_params.required {
+            let id = safe_ident(name);
+            pushes.push(quote! { __super_args.push(#id.clone()); });
+        }
+        for (name, _) in &current_params.optional {
+            let id = safe_ident(name);
+            pushes.push(quote! { __super_args.push(#id.clone()); });
+        }
+        if let Some(Some(name)) = &current_params.rest {
+            let id = safe_ident(name);
+            // The `*rest` local is a `RubyValue::Array` post-prologue -- splat
+            // its elements (the same idiom `ArrayElem::Splat` uses at call sites).
+            pushes.push(quote! {
+                __super_args.extend((#id).as_array_unchecked().lock().iter().cloned());
+            });
+        }
+        for name in &current_params.post {
+            let id = safe_ident(name);
+            pushes.push(quote! { __super_args.push(#id.clone()); });
+        }
+    } else {
+        for &a in args {
+            let e = emit_expr(cx, a);
+            let e = super::expr::box_if_object_typed(cx, a, e);
+            pushes.push(quote! { __super_args.push(#e); });
+        }
+        if !kwargs.is_empty() {
+            let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
+            pushes.push(quote! {
+                {
+                    let __kw = spinel_rt::hash_new(vec![]);
+                    #inserts
+                    __super_args.push(spinel_rt::RubyValue::Hash(__kw));
+                }
+            });
+        }
+    }
+
+    // A literal block at the `super` site is forwarded (native `Exception`
+    // methods ignore it, but a transitively-reached user parent may `yield`);
+    // bare `super` with no literal block forwards nothing (`None`) -- the
+    // native methods take no block, so there is no current `__blk` to thread.
+    let block_expr = match block {
+        Some(b) => {
+            let proc_value = emit_proc_value(cx, b);
+            quote! { Some(#proc_value) }
+        }
+        None => quote! { None },
+    };
+
+    quote! {
+        {
+            let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
+            #(#pushes)*
+            spinel_rt::send_super_from(
+                &#self_ident,
+                spinel_rt::ClassId(#def_id),
+                spinel_rt::Symbol::intern(#mname),
+                &__super_args,
+                #block_expr,
+            )?
+        }
+    }
 }
 
 /// Binds the parent method's (`parent_params`) own parameter names, right
@@ -1839,6 +1949,12 @@ pub fn emit_call(
                     // literal `HirNode::New` infers `Object(cid)`), so the
                     // expression must be a `RubyValue`.
                     let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
+                    // An exception-backed class (D3) has no struct to
+                    // `new_handle` -- `emit_new` already yields a fully-boxed
+                    // `RubyValue` built by the runtime.
+                    if cx.compiler.is_exception_backed(defining) {
+                        return ctor;
+                    }
                     let class_ident = super::ident::class_ident(cx.compiler, defining);
                     return quote! {
                         spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor))

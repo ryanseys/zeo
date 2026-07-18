@@ -26,6 +26,9 @@ pub struct Runner {
     pub diff_dir: PathBuf,
     pub compile_timeout: Duration,
     pub run_timeout: Duration,
+    /// Set `SPINELC_MSPEC_STUBS` when compiling (the rubyspec suite): spec files
+    /// `require_relative '../spec_helper'`, which spinelc no-ops under this flag.
+    pub mspec_stubs: bool,
 }
 
 impl Runner {
@@ -135,6 +138,9 @@ impl Runner {
             // ~16GB this suite alone costs statically. `spinelc` defaults to
             // static because a shipped binary has to stand on its own.
             .env("SPINELC_LINK_DYNAMIC", "1");
+        if self.mspec_stubs {
+            cmd.env("SPINELC_MSPEC_STUBS", "1");
+        }
             // No `SPINELC_ASSUME_BUILT` needed: `prebuild` above already built
             // `spinel-rt`, so each subprocess's `ensure_runtime_built` is a cheap
             // existence check and `build_binary` itself only links -- neither runs
@@ -202,12 +208,22 @@ impl Runner {
         }
 
         // -- expect -----------------------------------------------------------
+        // A self-reporting case (rubyspec/mspec_lite) carries its verdict on
+        // stdout; there is no oracle diff. A clean summary (0 failures, 0
+        // errors) is a PASS; any failures/errors is `FailOutput`; a missing
+        // summary line means the program crashed before printing it (`FailRun`).
+        if matches!(case.expectation, Expectation::SelfReport) {
+            return self.expect_self_report(result, &run);
+        }
+
         // A compiled `CompileFail` case has no snapshots; the live oracle is
         // its reference (same as a snapshot-less test).
         let no_snapshot = (None, None);
         let (stdout, stderr) = match &case.expectation {
             Expectation::Snapshot { stdout, stderr } => (stdout, stderr),
             Expectation::CompileFail => (&no_snapshot.0, &no_snapshot.1),
+            // Returned earlier via `expect_self_report`.
+            Expectation::SelfReport => unreachable!("SelfReport handled above"),
         };
         let (expected_out, expected_err) = match (stdout, stderr) {
             (Some(out_path), err_path) => {
@@ -274,6 +290,41 @@ impl Runner {
         result
     }
 
+    /// Decide a self-reporting (rubyspec) case from the driver's summary line.
+    fn expect_self_report(
+        &self,
+        mut result: TestResult,
+        run: &super::exec::Execution,
+    ) -> TestResult {
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        match stdout.lines().rev().find_map(parse_summary) {
+            // A clean self-report is the pass -- `result` already defaults to it.
+            Some((_examples, 0, 0)) => result,
+            // The spec ran but some examples failed/errored: a real behavior
+            // gap. Bucket by the driver's stderr (the FAIL/ERROR lines).
+            Some((_examples, _failures, _errors)) => {
+                result.stage = "expect";
+                result.verdict = Verdict::FailOutput;
+                result.stderr_tail = tail_lines(&run.stderr, 5);
+                let t = triage::classify(&String::from_utf8_lossy(&run.stderr));
+                result.bucket = t.bucket;
+                result.cluster = t.cluster;
+                result
+            }
+            // No summary line at all: the program aborted before printing it
+            // (an uncaught exception at the spec's top level, or a crash).
+            None => {
+                result.stage = "run";
+                result.verdict = Verdict::FailRun;
+                result.stderr_tail = tail_lines(&run.stderr, 5);
+                let t = triage::classify(&String::from_utf8_lossy(&run.stderr));
+                result.bucket = t.bucket;
+                result.cluster = t.cluster;
+                result
+            }
+        }
+    }
+
     fn write_diff(
         &self,
         id: &str,
@@ -318,6 +369,26 @@ impl Runner {
     pub fn diff_path(&self, id: &str) -> PathBuf {
         self.diff_dir.join(format!("{}.diff", sanitize_id(id)))
     }
+}
+
+/// Parse a mspec_lite summary line -- `MSPEC_LITE examples=N failures=F
+/// errors=E` -- into `(examples, failures, errors)`. Any other line is `None`.
+fn parse_summary(line: &str) -> Option<(u64, u64, u64)> {
+    let rest = line.strip_prefix("MSPEC_LITE ")?;
+    let mut examples = None;
+    let mut failures = None;
+    let mut errors = None;
+    for field in rest.split_whitespace() {
+        let (key, val) = field.split_once('=')?;
+        let n: u64 = val.parse().ok()?;
+        match key {
+            "examples" => examples = Some(n),
+            "failures" => failures = Some(n),
+            "errors" => errors = Some(n),
+            _ => {}
+        }
+    }
+    Some((examples?, failures?, errors?))
 }
 
 fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> TestResult {
