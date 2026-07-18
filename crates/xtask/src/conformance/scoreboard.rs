@@ -81,11 +81,17 @@ fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
     if ranked.is_empty() {
         out.push_str("(none)\n");
     } else {
-        out.push_str("| blocked | bucket | cluster | sample test |\n|---|---|---|---|\n");
+        out.push_str(
+            "| blocked | bucket | cluster | sample test | sample message |\n|---|---|---|---|---|\n",
+        );
         for b in ranked.iter().take(10) {
             out.push_str(&format!(
-                "| {} | {} | {} | {} |\n",
-                b.count, b.bucket, b.cluster, b.sample_id
+                "| {} | {} | {} | {} | {} |\n",
+                b.count,
+                b.bucket,
+                b.cluster,
+                b.sample_id,
+                b.sample_message.replace('|', "\\|")
             ));
         }
     }
@@ -117,7 +123,7 @@ fn triage_md(meta: &RunMeta, results: &[TestResult]) -> String {
          Failing tests grouped by normalized failure message, ranked by how many\n\
          tests each gap blocks. Clusters refer to the implementation plan's gap\n\
          families. Oracle `{}`.\n\n\
-         | cluster | bucket | blocked | sample test | sample message |\n|---|---|---|---|---|\n",
+         | cluster | bucket | blocked | sample tests | sample message |\n|---|---|---|---|---|\n",
         meta.ruby_version
     );
     for b in ranked {
@@ -126,7 +132,7 @@ fn triage_md(meta: &RunMeta, results: &[TestResult]) -> String {
             b.cluster,
             b.bucket,
             b.count,
-            b.sample_id,
+            b.sample_ids.join(", "),
             b.sample_message.replace('|', "\\|")
         ));
     }
@@ -140,7 +146,15 @@ pub struct BucketStat {
     pub cluster: String,
     pub bucket: String,
     pub count: usize,
+    /// The representative test for this bucket -- the first of `sample_ids`.
     pub sample_id: String,
+    /// Up to three member tests, spread across the (sorted) member list rather
+    /// than always the alphabetically-first, so the table shows the bucket's
+    /// variety. Deterministic (stable across runs given the same members) so
+    /// the committed report only churns when the underlying set changes.
+    pub sample_ids: Vec<String>,
+    /// The ACTIONABLE failure message of `sample_id` -- the real panic body /
+    /// clean rejection, never the `note: run with RUST_BACKTRACE=1` trailer.
     pub sample_message: String,
 }
 
@@ -151,24 +165,77 @@ pub fn ranked_buckets(results: &[TestResult]) -> Vec<BucketStat> {
     ranked
 }
 
+/// One member of a failure bucket: its test id and extracted message.
+struct Member {
+    id: String,
+    message: String,
+}
+
 pub fn bucket_stats(results: &[TestResult]) -> BTreeMap<String, BucketStat> {
-    let mut buckets: BTreeMap<String, BucketStat> = BTreeMap::new();
+    // First gather every failing test's (id, real message) under its bucket,
+    // keeping the cluster label (same for all members of a bucket).
+    let mut members: BTreeMap<String, (String, Vec<Member>)> = BTreeMap::new();
     for r in results {
         if r.bucket == "-" || r.verdict == Verdict::Pass || r.verdict == Verdict::Skip {
             continue;
         }
-        buckets
+        let entry = members
             .entry(r.bucket.clone())
-            .and_modify(|b| b.count += 1)
-            .or_insert_with(|| BucketStat {
-                cluster: r.cluster.clone(),
-                bucket: r.bucket.clone(),
-                count: 1,
-                sample_id: r.id.clone(),
-                sample_message: r.stderr_tail.lines().last().unwrap_or("").to_owned(),
-            });
+            .or_insert_with(|| (r.cluster.clone(), Vec::new()));
+        entry.1.push(Member {
+            id: r.id.clone(),
+            message: super::triage::extract_message(&r.stderr_tail),
+        });
     }
-    buckets
+
+    members
+        .into_iter()
+        .map(|(bucket, (cluster, mut mem))| {
+            mem.sort_by(|a, b| a.id.cmp(&b.id));
+            let count = mem.len();
+            let sample_ids = spread_samples(&bucket, &mem, 3);
+            // The representative (first shown) drives the one-line message.
+            let sample_id = sample_ids[0].clone();
+            let sample_message = mem
+                .iter()
+                .find(|m| m.id == sample_id)
+                .map(|m| m.message.clone())
+                .unwrap_or_default();
+            (
+                bucket.clone(),
+                BucketStat {
+                    cluster,
+                    bucket,
+                    count,
+                    sample_id,
+                    sample_ids,
+                    sample_message,
+                },
+            )
+        })
+        .collect()
+}
+
+/// Pick up to `n` member ids spread across the sorted list, starting at a
+/// bucket-name-seeded offset (so the pick isn't always the alphabetically
+/// first, giving a "random" feel) while staying fully deterministic.
+fn spread_samples(bucket: &str, members: &[Member], n: usize) -> Vec<String> {
+    let count = members.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let start = (super::util::fnv1a64(bucket.as_bytes()) as usize) % count;
+    let take = n.min(count);
+    let stride = (count / take).max(1);
+    let mut picked = Vec::with_capacity(take);
+    for i in 0..take {
+        let idx = (start + i * stride) % count;
+        let id = members[idx].id.clone();
+        if !picked.contains(&id) {
+            picked.push(id);
+        }
+    }
+    picked
 }
 
 /// Every verdict with its count, in `Verdict::ALL` order -- categories with

@@ -1,4 +1,4 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=ddde250
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=674e524
 # PASS=4 FAIL_OUTPUT=1 FAIL_COMPILE=61 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_COMPILE	compile	spike-misc
 END_spec	FAIL_RUN	run	auto-f0c6b32f
@@ -46,7 +46,7 @@ precedence_spec	FAIL_COMPILE	compile	auto-ba2b7615
 predefined_spec	FAIL_COMPILE	compile	spike-misc
 private_spec	FAIL_COMPILE	compile	spike-misc
 proc_spec	FAIL_COMPILE	compile	spike-misc
-range_spec	FAIL_OUTPUT	expect	range-shapes
+range_spec	FAIL_OUTPUT	expect	missing-method:new
 redo_spec	FAIL_COMPILE	compile	spike-misc
 regexp_spec	FAIL_COMPILE	compile	spike-misc
 rescue_spec	FAIL_COMPILE	compile	spike-misc

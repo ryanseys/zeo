@@ -68,6 +68,12 @@ pub struct Triage {
 /// Clean rejections look like `spinelc: <message>`.
 pub fn classify(stderr: &str) -> Triage {
     let message = extract_message(stderr);
+    // High-value patterns get a bucket keyed on the SPECIFIC missing name, so
+    // the triage ranks individual methods/constants (the actionable worklist)
+    // instead of collapsing every "undefined method" into one 100+ pile.
+    if let Some((cluster, bucket)) = specific_bucket(&message) {
+        return Triage { cluster: cluster.to_owned(), bucket };
+    }
     let normalized = normalize(&message);
     for (needle, cluster, bucket) in CLUSTERS {
         if normalized.contains(needle) {
@@ -82,6 +88,29 @@ pub fn classify(stderr: &str) -> Triage {
         cluster: "?".to_owned(),
         bucket,
     }
+}
+
+/// Map the highest-value runtime failures onto a bucket keyed by the SPECIFIC
+/// missing method or constant (`missing-method:transfer`,
+/// `missing-const:SizedQueue`), so the triage report ranks individual gaps --
+/// the direct worklist for closing them -- rather than one giant pile.
+fn specific_bucket(message: &str) -> Option<(&'static str, String)> {
+    // `undefined method 'X' for <receiver>` -- take the quoted name.
+    if let Some(rest) = message.split_once("undefined method '") {
+        if let Some(name) = rest.1.split('\'').next() {
+            if !name.is_empty() {
+                return Some(("P", format!("missing-method:{name}")));
+            }
+        }
+    }
+    // `uninitialized constant Z` (possibly a `A::B` path) -- take the token.
+    if let Some(rest) = message.split_once("uninitialized constant ") {
+        let name = rest.1.split_whitespace().next().unwrap_or("").trim();
+        if !name.is_empty() {
+            return Some(("P", format!("missing-const:{name}")));
+        }
+    }
+    None
 }
 
 /// The salient one-line failure message from a stage's stderr -- the Rust
@@ -106,11 +135,17 @@ pub fn extract_message(stderr: &str) -> String {
     if let Some(line) = lines.iter().rev().find(|l| l.starts_with("spinelc: ")) {
         return line["spinelc: ".len()..].to_owned();
     }
-    // Otherwise the last non-empty line.
+    // Otherwise the last meaningful line -- skipping the `note: run with
+    // RUST_BACKTRACE=1` trailer, which is noise on its own (e.g. an allocation
+    // abort, `memory allocation of N bytes failed`, prints the real reason on
+    // the line just above it with no `panicked at` header).
     lines
         .iter()
         .rev()
-        .find(|l| !l.trim().is_empty())
+        .find(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with("note: run with `RUST_BACKTRACE")
+        })
         .map(|l| l.trim().to_owned())
         .unwrap_or_default()
 }
@@ -163,6 +198,19 @@ mod tests {
         let t = classify("spinelc: only plain required parameters are supported in a method definition (spike scope)");
         assert_eq!(t.cluster, "a");
         assert_eq!(t.bucket, "param-shapes");
+    }
+
+    #[test]
+    fn extracts_message_from_an_abort_without_a_panic_header() {
+        // A `memory allocation of N bytes failed` abort (or any abort) has no
+        // `panicked at` line -- the real reason is the line above the
+        // RUST_BACKTRACE note, which must not be reported on its own.
+        let stderr = "memory allocation of 1152921504606846976 bytes failed\n\
+                      note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace";
+        assert_eq!(
+            extract_message(stderr),
+            "memory allocation of 1152921504606846976 bytes failed"
+        );
     }
 
     #[test]
