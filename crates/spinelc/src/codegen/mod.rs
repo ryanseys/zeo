@@ -658,7 +658,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 }
             });
             builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
-            let register = (!is_overlay).then(|| {
+            // Always-on builtins with their DEFAULT ancestors are registered
+            // once by `spinel_rt::register_builtins` -- so emit a base register
+            // here only for a require-gated extension (per-program, and the loop
+            // already feature-gates it) or a builtin whose ancestors a reopen
+            // actually changed (`class Array; include M; end`). The latter is an
+            // OVERRIDE: it lands after `register_builtins` in `main` and replaces
+            // the default entry. This keeps the common program free of the ~540
+            // identical builtin registrations while preserving full reopen parity.
+            let is_ext = class.feature_gate.is_some();
+            let ancestors_default =
+                class.ancestors == spinel_abi::default_builtin_ancestors(ClassId(id));
+            let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
                 quote! {
                     __registry.register(
                         spinel_rt::ClassId(#id),
@@ -718,6 +729,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
         fn main() {
             let mut __registry = spinel_rt::ClassRegistry::new();
+            // The always-on builtin classes/modules with their default
+            // hierarchy -- installed once from `spinel-rt` instead of ~540
+            // identical `register(...)` calls per program. Require-gated exts
+            // and reopen-modified builtins still register below (the latter as
+            // an override that replaces the default entry).
+            spinel_rt::register_builtins(&mut __registry);
             #(#builtin_registrations)*
             // The built-in exception hierarchy (`Exception`, `StandardError`,
             // the whole tree) -- installed once from `spinel-rt` instead of the

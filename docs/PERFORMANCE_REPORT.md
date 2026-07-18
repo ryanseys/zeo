@@ -252,7 +252,25 @@ built-in exception hierarchy is now written once, natively, in the runtime:
 **Result: `puts 1` went from 8,671 → 587 generated lines (−93%).** A cold single
 compile (dynamic + `lld`) dropped to **1.81 s** (from ~3 s at Stage A, ~7–8 s at
 baseline), with rustc CPU down to ~0.5 s (from ~2 s) — exactly the CPU-bound
-prelude codegen the saturation A/B pinpointed. Files:
+prelude codegen the saturation A/B pinpointed.
+
+**Stage D — the same move for the builtin registry (DONE).** After Stage C, 538 of
+the remaining 587 lines were *fixed builtin registration* — the identical
+`__registry.register(...)` calls for `Integer`/`Array`/`Kernel`/… in every
+program. Moved into a runtime `register_builtins(&mut ClassRegistry)` that installs
+the always-on builtins with their **default** ancestors (derived from
+`spinel_abi::default_builtin_ancestors`, which replicates the compiler's own
+linearization from the same abi edges). Full CRuby parity is preserved: a program
+that reopens a builtin to change its hierarchy (`class Array; include M; end`)
+emits a targeted **override** `register` that lands after `register_builtins` and
+replaces the entry — and codegen emits it *only* when the ancestors actually
+differ from the default (method reopens, which don't change ancestors, cost
+nothing). Require-gated extensions stay per-program so an un-`require`d one stays
+invisible. **`puts 1` is now 83 lines** (from 8,671 — a **99% reduction**). Files:
+`crates/spinel-abi/src/lib.rs`, `crates/spinel-rt/src/prelude.rs`,
+`crates/spinelc/src/codegen/mod.rs`.
+
+Files for Stage C:
 `crates/spinel-abi/src/lib.rs`, `crates/spinel-rt/src/prelude.rs`,
 `crates/spinel-rt/src/dispatch.rs`, `crates/spinelc/src/codegen/mod.rs`,
 `crates/spinelc/src/types.rs`, `crates/spinelc/src/codegen/call.rs`,

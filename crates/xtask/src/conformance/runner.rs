@@ -44,6 +44,22 @@ impl Runner {
         std::fs::create_dir_all(&self.diff_dir).ok();
 
         let total = cases.len();
+        // Longest-processing-time-first scheduling: draw the slowest cases
+        // (by their last recorded compile+run cost) first, so the big compiles
+        // start immediately and the many short ones backfill idle workers --
+        // instead of a slow case landing last and stalling the tail while 11
+        // cores sit idle (the "bursty" feel). A case with no prior stamp is
+        // unknown-cost and scheduled first, so a new slow test isn't discovered
+        // only at the very end. Purely a schedule; results are re-sorted by id.
+        let mut cases = cases;
+        cases.sort_by_key(|(case, _)| {
+            std::cmp::Reverse(
+                stamps
+                    .load_any(&case.id)
+                    .map(|r| r.compile_ms + r.run_ms)
+                    .unwrap_or(u64::MAX),
+            )
+        });
         let queue = Mutex::new(cases.into_iter().collect::<VecDeque<_>>());
         let results = Mutex::new(Vec::with_capacity(total));
         let done = std::sync::atomic::AtomicUsize::new(0);

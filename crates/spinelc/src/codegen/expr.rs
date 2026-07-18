@@ -985,14 +985,13 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
             let boxed = quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#expr)) };
             // A statically-known Exception subclass raises directly; a
             // non-exception object is coerced at runtime to CRuby's TypeError.
-            let exc_cid = cx.resolve_class("Exception").map(|c| c.0);
-            let is_exc =
-                exc_cid.is_some_and(|e| cx.compiler.class(cid).ancestors.iter().any(|a| a.0 == e));
+            // `Exception`'s id is fixed (`spinel-abi`), so no lookup is needed.
+            let exc_cid = spinel_abi::EXCEPTION_CLASS.0;
+            let is_exc = cx.compiler.class(cid).ancestors.iter().any(|a| a.0 == exc_cid);
             if is_exc {
                 boxed
             } else {
-                let e = exc_cid.unwrap_or(0);
-                quote! { spinel_rt::coerce_raise_arg(#boxed, spinel_rt::ClassId(#e)) }
+                quote! { spinel_rt::coerce_raise_arg(#boxed) }
             }
         }
         // A Poly (or non-exception) operand is coerced at runtime: an
@@ -1001,9 +1000,8 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         // expected` (previously a value smuggled into `Signal::Raise`
         // that panicked when the machinery unwrapped a non-Object).
         _ => {
-            let exc_cid = cx.resolve_class("Exception").map_or(0, |c| c.0);
             let expr = emit_expr(cx, node);
-            quote! { spinel_rt::coerce_raise_arg(#expr, spinel_rt::ClassId(#exc_cid)) }
+            quote! { spinel_rt::coerce_raise_arg(#expr) }
         }
     }
 }

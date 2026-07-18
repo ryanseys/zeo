@@ -1189,15 +1189,15 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
 /// an Exception object raises itself, a String becomes a `RuntimeError` with
 /// that message, and anything else is CRuby's `TypeError: exception
 /// class/object expected` -- instead of panicking when the raise machinery
-/// later unwraps a non-Object. `exception_cid` is `Exception`'s ClassId,
-/// baked in by codegen.
-pub fn coerce_raise_arg(value: RubyValue, exception_cid: ClassId) -> RubyValue {
+/// later unwraps a non-Object. `Exception`'s id is fixed (`spinel-abi`), so it
+/// no longer needs baking in by codegen.
+pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
     let build = |class_name: &str, msg: String| match REGISTRY.get() {
         Some(reg) => reg.construct_exception(class_name, msg),
         None => panic!("{class_name}: {msg}"),
     };
     match &value {
-        RubyValue::Object(o) if is_a(o.class_id(), exception_cid) => value,
+        RubyValue::Object(o) if is_a(o.class_id(), spinel_abi::EXCEPTION_CLASS) => value,
         RubyValue::Str(s) => build("RuntimeError", s.lock().to_utf8_lossy().into_owned()),
         _ => build("TypeError", "exception class/object expected".to_string()),
     }

@@ -50,7 +50,7 @@ pub use builtins::encoding::seed_encoding_constants;
 pub use builtins::numeric::seed_numeric_constants;
 pub use builtins::regexp::seed_regexp_constants;
 pub use builtins::BuiltinMethodFn;
-pub use prelude::register_prelude;
+pub use prelude::{register_builtins, register_prelude};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
     downcast_robj, install_class_registry,

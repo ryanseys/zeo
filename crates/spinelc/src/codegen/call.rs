@@ -603,7 +603,7 @@ pub fn emit_new(
         .resolve_class(class_name)
         .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
     let ci = cx.compiler.class(cid);
-    if !ci.is_builtin && !ci.is_module && !ci.is_bootstrap && cid != crate::compiler::OBJECT_CLASS {
+    if cx.compiler.has_generated_struct(cid) {
         if let Some((_, sid)) = cx.compiler.method_in_chain(cid, "initialize") {
             let scope = cx.compiler.scope(sid);
             let ctor = emit_ctor_struct(cx, cid);

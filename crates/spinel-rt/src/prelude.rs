@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use spinel_abi::{
-    ClassId, EXCEPTION_PRELUDE_CLASSES, OBJECT_ANCESTRY_TAIL, OBJECT_CLASS, EXCEPTION_CLASS,
+    default_builtin_ancestors, ClassId, BUILTINS, EXCEPTION_CLASS, EXCEPTION_PRELUDE_CLASSES,
+    OBJECT_ANCESTRY_TAIL, OBJECT_CLASS,
 };
 
 use crate::dispatch::{
@@ -248,6 +249,26 @@ fn linearize(id: ClassId) -> Vec<ClassId> {
     }
     chain.extend_from_slice(OBJECT_ANCESTRY_TAIL);
     chain
+}
+
+/// Install the always-on built-in classes/modules (`Integer`, `Array`, `Kernel`,
+/// ... and `Object`) into `registry` with their DEFAULT ancestors -- the fixed
+/// hierarchy every program shares, which used to be ~540 lines of identical
+/// `__registry.register(...)` calls in every generated `main()`. Require-gated
+/// extensions (`Base64`, `StringIO`, ...) are NOT here: they stay per-program in
+/// codegen so an un-`require`d one contributes nothing (its constant must stay
+/// invisible). A program that reopens a builtin to change its ancestors
+/// (`class Array; include M; end`) still works: codegen emits a targeted
+/// override that lands after this, replacing the entry (see `register`).
+pub fn register_builtins(registry: &mut ClassRegistry) {
+    let object = std::iter::once((OBJECT_CLASS, "Object", false));
+    let always_on = BUILTINS
+        .iter()
+        .filter(|b| b.feature.is_none())
+        .map(|b| (b.id, b.name, b.is_module));
+    for (id, name, is_module) in object.chain(always_on) {
+        registry.register(id, name, is_module, default_builtin_ancestors(id), None);
+    }
 }
 
 /// Install the whole built-in exception hierarchy into `registry`. Called once

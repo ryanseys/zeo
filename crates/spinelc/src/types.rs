@@ -201,14 +201,7 @@ pub fn infer_type_with_locals(
                 //     `spinel-rt`, so a `raise ArgumentError.new(...)` is a
                 //     boxed `RubyValue` built by `construct_by_class_id`, not
                 //     an unboxed `Arc<ArgumentError>` (there is no such struct).
-                Some(cid)
-                    if !compiler.class(cid).is_module
-                        && !compiler.class(cid).is_builtin
-                        && !compiler.class(cid).is_bootstrap
-                        && cid != crate::compiler::OBJECT_CLASS =>
-                {
-                    TyKind::Object(cid)
-                }
+                Some(cid) if compiler.has_generated_struct(cid) => TyKind::Object(cid),
                 _ => TyKind::Poly,
             }
         }
@@ -266,14 +259,7 @@ pub fn infer_type_with_locals(
             // interception emits the same unboxed `Arc<Concrete>`
             // construction.
             _ => match infer_type_with_locals(compiler, defining, box_id, locals, *recv) {
-                TyKind::ClassObj(cid)
-                    if !compiler.class(cid).is_module
-                        && !compiler.class(cid).is_builtin
-                        && !compiler.class(cid).is_bootstrap
-                        && cid != crate::compiler::OBJECT_CLASS =>
-                {
-                    TyKind::Object(cid)
-                }
+                TyKind::ClassObj(cid) if compiler.has_generated_struct(cid) => TyKind::Object(cid),
                 _ => TyKind::Poly,
             },
         },

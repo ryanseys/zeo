@@ -523,6 +523,20 @@ impl Compiler {
         self.class(cid).is_builtin || cid == OBJECT_CLASS
     }
 
+    /// Whether `cid` has a generated Rust struct in the program, so codegen may
+    /// name its type -- `#ident::new_handle(...)`, an unboxed `Arc<Concrete>`, a
+    /// static `(recv).method()` call. False for the four kinds that have none,
+    /// each of which is instead a boxed `RubyValue` dispatched dynamically:
+    /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
+    /// `Object` (the runtime root, name-keyed ivars), and -- since the exception
+    /// prelude moved into `spinel-rt` -- BOOTSTRAP classes (constructed via
+    /// `construct_by_class_id`). The single source of truth for "is there a
+    /// struct here?", which several `TyKind::Object` and `.new` sites gate on.
+    pub fn has_generated_struct(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        !ci.is_module && !ci.is_builtin && !ci.is_bootstrap && cid != OBJECT_CLASS
+    }
+
     /// A flat lookup into the receiver class's own MATERIALIZED `methods`
     /// list -- no ancestor walk needed at call-resolution time at all,
     /// since `analyze::mro::materialize` already resolved every reachable

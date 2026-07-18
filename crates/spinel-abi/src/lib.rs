@@ -384,6 +384,47 @@ pub const EXCEPTION_PRELUDE_CLASSES: &[PreludeClass] = &[
 /// `StandardError.ancestors[-3..] == [Object, Kernel, BasicObject]`.
 pub const OBJECT_ANCESTRY_TAIL: &[ClassId] = &[OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS];
 
+/// A builtin's `(superclass, includes)` edges, `Object` included. The single
+/// source both the compiler's seeding (`Compiler::new`) and the runtime's
+/// `register_builtins` derive the hierarchy from.
+fn builtin_edges(id: ClassId) -> (Option<ClassId>, &'static [ClassId]) {
+    if id == OBJECT_CLASS {
+        return (Some(OBJECT_SUPERCLASS), OBJECT_INCLUDES);
+    }
+    match BUILTINS.iter().find(|b| b.id == id) {
+        Some(b) => (b.superclass, b.includes),
+        None => (None, &[]),
+    }
+}
+
+fn expand_builtin(id: ClassId, out: &mut Vec<ClassId>) {
+    if out.contains(&id) {
+        return;
+    }
+    out.push(id);
+    let (superclass, includes) = builtin_edges(id);
+    // `includes` reversed, then the superclass -- the exact order (and the
+    // dedup above) the compiler's `mro::expand_into` uses, so an UNMODIFIED
+    // builtin linearizes here identically to how the compiler linearizes it.
+    for &m in includes.iter().rev() {
+        expand_builtin(m, out);
+    }
+    if let Some(parent) = superclass {
+        expand_builtin(parent, out);
+    }
+}
+
+/// A builtin's DEFAULT linearized ancestors -- what it has before any program
+/// reopens it to `include`/`prepend` a module. `register_builtins` (runtime)
+/// installs these once; the compiler emits a per-program OVERRIDE only when a
+/// program actually changes them (so `class Array; include M; end` still works,
+/// full-parity, without every program re-listing the unchanged hierarchy).
+pub fn default_builtin_ancestors(id: ClassId) -> Vec<ClassId> {
+    let mut out = Vec::new();
+    expand_builtin(id, &mut out);
+    out
+}
+
 /// The Ruby-visible name of any builtin id, `Object` included. `None` for
 /// user-class ids. Retires the runtime's hand-maintained variant->name
 /// match (NoMethodError messages, registry-less display).
@@ -410,6 +451,33 @@ mod tests {
         for (i, b) in BUILTINS.iter().enumerate() {
             assert_eq!(b.id.0 as usize, i + 1, "{} out of order", b.name);
         }
+    }
+
+    /// `default_builtin_ancestors` must match CRuby's own linearization (and
+    /// thus the compiler's `mro::expand_into`, which reads the same edges), or
+    /// the runtime `register_builtins` and codegen would disagree on `is_a?`.
+    #[test]
+    fn default_ancestors_match_cruby() {
+        let by_name = |n: &str| BUILTINS.iter().find(|b| b.name == n).unwrap().id;
+        let names = |ids: Vec<ClassId>| -> Vec<&'static str> {
+            ids.into_iter().map(|id| builtin_name(id).unwrap()).collect()
+        };
+        assert_eq!(
+            names(default_builtin_ancestors(by_name("Integer"))),
+            ["Integer", "Numeric", "Comparable", "Object", "Kernel", "BasicObject"]
+        );
+        assert_eq!(
+            names(default_builtin_ancestors(by_name("Array"))),
+            ["Array", "Enumerable", "Object", "Kernel", "BasicObject"]
+        );
+        assert_eq!(
+            names(default_builtin_ancestors(OBJECT_CLASS)),
+            ["Object", "Kernel", "BasicObject"]
+        );
+        assert_eq!(
+            names(default_builtin_ancestors(by_name("Comparable"))),
+            ["Comparable"]
+        );
     }
 
     /// The exception prelude starts right after the last builtin and is
