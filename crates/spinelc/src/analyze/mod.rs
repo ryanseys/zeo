@@ -70,6 +70,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             let body = body.clone();
             let is_module = *is_module;
             let before = compiler.classes.len();
+            let scopes_before = compiler.scopes.len();
             register_class(&mut compiler, name, superclass, is_module, &body, &[], 0)?;
             // Built-in exception classes are BOOTSTRAP: the "defined before
             // any user program runs" set every `Ruby::Box` sees (see
@@ -77,6 +78,14 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             if idx < builtin_exceptions_len {
                 for c in &mut compiler.classes[before..] {
                     c.is_bootstrap = true;
+                }
+                // Every method body registered by this bootstrap `ClassDef` IS a
+                // pristine `BUILTIN_EXCEPTIONS_RB` body -- installed at runtime by
+                // `register_exceptions`, so codegen must not re-emit it. A later
+                // USER reopen of the same class registers a FRESH scope (after
+                // this point), which stays `native_default: false` and so emits.
+                for s in &mut compiler.scopes[scopes_before..] {
+                    s.native_default = true;
                 }
             }
         } else if let HirNode::BoxScope { box_id, body } = &compiler.hir[stmt] {
@@ -314,18 +323,27 @@ fn register_class(
             // support): reopening it merges into arena slot 0 exactly like
             // any builtin-class reopen -- an Object reopen is top-level
             // `def` by another name.
-            if ci.is_module == is_module
-                && (cid == CLASS_CLASS || cid == MODULE_CLASS || ci.is_module)
-            {
+            // `Class`/`Module` themselves have no per-value dispatch to hang a
+            // reopen method on, so they stay unsupported. Every OTHER builtin
+            // module (`Enumerable`/`Comparable`/`Kernel`/`Math`) now accepts a
+            // reopen (D3): its added methods register as value methods on the
+            // module id, found by the MRO walk for every includer.
+            if ci.is_module == is_module && (cid == CLASS_CLASS || cid == MODULE_CLASS) {
                 return Err(format!(
                     "reopening the built-in {} `{name}` isn't supported yet (spike scope)",
                     if ci.is_module { "module" } else { "class" }
                 ));
             }
-            if superclass.is_some() {
-                return Err(format!(
-                    "reopening the built-in class `{name}` with a superclass clause isn't supported (spike scope)"
-                ));
+            // A reopen may RESTATE the builtin's superclass (`class String <
+            // Object`); CRuby accepts a matching clause and raises `superclass
+            // mismatch` on a wrong one (D3). Mirrors the user-class reopen guard.
+            if let Some(s) = &superclass {
+                let want = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
+                    format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                })?;
+                if compiler.class(cid).parent != Some(want) {
+                    return Err(format!("superclass mismatch for class {name}"));
+                }
             }
         }
     }
@@ -577,6 +595,9 @@ fn register_method(
         local_types,
         uses_bare_block,
         visibility,
+        // Ordinary methods are never native defaults; the bootstrap-marking
+        // pass and `mro` set this true for the pristine exception bodies.
+        native_default: false,
     }))
 }
 
@@ -1231,13 +1252,19 @@ mod tests {
         assert_eq!(ci.own_methods.len(), 1);
     }
 
-    /// Builtins stay un-reopenable until Phase 16.3 (loud, not silent).
+    /// Reopening a builtin MODULE (Enumerable/Comparable) is supported (D3):
+    /// its added methods register as value methods on the module id, found by
+    /// the MRO walk for every includer.
     #[test]
-    fn reopening_a_builtin_module_is_still_rejected() {
-        // Value CLASSES became reopenable in Phase 16.3; the module tier
-        // (Enumerable/Comparable) did not -- see `builtin_reopen_tests`.
-        assert!(analyze_err("module Enumerable\n  def stat\n    0\n  end\nend\n")
-            .contains("isn't supported yet (spike scope)"));
+    fn reopening_a_builtin_module_is_supported() {
+        let a = analyze_src("module Enumerable\n  def stat\n    0\n  end\nend\n");
+        let ci = a.compiler.class(class_named(&a, "Enumerable"));
+        let names: Vec<&str> = ci
+            .methods
+            .iter()
+            .map(|&sid| a.compiler.scope(sid).name.as_str())
+            .collect();
+        assert!(names.contains(&"stat"), "reopen method surfaced as a value method");
     }
 }
 
@@ -1294,14 +1321,14 @@ mod builtin_reopen_tests {
     }
 
     #[test]
-    fn class_module_and_builtin_modules_stay_rejected() {
-        // `Object` is no longer in this list: reopening it is top-level
-        // `def` by another name, supported since G0 (see the top_level_
-        // e2e tests).
+    fn only_class_and_module_stay_rejected() {
+        // `Object` is no longer in this list: reopening it is top-level `def`
+        // by another name. Builtin MODULES (Comparable/Enumerable) became
+        // reopenable in D3; only `Class`/`Module` themselves -- which have no
+        // per-value dispatch to hang a method on -- stay rejected.
         for src in [
             "class Class\n  def probe\n    1\n  end\nend\n",
             "class Module\n  def probe\n    1\n  end\nend\n",
-            "module Comparable\n  def probe\n    1\n  end\nend\n",
         ] {
             assert!(
                 analyze_err(src).contains("isn't supported yet (spike scope)"),
@@ -1317,9 +1344,13 @@ mod builtin_reopen_tests {
     }
 
     #[test]
-    fn superclass_clause_on_a_builtin_reopen_is_rejected() {
-        assert!(analyze_err("class String < Object\n  def x\n    1\n  end\nend\n")
-            .contains("superclass clause"));
+    fn superclass_clause_on_a_builtin_reopen_must_match() {
+        // A MATCHING clause (`String < Object`) is accepted (D3); a wrong one
+        // raises CRuby's `superclass mismatch`.
+        let a = analyze_src("class String < Object\n  def x\n    1\n  end\nend\n");
+        assert_eq!(class_named(&a, "String"), STRING_CLASS);
+        assert!(analyze_err("class String < Array\n  def x\n    1\n  end\nend\n")
+            .contains("superclass mismatch for class String"));
     }
 
     #[test]

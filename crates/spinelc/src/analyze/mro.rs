@@ -90,6 +90,24 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
         materialize_class_methods(compiler, cid)?;
     }
 
+    // A reopened builtin MODULE (D3) is never run through `materialize_methods`
+    // (modules aren't), so its `methods` stays empty and the builtin-reopen
+    // emitter would find nothing. Surface its OWN reopen methods as `methods`
+    // so they register as value methods on the module id, where the MRO walk
+    // finds them for every includer (`Enumerable`/`Comparable`/`Kernel`/...).
+    for &cid in &all_ids {
+        let is_builtin_module = {
+            let ci = compiler.class(cid);
+            ci.is_builtin && ci.is_module
+        };
+        if is_builtin_module {
+            let own = compiler.class(cid).own_methods.clone();
+            if !own.is_empty() {
+                compiler.classes[cid.0 as usize].methods = own;
+            }
+        }
+    }
+
     resolve_cvars(compiler, main_statements)?;
     resolve_consts(compiler, main_statements)?;
 
@@ -186,10 +204,15 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body, visibility) =
-                    (scope.params.clone(), scope.body.clone(), scope.visibility);
+                let (params, body, visibility, native_default) =
+                    (scope.params.clone(), scope.body.clone(), scope.visibility, scope.native_default);
                 let new_id =
                     register_method(compiler, class_id, anc_id, name, params, body, visibility)?;
+                // A pristine exception body stays pristine when inherited: the
+                // subclass's copy is served by `register_exceptions` too, so
+                // codegen skips it. A reopen/override body (`native_default ==
+                // false`) propagates as a real delta onto each descendant.
+                compiler.scopes[new_id.0 as usize].native_default = native_default;
                 materialized.push(new_id);
             }
         }

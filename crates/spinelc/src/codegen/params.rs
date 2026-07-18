@@ -841,6 +841,54 @@ pub fn emit_value_trampoline(
     }
 }
 
+/// The `MethodFn` trampoline for a native-exception reopen/subclass method
+/// (D3): identical arity/keyword handling to `emit_value_trampoline`, but the
+/// receiver is a `&RObj` (the flat `methods` table `define_method` registers
+/// into) rather than a `&RubyValue`, so it BOXES the object into the
+/// `RubyValue::Object` self the `emit_builtin_method_fn`-shaped body takes.
+/// Registered via `ClassRegistry::define_method`; a non-capturing closure
+/// coerces to `MethodFn` -> `MethodImpl::Static`.
+pub fn emit_exc_trampoline(
+    fn_path: &TokenStream,
+    method_name: &str,
+    params: &Params,
+    needs_block: bool,
+) -> TokenStream {
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
+
+    let nreq = params.required.len();
+    let nopt = params.optional.len();
+    let npost = params.post.len();
+    let min_lit = nreq + npost;
+    let arity_check = emit_arity_check(params);
+
+    let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
+    let optional_args = (0..nopt).map(|i| {
+        let idx = nreq + i;
+        quote! { if #i < __opt_bound { Some(args[#idx].clone()) } else { None } }
+    });
+    let rest_arg = params.rest.iter().flatten().map(|_| {
+        quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
+    });
+    let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
+    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let block_arg = needs_block.then(|| quote! { blk, });
+
+    quote! {
+        |recv: &spinel_rt::RObj, args: &[spinel_rt::RubyValue], #blk_ident: Option<spinel_rt::RubyValue>| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            let __self = spinel_rt::RubyValue::Object(recv.clone());
+            #kw_preamble
+            #arity_check
+            #[allow(unused_variables)]
+            let __opt_bound = (args.len() - #min_lit).min(#nopt);
+            #fn_path(
+                __self,
+                #(#required_args,)* #(#optional_args,)* #(#rest_arg)* #(#post_args,)* #(#kw_args,)* #block_arg
+            )
+        }
+    }
+}
+
 /// `Proc#arity` for a block/lambda with these parameters -- CRuby's
 /// `rb_proc_arity`/`rb_iseq_min_max_arity` (proc.c), evaluated at compile
 /// time and baked into the constructed `RProc` (a Rust closure can't

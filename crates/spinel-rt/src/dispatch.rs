@@ -388,6 +388,42 @@ pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Arc<T>> {
 /// docs for how a block crosses the Path 2 boundary.
 pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+/// A registered instance method's implementation. Today every entry is
+/// `Static` -- a bare `fn` pointer, exactly as before -- so the hot path is a
+/// direct indirect call with one folded discriminant branch, no allocation.
+/// The `Dynamic` arm is the seam the eval VM (the dynamic-`eval`/`define_method`
+/// phase) fills: an interpreted method body captured as an `Arc<dyn Fn>` that a
+/// bare `fn` pointer cannot represent. Nothing constructs `Dynamic` yet; it
+/// exists so the registry's method table and every dispatch site already speak
+/// the widened shape when that phase lands, with no further dispatch rewrite.
+pub enum MethodImpl {
+    Static(MethodFn),
+    // Nothing constructs this yet -- it's the eval VM's seam (see the type doc).
+    // The `#[cfg(test)]` dispatch test does exercise it.
+    #[allow(dead_code)]
+    Dynamic(Arc<dyn Fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync>),
+}
+
+impl MethodImpl {
+    #[inline(always)]
+    pub fn call(
+        &self,
+        recv: &RObj,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
+        match self {
+            MethodImpl::Static(f) => f(recv, args, block),
+            MethodImpl::Dynamic(f) => f(recv, args, block),
+        }
+    }
+
+    #[inline(always)]
+    pub fn from_fn(f: MethodFn) -> Self {
+        MethodImpl::Static(f)
+    }
+}
+
 /// A class's dynamic constructor (Phase 16.1): allocates a fresh instance
 /// and runs its `initialize` (if any) -- what makes `x = Widget;
 /// x.new(...)` work when the class is only known at runtime as a
@@ -427,7 +463,7 @@ struct ClassEntry {
     /// already MATERIALIZED directly onto this class -- see the plan's Part
     /// 6), but `is_a`/rescue-by-class matching does.
     ancestors: Vec<ClassId>,
-    methods: HashMap<Symbol, MethodFn>,
+    methods: HashMap<Symbol, MethodImpl>,
     /// Methods added by reopening a BUILTIN class (Phase 16.3) -- keyed off
     /// the receiver's `class_id()` with no ancestor walk needed (the only
     /// reopenable builtins are leaf value classes; Object/module reopens are
@@ -637,11 +673,11 @@ impl ClassRegistry {
             .get_mut(&id.0)
             .expect("class must be registered before defining methods on it")
             .methods
-            .insert(name, f);
+            .insert(name, MethodImpl::from_fn(f));
     }
 
-    fn lookup(&self, id: ClassId, name: Symbol) -> Option<MethodFn> {
-        self.entries.get(&id.0)?.methods.get(&name).copied()
+    fn lookup(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
+        self.entries.get(&id.0)?.methods.get(&name)
     }
 
     /// This class's registered instance-method names, each tagged private/not,
@@ -1086,7 +1122,7 @@ pub(crate) fn call_user_method(
 ) -> Option<Result<RubyValue, Signal>> {
     let id = recv.class_id();
     if let Some(f) = REGISTRY.get().and_then(|r| r.lookup(id, Symbol::intern(name))) {
-        return Some(f(recv, args, None));
+        return Some(f.call(recv, args, None));
     }
     // A RUNTIME-RESIDENT class (`Time`, `File`, ... -- plan P-B) is an
     // `Object(RObj)` with no registry entry, but it does have a builtin
@@ -1130,7 +1166,7 @@ pub fn run_initialize(
     block: Option<RubyValue>,
 ) -> Result<(), Signal> {
     if let Some(f) = registry().lookup(class, Symbol::intern("initialize")) {
-        f(recv, args, block)?;
+        f.call(recv, args, block)?;
         return Ok(());
     }
     // No user `initialize` at all, so the inherited `Object#initialize`
@@ -1406,7 +1442,7 @@ pub fn send_in(
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     if let Some(f) = registry().lookup(id, name) {
-        return f(recv, args, block);
+        return f.call(recv, args, block);
     }
 
     let boxed = RubyValue::Object(recv.clone());
@@ -1471,7 +1507,7 @@ pub fn send_in(
         let mut full_args = Vec::with_capacity(args.len() + 1);
         full_args.push(RubyValue::Symbol(name));
         full_args.extend_from_slice(args);
-        return f(recv, &full_args, block);
+        return f.call(recv, &full_args, block);
     }
 
     // A real, catchable `NoMethodError` (Phase 13.7, replacing the original
@@ -1487,4 +1523,27 @@ pub fn send_in(
             class_name(id).unwrap_or_else(|| format!("class {}", id.0))
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both `MethodImpl` arms invoke through `call` with the same ABI -- the
+    /// widening the eval VM depends on, verified without any registry.
+    #[test]
+    fn method_impl_static_and_dynamic_dispatch_through_call() {
+        let recv: RObj = Arc::new(Object::default());
+
+        fn stat(_: &RObj, _: &[RubyValue], _: Option<RubyValue>) -> Result<RubyValue, Signal> {
+            Ok(RubyValue::Int(1))
+        }
+        let s = MethodImpl::from_fn(stat);
+        assert!(matches!(s.call(&recv, &[], None), Ok(RubyValue::Int(1))));
+
+        let d = MethodImpl::Dynamic(Arc::new(|_: &RObj, _: &[RubyValue], _: Option<RubyValue>| {
+            Ok(RubyValue::Int(2))
+        }));
+        assert!(matches!(d.call(&recv, &[], None), Ok(RubyValue::Int(2))));
+    }
 }

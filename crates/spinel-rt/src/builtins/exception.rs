@@ -35,7 +35,11 @@ use crate::{array_new, string_new};
 /// are it and its descendants (`ClosedQueueError`), matched by ancestry.
 const STOP_ITERATION_ID: ClassId = ClassId(78);
 
-/// The single native type backing every built-in exception class. Ivars are
+/// The single native type backing every built-in exception class. The message
+/// and StopIteration's result live in DEDICATED internal slots (`mesg`/`res`),
+/// NOT among the user ivars -- matching CRuby, where a raised exception's
+/// `instance_variables` is `[]` and `instance_variable_get(:@message)` is `nil`
+/// (the message is a hidden `mesg` field, not `@message`). User ivars are
 /// name-keyed (insertion-ordered, like Ruby) rather than typed struct fields,
 /// since there is no per-class Rust struct here -- which incidentally makes
 /// `instance_variable_set` on an arbitrary name actually store (a generated
@@ -43,6 +47,12 @@ const STOP_ITERATION_ID: ClassId = ClassId(78);
 pub struct RubyException {
     class_id: ClassId,
     frozen: AtomicBool,
+    /// The hidden message slot -- `Exception#message`/`#to_s` read it; a user
+    /// `@message = x` does NOT (that lands in `ivars`), exactly as in CRuby.
+    mesg: Mutex<RubyValue>,
+    /// StopIteration's hidden result slot (`#result`/`__set_result`), likewise
+    /// invisible to `instance_variables`.
+    res: Mutex<RubyValue>,
     ivars: Mutex<Vec<(String, RubyValue)>>,
 }
 
@@ -51,17 +61,10 @@ impl RubyException {
         Arc::new(RubyException {
             class_id,
             frozen: AtomicBool::new(false),
+            mesg: Mutex::new(RubyValue::Nil),
+            res: Mutex::new(RubyValue::Nil),
             ivars: Mutex::new(Vec::new()),
         })
-    }
-
-    fn ivar(&self, name: &str) -> RubyValue {
-        self.ivars
-            .lock()
-            .iter()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.clone())
-            .unwrap_or(RubyValue::Nil)
     }
 
     fn store_ivar(&self, name: &str, v: RubyValue) {
@@ -114,6 +117,8 @@ impl RubyObject for RubyException {
         Arc::new(RubyException {
             class_id: self.class_id,
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
+            mesg: Mutex::new(self.mesg.lock().clone()),
+            res: Mutex::new(self.res.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
     }
@@ -127,9 +132,10 @@ fn exc(recv: &RObj) -> Arc<RubyException> {
         .expect("exception method received a non-RubyException receiver")
 }
 
-/// `@ivar = v` with the frozen-write guard the generated `initialize` emitted:
-/// writing a frozen exception raises `FrozenError` with CRuby's message shape.
-fn write_ivar(recv: &RObj, e: &RubyException, name: &str, v: RubyValue) -> Result<(), Signal> {
+/// The frozen-write guard the generated `initialize` emitted: writing a frozen
+/// exception (its message or result slot) raises `FrozenError` with CRuby's
+/// message shape.
+fn guard_frozen(recv: &RObj, e: &RubyException) -> Result<(), Signal> {
     if e.is_frozen() {
         let cls = class_name(e.class_id).unwrap_or_default();
         let inspected = RubyValue::Object(recv.clone()).inspect_string();
@@ -138,7 +144,6 @@ fn write_ivar(recv: &RObj, e: &RubyException, name: &str, v: RubyValue) -> Resul
             format!("can't modify frozen {cls}: {inspected}"),
         ));
     }
-    e.store_ivar(name, v);
     Ok(())
 }
 
@@ -148,14 +153,16 @@ fn write_ivar(recv: &RObj, e: &RubyException, name: &str, v: RubyValue) -> Resul
 fn exc_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let msg = args.first().cloned().unwrap_or(RubyValue::Nil);
-    write_ivar(recv, &e, "message", msg.clone())?;
+    guard_frozen(recv, &e)?;
+    *e.mesg.lock() = msg.clone();
     Ok(msg)
 }
 
-/// `def to_s; @message || self.class.name; end`
+/// `def to_s; message_slot || self.class.name; end` -- reads the hidden `mesg`
+/// slot (NOT a `@message` ivar, which a subclass may set independently).
 fn exc_to_s(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
-    let msg = e.ivar("message");
+    let msg = e.mesg.lock().clone();
     if msg.truthy() {
         Ok(msg)
     } else {
@@ -204,13 +211,14 @@ fn exc_inspect(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 fn stop_set_result(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let v = args.first().cloned().unwrap_or(RubyValue::Nil);
-    write_ivar(recv, &e, "result", v.clone())?;
+    guard_frozen(recv, &e)?;
+    *e.res.lock() = v.clone();
     Ok(v)
 }
 
-/// `StopIteration#result; @result; end`
+/// `StopIteration#result` -- the hidden `res` slot (not a `@result` ivar).
 fn stop_result(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    Ok(exc(recv).ivar("result"))
+    Ok(exc(recv).res.lock().clone())
 }
 
 /// The one `ConstructorFn` behind every exception class: allocate a

@@ -566,6 +566,24 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
     }
 
+    // Native-exception reopen/subclass DELTAS (D3): the pristine exception
+    // hierarchy is installed by `with_core()`, so codegen emits only the user
+    // methods that reopen/override it. In this stage only BOOTSTRAP classes are
+    // reached (a user `class MyErr < StandardError` still takes the generated-
+    // struct path); a later stage widens this to every `is_exception_backed`
+    // class. Each delta `define_method`s over the native entry AFTER `with_core`,
+    // so an override replaces it and an addition extends it.
+    let mut exc_containers: Vec<TokenStream> = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if !class.is_bootstrap {
+            continue;
+        }
+        if let Some((container, regs)) = emit_exception_deltas(compiler, ClassId(idx as u32)) {
+            exc_containers.push(container);
+            registrations.extend(regs);
+        }
+    }
+
     // A built-in placeholder has no generated `__register` function to call
     // (see the `classes` filter above) -- it still needs a `ClassRegistry`
     // entry of its own, with the SAME linearized `ancestors` every user
@@ -726,6 +744,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#classes)*
         #(#class_method_containers)*
         #(#builtin_reopens)*
+        #(#exc_containers)*
 
         fn main() {
             // A registry pre-populated with the CORE world -- the always-on
@@ -1009,6 +1028,61 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
         #[allow(non_snake_case)]
         pub mod #mod_ident { #[allow(unused_imports)] use super::*; #(#instance_fns)* #(#class_fns)* }
     }
+}
+
+/// The native-exception reopen/subclass DELTA (D3): for an exception-backed
+/// class (`is_exception_backed`), the methods whose winning body is NOT a
+/// pristine `BUILTIN_EXCEPTIONS_RB` body (`!native_default`) and that were
+/// actually defined ON an exception class (never a top-level `def`
+/// materialized from `Object`). Returns a `__exc_<id>` container of
+/// `RubyValue`-self free functions (`emit_builtin_method_fn`, name-keyed ivars)
+/// plus `define_method` registrations that layer over -- replacing, for an
+/// override -- the native defaults `register_exceptions` already installed on
+/// this class's id. Empty (`None`) when the class carries no user deltas (the
+/// pure-native case, or a subclass that adds nothing).
+fn emit_exception_deltas(
+    compiler: &Compiler,
+    cid: ClassId,
+) -> Option<(TokenStream, Vec<TokenStream>)> {
+    let deltas: Vec<crate::compiler::ScopeId> = compiler
+        .class(cid)
+        .methods
+        .iter()
+        .copied()
+        .filter(|&sid| {
+            let scope = compiler.scope(sid);
+            !scope.native_default && compiler.is_exception_backed(scope.defining_class)
+        })
+        .collect();
+    if deltas.is_empty() {
+        return None;
+    }
+    let mod_ident = format_ident!("__exc_{}", cid.0);
+    let fns = deltas.iter().map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+    let container = quote! {
+        #[allow(non_snake_case)]
+        pub mod #mod_ident { #[allow(unused_imports)] use super::*; #(#fns)* }
+    };
+    let id = cid.0;
+    let regs = deltas
+        .iter()
+        .map(|&sid| {
+            let scope = compiler.scope(sid);
+            let name = &scope.name;
+            let method_ident = safe_ident(name);
+            let fn_path = quote! { #mod_ident::#method_ident };
+            let tramp =
+                params::emit_exc_trampoline(&fn_path, name, &scope.params, scope.needs_block_param());
+            quote! {
+                __registry.define_method(
+                    spinel_rt::ClassId(#id),
+                    spinel_rt::Symbol::intern(#name),
+                    #tramp,
+                );
+            }
+        })
+        .collect();
+    Some((container, regs))
 }
 
 /// One reopened-builtin INSTANCE method (Phase 16.3) -- the free-function

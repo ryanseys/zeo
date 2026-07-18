@@ -2523,6 +2523,108 @@ fn rescuing_a_middle_class_catches_a_raised_leaf_subclass() {
     assert_eq!(result.stdout, "caught as AppError: bad input\n");
 }
 
+/// Reopening a NATIVE exception class (D3): a reopen `def` ADDS a method that
+/// reaches every subclass, and OVERRIDES an existing native method everywhere.
+/// The native message lives in a hidden slot, so a reopened `message` reading
+/// `@message` sees nil (CRuby parity) -- here it reads `to_s`.
+#[test]
+fn native_exception_reopen_adds_and_overrides() {
+    let result = run_ruby(
+        r#"
+        class StandardError
+          def code
+            42
+          end
+        end
+        class Exception
+          def message
+            "patched: " + to_s
+          end
+        end
+        begin
+          raise ArgumentError, "bad value"
+        rescue => e
+          puts e.code
+          puts e.message
+          puts e.is_a?(StandardError)
+        end
+        begin
+          raise "plain"
+        rescue => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "42\npatched: bad value\ntrue\npatched: plain\n"
+    );
+}
+
+/// A raised native exception exposes NO `@message` ivar (CRuby stores it in a
+/// hidden slot): `instance_variables` is empty and `@message` reads nil.
+#[test]
+fn native_exception_hides_its_message_ivar() {
+    let result = run_ruby(
+        r#"
+        begin
+          raise ArgumentError, "boom"
+        rescue => e
+          p e.instance_variables
+          p e.instance_variable_get(:@message)
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[]\nnil\nboom\n");
+}
+
+/// Reopening a builtin MODULE (D3): the added method reaches every includer --
+/// Enumerable across Array/Hash, Comparable across Integer.
+#[test]
+fn builtin_module_reopen_reaches_all_includers() {
+    let result = run_ruby(
+        r#"
+        module Enumerable
+          def second
+            first(2).last
+          end
+        end
+        module Comparable
+          def clamp_low(lo)
+            self < lo ? lo : self
+          end
+        end
+        puts [10, 20, 30].second
+        puts({ a: 1, b: 2 }.map { |k, v| v }.second)
+        puts 5.clamp_low(8)
+        puts 12.clamp_low(8)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n2\n8\n12\n");
+}
+
+/// A builtin reopen may RESTATE the class's real superclass (`class String <
+/// Object`); the methods attach exactly as a clauseless reopen (D3).
+#[test]
+fn builtin_reopen_with_matching_superclass_clause() {
+    let result = run_ruby(
+        r#"
+        class String < Object
+          def shout
+            upcase + "!"
+          end
+        end
+        puts "hi".shout
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "HI!\n");
+}
+
 #[test]
 fn rescue_with_multiple_classes_in_one_clause() {
     let result = run_ruby(
@@ -9594,16 +9696,24 @@ fn blockless_forms_return_real_enumerators() {
 }
 
 #[test]
-fn redefining_enumerable_in_ruby_is_rejected() {
-    // Enumerable is a RUST-implemented builtin now (the whole point of
-    // rev.2) -- and builtin MODULES stayed un-reopenable through Phase 16.3
-    // (patching one would need re-materialization onto every includer,
-    // including the Rust-backed builtin fallbacks).
-    let err = spinelc::compile_to_rust("module Enumerable\n  def map\n  end\nend\n").unwrap_err();
-    assert!(
-        err.contains("built-in module `Enumerable`"),
-        "unexpected error: {err}"
+fn reopening_enumerable_reaches_every_includer() {
+    // Enumerable is a RUST-implemented builtin, yet reopenable (D3): an added
+    // method registers as a value method on the module id and the MRO walk
+    // finds it for every includer, its body free to drive the native
+    // Enumerable protocol (`reduce`) on the receiver.
+    let result = support::run_ruby(
+        r#"
+        module Enumerable
+          def my_join
+            reduce("") { |acc, x| acc + x.to_s }
+          end
+        end
+        puts [1, 2, 3].my_join
+        puts (1..3).my_join
+        "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "123\n123\n");
 }
 
 // -- Phase 15.2: correctness fixes (reopening, bare-super forwarding, cycle

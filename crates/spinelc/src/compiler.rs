@@ -203,6 +203,15 @@ pub struct Scope {
     /// `hir::Visibility`'s docs. Enforced at `codegen::call::dispatch`'s
     /// Path 1 site and `spinel_rt::send`'s Path 2 dispatch.
     pub visibility: Visibility,
+    /// Whether this scope IS one of the pristine `BUILTIN_EXCEPTIONS_RB` method
+    /// bodies (or a materialized copy of one). The native exception hierarchy is
+    /// installed once by `spinel-rt`'s `register_exceptions`, so codegen must
+    /// emit only the DELTA -- the methods a user reopen/subclass actually
+    /// changed (`!native_default`) -- never re-emitting the pristine bodies
+    /// `with_core()` already provides. Set true when the bootstrap classes are
+    /// registered (`analyze`), propagated onto inherited copies by
+    /// `mro::materialize_methods`. `false` for every ordinary user method.
+    pub native_default: bool,
 }
 
 impl Scope {
@@ -535,6 +544,21 @@ impl Compiler {
     pub fn has_generated_struct(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         !ci.is_module && !ci.is_builtin && !ci.is_bootstrap && cid != OBJECT_CLASS
+    }
+
+    /// Whether `cid`'s instances are the native `RubyException` (D3): the
+    /// bootstrap exception classes themselves, and any user subclass of one
+    /// (`class MyErr < StandardError`). Such a class has NO generated struct --
+    /// its instances are allocated by `spinel-rt`'s `exception_construct` and
+    /// its ivars are name-keyed -- so codegen emits its user methods as
+    /// `RubyValue`-self free functions (`__exc_<id>`) `define_method`'d onto the
+    /// class id, over the native defaults `register_exceptions` already installed.
+    /// `is_module` guards the `Errno` namespace (a module, never instantiated).
+    pub fn is_exception_backed(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        !ci.is_module
+            && (ci.is_bootstrap
+                || ci.ancestors.contains(&spinel_abi::EXCEPTION_CLASS))
     }
 
     /// A flat lookup into the receiver class's own MATERIALIZED `methods`
