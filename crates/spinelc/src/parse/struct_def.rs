@@ -398,14 +398,19 @@ end
 /// `each`). Positional construction (`Point.new(1, 2)`) is a documented
 /// follow-on -- keyword construction is what real code and every test uses.
 fn data_template(name: &str, display: &str, members: &[String]) -> String {
-    let init_params = members
+    let n = members.len();
+    // Positional construction (`Point.new(1, 2)`) binds members in order;
+    // keyword construction (`Point.new(x: 1, y: 2)`) binds by name. An empty
+    // call with members takes the keyword path (so it reports missing keywords).
+    let pos_assigns = members
         .iter()
-        .map(|m| format!("{m}:"))
+        .enumerate()
+        .map(|(i, m)| format!("      @{m} = args[{i}]"))
         .collect::<Vec<_>>()
-        .join(", ");
-    let init_body = members
+        .join("\n");
+    let kw_fetches = members
         .iter()
-        .map(|m| format!("    @{m} = {m}"))
+        .map(|m| format!("      @{m} = kwargs.fetch(:{m}) {{ __missing << :{m}; nil }}"))
         .collect::<Vec<_>>()
         .join("\n");
     let accessors = members
@@ -439,8 +444,27 @@ fn data_template(name: &str, display: &str, members: &[String]) -> String {
         .join(", ");
     format!(
         r##"class {name} < Data
-  def initialize({init_params})
-{init_body}
+  def initialize(*args, **kwargs)
+    if !kwargs.empty? || (args.empty? && {n} > 0)
+      unless args.empty?
+        raise ArgumentError, "wrong number of arguments (given #{{args.size}}, expected 0)"
+      end
+      __missing = []
+{kw_fetches}
+      unless __missing.empty?
+        raise ArgumentError, (__missing.size == 1 ? "missing keyword: #{{__missing.first.inspect}}" : "missing keywords: #{{__missing.map(&:inspect).join(', ')}}")
+      end
+      __extra = kwargs.keys - [{member_list}]
+      unless __extra.empty?
+        raise ArgumentError, (__extra.size == 1 ? "unknown keyword: #{{__extra.first.inspect}}" : "unknown keywords: #{{__extra.map(&:inspect).join(', ')}}")
+      end
+    else
+      unless args.size == {n}
+        raise ArgumentError, "wrong number of arguments (given #{{args.size}}, expected {n})"
+      end
+{pos_assigns}
+    end
+    freeze
   end
   def members
     [{member_list}]
@@ -455,6 +479,10 @@ fn data_template(name: &str, display: &str, members: &[String]) -> String {
     to_h
   end
   def with(changes = {{}})
+    __extra = changes.keys - [{member_list}]
+    unless __extra.empty?
+      raise ArgumentError, (__extra.size == 1 ? "unknown keyword: #{{__extra.first.inspect}}" : "unknown keywords: #{{__extra.map(&:inspect).join(', ')}}")
+    end
     {display}.new({with_args})
   end
   def ==(other)

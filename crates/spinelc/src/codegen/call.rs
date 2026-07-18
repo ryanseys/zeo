@@ -1504,7 +1504,7 @@ fn emit_super_explicit_keyword_bindings(
     parent_params: &Params,
     kwargs: &[KwArg],
 ) -> TokenStream {
-    if parent_params.keywords.is_empty() {
+    if parent_params.keywords.is_empty() && parent_params.keyword_rest.is_none() {
         return quote! {};
     }
     let mut provided: std::collections::HashMap<String, NodeId> = std::collections::HashMap::new();
@@ -1521,6 +1521,42 @@ fn emit_super_explicit_keyword_bindings(
             }
         }
     }
+
+    // A named `**kwrest` parent param collects every super keyword that isn't
+    // bound to a declared keyword param -- the shape the `Data`/`Struct` base
+    // `initialize(*args, **kwargs)` relies on for `super(x: .., y: ..)`.
+    let kwrest_let = match &parent_params.keyword_rest {
+        Some(Some(rest_name)) => {
+            let named: std::collections::HashSet<&str> = parent_params
+                .keywords
+                .iter()
+                .map(|kw| match kw {
+                    KeywordParam::Required(n) | KeywordParam::Optional(n, _) => n.as_str(),
+                })
+                .collect();
+            let pairs: Vec<TokenStream> = kwargs
+                .iter()
+                .filter_map(|kw| match kw {
+                    KwArg::Pair(k, v) => match &cx.compiler.hir[*k] {
+                        HirNode::SymbolLit(name) if !named.contains(name.as_str()) => {
+                            let val = super::expr::box_if_object_typed(cx, *v, emit_expr(cx, *v));
+                            Some(quote! {
+                                (spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#name)), #val)
+                            })
+                        }
+                        _ => None,
+                    },
+                    KwArg::DoubleSplat(_) => None,
+                })
+                .collect();
+            let dst = safe_ident(rest_name);
+            quote! {
+                let #dst: spinel_rt::RubyValue =
+                    spinel_rt::RubyValue::Hash(spinel_rt::hash_new(vec![#(#pairs),*]));
+            }
+        }
+        _ => quote! {},
+    };
 
     let missing: Vec<String> = parent_params
         .keywords
@@ -1557,7 +1593,8 @@ fn emit_super_explicit_keyword_bindings(
             }
         }
     });
-    quote! { #(#lets)* }
+    let lets: Vec<TokenStream> = lets.collect();
+    quote! { #(#lets)* #kwrest_let }
 }
 
 /// Builds a real, escaping `spinel_rt::RubyValue::Proc` value from a literal

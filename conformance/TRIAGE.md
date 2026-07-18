@@ -7,10 +7,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
 | ? | spike-misc | 30 | valued_break_proc, external_singleton_def, public_send_visibility | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
-| g | arity-panic | 23 | data_inspect_in_container, data_with_unknown_kw, rational_div_family | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | k | pattern-shapes | 8 | hash_numeric_wave11, array_conformance_batch5, bundle_tiny_array | Enumerable#any? with a pattern argument (`===` form) isn't supported yet (spike scope) |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
+| g | arity-panic | 7 | time_at_unit_form, matchdata_index_eq, random_seed_range_base64_pad | uncaught exception: wrong number of arguments (given 3, expected 1..2) |
 | ? | auto-362e8305 | 6 | bundle_hash, fiber_nested_block, proc_nonlocal_return | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | a | splat | 5 | pattern_rightward_oneline, proc_call_kw_and_lead_splat, proc_call_splat | expected a `*name` splat in this array pattern (spike scope) |
@@ -34,6 +34,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-3fa590af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor, time_plus_rational | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33, bundle_misc_c_34 | cannot load such file -- time |
+| ? | auto-c7d3b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-d46bf646 | 2 | proc_return_rescue_modifier_escape, proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
 | f | dynamic-require | 2 | require_parent, user_enumerable_each_and_for | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
@@ -76,7 +77,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-a8d5a4ab | 1 | symbol_to_proc_after_positional | define_method's second argument must be a block |
 | ? | auto-b07debb8 | 1 | proc_return_catch_no_leak | uncaught signal escaped the top level: Throw(tag, 5) |
 | ? | auto-ba7c5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
-| ? | auto-c7d3b59c | 1 | kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-cd5e05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-ceefc00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
 | ? | auto-d04215d7 | 1 | bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |

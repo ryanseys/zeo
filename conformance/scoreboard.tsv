@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=0e3b87c
-# PASS=1516 FAIL_OUTPUT=401 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=186c7fe
+# PASS=1528 FAIL_OUTPUT=389 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -459,25 +459,25 @@ custom_enumerable_bare_yield	PASS	-	-
 custom_enumerable_wave10	PASS	-	-
 cvar_method_first_assign	PASS	-	-
 cycle_block_value_position	PASS	-	-
-data_bare_new_in_factory	FAIL_OUTPUT	expect	arity-panic
+data_bare_new_in_factory	PASS	-	-
 data_define	PASS	-	-
 data_define_duplicate_member	FAIL_COMPILE	compile	auto-20dcf25f
 data_define_inline_receiver	FAIL_COMPILE	compile	auto-20dcf25f
-data_dup_clone_frozen	FAIL_OUTPUT	expect	arity-panic
-data_hash_key	FAIL_OUTPUT	expect	arity-panic
-data_inspect_in_container	FAIL_OUTPUT	expect	arity-panic
-data_instance_frozen	FAIL_OUTPUT	expect	arity-panic
-data_is_a_data	FAIL_OUTPUT	expect	arity-panic
+data_dup_clone_frozen	FAIL_OUTPUT	expect	-
+data_hash_key	FAIL_OUTPUT	expect	-
+data_inspect_in_container	PASS	-	-
+data_instance_frozen	PASS	-	-
+data_is_a_data	PASS	-	-
 data_new_kwsplat	PASS	-	-
 data_new_validation	PASS	-	-
-data_reopen_reader	FAIL_OUTPUT	expect	arity-panic
-data_respond_to	FAIL_OUTPUT	expect	arity-panic
-data_struct_ivar_get_nil	FAIL_OUTPUT	expect	arity-panic
+data_reopen_reader	PASS	-	-
+data_respond_to	PASS	-	-
+data_struct_ivar_get_nil	FAIL_OUTPUT	expect	-
 data_super_kwarg	PASS	-	-
-data_value_eq_container	FAIL_OUTPUT	expect	arity-panic
+data_value_eq_container	PASS	-	-
 data_with	PASS	-	-
 data_with_poly_member_coerce	PASS	-	-
-data_with_unknown_kw	FAIL_OUTPUT	expect	arity-panic
+data_with_unknown_kw	PASS	-	-
 def_tail_empty_literal	PASS	-	-
 default_arg_find_block	PASS	-	-
 default_arg_ivar_module_subclass	PASS	-	-
@@ -1307,7 +1307,7 @@ param_ptr_from_callee_slot	PASS	-	-
 param_widens_when_body_assigns_string	PASS	-	-
 parser_long_ast_record	PASS	-	-
 pattern	PASS	-	-
-pattern_deconstruct	FAIL_OUTPUT	expect	arity-panic
+pattern_deconstruct	PASS	-	-
 pattern_element_subpatterns	PASS	-	-
 pattern_implicit_rest	FAIL_COMPILE	compile	splat
 pattern_match_as_and_guard	PASS	-	-
@@ -1315,7 +1315,7 @@ pattern_match_splat_rest	PASS	-	-
 pattern_methodobj_kwsplat_undersupply	PASS	-	-
 pattern_pin	PASS	-	-
 pattern_pin_regexp	PASS	-	-
-pattern_poly_scrutinee_bindings	FAIL_OUTPUT	expect	arity-panic
+pattern_poly_scrutinee_bindings	PASS	-	-
 pattern_post_splat	PASS	-	-
 pattern_rightward_oneline	FAIL_COMPILE	compile	splat
 poly	PASS	-	-
@@ -1549,9 +1549,9 @@ range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
 rational_complex_literals	PASS	-	-
-rational_complex_wave9	FAIL_OUTPUT	expect	arity-panic
+rational_complex_wave9	FAIL_OUTPUT	expect	auto-c7d3b59c
 rational_ctor_exact	PASS	-	-
-rational_div_family	FAIL_OUTPUT	expect	arity-panic
+rational_div_family	PASS	-	-
 rational_i_to_complex	FAIL_OUTPUT	expect	-
 rational_mod_cmp_slice_default_wave10	FAIL_OUTPUT	expect	-
 rational_step	TIMEOUT_RUN	run	-
@@ -1803,7 +1803,7 @@ struct	PASS	-	-
 struct_bare_super_initialize	PASS	-	-
 struct_block_constant_init	PASS	-	-
 struct_custom_initialize_super	PASS	-	-
-struct_data_deconstruct	FAIL_OUTPUT	expect	arity-panic
+struct_data_deconstruct	PASS	-	-
 struct_data_inspect	PASS	-	-
 struct_dig	FAIL_OUTPUT	expect	missing-method:dig
 struct_display_to_s	PASS	-	-

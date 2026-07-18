@@ -255,6 +255,62 @@ fn recv_rational(recv: &RubyValue) -> &RRationalData {
     }
 }
 
+/// How `floor`/`ceil`/`round`/`truncate` break a fraction to an integer.
+#[derive(Clone, Copy)]
+enum RoundMode {
+    Floor,
+    Ceil,
+    Trunc,
+    HalfUp,
+}
+
+/// The optional `ndigits` precision argument (default 0).
+fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
+    match args.first() {
+        None => Ok(0),
+        Some(RubyValue::Int(n)) => Ok(*n),
+        Some(other) => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// `num/den` reduced to an integer under `mode` (`den` is always positive here).
+fn round_int(num: &BigInt, den: &BigInt, mode: RoundMode) -> BigInt {
+    match mode {
+        RoundMode::Floor => num.div_floor(den),
+        RoundMode::Ceil => num.div_ceil(den),
+        RoundMode::Trunc => num / den,
+        // Half away from zero: sign * ((2|num| + den) / (2 den)).
+        RoundMode::HalfUp => {
+            let m = (BigInt::from(2) * num.abs() + den) / (BigInt::from(2) * den);
+            if num.is_negative() { -m } else { m }
+        }
+    }
+}
+
+/// `round`/`floor`/`ceil`/`truncate` with an optional decimal precision: a
+/// positive `n` scales by `10^n`, rounds, and answers a Rational; zero or a
+/// negative `n` answers an Integer (a negative `n` rounds to the `10^|n|` place).
+fn round_with_precision(r: &RRationalData, n: i64, mode: RoundMode) -> Result<RubyValue, Signal> {
+    use crate::builtins::integer::int_value;
+    if n == 0 {
+        return Ok(int_value(round_int(&r.num, &r.den, mode)));
+    }
+    if n < 0 {
+        let p = BigInt::from(10).pow((-n) as u32);
+        let q = round_int(&r.num, &(&r.den * &p), mode);
+        return Ok(int_value(q * p));
+    }
+    let p = BigInt::from(10).pow(n as u32);
+    let q = round_int(&(&r.num * &p), &r.den, mode);
+    rational_new(q, p)
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -302,7 +358,7 @@ builtin_methods! {
         Ok(RubyValue::Float(rat_to_f64(recv_rational(recv))))
     }
     // Truncation toward zero (BigInt's `/` truncates).
-    "to_i" | "to_int" | "truncate" => fn to_i(recv, args, _block) {
+    "to_i" | "to_int" => fn to_i(recv, args, _block) {
         arity!(args, 0);
         let r = recv_rational(recv);
         Ok(crate::builtins::integer::int_value(&r.num / &r.den))
@@ -311,26 +367,23 @@ builtin_methods! {
         arity!(args, 0);
         Ok(recv.clone())
     }
+    // `floor`/`ceil`/`round`/`truncate` accept an optional precision: a
+    // positive `ndigits` answers a Rational, zero/negative an Integer.
     "floor" => fn floor(recv, args, _block) {
-        arity!(args, 0);
-        let r = recv_rational(recv);
-        Ok(crate::builtins::integer::int_value(r.num.div_floor(&r.den)))
+        arity!(args, 0..=1);
+        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Floor)
     }
     "ceil" => fn ceil(recv, args, _block) {
-        arity!(args, 0);
-        let r = recv_rational(recv);
-        Ok(crate::builtins::integer::int_value(r.num.div_ceil(&r.den)))
+        arity!(args, 0..=1);
+        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Ceil)
     }
-    // Half away from zero: sign * ((2|num| + den) / (2 den)).
+    "truncate" => fn truncate(recv, args, _block) {
+        arity!(args, 0..=1);
+        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Trunc)
+    }
     "round" => fn round(recv, args, _block) {
-        arity!(args, 0);
-        let r = recv_rational(recv);
-        let m = (BigInt::from(2) * r.num.abs() + &r.den) / (BigInt::from(2) * &r.den);
-        Ok(crate::builtins::integer::int_value(if r.num.is_negative() {
-            -m
-        } else {
-            m
-        }))
+        arity!(args, 0..=1);
+        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::HalfUp)
     }
     // A Rational is always a finite value.
     "finite?" => fn finite_p(recv, args, _block) {

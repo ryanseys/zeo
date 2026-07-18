@@ -17022,6 +17022,50 @@ fn exception_cause_chains_from_active_rescue() {
 }
 
 #[test]
+fn data_constructs_positionally_or_by_keyword() {
+    let result = run_ruby(
+        r#"
+        Point = Data.define(:x, :y)
+        a = Point.new(1, 2)
+        b = Point.new(x: 1, y: 2)
+        p [a.x, a.y]
+        p(a == b)
+        p a.frozen?
+        p(Point.new(1) rescue $!.class)
+        p(Point.new(x: 1, y: 2, z: 3) rescue $!.class)
+        p(a.with(z: 9) rescue $!.class)
+        p a.with(y: 5).to_h
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\ntrue\ntrue\nArgumentError\nArgumentError\nArgumentError\n{x: 1, y: 5}\n"
+    );
+}
+
+#[test]
+fn rational_round_family_takes_precision() {
+    let result = run_ruby(
+        r#"
+        r = Rational(157, 50)
+        p r.round(2)
+        p r.round(-1)
+        p r.round
+        p r.floor(1)
+        p r.ceil(1)
+        p r.truncate(1)
+        p Rational(-7, 2).round
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "(157/50)\n0\n3\n(157/50)\n(157/50)\n(157/50)\n-4\n"
+    );
+}
+
+#[test]
 fn proc_parameters_reflect_the_signature() {
     let result = run_ruby(
         r#"

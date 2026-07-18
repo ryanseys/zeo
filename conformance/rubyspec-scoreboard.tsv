@@ -1,4 +1,4 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=0e3b87c
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=186c7fe
 # PASS=4 FAIL_OUTPUT=1 FAIL_COMPILE=61 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_COMPILE	compile	spike-misc
 END_spec	FAIL_RUN	run	auto-f0c6b32f
