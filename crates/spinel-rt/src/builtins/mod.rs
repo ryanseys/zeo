@@ -59,6 +59,7 @@ pub(crate) mod fiber;
 pub(crate) mod rproc;
 pub(crate) mod string;
 pub(crate) mod symbol;
+pub(crate) mod value_subclass;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately

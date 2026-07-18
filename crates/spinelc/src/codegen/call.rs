@@ -649,7 +649,7 @@ pub fn emit_new(
     // (A struct-backed user class binds keywords through `emit_call_args_to`
     // above, not here.)
     if !kwargs.is_empty()
-        && (ci.is_builtin || ci.is_module || cx.compiler.is_exception_backed(cid))
+        && (ci.is_builtin || ci.is_module || cx.compiler.is_native_backed(cid))
     {
         let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
         arg_exprs.push(quote! {
@@ -712,7 +712,14 @@ pub fn emit_new_with_arg_tokens(
     // a compile-time panic ("built-in types are constructed via their own
     // literal syntax"), which was never true of `Time`/`File`/`Dir` and made
     // an unreachable `Time.new` fail the whole compile.
-    if cx.compiler.class(cid).is_builtin || cx.compiler.class(cid).is_module {
+    // An IMMEDIATE-builtin subclass (`class MyInt < Integer`, D3) is
+    // registry-only -- no constructor -- so its `.new` must dispatch
+    // dynamically too, landing on `Class#new`'s NoMethodError arm (CRuby's
+    // exact "undefined method 'new' for class MyInt").
+    if cx.compiler.class(cid).is_builtin
+        || cx.compiler.class(cid).is_module
+        || cx.compiler.is_immediate_subclass(cid)
+    {
         let id = cid.0;
         return quote! {
             spinel_rt::send_value_in(#__bx,
@@ -723,13 +730,14 @@ pub fn emit_new_with_arg_tokens(
             )?
         };
     }
-    // An EXCEPTION-BACKED class (a bootstrap exception OR a user `class MyErr <
-    // StandardError`, D3): no generated struct exists -- its instances are the
-    // native `RubyException` -- so construct it through the runtime by id.
-    // Returns a boxed `RubyValue`, matching its `Poly` static type, and runs the
-    // registered `initialize` (the native default, or the subclass's own delta)
-    // exactly as the old struct literal's inline `.initialize(...)?` did.
-    if cx.compiler.is_exception_backed(cid) {
+    // A NATIVE-BACKED class (D3) -- an exception subclass (`RubyException`) or a
+    // value-builtin subclass (`ValueSubclass`, `class Stack < Array`) -- has no
+    // generated struct, so construct it through the runtime by id. Returns a
+    // boxed `RubyValue` matching its `Poly` static type, running the registered
+    // constructor (`exception_construct`/`value_subclass_construct`) which seeds
+    // any payload and runs `initialize` just as the struct literal's inline
+    // `.initialize(...)?` did.
+    if cx.compiler.is_native_backed(cid) {
         let id = cid.0;
         return quote! {
             spinel_rt::construct_by_class_id(spinel_rt::ClassId(#id), &[#(#arg_exprs),*], None)?
@@ -958,20 +966,11 @@ pub fn emit_super_inline(
             .find(|&&s| cx.compiler.scope(s).name == mname)
             .map(|&sid| (anc, sid))
     });
-    let (new_defining_class, sid) = found.unwrap_or_else(|| {
-        panic!(
-            "`super`: no `{mname}` found above {}",
-            cx.compiler.class(defining_class).name
-        )
-    });
 
     // The method CURRENTLY executing (whose lexical body this `super` call
-    // sits inside) -- needed only for bare `super`'s forwarding case below.
-    // Guaranteed to exist: `defining_class` was either the receiver's own
-    // class (an ordinary call into this function) or a previously-found
-    // ancestor from an earlier `super` splice, and both cases only ever set
-    // `defining_class` to a class that owns a `mname` method (that's exactly
-    // how it was found).
+    // sits inside) -- needed for bare `super`'s forwarding case (in the splice
+    // AND the runtime-dispatch branches below). Guaranteed to exist: this
+    // `super` is inside `mname`'s own body on `defining_class`.
     let current_sid = cx
         .compiler
         .class(defining_class)
@@ -983,6 +982,23 @@ pub fn emit_super_inline(
             panic!("internal error: `{mname}` not found in its own defining class's own_methods")
         });
     let current_params = cx.compiler.scope(current_sid).params.clone();
+
+    // `super` into an inherited VALUE builtin (D3): a `class Stack < Array`
+    // method whose `super` finds NO user definition above targets the native
+    // `Array` method -- `super` in `initialize` re-seats the payload, any other
+    // runs the builtin against it. There is no HIR to splice (the builtin has no
+    // `own_methods`), so dispatch through the runtime. Only reached when no user
+    // ancestor overrides `mname`; a user parent still splices.
+    if found.is_none() && cx.compiler.is_value_subclass(receiver_class) {
+        return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+    }
+
+    let (new_defining_class, sid) = found.unwrap_or_else(|| {
+        panic!(
+            "`super`: no `{mname}` found above {}",
+            cx.compiler.class(defining_class).name
+        )
+    });
 
     // `super` into a NATIVE exception method (D3): the resolved parent is a
     // pristine `BUILTIN_EXCEPTIONS_RB` body (`native_default`) whose real
@@ -1097,11 +1113,70 @@ fn emit_super_native(
 ) -> TokenStream {
     let self_ident = &cx.self_ident;
     let def_id = cx.defining_class.expect("`super` outside a method").0;
+    let (pushes, block_expr) =
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+    quote! {
+        {
+            let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
+            #(#pushes)*
+            spinel_rt::send_super_from(
+                &#self_ident,
+                spinel_rt::ClassId(#def_id),
+                spinel_rt::Symbol::intern(#mname),
+                &__super_args,
+                #block_expr,
+            )?
+        }
+    }
+}
 
+/// `super` from a value-builtin subclass method into the inherited builtin
+/// (D3): `spinel_rt::value_super` re-seats the payload for `initialize`, else
+/// runs the root builtin method (`Array#push` ...) against the payload and
+/// re-wraps a self-return. No HIR to splice (the builtin has no `own_methods`).
+/// Argument forwarding is shared with the exception path.
+fn emit_value_super(
+    cx: &Ctx,
+    mname: &str,
+    current_params: &Params,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    zsuper: bool,
+    block: Option<NodeId>,
+) -> TokenStream {
+    let self_ident = &cx.self_ident;
+    let (pushes, block_expr) =
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+    quote! {
+        {
+            let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
+            #(#pushes)*
+            spinel_rt::value_super(
+                &#self_ident,
+                #mname,
+                &__super_args,
+                #block_expr,
+            )?
+        }
+    }
+}
+
+/// Build the forwarded argument pushes + block expression for a RUNTIME-
+/// dispatched `super` (`send_super_from`/`value_super`) -- explicit
+/// `super(a, b)` args, or, for bare `super`, the current method's own positional
+/// parameters (required / optional / splatted `*rest` / post). Keyword arguments
+/// append as one trailing Hash (the G2 convention). A literal block forwards; a
+/// bare `super` without one passes `None` (the native builtins take no block).
+fn emit_runtime_super_args(
+    cx: &Ctx,
+    current_params: &Params,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    zsuper: bool,
+    block: Option<NodeId>,
+) -> (Vec<TokenStream>, TokenStream) {
     let mut pushes: Vec<TokenStream> = Vec::new();
     if zsuper {
-        // Bare `super`: forward the current method's own already-bound
-        // positional parameters, in Ruby order.
         for name in &current_params.required {
             let id = safe_ident(name);
             pushes.push(quote! { __super_args.push(#id.clone()); });
@@ -1139,11 +1214,6 @@ fn emit_super_native(
             });
         }
     }
-
-    // A literal block at the `super` site is forwarded (native `Exception`
-    // methods ignore it, but a transitively-reached user parent may `yield`);
-    // bare `super` with no literal block forwards nothing (`None`) -- the
-    // native methods take no block, so there is no current `__blk` to thread.
     let block_expr = match block {
         Some(b) => {
             let proc_value = emit_proc_value(cx, b);
@@ -1151,20 +1221,7 @@ fn emit_super_native(
         }
         None => quote! { None },
     };
-
-    quote! {
-        {
-            let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
-            #(#pushes)*
-            spinel_rt::send_super_from(
-                &#self_ident,
-                spinel_rt::ClassId(#def_id),
-                spinel_rt::Symbol::intern(#mname),
-                &__super_args,
-                #block_expr,
-            )?
-        }
-    }
+    (pushes, block_expr)
 }
 
 /// Binds the parent method's (`parent_params`) own parameter names, right
@@ -1949,10 +2006,10 @@ pub fn emit_call(
                     // literal `HirNode::New` infers `Object(cid)`), so the
                     // expression must be a `RubyValue`.
                     let ctor = emit_new(cx, &cx.compiler.fq_name(defining), args, kwargs, None);
-                    // An exception-backed class (D3) has no struct to
-                    // `new_handle` -- `emit_new` already yields a fully-boxed
-                    // `RubyValue` built by the runtime.
-                    if cx.compiler.is_exception_backed(defining) {
+                    // A native-backed class (D3) has no struct to `new_handle`
+                    // -- `emit_new` already yields a fully-boxed `RubyValue`
+                    // built by the runtime.
+                    if cx.compiler.is_native_backed(defining) {
                         return ctor;
                     }
                     let class_ident = super::ident::class_ident(cx.compiler, defining);

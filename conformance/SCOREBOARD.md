@@ -1,12 +1,12 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1453/1986 passing (73.2%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `ebc830d`
+Suite `spinel` — **1454/1986 passing (73.2%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `d628302`
 
 | verdict | count |
 |---|---|
-| PASS | 1453 |
+| PASS | 1454 |
 | FAIL_OUTPUT | 432 |
-| FAIL_COMPILE | 93 |
+| FAIL_COMPILE | 92 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
 | TIMEOUT_COMPILE | 0 |
@@ -20,7 +20,7 @@ Suite `spinel` — **1453/1986 passing (73.2%)** — oracle `ruby 4.0.5 (2026-05
 | blocked | bucket | cluster | sample test |
 |---|---|---|---|
 | 165 | missing-builtin-method | P | array_conformance_batch |
-| 49 | spike-misc | ? | array_bsearch_find_any |
+| 48 | spike-misc | ? | array_bsearch_find_any |
 | 33 | arity-panic | g | bool_nil_immediate_edges |
 | 21 | unknown-class | ? | catch_throw_ensure |
 | 16 | missing-core-const | P | argf_class_no_args |

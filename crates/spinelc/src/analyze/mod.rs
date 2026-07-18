@@ -387,14 +387,41 @@ fn register_class(
                         let cid = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
                             format!("unknown superclass `{s}` (must be defined earlier in the file)")
                         })?;
-                        // `Struct` and `Data` are the subclassable builtins:
-                        // their subclasses' instances are ordinary
-                        // ivar-carrying objects, so the generated Rust struct
-                        // machinery fits them exactly (Phase 17.1-H).
-                        if compiler.class(cid).is_builtin
-                            && cid != crate::compiler::STRUCT_CLASS
-                            && cid != crate::compiler::DATA_CLASS
-                        {
+                        // Subclassable builtins (D3):
+                        //  - `Struct`/`Data`: subclasses are ordinary
+                        //    ivar-carrying objects (generated struct, Phase 17.1-H).
+                        //  - `Numeric`: abstract, so a subclass is likewise a plain
+                        //    ivar object (user-implemented `<=>`/`coerce`, Comparable
+                        //    via the ancestor chain) -- the same struct machinery.
+                        //  - `Array`/`String`/`Hash`: the native `ValueSubclass`
+                        //    (a payload RObj), no struct.
+                        //  - `Integer`/`Float`/`Symbol`/`Nil`/`True`/`FalseClass`
+                        //    (immediates): the DEFINITION is allowed but has no
+                        //    instances -- registry-entry-only, `.new` raises
+                        //    NoMethodError (`is_immediate_subclass`).
+                        // Still rejected: `Range` (no runtime constructor) and
+                        // `Class`/`Module` (no per-value dispatch).
+                        use crate::compiler::{
+                            ARRAY_CLASS, DATA_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS,
+                            INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRING_CLASS, STRUCT_CLASS,
+                            SYMBOL_CLASS, TRUE_CLASS,
+                        };
+                        let subclassable = matches!(
+                            cid,
+                            STRUCT_CLASS
+                                | DATA_CLASS
+                                | NUMERIC_CLASS
+                                | ARRAY_CLASS
+                                | STRING_CLASS
+                                | HASH_CLASS
+                                | INTEGER_CLASS
+                                | FLOAT_CLASS
+                                | SYMBOL_CLASS
+                                | NIL_CLASS
+                                | TRUE_CLASS
+                                | FALSE_CLASS
+                        );
+                        if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(
                                 "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
                             ));

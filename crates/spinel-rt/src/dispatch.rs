@@ -111,6 +111,26 @@ pub trait RubyObject: Any + Send + Sync {
     /// `initialize_copy`/singleton-state carryover are documented
     /// scope-cuts. See `RubyValue::dup_value` for the non-Object kinds.
     fn dup_object(&self, copy_frozen: bool) -> RObj;
+
+    /// The wrapped builtin value of a value-builtin SUBCLASS instance (D3):
+    /// `class Stack < Array` stores a `RubyValue::Array` here, so inherited
+    /// `Array` methods run against it (the `send_in` payload bridge). `None`
+    /// for every ordinary object -- only `ValueSubclass` overrides these three.
+    /// Returns a HANDLE clone (cheap `Arc` bump), never holding the internal
+    /// lock across the re-entrant dispatch that follows.
+    fn builtin_payload(&self) -> Option<RubyValue> {
+        None
+    }
+    /// The root builtin whose methods this subclass inherits (`Array` for
+    /// `Stack < Array`) -- the ancestor the payload bridge substitutes at.
+    fn builtin_root(&self) -> Option<ClassId> {
+        None
+    }
+    /// Re-seat the whole payload (a `super`/`replace`/`initialize` that rebuilds
+    /// the collection). `false` for a non-value-subclass. The single write path.
+    fn set_builtin_payload(&self, _v: RubyValue) -> bool {
+        false
+    }
 }
 
 /// A handle to any live Ruby object, used wherever the concrete class isn't
@@ -1239,6 +1259,14 @@ fn registry() -> &'static ClassRegistry {
         .expect("class registry not installed -- install_class_registry must run first")
 }
 
+/// Whether an instance method `name` is registered directly on class `id` (its
+/// flat, materialized `methods` table) -- the value-subclass constructor uses
+/// this to decide whether to run a user `initialize` or seed the payload from
+/// the args directly.
+pub fn has_instance_method(id: ClassId, name: Symbol) -> bool {
+    registry().lookup(id, name).is_some()
+}
+
 /// Called once from generated `main()`, after every class's `__register` has
 /// populated the registry passed in.
 pub fn install_class_registry(registry: ClassRegistry) {
@@ -1504,6 +1532,12 @@ pub fn send_in(
     // real (module) method first, always.
     let n = name.name();
     let n = n.as_str();
+    // Value-subclass payload bridge (D3): `class Stack < Array` carries a
+    // `RubyValue::Array` payload; at its payload root the inherited builtin
+    // method runs against that value, not the boxed object. `None` for every
+    // ordinary object, so this costs one field read on the miss path.
+    let payload = recv.builtin_payload();
+    let payload_root = recv.builtin_root();
     for &anc in ancestors_of_value(id) {
         if let Some(f) = value_method(anc, box_id, name) {
             return f(&boxed, args, block);
@@ -1531,6 +1565,18 @@ pub fn send_in(
             _ => {
                 if let Some(table) = crate::builtins::class_table(anc) {
                     if let Some(f) = table(n) {
+                        // At the payload root, run against the wrapped value and
+                        // re-wrap a self-return (`push`/`<<`) back to the subclass.
+                        if payload_root == Some(anc) {
+                            if let Some(ref p) = payload {
+                                let result = f(p, args, block)?;
+                                return Ok(
+                                    crate::builtins::value_subclass::rewrap_self_return(
+                                        result, p, recv,
+                                    ),
+                                );
+                            }
+                        }
                         return f(&boxed, args, block);
                     }
                 }

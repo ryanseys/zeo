@@ -310,7 +310,12 @@ impl RubyValue {
                     Some(Err(_)) => panic!(
                         "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
                     ),
-                    None => default_object_repr(o, false, seen),
+                    // A value-builtin subclass (D3) with no `to_s` override
+                    // renders as its payload (`Array#to_s` etc.).
+                    None => match o.builtin_payload() {
+                        Some(p) => p.display_with(seen),
+                        None => default_object_repr(o, false, seen),
+                    },
                 }
             }
             RubyValue::Proc(_) => "#<Proc>".to_string(),
@@ -444,7 +449,12 @@ impl RubyValue {
                     Some(Err(_)) => panic!(
                         "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
                     ),
-                    None => default_object_repr(o, true, seen),
+                    // A value-builtin subclass (D3) with no `inspect` override
+                    // inspects as its payload (`[1, 2, 3]`).
+                    None => match o.builtin_payload() {
+                        Some(p) => p.inspect_with(seen),
+                        None => default_object_repr(o, true, seen),
+                    },
                 }
             }
             // `Bool`/`Int`/`Float`/`Proc`: `#inspect` and `#to_s` agree
@@ -703,6 +713,21 @@ impl RubyValue {
         }
         if let Some(eq) = crate::builtins::numeric::num_eq(self, other) {
             return eq;
+        }
+        // A value-builtin subclass (D3) compares by its wrapped payload, so
+        // `Tag.new("a")` equals `"a"` (symmetrically) and two subclass instances
+        // with equal payloads are equal -- what structural `==` and Hash-key
+        // `eql?` need. A `==` EXPRESSION dispatches a user override first (via
+        // `send`); this is the low-level fallback comparison.
+        if let RubyValue::Object(o) = self {
+            if let Some(p) = o.builtin_payload() {
+                return p.rb_eq_guarded(other, seen);
+            }
+        }
+        if let RubyValue::Object(o) = other {
+            if let Some(p) = o.builtin_payload() {
+                return self.rb_eq_guarded(&p, seen);
+            }
         }
         match (self, other) {
             (RubyValue::Nil, RubyValue::Nil) => true,

@@ -45,6 +45,7 @@ pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
 pub use builtins::BuiltinMethodFn;
 pub use builtins::exception::{register_exception_subclass, register_exceptions};
+pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,

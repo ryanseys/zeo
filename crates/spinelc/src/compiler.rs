@@ -20,10 +20,11 @@ use std::collections::HashMap;
 /// same `classes`/`ancestors` system as user classes.
 pub use spinel_abi::{
     ClassId, ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
-    DATA_CLASS, ENUMERABLE_CLASS, ENUMERATOR_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS,
-    NUMERIC_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS,
-    RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
+    DATA_CLASS, ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS,
+    HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS,
+    MUTEX_CLASS, NIL_CLASS, NUMERIC_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
+    RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS,
+    THREAD_CLASS, TRUE_CLASS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -539,11 +540,12 @@ impl Compiler {
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
     /// `Object` (the runtime root, name-keyed ivars), BOOTSTRAP classes (the
     /// built-in exceptions, now in `spinel-rt`), and -- since D3 -- every
-    /// EXCEPTION-BACKED user subclass (`class MyErr < StandardError`), whose
-    /// instances are the native `RubyException` constructed via
-    /// `construct_by_class_id`, not a per-class struct. The single source of
-    /// truth for "is there a struct here?", which several `TyKind::Object` and
-    /// `.new` sites gate on.
+    /// NATIVE-BACKED user subclass: an exception subclass (`class MyErr <
+    /// StandardError`, the native `RubyException`) or a value-builtin subclass
+    /// (`class Stack < Array`, the native `ValueSubclass`), both constructed via
+    /// `construct_by_class_id` rather than a per-class struct. The single source
+    /// of truth for "is there a struct here?", which several `TyKind::Object`
+    /// and `.new` sites gate on.
     pub fn has_generated_struct(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
         !ci.is_module
@@ -551,6 +553,8 @@ impl Compiler {
             && !ci.is_bootstrap
             && cid != OBJECT_CLASS
             && !self.is_exception_backed(cid)
+            && !self.is_value_subclass(cid)
+            && !self.is_immediate_subclass(cid)
     }
 
     /// Whether `cid`'s instances are the native `RubyException` (D3): the
@@ -566,6 +570,59 @@ impl Compiler {
         !ci.is_module
             && (ci.is_bootstrap
                 || ci.ancestors.contains(&spinel_abi::EXCEPTION_CLASS))
+    }
+
+    /// The instantiable value-builtin a USER subclass wraps as its payload
+    /// (D3): the first `Array`/`String`/`Hash` in `cid`'s linearized ancestry,
+    /// or `None` for anything that isn't such a subclass. `class Stack < Array`
+    /// -> `Some(ARRAY_CLASS)`. The builtin itself (`is_builtin`) is excluded --
+    /// only a user subclass has a `ValueSubclass` payload. `Range`/`Regexp` are
+    /// deliberately NOT roots (no runtime constructor / negligible use); a
+    /// subclass of one stays an analyze rejection.
+    pub fn value_payload_root(&self, cid: ClassId) -> Option<ClassId> {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap || cid == OBJECT_CLASS {
+            return None;
+        }
+        ci.ancestors
+            .iter()
+            .copied()
+            .find(|a| matches!(*a, ARRAY_CLASS | STRING_CLASS | HASH_CLASS))
+    }
+
+    /// Whether `cid`'s instances are the native `ValueSubclass` (D3): a user
+    /// subclass of `Array`/`String`/`Hash`. Like `is_exception_backed`, such a
+    /// class has NO generated struct -- its user methods emit as dynamic-self
+    /// deltas and inherited builtin behavior comes via the payload bridge.
+    pub fn is_value_subclass(&self, cid: ClassId) -> bool {
+        self.value_payload_root(cid).is_some()
+    }
+
+    /// Either native-backed shape that has no generated struct and whose user
+    /// methods emit as `define_method` deltas over runtime-installed behavior:
+    /// an exception subclass (`RubyException`) or a value-builtin subclass
+    /// (`ValueSubclass`). The shared gate for the delta/construct/reopen paths.
+    pub fn is_native_backed(&self, cid: ClassId) -> bool {
+        self.is_exception_backed(cid) || self.is_value_subclass(cid)
+    }
+
+    /// Whether `cid` is a user subclass of an IMMEDIATE builtin -- `Integer`/
+    /// `Float`/`Symbol`/`NilClass`/`TrueClass`/`FalseClass` (D3). CRuby allows
+    /// the class DEFINITION (`MyInt.superclass == Integer`, `is_a?` queries
+    /// resolve) but has no instances: `MyInt.new` raises `NoMethodError`. So
+    /// codegen emits a registry entry ONLY -- no struct, no constructor -- and
+    /// `.new` dynamically resolves to that NoMethodError.
+    pub fn is_immediate_subclass(&self, cid: ClassId) -> bool {
+        let ci = self.class(cid);
+        if ci.is_module || ci.is_builtin || ci.is_bootstrap || cid == OBJECT_CLASS {
+            return false;
+        }
+        ci.ancestors.iter().any(|a| {
+            matches!(
+                *a,
+                INTEGER_CLASS | FLOAT_CLASS | SYMBOL_CLASS | NIL_CLASS | TRUE_CLASS | FALSE_CLASS
+            )
+        })
     }
 
     /// A flat lookup into the receiver class's own MATERIALIZED `methods`

@@ -192,7 +192,12 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
             Some(Err(_)) => panic!(
                 "a user-defined `hash` raised inside a Hash key lookup (spike scope: no exception channel here)"
             ),
-            None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+            // A value-builtin subclass (D3) with no `hash` override keys by its
+            // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
+            None => match o.builtin_payload() {
+                Some(p) => hash_key_in(&p, by_identity),
+                None => HashKey::Identity(Arc::as_ptr(o) as *const () as usize),
+            },
         },
         RubyValue::Proc(p) => HashKey::Identity(p.ptr_id()),
         // Same identity-only fallback as `Object`/`Proc` above -- neither has

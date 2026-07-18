@@ -1537,6 +1537,14 @@ builtin_methods! {
     // clone, so that sharing is inherited rather than needing to be built.
     "new" => fn array_new_m(_recv, args, block) {
         arity!(args, 0..=2);
+        // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):
+        // a shallow copy of the given array, ignoring any block. Only when the
+        // sole argument is an Array -- otherwise the arg is a size below.
+        if args.len() == 1 {
+            if let Some(RubyValue::Array(a)) = args.first() {
+                return Ok(RubyValue::Array(crate::array_new(a.lock().clone())));
+            }
+        }
         let size = match args.first() {
             None => 0,
             Some(_) => arg_int!(args, 0),

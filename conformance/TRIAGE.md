@@ -7,7 +7,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | cluster | bucket | blocked | sample test | sample message |
 |---|---|---|---|---|
 | P | missing-builtin-method | 165 | array_conformance_batch | uncaught exception: undefined method 'try_convert' for class Array |
-| ? | spike-misc | 49 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
+| ? | spike-misc | 48 | array_bsearch_find_any | uncaught exception: Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope) |
 | g | arity-panic | 33 | bool_nil_immediate_edges | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | ? | unknown-class | 21 | catch_throw_ensure | note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace |
 | P | missing-core-const | 16 | argf_class_no_args | uncaught exception: uninitialized constant ARGF |

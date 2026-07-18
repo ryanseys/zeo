@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=ebc830d
-# PASS=1453 FAIL_OUTPUT=432 FAIL_COMPILE=93 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=d628302
+# PASS=1454 FAIL_OUTPUT=432 FAIL_COMPILE=92 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -359,7 +359,7 @@ class_in_collection	PASS	-	-
 class_ivar_in_class_method	PASS	-	-
 class_ivar_not_inherited	PASS	-	-
 class_ivar_save_restore	PASS	-	-
-class_lt_builtin_parent	FAIL_COMPILE	compile	spike-misc
+class_lt_builtin_parent	PASS	-	-
 class_method_open_class_call	PASS	-	-
 class_name_collision_across_modules	PASS	-	-
 class_name_in_cmeth	PASS	-	-

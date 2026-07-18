@@ -478,6 +478,42 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
                 );
             }
+        } else if compiler.is_value_subclass(ClassId(idx as u32)) {
+            // A user `class Stack < Array` (D3): no generated struct -- its
+            // instances are the native `ValueSubclass` wrapping an `Array`/
+            // `String`/`Hash` payload. Register the runtime entry + the shared
+            // `value_subclass_construct`; inherited builtin methods come via the
+            // `send_in` payload bridge, the subclass's own `def`s via deltas.
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                spinel_rt::register_value_subclass(
+                    &mut __registry,
+                    spinel_rt::ClassId(#id),
+                    #fq_name,
+                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                );
+            }
+        } else if compiler.is_immediate_subclass(ClassId(idx as u32)) {
+            // A user `class MyInt < Integer` (D3): allowed as a DEFINITION but
+            // has NO instances. Register just the name + ancestors with NO
+            // constructor -- so `MyInt.ancestors`/`superclass`/`is_a?` resolve,
+            // while `MyInt.new` dynamically hits `Class#new`'s "no constructor"
+            // arm and raises CRuby's `NoMethodError: undefined method 'new' for
+            // class MyInt`. No struct, no methods (nothing can be an instance).
+            let id = idx as u32;
+            let fq_name = compiler.fq_name(ClassId(id));
+            let ancestor_ids = compiler.class(ClassId(id)).ancestors.iter().map(|a| a.0);
+            quote! {
+                __registry.register(
+                    spinel_rt::ClassId(#id),
+                    #fq_name,
+                    false,
+                    vec![#(spinel_rt::ClassId(#ancestor_ids)),*],
+                    None,
+                );
+            }
         } else {
             let ident = ident::class_ident(compiler, ClassId(idx as u32));
             quote! { #ident::__register(&mut __registry); }
@@ -594,7 +630,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // alike (`is_exception_backed` spans both).
     let mut exc_containers: Vec<TokenStream> = Vec::new();
     for (idx, _) in compiler.classes.iter().enumerate() {
-        if !compiler.is_exception_backed(ClassId(idx as u32)) {
+        if !compiler.is_native_backed(ClassId(idx as u32)) {
             continue;
         }
         if let Some((container, regs)) = emit_exception_deltas(compiler, ClassId(idx as u32)) {
@@ -909,11 +945,13 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
     let fns = ci.class_methods.iter().map(|&sid| emit_class_method_fn(compiler, sid));
-    // A module has no struct to attach an `impl` to -- and neither does an
-    // EXCEPTION-BACKED class (D3): its instances are the native `RubyException`,
-    // so `def self.x` emits into a `pub mod` of free functions, reached at the
-    // call site as `#name::x(...)` exactly like a module's (see below).
-    if ci.is_module || compiler.is_exception_backed(cid) {
+    // A container without a generated struct to attach an `impl` to -- a module,
+    // OR a native-backed class (`RubyException`/`ValueSubclass`), OR an immediate
+    // subclass (registry-only) -- emits `def self.x` into a `pub mod` of free
+    // functions, reached at the call site as `#name::x(...)` like a module's.
+    // (`emit_class_methods` is only called for user classes/modules, never
+    // builtins, so `!has_generated_struct` cleanly means "structless".)
+    if !compiler.has_generated_struct(cid) {
         // Ruby module names are conventionally PascalCase (matching a Rust
         // struct/type's own convention), which `rustc` otherwise flags as
         // non-idiomatic for a `mod` (conventionally snake_case) -- silenced
@@ -1074,7 +1112,7 @@ fn emit_exception_deltas(
         .copied()
         .filter(|&sid| {
             let scope = compiler.scope(sid);
-            !scope.native_default && compiler.is_exception_backed(scope.defining_class)
+            !scope.native_default && compiler.is_native_backed(scope.defining_class)
         })
         .collect();
     if deltas.is_empty() {

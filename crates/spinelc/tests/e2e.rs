@@ -2722,6 +2722,150 @@ fn user_exception_subclass_class_method_constructs_via_runtime() {
     assert_eq!(result.stdout, "built-3\nD\ntrue\n");
 }
 
+/// A user subclass of `Array` (D3) is the native `ValueSubclass` wrapping an
+/// array payload: inherited methods (`push`/`<<`/`size`/`each`/`map`) run
+/// against it, self-returning mutators re-wrap to the subclass while a NEW
+/// collection (`map`) is a plain `Array`, and a custom method sees the elements.
+#[test]
+fn value_subclass_of_array() {
+    let result = run_ruby(
+        r#"
+        class Stack < Array
+          def peek; last; end
+        end
+        s = Stack.new
+        s.push(1)
+        s << 2
+        p s
+        puts s.size
+        puts s.peek
+        puts s.class
+        puts s.push(3).class
+        puts s.map { |x| x * 2 }.inspect
+        puts s.map { |x| x }.class
+        puts s.is_a?(Array)
+        puts Stack.new([9, 8]).size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n2\n2\nStack\nStack\n[2, 4, 6]\nArray\ntrue\n2\n"
+    );
+}
+
+/// A `String` subclass (D3): inherited `String` methods, a `super`-free custom
+/// method, `dup` independence, and payload-based equality/`Hash`-key identity
+/// (`Tag.new("k")` is the same key as `"k"`, symmetric `==`).
+#[test]
+fn value_subclass_of_string_equality_and_hashing() {
+    let result = run_ruby(
+        r#"
+        class Tag < String
+          def shout; upcase + "!"; end
+        end
+        t = Tag.new("hi")
+        puts t.shout
+        puts t.class
+        puts(t == "hi")
+        puts("hi" == t)
+        puts(Tag.new("x").hash == "x".hash)
+        h = { "key" => 1 }
+        puts h[Tag.new("key")].inspect
+        d = Tag.new("a")
+        d2 = d.dup
+        d2 << "b"
+        puts d
+        puts d2
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "HI!\nTag\ntrue\ntrue\ntrue\n1\na\nab\n"
+    );
+}
+
+/// A `Hash` subclass with a `super` in `initialize` (D3): `super(0)` seeds the
+/// default value on the payload, and inherited `[]`/`[]=`/`size` work.
+#[test]
+fn value_subclass_of_hash_with_super_initialize() {
+    let result = run_ruby(
+        r#"
+        class Counter < Hash
+          def initialize
+            super(0)
+          end
+          def bump(k); self[k] += 1; end
+        end
+        c = Counter.new
+        c.bump(:a); c.bump(:a); c.bump(:b)
+        puts c[:a]
+        puts c[:b]
+        puts c[:missing]
+        p c
+        puts c.class
+        puts c.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n1\n0\n{a: 2, b: 1}\nCounter\n2\n");
+}
+
+/// A user subclass of an IMMEDIATE builtin (D3): the DEFINITION is allowed --
+/// `superclass`/`ancestors`/`is_a?` resolve -- but there are no instances, so
+/// `MyInt.new` raises CRuby's exact `NoMethodError`.
+#[test]
+fn immediate_builtin_subclass_defines_but_cannot_instantiate() {
+    let result = run_ruby(
+        r##"
+        class MyInt < Integer; end
+        puts MyInt.superclass
+        puts MyInt.ancestors.include?(Integer)
+        puts MyInt.ancestors.include?(Numeric)
+        begin
+          MyInt.new
+        rescue => e
+          puts "#{e.class}: #{e.message}"
+        end
+        class MySym < Symbol; end
+        begin; MySym.new; rescue => e; puts e.class; end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Integer\ntrue\ntrue\nNoMethodError: undefined method 'new' for class MyInt\nNoMethodError\n"
+    );
+}
+
+/// A `Numeric` subclass (D3) is an ordinary ivar-carrying object: it defines its
+/// own `<=>`/state, and `Comparable` (inherited through `Numeric`) drives
+/// `<`/`>`/`min` off that `<=>`.
+#[test]
+fn numeric_subclass_is_a_plain_comparable_object() {
+    let result = run_ruby(
+        r#"
+        class Money < Numeric
+          def initialize(cents); @cents = cents; end
+          def cents; @cents; end
+          def <=>(o); cents <=> o.cents; end
+        end
+        m = Money.new(500)
+        n = Money.new(300)
+        puts m.cents
+        puts(m > n)
+        puts(m == Money.new(500))
+        puts m.is_a?(Numeric)
+        puts m.is_a?(Comparable)
+        puts m.class
+        puts [m, n].min.cents
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "500\ntrue\ntrue\ntrue\ntrue\nMoney\n300\n");
+}
+
 /// Reopening a builtin MODULE (D3): the added method reaches every includer --
 /// Enumerable across Array/Hash, Comparable across Integer.
 #[test]
@@ -4973,10 +5117,13 @@ fn is_a_against_statically_typed_array_hash_range_and_symbol_locals() {
 }
 
 #[test]
-fn subclassing_a_built_in_type_is_a_clean_error() {
+fn subclassing_an_unsupported_built_in_type_is_a_clean_error() {
+    // D3 opened subclassing for Array/String/Hash (payload), Numeric (plain
+    // object), and the immediates (registry-only). `Range` stays rejected --
+    // it has no runtime constructor -- so this remains a clean compile error.
     let err = spinelc::compile_to_rust(
         r#"
-        class MyInt < Integer
+        class MyRange < Range
         end
         "#,
     )

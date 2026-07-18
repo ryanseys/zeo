@@ -1,0 +1,13 @@
+Integer
+true
+true
+NoMethodError: undefined method 'new' for class MyInt
+500
+true
+false
+true
+true
+true
+Money
+300
+500
