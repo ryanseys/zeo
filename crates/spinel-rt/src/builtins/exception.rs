@@ -49,6 +49,10 @@ pub struct RubyException {
     /// StopIteration's hidden result slot (`#result`/`__set_result`), likewise
     /// invisible to `instance_variables`.
     res: Mutex<RubyValue>,
+    /// The hidden `cause` slot (`Exception#cause`) -- the exception being
+    /// handled at the moment this one was raised, threaded in at raise time
+    /// (`attach_cause`). Invisible to `instance_variables`, like `mesg`/`res`.
+    cause: Mutex<RubyValue>,
     ivars: Mutex<Vec<(String, RubyValue)>>,
 }
 
@@ -59,6 +63,7 @@ impl RubyException {
             frozen: AtomicBool::new(false),
             mesg: Mutex::new(RubyValue::Nil),
             res: Mutex::new(RubyValue::Nil),
+            cause: Mutex::new(RubyValue::Nil),
             ivars: Mutex::new(Vec::new()),
         })
     }
@@ -115,6 +120,7 @@ impl RubyObject for RubyException {
             frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
             mesg: Mutex::new(self.mesg.lock().clone()),
             res: Mutex::new(self.res.lock().clone()),
+            cause: Mutex::new(self.cause.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
     }
@@ -179,6 +185,35 @@ fn exc_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 /// `def backtrace; []; end`
 fn exc_backtrace(_recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Array(array_new(Vec::new())))
+}
+
+/// `def cause; <cause slot>; end` -- the exception that was being handled when
+/// this one was raised (`nil` if none), threaded in at raise time by
+/// [`attach_cause`].
+fn exc_cause(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).cause.lock().clone())
+}
+
+/// Thread the currently-handled exception (`$!`) into `exc_value`'s hidden
+/// `cause` slot at raise time, mirroring CRuby's automatic cause chaining. Only
+/// applies when `exc_value` is a native exception whose cause is still unset and
+/// is not the same object as the current `$!` (a bare re-raise leaves its cause
+/// untouched). A no-op for a non-exception raise operand.
+pub fn attach_cause(exc_value: &RubyValue) {
+    let RubyValue::Object(o) = exc_value else { return };
+    let Some(e) = downcast_robj::<RubyException>(o) else { return };
+    let Some(current) = crate::handling::current_exception() else { return };
+    // A bare re-raise of the exception being handled must not become its own
+    // cause.
+    if let RubyValue::Object(cur_obj) = &current {
+        if Arc::ptr_eq(cur_obj, o) {
+            return;
+        }
+    }
+    let mut slot = e.cause.lock();
+    if matches!(*slot, RubyValue::Nil) {
+        *slot = current;
+    }
 }
 
 /// `def full_message; self.class.name + ": " + message; end`
@@ -288,6 +323,7 @@ pub fn register_exception_subclass(
     registry.define_method(id, Symbol::intern("message"), exc_message);
     registry.define_method(id, Symbol::intern("to_s"), exc_to_s);
     registry.define_method(id, Symbol::intern("backtrace"), exc_backtrace);
+    registry.define_method(id, Symbol::intern("cause"), exc_cause);
     registry.define_method(id, Symbol::intern("full_message"), exc_full_message);
     registry.define_method(id, Symbol::intern("inspect"), exc_inspect);
     if carries_result {

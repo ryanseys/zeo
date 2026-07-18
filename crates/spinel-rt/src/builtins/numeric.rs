@@ -400,14 +400,34 @@ builtin_methods! {
     // (Phase 17.2). Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
     "step" => fn step(recv, args, block) {
-        arity!(args, 1..=2);
+        arity!(args, 0..=2);
         let p = block_or_enum!(recv, "step", args, block);
-        let limit = &args[0];
-        let step = args.get(1).cloned().unwrap_or(RubyValue::Int(1));
+        // `step` accepts positional (`1.step(10, 2)`) and/or keyword
+        // (`1.step(by: 2, to: 10)`) forms; a trailing Hash carries `:by`/`:to`.
+        let mut positional = args;
+        let mut limit: Option<RubyValue> = None;
+        let mut step = RubyValue::Int(1);
+        if let Some(RubyValue::Hash(h)) = args.last() {
+            let by = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("by")));
+            let to = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("to")));
+            if !matches!(by, RubyValue::Nil) {
+                step = by;
+            }
+            if !matches!(to, RubyValue::Nil) {
+                limit = Some(to);
+            }
+            positional = &args[..args.len() - 1];
+        }
+        if let Some(l) = positional.first() {
+            limit = Some(l.clone());
+        }
+        if let Some(s) = positional.get(1) {
+            step = s.clone();
+        }
         let descending = matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(-1)));
         // CRuby's rule: a Float limit OR step moves the WHOLE iteration
         // into the Float domain (`1.step(2.0, 0.5)` yields 1.0 first).
-        let mut cur = if matches!(limit, RubyValue::Float(_))
+        let mut cur = if matches!(limit, Some(RubyValue::Float(_)))
             || matches!(step, RubyValue::Float(_))
         {
             RubyValue::Float(num_to_f64_unchecked(recv))
@@ -415,10 +435,13 @@ builtin_methods! {
             recv.clone()
         };
         loop {
-            match num_cmp(&cur, limit) {
-                Some(Some(c)) if (!descending && c > 0) || (descending && c < 0) => break,
-                Some(Some(_)) => {}
-                _ => break,
+            // An absent limit (`1.step(by: 2)`) is an unbounded sequence.
+            if let Some(limit) = &limit {
+                match num_cmp(&cur, limit) {
+                    Some(Some(c)) if (!descending && c > 0) || (descending && c < 0) => break,
+                    Some(Some(_)) => {}
+                    _ => break,
+                }
             }
             p.call(std::slice::from_ref(&cur))?;
             cur = num_add(&cur, &step).expect("numeric step operands")?;

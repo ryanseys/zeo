@@ -478,27 +478,45 @@ builtin_methods! {
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
+    // `transform_keys([mapping]) { |k| }` -- an optional mapping Hash renames
+    // the keys it lists (block/identity handles the rest), then the block maps
+    // any remaining keys; with neither, an Enumerator.
     "transform_keys" => fn transform_keys(recv, args, block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "transform_keys", args, block);
+        arity!(args, 0..=1);
+        let mapping = transform_keys_mapping(args)?;
+        let blk = match &block {
+            Some(RubyValue::Proc(p)) => Some(p.clone()),
+            _ => None,
+        };
+        if mapping.is_none() && blk.is_none() {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys", args));
+        }
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
-            out.push((p.call(&[k])?, v));
+            out.push((map_transform_key(&mapping, &blk, k)?, v));
         }
         Ok(RubyValue::Hash(crate::hash_new(out)))
     }
     // In-place `transform_keys` -- rebuilds the hash with each key mapped
-    // through the block, keeping insertion order and answering the receiver.
+    // through the mapping/block, keeping insertion order and answering the
+    // receiver.
     "transform_keys!" => fn transform_keys_bang(recv, args, block) {
-        arity!(args, 0);
-        let p = block_or_enum!(recv, "transform_keys!", args, block);
+        arity!(args, 0..=1);
+        let mapping = transform_keys_mapping(args)?;
+        let blk = match &block {
+            Some(RubyValue::Proc(p)) => Some(p.clone()),
+            _ => None,
+        };
+        if mapping.is_none() && blk.is_none() {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys!", args));
+        }
         let h = recv_hash!(recv);
         let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());
         for (k, v) in pairs {
-            out.push((p.call(&[k])?, v));
+            out.push((map_transform_key(&mapping, &blk, k)?, v));
         }
         h.lock().clear();
         for (k, v) in out {
@@ -549,6 +567,40 @@ builtin_methods! {
     }
 }
 
+
+/// `transform_keys`'s optional first argument: a mapping Hash (`nil`/absent is
+/// none), else CRuby's `no implicit conversion into Hash` TypeError.
+fn transform_keys_mapping(args: &[RubyValue]) -> Result<Option<crate::collections::RHash>, crate::Signal> {
+    match args.first() {
+        Some(RubyValue::Hash(h)) => Ok(Some(h.clone())),
+        None | Some(RubyValue::Nil) => Ok(None),
+        Some(other) => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Hash",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// One key's new name under `transform_keys`: a listed mapping key wins, then
+/// the block, then the key unchanged.
+fn map_transform_key(
+    mapping: &Option<crate::collections::RHash>,
+    blk: &Option<crate::RProc>,
+    k: RubyValue,
+) -> Result<RubyValue, crate::Signal> {
+    if let Some(m) = mapping {
+        if crate::hash_has_key(m, &k) {
+            return Ok(crate::hash_get(m, &k));
+        }
+    }
+    if let Some(p) = blk {
+        return p.call(std::slice::from_ref(&k));
+    }
+    Ok(k)
+}
 
 /// `merge`/`merge!`'s shared writer: later hashes win, unless the conflict
 /// block chooses (`old`/`new` order is real Ruby's).

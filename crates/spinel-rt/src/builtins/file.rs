@@ -65,6 +65,21 @@ pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
     }
 }
 
+/// Flatten `File.join`'s arguments: a String (or `to_path`-able) becomes one
+/// path component; an Array is recursively flattened.
+fn collect_join_parts(v: &RubyValue, parts: &mut Vec<String>) -> Result<(), Signal> {
+    match v {
+        RubyValue::Array(el) => {
+            let items: Vec<RubyValue> = el.lock().iter().cloned().collect();
+            for e in &items {
+                collect_join_parts(e, parts)?;
+            }
+        }
+        other => parts.push(path_arg(other, "join")?),
+    }
+    Ok(())
+}
+
 fn str_val(s: String) -> RubyValue {
     RubyValue::Str(crate::collections::string_new(s))
 }
@@ -479,17 +494,10 @@ builtin_methods! {
         ])))
     }
     "join" => fn file_join(_recv, args, _block) {
+        // `File.join("a", ["b", ["c"]])` flattens arbitrarily nested arrays.
         let mut parts = Vec::new();
         for a in args {
-            // `File.join("a", ["b", "c"])` flattens nested arrays.
-            match a {
-                RubyValue::Array(el) => {
-                    for e in el.lock().iter() {
-                        parts.push(path_arg(e, "join")?);
-                    }
-                }
-                v => parts.push(path_arg(v, "join")?),
-            }
+            collect_join_parts(a, &mut parts)?;
         }
         // Ruby collapses a separator at the seam rather than doubling it:
         // `File.join("a/", "/b")` is `"a/b"`.

@@ -4,8 +4,9 @@
 //! Backed by an `RObj` over a `Mutex<State>`. `scan`/`skip`/`match?`/`check`
 //! anchor a pattern at the current position (via `regexp::regexp_anchored_len`);
 //! `scan_until` searches forward (via `regexp::regexp_find`). Patterns may be a
-//! `Regexp` or a `String` (matched literally). Implemented methods are oracle-
-//! verified against ruby 4.0.5; the rest are `todo!()` (see docs/EXTENSIONS.md).
+//! `Regexp` or a `String` (matched literally). The full scan/peek/position
+//! surface -- including `exist?`/`check_until`/`get_byte`/`unscan` -- is
+//! oracle-verified against ruby 4.0.5.
 
 use crate::builtins::{arity, builtin_methods};
 use crate::dispatch::{raise_error, RObj, RubyObject};
@@ -21,6 +22,9 @@ struct State {
     /// Byte span of the most recent successful match (for
     /// `matched`/`pre_match`/`post_match`); `None` after a miss.
     last: Option<(usize, usize)>,
+    /// The position before the most recent advancing scan, for `unscan`
+    /// (CRuby remembers exactly one).
+    prev_pos: Option<usize>,
 }
 
 pub struct RStringScanner {
@@ -31,7 +35,7 @@ pub struct RStringScanner {
 impl RStringScanner {
     fn new(string: String) -> RStringScanner {
         RStringScanner {
-            state: Mutex::new(State { string, pos: 0, last: None }),
+            state: Mutex::new(State { string, pos: 0, last: None, prev_pos: None }),
             frozen: AtomicBool::new(false),
         }
     }
@@ -112,11 +116,12 @@ builtin_methods! {
         match anchored_len(&args[0], tail)? {
             Some(len) => {
                 let (m0, m1) = (st.pos, st.pos + len);
+                st.prev_pos = Some(st.pos);
                 st.last = Some((m0, m1));
                 st.pos = m1;
                 Ok(str_val(&st.string[m0..m1]))
             }
-            None => { st.last = None; Ok(RubyValue::Nil) }
+            None => { st.last = None; st.prev_pos = None; Ok(RubyValue::Nil) }
         }
     }
     // Like `scan` but returns the matched LENGTH (or nil), still advancing.
@@ -126,11 +131,12 @@ builtin_methods! {
         let tail = &st.string[st.pos..];
         match anchored_len(&args[0], tail)? {
             Some(len) => {
+                st.prev_pos = Some(st.pos);
                 st.last = Some((st.pos, st.pos + len));
                 st.pos += len;
                 Ok(RubyValue::Int(len as i64))
             }
-            None => { st.last = None; Ok(RubyValue::Nil) }
+            None => { st.last = None; st.prev_pos = None; Ok(RubyValue::Nil) }
         }
     }
     // Anchored length probe -- does NOT advance. Returns the length or nil.
@@ -178,11 +184,12 @@ builtin_methods! {
                 let (from, to) = (st.pos, st.pos + rel_end);
                 // `matched` is just the matched text (from the match start),
                 // but scan_until RETURNS everything consumed: pos..match-end.
+                st.prev_pos = Some(st.pos);
                 st.last = Some((st.pos + rel_start, to));
                 st.pos = to;
                 Ok(str_val(&st.string[from..to]))
             }
-            None => { st.last = None; Ok(RubyValue::Nil) }
+            None => { st.last = None; st.prev_pos = None; Ok(RubyValue::Nil) }
         }
     }
     "getch" => fn getch(recv, args, _block) {
@@ -195,6 +202,7 @@ builtin_methods! {
         let ch = st.string[st.pos..].chars().next().expect("pos < len");
         let len = ch.len_utf8();
         let (m0, m1) = (st.pos, st.pos + len);
+        st.prev_pos = Some(st.pos);
         st.last = Some((m0, m1));
         st.pos = m1;
         Ok(str_val(&st.string[m0..m1]))
@@ -273,11 +281,87 @@ builtin_methods! {
         Ok(str_val(&sc_of(recv).state.lock().string))
     }
 
-    // Not yet implemented (see docs/EXTENSIONS.md).
-    "exist?" => fn exist(_recv, _args, _block) { todo!("StringScanner#exist?") }
-    "check_until" => fn check_until(_recv, _args, _block) { todo!("StringScanner#check_until") }
-    "unscan" => fn unscan(_recv, _args, _block) { todo!("StringScanner#unscan") }
-    "get_byte" => fn get_byte(_recv, _args, _block) { todo!("StringScanner#get_byte") }
+    // `exist?(pattern)` -- look ahead for the next match WITHOUT advancing;
+    // returns the byte count from the current position to the match end, or nil.
+    "exist?" => fn exist(recv, args, _block) {
+        arity!(args, 1);
+        let st = &mut *sc_of(recv).state.lock();
+        let tail = &st.string[st.pos..];
+        match find_forward(&args[0], tail)? {
+            Some((rel_start, rel_end)) => {
+                st.last = Some((st.pos + rel_start, st.pos + rel_end));
+                Ok(RubyValue::Int(rel_end as i64))
+            }
+            None => { st.last = None; Ok(RubyValue::Nil) }
+        }
+    }
+    // Like `scan_until` but does NOT advance -- peek the text from the current
+    // position through the next match, or nil.
+    "check_until" => fn check_until(recv, args, _block) {
+        arity!(args, 1);
+        let st = &mut *sc_of(recv).state.lock();
+        let tail = &st.string[st.pos..];
+        match find_forward(&args[0], tail)? {
+            Some((rel_start, rel_end)) => {
+                st.last = Some((st.pos + rel_start, st.pos + rel_end));
+                Ok(str_val(&st.string[st.pos..st.pos + rel_end]))
+            }
+            None => { st.last = None; Ok(RubyValue::Nil) }
+        }
+    }
+    // `unscan` -- back the pointer up to before the most recent advancing scan
+    // (CRuby remembers exactly one); a ScanError if there is none.
+    "unscan" => fn unscan(recv, args, _block) {
+        arity!(args, 0);
+        let st = &mut *sc_of(recv).state.lock();
+        match st.prev_pos.take() {
+            Some(p) => {
+                st.pos = p;
+                st.last = None;
+                Ok(recv.clone())
+            }
+            // Documented divergence: CRuby raises `StringScanner::Error`, a
+            // class nested under the feature-gated `StringScanner` that this
+            // runtime can't register unconditionally; a `RuntimeError` with the
+            // same message is still `rescue`-able as a StandardError.
+            None => Err(raise_error(
+                "RuntimeError",
+                "unscan failed: previous match record not exist".to_string(),
+            )),
+        }
+    }
+    // `get_byte` -- one BYTE (not char), advancing by one; nil at end.
+    "get_byte" => fn get_byte(recv, args, _block) {
+        arity!(args, 0);
+        let st = &mut *sc_of(recv).state.lock();
+        if st.pos >= st.string.len() {
+            st.last = None;
+            return Ok(RubyValue::Nil);
+        }
+        let (m0, m1) = (st.pos, st.pos + 1);
+        st.prev_pos = Some(st.pos);
+        st.last = Some((m0, m1));
+        st.pos = m1;
+        // A single raw byte -- lossily UTF-8 for a continuation byte, matching
+        // this runtime's Str model (documented divergence, like the rest here).
+        Ok(str_val(&String::from_utf8_lossy(&st.string.as_bytes()[m0..m1])))
+    }
+}
+
+/// Search `tail` forward for `pattern` (Regexp or literal String), returning
+/// its byte span relative to `tail`'s start, or `None`.
+fn find_forward(pattern: &RubyValue, tail: &str) -> Result<Option<(usize, usize)>, Signal> {
+    match pattern {
+        RubyValue::Regexp(re) => Ok(crate::regexp::regexp_find(re, tail)),
+        RubyValue::Str(s) => {
+            let p = s.lock().to_utf8_lossy().into_owned();
+            Ok(tail.find(&p).map(|i| (i, i + p.len())))
+        }
+        other => Err(raise_error(
+            "TypeError",
+            format!("wrong argument type {} (expected Regexp)", crate::builtins::class_name_of(other)),
+        )),
+    }
 }
 
 builtin_methods! {

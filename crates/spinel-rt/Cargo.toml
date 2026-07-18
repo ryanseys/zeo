@@ -54,6 +54,9 @@ md-5 = { version = "0.10", optional = true }
 sha1 = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 digest = { version = "0.10", optional = true }
+# `zlib` extension: flate2's pure-Rust (miniz_oxide) backend powers
+# `deflate`/`inflate`/`gzip`/`gunzip`. Pulled in only by `ext-zlib`.
+flate2 = { version = "1", optional = true }
 # `json` extension: serde_json parses into a `Value` tree we convert to
 # `RubyValue` (generation is hand-rolled for int/float/bignum fidelity).
 # Pulled in only by `ext-json`.
@@ -108,7 +111,7 @@ ext-cgi = []
 ext-digest = ["dep:md-5", "dep:sha1", "dep:sha2", "dep:digest"]
 ext-json = ["dep:serde_json"]
 ext-date = []
-ext-zlib = []
+ext-zlib = ["dep:flate2"]
 ext-psych = ["dep:yaml-rust2"]
 ext-socket = []
 ext-openssl = []

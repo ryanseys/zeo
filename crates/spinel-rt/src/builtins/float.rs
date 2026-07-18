@@ -155,7 +155,9 @@ builtin_methods! {
     // arithmetic when double precision is insufficient (`2.675.round(2)`),
     // a documented divergence.
     "round" => fn round(recv, args, _block) {
-        float_round_family(recv, args, f64::round)
+        // A trailing `half:` keyword selects the tie-break mode (:up default).
+        let (positional, mode) = split_round_half(args)?;
+        float_round_family(recv, positional, move |x| round_half(x, mode))
     }
     "floor" => fn floor(recv, args, _block) {
         float_round_family(recv, args, f64::floor)
@@ -354,6 +356,61 @@ fn float_rationalize(d: f64, eps: Option<&RubyValue>) -> Result<RubyValue, Signa
         }
     };
     crate::builtins::rational::rational_new(if neg { -p } else { p }, q)
+}
+
+/// `Float#round`'s tie-break mode (the `half:` keyword).
+#[derive(Clone, Copy)]
+enum HalfMode {
+    Up,
+    Down,
+    Even,
+}
+
+/// Round `x` to the nearest integer, breaking an exact `.5` tie per `mode`
+/// (`:up` = away from zero, `:down` = toward zero, `:even` = banker's).
+fn round_half(x: f64, mode: HalfMode) -> f64 {
+    let fl = x.floor();
+    let diff = x - fl;
+    if diff < 0.5 {
+        fl
+    } else if diff > 0.5 {
+        fl + 1.0
+    } else {
+        match mode {
+            HalfMode::Up => if x >= 0.0 { fl + 1.0 } else { fl },
+            HalfMode::Down => if x >= 0.0 { fl } else { fl + 1.0 },
+            HalfMode::Even => if (fl as i64) % 2 == 0 { fl } else { fl + 1.0 },
+        }
+    }
+}
+
+/// Split a trailing `half:` keyword Hash off `round`'s arguments, returning the
+/// positional slice and the selected mode (`:up` when absent).
+fn split_round_half(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Signal> {
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        let mode = match crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("half"))) {
+            RubyValue::Nil => HalfMode::Up,
+            RubyValue::Symbol(s) => match s.name().as_str() {
+                "up" => HalfMode::Up,
+                "down" => HalfMode::Down,
+                "even" => HalfMode::Even,
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        format!("invalid rounding mode: {other}"),
+                    ))
+                }
+            },
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    format!("invalid rounding mode: {}", other.to_display_string()),
+                ))
+            }
+        };
+        return Ok((&args[..args.len() - 1], mode));
+    }
+    Ok((args, HalfMode::Up))
 }
 
 fn float_round_family(

@@ -462,6 +462,8 @@ builtin_methods! {
         arity!(args, 1);
         match &args[0] {
             RubyValue::Int(_) | RubyValue::BigInt(_) => int_shl(recv, &args[0]),
+            // A Float count is truncated toward zero (CRuby's `to_int`).
+            RubyValue::Float(f) => int_shl(recv, &RubyValue::Int(f.trunc() as i64)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
@@ -469,6 +471,7 @@ builtin_methods! {
         arity!(args, 1);
         match &args[0] {
             RubyValue::Int(_) | RubyValue::BigInt(_) => int_shr(recv, &args[0]),
+            RubyValue::Float(f) => int_shr(recv, &RubyValue::Int(f.trunc() as i64)),
             other => Err(coerce_error(other, "Integer")),
         }
     }
@@ -529,6 +532,18 @@ builtin_methods! {
     // gives the exact result for either sign.
     "ceildiv" => fn ceildiv(recv, args, _block) {
         arity!(args, 1);
+        // `ceildiv(other)` == `-((-self).div(other))`; a Float/Rational divisor
+        // rides the floored-division tower, still answering an Integer.
+        if matches!(&args[0], RubyValue::Float(_) | RubyValue::Rational(_)) {
+            let neg_self = int_neg(recv);
+            let floored = crate::dispatch::send_value(
+                &neg_self,
+                crate::Symbol::intern("div"),
+                std::slice::from_ref(&args[0]),
+                None,
+            )?;
+            return Ok(int_neg(&floored));
+        }
         let b = int_mask_arg(&args[0])?;
         if b.is_zero() {
             return Err(crate::dispatch::raise_error(
@@ -611,8 +626,9 @@ builtin_methods! {
         arity!(args, 1);
         let to_f = |v: &RubyValue| -> Option<f64> {
             match v {
-                RubyValue::Int(i) => Some(*i as f64),
-                RubyValue::Float(f) => Some(*f),
+                RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
+                    Some(crate::builtins::numeric::num_to_f64_unchecked(v))
+                }
                 _ => None,
             }
         };
@@ -956,7 +972,6 @@ builtin_methods! {
     // negative argument is a `Math::DomainError`, like CRuby.
     "sqrt" => fn isqrt(_recv, args, _block) {
         arity!(args, 1);
-        use num_integer::Roots;
         let n = match &args[0] {
             RubyValue::Int(_) | RubyValue::BigInt(_) => to_bigint(&args[0]),
             RubyValue::Float(f) => {

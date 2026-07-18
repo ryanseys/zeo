@@ -185,7 +185,10 @@ builtin_methods! {
     // which skips private but keeps protected -- exactly method_defined?'s
     // rule), so an inherited `object_id`/`frozen?` answers true too.
     "method_defined?" => fn method_defined(recv, args, _block) {
-        arity!(args, 1);
+        // The optional second `inherit` flag (default true) is accepted; this
+        // runtime always walks ancestors, so `inherit: false` is a documented
+        // approximation rather than an error.
+        arity!(args, 1..=2);
         let name = name_arg(&args[0])?;
         Ok(RubyValue::Bool(crate::dispatch::responds_to(
             recv_cid(recv),

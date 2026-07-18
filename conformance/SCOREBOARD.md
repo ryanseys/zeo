@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1492/1986 passing (75.1%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `73e9623`
+Suite `spinel` — **1516/1986 passing (76.3%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `0e3b87c`
 
 | verdict | count |
 |---|---|
-| PASS | 1492 |
-| FAIL_OUTPUT | 425 |
+| PASS | 1516 |
+| FAIL_OUTPUT | 401 |
 | FAIL_COMPILE | 61 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
@@ -19,8 +19,8 @@ Suite `spinel` — **1492/1986 passing (75.1%)** — oracle `ruby 4.0.5 (2026-05
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 35 | arity-panic | g | string_conformance_batch3 | uncaught exception: wrong number of arguments (given 0, expected 1) |
-| 31 | spike-misc | ? | minmax_by_count | Enumerable#max_by with arguments isn't supported yet (spike scope) |
+| 30 | spike-misc | ? | valued_break_proc | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
+| 23 | arity-panic | g | data_inspect_in_container | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
 | 8 | pattern-shapes | k | hash_numeric_wave11 | Enumerable#any? with a pattern argument (`===` form) isn't supported yet (spike scope) |
 | 8 | unknown-class | ? | defined_guard_dead_branch | unknown class/module `MissingRoot::Sub` |

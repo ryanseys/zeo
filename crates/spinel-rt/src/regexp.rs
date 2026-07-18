@@ -375,6 +375,23 @@ pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> Rub
     }
 }
 
+/// `String#byterindex(regexp[, pos])` -- the BYTE offset of the LAST (highest)
+/// start position at or before `before` where `re` matches anchored, or
+/// `None`. CRuby's `rindex` tries every start from the end, so `/l+/` against
+/// `"hello"` finds the single `"l"` at 3, not the greedy `"ll"` leftmost at 2.
+pub fn regexp_byterindex(re: &RRegexp, haystack: &str, before: usize) -> Option<usize> {
+    let mut p = before.min(haystack.len());
+    loop {
+        if haystack.is_char_boundary(p) && regexp_anchored_len(re, &haystack[p..]).is_some() {
+            return Some(p);
+        }
+        if p == 0 {
+            return None;
+        }
+        p -= 1;
+    }
+}
+
 pub fn regexp_source(re: &RRegexp) -> RubyValue {
     RubyValue::Str(string_new(re.source.clone()))
 }
@@ -668,6 +685,33 @@ pub fn matchdata_string(m: &RMatchData) -> RubyValue {
 /// `#string`, which is the entire ORIGINAL haystack).
 pub fn matchdata_to_s(m: &RMatchData) -> RubyValue {
     matchdata_group(m, 0)
+}
+
+/// `MatchData#inspect` -- `#<MatchData "whole" 1:"cap" name:"cap">`. Each
+/// capture past the whole match is labelled by its group name when it has one,
+/// else by its 1-based index; a non-participating group renders as `nil`.
+pub fn matchdata_inspect(m: &RMatchData) -> String {
+    let whole = RubyValue::Str(string_new(match m.groups.first() {
+        Some(Some((s, e))) => m.haystack[*s..*e].to_string(),
+        _ => String::new(),
+    }))
+    .inspect_string();
+    let mut out = format!("#<MatchData {whole}");
+    for i in 1..m.groups.len() {
+        let label = m
+            .names
+            .iter()
+            .find(|(_, idx)| *idx == i)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| i.to_string());
+        let value = match m.groups[i] {
+            Some((s, e)) => RubyValue::Str(string_new(m.haystack[s..e].to_string())).inspect_string(),
+            None => "nil".to_string(),
+        };
+        out.push_str(&format!(" {label}:{value}"));
+    }
+    out.push('>');
+    out
 }
 
 #[cfg(test)]

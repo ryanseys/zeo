@@ -967,7 +967,10 @@ fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
         [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
         _ => unreachable!("lowering rejects `raise`/`fail` with more than 2 arguments"),
     };
-    quote! { return Err(spinel_rt::Signal::Raise(#exc)) }
+    // `raise_with_cause` threads the currently-handled exception (`$!`) into the
+    // raised exception's `cause` slot (CRuby's automatic cause chaining); it is a
+    // no-op for a bare re-raise or a non-exception operand.
+    quote! { return Err(spinel_rt::Signal::Raise(spinel_rt::raise_with_cause(#exc))) }
 }
 
 /// Builds the actual `RubyValue` to raise, mirroring spinel's own `raise`

@@ -974,9 +974,39 @@ builtin_methods! {
             (s.bytes().to_vec(), s.encoding())
         };
         let n = bytes.len() as i64;
+        // `byteslice(start..end)` -- a single Range argument cuts on byte
+        // boundaries; negative endpoints count from the end, an out-of-range
+        // start is nil.
+        if let RubyValue::Range(s, e, exclusive) = &args[0] {
+            let start = match s.as_deref() {
+                Some(RubyValue::Int(v)) => if *v < 0 { *v + n } else { *v },
+                None => 0,
+                _ => return Ok(RubyValue::Nil),
+            };
+            if start < 0 || start > n {
+                return Ok(RubyValue::Nil);
+            }
+            let end = match e.as_deref() {
+                Some(RubyValue::Int(v)) => {
+                    let v = if *v < 0 { *v + n } else { *v };
+                    if *exclusive { v } else { v + 1 }
+                }
+                None => n,
+                _ => return Ok(RubyValue::Nil),
+            };
+            let end = end.clamp(start, n) as usize;
+            return Ok(RubyValue::Str(crate::string_from_bytes(
+                bytes[start as usize..end].to_vec(),
+                enc,
+            )));
+        }
         let off = arg_int!(args, 0);
         let off = if off < 0 { off + n } else { off };
-        if off < 0 || off > n {
+        // With a length, `offset == bytesize` yields "" (an empty cut); the
+        // single-argument form needs an actual byte to read, so the boundary
+        // is nil.
+        let has_len = args.get(1).is_some();
+        if off < 0 || off > n || (off == n && !has_len) {
             return Ok(RubyValue::Nil);
         }
         let len = match args.get(1) {
@@ -1000,6 +1030,20 @@ builtin_methods! {
     "byteindex" => fn byteindex(recv, args, _block) {
         arity!(args, 1..=2);
         let hay = recv_str!(recv).lock().bytes().to_vec();
+        // `byteindex(regexp[, offset])` -- the BYTE offset of the first match.
+        if let RubyValue::Regexp(re) = &args[0] {
+            let Some(start) = byte_offset_arg(args.get(1), hay.len())? else {
+                return Ok(RubyValue::Nil);
+            };
+            let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+            if start > text.len() || !text.is_char_boundary(start) {
+                return Ok(RubyValue::Nil);
+            }
+            return Ok(match crate::regexp::regexp_find(re, &text[start..]) {
+                Some((b, _)) => RubyValue::Int((start + b) as i64),
+                None => RubyValue::Nil,
+            });
+        }
         let needle = arg_str!(args, 0).lock().bytes().to_vec();
         let start = byte_offset_arg(args.get(1), hay.len())?;
         let Some(start) = start else { return Ok(RubyValue::Nil) };
@@ -1011,7 +1055,6 @@ builtin_methods! {
     "byterindex" => fn byterindex(recv, args, _block) {
         arity!(args, 1..=2);
         let hay = recv_str!(recv).lock().bytes().to_vec();
-        let needle = arg_str!(args, 0).lock().bytes().to_vec();
         // Omitted position searches the whole string (from the end); an
         // explicit one bounds the match start (negative counts from the end).
         let before = match args.get(1) {
@@ -1021,6 +1064,15 @@ builtin_methods! {
                 None => return Ok(RubyValue::Nil),
             },
         };
+        // `byterindex(regexp[, pos])` -- the BYTE offset of the last match.
+        if let RubyValue::Regexp(re) = &args[0] {
+            let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+            return Ok(match crate::regexp::regexp_byterindex(re, &text, before) {
+                Some(i) => RubyValue::Int(i as i64),
+                None => RubyValue::Nil,
+            });
+        }
+        let needle = arg_str!(args, 0).lock().bytes().to_vec();
         Ok(match byte_rfind(&hay, &needle, before) {
             Some(i) => RubyValue::Int(i as i64),
             None => RubyValue::Nil,
@@ -1174,40 +1226,44 @@ builtin_methods! {
     }
     // Mutating append -- returns the receiver (the same object).
     "<<" | "concat" => fn concat(recv, args, _block) {
-        arity!(args, 1);
-        let addition = match &args[0] {
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            // `str << 65` appends the CODEPOINT's character.
-            RubyValue::Int(i) => match u32::try_from(*i).ok().and_then(char::from_u32) {
-                Some(c) => c.to_string(),
-                None => {
-                    return Err(crate::dispatch::raise_error(
-                        "RangeError",
-                        format!("{i} out of char range"),
-                    ))
-                }
-            },
-            other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(other)
-                    ),
-                ))
-            }
-        };
+        // `<<` is syntactically a single-arg operator; `concat` accepts any
+        // number of arguments and appends them left-to-right.
         let s = recv_str!(recv);
         // Frozen check at the mutator (CRuby's `rb_str_modify`): `<<`/`concat`
         // dispatch through this one row for every receiver shape, so guarding
         // here covers them all -- including a `frozen_string_literal` literal.
+        // CRuby checks modifiability before appending any argument.
         if s.is_frozen() {
             return Err(crate::dispatch::raise_error(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
             ));
         }
-        s.lock().push_str(&addition);
+        for arg in args {
+            let addition = match arg {
+                RubyValue::Str(other) => other.lock().to_utf8_lossy().into_owned(),
+                // `str << 65` appends the CODEPOINT's character.
+                RubyValue::Int(i) => match u32::try_from(*i).ok().and_then(char::from_u32) {
+                    Some(c) => c.to_string(),
+                    None => {
+                        return Err(crate::dispatch::raise_error(
+                            "RangeError",
+                            format!("{i} out of char range"),
+                        ))
+                    }
+                },
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "no implicit conversion of {} into String",
+                            crate::builtins::class_name_of(other)
+                        ),
+                    ))
+                }
+            };
+            s.lock().push_str(&addition);
+        }
         Ok(recv.clone())
     }
     "*" => fn times(recv, args, _block) {
@@ -1653,17 +1709,43 @@ builtin_methods! {
         Ok(RubyValue::Str(repl))
     }
     "index" => fn index(recv, args, _block) {
-        arity!(args, 1);
+        // `index(substr_or_regexp[, start])` -- the optional start is a CHAR
+        // offset (from the end when negative) to begin searching at.
+        arity!(args, 1..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        let clen = text.chars().count() as i64;
+        let start_char = match args.get(1) {
+            Some(v) => {
+                let mut p = int_arg(v)?;
+                if p < 0 {
+                    p += clen;
+                }
+                if p < 0 || p > clen {
+                    return Ok(RubyValue::Nil);
+                }
+                p as usize
+            }
+            None => 0,
+        };
+        let byte_start = text
+            .char_indices()
+            .nth(start_char)
+            .map(|(b, _)| b)
+            .unwrap_or(text.len());
         match &args[0] {
             RubyValue::Str(needle) => {
                 let needle = needle.lock().to_utf8_lossy().into_owned();
-                Ok(match text.find(&needle) {
-                    Some(byte_pos) => RubyValue::Int(text[..byte_pos].chars().count() as i64),
+                Ok(match text[byte_start..].find(&needle) {
+                    Some(byte_pos) => {
+                        RubyValue::Int(text[..byte_start + byte_pos].chars().count() as i64)
+                    }
                     None => RubyValue::Nil,
                 })
             }
-            RubyValue::Regexp(re) => Ok(crate::regexp_match_index(re, &text)),
+            RubyValue::Regexp(re) => match crate::regexp_match_index(re, &text[byte_start..]) {
+                RubyValue::Int(i) => Ok(RubyValue::Int(i + start_char as i64)),
+                other => Ok(other),
+            },
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(
@@ -1824,17 +1906,30 @@ builtin_methods! {
     "start_with?" => fn start_with_p(recv, args, _block) {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
-            let RubyValue::Str(prefix) = a else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(a)
-                    ),
-                ));
-            };
-            if text.starts_with(&*prefix.lock().to_utf8_lossy()) {
-                return Ok(RubyValue::Bool(true));
+            match a {
+                RubyValue::Str(prefix) => {
+                    if text.starts_with(&*prefix.lock().to_utf8_lossy()) {
+                        return Ok(RubyValue::Bool(true));
+                    }
+                }
+                // A Regexp prefix matches only when it matches anchored at the
+                // start; CRuby sets `$~` to the match (nil on no start-match).
+                RubyValue::Regexp(re) => {
+                    if crate::regexp::regexp_anchored_len(re, &text).is_some() {
+                        crate::regexp_match(re, &text);
+                        return Ok(RubyValue::Bool(true));
+                    }
+                    crate::lastmatch::set_last_match(None);
+                }
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "no implicit conversion of {} into String",
+                            crate::builtins::class_name_of(other)
+                        ),
+                    ));
+                }
             }
         }
         Ok(RubyValue::Bool(false))
@@ -1959,7 +2054,23 @@ builtin_methods! {
     "to_f" => fn to_f(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        let t = text.trim_start();
+        // CRuby ignores a single underscore between two digits (`"1_000.5"` ->
+        // 1000.5); a leading, trailing, or doubled underscore stops the parse.
+        let cleaned: String = {
+            let chars: Vec<char> = text.trim_start().chars().collect();
+            chars
+                .iter()
+                .enumerate()
+                .filter(|(i, &c)| {
+                    !(c == '_'
+                        && *i > 0
+                        && chars[i - 1].is_ascii_digit()
+                        && chars.get(i + 1).is_some_and(|n| n.is_ascii_digit()))
+                })
+                .map(|(_, &c)| c)
+                .collect()
+        };
+        let t = cleaned.as_str();
         let mut end = 0;
         for (i, _) in t.char_indices() {
             let candidate = &t[..=i + t[i..].chars().next().map_or(0, |c| c.len_utf8() - 1)];
@@ -2488,16 +2599,25 @@ fn sub_gsub(
         }
         (RubyValue::Str(pattern), None) => {
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
-            let RubyValue::Str(replacement) = &args[1] else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(&args[1])
-                    ),
-                ));
+            // A String pattern matches literally, so its "matched substring" is
+            // always the pattern itself; a Hash replacement looks that up (a
+            // missing key stringifies to ""), a String replacement is literal.
+            let replacement = match &args[1] {
+                RubyValue::Str(replacement) => replacement.lock().to_utf8_lossy().into_owned(),
+                RubyValue::Hash(h) => {
+                    let key = RubyValue::Str(crate::string_new(pattern.clone()));
+                    crate::hash_get(h, &key).to_display_string()
+                }
+                other => {
+                    return Err(crate::dispatch::raise_error(
+                        "TypeError",
+                        format!(
+                            "no implicit conversion of {} into String",
+                            crate::builtins::class_name_of(other)
+                        ),
+                    ))
+                }
             };
-            let replacement = replacement.lock().to_utf8_lossy().into_owned();
             Ok(RubyValue::Str(crate::string_new(if global {
                 text.replace(&pattern, &replacement)
             } else {

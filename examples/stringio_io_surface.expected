@@ -1,0 +1,11 @@
+"h"
+"é"
+"!"
+nil
+"cd"
+"f"
+"c"
+"one\n"
+["two\n", "three"]
+EOFError: end of file reached
+"hello"

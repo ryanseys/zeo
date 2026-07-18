@@ -2188,7 +2188,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
             if arg_list.iter().any(|n| n.as_keyword_hash_node().is_some()) {
-                return Err("`raise`/`fail` with a `cause:` keyword argument isn't supported yet (spike scope) -- automatic cause chaining from an active `rescue` works once that lands (Phase 9); only the explicit override is deferred".to_string());
+                return Err("`raise`/`fail` with an explicit `cause:` keyword override isn't supported yet -- automatic cause chaining from an active `rescue` works (Exception#cause); only the explicit override is deferred".to_string());
             }
             if arg_list.len() > 2 {
                 return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string());

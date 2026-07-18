@@ -57,7 +57,7 @@ pub use dispatch::{
     downcast_robj, install_class_registry,
     instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
-    method_name_symbol, raise_error, raise_stop_iteration, responds_to, responds_to_value,
+    method_name_symbol, raise_error, raise_stop_iteration, raise_with_cause, responds_to, responds_to_value,
     run_initialize,
     send, send_in, send_super_from, send_value, send_value_in,
     ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
@@ -84,7 +84,7 @@ pub use ractor::{
     RRactor, RactorData,
 };
 pub use regexp::*;
-pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, RProc};
+pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, ProcParamMeta, RProc};
 pub use runtime_meta::{
     name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
     runtime_define_singleton_method,

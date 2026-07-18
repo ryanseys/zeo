@@ -6,8 +6,8 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| g | arity-panic | 35 | string_conformance_batch3, data_bare_new_in_factory, hash_ctor_merge_clone_transform | uncaught exception: wrong number of arguments (given 0, expected 1) |
-| ? | spike-misc | 31 | minmax_by_count, singleton_method_object, bsearch_find_any_mixed | Enumerable#max_by with arguments isn't supported yet (spike scope) |
+| ? | spike-misc | 30 | valued_break_proc, external_singleton_def, public_send_visibility | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
+| g | arity-panic | 23 | data_inspect_in_container, data_with_unknown_kw, rational_div_family | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | k | pattern-shapes | 8 | hash_numeric_wave11, array_conformance_batch5, bundle_tiny_array | Enumerable#any? with a pattern argument (`===` form) isn't supported yet (spike scope) |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
@@ -20,22 +20,18 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:new | 4 | proc_compose_curry_forward, basicobject_new, constant_path | uncaught exception: undefined method 'new' for class Proc |
 | h | range-shapes | 4 | range_sum_endless_wave10, bundle_tiny_num, range_float_begin_iterate | Range#size on a non-Integer/beginless/endless range isn't supported (spike scope) |
 | ? | auto-20dcf25f | 3 | data_define_inline_receiver, anon_struct_local, data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
-| ? | auto-3d0c6827 | 3 | array_fill_block_form, array_fill_incompatible, string_conformance_batch | uncaught exception: no implicit conversion of Range into Integer |
 | ? | auto-3e862739 | 3 | error_protocol_edges, poly_array_readers, array_cycle_bounded | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
-| ? | auto-5acee2ea | 3 | hash_array_string_batch8, matchdata_value_varargs_symstr, string_search_slice | uncaught exception: no implicit conversion of Regexp into String |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
 | P | missing-method:[] | 3 | struct_methods, multi_write_call_rhs_as_expr, param_body_hash_inference | uncaught exception: undefined method '[]' for class S |
 | P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of Object |
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
-| P | missing-method:parameters | 3 | proc_parameters_lambda_kw, proc_introspection, proc_method_wave10 | uncaught exception: undefined method 'parameters' for an instance of Proc |
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
-| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-d5828e68fe3641a4.rs) |
+| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-14cc3095c83dd703.rs) |
 | ? | auto-03f2cac6 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-176da354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-1b4f9693 | 2 | symbol_range_enum, range_float_type | uncaught exception: can't iterate from the given Range |
 | ? | auto-3fa590af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
-| ? | auto-41318f62 | 2 | integer_bignum_batch2, integer_shift_float_and_coerce | uncaught exception: Float can't be coerced into Integer |
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor, time_plus_rational | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33, bundle_misc_c_34 | cannot load such file -- time |
 | ? | auto-d46bf646 | 2 | proc_return_rescue_modifier_escape, proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
@@ -47,17 +43,16 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:__callee__ | 2 | object_method_gaps_callee_clone_itself, method_at_toplevel | uncaught exception: undefined method '__callee__' for an instance of Object |
 | P | missing-method:allocate | 2 | class_allocate, class_allocate_builtin_var | uncaught exception: undefined method 'allocate' for class Thing |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for an instance of Object |
-| P | missing-method:cause | 2 | exception_cause, exception_value_flow_match | uncaught exception: undefined method 'cause' for an instance of RuntimeError |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
 | P | missing-method:deconstruct_keys | 2 | issue_2866, time_deconstruct_keys | uncaught exception: undefined method 'deconstruct_keys' for an instance of Time |
 | P | missing-method:dig | 2 | struct_enumerable_wave8, struct_dig | uncaught exception: undefined method 'dig' for an instance of Ou142 |
 | P | missing-method:foreach | 2 | wave_followups_2833, dir_full_surface | uncaught exception: undefined method 'foreach' for class File |
+| P | missing-method:name | 2 | exception_value_flow_match, thread_name | uncaught exception: undefined method 'name' for an instance of NoMethodError |
 | P | missing-method:owner | 2 | method_owner_receiver, module_instance_method_unbound | uncaught exception: undefined method 'owner' for an instance of Method |
 | P | missing-method:pass | 2 | thread_condvar, thread_pass_fairness | uncaught exception: undefined method 'pass' for class Thread |
 | P | missing-method:private_method_defined? | 2 | method_visibility_inherit, method_visibility_attr | uncaught exception: undefined method 'private_method_defined?' for class Sub |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:source_location | 2 | proc_source_location, proc_source_location_var | uncaught exception: undefined method 'source_location' for an instance of Proc |
-| ? | auto-02ee698a | 1 | bignum_receiver_methods | uncaught exception: Integer can't be coerced into Integer |
 | ? | auto-1e00ef9d | 1 | super_missing_hash_slot | `super`: no `as_json` found above Rec |
 | ? | auto-27bada46 | 1 | warn_category | {category: :deprecated} |
 | ? | auto-2d0f16c6 | 1 | ffi_gem_compat | cannot load such file -- ffi |
@@ -68,14 +63,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-5c693233 | 1 | mutex_synchronize_block | cannot load such file -- monitor |
 | ? | auto-5d152f37 | 1 | pp_store_float_inf_literal | assertion failed: f.is_finite() |
 | ? | auto-5d6a192c | 1 | string_to_i_base_zero | uncaught exception: invalid radix 0 |
-| ? | auto-65bd6b6e | 1 | float_round_half | uncaught exception: Hash can't be coerced into Float |
-| ? | auto-693fd5cf | 1 | string_sub_hash_replacement | uncaught exception: no implicit conversion of Hash into String |
-| ? | auto-6b001200 | 1 | float_quo_step_by | numeric step operands |
+| ? | auto-63954a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
 | ? | auto-6dc7ea47 | 1 | require_first_line | cannot load such file -- optparse |
 | ? | auto-74de9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
 | ? | auto-767cf864 | 1 | range_bsearch_float | uncaught exception: can't do binary search for the given Range |
-| ? | auto-7a68b003 | 1 | time_new_in_kwarg | uncaught exception: no implicit conversion of Hash into Integer (utc_offset) |
-| ? | auto-7f56d934 | 1 | integer_rational_complex_ops | uncaught exception: Rational can't be coerced into Integer |
 | ? | auto-867ee324 | 1 | super_into_included_module | `super`: no `orphan` found above E |
 | ? | auto-8945269a | 1 | kernel_rational_string_zerodenom | uncaught exception: can't convert String into Rational |
 | ? | auto-8c9acd6e | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference |
@@ -83,8 +74,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-9b378cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') |
 | ? | auto-a2980bed | 1 | require_io_console_winsize | cannot load such file -- io/console |
 | ? | auto-a8d5a4ab | 1 | symbol_to_proc_after_positional | define_method's second argument must be a block |
-| ? | auto-aa024b53 | 1 | time_numeric_string_args | uncaught exception: no implicit conversion of String into Integer |
-| ? | auto-ae9c325e | 1 | file_path_predicates | uncaught exception: no implicit conversion of Array into String (in `join') |
 | ? | auto-b07debb8 | 1 | proc_return_catch_no_leak | uncaught signal escaped the top level: Throw(tag, 5) |
 | ? | auto-ba7c5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-c7d3b59c | 1 | kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
@@ -97,9 +86,11 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-e43187a8 | 1 | string_scan_literal | uncaught exception: wrong argument type String (expected Regexp) |
 | ? | auto-e6bba903 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" |
 | ? | auto-ebd75c85 | 1 | stdin_io | uncaught exception: not a file |
+| ? | auto-ee43c0d6 | 1 | exception_value_parity | `raise`/`fail` with an explicit `cause:` keyword override isn't supported yet -- automatic cause chaining from an active `rescue` works (Exception#cause); only the explicit override is deferred |
 | ? | auto-f715b554 | 1 | yield_no_block_raises | no block given (LocalJumpError) |
 | ? | auto-f876aad1 | 1 | string_multiply_overflow | memory allocation of 1152921504606846976 bytes failed |
 | a | interpolation-shapes | 1 | interp_adjacent_concat | unsupported string interpolation part (spike scope) |
+| P | missing-const:File::ALT_SEPARATOR | 1 | file_path_predicates | uncaught exception: uninitialized constant File::ALT_SEPARATOR |
 | P | missing-const:File::SEPARATOR | 1 | bundle_tiny_misc | uncaught exception: uninitialized constant File::SEPARATOR |
 | P | missing-const:Interrupt | 1 | exception_reflection_surface | uncaught exception: uninitialized constant Interrupt |
 | P | missing-const:Object::Integer | 1 | is_a_toplevel_scoped_const | uncaught exception: uninitialized constant Object::Integer |
@@ -147,7 +138,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:lgamma | 1 | numeric_tower_remainder | uncaught exception: undefined method 'lgamma' for module Math |
 | P | missing-method:linear_time? | 1 | regexp_encoding_introspection | uncaught exception: undefined method 'linear_time?' for class Regexp |
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
-| P | missing-method:name | 1 | thread_name | uncaught exception: undefined method 'name' for an instance of Thread |
 | P | missing-method:names | 1 | matchdata_named_groups | uncaught exception: undefined method 'names' for an instance of MatchData |
 | P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB |
 | P | missing-method:offset | 1 | i974 | uncaught exception: undefined method 'offset' for an instance of MatchData |

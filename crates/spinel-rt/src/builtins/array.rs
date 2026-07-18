@@ -501,10 +501,33 @@ builtin_methods! {
         )))
     }
     "slice!" => fn slice_bang(recv, args, _block) {
-        // `slice!(i)` / `slice!(i, len)` -- remove and return. The Range
-        // form isn't wired yet (TODO(plan G6)).
+        // `slice!(i)` / `slice!(i, len)` / `slice!(start..end)` -- remove and
+        // return the removed span.
         let h = recv_array!(recv);
         let len = h.lock().len() as i64;
+        // Range form: remove and return the sub-array (nil if the start is
+        // past the end).
+        if let RubyValue::Range(s, e, exclusive) = &args[0] {
+            let start = match s.as_deref() {
+                Some(RubyValue::Int(v)) => if *v < 0 { v + len } else { *v },
+                None => 0,
+                _ => return Ok(RubyValue::Nil),
+            };
+            if start < 0 || start > len {
+                return Ok(RubyValue::Nil);
+            }
+            let end = match e.as_deref() {
+                Some(RubyValue::Int(v)) => {
+                    let v = if *v < 0 { v + len } else { *v };
+                    if *exclusive { v } else { v + 1 }
+                }
+                None => len,
+                _ => return Ok(RubyValue::Nil),
+            };
+            let end = end.clamp(start, len) as usize;
+            let removed: Vec<RubyValue> = h.lock().drain(start as usize..end).collect();
+            return Ok(RubyValue::Array(crate::array_new(removed)));
+        }
         let i = arg_int!(args, 0);
         let idx = if i < 0 { i + len } else { i };
         if idx < 0 || idx > len {
@@ -859,22 +882,42 @@ builtin_methods! {
                 (Some(args[0].clone()), &args[1..])
             }
         };
-        let start = match span.first() {
-            Some(v) => {
-                let s = int_arg(v)?;
-                if s < 0 { s + cur_len } else { s }
+        // The position may be a Range (`fill(1..2) { }` / `fill(obj, 1..2)`)
+        // or a `start[, length]` pair.
+        let (start, end) = if let Some(RubyValue::Range(rs, re, exclusive)) = span.first() {
+            let start = match rs.as_deref() {
+                Some(RubyValue::Int(v)) => if *v < 0 { v + cur_len } else { *v },
+                None => 0,
+                _ => return Err(range_index_error(rs.as_deref().unwrap())),
+            };
+            let end = match re.as_deref() {
+                Some(RubyValue::Int(v)) => {
+                    let v = if *v < 0 { v + cur_len } else { *v };
+                    if *exclusive { v } else { v + 1 }
+                }
+                None => cur_len,
+                _ => return Err(range_index_error(re.as_deref().unwrap())),
+            };
+            (start.max(0), end)
+        } else {
+            let start = match span.first() {
+                Some(v) => {
+                    let s = int_arg(v)?;
+                    if s < 0 { s + cur_len } else { s }
+                }
+                None => 0,
+            };
+            if start < 0 {
+                return Err(crate::dispatch::raise_error(
+                    "IndexError",
+                    format!("index {} too small for array; minimum: {}", start - cur_len, -cur_len),
+                ));
             }
-            None => 0,
-        };
-        if start < 0 {
-            return Err(crate::dispatch::raise_error(
-                "IndexError",
-                format!("index {} too small for array; minimum: {}", start - cur_len, -cur_len),
-            ));
-        }
-        let end = match span.get(1) {
-            Some(v) => start + int_arg(v)?.max(0),
-            None => cur_len,
+            let end = match span.get(1) {
+                Some(v) => start + int_arg(v)?.max(0),
+                None => cur_len,
+            };
+            (start, end)
         };
         if end > cur_len {
             handle.lock().resize(end as usize, RubyValue::Nil);

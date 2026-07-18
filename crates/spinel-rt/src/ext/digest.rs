@@ -7,7 +7,8 @@
 //! instance API (`new`/`update`/`<<`/`hexdigest`/`digest`/`base64digest`/
 //! `reset`) are oracle-verified against ruby 4.0.5. An instance stores the
 //! accumulated message and hashes it on demand -- simpler than cloning a live
-//! hasher, and identical in result. Less-used methods are `todo!()` (see
+//! hasher, and identical in result. The metadata/comparison surface
+//! (`digest_length`/`block_length`/`==`/`bubblebabble`/`hexencode`) is built (see
 //! docs/EXTENSIONS.md).
 
 use crate::builtins::{arity, builtin_methods};
@@ -54,6 +55,56 @@ impl Algo {
             Algo::Sha512 => sha2::Sha512::digest(data).to_vec(),
         }
     }
+    /// The digest output size in bytes (`Digest#digest_length`).
+    fn digest_length(self) -> i64 {
+        match self {
+            Algo::Md5 => 16,
+            Algo::Sha1 => 20,
+            Algo::Sha256 => 32,
+            Algo::Sha512 => 64,
+        }
+    }
+    /// The internal block size in bytes (`Digest#block_length`).
+    fn block_length(self) -> i64 {
+        match self {
+            Algo::Md5 | Algo::Sha1 | Algo::Sha256 => 64,
+            Algo::Sha512 => 128,
+        }
+    }
+}
+
+/// The "bubble babble" encoding of `data` (`Digest.bubblebabble`), the
+/// pseudo-word format from the original SSH fingerprint scheme.
+fn bubble_babble(data: &[u8]) -> String {
+    const VOWELS: &[u8; 6] = b"aeiouy";
+    const CONSONANTS: &[u8; 17] = b"bcdfghklmnprstvzx";
+    let mut out = vec![b'x'];
+    let mut seed: usize = 1;
+    let n = data.len();
+    let mut i = 0;
+    loop {
+        if i >= n {
+            out.push(VOWELS[seed % 6]);
+            out.push(CONSONANTS[16]);
+            out.push(VOWELS[seed / 6]);
+            break;
+        }
+        let b1 = data[i] as usize;
+        out.push(VOWELS[(((b1 >> 6) & 3) + seed) % 6]);
+        out.push(CONSONANTS[(b1 >> 2) & 15]);
+        out.push(VOWELS[((b1 & 3) + (seed / 6)) % 6]);
+        if i + 1 >= n {
+            break;
+        }
+        let b2 = data[i + 1] as usize;
+        out.push(CONSONANTS[(b2 >> 4) & 15]);
+        out.push(b'-');
+        out.push(CONSONANTS[b2 & 15]);
+        seed = (seed * 5 + b1 * 7 + b2) % 36;
+        i += 2;
+    }
+    out.push(b'x');
+    String::from_utf8(out).expect("bubble babble is ASCII")
 }
 
 pub struct RDigest {
@@ -192,11 +243,36 @@ builtin_methods! {
         Ok(recv.clone())
     }
 
-    // Not yet implemented (see docs/EXTENSIONS.md).
-    "digest_length" | "length" | "size" => fn digest_length(_recv, _args, _block) { todo!("Digest#digest_length") }
-    "block_length" => fn block_length(_recv, _args, _block) { todo!("Digest#block_length") }
-    "==" => fn eq(_recv, _args, _block) { todo!("Digest#==") }
-    "bubblebabble" => fn bubblebabble(_recv, _args, _block) { todo!("Digest#bubblebabble") }
+    "digest_length" | "length" | "size" => fn digest_length(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(digest_of(recv).algo.digest_length()))
+    }
+    "block_length" => fn block_length(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(digest_of(recv).algo.block_length()))
+    }
+    // `d == other`: another Digest compares by raw digest; anything else is
+    // compared to `d`'s hexdigest (CRuby's `to_str` path).
+    "==" => fn eq(recv, args, _block) {
+        arity!(args, 1);
+        let mine = digest_of(recv);
+        let my_raw = mine.algo.raw(&mine.buf.lock());
+        let equal = match &args[0] {
+            RubyValue::Object(o) if o.as_any().downcast_ref::<RDigest>().is_some() => {
+                let other = digest_of(&args[0]);
+                my_raw == other.algo.raw(&other.buf.lock())
+            }
+            RubyValue::Str(s) => hex(&my_raw) == s.lock().to_utf8_lossy(),
+            _ => false,
+        };
+        Ok(RubyValue::Bool(equal))
+    }
+    // The bubble babble of this object's current digest.
+    "bubblebabble" => fn bubblebabble(recv, args, _block) {
+        arity!(args, 0);
+        let d = digest_of(recv);
+        Ok(RubyValue::Str(string_new(bubble_babble(&d.algo.raw(&d.buf.lock())))))
+    }
 }
 
 builtin_methods! {
@@ -228,8 +304,16 @@ builtin_methods! {
     // yet implemented; `require "digest"` and the algorithm classes work.
     pub(crate) fn lookup_module;
 
-    "hexencode" => fn hexencode(_recv, _args, _block) { todo!("Digest.hexencode") }
-    "bubblebabble" => fn bubblebabble_mod(_recv, _args, _block) { todo!("Digest.bubblebabble") }
+    // `Digest.hexencode(str)` -- the lowercase hex of the raw bytes (no hashing).
+    "hexencode" => fn hexencode(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Str(string_new(hex(&in_bytes(&args[0])?))))
+    }
+    // `Digest.bubblebabble(str)` -- the bubble babble of the raw bytes.
+    "bubblebabble" => fn bubblebabble_mod(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Str(string_new(bubble_babble(&in_bytes(&args[0])?))))
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +350,39 @@ mod tests {
         update(&d, &[s("a")], None).unwrap();
         update(&d, &[s("bc")], None).unwrap();
         assert_eq!(t(hexdigest(&d, &[], None)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+
+    #[test]
+    fn digest_and_block_lengths_match_ruby() {
+        for (id, dlen, blen) in [
+            (DIGEST_MD5_CLASS, 16, 64),
+            (DIGEST_SHA1_CLASS, 20, 64),
+            (DIGEST_SHA256_CLASS, 32, 64),
+            (DIGEST_SHA512_CLASS, 64, 128),
+        ] {
+            let d = new_m(&cls(id), &[], None).unwrap();
+            assert!(matches!(digest_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == dlen));
+            assert!(matches!(block_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == blen));
+        }
+    }
+
+    #[test]
+    fn equality_compares_digest_or_hexdigest() {
+        let a = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
+        update(&a, &[s("hello")], None).unwrap();
+        let b = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
+        update(&b, &[s("hello")], None).unwrap();
+        assert!(matches!(eq(&a, &[b], None).unwrap(), RubyValue::Bool(true)));
+        let hexed = t(hexdigest(&a, &[], None));
+        assert!(matches!(eq(&a, &[s(&hexed)], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(eq(&a, &[s("nope")], None).unwrap(), RubyValue::Bool(false)));
+    }
+
+    #[test]
+    fn bubble_babble_matches_ruby_reference() {
+        // `Digest.bubblebabble("1234567890")` from ruby 4.0.5.
+        assert_eq!(bubble_babble(b"1234567890"), "xesef-disof-gytuf-katof-movif-baxux");
+        assert_eq!(bubble_babble(b"Pineapple"), "xigak-nyryk-humil-bosek-sonax");
+        assert_eq!(bubble_babble(b""), "xexax");
     }
 }

@@ -1740,6 +1740,8 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     // `Proc#arity`/`#lambda?`/`#curry` read these -- a Rust closure can't
     // answer them about itself (see `spinel_rt::ProcData`).
     let arity = super::params::proc_arity(params, is_lambda);
+    // `Proc#parameters` metadata, attached to the constructed proc.
+    let proc_params = super::params::proc_parameters(params, is_lambda);
     // Two shapes, differing only in whether the body needs a receiver:
     // `with_self` takes one as a parameter (so `instance_exec` can rebind
     // it); `with_meta` is for a body that never mentions `self` and so has
@@ -1774,7 +1776,7 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
                         #terminal_arm
                     }
                 }
-            }, #default_arg #arity, #is_lambda))
+            }, #default_arg #arity, #is_lambda).with_params(#proc_params))
         }
     }
 }

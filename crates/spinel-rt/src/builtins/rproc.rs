@@ -34,6 +34,24 @@ builtin_methods! {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
+    // `parameters` -- `[[kind, name], ...]` from the static signature codegen
+    // recorded. A kind-only entry (anonymous `*`/`**`/`&`) is a one-element
+    // array, matching CRuby.
+    "parameters" => fn parameters(recv, args, _block) {
+        crate::builtins::arity!(args, 0..=1);
+        let rows: Vec<RubyValue> = recv_proc(recv)
+            .parameters()
+            .iter()
+            .map(|p| {
+                let mut entry = vec![RubyValue::Symbol(crate::Symbol::intern(p.kind))];
+                if let Some(name) = p.name {
+                    entry.push(RubyValue::Symbol(name));
+                }
+                RubyValue::Array(crate::array_new(entry))
+            })
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(rows)))
+    }
     // `curry` / `curry(n)`: collects arguments across calls until `n` (the
     // proc's own arity by default) are in hand, then invokes. Each partial
     // application answers a FRESH curried proc -- `add.curry[1]` is reusable,

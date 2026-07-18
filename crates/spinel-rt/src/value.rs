@@ -438,7 +438,7 @@ impl RubyValue {
                 format!("{s}{op}{e}")
             }
             RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).to_display_string(),
-            RubyValue::MatchData(_) => "#<MatchData>".to_string(),
+            RubyValue::MatchData(m) => crate::regexp::matchdata_inspect(m),
             // A user-defined `inspect` wins (Phase 16.2); the default is
             // CRuby's `#<Class:0xADDR @iv=val, ...>` -- address plus the
             // object's ivars, each inspected, in field-declaration order (see

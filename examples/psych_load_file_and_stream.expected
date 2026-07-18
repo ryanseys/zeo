@@ -1,0 +1,3 @@
+[{"name" => "alice", "role" => "admin"}, {"name" => "bob", "role" => "user"}]
+["alice", "bob"]
+{"fruits" => ["apple", "banana"], "count" => 2}

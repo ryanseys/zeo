@@ -16916,3 +16916,225 @@ fn kernel_catch_throw_sleep_via_dynamic_dispatch() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "42\n[1, -1, 3]\nslept\n");
 }
+
+#[test]
+fn clone_honors_the_freeze_keyword() {
+    let result = run_ruby(
+        r#"
+        a = "hi".freeze
+        p a.clone.frozen?
+        p a.clone(freeze: false).frozen?
+        p a.clone(freeze: true).frozen?
+        b = "yo"
+        p b.clone.frozen?
+        p b.clone(freeze: true).frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\nfalse\ntrue\n");
+}
+
+#[test]
+fn string_index_accepts_a_start_offset() {
+    let result = run_ruby(
+        r#"
+        p "hello world".index("o")
+        p "hello world".index("o", 5)
+        p "hello world".index("o", -3)
+        p "hello".index("z", 2)
+        p "abcabc".index(/b/, 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4\n7\nnil\nnil\n4\n");
+}
+
+#[test]
+fn module_method_defined_accepts_the_inherit_flag() {
+    let result = run_ruby(
+        r#"
+        class Foo; def bar; end; end
+        p Foo.method_defined?(:bar)
+        p Foo.method_defined?(:bar, true)
+        p Foo.method_defined?(:nope, false)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\n");
+}
+
+#[test]
+fn string_concat_is_variadic() {
+    let result = run_ruby(
+        r#"
+        s = "a"
+        s.concat("b", "c", "d")
+        puts s
+        t = "x"
+        t << "y" << "z"
+        puts t
+        u = "n"
+        u.concat(65, 66)
+        puts u
+        puts "keep".concat
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "abcd\nxyz\nnAB\nkeep\n");
+}
+
+#[test]
+fn exception_cause_chains_from_active_rescue() {
+    let result = run_ruby(
+        r#"
+        begin
+          begin
+            raise "inner"
+          rescue
+            raise "outer"
+          end
+        rescue => e
+          puts e.message
+          puts e.cause.message
+          puts e.cause.class
+        end
+        begin
+          raise "solo"
+        rescue => e
+          p e.cause
+        end
+        begin
+          begin
+            Integer("x")
+          rescue
+            raise ArgumentError, "wrapped"
+          end
+        rescue => e
+          puts e.cause.class
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "outer\ninner\nRuntimeError\nnil\nArgumentError\n"
+    );
+}
+
+#[test]
+fn proc_parameters_reflect_the_signature() {
+    let result = run_ruby(
+        r#"
+        p proc { |x, y| }.parameters
+        p lambda { |x, y| }.parameters
+        p proc { |a, b = 1, *c, d, k:, m: 2, **n, &blk| }.parameters
+        p ->(a, b) { }.parameters
+        p proc { |*| }.parameters
+        p proc { |**| }.parameters
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[:opt, :x], [:opt, :y]]\n\
+         [[:req, :x], [:req, :y]]\n\
+         [[:opt, :a], [:opt, :b], [:rest, :c], [:opt, :d], [:keyreq, :k], [:key, :m], [:keyrest, :n], [:block, :blk]]\n\
+         [[:req, :a], [:req, :b]]\n\
+         [[:rest, :*]]\n\
+         [[:keyrest, :**]]\n",
+    );
+}
+
+#[test]
+fn range_arguments_across_string_and_array_slicing() {
+    let result = run_ruby(
+        r#"
+        p "hello".byteslice(1..3)
+        p "hello".byteslice(2..)
+        p "hello".byteslice(10..12)
+        a = [1, 2, 3, 4]
+        p a.slice!(1..2)
+        p a
+        b = [0, 0, 0, 0, 0]
+        b.fill(1..2) { |i| i + 100 }
+        p b
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ell\"\n\"llo\"\nnil\n[2, 3]\n[1, 4]\n[0, 101, 102, 0, 0]\n"
+    );
+}
+
+#[test]
+fn hash_transform_keys_accepts_a_mapping() {
+    let result = run_ruby(
+        r#"
+        p({ a: 1, b: 2 }.transform_keys(a: :x))
+        p({ a: 1, b: 2 }.transform_keys(a: :x) { |k| k.to_s })
+        h = { a: 1, b: 2 }
+        h.transform_keys!(b: :y)
+        p h
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "{x: 1, b: 2}\n{x: 1, \"b\" => 2}\n{a: 1, y: 2}\n");
+}
+
+#[test]
+fn float_round_half_modes_and_string_hash_sub() {
+    let result = run_ruby(
+        r#"
+        p 2.5.round(half: :even)
+        p 3.5.round(half: :even)
+        p 2.5.round(half: :down)
+        puts "hello".sub("l", "l" => "X")
+        puts "hello".gsub("l", "l" => "X")
+        p 5 << 2.0
+        p 100 >> 1.9
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n4\n2\nheXlo\nheXXo\n20\n50\n");
+}
+
+#[test]
+fn matchdata_inspect_shows_groups_and_regexp_string_methods() {
+    let result = run_ruby(
+        r#"
+        p "hello".match(/l(l)o/)
+        p "2024-01".match(/(?<y>\d+)-(?<m>\d+)/)
+        p "hello".start_with?(/he/)
+        p "hello".start_with?(/ell/)
+        p "hello".byteindex(/l+/)
+        p "hello".byterindex(/l+/)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<MatchData \"llo\" 1:\"l\">\n#<MatchData \"2024-01\" y:\"2024\" m:\"01\">\ntrue\nfalse\n2\n3\n"
+    );
+}
+
+#[test]
+fn numeric_step_accepts_by_and_to_keywords() {
+    let result = run_ruby(
+        r#"
+        1.step(by: 2, to: 10) { |i| print i, " " }
+        puts
+        1.step(10, 2) { |i| print i, " " }
+        puts
+        1.step(to: 5) { |i| print i, " " }
+        puts
+        10.step(by: -3, to: 1) { |i| print i, " " }
+        puts
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1 3 5 7 9 \n1 3 5 7 9 \n1 2 3 4 5 \n10 7 4 1 \n"
+    );
+}

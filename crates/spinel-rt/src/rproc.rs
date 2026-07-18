@@ -47,6 +47,28 @@ pub struct ProcData {
     /// any optional/rest param makes it `-(required + 1)`.
     pub arity: i32,
     pub is_lambda: bool,
+    /// `Proc#parameters`: the block/lambda's static parameter list, in CRuby's
+    /// `[[kind, name], ...]` order and kinds (a proc reports required
+    /// positionals as `:opt`, a lambda as `:req`). Empty for a runtime-internal
+    /// proc (`RProc::new`), matching CRuby's `[[:rest]]`-ish C-proc reporting
+    /// only where codegen supplied it.
+    params: Vec<ProcParamMeta>,
+}
+
+/// One entry of `Proc#parameters` -- a parameter's kind (`"req"`, `"opt"`,
+/// `"rest"`, `"keyreq"`, `"key"`, `"keyrest"`, `"block"`) and optional name.
+/// Codegen builds these from the block/lambda's static signature.
+#[derive(Clone)]
+pub struct ProcParamMeta {
+    pub kind: &'static str,
+    pub name: Option<crate::Symbol>,
+}
+
+impl ProcParamMeta {
+    /// Codegen's constructor: a static kind and an optional name to intern.
+    pub fn new(kind: &'static str, name: Option<&str>) -> ProcParamMeta {
+        ProcParamMeta { kind, name: name.map(crate::Symbol::intern) }
+    }
 }
 
 /// A `Proc` value's payload. A newtype over `Arc<ProcData>` rather than the
@@ -70,6 +92,7 @@ impl RProc {
             self_val: RubyValue::Nil,
             arity: -1,
             is_lambda: false,
+            params: Vec::new(),
         }))
     }
 
@@ -86,6 +109,7 @@ impl RProc {
             self_val: RubyValue::Nil,
             arity,
             is_lambda,
+            params: Vec::new(),
         }))
     }
 
@@ -104,7 +128,23 @@ impl RProc {
             self_val,
             arity,
             is_lambda,
+            params: Vec::new(),
         }))
+    }
+
+    /// Attach the static `Proc#parameters` metadata codegen computed from the
+    /// block/lambda's signature. Called immediately after construction (refcount
+    /// 1), so `Arc::get_mut` always succeeds; a no-op on the rare shared handle.
+    pub fn with_params(mut self, params: Vec<ProcParamMeta>) -> RProc {
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.params = params;
+        }
+        self
+    }
+
+    /// The `Proc#parameters` metadata (empty for a runtime-internal proc).
+    pub fn parameters(&self) -> &[ProcParamMeta] {
+        &self.0.params
     }
 
     /// Invoke under the block's own lexical self -- ordinary `#call`/`yield`.

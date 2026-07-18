@@ -218,6 +218,21 @@ fn offset_str(off: i32, with_seconds: bool) -> String {
     }
 }
 
+/// strftime's colon-offset directives: `%:z` -> `+HH:MM`, `%::z` ->
+/// `+HH:MM:SS`, `%:::z` -> the minimal colon form.
+fn offset_str_colon(off: i32, colons: usize) -> String {
+    let sign = if off < 0 { '-' } else { '+' };
+    let a = off.abs();
+    let (h, m, s) = (a / 3600, (a % 3600) / 60, a % 60);
+    match colons {
+        1 => format!("{sign}{h:02}:{m:02}"),
+        2 => format!("{sign}{h:02}:{m:02}:{s:02}"),
+        _ if s != 0 => format!("{sign}{h:02}:{m:02}:{s:02}"),
+        _ if m != 0 => format!("{sign}{h:02}:{m:02}"),
+        _ => format!("{sign}{h:02}"),
+    }
+}
+
 /// `Time#to_s`/`#inspect`: `2023-11-14 17:13:20 -0500`, or `... UTC` for a
 /// UTC Time -- oracle-verified, including that the two agree (CRuby's
 /// `inspect` adds sub-second digits only when nsec is nonzero, which this
@@ -272,12 +287,17 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             out.push(ch);
             continue;
         }
-        // Flags, then the directive.
+        // Flags, then the directive. `:` flags only precede `z` (`%:z` etc.).
         let mut pad: Option<char> = None;
+        let mut colons = 0usize;
         while let Some(&f) = chars.peek() {
             match f {
                 '-' | '0' | '_' => {
                     pad = Some(f);
+                    chars.next();
+                }
+                ':' => {
+                    colons += 1;
                     chars.next();
                 }
                 _ => break,
@@ -324,6 +344,7 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'S' => out.push_str(&num(tm.tm_sec as i64, 2)),
             'L' => out.push_str(&format!("{:03}", t.nsec() / 1_000_000)),
             'N' => out.push_str(&format!("{:09}", t.nsec())),
+            'z' if colons > 0 => out.push_str(&offset_str_colon(c.offset, colons)),
             'z' => out.push_str(&offset_str(c.offset, false)),
             'Z' => out.push_str(&c.zone),
             'a' => out.push_str(&DAY_NAMES[tm.tm_wday as usize][..3]),
@@ -431,6 +452,14 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
         .take(take)
         .map(|a| match a {
             RubyValue::Int(i) => Ok(*i),
+            // A String component is parsed as a base-10 integer (`Time.utc(
+            // "2020", "3")`), matching CRuby's forced-decimal reading.
+            RubyValue::Str(s) => {
+                let t = s.lock().to_utf8_lossy().trim().to_string();
+                t.parse::<i64>().map_err(|_| {
+                    raise_error("ArgumentError", format!("argument out of range: {t:?}"))
+                })
+            }
             other => Err(raise_error(
                 "TypeError",
                 format!(
@@ -551,14 +580,25 @@ builtin_methods! {
     // microseconds. With no offset given it is local time, like `Time.local`.
     // TODO(plan P-B): the `in:` keyword form isn't handled.
     "new" => fn time_new(recv, args, _block) {
-        arity!(args, 0..=7);
-        if args.is_empty() {
+        arity!(args, 0..=8);
+        // A trailing `in:` keyword hash supplies the utc_offset (like the 7th
+        // positional argument); split it off before reading the components.
+        let (args, in_offset) = match args.last() {
+            Some(RubyValue::Hash(h)) => {
+                let off = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in")));
+                (&args[..args.len() - 1], Some(off))
+            }
+            _ => (args, None),
+        };
+        if args.is_empty() && in_offset.is_none() {
             return time_now(recv, &[], None);
         }
         let parts = int_parts(args, 6)?;
         let as_utc = civil_to_epoch_utc(&parts);
-        match args.get(6) {
-            None => {
+        // An `in:` keyword offset takes the place of a 7th positional argument.
+        let offset_arg = in_offset.as_ref().or_else(|| args.get(6));
+        match offset_arg {
+            None | Some(RubyValue::Nil) => {
                 // Local: the same UTC-instant-then-shift rule `Time.local`
                 // uses (see its own note on the DST-transition edge).
                 let probe = RTime { num: num_bigint::BigInt::from(as_utc), den: num_bigint::BigInt::from(1), offset: parking_lot::Mutex::new(None) };

@@ -930,6 +930,63 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
     }
 }
 
+/// `Proc#parameters` metadata: emits `vec![spinel_rt::ProcParamMeta::new(...)]`
+/// in CRuby's order and kinds. A proc reports required positionals as `:opt`, a
+/// lambda as `:req`; a parenthesized destructuring slot (named `__destr_<i>`
+/// internally) reports its kind with no name, matching CRuby.
+pub(super) fn proc_parameters(params: &Params, is_lambda: bool) -> TokenStream {
+    fn mk(kind: &str, name: Option<&str>) -> TokenStream {
+        let name_tok = match name {
+            Some(n) => quote! { Some(#n) },
+            None => quote! { None },
+        };
+        quote! { spinel_rt::ProcParamMeta::new(#kind, #name_tok) }
+    }
+    // A parenthesized destructuring slot (`__destr_<i>`) reports no name.
+    fn visible(n: &str) -> Option<&str> {
+        (!n.starts_with("__destr")).then_some(n)
+    }
+    let positional = if is_lambda { "req" } else { "opt" };
+    let mut items: Vec<TokenStream> = Vec::new();
+    for r in &params.required {
+        items.push(mk(positional, visible(r)));
+    }
+    for (o, _) in &params.optional {
+        items.push(mk("opt", visible(o)));
+    }
+    if let Some(rest) = &params.rest {
+        // An anonymous `*` (absent, or the parser's `__anon_rest` synthetic)
+        // reports the name `:*` (CRuby 4.0).
+        items.push(mk("rest", Some(anon_name(rest.as_deref(), "*"))));
+    }
+    for p in &params.post {
+        items.push(mk(positional, visible(p)));
+    }
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(n) => items.push(mk("keyreq", Some(n))),
+            KeywordParam::Optional(n, _) => items.push(mk("key", Some(n))),
+        }
+    }
+    if let Some(kwrest) = &params.keyword_rest {
+        items.push(mk("keyrest", Some(anon_name(kwrest.as_deref(), "**"))));
+    }
+    if let Some(blk) = &params.block {
+        items.push(mk("block", Some(anon_name(blk.as_deref(), "&"))));
+    }
+    quote! { vec![ #(#items),* ] }
+}
+
+/// The reported name for a `rest`/`keyword_rest`/`block` slot: its declared
+/// name, or `sigil` (`*`/`**`/`&`) when it is anonymous (absent, or a parser
+/// `__anon_*` synthetic).
+fn anon_name<'a>(name: Option<&'a str>, sigil: &'a str) -> &'a str {
+    match name {
+        Some(n) if !n.starts_with("__anon") => n,
+        _ => sigil,
+    }
+}
+
 /// Whether a (non-lambda) block with these parameters auto-splats a lone
 /// Array argument across its positional slots.
 ///

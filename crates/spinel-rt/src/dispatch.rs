@@ -1345,6 +1345,35 @@ pub fn install_class_registry(registry: ClassRegistry) {
         .unwrap_or_else(|_| panic!("class registry installed twice"));
 }
 
+thread_local! {
+    /// The method most recently entered via `send_in`/`send_value_in` -- the
+    /// diagnostic breadcrumb `SPINEL_ARITY_DEBUG` reads to name which method an
+    /// "wrong number of arguments" error came from (the message CRuby, and so
+    /// we, deliberately leave method-less). Set at dispatch entry, so at the
+    /// point a builtin's `arity!` guard raises it still names that builtin.
+    static CURRENT_METHOD: std::cell::Cell<Option<Symbol>> = const { std::cell::Cell::new(None) };
+}
+
+/// Record the method being dispatched (for `SPINEL_ARITY_DEBUG`). Cheap enough
+/// (a thread-local `Cell` set) to run unconditionally on every dispatch.
+fn note_dispatch(name: Symbol) {
+    CURRENT_METHOD.with(|c| c.set(Some(name)));
+}
+
+/// Under `SPINEL_ARITY_DEBUG`, append ` [method: X]` to an arity error so the
+/// conformance triage can attribute the otherwise method-less
+/// "wrong number of arguments" pile. A no-op (and no env lookup on the common
+/// path) unless the message is an arity error.
+fn arity_debug_context(msg: String) -> String {
+    if !msg.starts_with("wrong number of arguments") || std::env::var_os("SPINEL_ARITY_DEBUG").is_none() {
+        return msg;
+    }
+    match CURRENT_METHOD.with(|c| c.get()) {
+        Some(sym) => format!("{msg} [method: {}]", sym.name().as_str()),
+        None => msg,
+    }
+}
+
 /// THE runtime raise channel: a rescuable `Signal::Raise` carrying a
 /// `class_name` exception once the registry is installed (every generated
 /// program), a loud panic otherwise (this crate's own unit tests, which run
@@ -1352,10 +1381,24 @@ pub fn install_class_registry(registry: ClassRegistry) {
 /// registered `ConstructorFn` -- see `ClassRegistry::construct_exception` for
 /// why the runtime no longer needs a factory installed from generated `main()`.
 pub fn raise_error(class_name: &str, msg: String) -> Signal {
+    let msg = arity_debug_context(msg);
     match REGISTRY.get() {
-        Some(reg) => Signal::Raise(reg.construct_exception(class_name, msg)),
+        Some(reg) => {
+            let exc = reg.construct_exception(class_name, msg);
+            crate::builtins::exception::attach_cause(&exc);
+            Signal::Raise(exc)
+        }
         None => panic!("{class_name}: {msg}"),
     }
+}
+
+/// Thread the currently-handled exception (`$!`) into `exc`'s `cause` slot
+/// (CRuby's automatic cause chaining) and return `exc` unchanged, for use at a
+/// `raise` site: `Err(Signal::Raise(raise_with_cause(exc)))`. A no-op for a
+/// bare re-raise or a non-exception operand (see `attach_cause`).
+pub fn raise_with_cause(exc: RubyValue) -> RubyValue {
+    crate::builtins::exception::attach_cause(&exc);
+    exc
 }
 
 /// Coerce a `raise <value>` operand to the exception value to raise:
@@ -1397,6 +1440,7 @@ pub fn raise_stop_iteration(result: RubyValue) -> Signal {
                 None,
             )
             .expect("StopIteration#__set_result can't signal");
+            crate::builtins::exception::attach_cause(&exc);
             Signal::Raise(exc)
         }
         None => panic!("StopIteration: iteration reached an end"),
@@ -1457,6 +1501,7 @@ pub fn send_value_in(
     if let RubyValue::Object(o) = recv {
         return send_in(box_id, o, name, args, block);
     }
+    note_dispatch(name);
     let n = name.name();
     let n = n.as_str();
     // CLASS/MODULE-level methods (`File.read`, `Time.now`, `Math.sqrt`):
@@ -1587,6 +1632,7 @@ pub fn send_in(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
+    note_dispatch(name);
     // Runtime metaprogramming (#97): a per-object singleton, a runtime
     // `define_method` override, or a runtime-class instance's own/inherited
     // methods -- probed first (Ruby: a runtime `define_method` REPLACES), but

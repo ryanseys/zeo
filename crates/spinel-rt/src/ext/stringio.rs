@@ -5,9 +5,9 @@
 //!
 //! Backed by an `RObj` over a `Mutex<State>` (a `StringIO` is mutable and
 //! shared by reference). Positions are byte offsets; writes overwrite from the
-//! current position and extend the buffer, exactly like a file. Implemented
-//! methods are oracle-verified against ruby 4.0.5; the rest are `todo!()`
-//! markers (see `docs/EXTENSIONS.md`).
+//! current position and extend the buffer, exactly like a file. The read/write
+//! surface -- including `seek`/`getc`/`readline`/`readlines`/`truncate` -- is
+//! oracle-verified against ruby 4.0.5.
 //!
 //! Documented divergence: strings are handed back as UTF-8 (lossy for non-UTF-8
 //! bytes), matching this runtime's default `Str` -- CRuby's StringIO preserves
@@ -240,14 +240,89 @@ builtin_methods! {
         Ok(RubyValue::Bool(io_of(recv).state.lock().closed))
     }
 
-    // Not yet implemented -- greppable markers of what's left (see
-    // docs/EXTENSIONS.md). `require "stringio"` still works; only these
-    // specific calls are unbuilt.
-    "seek" => fn seek(_recv, _args, _block) { todo!("StringIO#seek") }
-    "getc" => fn getc(_recv, _args, _block) { todo!("StringIO#getc") }
-    "readline" => fn readline(_recv, _args, _block) { todo!("StringIO#readline") }
-    "readlines" => fn readlines(_recv, _args, _block) { todo!("StringIO#readlines") }
-    "truncate" => fn truncate(_recv, _args, _block) { todo!("StringIO#truncate") }
+    // `seek(offset, whence = SEEK_SET)` -- reposition; whence 0/1/2 =
+    // absolute/relative/from-end. Returns 0, like CRuby's IO#seek.
+    "seek" => fn seek(recv, args, _block) {
+        arity!(args, 1..=2);
+        let RubyValue::Int(off) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        let whence = match args.get(1) {
+            None => 0,
+            Some(RubyValue::Int(w)) => *w,
+            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+        };
+        let mut s = io_of(recv).state.lock();
+        let base = match whence {
+            0 => 0i64,
+            1 => s.pos as i64,
+            2 => s.bytes.len() as i64,
+            _ => return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string())),
+        };
+        let target = base + off;
+        if target < 0 {
+            return Err(raise_error("Errno::EINVAL", "Invalid argument - invalid seek".to_string()));
+        }
+        s.pos = target as usize;
+        Ok(RubyValue::Int(0))
+    }
+    // `getc` -- one character (the next whole UTF-8 char), or nil at EOF.
+    "getc" => fn getc(recv, args, _block) {
+        arity!(args, 0);
+        let mut s = io_of(recv).state.lock();
+        if s.pos >= s.bytes.len() {
+            return Ok(RubyValue::Nil);
+        }
+        let len = utf8_char_len(s.bytes[s.pos]).min(s.bytes.len() - s.pos);
+        let ch = s.bytes[s.pos..s.pos + len].to_vec();
+        s.pos += len;
+        Ok(bytes_to_str(&ch))
+    }
+    // `readline(sep = "\n")` -- like `gets`, but raises `EOFError` at end.
+    "readline" => fn readline(recv, args, _block) {
+        arity!(args, 0..=1);
+        match gets(recv, args, None)? {
+            RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
+            line => Ok(line),
+        }
+    }
+    // `readlines(sep = "\n")` -- every remaining line as an Array.
+    "readlines" => fn readlines(recv, args, _block) {
+        arity!(args, 0..=1);
+        let mut lines = Vec::new();
+        loop {
+            match gets(recv, args, None)? {
+                RubyValue::Nil => break,
+                line => lines.push(line),
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(lines)))
+    }
+    // `truncate(len)` -- resize the buffer, zero-padding when it grows.
+    // Returns 0 (CRuby's IO#truncate result).
+    "truncate" => fn truncate(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Int(len) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        if *len < 0 {
+            return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
+        }
+        io_of(recv).state.lock().bytes.resize(*len as usize, 0);
+        Ok(RubyValue::Int(0))
+    }
+}
+
+/// The byte length of a UTF-8 sequence given its leading byte (1 for ASCII or
+/// an invalid lead byte, so `getc` always makes progress).
+fn utf8_char_len(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        0xf0..=0xf7 => 4,
+        _ => 1,
+    }
 }
 
 /// `puts` for a single argument: arrays flatten (each element on its own
@@ -330,5 +405,39 @@ mod tests {
         assert_eq!(text(&gets(&io, &[], None).unwrap()), "a\n");
         assert_eq!(text(&gets(&io, &[], None).unwrap()), "b");
         assert!(matches!(gets(&io, &[], None).unwrap(), RubyValue::Nil));
+    }
+
+    #[test]
+    fn getc_reads_one_char_then_nil() {
+        let io = new_m(&RubyValue::Nil, &[s("hé")], None).unwrap();
+        assert_eq!(text(&getc(&io, &[], None).unwrap()), "h");
+        assert_eq!(text(&getc(&io, &[], None).unwrap()), "é");
+        assert!(matches!(getc(&io, &[], None).unwrap(), RubyValue::Nil));
+    }
+
+    #[test]
+    fn seek_repositions_by_whence() {
+        let io = new_m(&RubyValue::Nil, &[s("abcdef")], None).unwrap();
+        seek(&io, &[RubyValue::Int(2)], None).unwrap();
+        assert_eq!(text(&read(&io, &[RubyValue::Int(2)], None).unwrap()), "cd");
+        seek(&io, &[RubyValue::Int(-1), RubyValue::Int(2)], None).unwrap();
+        assert_eq!(text(&read(&io, &[], None).unwrap()), "f");
+    }
+
+    #[test]
+    fn readlines_collects_every_line() {
+        let io = new_m(&RubyValue::Nil, &[s("a\nb\nc")], None).unwrap();
+        let RubyValue::Array(a) = readlines(&io, &[], None).unwrap() else {
+            panic!("expected an Array")
+        };
+        let lines: Vec<String> = a.lock().iter().map(text).collect();
+        assert_eq!(lines, vec!["a\n", "b\n", "c"]);
+    }
+
+    #[test]
+    fn truncate_resizes_the_buffer() {
+        let io = new_m(&RubyValue::Nil, &[s("hello world")], None).unwrap();
+        truncate(&io, &[RubyValue::Int(5)], None).unwrap();
+        assert_eq!(text(&string(&io, &[], None).unwrap()), "hello");
     }
 }

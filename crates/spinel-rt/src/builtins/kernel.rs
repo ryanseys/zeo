@@ -149,11 +149,28 @@ builtin_methods! {
         })
     }
     "clone" => fn clone_m(recv, args, _block) {
-        arity!(args, 0);
-        Ok(match recv {
-            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(true)))?,
-            _ => recv.dup_value(true),
-        })
+        arity!(args, 0..=1);
+        // `clone(freeze: nil)` PRESERVES the original's frozen state (the
+        // default), `freeze: true` forces the copy frozen, `freeze: false`
+        // forces it unfrozen. The keyword arrives as a trailing options Hash.
+        let freeze = match args.first() {
+            Some(RubyValue::Hash(h)) => {
+                match crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("freeze"))) {
+                    RubyValue::Bool(b) => Some(b),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let copy_frozen = freeze != Some(false);
+        let copy = match recv {
+            RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(copy_frozen)))?,
+            _ => recv.dup_value(copy_frozen),
+        };
+        if freeze == Some(true) {
+            copy.freeze_value();
+        }
+        Ok(copy)
     }
     "frozen?" => fn frozen_p(recv, args, _block) {
         arity!(args, 0);

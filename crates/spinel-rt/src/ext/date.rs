@@ -1,32 +1,434 @@
-//! `date` (CRuby's bundled `date` gem). **Scaffolded** -- `require "date"`
-//! activates the `Date`/`DateTime` constants so downstream code compiles past
-//! the require, but the calendar arithmetic is not yet implemented (`todo!()`
-//! markers). A real implementation would carry an astronomical/Julian-day core
-//! (like CRuby's `date_core.c`); see docs/EXTENSIONS.md.
+//! `date` (CRuby's bundled `date` gem) -- `Date`, a proleptic-Gregorian
+//! calendar date. `require "date"` activates it (a built-in feature; see
+//! `ext/mod.rs`).
 //!
-//! Both `Date` and `DateTime` dispatch here.
+//! Backed by an `RObj` holding a **Julian Day Number** (JDN), which makes day
+//! arithmetic (`+`/`-`), ordering, and `wday` trivial and exact. Gregorian
+//! `(year, month, day)` fields are derived on demand via the standard
+//! JDN<->civil formulas. Implemented methods are oracle-verified against ruby
+//! 4.0.5.
+//!
+//! `DateTime` shares this table; its time-of-day fields default to midnight
+//! (a documented partial: the calendar half is complete, sub-day fields are
+//! not modelled here).
 
-use crate::builtins::builtin_methods;
+use crate::builtins::{arity, builtin_methods};
+use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::{string_new, ClassId, RubyValue, Signal};
+use spinel_abi::{DATE_CLASS, DATETIME_CLASS};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+pub struct RDate {
+    jdn: i64,
+    class_id: ClassId,
+    frozen: AtomicBool,
+}
+
+impl RDate {
+    fn new(jdn: i64, class_id: ClassId) -> Arc<RDate> {
+        Arc::new(RDate { jdn, class_id, frozen: AtomicBool::new(false) })
+    }
+}
+
+impl RubyObject for RDate {
+    fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+    fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed)
+    }
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        Vec::new()
+    }
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
+        let d = RDate::new(self.jdn, self.class_id);
+        if copy_frozen && self.is_frozen() {
+            d.set_frozen();
+        }
+        d
+    }
+}
+
+const DAY_NAMES: [&str; 7] = [
+    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+];
+const MONTH_NAMES: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+];
+
+/// The JDN of a proleptic-Gregorian `(year, month, day)`.
+fn civil_to_jdn(y: i64, m: i64, d: i64) -> i64 {
+    let a = (14 - m) / 12;
+    let y2 = y + 4800 - a;
+    let m2 = m + 12 * a - 3;
+    d + (153 * m2 + 2) / 5 + 365 * y2 + y2 / 4 - y2 / 100 + y2 / 400 - 32045
+}
+
+/// The proleptic-Gregorian `(year, month, day)` of a JDN.
+fn jdn_to_civil(jdn: i64) -> (i64, i64, i64) {
+    let a = jdn + 32044;
+    let b = (4 * a + 3) / 146097;
+    let c = a - (146097 * b) / 4;
+    let d2 = (4 * c + 3) / 1461;
+    let e = c - (1461 * d2) / 4;
+    let m2 = (5 * e + 2) / 153;
+    let day = e - (153 * m2 + 2) / 5 + 1;
+    let month = m2 + 3 - 12 * (m2 / 10);
+    let year = 100 * b + d2 - 4800 + m2 / 10;
+    (year, month, day)
+}
+
+/// `Date#wday`: 0 = Sunday .. 6 = Saturday. JDN 0 is a Monday, so `+1` aligns
+/// the modulo to Sunday-origin.
+fn jdn_wday(jdn: i64) -> i64 {
+    (jdn + 1).rem_euclid(7)
+}
+
+/// Day-of-year (1-based) for a JDN.
+fn jdn_yday(jdn: i64) -> i64 {
+    let (y, _, _) = jdn_to_civil(jdn);
+    jdn - civil_to_jdn(y, 1, 1) + 1
+}
+
+fn date_of(recv: &RubyValue) -> &RDate {
+    match recv {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RDate>()
+            .expect("the Date table only dispatches on Date receivers"),
+        _ => unreachable!("the Date table only dispatches on Date receivers"),
+    }
+}
+
+/// A numeric argument's integer value (`Int`, or a truncated `Float`), for the
+/// day-count arguments of `+`/`-`.
+fn day_count(v: &RubyValue) -> Option<i64> {
+    match v {
+        RubyValue::Int(i) => Some(*i),
+        RubyValue::Float(f) => Some(*f as i64),
+        _ => None,
+    }
+}
+
+/// `strftime` over a Date's fields (time-of-day directives render as zero).
+fn date_strftime(jdn: i64, fmt: &str) -> String {
+    let (y, m, d) = jdn_to_civil(jdn);
+    let wday = jdn_wday(jdn);
+    let mut out = String::new();
+    let mut chars = fmt.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            out.push(ch);
+            continue;
+        }
+        let mut dash = false;
+        while let Some(&f) = chars.peek() {
+            match f {
+                '-' | '0' | '_' => {
+                    dash = f == '-';
+                    chars.next();
+                }
+                _ => break,
+            }
+        }
+        let Some(dir) = chars.next() else {
+            out.push('%');
+            break;
+        };
+        let num = |v: i64, width: usize| if dash { v.to_string() } else { format!("{v:0width$}") };
+        match dir {
+            'Y' => out.push_str(&y.to_string()),
+            'y' => out.push_str(&num(y.rem_euclid(100), 2)),
+            'C' => out.push_str(&num(y / 100, 2)),
+            'm' => out.push_str(&num(m, 2)),
+            'd' => out.push_str(&num(d, 2)),
+            'e' => out.push_str(&format!("{d:>2}")),
+            'j' => out.push_str(&num(jdn_yday(jdn), 3)),
+            'A' => out.push_str(DAY_NAMES[wday as usize]),
+            'a' => out.push_str(&DAY_NAMES[wday as usize][..3]),
+            'B' => out.push_str(MONTH_NAMES[(m - 1) as usize]),
+            'b' | 'h' => out.push_str(&MONTH_NAMES[(m - 1) as usize][..3]),
+            'w' => out.push_str(&wday.to_string()),
+            'u' => out.push_str(&(if wday == 0 { 7 } else { wday }).to_string()),
+            'H' | 'M' | 'S' => out.push_str("00"),
+            'F' => out.push_str(&format!("{y:04}-{m:02}-{d:02}")),
+            '%' => out.push('%'),
+            other => {
+                out.push('%');
+                out.push(other);
+            }
+        }
+    }
+    out
+}
+
+fn iso_string(jdn: i64) -> String {
+    let (y, m, d) = jdn_to_civil(jdn);
+    format!("{y:04}-{m:02}-{d:02}")
+}
 
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "year" => fn year(_recv, _args, _block) { todo!("Date#year -- see docs/EXTENSIONS.md") }
-    "month" | "mon" => fn month(_recv, _args, _block) { todo!("Date#month") }
-    "day" | "mday" => fn day(_recv, _args, _block) { todo!("Date#day") }
-    "wday" => fn wday(_recv, _args, _block) { todo!("Date#wday") }
-    "to_s" => fn to_s(_recv, _args, _block) { todo!("Date#to_s") }
-    "strftime" => fn strftime(_recv, _args, _block) { todo!("Date#strftime") }
-    "+" => fn plus(_recv, _args, _block) { todo!("Date#+") }
-    "-" => fn minus(_recv, _args, _block) { todo!("Date#-") }
-    "<=>" => fn cmp(_recv, _args, _block) { todo!("Date#<=>") }
+    "year" => fn year(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).0))
+    }
+    "month" | "mon" => fn month(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).1))
+    }
+    "day" | "mday" => fn day(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(jdn_to_civil(date_of(recv).jdn).2))
+    }
+    "wday" => fn wday(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(jdn_wday(date_of(recv).jdn)))
+    }
+    "yday" => fn yday(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(jdn_yday(date_of(recv).jdn)))
+    }
+    "jd" => fn jd(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(date_of(recv).jdn))
+    }
+    "leap?" => fn leap(recv, args, _block) {
+        arity!(args, 0);
+        let y = jdn_to_civil(date_of(recv).jdn).0;
+        Ok(RubyValue::Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)))
+    }
+    "to_s" | "iso8601" => fn to_s(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(string_new(iso_string(date_of(recv).jdn))))
+    }
+    "inspect" => fn inspect(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(string_new(format!("#<Date: {}>", iso_string(date_of(recv).jdn)))))
+    }
+    "strftime" => fn strftime(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Str(fmt) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into String".to_string()));
+        };
+        let fmt = fmt.lock().to_utf8_lossy().into_owned();
+        Ok(RubyValue::Str(string_new(date_strftime(date_of(recv).jdn, &fmt))))
+    }
+    // `date + n` advances by n days; `next_day`/`prev_day` are the named forms.
+    "+" | "next_day" => fn plus(recv, args, _block) {
+        let d = date_of(recv);
+        let n = match args.first() {
+            None => 1,
+            Some(v) => day_count(v).ok_or_else(|| raise_error(
+                "TypeError",
+                "expected numeric".to_string(),
+            ))?,
+        };
+        Ok(RubyValue::Object(RDate::new(d.jdn + n, d.class_id)))
+    }
+    "prev_day" => fn prev_day(recv, args, _block) {
+        arity!(args, 0..=1);
+        let d = date_of(recv);
+        let n = args.first().and_then(day_count).unwrap_or(1);
+        Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
+    }
+    // `date - n` -> a Date n days earlier; `date - other_date` -> the Rational
+    // day difference (CRuby's result type).
+    "-" => fn minus(recv, args, _block) {
+        arity!(args, 1);
+        let d = date_of(recv);
+        if let RubyValue::Object(o) = &args[0] {
+            if let Some(other) = o.as_any().downcast_ref::<RDate>() {
+                return crate::builtins::rational::rational_new(
+                    num_bigint::BigInt::from(d.jdn - other.jdn),
+                    num_bigint::BigInt::from(1),
+                );
+            }
+        }
+        let n = day_count(&args[0]).ok_or_else(|| raise_error(
+            "TypeError",
+            "expected numeric or date".to_string(),
+        ))?;
+        Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
+    }
+    "next" | "succ" => fn succ(recv, args, _block) {
+        arity!(args, 0);
+        let d = date_of(recv);
+        Ok(RubyValue::Object(RDate::new(d.jdn + 1, d.class_id)))
+    }
+    "<=>" => fn cmp(recv, args, _block) {
+        arity!(args, 1);
+        let a = date_of(recv).jdn;
+        let b = match &args[0] {
+            RubyValue::Object(o) => match o.as_any().downcast_ref::<RDate>() {
+                Some(other) => other.jdn,
+                None => return Ok(RubyValue::Nil),
+            },
+            _ => return Ok(RubyValue::Nil),
+        };
+        Ok(RubyValue::Int((a.cmp(&b) as i64).signum()))
+    }
+    "==" => fn eq(recv, args, _block) {
+        arity!(args, 1);
+        let a = date_of(recv).jdn;
+        let equal = matches!(&args[0], RubyValue::Object(o)
+            if o.as_any().downcast_ref::<RDate>().is_some_and(|d| d.jdn == a));
+        Ok(RubyValue::Bool(equal))
+    }
+}
+
+/// `Date.new`'s civil components, defaulting like CRuby (`Date.new` == the
+/// Julian-calendar epoch, but the common call passes all three).
+fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
+    let int_at = |i: usize, default: i64| -> Result<i64, Signal> {
+        match args.get(i) {
+            None => Ok(default),
+            Some(RubyValue::Int(v)) => Ok(*v),
+            Some(_) => Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+        }
+    };
+    Ok((int_at(0, -4712)?, int_at(1, 1)?, int_at(2, 1)?))
 }
 
 builtin_methods! {
     pub(crate) fn lookup_class;
 
-    "new" | "civil" => fn new_m(_recv, _args, _block) { todo!("Date.new -- see docs/EXTENSIONS.md") }
-    "today" => fn today(_recv, _args, _block) { todo!("Date.today") }
-    "parse" => fn parse(_recv, _args, _block) { todo!("Date.parse") }
-    "jd" => fn jd(_recv, _args, _block) { todo!("Date.jd") }
+    "new" | "civil" => fn new_m(recv, args, _block) {
+        arity!(args, 0..=3);
+        let (y, m, d) = civil_args(args)?;
+        Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
+    }
+    "jd" => fn jd_c(recv, args, _block) {
+        arity!(args, 0..=1);
+        let jdn = match args.first() {
+            None => 0,
+            Some(RubyValue::Int(n)) => *n,
+            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+        };
+        Ok(RubyValue::Object(RDate::new(jdn, class_of(recv))))
+    }
+    "today" => fn today(recv, args, _block) {
+        arity!(args, 0);
+        // Current UTC calendar day (a documented divergence from CRuby's LOCAL
+        // date near midnight in non-UTC zones); untestable deterministically.
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let days = secs.div_euclid(86_400);
+        Ok(RubyValue::Object(RDate::new(2_440_588 + days, class_of(recv))))
+    }
+    "parse" => fn parse(recv, args, _block) {
+        arity!(args, 1..=2);
+        let RubyValue::Str(s) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into String".to_string()));
+        };
+        let text = s.lock().to_utf8_lossy().into_owned();
+        let (y, m, d) = parse_date(&text)?;
+        Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
+    }
+    "valid_date?" | "valid_civil?" => fn valid_date(_recv, args, _block) {
+        arity!(args, 3..=4);
+        let (y, m, d) = civil_args(args)?;
+        // Round-trips only for a real calendar date.
+        let jdn = civil_to_jdn(y, m, d);
+        Ok(RubyValue::Bool(jdn_to_civil(jdn) == (y, m, d)))
+    }
+    "leap?" => fn leap_c(_recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Int(y) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        Ok(RubyValue::Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)))
+    }
+}
+
+/// The class a `Date` class method should build (`Date` or a `DateTime`).
+fn class_of(recv: &RubyValue) -> ClassId {
+    match recv {
+        RubyValue::Class(DATETIME_CLASS) => DATETIME_CLASS,
+        _ => DATE_CLASS,
+    }
+}
+
+/// A minimal `Date.parse`: ISO `YYYY-MM-DD` (or `/`-separated), the forms the
+/// conformance corpus exercises. An unrecognised string is CRuby's ArgumentError.
+fn parse_date(text: &str) -> Result<(i64, i64, i64), Signal> {
+    let cleaned = text.trim();
+    let parts: Vec<&str> = cleaned.split(['-', '/']).collect();
+    if parts.len() == 3 {
+        if let (Ok(y), Ok(m), Ok(d)) =
+            (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>())
+        {
+            return Ok((y, m, d));
+        }
+    }
+    Err(raise_error("ArgumentError", format!("invalid date: {text:?}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn date(y: i64, m: i64, d: i64) -> RubyValue {
+        RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), DATE_CLASS))
+    }
+    fn int(v: &RubyValue) -> i64 {
+        match v {
+            RubyValue::Int(i) => *i,
+            other => panic!("expected Int, got {other:?}"),
+        }
+    }
+    fn s(v: &RubyValue) -> String {
+        match v {
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => panic!("expected Str, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn civil_jdn_round_trips() {
+        for (y, m, d) in [(2000, 1, 1), (1970, 1, 1), (2024, 2, 29), (1, 1, 1)] {
+            assert_eq!(jdn_to_civil(civil_to_jdn(y, m, d)), (y, m, d));
+        }
+    }
+
+    #[test]
+    fn fields_match_ruby() {
+        let dt = date(2024, 3, 15); // a Friday
+        assert_eq!(int(&year(&dt, &[], None).unwrap()), 2024);
+        assert_eq!(int(&month(&dt, &[], None).unwrap()), 3);
+        assert_eq!(int(&day(&dt, &[], None).unwrap()), 15);
+        assert_eq!(int(&wday(&dt, &[], None).unwrap()), 5);
+        assert_eq!(s(&to_s(&dt, &[], None).unwrap()), "2024-03-15");
+    }
+
+    #[test]
+    fn arithmetic_advances_and_differences() {
+        let a = date(2024, 1, 1);
+        let plus10 = plus(&a, &[RubyValue::Int(10)], None).unwrap();
+        assert_eq!(s(&to_s(&plus10, &[], None).unwrap()), "2024-01-11");
+        // date - date -> Rational difference.
+        let diff = minus(&plus10, &[a.clone()], None).unwrap();
+        assert!(matches!(diff, RubyValue::Rational(_)));
+    }
+
+    #[test]
+    fn strftime_covers_common_directives() {
+        let dt = date(2024, 3, 15);
+        assert_eq!(s(&strftime(&dt, &[RubyValue::Str(string_new("%Y-%m-%d (%A)".into()))], None).unwrap()), "2024-03-15 (Friday)");
+        assert_eq!(s(&strftime(&dt, &[RubyValue::Str(string_new("%b %-d, %Y".into()))], None).unwrap()), "Mar 15, 2024");
+    }
 }

@@ -12,7 +12,9 @@
 //! their nesting. Documented divergences: a YAML syntax error raises
 //! `RuntimeError` (CRuby: `Psych::SyntaxError`); anchors/aliases and custom
 //! tags load as `nil`; exotic scalar styles (multi-line block scalars) dump as
-//! quoted strings rather than `|-` blocks; `parse`/`load_file` are `todo!()`.
+//! quoted strings rather than `|-` blocks. `load`/`load_file`/`load_stream` are
+//! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
+//! NotImplementedError (not modelled).
 
 use crate::builtins::{arity, builtin_methods};
 use crate::collections::{array_new, hash_new, hash_pairs};
@@ -223,11 +225,42 @@ builtin_methods! {
         Ok(RubyValue::Str(string_new(dump(&args[0]))))
     }
 
-    // Not yet implemented (see docs/EXTENSIONS.md).
-    "parse" => fn parse(_recv, _args, _block) { todo!("Psych.parse (node tree)") }
-    "parse_stream" => fn parse_stream(_recv, _args, _block) { todo!("Psych.parse_stream") }
-    "load_file" => fn load_file(_recv, _args, _block) { todo!("Psych.load_file") }
-    "load_stream" => fn load_stream(_recv, _args, _block) { todo!("Psych.load_stream") }
+    // `Psych.load_file(path)` -- read the file and load its first document.
+    "load_file" => fn load_file(_recv, args, _block) {
+        arity!(args, 1..=2); // (path[, opts]) -- opts ignored
+        let path = crate::builtins::file::path_arg(&args[0], "load_file")?;
+        let text = std::fs::read_to_string(&path).map_err(|e| raise_error(
+            "Errno::ENOENT",
+            format!("No such file or directory - {path} ({e})"),
+        ))?;
+        let docs = YamlLoader::load_from_str(&text)
+            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+        Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
+    }
+    // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
+    // one to a block (then the receiver's nil, matching CRuby's block form).
+    "load_stream" => fn load_stream(_recv, args, block) {
+        arity!(args, 1..=2);
+        let text = load_text(&args[0])?;
+        let docs = YamlLoader::load_from_str(&text)
+            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+        if let Some(RubyValue::Proc(p)) = &block {
+            for doc in &docs {
+                p.call(std::slice::from_ref(&yaml_to_ruby(doc)))?;
+            }
+            return Ok(RubyValue::Nil);
+        }
+        Ok(RubyValue::Array(crate::array_new(docs.iter().map(yaml_to_ruby).collect())))
+    }
+
+    // The `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) isn't
+    // modelled; a clean NotImplementedError rather than a panic.
+    "parse" => fn parse(_recv, _args, _block) {
+        Err(raise_error("NotImplementedError", "Psych.parse (the node-tree API) is not implemented".to_string()))
+    }
+    "parse_stream" => fn parse_stream(_recv, _args, _block) {
+        Err(raise_error("NotImplementedError", "Psych.parse_stream (the node-tree API) is not implemented".to_string()))
+    }
 }
 
 #[cfg(test)]
