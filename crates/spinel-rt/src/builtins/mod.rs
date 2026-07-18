@@ -52,6 +52,7 @@ pub(crate) mod process;
 pub(crate) mod time;
 pub(crate) mod range;
 pub(crate) mod rational;
+pub(crate) mod random;
 pub(crate) mod condition_variable;
 pub(crate) mod set;
 pub(crate) mod regexp;
@@ -59,6 +60,7 @@ pub(crate) mod fiber;
 pub(crate) mod rproc;
 pub(crate) mod string;
 pub(crate) mod symbol;
+pub(crate) mod thread;
 pub(crate) mod value_subclass;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
@@ -100,6 +102,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::METHOD_CLASS => method_obj::lookup,
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         spinel_abi::FIBER_CLASS => fiber::lookup,
+        spinel_abi::THREAD_CLASS => thread::lookup,
+        spinel_abi::RANDOM_CLASS => random::lookup,
         spinel_abi::TIME_CLASS => time::lookup,
         spinel_abi::ENCODING_CLASS => encoding::lookup,
         spinel_abi::SET_CLASS => set::lookup,
@@ -142,6 +146,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
 /// it keeps the `BuiltinMethodFn` ABI uniform with `class_table`'s.
 pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     Some(match id {
+        spinel_abi::INTEGER_CLASS => integer::lookup_class,
         spinel_abi::ARRAY_CLASS => array::lookup_class,
         spinel_abi::STRING_CLASS => string::lookup_class,
         spinel_abi::HASH_CLASS => hash::lookup_class,
@@ -154,6 +159,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         spinel_abi::SET_CLASS => set::lookup_class,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
+        spinel_abi::RANDOM_CLASS => random::lookup_class,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
@@ -218,6 +224,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::METHOD_CLASS => method_obj::lookup_names(),
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         spinel_abi::FIBER_CLASS => fiber::lookup_names(),
+        spinel_abi::THREAD_CLASS => thread::lookup_names(),
+        spinel_abi::RANDOM_CLASS => random::lookup_names(),
         spinel_abi::TIME_CLASS => time::lookup_names(),
         spinel_abi::ENCODING_CLASS => encoding::lookup_names(),
         spinel_abi::SET_CLASS => set::lookup_names(),
@@ -247,6 +255,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
 /// builtin exposes (for `SomeClass.singleton_methods` / `.methods`).
 pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
     match id {
+        spinel_abi::INTEGER_CLASS => integer::lookup_class_names(),
         spinel_abi::ARRAY_CLASS => array::lookup_class_names(),
         spinel_abi::STRING_CLASS => string::lookup_class_names(),
         spinel_abi::HASH_CLASS => hash::lookup_class_names(),

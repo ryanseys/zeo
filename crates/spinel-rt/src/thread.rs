@@ -111,6 +111,12 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
     }
 }
 
+/// Whether the thread is still running (`Thread#alive?`) -- a peek at the
+/// state that, unlike `thread_outcome`, never joins or consumes the handle.
+pub fn thread_alive(t: &RThread) -> bool {
+    matches!(&*t.state.lock(), Some(ThreadState::Running(_)))
+}
+
 // ---------------------------------------------------------------------------
 // Mutex
 // ---------------------------------------------------------------------------

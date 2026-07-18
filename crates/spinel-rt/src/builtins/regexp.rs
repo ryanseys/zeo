@@ -164,6 +164,20 @@ builtin_methods! {
         Ok(RubyValue::Nil)
     }
 
+    // `Regexp.last_match` / `Regexp.last_match(n)` -- the thread-local `$~`
+    // (whole MatchData), or its nth capture group when given an index.
+    "last_match" => fn last_match_c(_recv, args, _block) {
+        arity!(args, 0..=1);
+        match args.first() {
+            None => Ok(crate::lastmatch::last_match()),
+            Some(RubyValue::Int(n)) => Ok(crate::lastmatch::last_match_group((*n).max(0) as usize)),
+            Some(other) => Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        }
+    }
+
     // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
     "escape" | "quote" => fn escape_m(_recv, args, _block) {
         arity!(args, 1);

@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use spinel_abi::{declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES};
+use spinel_abi::{declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, STOP_ITERATION_CLASS};
 
 use crate::dispatch::{
     class_name, downcast_robj, raise_error, run_initialize, send, ClassRegistry, ConstructorFn,
@@ -30,10 +30,6 @@ use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
 use crate::{array_new, string_new};
-
-/// `StopIteration`'s id -- the classes that also carry `__set_result`/`#result`
-/// are it and its descendants (`ClosedQueueError`), matched by ancestry.
-const STOP_ITERATION_ID: ClassId = ClassId(78);
 
 /// The single native type backing every built-in exception class. The message
 /// and StopIteration's result live in DEDICATED internal slots (`mesg`/`res`),
@@ -278,7 +274,7 @@ pub fn register_exception_subclass(
     name: &str,
     ancestors: Vec<ClassId>,
 ) {
-    let carries_result = ancestors.contains(&STOP_ITERATION_ID);
+    let carries_result = ancestors.contains(&STOP_ITERATION_CLASS);
     registry.register(
         id,
         name,

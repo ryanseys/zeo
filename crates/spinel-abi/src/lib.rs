@@ -222,6 +222,9 @@ pub const OPENSSL_MODULE: ClassId = ClassId(61);
 /// `yaml`: the `YAML` module -- an alias for `Psych` (Ruby's `yaml.rb` does
 /// `YAML = Psych`), so it shares the `psych` feature and dispatch.
 pub const YAML_MODULE: ClassId = ClassId(62);
+/// `Random` -- a seedable PRNG. An ordinary always-on core class (not an
+/// ext), appended at the end of the builtin id block.
+pub const RANDOM_CLASS: ClassId = ClassId(63);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -301,6 +304,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     // `psych` feature so `require "yaml"` (canonicalized to `psych` by the
     // loader) makes both constants resolve, and both dispatch to `ext::psych`.
     BuiltinClass { id: YAML_MODULE, name: "YAML", is_module: true, superclass: None, includes: &[], feature: Some("psych") },
+    BuiltinClass { id: RANDOM_CLASS, name: "Random", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):
@@ -310,11 +314,29 @@ pub const OBJECT_SUPERCLASS: ClassId = BASIC_OBJECT_CLASS;
 pub const OBJECT_INCLUDES: &[ClassId] = &[KERNEL_CLASS];
 
 /// The first id the built-in exception classes occupy -- immediately after the
-/// last [`BUILTINS`] row (`YAML_MODULE` = 62). See [`EXCEPTION_CLASSES`].
-pub const FIRST_EXCEPTION_ID: u32 = 63;
+/// last [`BUILTINS`] row. DERIVED from the builtin count (`Object` is id 0 and
+/// the builtins are `1..=BUILTINS.len()`, so the first free id is `len + 1`),
+/// which is exactly where the compiler's sequential id counter lands after it
+/// registers `Object` + every builtin. This is the whole point: **appending a
+/// builtin automatically shifts the entire exception block** -- no hand-edited
+/// ids, no re-learning the layout. Every [`EXCEPTION_CLASSES`] id is expressed
+/// as [`exc_id`]`(offset)` off this base, so they all move together for free.
+pub const FIRST_EXCEPTION_ID: u32 = BUILTINS.len() as u32 + 1;
 
-/// `Exception`, the root of the whole hierarchy.
-pub const EXCEPTION_CLASS: ClassId = ClassId(FIRST_EXCEPTION_ID);
+/// The id of the exception class at position `offset` in [`EXCEPTION_CLASSES`]
+/// -- the base plus its table index. Used for both the `id` and every
+/// `superclass` edge so the whole block is relocatable by construction.
+pub const fn exc_id(offset: u32) -> ClassId {
+    ClassId(FIRST_EXCEPTION_ID + offset)
+}
+
+/// `Exception`, the root of the whole hierarchy (offset 0).
+pub const EXCEPTION_CLASS: ClassId = exc_id(0);
+
+/// `StopIteration` -- named because the runtime special-cases it (an
+/// `each`-driver's terminal signal). Derived like every other exception id, so
+/// it never needs a manual bump. Keep the offset in sync with its row.
+pub const STOP_ITERATION_CLASS: ClassId = exc_id(15);
 
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.
@@ -333,7 +355,10 @@ pub struct ExceptionClass {
 /// The built-in exception hierarchy, in the exact order the compiler registers
 /// it (the [`BUILTIN_EXCEPTIONS_RB`](../spinelc/parse) Ruby source, then the
 /// pinned `Math::DomainError`). Ids are contiguous from [`FIRST_EXCEPTION_ID`]
-/// (asserted below), so index `i` has id `63 + i`. This is what lets
+/// (asserted below), so row `i` has id [`exc_id`]`(i)` -- both the `id` and
+/// every `superclass` edge are written that way, so appending a builtin (which
+/// bumps `FIRST_EXCEPTION_ID`) relocates the whole block automatically. This is
+/// what lets
 /// `spinel-rt`'s `register_exceptions` install these classes at ids the compiler
 /// independently assigns the same way -- `spinelc` asserts the agreement at
 /// analyze time.
@@ -342,59 +367,59 @@ pub struct ExceptionClass {
 /// parent before its children); [`declared_ancestors`] linearizes them by
 /// walking up to `Object`.
 pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
-    ExceptionClass { id: ClassId(63), name: "Exception", superclass: Some(OBJECT_CLASS), is_module: false },
-    ExceptionClass { id: ClassId(64), name: "ScriptError", superclass: Some(ClassId(63)), is_module: false },
-    ExceptionClass { id: ClassId(65), name: "NotImplementedError", superclass: Some(ClassId(64)), is_module: false },
-    ExceptionClass { id: ClassId(66), name: "LoadError", superclass: Some(ClassId(64)), is_module: false },
-    ExceptionClass { id: ClassId(67), name: "StandardError", superclass: Some(ClassId(63)), is_module: false },
-    ExceptionClass { id: ClassId(68), name: "ArgumentError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(69), name: "EncodingError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(70), name: "Encoding::UndefinedConversionError", superclass: Some(ClassId(69)), is_module: false },
-    ExceptionClass { id: ClassId(71), name: "Encoding::InvalidByteSequenceError", superclass: Some(ClassId(69)), is_module: false },
-    ExceptionClass { id: ClassId(72), name: "Encoding::CompatibilityError", superclass: Some(ClassId(69)), is_module: false },
-    ExceptionClass { id: ClassId(73), name: "Encoding::ConverterNotFoundError", superclass: Some(ClassId(69)), is_module: false },
-    ExceptionClass { id: ClassId(74), name: "IOError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(75), name: "EOFError", superclass: Some(ClassId(74)), is_module: false },
-    ExceptionClass { id: ClassId(76), name: "IndexError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(77), name: "KeyError", superclass: Some(ClassId(76)), is_module: false },
-    ExceptionClass { id: ClassId(78), name: "StopIteration", superclass: Some(ClassId(76)), is_module: false },
-    ExceptionClass { id: ClassId(79), name: "NameError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(80), name: "NoMethodError", superclass: Some(ClassId(79)), is_module: false },
-    ExceptionClass { id: ClassId(81), name: "RangeError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(82), name: "FloatDomainError", superclass: Some(ClassId(81)), is_module: false },
-    ExceptionClass { id: ClassId(83), name: "LocalJumpError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(84), name: "RegexpError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(85), name: "RuntimeError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(86), name: "FrozenError", superclass: Some(ClassId(85)), is_module: false },
-    ExceptionClass { id: ClassId(87), name: "NoMatchingPatternError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(88), name: "FiberError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(89), name: "ThreadError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(90), name: "ClosedQueueError", superclass: Some(ClassId(78)), is_module: false },
-    ExceptionClass { id: ClassId(91), name: "RactorError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(92), name: "TypeError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(93), name: "ZeroDivisionError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(94), name: "SystemCallError", superclass: Some(ClassId(67)), is_module: false },
-    ExceptionClass { id: ClassId(95), name: "Errno", superclass: None, is_module: true },
-    ExceptionClass { id: ClassId(96), name: "Errno::ENOENT", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(97), name: "Errno::EACCES", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(98), name: "Errno::EEXIST", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(99), name: "Errno::ENOTDIR", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(100), name: "Errno::EISDIR", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(101), name: "Errno::ENOTEMPTY", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(102), name: "Errno::EPIPE", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(103), name: "Errno::EINVAL", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(104), name: "Errno::EAGAIN", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(105), name: "Errno::EBADF", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(106), name: "Errno::ESPIPE", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(107), name: "Errno::EXDEV", superclass: Some(ClassId(94)), is_module: false },
-    ExceptionClass { id: ClassId(108), name: "Math::DomainError", superclass: Some(ClassId(67)), is_module: false },
+    ExceptionClass { id: exc_id(0), name: "Exception", superclass: Some(OBJECT_CLASS), is_module: false },
+    ExceptionClass { id: exc_id(1), name: "ScriptError", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(2), name: "NotImplementedError", superclass: Some(exc_id(1)), is_module: false },
+    ExceptionClass { id: exc_id(3), name: "LoadError", superclass: Some(exc_id(1)), is_module: false },
+    ExceptionClass { id: exc_id(4), name: "StandardError", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(5), name: "ArgumentError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(6), name: "EncodingError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(7), name: "Encoding::UndefinedConversionError", superclass: Some(exc_id(6)), is_module: false },
+    ExceptionClass { id: exc_id(8), name: "Encoding::InvalidByteSequenceError", superclass: Some(exc_id(6)), is_module: false },
+    ExceptionClass { id: exc_id(9), name: "Encoding::CompatibilityError", superclass: Some(exc_id(6)), is_module: false },
+    ExceptionClass { id: exc_id(10), name: "Encoding::ConverterNotFoundError", superclass: Some(exc_id(6)), is_module: false },
+    ExceptionClass { id: exc_id(11), name: "IOError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(12), name: "EOFError", superclass: Some(exc_id(11)), is_module: false },
+    ExceptionClass { id: exc_id(13), name: "IndexError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(14), name: "KeyError", superclass: Some(exc_id(13)), is_module: false },
+    ExceptionClass { id: exc_id(15), name: "StopIteration", superclass: Some(exc_id(13)), is_module: false },
+    ExceptionClass { id: exc_id(16), name: "NameError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(17), name: "NoMethodError", superclass: Some(exc_id(16)), is_module: false },
+    ExceptionClass { id: exc_id(18), name: "RangeError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(19), name: "FloatDomainError", superclass: Some(exc_id(18)), is_module: false },
+    ExceptionClass { id: exc_id(20), name: "LocalJumpError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(21), name: "RegexpError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(22), name: "RuntimeError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(23), name: "FrozenError", superclass: Some(exc_id(22)), is_module: false },
+    ExceptionClass { id: exc_id(24), name: "NoMatchingPatternError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(25), name: "FiberError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(26), name: "ThreadError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(27), name: "ClosedQueueError", superclass: Some(exc_id(15)), is_module: false },
+    ExceptionClass { id: exc_id(28), name: "RactorError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(29), name: "TypeError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(30), name: "ZeroDivisionError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(31), name: "SystemCallError", superclass: Some(exc_id(4)), is_module: false },
+    ExceptionClass { id: exc_id(32), name: "Errno", superclass: None, is_module: true },
+    ExceptionClass { id: exc_id(33), name: "Errno::ENOENT", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(34), name: "Errno::EACCES", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(35), name: "Errno::EEXIST", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(36), name: "Errno::ENOTDIR", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(37), name: "Errno::EISDIR", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(38), name: "Errno::ENOTEMPTY", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(39), name: "Errno::EPIPE", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(40), name: "Errno::EINVAL", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(41), name: "Errno::EAGAIN", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(42), name: "Errno::EBADF", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(43), name: "Errno::ESPIPE", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(44), name: "Errno::EXDEV", superclass: Some(exc_id(31)), is_module: false },
+    ExceptionClass { id: exc_id(45), name: "Math::DomainError", superclass: Some(exc_id(4)), is_module: false },
     // `SyntaxError < ScriptError` (#97 stage 2) -- raised by the runtime eval VM
     // when a dynamically-eval'd string fails to parse. Appended AFTER
     // `Math::DomainError` so every pre-existing exception id stays put; like
     // `Math::DomainError` it is registered in the compiler's exception-tail pin
     // rather than in `BUILTIN_EXCEPTIONS_RB` (id-ordering, not a semantic
     // difference).
-    ExceptionClass { id: ClassId(109), name: "SyntaxError", superclass: Some(ClassId(64)), is_module: false },
+    ExceptionClass { id: exc_id(46), name: "SyntaxError", superclass: Some(exc_id(1)), is_module: false },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=674e524
-# PASS=1470 FAIL_OUTPUT=447 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=73e9623
+# PASS=1492 FAIL_OUTPUT=425 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -35,7 +35,7 @@ array_clone_poly	PASS	-	-
 array_combination	PASS	-	-
 array_combination_block	PASS	-	-
 array_compact_eq	PASS	-	-
-array_conformance_batch	FAIL_OUTPUT	expect	missing-method:try_convert
+array_conformance_batch	PASS	-	-
 array_conformance_batch5	FAIL_OUTPUT	expect	pattern-shapes
 array_cycle_bounded	FAIL_OUTPUT	expect	auto-3e862739
 array_dup_sort_gc	PASS	-	-
@@ -227,7 +227,7 @@ bundle_class_19	PASS	-	-
 bundle_class_20	PASS	-	-
 bundle_class_21	PASS	-	-
 bundle_class_22	PASS	-	-
-bundle_class_23	FAIL_OUTPUT	expect	missing-method:sleep
+bundle_class_23	PASS	-	-
 bundle_class_a	PASS	-	-
 bundle_classd_04	PASS	-	-
 bundle_classd_05	PASS	-	-
@@ -263,9 +263,9 @@ bundle_hash_b1	PASS	-	-
 bundle_hash_b2	FAIL_OUTPUT	expect	-
 bundle_int_a	PASS	-	-
 bundle_int_array	PASS	-	-
-bundle_integer	FAIL_OUTPUT	expect	missing-method:sqrt
+bundle_integer	PASS	-	-
 bundle_io_sys	FAIL_COMPILE	compile	auto-2d4c0f69
-bundle_misc_a	FAIL_OUTPUT	expect	missing-method:catch
+bundle_misc_a	FAIL_OUTPUT	expect	missing-method:current
 bundle_misc_b	PASS	-	-
 bundle_misc_c_08	FAIL_OUTPUT	expect	missing-method:[]=
 bundle_misc_c_09	FAIL_OUTPUT	expect	missing-method:[]=
@@ -416,16 +416,16 @@ compile_time_define_method_int	PASS	-	-
 compile_time_define_method_predicates	FAIL_OUTPUT	expect	missing-method:attributes
 compile_time_define_method_strings	PASS	-	-
 complex_arithmetic	PASS	-	-
-complex_component_class	FAIL_OUTPUT	expect	missing-method:polar
+complex_component_class	FAIL_OUTPUT	expect	-
 complex_division	FAIL_OUTPUT	expect	-
 complex_nil_arg_and_nomethod	PASS	-	-
-complex_polar	FAIL_OUTPUT	expect	missing-method:polar
+complex_polar	PASS	-	-
 complex_rational_class	PASS	-	-
 complex_rational_interop	PASS	-	-
 complex_rect_arg_polar	FAIL_OUTPUT	expect	-
 concat_chain_operand_gc_root	PASS	-	-
 concat_print_poly_unbox	PASS	-	-
-cond_poly_truthy	FAIL_OUTPUT	expect	missing-const:Random
+cond_poly_truthy	PASS	-	-
 const_alias_method_call	PASS	-	-
 const_alias_path_receiver	PASS	-	-
 const_aliased_class_reopen_include	FAIL_OUTPUT	expect	missing-method:wordy
@@ -748,13 +748,13 @@ gvar_opassign_value	PASS	-	-
 hangs_548	FAIL_COMPILE	compile	spike-misc
 harness_batch_2453_2456	FAIL_COMPILE	compile	unknown-class
 hash_all_pattern	FAIL_OUTPUT	expect	pattern-shapes
-hash_array_string_batch8	FAIL_OUTPUT	expect	missing-method:try_convert
+hash_array_string_batch8	FAIL_OUTPUT	expect	auto-5acee2ea
 hash_block_methods_variants	PASS	-	-
 hash_blockless_enumerator	PASS	-	-
 hash_clear	PASS	-	-
 hash_compound_assign_more	PASS	-	-
 hash_conformance_batch7	FAIL_OUTPUT	expect	-
-hash_ctor_merge_clone_transform	FAIL_OUTPUT	expect	missing-method:[]
+hash_ctor_merge_clone_transform	FAIL_OUTPUT	expect	arity-panic
 hash_default_array_fetch_concat_wave9	PASS	-	-
 hash_default_proc	PASS	-	-
 hash_default_proc_assign	PASS	-	-
@@ -770,7 +770,7 @@ hash_each_key_value	PASS	-	-
 hash_each_value_key_enumerator	PASS	-	-
 hash_each_with_object	FAIL_OUTPUT	expect	missing-method:<<
 hash_empty_block_methods	PASS	-	-
-hash_empty_literal_and_map	FAIL_OUTPUT	expect	missing-method:[]
+hash_empty_literal_and_map	PASS	-	-
 hash_enum_with_index_chain	PASS	-	-
 hash_enumerable_batch	PASS	-	-
 hash_enumerable_eql_batch	PASS	-	-
@@ -811,7 +811,7 @@ hash_param_each_kv_inference	PASS	-	-
 hash_param_each_kv_weak_default	PASS	-	-
 hash_param_widen_from_callee_slot	PASS	-	-
 hash_poly_value_local	PASS	-	-
-hash_predicates_merge_minby_wave10	FAIL_OUTPUT	expect	missing-method:[]
+hash_predicates_merge_minby_wave10	FAIL_OUTPUT	expect	spike-misc
 hash_range_enum_extensions	PASS	-	-
 hash_reduce_inject_ewi	PASS	-	-
 hash_reduce_predicate	PASS	-	-
@@ -842,7 +842,7 @@ hash_values_at_fetch_values	PASS	-	-
 hash_values_inject_sym	PASS	-	-
 hash_variant_call_boundary_sym	PASS	-	-
 hash_variant_eq	PASS	-	-
-hash_variant_returns	FAIL_OUTPUT	expect	missing-method:[]
+hash_variant_returns	FAIL_OUTPUT	expect	-
 hash_variant_unify	PASS	-	-
 heterogeneous_tuple_return	PASS	-	-
 i1006	PASS	-	-
@@ -858,7 +858,7 @@ i1031	PASS	-	-
 i1035	PASS	-	-
 i1041	PASS	-	-
 i709	PASS	-	-
-i898	FAIL_OUTPUT	expect	missing-const:Random
+i898	PASS	-	-
 i912	PASS	-	-
 i916	PASS	-	-
 i918	FAIL_OUTPUT	expect	-
@@ -891,7 +891,7 @@ include_method_body_locals	PASS	-	-
 include_nested_module	PASS	-	-
 include_skips_module_class_methods	PASS	-	-
 index_op_write_nested	PASS	-	-
-index_opassign_in_thread_block	FAIL_OUTPUT	expect	missing-method:join
+index_opassign_in_thread_block	PASS	-	-
 index_or_write_empty_hash	PASS	-	-
 index_write	PASS	-	-
 inference_method_set	PASS	-	-
@@ -973,7 +973,7 @@ int_round_large_precision	FAIL_OUTPUT	expect	-
 int_sentinel_class_nilclass	PASS	-	-
 int_to_enum_times	PASS	-	-
 integer_argument_error	FAIL_OUTPUT	expect	-
-integer_bignum_batch2	FAIL_OUTPUT	expect	missing-method:sqrt
+integer_bignum_batch2	FAIL_OUTPUT	expect	auto-41318f62
 integer_bit_index_clamped	PASS	-	-
 integer_chr_encoding	FAIL_OUTPUT	expect	-
 integer_clamp_float_bound	PASS	-	-
@@ -1026,7 +1026,7 @@ issue_2864	PASS	-	-
 issue_2865	PASS	-	-
 issue_2866	FAIL_OUTPUT	expect	missing-method:deconstruct_keys
 issue_2868	FAIL_OUTPUT	expect	-
-issue_2869	FAIL_OUTPUT	expect	missing-const:Random
+issue_2869	PASS	-	-
 issue_2870	PASS	-	-
 issue_2871	PASS	-	-
 issue_2872	PASS	-	-
@@ -1084,7 +1084,7 @@ lazy_range_local	PASS	-	-
 lazy_range_method	PASS	-	-
 lazy_size	FAIL_OUTPUT	expect	missing-method:size
 leading_splat_scalar_massign	PASS	-	-
-lifted_block_nested_capture	FAIL_OUTPUT	expect	missing-method:join
+lifted_block_nested_capture	PASS	-	-
 local_empty_array_push_promotion_propagates	PASS	-	-
 logical_pointer_guard	PASS	-	-
 logical_value_return	PASS	-	-
@@ -1164,14 +1164,14 @@ module_const_array_widen	PASS	-	-
 module_const_defined	PASS	-	-
 module_const_root_path	PASS	-	-
 module_const_set	FAIL_OUTPUT	expect	missing-method:const_set
-module_constants_included_modules	FAIL_OUTPUT	expect	missing-method:include?
+module_constants_included_modules	FAIL_OUTPUT	expect	missing-method:included_modules
 module_cvars	PASS	-	-
 module_def_self_ivar	PASS	-	-
 module_dispatch_param_widen	PASS	-	-
 module_function_dead_method_dce	PASS	-	-
 module_function_namespace	PASS	-	-
 module_function_str_method_param	PASS	-	-
-module_include_p	FAIL_OUTPUT	expect	missing-method:include?
+module_include_p	PASS	-	-
 module_instance_method_unbound	FAIL_OUTPUT	expect	missing-method:owner
 module_ivar_empty_hash_reset	PASS	-	-
 module_ivar_hash	PASS	-	-
@@ -1453,7 +1453,7 @@ proc_closure	PASS	-	-
 proc_compose_curry_forward	FAIL_OUTPUT	expect	missing-method:new
 proc_compose_intermediate_type	PASS	-	-
 proc_compose_method_operand	FAIL_OUTPUT	expect	missing-method:>>
-proc_concurrent_call_poly_ret	FAIL_OUTPUT	expect	missing-method:value
+proc_concurrent_call_poly_ret	PASS	-	-
 proc_curry	PASS	-	-
 proc_curry_arity_arg	PASS	-	-
 proc_curry_reflection	PASS	-	-
@@ -1476,7 +1476,7 @@ proc_poly_value_return	PASS	-	-
 proc_range_time_return	PASS	-	-
 proc_recursive	PASS	-	-
 proc_rest_post_params	PASS	-	-
-proc_return_catch_no_leak	FAIL_OUTPUT	expect	missing-method:catch
+proc_return_catch_no_leak	FAIL_OUTPUT	expect	auto-b07debb8
 proc_return_ensure_raise	PASS	-	-
 proc_return_escape_localjump	FAIL_OUTPUT	expect	auto-d46bf646
 proc_return_fiber_isolation	PASS	-	-
@@ -1509,12 +1509,12 @@ raise_reraise_in_def	PASS	-	-
 raise_shortform_default_args	PASS	-	-
 raise_unless_isa_narrow	PASS	-	-
 rand_prng_stream	FAIL_OUTPUT	expect	auto-176da354
-random_bignum_seed	FAIL_OUTPUT	expect	missing-const:Random
-random_float_seed	FAIL_OUTPUT	expect	missing-const:Random
-random_inspect	FAIL_OUTPUT	expect	missing-const:Random
+random_bignum_seed	PASS	-	-
+random_float_seed	PASS	-	-
+random_inspect	PASS	-	-
 random_methods	FAIL_OUTPUT	expect	auto-ceefc00e
-random_rand_argument	FAIL_OUTPUT	expect	missing-const:Random
-random_seed_range_base64_pad	FAIL_OUTPUT	expect	missing-const:Random
+random_rand_argument	PASS	-	-
+random_seed_range_base64_pad	FAIL_OUTPUT	expect	arity-panic
 range	PASS	-	-
 range_and_array_range_args	FAIL_OUTPUT	expect	auto-176da354
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
@@ -1583,7 +1583,7 @@ regexp_error_catchable	FAIL_OUTPUT	expect	-
 regexp_gsub_zero_width	FAIL_OUTPUT	expect	-
 regexp_inline_comment	PASS	-	-
 regexp_inline_options	FAIL_OUTPUT	expect	-
-regexp_last_match_capture	FAIL_OUTPUT	expect	missing-method:last_match
+regexp_last_match_capture	PASS	-	-
 regexp_line_anchors	FAIL_OUTPUT	expect	auto-74de9804
 regexp_local_if_else_union	PASS	-	-
 regexp_match_data	FAIL_OUTPUT	expect	missing-method:length
@@ -1594,7 +1594,7 @@ regexp_names_meta	FAIL_OUTPUT	expect	-
 regexp_new_literal	PASS	-	-
 regexp_pike_capture_and_bol	FAIL_OUTPUT	expect	-
 regexp_quantifier_alt_loopback	PASS	-	-
-regexp_reflection	FAIL_OUTPUT	expect	missing-method:last_match
+regexp_reflection	FAIL_OUTPUT	expect	missing-method:try_convert
 regexp_render_source_variable	PASS	-	-
 regexp_repeated_group_capture	PASS	-	-
 regexp_source_options	PASS	-	-
@@ -1664,7 +1664,7 @@ singleton_class_object	FAIL_COMPILE	compile	spike-misc
 singleton_method_object	FAIL_COMPILE	compile	spike-misc
 sized_poly_array_nil_n	PASS	-	-
 sleep_poly_arg	PASS	-	-
-sleep_return_value	FAIL_OUTPUT	expect	missing-method:sleep
+sleep_return_value	FAIL_OUTPUT	expect	missing-const:Object::Kernel
 slice_before_after_block	PASS	-	-
 slice_when_first_class	PASS	-	-
 sort_by_array_key	PASS	-	-
@@ -1852,23 +1852,23 @@ tally_accumulator	FAIL_OUTPUT	expect	spike-misc
 tap_then_expr	PASS	-	-
 tap_then_tail_value	PASS	-	-
 ternary_lazy_arms	PASS	-	-
-thread_alloc_heavy_workers	FAIL_OUTPUT	expect	missing-method:value
-thread_basic	FAIL_OUTPUT	expect	missing-method:alive?
-thread_concurrent_alloc	FAIL_OUTPUT	expect	missing-method:join
+thread_alloc_heavy_workers	PASS	-	-
+thread_basic	FAIL_OUTPUT	expect	missing-method:report_on_exception=
+thread_concurrent_alloc	PASS	-	-
 thread_condvar	FAIL_OUTPUT	expect	missing-method:pass
 thread_kill_raise	FAIL_OUTPUT	expect	missing-method:report_on_exception=
 thread_list	FAIL_OUTPUT	expect	missing-method:list
 thread_local	FAIL_OUTPUT	expect	missing-method:current
-thread_mutex	FAIL_OUTPUT	expect	missing-method:join
+thread_mutex	FAIL_OUTPUT	expect	missing-method:try_lock
 thread_name	FAIL_OUTPUT	expect	missing-method:name
-thread_new_args	FAIL_OUTPUT	expect	missing-method:value
+thread_new_args	PASS	-	-
 thread_new_value	PASS	-	-
 thread_pass_fairness	FAIL_OUTPUT	expect	missing-method:pass
-thread_preempt	FAIL_OUTPUT	expect	missing-method:value
+thread_preempt	PASS	-	-
 thread_queue	FAIL_OUTPUT	expect	missing-method:<<
 thread_raise_main	FAIL_OUTPUT	expect	missing-method:report_on_exception=
 thread_sized_queue	FAIL_OUTPUT	expect	missing-const:SizedQueue
-thread_value_through_container	FAIL_OUTPUT	expect	missing-method:value
+thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	FAIL_OUTPUT	expect	missing-method:asctime
 time_at_in_offset	FAIL_OUTPUT	expect	-

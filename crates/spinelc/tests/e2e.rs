@@ -16748,3 +16748,171 @@ fn instance_eval_string_mutates_an_ivar() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "3\n");
 }
+
+// ---------------------------------------------------------------------------
+// Builtin method additions (conformance drawdown): Hash[], try_convert,
+// Complex.polar, Module#include?, Regexp.last_match, Thread#join/#value, and
+// the Random PRNG. Ruby-visible surface; the PRNG cases assert only
+// deterministic guarantees (a seeded xorshift64* diverges from CRuby's MT).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn hash_class_bracket_constructor() {
+    let result = run_ruby(
+        r#"
+        p Hash[]
+        p Hash[1, 2, 3, 4]
+        p Hash[[[:a, 1], [:b, 2]]]
+        p Hash[{ x: 1 }]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{}\n{1 => 2, 3 => 4}\n{a: 1, b: 2}\n{x: 1}\n"
+    );
+}
+
+#[test]
+fn array_and_hash_try_convert() {
+    let result = run_ruby(
+        r#"
+        p Array.try_convert([1, 2])
+        p Array.try_convert("no")
+        p Hash.try_convert({ a: 1 })
+        p Hash.try_convert(5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2]\nnil\n{a: 1}\nnil\n");
+}
+
+#[test]
+fn complex_polar_constructor() {
+    let result = run_ruby("p Complex.polar(2, 0)");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "(2+0.0i)\n");
+}
+
+#[test]
+fn module_include_predicate() {
+    let result = run_ruby(
+        r#"
+        module Greetable; end
+        class Person; include Greetable; end
+        p Person.include?(Greetable)
+        p Person.include?(Comparable)
+        begin
+          Person.include?(Object)
+        rescue TypeError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\nwrong argument type Class (expected Module)\n"
+    );
+}
+
+#[test]
+fn regexp_last_match_and_groups() {
+    let result = run_ruby(
+        r#"
+        "abc123" =~ /([a-z]+)(\d+)/
+        p Regexp.last_match(1)
+        p Regexp.last_match(2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"abc\"\n\"123\"\n");
+}
+
+#[test]
+fn thread_join_and_value_via_dynamic_dispatch() {
+    // The threads live in an Array, so `join`/`value` dispatch dynamically
+    // (the runtime Thread table), not the static codegen fast path.
+    let result = run_ruby(
+        r#"
+        threads = 3.times.map { |i| Thread.new { i * 10 } }
+        threads.each(&:join)
+        p threads.map(&:value)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[0, 10, 20]\n");
+}
+
+#[test]
+fn random_is_seeded_reproducible_and_typed() {
+    let result = run_ruby(
+        r#"
+        p(Random.new(42).rand(1000) == Random.new(42).rand(1000))
+        p(Random.new(1).rand(1000) != Random.new(2).rand(1000))
+        p Random.new(5).rand(10).class
+        p Random.new(5).rand(2.5).class
+        p Random.new(5).rand.class
+        p((r = Random.new(9).rand(6)) >= 0 && r < 6)
+        p Random.new(1).bytes(8).bytesize
+        p Random.new(123).seed
+        p Random.new(3.9).seed
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\nInteger\nFloat\nFloat\ntrue\n8\n123\n3\n"
+    );
+}
+
+#[test]
+fn random_rejects_non_positive_bounds() {
+    let result = run_ruby(
+        r#"
+        begin; Random.new(1).rand(0); rescue ArgumentError => e; puts e.message; end
+        begin; Random.new(1).rand(-3); rescue ArgumentError => e; puts e.message; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "invalid argument - 0\ninvalid argument - -3\n");
+}
+
+#[test]
+fn integer_sqrt_is_exact_including_bignums() {
+    let result = run_ruby(
+        r#"
+        p Integer.sqrt(0)
+        p Integer.sqrt(8)
+        p Integer.sqrt(9)
+        p Integer.sqrt(10**20)
+        p Integer.sqrt(2**100)
+        begin
+          Integer.sqrt(-4)
+        rescue Math::DomainError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "0\n2\n3\n10000000000\n1125899906842624\nNumerical argument is out of domain - \"isqrt\"\n"
+    );
+}
+
+#[test]
+fn kernel_catch_throw_sleep_via_dynamic_dispatch() {
+    // `send`/`&:` force dynamic dispatch through the Kernel table rather than
+    // the static codegen fast path.
+    let result = run_ruby(
+        r#"
+        p send(:catch, :done) { throw :done, 42 }
+        p [1, 2, 3].map { |x| catch(:skip) { throw :skip, -1 if x == 2; x } }
+        send(:sleep, 0)
+        puts "slept"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n[1, -1, 3]\nslept\n");
+}

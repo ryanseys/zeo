@@ -1535,6 +1535,32 @@ builtin_methods! {
     // Ruby: `a = Array.new(2, "x"); a[0] << "!"` changes `a[1]` too), which
     // is exactly why the block form exists; a `RubyValue` clone is a handle
     // clone, so that sharing is inherited rather than needing to be built.
+    // `Array.try_convert(obj)`: `obj` if it's already an Array, its `to_ary`
+    // if it defines one (which must yield an Array or nil), else nil. Unlike
+    // `Array(obj)` it never wraps or raises for a non-convertible value.
+    "try_convert" => fn try_convert(_recv, args, _block) {
+        arity!(args, 1);
+        let v = &args[0];
+        if matches!(v, RubyValue::Array(_)) {
+            return Ok(v.clone());
+        }
+        let to_ary = crate::Symbol::intern("to_ary");
+        if crate::dispatch::responds_to(v.class_id(), to_ary, false) {
+            return match crate::dispatch::send_value(v, to_ary, &[], None)? {
+                r @ (RubyValue::Array(_) | RubyValue::Nil) => Ok(r),
+                other => Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "can't convert {} to Array ({}#to_ary gives {})",
+                        crate::builtins::class_name_of(v),
+                        crate::builtins::class_name_of(v),
+                        crate::builtins::class_name_of(&other)
+                    ),
+                )),
+            };
+        }
+        Ok(RubyValue::Nil)
+    }
     "new" => fn array_new_m(_recv, args, block) {
         arity!(args, 0..=2);
         // `Array.new(other_array)` is the COPY form (CRuby `rb_ary_initialize`):

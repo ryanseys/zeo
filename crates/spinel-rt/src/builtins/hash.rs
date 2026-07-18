@@ -678,11 +678,112 @@ builtin_methods! {
         let default = args.first().cloned().unwrap_or(RubyValue::Nil);
         Ok(RubyValue::Hash(crate::hash_new_with_default(default, None)))
     }
+    // `Hash[]` class constructor -- distinct from the INSTANCE `Hash#[]` (key
+    // lookup). Three shapes: a single Hash to copy, a single Array of `[k, v]`
+    // pairs, or an even-length flat `k1, v1, k2, v2, ...` list.
+    "[]" => fn hash_bracket(_recv, args, _block) {
+        if args.len() == 1 {
+            match &args[0] {
+                RubyValue::Hash(h) => {
+                    let pairs = h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    return Ok(RubyValue::Hash(crate::hash_new(pairs)));
+                }
+                RubyValue::Array(a) => {
+                    let mut pairs = Vec::new();
+                    for el in a.lock().iter() {
+                        let RubyValue::Array(kv) = el else {
+                            return Err(crate::dispatch::raise_error(
+                                "ArgumentError",
+                                format!(
+                                    "wrong element type {} (expected array)",
+                                    crate::builtins::class_name_of(el)
+                                ),
+                            ));
+                        };
+                        let kv = kv.lock();
+                        if kv.is_empty() || kv.len() > 2 {
+                            return Err(crate::dispatch::raise_error(
+                                "ArgumentError",
+                                format!("invalid number of elements ({} for 1..2)", kv.len()),
+                            ));
+                        }
+                        pairs.push((kv[0].clone(), kv.get(1).cloned().unwrap_or(RubyValue::Nil)));
+                    }
+                    return Ok(RubyValue::Hash(crate::hash_new(pairs)));
+                }
+                _ => {}
+            }
+        }
+        if args.len() % 2 != 0 {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "odd number of arguments for Hash".to_string(),
+            ));
+        }
+        let pairs = args.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect();
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
+    // `Hash.try_convert(obj)`: `obj` if it's already a Hash, its `to_hash` if
+    // it defines one (which must yield a Hash or nil), else nil.
+    "try_convert" => fn try_convert(_recv, args, _block) {
+        arity!(args, 1);
+        let v = &args[0];
+        if matches!(v, RubyValue::Hash(_)) {
+            return Ok(v.clone());
+        }
+        let to_hash = crate::Symbol::intern("to_hash");
+        if crate::dispatch::responds_to(v.class_id(), to_hash, false) {
+            return match crate::dispatch::send_value(v, to_hash, &[], None)? {
+                r @ (RubyValue::Hash(_) | RubyValue::Nil) => Ok(r),
+                other => Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "can't convert {} to Hash ({}#to_hash gives {})",
+                        crate::builtins::class_name_of(v),
+                        crate::builtins::class_name_of(v),
+                        crate::builtins::class_name_of(&other)
+                    ),
+                )),
+            };
+        }
+        Ok(RubyValue::Nil)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bracket_class_constructor_shapes() {
+        // Flat k, v, k, v list.
+        let flat = hash_bracket(
+            &RubyValue::Nil,
+            &[RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)],
+            None,
+        )
+        .unwrap();
+        let RubyValue::Hash(h) = flat else { panic!() };
+        assert_eq!(h.lock().len(), 2);
+
+        // Single Array of [k, v] pairs.
+        let pairs = RubyValue::Array(crate::array_new(vec![RubyValue::Array(crate::array_new(
+            vec![RubyValue::Int(9), RubyValue::Int(8)],
+        ))]));
+        let from_pairs = hash_bracket(&RubyValue::Nil, &[pairs], None).unwrap();
+        let RubyValue::Hash(h2) = from_pairs else { panic!() };
+        assert_eq!(h2.lock().len(), 1);
+
+        // Empty.
+        assert!(matches!(hash_bracket(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Hash(_)));
+    }
+
+    #[test]
+    #[should_panic(expected = "ArgumentError")]
+    fn bracket_odd_flat_arg_count_is_argument_error() {
+        // Registry-less, `raise_error` panics -- the message is the assertion.
+        let _ = hash_bracket(&RubyValue::Nil, &[RubyValue::Int(1)], None);
+    }
 
     #[test]
     fn store_alias_sets_and_keys_reports() {

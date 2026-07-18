@@ -85,6 +85,28 @@ builtin_methods! {
         }
         crate::eval_value(args[0].clone(), recv.clone(), 0)
     }
+    // `catch(tag = new object) { |tag| ... }` / `throw(tag[, value])` /
+    // `sleep(secs)` -- universal Kernel methods. The static codegen fast path
+    // handles the literal `catch {}`/`throw` forms; these rows serve dynamic
+    // dispatch (a `send :catch`, a `catch` reached through the MRO walk).
+    "catch" => fn catch_m(_recv, args, block) {
+        arity!(args, 0..=1);
+        // A bare `catch` mints a fresh, unique tag object (passed to the block).
+        let tag = args
+            .first()
+            .cloned()
+            .unwrap_or_else(|| RubyValue::Array(crate::array_new(Vec::new())));
+        let blk = block.ok_or_else(|| {
+            crate::dispatch::raise_error("LocalJumpError", "no block given (yield)".to_string())
+        })?;
+        crate::kernel_catch(tag, blk)
+    }
+    "throw" => fn throw_m(_recv, args, _block) {
+        crate::kernel_throw(args)
+    }
+    "sleep" => fn sleep_m(_recv, args, _block) {
+        crate::kernel_sleep(args)
+    }
     "class" => fn class(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Class(recv.class_id()))

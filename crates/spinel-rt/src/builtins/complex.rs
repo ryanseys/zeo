@@ -431,6 +431,16 @@ mod tests {
     }
 
     #[test]
+    fn polar_class_constructor_builds_a_complex() {
+        // `Complex.polar(3, 0)` == `3 * (cos 0 + i sin 0)` == (3+0i).
+        let c = polar_c(&RubyValue::Nil, &[RubyValue::Int(3), RubyValue::Int(0)], None).unwrap();
+        assert!(matches!(c, RubyValue::Complex(_)));
+        // Zero magnitude collapses to the origin regardless of the angle.
+        let z = polar_c(&RubyValue::Nil, &[RubyValue::Int(0), RubyValue::Int(5)], None).unwrap();
+        assert!(z.rb_eq(&cpx(0, 0)));
+    }
+
+    #[test]
     fn multiplication_matches_the_oracle() {
         // (1+2i)(3+4i) == (-5+10i), exact Integer components.
         let r = cpx_mul(&cpx(1, 2), &cpx(3, 4)).unwrap();
@@ -732,5 +742,14 @@ builtin_methods! {
         let real = args[0].clone();
         let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
         complex_new(real, imag)
+    }
+    // `Complex.polar(abs, arg = 0)`: the polar constructor -- `abs * (cos arg
+    // + i sin arg)`, computed by the shared `complex_new_polar` the string
+    // parser already uses for the `r@theta` form.
+    "polar" => fn polar_c(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let mag = args[0].clone();
+        let angle = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
+        complex_new_polar(mag, angle)
     }
 }

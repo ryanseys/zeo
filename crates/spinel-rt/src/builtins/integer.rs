@@ -14,6 +14,7 @@ use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
+use num_traits::cast::FromPrimitive;
 use num_traits::{Signed, ToPrimitive, Zero};
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -947,12 +948,72 @@ fn int_round_family(
     Ok(int_value(if negative { -rounded_mag } else { rounded_mag }))
 }
 
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Integer.sqrt(n)` -- the exact integer square root (floor of the real
+    // square root, no floating-point rounding: correct for bignums too). A
+    // negative argument is a `Math::DomainError`, like CRuby.
+    "sqrt" => fn isqrt(_recv, args, _block) {
+        arity!(args, 1);
+        use num_integer::Roots;
+        let n = match &args[0] {
+            RubyValue::Int(_) | RubyValue::BigInt(_) => to_bigint(&args[0]),
+            RubyValue::Float(f) => {
+                if !f.is_finite() {
+                    return Err(crate::dispatch::raise_error(
+                        "Math::DomainError",
+                        "Numerical argument is out of domain - \"isqrt\"".to_string(),
+                    ));
+                }
+                num_bigint::BigInt::from_f64(f.trunc()).unwrap_or_default()
+            }
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "no implicit conversion of {} into Integer",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        };
+        if n.is_negative() {
+            return Err(crate::dispatch::raise_error(
+                "Math::DomainError",
+                "Numerical argument is out of domain - \"isqrt\"".to_string(),
+            ));
+        }
+        Ok(int_value(n.sqrt()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn big(s: &str) -> RubyValue {
         int_value(s.parse::<BigInt>().unwrap())
+    }
+
+    #[test]
+    fn integer_sqrt_is_the_exact_floor_root() {
+        let sq = |v: RubyValue| isqrt(&RubyValue::Nil, &[v], None).unwrap();
+        assert!(matches!(sq(RubyValue::Int(0)), RubyValue::Int(0)));
+        assert!(matches!(sq(RubyValue::Int(8)), RubyValue::Int(2)));
+        assert!(matches!(sq(RubyValue::Int(9)), RubyValue::Int(3)));
+        assert!(matches!(sq(RubyValue::Int(15)), RubyValue::Int(3)));
+        // Exact for a bignum (no float rounding): sqrt(10**20) == 10**10.
+        assert!(matches!(sq(big("100000000000000000000")), RubyValue::Int(10_000_000_000)));
+        // A Float argument truncates to its integer part first.
+        assert!(matches!(sq(RubyValue::Float(26.9)), RubyValue::Int(5)));
+    }
+
+    #[test]
+    #[should_panic(expected = "Math::DomainError")]
+    fn integer_sqrt_of_a_negative_is_a_domain_error() {
+        // Registry-less, `raise_error` panics -- the message is the assertion.
+        let _ = isqrt(&RubyValue::Nil, &[RubyValue::Int(-4)], None);
     }
 
     #[test]

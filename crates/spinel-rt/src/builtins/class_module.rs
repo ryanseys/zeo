@@ -58,6 +58,37 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(chain)))
     }
+    // `Module#include?(mod)`: true when `mod` is a MODULE mixed into `recv` or
+    // one of its ancestors (never `recv` itself, and never a superclass --
+    // only included/prepended modules count). A non-class/module argument is a
+    // TypeError.
+    "include?" => fn include_p(recv, args, _block) {
+        arity!(args, 1);
+        // The argument must be a MODULE. A class (or any non-module) is a
+        // TypeError whose type name CRuby reports as `Class` for a class value.
+        let type_err = || {
+            let name = match &args[0] {
+                RubyValue::Class(cid) if !crate::dispatch::class_is_module(*cid).unwrap_or(false) => {
+                    "Class".to_string()
+                }
+                other => crate::builtins::class_name_of(other),
+            };
+            crate::dispatch::raise_error(
+                "TypeError",
+                format!("wrong argument type {name} (expected Module)"),
+            )
+        };
+        let RubyValue::Class(other) = args[0] else {
+            return Err(type_err());
+        };
+        if !crate::dispatch::class_is_module(other).unwrap_or(false) {
+            return Err(type_err());
+        }
+        let me = recv_cid(recv);
+        let in_chain =
+            other != me && crate::dispatch::ancestors_of_value(me).contains(&other);
+        Ok(RubyValue::Bool(in_chain))
+    }
     // `Module#===`: instance-of-ancestry, the check `case`/`when` class
     // candidates desugar to.
     "===" => fn case_eq(recv, args, _block) {
