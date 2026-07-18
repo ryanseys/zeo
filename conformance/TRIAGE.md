@@ -9,10 +9,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | spike-misc | 31 | proc_capture_enclosing_lambda, singleton_method_object, bsearch_find_any_mixed | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
-| g | arity-panic | 7 | time_at_unit_form, matchdata_index_eq, random_seed_range_base64_pad | uncaught exception: wrong number of arguments (given 3, expected 1..2) |
 | ? | auto-362e8305 | 6 | bundle_hash, fiber_nested_block, proc_nonlocal_return | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | a | splat | 5 | pattern_rightward_oneline, proc_call_kw_and_lead_splat, proc_call_splat | expected a `*name` splat in this array pattern (spike scope) |
+| g | arity-panic | 4 | bundle_tiny_string, mutator_value_forms_bang_nil, str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 1, expected 0) |
 | P | missing-method:[]= | 4 | bundle_misc_c_10, fiber_storage_nil, bundle_misc_c_08 | uncaught exception: undefined method '[]=' for class Fiber |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:current | 4 | bundle_misc_a, fiber_class_reflection, fiber_transfer_root | uncaught exception: undefined method 'current' for class Fiber |
@@ -27,6 +27,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-14cc3095c83dd703.rs) |
 | ? | auto-03f2cac6 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-176da354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
+| ? | auto-1a5f778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-1b4f9693 | 2 | symbol_range_enum, range_float_type | uncaught exception: can't iterate from the given Range |
 | ? | auto-3fa590af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor, time_plus_rational | uncaught exception: can't convert Rational into an exact number |

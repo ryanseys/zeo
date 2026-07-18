@@ -17022,6 +17022,27 @@ fn exception_cause_chains_from_active_rescue() {
 }
 
 #[test]
+fn time_at_units_matchdata_slice_and_float_exponent() {
+    let result = run_ruby(
+        r#"
+        p Time.at(0, 500, :millisecond).to_f
+        p Time.at(0, 500, :nanosecond).to_f
+        md = "2024-01-31".match(/(\d+)-(\d+)-(\d+)/)
+        p md[1, 2]
+        p md[1..]
+        p(md == "2024-01-31".match(/(\d+)-(\d+)-(\d+)/))
+        p 5.0e-7
+        p 1.0e20
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "0.5\n5.0e-07\n[\"01\", \"31\"]\n[\"01\", \"31\"]\ntrue\n5.0e-07\n1.0e+20\n"
+    );
+}
+
+#[test]
 fn range_size_covers_endless_and_float_ends() {
     let result = run_ruby(
         r#"

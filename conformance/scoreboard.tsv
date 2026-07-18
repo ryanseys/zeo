@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8881d9b
-# PASS=1535 FAIL_OUTPUT=382 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=10bfe81
+# PASS=1539 FAIL_OUTPUT=378 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1115,7 +1115,7 @@ massign_splat_rhs	PASS	-	-
 massign_underfill_nil	PASS	-	-
 match_tilde_pre_post	PASS	-	-
 matchdata_gsub_named_backref	FAIL_OUTPUT	expect	-
-matchdata_index_eq	FAIL_OUTPUT	expect	arity-panic
+matchdata_index_eq	PASS	-	-
 matchdata_methods	FAIL_OUTPUT	expect	missing-method:regexp
 matchdata_named_groups	FAIL_OUTPUT	expect	missing-method:names
 matchdata_value_varargs_symstr	PASS	-	-
@@ -1514,7 +1514,7 @@ random_float_seed	PASS	-	-
 random_inspect	PASS	-	-
 random_methods	FAIL_OUTPUT	expect	auto-ceefc00e
 random_rand_argument	PASS	-	-
-random_seed_range_base64_pad	FAIL_OUTPUT	expect	arity-panic
+random_seed_range_base64_pad	PASS	-	-
 range	PASS	-	-
 range_and_array_range_args	FAIL_OUTPUT	expect	auto-176da354
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
@@ -1871,10 +1871,10 @@ thread_sized_queue	FAIL_OUTPUT	expect	missing-const:SizedQueue
 thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	FAIL_OUTPUT	expect	missing-method:asctime
-time_at_in_offset	FAIL_OUTPUT	expect	-
+time_at_in_offset	FAIL_OUTPUT	expect	auto-1a5f778a
 time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-434a127c
-time_at_subsec	FAIL_OUTPUT	expect	-
-time_at_unit_form	FAIL_OUTPUT	expect	arity-panic
+time_at_subsec	PASS	-	-
+time_at_unit_form	PASS	-	-
 time_between_clamp	PASS	-	-
 time_compare_nontime	PASS	-	-
 time_deconstruct_keys	FAIL_OUTPUT	expect	missing-method:deconstruct_keys
@@ -1891,7 +1891,7 @@ time_round_floor_ceil	FAIL_OUTPUT	expect	missing-method:round
 time_strftime_directives	FAIL_OUTPUT	expect	-
 time_strftime_epoch_zone	PASS	-	-
 time_strftime_long_format	PASS	-	-
-time_strftime_z_minimal	FAIL_OUTPUT	expect	-
+time_strftime_z_minimal	FAIL_OUTPUT	expect	auto-1a5f778a
 time_subsec_offset_family	PASS	-	-
 time_subsec_utc	PASS	-	-
 time_to_a_to_r	FAIL_OUTPUT	expect	missing-method:to_a

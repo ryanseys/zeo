@@ -56,9 +56,17 @@ builtin_methods! {
         Ok(RubyValue::Str(string_new(encode(data.as_bytes(), STD))))
     }
     "urlsafe_encode64" => fn urlsafe_encode64(_recv, args, _block) {
-        arity!(args, 1);
+        arity!(args, 1..=2);
         let data = str_arg(&args[0], "urlsafe_encode64")?;
-        Ok(RubyValue::Str(string_new(encode(data.as_bytes(), URL))))
+        let mut out = encode(data.as_bytes(), URL);
+        // A `padding: false` keyword strips the trailing '=' padding.
+        if let Some(RubyValue::Hash(h)) = args.get(1) {
+            let pad = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("padding")));
+            if matches!(pad, RubyValue::Bool(false)) {
+                out = out.trim_end_matches('=').to_string();
+            }
+        }
+        Ok(RubyValue::Str(string_new(out)))
     }
     "decode64" => fn decode64(_recv, args, _block) {
         arity!(args, 1);

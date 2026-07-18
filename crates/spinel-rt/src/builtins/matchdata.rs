@@ -20,9 +20,27 @@ fn recv_md(recv: &RubyValue) -> crate::regexp::RMatchData {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "[]" => fn get(recv, args, _block) {
+    // Two MatchData are equal when they cover the same string with the same
+    // group spans (CRuby also checks the regexp; same-string-same-spans is the
+    // observable equivalent here).
+    "==" | "eql?" => fn eq(recv, args, _block) {
         arity!(args, 1);
-        Ok(crate::regexp::matchdata_get(&recv_md(recv), &args[0]))
+        let RubyValue::MatchData(other) = &args[0] else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let a = recv_md(recv);
+        Ok(RubyValue::Bool(a.haystack == other.haystack && a.groups == other.groups))
+    }
+    // `md[i]` / `md[name]` -- a single group; `md[start, length]` / `md[range]`
+    // slice the group array (delegated to `Array#[]`, like CRuby).
+    "[]" => fn get(recv, args, _block) {
+        arity!(args, 1..=2);
+        let md = recv_md(recv);
+        if args.len() == 2 || matches!(&args[0], RubyValue::Range(..)) {
+            let all = crate::regexp::matchdata_to_a(&md);
+            return crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), args, None);
+        }
+        Ok(crate::regexp::matchdata_get(&md, &args[0]))
     }
     "pre_match" => fn pre_match(recv, args, _block) {
         arity!(args, 0);

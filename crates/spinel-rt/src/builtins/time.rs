@@ -556,9 +556,39 @@ builtin_methods! {
             .expect("system clock before the Unix epoch");
         Ok(time_value(d.as_secs() as i64, d.subsec_nanos(), None))
     }
+    // `Time.at(sec)` / `Time.at(sec, frac[, unit])` -- the second argument is a
+    // fractional count in `unit` (default `:microsecond`; also `:millisecond`,
+    // `:nanosecond`), added to the base seconds exactly.
     "at" => fn time_at(_recv, args, _block) {
-        arity!(args, 1..=2);
-        let (num, den) = exact_seconds(&args[0])?;
+        arity!(args, 1..=3);
+        use num_bigint::BigInt;
+        let (base_num, base_den) = exact_seconds(&args[0])?;
+        let (num, den) = match args.get(1) {
+            None => (base_num, base_den),
+            Some(frac) => {
+                let scale = match args.get(2) {
+                    None => 1_000_000i64,
+                    Some(RubyValue::Symbol(s)) => match s.name().as_str() {
+                        "millisecond" => 1_000,
+                        "microsecond" | "usec" => 1_000_000,
+                        "nanosecond" | "nsec" => 1_000_000_000,
+                        other => return Err(raise_error(
+                            "ArgumentError",
+                            format!("unexpected unit: {other}"),
+                        )),
+                    },
+                    Some(other) => return Err(raise_error(
+                        "ArgumentError",
+                        format!("unexpected unit: {}", crate::builtins::class_name_of(other)),
+                    )),
+                };
+                let (cnum, cden) = exact_seconds(frac)?;
+                let frac_den = &cden * BigInt::from(scale);
+                let total_num = &base_num * &frac_den + &cnum * &base_den;
+                let total_den = &base_den * &frac_den;
+                (total_num, total_den)
+            }
+        };
         Ok(time_exact(num, den, None))
     }
     // `Time.utc(y, mo, d, h, mi, s)` / `Time.gm(...)`. A 7th argument is

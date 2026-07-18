@@ -641,6 +641,12 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> RubyValue {
         RubyValue::Int(i) => matchdata_group(m, *i),
         RubyValue::Symbol(s) => matchdata_group_by_name(m, &s.name()),
         RubyValue::Str(s) => matchdata_group_by_name(m, &s.lock().to_utf8_lossy()),
+        // `md[range]` slices the group array, like `to_a[range]`.
+        RubyValue::Range(..) => {
+            let all = matchdata_to_a(m);
+            crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), std::slice::from_ref(key), None)
+                .unwrap_or(RubyValue::Nil)
+        }
         other => panic!("MatchData#[] expected an Int/Symbol/String key, got {}", other.to_display_string()),
     }
 }

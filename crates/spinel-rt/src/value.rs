@@ -130,10 +130,12 @@ fn float_to_display_string(f: f64) -> String {
         } else {
             format!("{mantissa}.0")
         };
+        // Ruby zero-pads the exponent to at least two digits (`5.0e-07`,
+        // `1.0e+20`); Rust's `{:e}` does not.
         return if let Some(neg) = exp.strip_prefix('-') {
-            format!("{mantissa}e-{neg}")
+            format!("{mantissa}e-{neg:0>2}")
         } else {
-            format!("{mantissa}e+{exp}")
+            format!("{mantissa}e+{exp:0>2}")
         };
     }
     let s = f.to_string();
