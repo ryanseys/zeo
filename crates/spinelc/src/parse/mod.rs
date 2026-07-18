@@ -41,7 +41,7 @@ type PResult<T> = Result<T, String>;
 /// with no optional-argument `Some(...)`-wrapping smarts (fine for
 /// required-only signatures like this one; a separate, unrelated fix if a
 /// class's own `initialize` needs real optional-param support via `.new`).
-const EXCEPTION_PRELUDE: &str = r##"
+const BUILTIN_EXCEPTIONS_RB: &str = r##"
 class Exception
   def initialize(msg = nil)
     @message = msg
@@ -275,9 +275,9 @@ pub fn parse_and_lower_with(
         hir.script_encoding = encoding_const_name(&name)?.map(str::to_string);
     }
     hir.frozen_string_literal = magic_frozen_string_literal(source);
-    let mut statements = parse_and_lower_into(&mut hir, EXCEPTION_PRELUDE)
-        .map_err(|e| format!("internal error in spinelc's built-in exception prelude (this is a spinelc bug): {e}"))?;
-    hir.prelude_len = statements.len();
+    let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB)
+        .map_err(|e| format!("internal error in spinelc's built-in exception classes (this is a spinelc bug): {e}"))?;
+    hir.builtin_exceptions_len = statements.len();
     statements.extend(loader::lower_main_file(
         &mut hir,
         source,
@@ -286,11 +286,11 @@ pub fn parse_and_lower_with(
         package_dirs,
     )?);
     // Synthesized base classes (the Struct/Data super split) are spliced in
-    // right after the prelude -- before every main statement -- so each base
-    // is registered ahead of the leaf that inherits it.
+    // right after the built-in exceptions -- before every main statement -- so
+    // each base is registered ahead of the leaf that inherits it.
     let synth = std::mem::take(&mut hir.synth_classes);
     if !synth.is_empty() {
-        let at = hir.prelude_len;
+        let at = hir.builtin_exceptions_len;
         statements.splice(at..at, synth);
     }
     let root = hir.push(HirNode::Program(statements));

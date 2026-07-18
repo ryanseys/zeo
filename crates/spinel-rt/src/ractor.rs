@@ -36,7 +36,7 @@
 //! is a loud panic at join (the common failure -- an unshareable `#send`
 //! payload -- is the catchable error); `Ractor.receive` works only inside a
 //! spawned Ractor (the main Ractor has no incoming port here); errors use
-//! the flat prelude class `RactorError` standing in for `Ractor::Error`.
+//! the flat exception class `RactorError` standing in for `Ractor::Error`.
 
 use crate::{RubyValue, Signal};
 use parking_lot::Mutex as PlMutex;

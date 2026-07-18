@@ -371,9 +371,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     // via hardcoded codegen paths rather than the dynamic registry, so
     // `respond_to?` against one always reports `false`, a separate,
     // pre-existing-shaped scope-cut, not a regression this introduces).
-    // BOOTSTRAP classes (the exception prelude) are excluded too: their
+    // BOOTSTRAP classes (the built-in exceptions) are excluded too: their
     // structs/impls/registration now live once in `spinel-rt`, installed by
-    // `spinel_rt::register_prelude` (see `main` below). The compiler still keeps
+    // `ClassRegistry::with_core` (see `main` below). The compiler still keeps
     // their HIR for name resolution, `super` inlining, and materializing user
     // subclasses -- it just no longer EMITS them into every program.
     let classes = compiler
@@ -438,7 +438,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 
     let mut registrations: Vec<TokenStream> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
-        // BOOTSTRAP classes are registered by `spinel_rt::register_prelude`, not
+        // BOOTSTRAP classes are registered by `ClassRegistry::with_core`, not
         // per-program -- skip their whole registration/metadata block here.
         if idx == 0 || class.is_builtin || class.is_bootstrap {
             continue;
@@ -668,7 +668,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // identical builtin registrations while preserving full reopen parity.
             let is_ext = class.feature_gate.is_some();
             let ancestors_default =
-                class.ancestors == spinel_abi::default_builtin_ancestors(ClassId(id));
+                class.ancestors == spinel_abi::declared_ancestors(ClassId(id));
             let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
                 quote! {
                     __registry.register(
@@ -728,42 +728,25 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#builtin_reopens)*
 
         fn main() {
-            let mut __registry = spinel_rt::ClassRegistry::new();
-            // The always-on builtin classes/modules with their default
-            // hierarchy -- installed once from `spinel-rt` instead of ~540
-            // identical `register(...)` calls per program. Require-gated exts
-            // and reopen-modified builtins still register below (the latter as
-            // an override that replaces the default entry).
-            spinel_rt::register_builtins(&mut __registry);
+            // A registry pre-populated with the CORE world -- the always-on
+            // builtin classes/modules AND the built-in exception hierarchy,
+            // installed once from `spinel-rt` instead of the ~540 identical
+            // `register(...)` calls plus ~6,600 lines of `ruby_class!` blocks
+            // every program used to emit. Their ids are the ones `spinel-abi`
+            // reserves and the compiler asserts it assigned identically (see
+            // `analyze`).
+            let mut __registry = spinel_rt::ClassRegistry::with_core();
+            // Require-gated exts and reopen-modified builtins register on top
+            // (the latter as an override that replaces the default entry),
+            // then the program's own user classes.
             #(#builtin_registrations)*
-            // The built-in exception hierarchy (`Exception`, `StandardError`,
-            // the whole tree) -- installed once from `spinel-rt` instead of the
-            // ~6,600 lines of `ruby_class!` blocks every program used to emit.
-            // Its ids are the ones `spinel-abi` reserves and the compiler
-            // asserts it assigned identically (see `analyze`).
-            spinel_rt::register_prelude(&mut __registry);
             #(#registrations)*
             spinel_rt::install_class_registry(__registry);
-            // Float::INFINITY/NAN/EPSILON/... and Math::PI/E (Phase 17.1)
-            // -- the 15.3 const machinery resolves the OWNERS at compile
-            // time; only the values need seeding.
-            spinel_rt::seed_numeric_constants();
-            // `Encoding::UTF_8`/`US_ASCII`/`ASCII_8BIT`/... -- same
-            // resolve-owner-at-compile-time, seed-values-at-runtime story.
-            spinel_rt::seed_encoding_constants();
-            // `Regexp::IGNORECASE`/`EXTENDED`/`MULTILINE` -- the flag bits
-            // accepted by `Regexp.new`, same resolve-owner-at-compile-time story.
-            spinel_rt::seed_regexp_constants();
-            // `ARGV` + `STDOUT`/`STDERR`/`$stdout`/`$stderr` (CRuby startup
-            // parity) -- reads resolve through the runtime const/global
-            // fallbacks, no compile-time registration.
-            spinel_rt::seed_argv();
-            spinel_rt::seed_stdio();
-            spinel_rt::seed_io_constants();
-            // `ENV` and the `Process::CLOCK_*` constants (plan P-B) -- same
-            // runtime-fallback story as ARGV/STDOUT above.
-            spinel_rt::seed_env();
-            spinel_rt::seed_process();
+            // Seed the CORE constants (`Float::INFINITY`, `Encoding::UTF_8`,
+            // `Regexp::IGNORECASE`, `ARGV`, `STDOUT`/`$stdout`, `ENV`,
+            // `Process::CLOCK_*`) now that the registry is in place -- their
+            // owners resolved at compile time; only the values need installing.
+            spinel_rt::install_core_constants();
             // The runtime raises real, catchable exceptions (NoMethodError,
             // ArgumentError, TypeError, StopIteration, ...) by constructing
             // them itself from the registered classes -- see

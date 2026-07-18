@@ -30,21 +30,19 @@
 //! against already-built deps" shape tools like `trybuild`/`compiletest` use
 //! for the identical reason.
 //!
-//! `ensure_spinel_rt_built` (a `std::sync::OnceLock`-guarded `cargo build -p
-//! spinel-rt`) is what keeps this correct rather than merely fast: it
-//! guarantees the rlib this reads is fresh relative to `spinel-rt`'s current
-//! source, regardless of how this function's CALLER was invoked (the
-//! in-process test harness has no other guarantee spinel-rt was built
-//! first, since `spinelc`'s own `Cargo.toml` has no ordinary dependency on
-//! it -- see that crate's dev-dependency addition). Run once per process
-//! (cheap and idempotent every time after the first -- Cargo's own
-//! fingerprinting makes a no-op rebuild check near-instant), not once per
-//! call, so the hundreds of calls a test suite makes don't each pay a
-//! `cargo` subprocess-startup cost just to confirm nothing changed.
+//! `build_binary` is PURE: it only links an already-built `spinel-rt` and errors
+//! clearly if the artifact is missing. It never runs cargo and never mutates the
+//! workspace, so parallel `spinelc` subprocesses never contend on Cargo's
+//! exclusive build-directory lock. Building the runtime is a separate, explicit
+//! step (`ensure_runtime_built`) that an entrypoint which can't assume a prior
+//! workspace build calls first -- the CLI (`main.rs`) on a fresh tree, and the
+//! in-process test harness (`tests/support`), since `spinelc`'s own `Cargo.toml`
+//! has no dependency on `spinel-rt`. A driver that prebuilds the workspace (the
+//! conformance harness's `prebuild`) needs neither.
 //!
-//! Lives in the library (not `main.rs`) so the in-process test harness
-//! (`tests/support`) can call the exact same function the CLI uses, rather
-//! than a re-derived copy of the same logic.
+//! `ensure_runtime_built` lives here (not `main.rs`) so the CLI and the
+//! in-process test harness call the exact same logic rather than re-derived
+//! copies.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -67,42 +65,38 @@ fn target_dir() -> PathBuf {
     }
 }
 
-static CRATES_BUILT: OnceLock<std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>> =
-    OnceLock::new();
-
-/// Builds one workspace crate (debug profile) into the shared workspace
-/// `target/` exactly once per process per crate -- see this module's docs
-/// for why this can't just be assumed already done. `spinel-rt` always goes
-/// through here; a native package's `[native]` crate (Phase 14.3) does too,
-/// the first time a program requiring it is built. Every subsequent call in
-/// the same process (the common case: a test binary making hundreds of
-/// `build_binary` calls) is a cached map hit.
-fn ensure_crate_built(name: &str) -> Result<(), String> {
-    // A harness that already built the workspace can say so, and skip this
-    // entirely. The memoization below is per-PROCESS, which is worth nothing to
-    // a driver that runs `spinelc` as a subprocess per case: the conformance
-    // suite pays this 1,819 times at ~84ms each (~153s of CPU), and because
-    // Cargo takes an exclusive lock on the whole build directory, those calls
-    // serialize against each other instead of just being redundant.
-    if std::env::var_os("SPINELC_ASSUME_BUILT").is_some() {
-        return Ok(());
-    }
-    let map = CRATES_BUILT.get_or_init(Default::default);
-    let mut map = map.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(cached) = map.get(name) {
-        return cached.clone();
-    }
-    let result = match std::process::Command::new("cargo")
-        .args(["build", "--quiet", "-p", name])
-        .current_dir(workspace_root())
-        .status()
-    {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("`cargo build -p {name}` exited with {status}")),
-        Err(e) => Err(format!("running `cargo build -p {name}`: {e}")),
-    };
-    map.insert(name.to_string(), result.clone());
-    result
+/// Ensure the `spinel-rt` runtime artifact `build_binary` links against exists.
+///
+/// `build_binary` is pure -- it only LINKS an already-built runtime -- so an
+/// entrypoint that can't assume a prior workspace build calls this first: the
+/// CLI on a fresh tree (so `spinelc foo.rb` just works), and the in-process e2e
+/// harness (`cargo test -p spinelc` doesn't build `spinel-rt`, since `spinelc`
+/// has no cargo dependency on it). It builds AT MOST ONCE per process, and ONLY
+/// when the artifact is actually missing -- so under a driver that already
+/// prebuilt the workspace (the conformance harness), every `spinelc` subprocess
+/// just does a cheap existence check, with none of the old
+/// env-var/per-crate-memoization machinery and none of the cargo build-lock
+/// contention that made a per-call `cargo build` cost the conformance suite ~153s.
+pub fn ensure_runtime_built() -> Result<(), String> {
+    static ONCE: OnceLock<Result<(), String>> = OnceLock::new();
+    ONCE.get_or_init(|| {
+        // Already built -- the common case (harness prebuild, or a prior build
+        // in this tree). `cargo build -p spinel-rt` co-produces the rlib and the
+        // dylib, so the rlib's presence answers for both linkages.
+        if linkable_for("spinel-rt", Linkage::Static).is_ok() {
+            return Ok(());
+        }
+        match std::process::Command::new("cargo")
+            .args(["build", "--quiet", "-p", "spinel-rt"])
+            .current_dir(workspace_root())
+            .status()
+        {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("`cargo build -p spinel-rt` exited with {status}")),
+            Err(e) => Err(format!("running `cargo build -p spinel-rt`: {e}")),
+        }
+    })
+    .clone()
 }
 
 /// How a generated program links the runtime.
@@ -167,7 +161,8 @@ fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
     let rlib = debug.join(format!("lib{underscored}.rlib"));
     if !rlib.exists() {
         return Err(format!(
-            "expected {} to exist after building {crate_name} -- was it built into a different target directory?",
+            "{crate_name} is not built: expected {} -- run `cargo build -p {crate_name}` \
+             (or call `ensure_runtime_built` first)",
             rlib.display()
         ));
     }
@@ -175,8 +170,10 @@ fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
 }
 
 pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Result<(), String> {
-    ensure_crate_built("spinel-rt")?;
-
+    // Pure: only LINKS the already-built runtime, never runs cargo or mutates
+    // the workspace. Callers that can't assume a prior build (`spinelc`'s own
+    // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
+    // prebuilds (the conformance harness) needs nothing here.
     let runtime = linkable_for("spinel-rt", linkage)?;
     let deps_dir = target_dir().join("debug").join("deps");
 
@@ -353,53 +350,15 @@ fn cache_path(rust_source: &str, linkage: Linkage) -> Result<PathBuf, String> {
     let root = cache_dir();
     std::fs::create_dir_all(&root).map_err(|e| format!("creating {}: {e}", root.display()))?;
     let dir = root.join(format!("{generation:016x}"));
-    // `create_dir`, not `create_dir_all`: the AlreadyExists error is the signal
-    // for whether this process is the one that opened a new generation.
-    let we_created = match std::fs::create_dir(&dir) {
-        Ok(()) => true,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
-        Err(e) => return Err(format!("creating {}: {e}", dir.display())),
-    };
-    if we_created {
-        sweep_stale_generations(&dir);
-    }
+    // Idempotent: many processes publish into the same generation concurrently,
+    // and each just ensures the directory exists. Stale generations are NOT
+    // swept here -- a `remove_dir_all` in the build hot path could delete a
+    // directory a sibling process is still writing rustc output into (seen as
+    // spurious FAIL_RUSTC across the corpus). Reclaiming disk is an explicit,
+    // between-runs operation instead (`xtask conformance clean-cache`, which
+    // removes this same `target/spinelc-bin-cache` tree).
+    std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     Ok(dir.join(format!("{:016x}", fnv1a64(rust_source.as_bytes()))))
-}
-
-/// Best-effort removal of cache generations that are provably not in use, run
-/// only by whichever process first creates a new generation.
-///
-/// Two guards, because a sweep is a `remove_dir_all` and the harness runs a
-/// dozen `spinelc` processes at once:
-///
-/// - only the process that actually created the new generation sweeps, so 1800
-///   conformance cases don't each race to delete the same directories;
-/// - a generation is only swept once nothing has touched it for an hour.
-///   Writing an entry bumps the directory's mtime, so a generation any live run
-///   is publishing into is never a candidate. Without this, a process whose
-///   runtime rebuild landed a moment earlier would delete the generation its
-///   siblings were still building into, and their `rustc` output would vanish
-///   mid-write (seen as spurious FAIL_RUSTC across the conformance corpus).
-///
-/// A generation that stays warm is simply swept on some later run; the cost of
-/// waiting is disk, and the cost of being wrong is a broken build.
-fn sweep_stale_generations(live: &Path) {
-    const STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(60 * 60);
-    let Ok(entries) = std::fs::read_dir(cache_dir()) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.path() == live {
-            continue;
-        }
-        let untouched_for = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|t| t.elapsed().unwrap_or_default());
-        if matches!(untouched_for, Ok(d) if d > STALE_AFTER) {
-            let _ = std::fs::remove_dir_all(entry.path());
-        }
-    }
 }
 
 /// Hard-links the cached binary to where the caller wanted it, falling back to

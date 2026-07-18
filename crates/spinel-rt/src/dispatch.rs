@@ -396,9 +396,9 @@ pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyVal
 /// `None` for modules and builtins.
 ///
 /// The leading `ClassId` lets ONE constructor back many classes -- the native
-/// exception prelude registers every exception class with the same
+/// exception hierarchy registers every exception class with the same
 /// `RubyException`-allocating fn, which reads the id from here instead of a
-/// per-class Rust type (see `crate::prelude`).
+/// per-class Rust type (see `crate::builtins::exception`).
 pub type ConstructorFn = fn(ClassId, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 /// A method defined by REOPENING a builtin class (Phase 16.3, `class String;
@@ -533,11 +533,11 @@ impl ClassRegistry {
 
     /// Build an exception instance from a class NAME + message -- the runtime's
     /// own replacement for the exception factory that generated `main()` used
-    /// to install. Every prelude exception class registers its `__construct`
-    /// `ConstructorFn` through `ruby_class!`'s `__register`, so the runtime can
+    /// to install. Every built-in exception class registers its constructor
+    /// `ConstructorFn` through `register_exceptions`, so the runtime can
     /// construct the object itself: allocate the struct and run `initialize(msg)`
     /// through the SAME trampoline `SomeError.new(msg)` uses. An unknown name is
-    /// a spinel-rt bug (a `raise_error` site naming a class no prelude defines),
+    /// a spinel-rt bug (a `raise_error` site naming a class no exception defines),
     /// exactly as the old factory's `panic!` arm caught. `Exception#initialize`
     /// only assigns `@message` and cannot signal, so a `Signal` here is a bug.
     pub fn construct_exception(&self, class_name: &str, msg: String) -> RubyValue {
@@ -553,7 +553,7 @@ impl ClassRegistry {
             )
             .expect("Exception#initialize can't signal"),
             // No such class registered: a `raise_error` site naming a class no
-            // prelude defines (a spinel-rt bug), or a partial test registry.
+            // exception defines (a spinel-rt bug), or a partial test registry.
             // Panic with the full message -- the same uncatchable fallback the
             // old registry-less `raise_error` used, so the real error still
             // surfaces rather than being masked by an "unknown class" note.
@@ -1018,7 +1018,8 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
 /// Construct an instance of the class with id `id`, running its `initialize`.
 /// Codegen calls this at every raise/construct site for a BOOTSTRAP exception
 /// class, since those classes no longer have a generated Rust struct to name --
-/// the native prelude registered their `ConstructorFn` (see `crate::prelude`).
+/// the native exceptions registered their `ConstructorFn` (see
+/// `crate::builtins::exception`).
 /// A missing constructor is a spinelc bug (a bootstrap id with no registrar).
 pub fn construct_by_class_id(
     id: ClassId,
@@ -1206,7 +1207,7 @@ pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
 /// The exhausted-iteration raise (Phase 17.2): a rescuable `StopIteration`
 /// whose `result` is `result` (a fresh instance per raise -- CRuby rebuilds
 /// one from `stop_exc` each time too). Constructs `StopIteration.new(msg)` via
-/// the registry, then stamps the result through the prelude class's own
+/// the registry, then stamps the result through the exception class's own
 /// `__set_result` -- the logic generated `main()` used to install as a second
 /// factory, now that the runtime constructs exceptions itself. Loud panic
 /// registry-less (unit tests).

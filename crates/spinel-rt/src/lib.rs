@@ -4,6 +4,7 @@
 //! for the full design writeup.
 
 mod arith;
+mod bootstrap;
 mod builtins;
 mod civars;
 mod collections;
@@ -18,7 +19,6 @@ mod globals;
 mod handling;
 mod lastmatch;
 mod method_params;
-mod prelude;
 mod ractor;
 mod regexp;
 mod rproc;
@@ -30,10 +30,7 @@ mod value;
 pub use arith::*;
 pub use collections::*;
 pub use encoding::{EncodingId, StrBuf};
-pub use builtins::env::seed_env;
-pub use builtins::io::{seed_io_constants, seed_stdio};
-pub use builtins::process::seed_process;
-pub use constants::{const_get, const_set, seed_argv};
+pub use constants::{const_get, const_set};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
@@ -46,11 +43,9 @@ pub use builtins::kernel::{
 };
 pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
-pub use builtins::encoding::seed_encoding_constants;
-pub use builtins::numeric::seed_numeric_constants;
-pub use builtins::regexp::seed_regexp_constants;
 pub use builtins::BuiltinMethodFn;
-pub use prelude::{register_builtins, register_prelude};
+pub use builtins::exception::register_exceptions;
+pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
     downcast_robj, install_class_registry,
@@ -230,7 +225,7 @@ macro_rules! ruby_class {
                 // A generated class has its own Rust type, so it ignores the
                 // id the `ConstructorFn` contract passes and uses its own
                 // `Self::CLASS_ID`. The parameter exists so ONE native
-                // constructor can back many classes (the exception prelude);
+                // constructor can back many classes (the built-in exceptions);
                 // see `ConstructorFn`.
                 _class: $crate::ClassId,
                 args: &[$crate::RubyValue],

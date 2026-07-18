@@ -138,6 +138,11 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
+    // Everything past here LINKS the runtime, so make sure it's built. Cheap
+    // existence check when it already is (the common case); a one-time
+    // `cargo build -p spinel-rt` on a fresh tree so `spinelc foo.rb` just works.
+    spinelc::build::ensure_runtime_built()?;
+
     // `-e`: compile to a throwaway binary, run it, and exit with ITS status
     // (stdout/stderr stream straight through) -- the differential-harness path.
     if matches!(args.source, Source::Eval(_)) {

@@ -33,7 +33,7 @@ pub struct ClassInfo {
     pub name: String,
     /// Which `Ruby::Box` this class/module is DEFINED in -- `0` is the main
     /// box (where the user's own top-level program runs; builtins and the
-    /// exception prelude also live at box 0, distinguished by
+    /// built-in exceptions also live at box 0, distinguished by
     /// `is_builtin`/`is_bootstrap`). Always `0` until Phase 18 populates it
     /// for box-required/box-eval'd definitions; carried from day one (Phase
     /// 15.1) so every consumer is already box-shaped -- see
@@ -55,11 +55,11 @@ pub struct ClassInfo {
     /// via the qualified form (or vice versa) keeps its original cref for
     /// all bodies.
     pub qualified_def: bool,
-    /// `true` for classes from the built-in exception prelude
-    /// (`parse::EXCEPTION_PRELUDE`) -- together with `is_builtin`, the
+    /// `true` for classes from the built-in exceptions
+    /// (`parse::BUILTIN_EXCEPTIONS_RB`) -- together with `is_builtin`, the
     /// "defined before any user program runs" set that stays visible inside
     /// EVERY box (CRuby's dup-from-master rule; see the plan's Part 14).
-    /// Marked by `analyze` via `Hir::prelude_len`.
+    /// Marked by `analyze` via `Hir::builtin_exceptions_len`.
     pub is_bootstrap: bool,
     /// `None` for `Object` (the implicit root) and for every MODULE (a
     /// module has no superclass at all, not even implicitly `Object` --
@@ -317,7 +317,7 @@ impl Compiler {
     ///
     /// Unqualified rule, mirroring CRuby: the lexical chain
     /// innermost-outward, then the box's own top level, then the BOOTSTRAP
-    /// set (builtins + the exception prelude -- the "defined before any
+    /// set (builtins + the built-in exceptions -- the "defined before any
     /// user program runs" classes every box sees; a box's own definition of
     /// the same name shadows it, exactly like CRuby's per-box constant
     /// overlay). First-registered wins within one scope, same as the old
@@ -528,8 +528,8 @@ impl Compiler {
     /// static `(recv).method()` call. False for the four kinds that have none,
     /// each of which is instead a boxed `RubyValue` dispatched dynamically:
     /// MODULES (no instances), BUILT-INs (their repr is a `RubyValue` variant),
-    /// `Object` (the runtime root, name-keyed ivars), and -- since the exception
-    /// prelude moved into `spinel-rt` -- BOOTSTRAP classes (constructed via
+    /// `Object` (the runtime root, name-keyed ivars), and -- since the built-in
+    /// exceptions moved into `spinel-rt` -- BOOTSTRAP classes (constructed via
     /// `construct_by_class_id`). The single source of truth for "is there a
     /// struct here?", which several `TyKind::Object` and `.new` sites gate on.
     pub fn has_generated_struct(&self, cid: ClassId) -> bool {

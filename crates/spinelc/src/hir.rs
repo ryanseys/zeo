@@ -43,13 +43,13 @@ pub struct Hir {
     /// `activate_feature`.
     pub activated_features: std::collections::HashSet<String>,
     /// How many of the root `Program`'s leading statements came from the
-    /// built-in exception prelude (`parse::EXCEPTION_PRELUDE`), set by
+    /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
     /// `parse_and_lower_with` (Phase 15.1). `analyze` marks the classes
     /// those statements register as `is_bootstrap` -- the AOT analogue of
     /// CRuby's "defined before any user program runs" set, which stays
     /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
     /// bootstrap fallback).
-    pub prelude_len: usize,
+    pub builtin_exceptions_len: usize,
     /// How many `Ruby::Box`es the loader allocated (Phase 18) -- box ids
     /// run 1..=boxes (0 is the root program). `analyze` creates one
     /// top-level surrogate `ClassInfo` per id.

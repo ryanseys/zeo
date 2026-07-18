@@ -26,3 +26,6 @@
 # fingerprint and rebuild the runtime on every alternation.
 [build]
 rustflags = ["-C", "prefer-dynamic"]
+
+[alias]
+xtask = "run --package xtask --"

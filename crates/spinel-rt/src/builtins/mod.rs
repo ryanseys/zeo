@@ -29,6 +29,7 @@ pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod enumerable;
 pub(crate) mod enumerator;
+pub(crate) mod exception;
 pub(crate) mod float;
 pub(crate) mod format;
 pub(crate) mod hash;

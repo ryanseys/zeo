@@ -6,6 +6,7 @@
 
 pub(crate) mod exec;
 mod oracle;
+mod runlock;
 mod runner;
 mod scoreboard;
 mod skiplist;
@@ -108,6 +109,7 @@ const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
   triage        [--top N] [--bucket NAME]   (--bucket lists each test + its stderr tail)\n\
   show <id>\n\
   oracle-verify [--dir PATH]\n\
+  clean-cache   remove the compiled-program cache (target/spinelc-bin-cache)\n\
   --help, -h    show this message\n\
 corpus root: --dir, else $SPINEL_TEST_DIR";
 
@@ -128,6 +130,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         "triage" => cmd_triage(root, &opts),
         "show" => cmd_show(root, &opts),
         "oracle-verify" => cmd_oracle_verify(root, &opts),
+        "clean-cache" => cmd_clean_cache(root, &opts),
         other => Err(format!("unknown command {other:?}\n{USAGE}")),
     };
     match result {
@@ -190,7 +193,76 @@ fn open_session(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, Str
     })
 }
 
+/// The workspace target directory (honoring `CARGO_TARGET_DIR`, else
+/// `<root>/target`) -- matches how `spinelc`'s `build` module locates it, so the
+/// run lock and the cache both land where `build_binary` expects.
+fn target_dir(root: &Path) -> PathBuf {
+    std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"))
+}
+
+/// Remove the compiled-program cache (`target/spinelc-bin-cache`), reclaiming
+/// disk. Fully regenerable, so this is always safe between runs; the old
+/// automatic mid-build sweep was removed because a `remove_dir_all` in the build
+/// hot path could delete a generation a sibling process was still writing into.
+fn cmd_clean_cache(root: &Path, _opts: &Opts) -> Result<ExitCode, String> {
+    // Mirrors `spinelc::build`'s `cache_dir` -- kept in sync by name.
+    let cache = target_dir(root).join("spinelc-bin-cache");
+    let Ok(entries) = std::fs::read_dir(&cache) else {
+        println!("nothing to clean: {} does not exist", cache.display());
+        return Ok(ExitCode::SUCCESS);
+    };
+    let mut generations = 0u64;
+    let mut bytes = 0u64;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_dir = path.is_dir();
+        bytes += dir_size(&path);
+        // A generation is a directory; tolerate stray files too (e.g. a macOS
+        // `.DS_Store`), which `remove_dir_all` would reject.
+        let removed = if is_dir {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed.map_err(|e| format!("removing {}: {e}", path.display()))?;
+        if is_dir {
+            generations += 1;
+        }
+    }
+    println!(
+        "cleaned {generations} cache generation(s), reclaimed {}",
+        human_bytes(bytes)
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Total size in bytes of a file or directory tree (best-effort; unreadable
+/// entries count as 0).
+fn dir_size(path: &Path) -> u64 {
+    match std::fs::read_dir(path) {
+        Ok(entries) => entries.flatten().map(|e| dir_size(&e.path())).sum(),
+        Err(_) => std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
+    }
+}
+
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
+    let mut value = n as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
+}
+
 fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
+    // Hold an advisory run lock for the whole run so a second `conformance run`
+    // can't silently contend on the shared target/binary-cache or race the
+    // scoreboard. Released when `_lock` drops at the end of this function.
+    let _lock = runlock::RunLock::acquire(&target_dir(root))?;
     let Session {
         suite,
         cases,

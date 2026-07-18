@@ -1,18 +1,18 @@
 //! The built-in exception hierarchy, hand-written natively.
 //!
 //! Every generated program used to embed ~6,600 lines of `ruby_class!`-expanded
-//! prelude classes (`Exception`, `StandardError`, the whole tree) plus a factory
-//! -- ~76% of the smallest program, recompiled cold once per binary. Those
-//! classes are FIXED (the same in every program), so they belong compiled once,
-//! here. `register_prelude` installs them into a program's `ClassRegistry` at the
-//! ids `spinel-abi` reserves for them (`EXCEPTION_PRELUDE_CLASSES`), which the
-//! compiler independently assigns the same way and asserts.
+//! exception classes (`Exception`, `StandardError`, the whole tree) plus a
+//! factory -- ~76% of the smallest program, recompiled cold once per binary.
+//! Those classes are FIXED (the same in every program), so they belong compiled
+//! once, here. `register_exceptions` installs them into a program's
+//! `ClassRegistry` at the ids `spinel-abi` reserves for them (`EXCEPTION_CLASSES`),
+//! which the compiler independently assigns the same way and asserts.
 //!
 //! One native `RubyException` type backs all of them, distinguished by its
 //! `class_id`; the six `Exception` methods (`initialize`/`message`/`to_s`/
 //! `backtrace`/`full_message`/`inspect`) plus `StopIteration`'s two are shared
 //! fn pointers that read the receiver's class dynamically. The compiler keeps the
-//! prelude HIR (for resolving names, inlining `super`, and materializing user
+//! exception HIR (for resolving names, inlining `super`, and materializing user
 //! subclasses), so a `class MyError < StandardError` is unchanged -- only the
 //! fixed classes themselves move here.
 
@@ -20,10 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use spinel_abi::{
-    default_builtin_ancestors, ClassId, BUILTINS, EXCEPTION_CLASS, EXCEPTION_PRELUDE_CLASSES,
-    OBJECT_ANCESTRY_TAIL, OBJECT_CLASS,
-};
+use spinel_abi::{declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES};
 
 use crate::dispatch::{
     class_name, downcast_robj, raise_error, run_initialize, ClassRegistry, ConstructorFn, RObj,
@@ -186,7 +183,7 @@ fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -
     Ok(RubyValue::Str(string_new(format!("{name}: {msg}"))))
 }
 
-/// The prelude's `inspect`: empty message -> the class name; a message with a
+/// The exception `inspect`: empty message -> the class name; a message with a
 /// newline -> `#<Name:<message.inspect>>`; else `#<Name: message>`.
 fn exc_inspect(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
@@ -229,59 +226,19 @@ fn exception_construct(
     Ok(RubyValue::Object(handle))
 }
 
-/// Linearize a prelude class's ancestors: itself, its superclass chain up to
-/// `Exception`, then `Object`'s own tail (`Object`, `Kernel`, `BasicObject`).
-/// Matches the compiler's own materialized `ancestors` exactly, which is what
-/// makes `rescue`/`is_a?` agree across the two.
-fn linearize(id: ClassId) -> Vec<ClassId> {
-    let mut chain = vec![id];
-    let mut cur = id;
-    while let Some(sup) = EXCEPTION_PRELUDE_CLASSES
-        .iter()
-        .find(|r| r.id == cur)
-        .and_then(|r| r.superclass)
-    {
-        if sup == OBJECT_CLASS {
-            break; // reached Exception; Object's own tail is appended below
-        }
-        chain.push(sup);
-        cur = sup;
-    }
-    chain.extend_from_slice(OBJECT_ANCESTRY_TAIL);
-    chain
-}
-
-/// Install the always-on built-in classes/modules (`Integer`, `Array`, `Kernel`,
-/// ... and `Object`) into `registry` with their DEFAULT ancestors -- the fixed
-/// hierarchy every program shares, which used to be ~540 lines of identical
-/// `__registry.register(...)` calls in every generated `main()`. Require-gated
-/// extensions (`Base64`, `StringIO`, ...) are NOT here: they stay per-program in
-/// codegen so an un-`require`d one contributes nothing (its constant must stay
-/// invisible). A program that reopens a builtin to change its ancestors
-/// (`class Array; include M; end`) still works: codegen emits a targeted
-/// override that lands after this, replacing the entry (see `register`).
-pub fn register_builtins(registry: &mut ClassRegistry) {
-    let object = std::iter::once((OBJECT_CLASS, "Object", false));
-    let always_on = BUILTINS
-        .iter()
-        .filter(|b| b.feature.is_none())
-        .map(|b| (b.id, b.name, b.is_module));
-    for (id, name, is_module) in object.chain(always_on) {
-        registry.register(id, name, is_module, default_builtin_ancestors(id), None);
-    }
-}
-
-/// Install the whole built-in exception hierarchy into `registry`. Called once
-/// from generated `main()` in place of the ~6,600 lines of `ruby_class!` blocks
-/// each program used to emit.
-pub fn register_prelude(registry: &mut ClassRegistry) {
-    for row in EXCEPTION_PRELUDE_CLASSES {
+/// Install the whole built-in exception hierarchy into `registry`. Called from
+/// `ClassRegistry::with_core` in place of the ~6,600 lines of `ruby_class!`
+/// blocks each program used to emit. Ancestors come from the single core-class
+/// linearizer (`declared_ancestors`), so `rescue`/`is_a?` agree with the
+/// compiler's own materialized `ancestors`.
+pub fn register_exceptions(registry: &mut ClassRegistry) {
+    for row in EXCEPTION_CLASSES {
+        let ancestors = declared_ancestors(row.id);
         if row.is_module {
             // The `Errno` namespace: a module (no constructor, ancestors = self).
-            registry.register(row.id, row.name, true, vec![row.id], None);
+            registry.register(row.id, row.name, true, ancestors, None);
             continue;
         }
-        let ancestors = linearize(row.id);
         let carries_result = ancestors.contains(&STOP_ITERATION_ID);
         registry.register(
             row.id,
@@ -303,8 +260,6 @@ pub fn register_prelude(registry: &mut ClassRegistry) {
             registry.define_method(row.id, Symbol::intern("result"), stop_result);
         }
     }
-    // A guard for future edits: `Exception` must be the first prelude id, and the
-    // table's superclass edges must resolve. `linearize` above would loop on a
-    // cycle; this cheap check documents the contract.
-    debug_assert_eq!(EXCEPTION_PRELUDE_CLASSES[0].id, EXCEPTION_CLASS);
+    // A guard for future edits: `Exception` must be the first exception id.
+    debug_assert_eq!(EXCEPTION_CLASSES[0].id, EXCEPTION_CLASS);
 }
