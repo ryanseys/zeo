@@ -6,9 +6,8 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 30 | valued_break_proc, external_singleton_def, public_send_visibility | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
+| ? | spike-misc | 31 | proc_capture_enclosing_lambda, singleton_method_object, bsearch_find_any_mixed | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| k | pattern-shapes | 8 | hash_numeric_wave11, array_conformance_batch5, bundle_tiny_array | Enumerable#any? with a pattern argument (`===` form) isn't supported yet (spike scope) |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
 | g | arity-panic | 7 | time_at_unit_form, matchdata_index_eq, random_seed_range_base64_pad | uncaught exception: wrong number of arguments (given 3, expected 1..2) |
 | ? | auto-362e8305 | 6 | bundle_hash, fiber_nested_block, proc_nonlocal_return | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
@@ -17,8 +16,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:[]= | 4 | bundle_misc_c_10, fiber_storage_nil, bundle_misc_c_08 | uncaught exception: undefined method '[]=' for class Fiber |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:current | 4 | bundle_misc_a, fiber_class_reflection, fiber_transfer_root | uncaught exception: undefined method 'current' for class Fiber |
-| P | missing-method:new | 4 | proc_compose_curry_forward, basicobject_new, constant_path | uncaught exception: undefined method 'new' for class Proc |
-| h | range-shapes | 4 | range_sum_endless_wave10, bundle_tiny_num, range_float_begin_iterate | Range#size on a non-Integer/beginless/endless range isn't supported (spike scope) |
 | ? | auto-20dcf25f | 3 | data_define_inline_receiver, anon_struct_local, data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3e862739 | 3 | error_protocol_edges, poly_array_readers, array_cycle_bounded | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
@@ -35,6 +32,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-434a127c | 2 | time_at_kinds_string_ctor, time_plus_rational | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33, bundle_misc_c_34 | cannot load such file -- time |
 | ? | auto-c7d3b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
+| ? | auto-d04215d7 | 2 | array_float_conformance, bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |
 | ? | auto-d46bf646 | 2 | proc_return_rescue_modifier_escape, proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
 | f | dynamic-require | 2 | require_parent, user_enumerable_each_and_for | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
@@ -49,6 +47,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:dig | 2 | struct_enumerable_wave8, struct_dig | uncaught exception: undefined method 'dig' for an instance of Ou142 |
 | P | missing-method:foreach | 2 | wave_followups_2833, dir_full_surface | uncaught exception: undefined method 'foreach' for class File |
 | P | missing-method:name | 2 | exception_value_flow_match, thread_name | uncaught exception: undefined method 'name' for an instance of NoMethodError |
+| P | missing-method:new | 2 | dir_handle_objects, basicobject_new | uncaught exception: undefined method 'new' for class Dir |
 | P | missing-method:owner | 2 | method_owner_receiver, module_instance_method_unbound | uncaught exception: undefined method 'owner' for an instance of Method |
 | P | missing-method:pass | 2 | thread_condvar, thread_pass_fairness | uncaught exception: undefined method 'pass' for class Thread |
 | P | missing-method:private_method_defined? | 2 | method_visibility_inherit, method_visibility_attr | uncaught exception: undefined method 'private_method_defined?' for class Sub |
@@ -61,6 +60,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-3814d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
 | ? | auto-3afe88d5 | 1 | cmethod_super | `super` outside a method |
 | ? | auto-454832aa | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
+| ? | auto-497fab8d | 1 | constant_path | uncaught exception: tried to create Proc object without a block |
 | ? | auto-5c693233 | 1 | mutex_synchronize_block | cannot load such file -- monitor |
 | ? | auto-5d152f37 | 1 | pp_store_float_inf_literal | assertion failed: f.is_finite() |
 | ? | auto-5d6a192c | 1 | string_to_i_base_zero | uncaught exception: invalid radix 0 |
@@ -68,6 +68,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-6dc7ea47 | 1 | require_first_line | cannot load such file -- optparse |
 | ? | auto-74de9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
 | ? | auto-767cf864 | 1 | range_bsearch_float | uncaught exception: can't do binary search for the given Range |
+| ? | auto-7eb1c4d1 | 1 | bundle_tiny_num | uncaught exception: can't iterate from String |
 | ? | auto-867ee324 | 1 | super_into_included_module | `super`: no `orphan` found above E |
 | ? | auto-8945269a | 1 | kernel_rational_string_zerodenom | uncaught exception: can't convert String into Rational |
 | ? | auto-8c9acd6e | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference |
@@ -79,7 +80,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-ba7c5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-cd5e05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-ceefc00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
-| ? | auto-d04215d7 | 1 | bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |
 | ? | auto-d453bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
 | ? | auto-d7c58806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
 | ? | auto-dfbd22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
@@ -142,6 +142,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB |
 | P | missing-method:offset | 1 | i974 | uncaught exception: undefined method 'offset' for an instance of MatchData |
 | P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |
+| P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for an instance of Object |
 | P | missing-method:produce | 1 | enumerator_produce | uncaught exception: undefined method 'produce' for class Enumerator |
 | P | missing-method:public_method | 1 | public_method | uncaught exception: undefined method 'public_method' for an instance of String |
 | P | missing-method:public_method_defined? | 1 | method_visibility | uncaught exception: undefined method 'public_method_defined?' for class Account |
@@ -164,6 +165,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:values_at | 1 | struct_valuesat_hash_set_init_wave10 | uncaught exception: undefined method 'values_at' for an instance of Pt |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
 | P | missing-method:xmlschema | 1 | time_xmlschema | uncaught exception: undefined method 'xmlschema' for an instance of Time |
+| k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |
 | g | super-arity | 1 | reopen_split_superclass_dispatch | superclass mismatch for class Sub |
 
 List one bucket's tests: `cargo run -p xtask -- conformance triage --bucket <name>`.

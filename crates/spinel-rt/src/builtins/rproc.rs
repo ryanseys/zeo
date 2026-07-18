@@ -110,6 +110,23 @@ builtin_methods! {
     }
 }
 
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Proc.new { ... }` / `Proc.new(&b)` -- the block IS the proc, so return
+    // it. Without a block, CRuby (3.0+) raises ArgumentError rather than
+    // capturing the enclosing method's block.
+    "new" => fn new_m(_recv, _args, block) {
+        match block {
+            Some(p @ RubyValue::Proc(_)) => Ok(p),
+            _ => Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "tried to create Proc object without a block".to_string(),
+            )),
+        }
+    }
+}
+
 /// One step of `Proc#curry`: a proc that either invokes the target (enough
 /// arguments collected) or answers the next curried step.
 fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> RubyValue {

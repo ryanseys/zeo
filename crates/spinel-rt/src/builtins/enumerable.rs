@@ -460,17 +460,24 @@ fn any_all(
     block: Option<RubyValue>,
     q: Quantifier,
 ) -> Result<RubyValue, Signal> {
-    reject_args(args, match q {
-        Quantifier::Any => "any?",
-        Quantifier::All => "all?",
-        Quantifier::None => "none?",
-        Quantifier::One => "one?",
-    }, "a pattern argument (`===` form)");
+    // `any?(pattern)`/... tests `pattern === element` (case equality). A
+    // pattern argument takes precedence over a block, matching CRuby.
+    let pattern = args.first().cloned();
     let blk = match block {
         Some(RubyValue::Proc(p)) => Some(p),
         _ => None,
     };
     let test = move |yielded: &[RubyValue]| -> Result<bool, Signal> {
+        if let Some(pat) = &pattern {
+            let elem = pack(yielded);
+            return Ok(crate::dispatch::send_value(
+                pat,
+                crate::Symbol::intern("==="),
+                std::slice::from_ref(&elem),
+                None,
+            )?
+            .truthy());
+        }
         match &blk {
             Some(b) => Ok(b.call(yielded)?.truthy()),
             None => Ok(pack(yielded).truthy()),

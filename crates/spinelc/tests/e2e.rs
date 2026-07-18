@@ -17022,6 +17022,40 @@ fn exception_cause_chains_from_active_rescue() {
 }
 
 #[test]
+fn range_size_covers_endless_and_float_ends() {
+    let result = run_ruby(
+        r#"
+        p (1..5).size
+        p (1...5).size
+        p (1..).size
+        p (1..5.5).size
+        p (1...5.5).size
+        p (10..1).size
+        p Proc.new { |x| x * 3 }.call(4)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n4\nInfinity\n5\n5\n0\n12\n");
+}
+
+#[test]
+fn enumerable_predicates_accept_a_pattern() {
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].any?(Integer)
+        p [1, "a", 3].all?(Integer)
+        p [1, 2, 3].none?(String)
+        p [1, 2, 3].one?(2)
+        p [1, 2, 3].any?(4..10)
+        p %w[foo bar].all?(/o|a/)
+        p({ a: 1 }.any?([:a, 1]))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\n");
+}
+
+#[test]
 fn data_constructs_positionally_or_by_keyword() {
     let result = run_ruby(
         r#"

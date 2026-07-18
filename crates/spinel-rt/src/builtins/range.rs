@@ -192,10 +192,34 @@ builtin_methods! {
     "size" => fn size(recv, args, _block) {
         arity!(args, 0);
         let (start, end, exclusive) = range_parts(recv);
-        let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
-            panic!("Range#size on a non-Integer/beginless/endless range isn't supported (spike scope)");
+        // The begin must be an Integer (CRuby iterates from it via `succ`).
+        let s = match start {
+            Some(RubyValue::Int(s)) => *s,
+            None => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                "can't iterate from NilClass".to_string(),
+            )),
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("can't iterate from {}", crate::builtins::class_name_of(other)),
+            )),
         };
-        let last = if exclusive { e - 1 } else { *e };
+        // The last integer the range covers: an endless (or +Infinity) range is
+        // infinite; a Float end floors (inclusive) or `ceil - 1` (exclusive).
+        let last = match end {
+            None => return Ok(RubyValue::Float(f64::INFINITY)),
+            Some(RubyValue::Int(e)) => if exclusive { e - 1 } else { *e },
+            Some(RubyValue::Float(f)) => {
+                if f.is_infinite() && f.is_sign_positive() {
+                    return Ok(RubyValue::Float(f64::INFINITY));
+                }
+                if exclusive { f.ceil() as i64 - 1 } else { f.floor() as i64 }
+            }
+            Some(other) => return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
     // `step(n)`: the blockless form returns an Enumerator (Phase 17.2).

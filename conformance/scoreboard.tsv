@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=186c7fe
-# PASS=1528 FAIL_OUTPUT=389 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8881d9b
+# PASS=1535 FAIL_OUTPUT=382 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -36,7 +36,7 @@ array_combination	PASS	-	-
 array_combination_block	PASS	-	-
 array_compact_eq	PASS	-	-
 array_conformance_batch	PASS	-	-
-array_conformance_batch5	FAIL_OUTPUT	expect	pattern-shapes
+array_conformance_batch5	PASS	-	-
 array_cycle_bounded	FAIL_OUTPUT	expect	auto-3e862739
 array_dup_sort_gc	PASS	-	-
 array_empty_and_pattern	PASS	-	-
@@ -51,7 +51,7 @@ array_filter_bang_return	FAIL_OUTPUT	expect	-
 array_first_last_empty	PASS	-	-
 array_flat_map_scalar_block	PASS	-	-
 array_flatten_typed_elements	PASS	-	-
-array_float_conformance	FAIL_OUTPUT	expect	pattern-shapes
+array_float_conformance	FAIL_OUTPUT	expect	auto-d04215d7
 array_fold_delete_flatten_rindex	FAIL_OUTPUT	expect	-
 array_frozen_mutate_raises	FAIL_OUTPUT	expect	-
 array_frozen_slice_bang	FAIL_OUTPUT	expect	-
@@ -286,9 +286,9 @@ bundle_string_a	PASS	-	-
 bundle_string_b	PASS	-	-
 bundle_string_c	FAIL_OUTPUT	expect	-
 bundle_sym	PASS	-	-
-bundle_tiny_array	FAIL_OUTPUT	expect	pattern-shapes
+bundle_tiny_array	PASS	-	-
 bundle_tiny_misc	FAIL_OUTPUT	expect	missing-const:File::SEPARATOR
-bundle_tiny_num	FAIL_OUTPUT	expect	range-shapes
+bundle_tiny_num	FAIL_OUTPUT	expect	auto-7eb1c4d1
 bundle_tiny_string	FAIL_OUTPUT	expect	arity-panic
 call_and_write	PASS	-	-
 call_arg_int_to_obj_cast	PASS	-	-
@@ -441,7 +441,7 @@ const_path_deep_nesting	PASS	-	-
 const_path_unresolved_require	FAIL_COMPILE	compile	unknown-class
 const_recv_yield_inline	PASS	-	-
 const_self_ref_raises_name_error	FAIL_OUTPUT	expect	-
-constant_path	FAIL_OUTPUT	expect	missing-method:new
+constant_path	FAIL_OUTPUT	expect	auto-497fab8d
 constant_path_write	PASS	-	-
 constant_path_write_undeclared	PASS	-	-
 constants	PASS	-	-
@@ -747,7 +747,7 @@ gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
 hangs_548	FAIL_COMPILE	compile	spike-misc
 harness_batch_2453_2456	FAIL_COMPILE	compile	unknown-class
-hash_all_pattern	FAIL_OUTPUT	expect	pattern-shapes
+hash_all_pattern	PASS	-	-
 hash_array_string_batch8	PASS	-	-
 hash_block_methods_variants	PASS	-	-
 hash_blockless_enumerator	PASS	-	-
@@ -789,7 +789,7 @@ hash_float_value_preserved	PASS	-	-
 hash_index_assign_expression	PASS	-	-
 hash_inspect_poly	PASS	-	-
 hash_int_and_or_assign	PASS	-	-
-hash_int_int_nested	FAIL_OUTPUT	expect	pattern-shapes
+hash_int_int_nested	PASS	-	-
 hash_int_keyed_delete	PASS	-	-
 hash_int_keyed_none_one	PASS	-	-
 hash_invert	PASS	-	-
@@ -806,7 +806,7 @@ hash_new_block_container	PASS	-	-
 hash_new_block_key_type	PASS	-	-
 hash_new_default_block_assign	PASS	-	-
 hash_new_default_empty	PASS	-	-
-hash_numeric_wave11	FAIL_OUTPUT	expect	pattern-shapes
+hash_numeric_wave11	FAIL_OUTPUT	expect	-
 hash_param_each_kv_inference	PASS	-	-
 hash_param_each_kv_weak_default	PASS	-	-
 hash_param_widen_from_callee_slot	PASS	-	-
@@ -1421,7 +1421,7 @@ polypoly_hash_assoc_to_proc	PASS	-	-
 post_execution	PASS	-	-
 pp_store_float_inf_literal	FAIL_COMPILE	compile	auto-5d152f37
 pre_execution	PASS	-	-
-predicate_class_arg	FAIL_OUTPUT	expect	pattern-shapes
+predicate_class_arg	PASS	-	-
 prepend_super_basic	PASS	-	-
 prepend_super_chain	PASS	-	-
 prepend_super_forward	PASS	-	-
@@ -1450,7 +1450,7 @@ proc_capture_inline_block_param	FAIL_COMPILE	compile	spike-misc
 proc_case_eq	PASS	-	-
 proc_cell_opassign_returns_new_value	FAIL_OUTPUT	expect	-
 proc_closure	PASS	-	-
-proc_compose_curry_forward	FAIL_OUTPUT	expect	missing-method:new
+proc_compose_curry_forward	FAIL_OUTPUT	expect	missing-method:proc
 proc_compose_intermediate_type	PASS	-	-
 proc_compose_method_operand	FAIL_OUTPUT	expect	missing-method:>>
 proc_concurrent_call_poly_ret	PASS	-	-
@@ -1536,15 +1536,15 @@ range_equality	PASS	-	-
 range_exclude_end_size	PASS	-	-
 range_exclusive_nonliteral	PASS	-	-
 range_flat_map	PASS	-	-
-range_float_begin_iterate	FAIL_OUTPUT	expect	range-shapes
+range_float_begin_iterate	FAIL_OUTPUT	expect	spike-misc
 range_float_type	FAIL_OUTPUT	expect	auto-1b4f9693
 range_object_bounds_limit	PASS	-	-
 range_overlap_array_flatten_depth	PASS	-	-
-range_size_infinite_local	FAIL_OUTPUT	expect	range-shapes
+range_size_infinite_local	PASS	-	-
 range_step	PASS	-	-
 range_step_float	FAIL_OUTPUT	expect	spike-misc
 range_string_cover	PASS	-	-
-range_sum_endless_wave10	FAIL_OUTPUT	expect	range-shapes
+range_sum_endless_wave10	PASS	-	-
 range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
