@@ -40,13 +40,13 @@
 //!   `require` inside `begin` is rejected as non-top-level first), never a
 //!   silent skip.
 //!
-//! Phase 14.2 adds PACKAGES on top: a `spin.toml`-manifested directory
+//! GEMS sit on top of that: a `.gemspec`-manifested directory
 //! contributing one or more search roots (`require_paths`, default
-//! `["lib"]` -- deliberately gemspec-shaped, see `Package`'s docs),
-//! searched AFTER every `-I` root, with cross-package feature ambiguity a
-//! loud error and first-NAME-wins shadowing across package dirs. `load`
-//! deliberately does NOT search package roots (its compile-time uses are
-//! project-local; a package's own files arrive via `require`).
+//! `["lib"]` -- read from a real gemspec, see `Gem`'s docs),
+//! searched AFTER every `-I` root, with a feature provided by more than one
+//! gem a loud error and first-NAME-wins shadowing across gem dirs. `load`
+//! deliberately does NOT search gem roots (its compile-time uses are
+//! project-local; a gem's own files arrive via `require`).
 //!
 //! Documented divergences: a `require` that must SPLICE a file is still
 //! statement-position-only, so its return value is unobservable there (a
@@ -141,15 +141,19 @@ impl Drop for BindingsFrame {
     }
 }
 
-/// One `spin.toml` package (Phase 14.2): a named directory contributing one
-/// or more `require` search roots. Deliberately gem-shaped (see the plan's
-/// Part 12 gems research): a gem reduces to exactly this -- a name plus its
-/// `require_paths` (PLURAL, default `["lib"]`) -- so a future "compile
-/// against a locked bundle" roots-provider (Gemfile.lock + installed gem
-/// store) can produce these same `Package` values with no resolver changes.
-pub(super) struct Package {
+/// One gem: a named directory with a `.gemspec`, contributing one or more
+/// `require` search roots.
+///
+/// This is a gem in RubyGems' own sense, not a spinel invention -- the
+/// manifest is a real gemspec (see `parse::gemspec`), so a bundled spinel
+/// library, a vendored gem, and a gem out of a real installed store all read
+/// through one code path. A gem reduces to exactly a name plus its
+/// `require_paths` (PLURAL, default `["lib"]`), which is why an installed
+/// store's `specifications/` directory can feed the same values later with no
+/// resolver changes.
+pub(super) struct Gem {
     name: String,
-    /// Absolute, existence-checked root directories, in manifest order.
+    /// Absolute, existence-checked root directories, in `require_paths` order.
     roots: Vec<PathBuf>,
 }
 
@@ -159,7 +163,7 @@ pub(super) struct Loader {
     roots: Vec<PathBuf>,
     /// Discovered packages, in package-dir order with first-NAME-wins
     /// shadowing across dirs (see `discover_packages`).
-    packages: Vec<Package>,
+    packages: Vec<Gem>,
     /// `require` dedup, keyed `(box_id, canonical path)` -- the box
     /// dimension is always 0 until Phase 14.5 (per-box feature tables are
     /// exactly how real `Ruby::Box` re-executes a file per box, so the key
@@ -458,7 +462,7 @@ impl Loader {
             return Ok(Vec::new());
         }
 
-        // Package attribution (Phase 14.2): a `require` resolved out of a
+        // Gem attribution: a `require` resolved out of a
         // package's roots belongs to that package; `require_relative`/
         // `load` INHERIT the requiring file's package (a package's internal
         // files are part of the package, however they're reached).
@@ -609,7 +613,7 @@ impl Loader {
             _ => {
                 let names: Vec<&str> = hits.iter().map(|(_, n)| *n).collect();
                 Err(format!(
-                    "`require \"{feature}\"` is ambiguous: found in multiple packages ({})",
+                    "`require \"{feature}\"` is ambiguous: found in multiple gems ({})",
                     names.join(", ")
                 ))
             }
@@ -718,16 +722,16 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 }
 
 /// Discovers packages under each dir, in dir order: every subdirectory
-/// containing a `spin.toml` manifest is a package (subdirectories without
-/// one are silently ignored -- not packages). Within one dir, discovery is
+/// containing a `.gemspec` is a gem (subdirectories without
+/// one are silently ignored -- not gems). Within one dir, discovery is
 /// name-sorted (deterministic); across dirs, the FIRST occurrence of a
 /// package NAME wins entirely (a project-local package shadows a
 /// same-named compiler-bundled one -- the "one version per name, nearest
 /// wins" rule, the same shape as Bundler's lockfile picking exactly one
 /// version). A missing/unreadable packages dir contributes nothing (the
 /// CLI passes default candidate locations that often don't exist).
-fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Package>> {
-    let mut packages: Vec<Package> = Vec::new();
+fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
+    let mut packages: Vec<Gem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for dir in package_dirs {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -736,7 +740,7 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Package>> {
         let mut pkg_dirs: Vec<PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.is_dir() && p.join("spin.toml").is_file())
+            .filter(|p| p.is_dir() && gemspec_path(p).is_some())
             .collect();
         pkg_dirs.sort();
         for pkg_dir in pkg_dirs {
@@ -749,79 +753,38 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Package>> {
     Ok(packages)
 }
 
-/// Parses one `spin.toml`. Deliberately minimal, mirroring the reference
-/// project's "identity + convention" manifest philosophy AND the gemspec
-/// subset that actually matters for load-path resolution (the Part 12
-/// research: name + `require_paths`, everything else is metadata):
+/// Finds and parses a gem directory's `.gemspec`.
 ///
-/// ```toml
-/// [package]
-/// name = "base64"                # required, must match the directory name
-/// require_paths = ["lib"]       # optional; this IS the default
-/// ```
+/// The manifest is a real gemspec, not an invented format -- see
+/// `parse::gemspec` for why a static parse is safe (RubyGems' serialized form
+/// has a closed grammar, enforced by a corpus test over the installed store).
+/// That is what lets one code path read a bundled spinel library, a vendored
+/// gem, and a gem out of a real installed store.
 ///
-/// Unknown keys/tables are tolerated (forward-compat: 14.3's `[native]`
-/// table lands here next). Every declared root must exist -- a package
-/// whose `lib/` is missing is a loud configuration error, not an empty
-/// search root.
-fn parse_manifest(pkg_dir: &Path) -> PResult<Package> {
-    let manifest_path = pkg_dir.join("spin.toml");
-    let text = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("reading {}: {e}", manifest_path.display()))?;
-    let table: toml::Table = text
-        .parse()
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    let package = table
-        .get("package")
-        .and_then(|v| v.as_table())
-        .ok_or_else(|| format!("{}: missing [package] table", manifest_path.display()))?;
-    let name = package
-        .get("name")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            format!(
-                "{}: [package] needs a string `name`",
-                manifest_path.display()
-            )
-        })?;
+/// The gemspec's `name` must match its directory, mirroring RubyGems' own
+/// `<name>-<version>/` convention: a mismatch means a `require` would resolve
+/// out of a directory that doesn't name the gem it provides.
+///
+/// Every declared `require_paths` entry must exist -- a gem whose `lib/` is
+/// missing is a loud configuration error, not a silently empty search root.
+fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
+    let manifest_path = gemspec_path(pkg_dir).ok_or_else(|| {
+        format!("{}: no `.gemspec`", pkg_dir.display())
+    })?;
+    let spec = super::gemspec::parse_file(&manifest_path)?;
     let dir_name = pkg_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if name != dir_name {
+    if spec.name != dir_name {
         return Err(format!(
-            "{}: package name \"{name}\" doesn't match its directory name \"{dir_name}\"",
-            manifest_path.display()
+            "{}: gem name \"{}\" doesn't match its directory name \"{dir_name}\"",
+            manifest_path.display(),
+            spec.name
         ));
     }
-    let require_paths: Vec<String> = match package.get("require_paths") {
-        None => vec!["lib".to_string()],
-        Some(v) => {
-            let arr = v.as_array().ok_or_else(|| {
-                format!(
-                    "{}: `require_paths` must be an array of strings",
-                    manifest_path.display()
-                )
-            })?;
-            arr.iter()
-                .map(|e| {
-                    e.as_str().map(String::from).ok_or_else(|| {
-                        format!(
-                            "{}: `require_paths` must be an array of strings",
-                            manifest_path.display()
-                        )
-                    })
-                })
-                .collect::<PResult<Vec<String>>>()?
-        }
-    };
-    if require_paths.is_empty() {
-        return Err(format!(
-            "{}: `require_paths` must not be empty",
-            manifest_path.display()
-        ));
-    }
-    let roots = require_paths
+    let roots = spec
+        .require_paths
         .iter()
         .map(|rp| {
             let root = pkg_dir.join(rp);
@@ -836,10 +799,32 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Package> {
             }
         })
         .collect::<PResult<Vec<PathBuf>>>()?;
-    Ok(Package {
-        name: name.to_string(),
+    Ok(Gem {
+        name: spec.name,
         roots,
     })
+}
+
+/// The `.gemspec` in a gem directory, if there is exactly one candidate.
+///
+/// Prefers `<dir>/<dir-name>.gemspec` (the convention every real gem follows)
+/// and otherwise takes any single `.gemspec` present, so a directory whose
+/// gemspec is named differently still loads and fails with the clearer
+/// name-mismatch error above rather than a bare "no `.gemspec`".
+fn gemspec_path(pkg_dir: &Path) -> Option<PathBuf> {
+    let dir_name = pkg_dir.file_name()?;
+    let conventional = pkg_dir.join(dir_name).with_extension("gemspec");
+    if conventional.is_file() {
+        return Some(conventional);
+    }
+    let mut found: Vec<PathBuf> = std::fs::read_dir(pkg_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "gemspec"))
+        .collect();
+    found.sort();
+    found.into_iter().next()
 }
 
 /// CRuby's exact missing-feature message (`load_failed` -> `rb_load_fail`).

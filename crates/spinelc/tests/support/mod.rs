@@ -28,7 +28,7 @@ pub fn run_ruby_project(files: &[(&str, &str)], entry: &str, roots: &[&str]) -> 
     run_ruby_packages(files, entry, roots, &[])
 }
 
-/// `run_ruby_project` plus `spin.toml` package directories (Phase 14.2),
+/// `run_ruby_project` plus `.gemspec` gem directories,
 /// also relative to the temp project dir.
 #[allow(dead_code)]
 pub fn run_ruby_packages(

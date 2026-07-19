@@ -7,6 +7,7 @@
 //! else is a clean `Err` (mirroring spinel's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
+mod gemspec;
 mod loader;
 mod rename;
 mod struct_def;

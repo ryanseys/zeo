@@ -9322,7 +9322,7 @@ fn load_cycles_are_detected_at_compile_time() {
     assert!(err.contains("cycle"), "unexpected error: {err}");
 }
 
-// ---- Phase 14.2: spin.toml packages + search-path resolution ----
+// ---- gems: .gemspec manifests + search-path resolution ----
 // Positive-path output oracle-verified by simulating package roots with
 // real `ruby -I <pkg>/lib` (the package layer IS just ordered roots).
 
@@ -9331,8 +9331,8 @@ fn packages_resolve_with_nested_features_and_cross_package_requires() {
     let result = support::run_ruby_packages(
         &[
             (
-                "packages/greet/spin.toml",
-                "[package]\nname = \"greet\"\n",
+                "packages/greet/greet.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"greet\"\n  s.version = \"1.0.0\"\nend\n",
             ),
             (
                 "packages/greet/lib/greet.rb",
@@ -9359,8 +9359,8 @@ fn packages_resolve_with_nested_features_and_cross_package_requires() {
                 "##,
             ),
             (
-                "packages/farewell/spin.toml",
-                "[package]\nname = \"farewell\"\n",
+                "packages/farewell/farewell.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"farewell\"\n  s.version = \"1.0.0\"\nend\n",
             ),
             (
                 "packages/farewell/lib/farewell.rb",
@@ -9394,12 +9394,12 @@ fn packages_resolve_with_nested_features_and_cross_package_requires() {
 }
 
 #[test]
-fn a_package_can_override_require_paths_reference_style_flat_layout() {
+fn a_gem_can_override_require_paths_to_a_flat_layout() {
     let result = support::run_ruby_packages(
         &[
             (
-                "packages/flat/spin.toml",
-                "[package]\nname = \"flat\"\nrequire_paths = [\".\"]\n",
+                "packages/flat/flat.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"flat\"\n  s.version = \"1.0.0\"\n  s.require_paths = [\".\"]\nend\n",
             ),
             ("packages/flat/flat.rb", "FLAT = \"flat pkg\"\n"),
             ("main.rb", "require \"flat\"\nputs FLAT\n"),
@@ -9420,24 +9420,24 @@ fn dash_i_roots_shadow_packages_and_earlier_package_dirs_shadow_later_ones() {
         &[
             ("override/dual.rb", "puts \"from -I root\"\n"),
             (
-                "projpkgs/thing/spin.toml",
-                "[package]\nname = \"thing\"\n",
+                "projpkgs/thing/thing.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"thing\"\n  s.version = \"1.0.0\"\nend\n",
             ),
             (
                 "projpkgs/thing/lib/thing.rb",
                 "puts \"thing from projpkgs\"\n",
             ),
             (
-                "bundledpkgs/thing/spin.toml",
-                "[package]\nname = \"thing\"\n",
+                "bundledpkgs/thing/thing.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"thing\"\n  s.version = \"1.0.0\"\nend\n",
             ),
             (
                 "bundledpkgs/thing/lib/thing.rb",
                 "puts \"thing from bundledpkgs\"\n",
             ),
             (
-                "bundledpkgs/dual/spin.toml",
-                "[package]\nname = \"dual\"\n",
+                "bundledpkgs/dual/dual.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"dual\"\n  s.version = \"1.0.0\"\nend\n",
             ),
             (
                 "bundledpkgs/dual/lib/dual.rb",
@@ -9462,9 +9462,11 @@ fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
     // stricter than silent $LOAD_PATH-order shadowing.
     let err = support::compile_packages(
         &[
-            ("packages/alpha/spin.toml", "[package]\nname = \"alpha\"\n"),
+            ("packages/alpha/alpha.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"alpha\"\n  s.version = \"1.0.0\"\nend\n"),
             ("packages/alpha/lib/common.rb", "puts 1\n"),
-            ("packages/beta/spin.toml", "[package]\nname = \"beta\"\n"),
+            ("packages/beta/beta.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"beta\"\n  s.version = \"1.0.0\"\nend\n"),
             ("packages/beta/lib/common.rb", "puts 2\n"),
             ("main.rb", "require \"common\"\n"),
         ],
@@ -9474,7 +9476,7 @@ fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
     )
     .unwrap_err();
     assert!(
-        err.contains("found in multiple packages") && err.contains("alpha") && err.contains("beta"),
+        err.contains("found in multiple gems") && err.contains("alpha") && err.contains("beta"),
         "unexpected error: {err}"
     );
 }
@@ -9484,7 +9486,9 @@ fn bad_manifests_are_loud_configuration_errors() {
     // Name/directory mismatch.
     let err = support::compile_packages(
         &[
-            ("packages/aaa/spin.toml", "[package]\nname = \"bbb\"\n"),
+            // Gem named "bbb" living in a directory named "aaa".
+            ("packages/aaa/aaa.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"bbb\"\n  s.version = \"1.0.0\"\nend\n"),
             ("packages/aaa/lib/aaa.rb", "puts 1\n"),
             ("main.rb", "puts :ok\n"),
         ],
@@ -9495,10 +9499,10 @@ fn bad_manifests_are_loud_configuration_errors() {
     .unwrap_err();
     assert!(err.contains("doesn't match its directory name"), "unexpected error: {err}");
 
-    // Missing [package] name.
+    // A gemspec that sets no name.
     let err = support::compile_packages(
         &[
-            ("packages/aaa/spin.toml", "[package]\n"),
+            ("packages/aaa/aaa.gemspec", "Gem::Specification.new do |s|\n  s.version = \"1.0.0\"\nend\n"),
             ("main.rb", "puts :ok\n"),
         ],
         "main.rb",
@@ -9506,12 +9510,13 @@ fn bad_manifests_are_loud_configuration_errors() {
         &["packages"],
     )
     .unwrap_err();
-    assert!(err.contains("needs a string `name`"), "unexpected error: {err}");
+    assert!(err.contains("sets no `name`"), "unexpected error: {err}");
 
     // Default require_paths (["lib"]) pointing at a missing lib/.
     let err = support::compile_packages(
         &[
-            ("packages/aaa/spin.toml", "[package]\nname = \"aaa\"\n"),
+            ("packages/aaa/aaa.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"aaa\"\n  s.version = \"1.0.0\"\nend\n"),
             ("packages/aaa/aaa.rb", "puts 1\n"),
             ("main.rb", "puts :ok\n"),
         ],
@@ -9524,8 +9529,8 @@ fn bad_manifests_are_loud_configuration_errors() {
 }
 
 #[test]
-fn a_directory_without_a_manifest_is_not_a_package() {
-    // No spin.toml -> ignored entirely; the feature is simply not found.
+fn a_directory_without_a_manifest_is_not_a_gem() {
+    // No `.gemspec` -> ignored entirely; the feature is simply not found.
     let err = support::compile_packages(
         &[
             ("packages/plain/lib/plain.rb", "puts 1\n"),
@@ -9572,7 +9577,7 @@ fn a_module_function_can_call_another_modules_function() {
 /// The compiler repo's own bundled packages/ dir, as the test-project
 /// harness's package-dir argument (absolute, so the temp-dir join is a
 /// no-op replacement).
-const REPO_PACKAGES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages");
+const REPO_PACKAGES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gems");
 
 #[test]
 fn base64_package_matches_real_ruby() {
@@ -19244,10 +19249,10 @@ fn time_reports_its_dst_flag() {
 /// `OptionParser` lives in `examples/optparse_subset.rb`.
 #[test]
 fn bundled_optparse_parses_switches_and_leaves_positionals() {
-    // The bundled `packages/` dir is a CLI default (`main.rs`), not a library
+    // The bundled `gems/` dir is a CLI default (`main.rs`), not a library
     // one, so a library-level test has to name it. `Path::join` with an
     // absolute path answers that path, so this reaches the real package.
-    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages");
+    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../../gems");
     let result = support::run_ruby_packages(
         &[(
             "main.rb",

@@ -29,17 +29,15 @@ doubles as a low-friction path for porting fixtures from spinel's own
   `RubyValue`, `Symbol`, the `ruby_class!` macro, and the `ClassRegistry`/
   `send` dynamic dispatch table (its curated builtin-method surface is the
   declarative `builtin_methods!` table in `dispatch.rs`).
-- `crates/spinelc-base64` -- the native half of the `base64` package: plain
-  Rust free functions linked (as a prebuilt rlib, like `spinel-rt`) only
-  into programs that actually `require "base64"`.
 - `crates/xtask` -- test automation (`cargo run -p xtask -- test`/`regen`).
-- `packages/` -- compiler-bundled `spin.toml` packages resolvable by
-  `require` (see Usage); `base64` is the worked native example (its
-  Ruby-visible surface declared via `native_crate`/`native_func` in
-  `packages/base64/lib/base64.rb`), and `set` is the worked PURE-RUBY
-  example -- a stdlib-shaped `Set` written in plain Ruby (`include
-  Enumerable` and all) and compiled by the same whole-program pipeline as
-  user code. `Enumerable` itself is core-language infrastructure,
+- `gems/` -- gems spinel ships, resolvable by `require` (see Usage). Each is
+  a directory with a real `.gemspec` (parsed statically -- see
+  `parse::gemspec`) plus its `require_paths`, exactly the shape an installed
+  gem has. `optparse` is the worked example: a pure-Ruby gem, byte-verified
+  against CRuby's own optparse. A gem may also have a NATIVE half in
+  `crates/spinel-rt/src/ext/`, joined to it by name -- the same split CRuby
+  makes between `rubylibdir` and `archdir`. `Enumerable` is core-language
+  infrastructure rather than a gem,
   implemented in Rust in `spinel-rt` (the `enum.c` approach: each method
   drives the receiver's own `#each` through dynamic dispatch).
 - `examples/*.rb` + `.expected` -- golden-file fixtures, oracle-verified
@@ -59,11 +57,11 @@ cargo run -p spinelc -- examples/dynamic.rb -S
 # search root, like ruby's own -I (repeatable, first hit wins)
 cargo run -p spinelc -- app/main.rb -I app/lib -o /tmp/app
 
-# Packages: a directory with a spin.toml ([package] name = "...", optional
-# require_paths, default ["lib"]) contributes `require` search roots.
-# Searched after every -I root; discovered from --packages dirs, the input
-# file's sibling packages/, and the compiler's bundled packages/
-cargo run -p spinelc -- app/main.rb --packages vendor/packages -o /tmp/app
+# Gems: a directory with a <name>.gemspec (name + optional require_paths,
+# default ["lib"]) contributes `require` search roots. Searched after every
+# -I root; discovered from --packages dirs, the input file's sibling gems/,
+# and the compiler's bundled gems/
+cargo run -p spinelc -- app/main.rb --packages vendor/gems -o /tmp/app
 
 # Run every example through spinelc and diff against real ruby's output
 cargo run -p xtask -- test
