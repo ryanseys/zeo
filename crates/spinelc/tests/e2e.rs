@@ -17915,6 +17915,35 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn exception_equality_exception_method_and_message_coercion() {
+    let result = run_ruby(
+        r##"
+        e = RuntimeError.new("m")
+        e2 = RuntimeError.new("m")
+        p e == e2
+        p e == RuntimeError.new("other")
+        p e == "not an exception"
+        p e.eql?(e)
+        p e.eql?(e2)
+        p e.exception.equal?(e)
+        p e.exception("n").message
+        p e.exception("n").equal?(e)
+        p RuntimeError.exception("z").message
+        p RuntimeError.exception("z").class
+        p RuntimeError.new(42).message
+        p RuntimeError.new(:sym).message
+        p ArgumentError.new([1, 2]).message
+        p [true, false].include?(Exception.to_tty?)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\nfalse\ntrue\nfalse\ntrue\n\"n\"\nfalse\n\"z\"\nRuntimeError\n\"42\"\n\"sym\"\n\"[1, 2]\"\ntrue\n",
+    );
+}
+
+#[test]
 fn warn_and_stderr_writes_land_on_stderr_not_stdout() {
     // `warn`, `$stderr.puts`, and `STDERR.write` all go to the error stream;
     // `$stdout.puts` stays on stdout. The two streams are asserted separately,

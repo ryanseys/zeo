@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=4e29a81
-# PASS=1688 FAIL_OUTPUT=342 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=db40ef1
+# PASS=1689 FAIL_OUTPUT=341 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -605,7 +605,7 @@ exception_introspection_accessors	FAIL_OUTPUT	expect	missing-method:key
 exception_message_override	PASS	-	-
 exception_namespaced_default_message	PASS	-	-
 exception_object_methods	PASS	-	-
-exception_object_surface	FAIL_OUTPUT	expect	missing-method:exception
+exception_object_surface	PASS	-	-
 exception_real_objects	PASS	-	-
 exception_reflection_surface	PASS	-	-
 exception_subclass_custom_method	PASS	-	-

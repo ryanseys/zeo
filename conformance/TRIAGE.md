@@ -103,7 +103,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:count | 1 | env_full_surface | uncaught exception: undefined method 'count' for an instance of Object |
 | P | missing-method:detailed_message | 1 | exception_detailed_message | uncaught exception: undefined method 'detailed_message' for an instance of RuntimeError |
 | P | missing-method:each_value | 1 | env_grep_lazy_followups | uncaught exception: undefined method 'each_value' for an instance of Object |
-| P | missing-method:exception | 1 | exception_object_surface | uncaught exception: undefined method 'exception' for an instance of RuntimeError |
 | P | missing-method:feed | 1 | enumerator_feed_result | uncaught exception: undefined method 'feed' for an instance of Enumerator |
 | P | missing-method:ffi_callback | 1 | ffi_callback | uncaught exception: undefined method 'ffi_callback' for module L |
 | P | missing-method:ffi_cflags | 1 | i1011 | uncaught exception: undefined method 'ffi_cflags' for module Pathy |

@@ -165,12 +165,61 @@ fn exc_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> R
 fn exc_to_s(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let msg = e.mesg.lock().clone();
-    if msg.truthy() {
-        Ok(msg)
-    } else {
-        Ok(RubyValue::Str(string_new(
+    match msg {
+        RubyValue::Str(_) => Ok(msg),
+        // A non-String message is coerced to a String via its own `to_s`
+        // (CRuby's `StringValue`): `RuntimeError.new(42).message` is `"42"`,
+        // `.new([1,2])` is `"[1, 2]"`.
+        m if m.truthy() => crate::dispatch::send_value(&m, Symbol::intern("to_s"), &[], None),
+        _ => Ok(RubyValue::Str(string_new(
             class_name(e.class_id).unwrap_or_default(),
-        )))
+        ))),
+    }
+}
+
+/// `Exception#==`: true when `other` is an exception of the SAME class with an
+/// equal message (backtraces are always `[]` here, so they never differ).
+/// Identity is NOT required -- two `RuntimeError.new("m")` are `==`.
+fn exc_equal(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Object(other) = &args[0] else {
+        return Ok(RubyValue::Bool(false));
+    };
+    let Some(o) = downcast_robj::<RubyException>(other) else {
+        return Ok(RubyValue::Bool(false));
+    };
+    let e = exc(recv);
+    // Clone each message out before comparing: `e == e` (or `e.eql?(e)`, which
+    // routes here) would otherwise lock the SAME `mesg` mutex twice and
+    // deadlock, since holding one guard across the second `lock()` is reentrant.
+    let e_msg = e.mesg.lock().clone();
+    let o_msg = o.mesg.lock().clone();
+    let eq = e.class_id == o.class_id && e_msg.rb_eq(&o_msg);
+    Ok(RubyValue::Bool(eq))
+}
+
+/// `Exception#eql?`: object identity (CRuby's `Object#eql?`, which `Exception`
+/// does NOT override -- distinct from `#==`, which compares class + message).
+/// An explicit definition is needed because `#==` is defined here, and a bare
+/// `eql?` would otherwise fall back to it.
+fn exc_eql(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let same = matches!(&args[0], RubyValue::Object(o) if Arc::ptr_eq(recv, o));
+    Ok(RubyValue::Bool(same))
+}
+
+/// `Exception#exception`: no argument answers the receiver itself; an argument
+/// equal to the current message also answers self; a different message answers
+/// a copy carrying the new message (CRuby's `exc_exception`).
+fn exc_exception(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match args.first() {
+        None => Ok(RubyValue::Object(recv.clone())),
+        Some(msg) if msg.rb_eq(&exc(recv).mesg.lock()) => Ok(RubyValue::Object(recv.clone())),
+        Some(msg) => {
+            let dup = exc(recv).dup_object(false);
+            if let Some(de) = downcast_robj::<RubyException>(&dup) {
+                *de.mesg.lock() = msg.clone();
+            }
+            Ok(RubyValue::Object(dup))
+        }
     }
 }
 
@@ -272,6 +321,22 @@ fn exception_construct(
     Ok(RubyValue::Object(handle))
 }
 
+/// `Exception.exception(*args)` -- the class-method form, an alias for `.new`
+/// (constructs an instance of the receiver class).
+fn exc_class_exception(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Class(cid) = recv else {
+        return Err(raise_error("TypeError", "exception must be sent to a class".to_string()));
+    };
+    exception_construct(*cid, args, block)
+}
+
+/// `Exception.to_tty?` -- whether the error stream is a TTY. Under the
+/// conformance harness stderr is redirected (not a TTY), so `false`; the value
+/// is environment-dependent, and callers only rely on it being a boolean.
+fn exc_class_to_tty(_recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(false))
+}
+
 /// Install the whole built-in exception hierarchy into `registry`. Called from
 /// `ClassRegistry::with_core` in place of the ~6,600 lines of `ruby_class!`
 /// blocks each program used to emit. Ancestors come from the single core-class
@@ -322,10 +387,17 @@ pub fn register_exception_subclass(
     registry.define_method(id, Symbol::intern("initialize"), exc_initialize);
     registry.define_method(id, Symbol::intern("message"), exc_message);
     registry.define_method(id, Symbol::intern("to_s"), exc_to_s);
+    registry.define_method(id, Symbol::intern("=="), exc_equal);
+    registry.define_method(id, Symbol::intern("eql?"), exc_eql);
+    registry.define_method(id, Symbol::intern("exception"), exc_exception);
     registry.define_method(id, Symbol::intern("backtrace"), exc_backtrace);
     registry.define_method(id, Symbol::intern("cause"), exc_cause);
     registry.define_method(id, Symbol::intern("full_message"), exc_full_message);
     registry.define_method(id, Symbol::intern("inspect"), exc_inspect);
+    // Class methods, registered per-id (class-method lookup doesn't walk
+    // ancestors -- see `dispatch`'s Class-value arm).
+    registry.define_class_method(id, Symbol::intern("exception"), exc_class_exception);
+    registry.define_class_method(id, Symbol::intern("to_tty?"), exc_class_to_tty);
     if carries_result {
         registry.define_method(id, Symbol::intern("__set_result"), stop_set_result);
         registry.define_method(id, Symbol::intern("result"), stop_result);
