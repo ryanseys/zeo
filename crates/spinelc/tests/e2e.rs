@@ -4859,6 +4859,41 @@ fn set_subtract_flatten_map_filter_classify_and_divide() {
 }
 
 #[test]
+fn kernel_callee_putc_and_public_method() {
+    let result = run_ruby(
+        r##"
+        def who = [__method__, __callee__]
+        p who
+        putc 72
+        putc "i"
+        putc "\n"
+        p putc(321).class
+        puts
+        p putc("BC")
+        puts
+        class Widget
+          def render = "drawn"
+          private
+          def secret = 42
+        end
+        w = Widget.new
+        p w.public_method(:render).call
+        begin
+          w.public_method(:secret)
+        rescue NameError => e
+          puts e.message
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:who, :who]\nHi\nAInteger\n\nB\"BC\"\n\n\"drawn\"\n\
+         method 'secret' for class 'Widget' is private\n"
+    );
+}
+
+#[test]
 fn method_owner_composition_equality_and_curry() {
     let result = run_ruby(
         r##"

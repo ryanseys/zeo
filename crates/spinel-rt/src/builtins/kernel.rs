@@ -47,6 +47,38 @@ builtin_methods! {
     "warn" => fn warn(_recv, args, _block) {
         kernel_warn(args)
     }
+    // `putc` -- writes one character to `$stdout` and returns its argument.
+    // An Integer writes the low byte (`n & 0xff`); a String writes its first
+    // character.
+    "putc" => fn putc(_recv, args, _block) {
+        arity!(args, 1);
+        let out = crate::builtins::io::current_stdout();
+        match &args[0] {
+            RubyValue::Int(n) => {
+                let byte = (n & 0xff) as u8;
+                crate::builtins::io::write_str(&out, &(byte as char).to_string())?;
+            }
+            RubyValue::Str(s) => {
+                let text = s.lock().to_utf8_lossy().into_owned();
+                if let Some(c) = text.chars().next() {
+                    crate::builtins::io::write_str(&out, &c.to_string())?;
+                }
+            }
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                ))
+            }
+        }
+        Ok(args[0].clone())
+    }
+    // `public_method(:name)` -- a bound Method restricted to the public
+    // surface (a private/protected name raises NameError).
+    "public_method" => fn public_method(recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::method_obj::public_method_new(recv, &args[0])
+    }
     // `Kernel#method(:name)` -- a bound Method object (see
     // `builtins::method_obj`). Reaches every receiver via the MRO walk's
     // Kernel row, including the top-level `main` object.

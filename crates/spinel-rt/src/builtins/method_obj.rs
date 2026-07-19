@@ -44,17 +44,22 @@ impl RubyObject for RMethod {
 /// immediately rather than deferring to `#call`. The lookup is
 /// `respond_to?`'s, with `include_all` -- `method(:private_helper)` is
 /// legal (privacy limits CALL sites, not reflection).
+/// Resolve a Symbol/String method-name argument to a `Symbol`, or the
+/// `TypeError` CRuby raises for anything else. Shared by
+/// `method`/`public_method`/`instance_method`.
+fn resolve_method_name(name_arg: &RubyValue) -> Result<Symbol, Signal> {
+    match name_arg {
+        RubyValue::Symbol(s) => Ok(*s),
+        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
+        other => Err(raise_error(
+            "TypeError",
+            format!("{} is not a symbol nor a string", other.inspect_string()),
+        )),
+    }
+}
+
 pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
-    let name = match name_arg {
-        RubyValue::Symbol(s) => *s,
-        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
-        other => {
-            return Err(raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", other.inspect_string()),
-            ))
-        }
-    };
+    let name = resolve_method_name(name_arg)?;
     if !crate::dispatch::responds_to(recv.class_id(), name, true) {
         // CRuby's phrasing names the receiver's CLASS, not the receiver
         // ("undefined method 'nope' for class 'String'").
@@ -69,6 +74,24 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
         ));
     }
     Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
+}
+
+/// `Kernel#public_method(:name)` -- like `method`, but a PRIVATE (or
+/// protected) method raises `NameError` rather than binding: reflection here
+/// is restricted to the public surface.
+pub fn public_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
+    let name = resolve_method_name(name_arg)?;
+    let cid = recv.class_id();
+    let class = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
+    if crate::dispatch::responds_to(cid, name, false) {
+        return Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })));
+    }
+    let msg = if crate::dispatch::responds_to(cid, name, true) {
+        format!("method '{}' for class '{}' is private", name.name(), class)
+    } else {
+        format!("undefined method '{}' for class '{}'", name.name(), class)
+    };
+    Err(raise_error("NameError", msg))
 }
 
 fn recv_method(recv: &RubyValue) -> &RMethod {
@@ -293,16 +316,7 @@ impl RubyObject for RUnboundMethod {
 /// `Module#instance_method(:name)` -- the unbound method for `name` on `cid`.
 /// Unknown name is a `NameError` at construction, as in CRuby.
 pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
-    let name = match name_arg {
-        RubyValue::Symbol(s) => *s,
-        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
-        other => {
-            return Err(raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", other.inspect_string()),
-            ))
-        }
-    };
+    let name = resolve_method_name(name_arg)?;
     if !crate::dispatch::responds_to(cid, name, true) {
         return Err(raise_error(
             "NameError",

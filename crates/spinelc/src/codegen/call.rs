@@ -2298,10 +2298,16 @@ pub fn emit_call(
                 });
             }
         }
-        // `__method__` -- the enclosing method's name as a Symbol, `nil` at
-        // the top level (a compile-time constant here: codegen always knows
-        // which method body it's emitting).
-        if name == "__method__" && args.is_empty() && kwargs.is_empty() && block.is_none() {
+        // `__method__`/`__callee__` -- the enclosing method's name as a Symbol,
+        // `nil` at the top level (a compile-time constant here: codegen always
+        // knows which method body it's emitting). The two differ only under an
+        // alias (`__callee__` reports the called-as name); we don't track
+        // aliases, so they coincide.
+        if (name == "__method__" || name == "__callee__")
+            && args.is_empty()
+            && kwargs.is_empty()
+            && block.is_none()
+        {
             return Some(match &cx.current_method {
                 Some(m) => quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#m)) },
                 None => quote! { spinel_rt::RubyValue::Nil },
