@@ -929,9 +929,13 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64)
         }
         Some(RubyValue::Int(n)) if *n > 0 => RubyValue::Int((r % (*n as u64)) as i64),
-        Some(RubyValue::Int(n)) => RubyValue::Int(-((r % (n.unsigned_abs())) as i64)),
+        // A negative bound draws from `[0, |n|)` (a non-negative Integer).
+        Some(RubyValue::Int(n)) => RubyValue::Int((r % n.unsigned_abs()) as i64),
         Some(RubyValue::Float(x)) => {
             RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64 * x)
+        }
+        Some(RubyValue::Range(lo, hi, exclusive)) => {
+            return kernel_rand_range(r, lo.as_deref(), hi.as_deref(), *exclusive);
         }
         Some(other) => {
             return Err(crate::dispatch::raise_error(
@@ -940,6 +944,54 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             ))
         }
     })
+}
+
+/// `rand(a..b)` -- an Integer range yields an Integer, a Float endpoint yields
+/// a Float. An empty/reversed range answers nil (CRuby's rule, NOT an error); a
+/// beginless or endless range raises Errno::EDOM.
+fn kernel_rand_range(
+    r: u64,
+    lo: Option<&RubyValue>,
+    hi: Option<&RubyValue>,
+    exclusive: bool,
+) -> Result<RubyValue, Signal> {
+    let (Some(lo), Some(hi)) = (lo, hi) else {
+        return Err(crate::dispatch::raise_error(
+            "Errno::EDOM",
+            "Numerical argument out of domain".to_string(),
+        ));
+    };
+    let unit = (r >> 11) as f64 / (1u64 << 53) as f64;
+    match (lo, hi) {
+        (RubyValue::Int(a), RubyValue::Int(b)) => {
+            let span = b - a + i64::from(!exclusive);
+            if span <= 0 {
+                return Ok(RubyValue::Nil);
+            }
+            Ok(RubyValue::Int(a + (r % span as u64) as i64))
+        }
+        _ => {
+            let (Some(a), Some(b)) = (num_to_f64(lo), num_to_f64(hi)) else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "no implicit conversion into Float".to_string(),
+                ));
+            };
+            if b < a || (b == a && exclusive) {
+                return Ok(RubyValue::Nil);
+            }
+            Ok(RubyValue::Float(a + unit * (b - a)))
+        }
+    }
+}
+
+/// Integer/Float -> f64 (for a range endpoint); `None` otherwise.
+fn num_to_f64(v: &RubyValue) -> Option<f64> {
+    match v {
+        RubyValue::Int(n) => Some(*n as f64),
+        RubyValue::Float(f) => Some(*f),
+        _ => None,
+    }
 }
 
 /// `Kernel#srand(seed)`: reseeds, returns the PREVIOUS seed.

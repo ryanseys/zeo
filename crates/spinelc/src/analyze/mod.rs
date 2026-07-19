@@ -310,6 +310,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("NoMatchingPatternKeyError", "NoMatchingPatternError"),
         ("Regexp::TimeoutError", "RegexpError"),
         ("IO::TimeoutError", "IOError"),
+        ("Errno::EDOM", "SystemCallError"),
     ] {
         register_class(compiler, name.to_string(), Some(superclass.to_string()), false, &[], &[], 0)?;
     }

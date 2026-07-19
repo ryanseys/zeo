@@ -162,22 +162,27 @@ fn rand_range(
     hi: &Option<Box<RubyValue>>,
     exclusive: bool,
 ) -> Result<RubyValue, Signal> {
+    // A beginless/endless range is a domain error (Errno::EDOM); an
+    // empty/reversed range answers nil, matching Kernel#rand.
     let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) else {
-        return Err(raise_error("ArgumentError", "invalid argument - a beginless/endless range".to_string()));
+        return Err(raise_error(
+            "Errno::EDOM",
+            "Numerical argument out of domain".to_string(),
+        ));
     };
     match (lo, hi) {
         (RubyValue::Int(a), RubyValue::Int(b)) => {
             let span = b - a + if exclusive { 0 } else { 1 };
             if span <= 0 {
-                return Err(raise_error("ArgumentError", format!("invalid argument - {a}..{b}")));
+                return Ok(RubyValue::Nil);
             }
             Ok(RubyValue::Int(a + (next_u64(state) % span as u64) as i64))
         }
         _ => {
             let a = to_f64(lo)?;
             let b = to_f64(hi)?;
-            if b <= a {
-                return Err(raise_error("ArgumentError", format!("invalid argument - {a}..{b}")));
+            if b < a || (b == a && exclusive) {
+                return Ok(RubyValue::Nil);
             }
             Ok(RubyValue::Float(a + to_unit_float(next_u64(state)) * (b - a)))
         }
@@ -238,6 +243,28 @@ crate::builtins::builtin_methods! {
         crate::builtins::arity!(args, 0);
         Ok(as_random(recv).seed.clone())
     }
+    // `Random#==`: two generators are equal when their seed AND current stream
+    // position match (so two fresh `Random.new(1)` are equal, but diverge once
+    // either draws) -- CRuby compares state, not object identity.
+    "==" => fn eq(recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let RubyValue::Object(o) = &args[0] else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let Some(other) = downcast_robj::<RandomObj>(o) else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let me = as_random(recv);
+        // Identity fast path: `r == r` would otherwise lock the same `state`
+        // mutex twice and deadlock. Cloning each state out before comparing
+        // keeps distinct-object comparison lock-safe too.
+        if Arc::ptr_eq(&me, &other) {
+            return Ok(RubyValue::Bool(true));
+        }
+        let (my_state, other_state) = (*me.state.lock(), *other.state.lock());
+        let eq = me.seed.rb_eq(&other.seed) && my_state == other_state;
+        Ok(RubyValue::Bool(eq))
+    }
 }
 
 /// The process-wide default `Random` behind `Random.rand`/`Random.bytes` (and
@@ -284,6 +311,13 @@ crate::builtins::builtin_methods! {
                 "no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0]))));
         };
         Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
+    }
+    // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
+    // suitable for `Random.new`. Drawn from the default generator.
+    "new_seed" => fn new_seed_c(_recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        let r = next_u64(&default_state().state);
+        Ok(RubyValue::Int((r >> 1) as i64 | 1))
     }
     // `Random.srand(seed = clock)` -- reseeds the DEFAULT generator, answering
     // the previous seed.

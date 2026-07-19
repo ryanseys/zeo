@@ -389,7 +389,9 @@ fn strftime(t: &RTime, fmt: &str) -> String {
 fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
     use num_bigint::BigInt;
     let (num, den) = match delta {
-        RubyValue::Int(i) => (BigInt::from(*i), BigInt::from(1)),
+        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            crate::builtins::rational::as_ratio(delta)
+        }
         RubyValue::Float(f) if f.is_finite() => crate::builtins::float::float_exact_parts(*f),
         RubyValue::Float(f) => {
             return Err(raise_error(
@@ -421,7 +423,9 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
 fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
     use num_bigint::BigInt;
     match v {
-        RubyValue::Int(i) => Ok((BigInt::from(*i), BigInt::from(1))),
+        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            Ok(crate::builtins::rational::as_ratio(v))
+        }
         RubyValue::Float(f) if f.is_finite() => Ok(crate::builtins::float::float_exact_parts(*f)),
         RubyValue::Float(f) => Err(raise_error(
             "FloatDomainError",

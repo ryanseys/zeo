@@ -459,6 +459,8 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     ExceptionClass { id: exc_id(54), name: "NoMatchingPatternKeyError", superclass: Some(exc_id(24)), is_module: false },
     ExceptionClass { id: exc_id(55), name: "Regexp::TimeoutError", superclass: Some(exc_id(21)), is_module: false },
     ExceptionClass { id: exc_id(56), name: "IO::TimeoutError", superclass: Some(exc_id(11)), is_module: false },
+    // `Errno::EDOM` (a Numeric domain error, e.g. `rand(1..)`), a SystemCallError.
+    ExceptionClass { id: exc_id(57), name: "Errno::EDOM", superclass: Some(exc_id(31)), is_module: false },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

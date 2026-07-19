@@ -17915,6 +17915,30 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn rand_ranges_edge_cases_and_random_equality() {
+    let result = run_ruby(
+        r#"
+        p rand(5...5)
+        p rand(5..3)
+        p rand(-3) >= 0
+        srand(3); v = rand(1..1000); p (1..1000).cover?(v)
+        p Random.new(1) == Random.new(1)
+        p Random.new(1) == Random.new(2)
+        r = Random.new(7); p r == r
+        p Random.new_seed.class
+        def t; yield; rescue => e; e.class; end
+        p t { rand(1..) }
+        p t { rand(..5) }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "nil\nnil\ntrue\ntrue\ntrue\nfalse\ntrue\nInteger\nErrno::EDOM\nErrno::EDOM\n",
+    );
+}
+
+#[test]
 fn top_level_scoped_constant_names_the_builtin_class() {
     // `::Integer` (and other `::Name` top-level anchors) resolve to the builtin
     // class in every position: is_a?/kind_of?/instance_of? arguments, `===`
