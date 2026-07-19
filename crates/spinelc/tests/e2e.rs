@@ -19290,3 +19290,103 @@ fn bundled_optparse_parses_switches_and_leaves_positionals() {
         "[\"file.txt\", \"-notaflag\"]\ntrue\n\"matz\"\n\"invalid option: --nope\"\n\"missing argument: --name\"\n"
     );
 }
+
+// ---- gems with two halves: a native half plus a Ruby half ----
+
+/// A gem's Ruby half can reopen its feature-gated NATIVE half and nest an
+/// exception class inside it, which the native half then raises by name.
+/// This is what retires the `StringScanner::Error` -> `RuntimeError`
+/// divergence: a nested user exception registers under its fully qualified
+/// name with a real constructor, where an ABI row cannot.
+#[test]
+fn a_gems_ruby_half_supplies_the_exception_class_its_native_half_raises() {
+    let result = run_ruby(
+        r##"
+        require "json"
+        require "strscan"
+        begin
+          JSON.parse("{oops")
+        rescue JSON::ParserError => e
+          p e.class.name
+          p e.class.ancestors.include?(StandardError)
+        end
+        p JSON::ParserError.superclass.name
+        p StringScanner::Error.ancestors.include?(StandardError)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"JSON::ParserError\"\ntrue\n\"JSON::JSONError\"\ntrue\n"
+    );
+}
+
+/// Loading the Ruby half must not cost the native half: `require "strscan"`
+/// resolves `gems/strscan/lib/strscan.rb`, which pulls the native half in with
+/// `require "strscan.so"` -- CRuby's loader idiom.
+#[test]
+fn the_native_half_still_works_through_its_ruby_half() {
+    let result = run_ruby(
+        r##"
+        require "strscan"
+        require "json"
+        s = StringScanner.new("hello world")
+        p s.scan(/\w+/)
+        p s.rest
+        p JSON.dump({ "a" => 1 })
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"hello\"\n\" world\"\n\"{\\\"a\\\":1}\"\n");
+}
+
+/// A `.so` require resolves through the static-ext table rather than the
+/// filesystem -- spinel is a Ruby built with `--with-static-linked-ext`, and
+/// CRuby registers static exts under `"<feature>.so"` (`load.c:1161`).
+#[test]
+fn an_explicit_so_require_resolves_a_statically_linked_extension() {
+    let result = run_ruby("require \"strscan.so\"\np StringScanner.new(\"ab\").scan(/a/)\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"a\"\n");
+
+    // A .so naming no static ext is still a clean LoadError, not a silent no-op.
+    let err = spinelc::compile_to_rust("require \"nope.so\"\n").unwrap_err();
+    assert!(err.contains("cannot load such file -- nope.so"), "unexpected: {err}");
+}
+
+/// A feature with no Ruby half falls through to the static-ext table, which is
+/// the ordinary case for most extensions.
+#[test]
+fn a_feature_with_no_ruby_half_falls_through_to_the_static_ext_table() {
+    let result = run_ruby("require \"base64\"\np Base64.encode64(\"hi\")\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"aGk=\\n\"\n");
+}
+
+/// MonitorMixin is the Ruby half of `monitor` over the native reentrant lock.
+#[test]
+fn monitor_mixin_layers_over_the_native_reentrant_lock() {
+    let result = run_ruby(
+        r##"
+        require "monitor"
+        class Counter
+          include MonitorMixin
+          def initialize
+            mon_initialize
+            @n = 0
+          end
+          def bump; synchronize { @n += 1 }; end
+          def reentrant; synchronize { synchronize { mon_owned? } }; end
+          attr_reader :n
+        end
+        c = Counter.new
+        c.bump
+        c.bump
+        p c.n
+        p c.reentrant
+        p c.mon_owned?
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\ntrue\nfalse\n");
+}

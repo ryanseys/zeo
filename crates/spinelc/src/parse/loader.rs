@@ -202,7 +202,20 @@ pub(super) fn lower_main_file(
     };
     let mut loader = Loader {
         roots: load_roots.to_vec(),
-        packages: discover_packages(package_dirs)?,
+        // The gems spinel itself ships are ALWAYS discoverable, appended
+        // last so any caller-supplied dir shadows them (first-name-wins).
+        // They are part of the compiler the way CRuby's rubylibdir is part of
+        // ruby -- not ambient machine state a caller opts into. A caller that
+        // forgot them would resolve a two-half gem's NATIVE half and silently
+        // miss its Ruby half, which is how `StringScanner::Error` would go
+        // missing and turn a raise into a panic.
+        packages: discover_packages(
+            &package_dirs
+                .iter()
+                .cloned()
+                .chain(bundled_gems_dir())
+                .collect::<Vec<_>>(),
+        )?,
         required: HashSet::new(),
         splicing: Vec::new(),
     };
@@ -441,34 +454,30 @@ impl Loader {
             return Ok(Vec::new());
         }
 
-        // Features spinel already provides natively -- `require` short-circuits
-        // to a no-op before any filesystem search (CRuby's own built-in-feature
-        // rule). `tmpdir` (Dir.mktmpdir) is compiled in.
-        if name == "require" && is_builtin_feature(feature) {
-            // An in-tree `ext/` feature's `require` ACTIVATES its gated
-            // builtin (`require "base64"` -> `Base64` resolves); always-on
-            // core no-ops (`set`/`tmpdir`) name no gated class, so nothing
-            // is recorded for them. Alias spellings collapse first, so
-            // `require "yaml"` activates the same `psych` feature `require
-            // "psych"` does.
-            // An in-tree `ext/` feature's `require` ACTIVATES its gated
-            // builtin (`require "base64"` -> `Base64` resolves). Always-on
-            // core no-ops (`set`/`tmpdir`) name no gated class, so recording
-            // them gates nothing -- but it is recorded all the same, because
-            // the same set doubles as the loaded-features table the
-            // non-top-level `require` (`parse::mod`) reads to decide whether
-            // it evaluates to `true` or `false`.
-            hir.activate_feature(canonical_ext_feature(feature));
-            return Ok(Vec::new());
-        }
-
         // Gem attribution: a `require` resolved out of a
         // package's roots belongs to that package; `require_relative`/
         // `load` INHERIT the requiring file's package (a package's internal
         // files are part of the package, however they're reached).
         let inherited = file_idx.and_then(|i| hir.loaded_files[i].package.clone());
         let (path, package) = match name {
-            "require" => self.resolve_require(feature)?,
+            // CRuby's `search_required` ORDER, and it is the inverse of the
+            // obvious one: every load-path root is tried for `<feature>.rb`
+            // BEFORE the statically-linked-extension table is consulted
+            // (`load.c:1159-1181`; `rb_find_file_ext` loops extension-outer,
+            // path-inner, `file.c:7173`). This is what lets a gem have a Ruby
+            // HALF sitting on top of a native half: `require "strscan"` finds
+            // `gems/strscan/lib/strscan.rb`, and that file pulls its native
+            // half in with `require "strscan.so"` -- CRuby's loader idiom,
+            // exactly as `ext/digest/lib/digest.rb` does.
+            //
+            // Short-circuiting builtin features first (the previous order)
+            // made a Ruby half unreachable: the require returned before any
+            // filesystem search could find it.
+            "require" => match self.resolve_require(feature)? {
+                Some(found) => found,
+                // Not on disk. A statically linked extension, then?
+                None => return self.activate_static_ext(hir, feature),
+            },
             "require_relative" => (resolve_require_relative(feature, dir)?, inherited),
             _ => (self.resolve_load(feature, dir)?, inherited),
         };
@@ -489,6 +498,40 @@ impl Loader {
         self.splice_file(hir, &canonical, file_idx, package, current_box)
     }
 
+
+    /// The static-ext fallthrough: a `require` that found nothing on disk.
+    ///
+    /// This is spinel's `vm->static_ext_inits` (`load.c:1510`). spinel is a
+    /// Ruby built with `--with-static-linked-ext` -- every extension it
+    /// supports is linked into the runtime, so there is no `.so` to dlopen and
+    /// "activating the feature" is the whole of what loading one means. The
+    /// ABI `feature` table is spinel's `ext/Setup`.
+    ///
+    /// A `.so`/`.bundle` spelling resolves the same way after dropping the
+    /// suffix, because CRuby registers static exts under `"<feature>.so"` and
+    /// rewrites an explicit suffix to `DLEXT` before looking them up
+    /// (`load.c:1129`, `template/extinit.c.tmpl`). That is what makes the
+    /// loader idiom -- a Ruby half doing `require "strscan.so"` -- work.
+    fn activate_static_ext(&self, hir: &mut Hir, feature: &str) -> PResult<Vec<NodeId>> {
+        let bare = feature
+            .strip_suffix(".so")
+            .or_else(|| feature.strip_suffix(".bundle"))
+            .or_else(|| feature.strip_suffix(".o"))
+            .unwrap_or(feature);
+        if !is_builtin_feature(bare) {
+            return Err(cannot_load(feature));
+        }
+        // An in-tree `ext/` feature's `require` ACTIVATES its gated builtin
+        // (`require "base64"` -> `Base64` resolves). Always-on core no-ops
+        // (`set`/`tmpdir`) name no gated class, so recording them gates
+        // nothing -- but it is recorded all the same, because the same set
+        // doubles as the loaded-features table the non-top-level `require`
+        // (`parse::mod`) reads to decide whether it evaluates to `true` or
+        // `false`. Alias spellings collapse first, so `require "yaml"`
+        // activates the same `psych` feature `require "psych"` does.
+        hir.activate_feature(canonical_ext_feature(bare));
+        Ok(Vec::new())
+    }
 
     /// Parses and lowers one resolved file into the arena, recording its
     /// provenance -- one `LoadedFile` per SPLICE INSTANCE (see
@@ -566,29 +609,36 @@ impl Loader {
     /// rely on). Returns the resolved path plus the owning package's name
     /// (provenance -- see `LoadedFile::package`). Absolute paths bypass all
     /// roots, exactly like `rb_find_file`'s absolute branch.
-    fn resolve_require(&self, feature: &str) -> PResult<(PathBuf, Option<String>)> {
+    ///
+    /// `Ok(None)` means NOT FOUND, which is not yet an error: the caller falls
+    /// through to the static-ext table, mirroring CRuby's `search_required`
+    /// (`load.c:1161`), where the statically-linked-extension lookup runs only
+    /// after `rb_find_file_ext` has failed on disk. `Err` is reserved for a
+    /// genuine problem (an ambiguous feature, an unsupported path shape).
+    fn resolve_require(&self, feature: &str) -> PResult<Option<(PathBuf, Option<String>)>> {
         if feature.starts_with("./") || feature.starts_with("../") || feature.starts_with('~') {
             return Err(format!(
                 "`require \"{feature}\"`: `./`/`../`/`~` paths resolve against the runtime working directory in real Ruby, which doesn't exist at compile time -- use `require_relative` instead"
             ));
         }
+        // A `.so`/`.bundle` feature never has a file on disk here -- it names
+        // a STATICALLY LINKED extension, so it belongs to the caller's
+        // static-ext fallthrough, not to the filesystem search.
         if is_native_feature(feature) {
-            return Err(format!(
-                "`require \"{feature}\"`: native (.so/.bundle) features aren't supported (spike scope)"
-            ));
+            return Ok(None);
         }
         let fname = with_rb_ext(feature);
         if Path::new(&fname).is_absolute() {
             let p = PathBuf::from(&fname);
             if p.is_file() {
-                return Ok((p, None));
+                return Ok(Some((p, None)));
             }
-            return Err(cannot_load(feature));
+            return Ok(None);
         }
         for root in &self.roots {
             let cand = root.join(&fname);
             if cand.is_file() {
-                return Ok((cand, None));
+                return Ok(Some((cand, None)));
             }
         }
         let mut hits: Vec<(PathBuf, &str)> = Vec::new();
@@ -605,10 +655,10 @@ impl Loader {
             }
         }
         match hits.len() {
-            0 => Err(cannot_load(feature)),
+            0 => Ok(None),
             1 => {
                 let (path, pkg) = hits.remove(0);
-                Ok((path, Some(pkg.to_string())))
+                Ok(Some((path, Some(pkg.to_string()))))
             }
             _ => {
                 let names: Vec<&str> = hits.iter().map(|(_, n)| *n).collect();
@@ -730,6 +780,16 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 /// wins" rule, the same shape as Bundler's lockfile picking exactly one
 /// version). A missing/unreadable packages dir contributes nothing (the
 /// CLI passes default candidate locations that often don't exist).
+/// The `gems/` directory shipped with the compiler, if it exists.
+///
+/// Baked in via `CARGO_MANIFEST_DIR` -- honest for a dev-tree compiler (both
+/// `cargo run` and the test harness live in the repo); an installed
+/// distribution would locate it relative to the executable instead.
+pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join("gems");
+    dir.is_dir().then_some(dir)
+}
+
 fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
     let mut packages: Vec<Gem> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();

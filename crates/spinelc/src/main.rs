@@ -94,9 +94,11 @@ fn parse_args() -> Result<Args, String> {
 
 /// The default package-dir candidates appended AFTER any explicit
 /// `--packages` dirs (explicit dirs get first-name-wins priority): the
-/// input file's sibling `gems/` (project-local gems), then the
-/// compiler's own bundled `gems/` (the repo-root directory holding the
-/// gems spinel ships -- its "default gems"). The bundled path is baked in
+/// input file's sibling `gems/` (project-local gems).
+///
+/// The compiler's OWN bundled `gems/` is not listed here: the loader appends
+/// it unconditionally, so it is found whether spinelc is driven through this
+/// CLI or used as a library. The bundled path is baked in
 /// via `CARGO_MANIFEST_DIR` -- honest for a dev-tree spike compiler
 /// (both `cargo run` and the test harness live in the repo); an installed
 /// distribution would locate it relative to the executable instead, the
@@ -106,10 +108,6 @@ fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     if let Some(parent) = input.and_then(|p| p.parent()) {
         dirs.push(parent.join("gems"));
     }
-    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("gems");
-    dirs.push(bundled);
     dirs
 }
 

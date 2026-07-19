@@ -8,8 +8,10 @@
 //! keys (Symbol keys with `symbolize_names: true`), arrays -> `Array`, `null`
 //! -> `nil`, integers -> `Integer` (bignums preserved), reals -> `Float`.
 //!
-//! Documented divergences: a parse error raises `RuntimeError` (CRuby raises
-//! `JSON::ParserError`, not yet a registered class); `to_json` on arbitrary
+//! A parse error raises `JSON::ParserError`, which this gem's RUBY half
+//! (`gems/json/lib/json.rb`) defines -- a feature-gated NATIVE class cannot
+//! register a constructible exception, so before the Ruby half existed this
+//! degraded to `RuntimeError`. Documented divergence: `to_json` on arbitrary
 //! objects (the require-time monkeypatch) is not added -- use `JSON.generate`.
 
 use crate::builtins::{arity, builtin_methods};
@@ -167,7 +169,7 @@ builtin_methods! {
         arity!(args, 1..=2);
         let text = parse_text(&args[0])?;
         let value: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+            .map_err(|e| raise_error("JSON::ParserError", format!("{e}")))?;
         Ok(to_ruby(&value, symbolize_opt(args.get(1))))
     }
     "generate" | "dump" => fn generate(_recv, args, _block) {

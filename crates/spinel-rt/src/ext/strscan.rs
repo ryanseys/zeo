@@ -320,12 +320,14 @@ builtin_methods! {
                 st.last = None;
                 Ok(recv.clone())
             }
-            // Documented divergence: CRuby raises `StringScanner::Error`, a
-            // class nested under the feature-gated `StringScanner` that this
-            // runtime can't register unconditionally; a `RuntimeError` with the
-            // same message is still `rescue`-able as a StandardError.
+            // `StringScanner::Error` is defined by this gem's RUBY half
+            // (`gems/strscan/lib/strscan.rb`), which `require "strscan"` always
+            // loads before reaching the native half. A nested user exception
+            // class registers under its fully qualified name with a real
+            // constructor, so raising it by name here works -- which is why
+            // this no longer has to degrade to `RuntimeError`.
             None => Err(raise_error(
-                "RuntimeError",
+                "StringScanner::Error",
                 "unscan failed: previous match record not exist".to_string(),
             )),
         }

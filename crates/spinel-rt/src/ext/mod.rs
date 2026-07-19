@@ -5,6 +5,24 @@
 //! Unlike the retired native-package DSL, these can construct proper
 //! exceptions (they live inside `spinel-rt`).
 //!
+//! # A gem may also have a RUBY half
+//!
+//! An extension here is the NATIVE half of a gem. The gem's Ruby half, when it
+//! has one, lives in `gems/<name>/lib/` and is joined to this module by the
+//! feature string -- the same split CRuby makes between `archdir` (the `.so`)
+//! and `rubylibdir` (the `.rb`), and the reason `digest`, `json`, `socket` and
+//! `strscan` all ship both. The Ruby half pulls this one in with
+//! `require "<name>.so"`, CRuby's loader idiom.
+//!
+//! That is where an extension's EXCEPTION classes belong. A row in the ABI
+//! table is feature-gated but registers `constructor: None`; the exception
+//! table is constructible but ungated and always-on -- so no row shape here is
+//! both gated and constructible, and `raise_error("Foo::Error", ..)` from an
+//! extension would panic. Defined in the Ruby half they are ordinary user
+//! classes, registered under their fully qualified name with a real
+//! constructor, and raising them by name from here works. See
+//! `gems/strscan/lib/strscan.rb`.
+//!
 //! # Two independent gates
 //!
 //! An extension is behind BOTH:

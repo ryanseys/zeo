@@ -9,8 +9,11 @@
 //! nested under a mapping key at the KEY's indent, not one level deeper).
 //!
 //! Oracle-verified against ruby 4.0.5 for scalars, sequences, mappings, and
-//! their nesting. Documented divergences: a YAML syntax error raises
-//! `RuntimeError` (CRuby: `Psych::SyntaxError`); anchors/aliases and custom
+//! their nesting. A YAML syntax error raises `Psych::SyntaxError`, which this
+//! gem's RUBY half (`gems/psych/lib/psych.rb`) defines -- see `ext/json.rs`
+//! for why the exception lives there and not here. Documented divergences:
+//! `Psych::SyntaxError` carries no file/line/column readers (the YAML backend
+//! does not surface positions); anchors/aliases and custom
 //! tags load as `nil`; exotic scalar styles (multi-line block scalars) dump as
 //! quoted strings rather than `|-` blocks. `load`/`load_file`/`load_stream` are
 //! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
@@ -217,7 +220,7 @@ builtin_methods! {
         arity!(args, 1..=2); // (yaml[, opts]) -- opts ignored
         let text = load_text(&args[0])?;
         let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
         Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
     }
     "dump" => fn dump_m(_recv, args, _block) {
@@ -234,7 +237,7 @@ builtin_methods! {
             format!("No such file or directory - {path} ({e})"),
         ))?;
         let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
         Ok(docs.first().map(yaml_to_ruby).unwrap_or(RubyValue::Nil))
     }
     // `Psych.load_stream(yaml)` -- EVERY document; an Array, or yielded one by
@@ -243,7 +246,7 @@ builtin_methods! {
         arity!(args, 1..=2);
         let text = load_text(&args[0])?;
         let docs = YamlLoader::load_from_str(&text)
-            .map_err(|e| raise_error("RuntimeError", format!("{e}")))?;
+            .map_err(|e| raise_error("Psych::SyntaxError", format!("{e}")))?;
         if let Some(RubyValue::Proc(p)) = &block {
             for doc in &docs {
                 p.call(std::slice::from_ref(&yaml_to_ruby(doc)))?;
