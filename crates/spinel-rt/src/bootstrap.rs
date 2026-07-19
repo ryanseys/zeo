@@ -11,6 +11,7 @@ use spinel_abi::{declared_ancestors, BUILTINS, OBJECT_CLASS};
 
 use crate::builtins::exception::register_exceptions;
 use crate::dispatch::ClassRegistry;
+use crate::RubyValue;
 
 /// Install the always-on built-in classes/modules (`Integer`, `Array`,
 /// `Kernel`, ... and `Object`) into `registry` with their DECLARED ancestors --
@@ -60,4 +61,52 @@ pub fn install_core_constants() {
     crate::builtins::io::seed_io_constants();
     crate::builtins::env::seed_env();
     crate::builtins::process::seed_process();
+    seed_ruby_constants();
+}
+
+/// Top-level `RUBY_*` version/build constants (owner `Object`, id 0) plus the
+/// `File::SEPARATOR` family.
+///
+/// The version, release date, and revision are the pinned oracle's own release
+/// identity (`ruby 4.0.5`) -- fixed for the version exactly as CRuby bakes them
+/// from `version.h`/`revision.h`. `RUBY_PLATFORM` is derived from the *build
+/// target* (`build.rs` -> `SPINEL_RUBY_PLATFORM`), and `RUBY_DESCRIPTION` is
+/// *composed* from those parts the same way CRuby's `version.c` builds
+/// `ruby_description`, rather than hardcoded.
+fn seed_ruby_constants() {
+    use crate::const_set;
+    let object = 0;
+
+    // Release identity of the pinned oracle (version-specific, not machine-specific).
+    const VERSION: &str = "4.0.5";
+    const RELEASE_DATE: &str = "2026-05-20";
+    const REVISION: &str = "64336ffd0ee9e1f4c05891695a3d7b49cb709721";
+    // Build-target-derived, like CRuby's configure-time `RUBY_PLATFORM`.
+    const PLATFORM: &str = env!("SPINEL_RUBY_PLATFORM");
+
+    const_set(object, "RUBY_VERSION", rb_str(VERSION));
+    const_set(object, "RUBY_PATCHLEVEL", RubyValue::Int(0));
+    const_set(object, "RUBY_ENGINE", rb_str("ruby"));
+    const_set(object, "RUBY_ENGINE_VERSION", rb_str(VERSION));
+    const_set(object, "RUBY_PLATFORM", rb_str(PLATFORM));
+    const_set(object, "RUBY_REVISION", rb_str(REVISION));
+    const_set(object, "RUBY_RELEASE_DATE", rb_str(RELEASE_DATE));
+
+    // Composed exactly as CRuby's `version.c` `ruby_description` +
+    // `define_ruby_description`: `ruby <ver> (<date> revision <short>) +PRISM
+    // [<platform>]`, where `<short>` is the leading 10 chars of the full
+    // revision and `+PRISM` is this build's default parser (the pinned oracle's).
+    let short_rev = &REVISION[..10.min(REVISION.len())];
+    let description =
+        format!("ruby {VERSION} ({RELEASE_DATE} revision {short_rev}) +PRISM [{PLATFORM}]");
+    const_set(object, "RUBY_DESCRIPTION", rb_str(&description));
+
+    let file = spinel_abi::FILE_CLASS.0;
+    const_set(file, "SEPARATOR", rb_str("/"));
+    const_set(file, "ALT_SEPARATOR", RubyValue::Nil);
+    const_set(file, "PATH_SEPARATOR", rb_str(":"));
+}
+
+fn rb_str(s: &str) -> RubyValue {
+    RubyValue::Str(crate::collections::string_new(s.to_string()))
 }

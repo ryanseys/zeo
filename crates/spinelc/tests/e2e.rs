@@ -4723,6 +4723,27 @@ fn top_level_constant_read_and_write() {
 }
 
 #[test]
+fn ruby_version_build_constants_and_file_separators() {
+    // Stable values plus a self-consistency check that RUBY_DESCRIPTION is
+    // composed from its parts exactly as CRuby's version.c does (portable
+    // across build hosts; RUBY_PLATFORM is build-target-derived via build.rs).
+    let result = run_ruby(
+        r#"
+        puts RUBY_VERSION
+        puts RUBY_ENGINE
+        puts RUBY_PATCHLEVEL
+        puts File::SEPARATOR
+        p File::ALT_SEPARATOR
+        short = RUBY_REVISION[0, 10]
+        composed = "ruby #{RUBY_VERSION} (#{RUBY_RELEASE_DATE} revision #{short}) +PRISM [#{RUBY_PLATFORM}]"
+        puts RUBY_DESCRIPTION == composed
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4.0.5\nruby\n0\n/\nnil\ntrue\n");
+}
+
+#[test]
 fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
     let result = run_ruby(
         r#"

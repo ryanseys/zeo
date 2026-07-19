@@ -1,6 +1,6 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1540/1986 passing (77.5%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `977cb73`
+Suite `spinel` — **1540/1986 passing (77.5%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `2ccb17a`
 
 | verdict | count |
 |---|---|
