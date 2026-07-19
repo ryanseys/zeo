@@ -461,6 +461,15 @@ impl MethodImpl {
 /// per-class Rust type (see `crate::builtins::exception`).
 pub type ConstructorFn = fn(ClassId, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
+/// Allocates a fresh, ZERO-INITIALIZED instance of a class WITHOUT running
+/// `initialize` -- backs `Class#allocate`. Mirrors `ConstructorFn`'s
+/// id-passing shape (one allocator can back many classes) but returns the
+/// bare `RObj` (every ivar `Nil`, frozen `false`); the caller wraps it in
+/// `RubyValue::Object`. `None` for modules/builtins (which have no generated
+/// struct); `Class#allocate` on those either yields a builtin empty value or
+/// raises, handled at the call site.
+pub type AllocatorFn = fn(ClassId) -> RObj;
+
 /// A method defined by REOPENING a builtin class (Phase 16.3, `class String;
 /// def blank?; ...`): the receiver is the builtin VALUE itself (`&RubyValue`,
 /// not an `RObj` -- builtins have no generated struct to downcast to), which
@@ -508,6 +517,14 @@ struct ClassEntry {
     /// (`puts`/`p`/...) aren't here -- they have no registry entry at all
     /// and are special-cased in `responds_to`.
     private_methods: HashSet<Symbol>,
+    /// The names in `methods`/`value_methods` this class marks PROTECTED
+    /// (`protected def x`, a bare `protected` section, `protected :x`). Parallel
+    /// to `private_methods`; a name in neither set is public. Materialization
+    /// stamps the mark onto every descendant that inherits the method, so this
+    /// set is authoritative for the class itself (no ancestor walk needed to
+    /// answer "is THIS class's `name` protected"). Consumed by the
+    /// `protected_*` reflection and the `*_method_defined?` family.
+    protected_methods: HashSet<Symbol>,
     /// Names this class's body `undef`'d. Mirrors CRuby, where `undef`
     /// inserts an "undefined" method entry that TERMINATES the lookup
     /// rather than deleting anything -- so an inherited name stops
@@ -544,6 +561,10 @@ struct ClassEntry {
     /// in which case reflection falls back to the materialized set.
     own_methods: HashSet<Symbol>,
     constructor: Option<ConstructorFn>,
+    /// The no-`initialize` allocator backing `Class#allocate` -- registered by
+    /// `ruby_class!`'s `__register` beside the constructor. `None` for
+    /// modules/builtins.
+    allocator: Option<AllocatorFn>,
 }
 
 #[derive(Default)]
@@ -583,12 +604,31 @@ impl ClassRegistry {
                 methods: HashMap::new(),
                 value_methods: HashMap::new(),
                 private_methods: HashSet::new(),
+                protected_methods: HashSet::new(),
                 undefined_methods: HashSet::new(),
                 class_methods: HashMap::new(),
                 own_methods: HashSet::new(),
                 constructor,
+                allocator: None,
             },
         );
+    }
+
+    /// Registers the no-`initialize` allocator backing `Class#allocate` --
+    /// called once per user class from its generated `__register`, right after
+    /// `register`. See `ClassEntry::allocator`.
+    pub fn define_allocator(&mut self, id: ClassId, f: AllocatorFn) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.allocator = Some(f);
+        }
+    }
+
+    /// Builds a fresh uninitialized instance of `id` via its registered
+    /// allocator (`Class#allocate`), or `None` if the class registered none
+    /// (a module/builtin). Does NOT run `initialize`.
+    pub fn allocate_instance(&self, id: ClassId) -> Option<RubyValue> {
+        let alloc = self.entries.get(&id.0).and_then(|e| e.allocator)?;
+        Some(RubyValue::Object(alloc(id)))
     }
 
     /// Build an exception instance from a class NAME + message -- the runtime's
@@ -651,6 +691,53 @@ impl ClassRegistry {
         self.entries
             .get(&id.0)
             .is_some_and(|e| e.private_methods.contains(&name))
+    }
+
+    fn is_protected(&self, id: ClassId, name: Symbol) -> bool {
+        self.entries
+            .get(&id.0)
+            .is_some_and(|e| e.protected_methods.contains(&name))
+    }
+
+    /// Records `name` as PROTECTED on `id` -- emitted by codegen beside
+    /// `mark_private` for each `def` whose resolved visibility is protected.
+    /// See `ClassEntry::protected_methods`.
+    pub fn mark_protected(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.protected_methods.insert(name);
+        }
+    }
+
+    /// Restores `name` to PUBLIC on `id` -- clears any private/protected mark.
+    /// Emitted for a `public :m` that promotes an inherited private/protected
+    /// method (materialization first stamps it with the ancestor's visibility;
+    /// this override wins). See `ClassEntry::visibility_overrides` in spinelc.
+    pub fn mark_public(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            e.private_methods.remove(&name);
+            e.protected_methods.remove(&name);
+        }
+    }
+
+    /// The visibility `id` records for `name` IF it defines or materializes it
+    /// (an own `def`, a builtin reopen, or an inherited method flattened in),
+    /// else `None`. Answers only THIS class's table -- the MRO walk is the
+    /// caller's (`instance_method_visibility`).
+    fn own_method_visibility(&self, id: ClassId, name: Symbol) -> Option<MethodVisibility> {
+        let e = self.entries.get(&id.0)?;
+        let defines = e.own_methods.contains(&name)
+            || e.methods.contains_key(&name)
+            || e.value_methods.keys().any(|(_, n)| *n == name);
+        if !defines {
+            return None;
+        }
+        Some(if e.protected_methods.contains(&name) {
+            MethodVisibility::Protected
+        } else if e.private_methods.contains(&name) {
+            MethodVisibility::Private
+        } else {
+            MethodVisibility::Public
+        })
     }
 
     pub fn define_value_method(&mut self, id: ClassId, box_id: u32, name: Symbol, f: ValueMethodFn) {
@@ -724,17 +811,26 @@ impl ClassRegistry {
     /// reopens (`value_methods`) are always own. When `own_only` is set but the
     /// class recorded no own-set (e.g. a builtin with no reopens), nothing is
     /// dropped only because there is nothing to drop.
-    fn own_instance_method_names(&self, id: ClassId, own_only: bool) -> Vec<(Symbol, bool)> {
+    fn own_instance_method_names(&self, id: ClassId, own_only: bool) -> Vec<(Symbol, MethodVisibility)> {
         let Some(e) = self.entries.get(&id.0) else {
             return Vec::new();
         };
         let mut seen = HashSet::new();
         let mut out = Vec::new();
-        let consider = |name: Symbol, seen: &mut HashSet<Symbol>, out: &mut Vec<(Symbol, bool)>| {
+        let consider = |name: Symbol,
+                        seen: &mut HashSet<Symbol>,
+                        out: &mut Vec<(Symbol, MethodVisibility)>| {
             if e.undefined_methods.contains(&name) || !seen.insert(name) {
                 return;
             }
-            out.push((name, e.private_methods.contains(&name)));
+            let vis = if e.protected_methods.contains(&name) {
+                MethodVisibility::Protected
+            } else if e.private_methods.contains(&name) {
+                MethodVisibility::Private
+            } else {
+                MethodVisibility::Public
+            };
+            out.push((name, vis));
         };
         // `own_methods` is the authoritative "defined directly here" set --
         // and the ONLY reliable source for a MODULE, whose instance methods
@@ -939,6 +1035,17 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     responds_to(recv.class_id(), name, include_all)
 }
 
+/// `Module#method_defined?` -- true when `name` resolves to a public OR
+/// protected instance method of `recv_class` (private and nonexistent answer
+/// false). Unlike `respond_to?`'s default, protected counts. `instance_method_
+/// visibility` supplies the private/public/protected verdict for a registered
+/// method; a builtin/Enumerable method (never private) has no registry entry,
+/// so its `None` verdict is correctly treated as "not private".
+pub fn method_defined(recv_class: ClassId, name: Symbol) -> bool {
+    responds_to(recv_class, name, true)
+        && instance_method_visibility(recv_class, name) != Some(MethodVisibility::Private)
+}
+
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     let n = name.name();
     let n = n.as_str();
@@ -957,11 +1064,13 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
                 return false;
             }
             if r.lookup(anc, name).is_some() || r.lookup_value_method(anc, 0, name).is_some() {
-                if !include_all && r.is_private(anc, name) {
-                    // A private method of this ancestor doesn't answer, but
-                    // a PUBLIC same-named one further along the chain still
-                    // could -- keep walking rather than returning early.
-                    continue;
+                // This is the NEAREST ancestor defining `name` (materialization
+                // flattens the resolved method, with its effective visibility,
+                // onto the receiver's own class), so its visibility is
+                // authoritative -- a private/protected redefinition here shadows
+                // a public copy farther up the chain (CRuby's nearest-wins rule).
+                if !include_all && (r.is_private(anc, name) || r.is_protected(anc, name)) {
+                    return false;
                 }
                 return true;
             }
@@ -1063,14 +1172,35 @@ pub(crate) fn ancestors_of_value(id: ClassId) -> &'static [ClassId] {
     crate::builtins::fallback_ancestors(id)
 }
 
-/// Visibility filter for the method-name reflection below. This runtime
-/// tracks only private-vs-not (no separate protected set), so `Public` means
-/// "public or protected" -- CRuby folds protected into `instance_methods`'s
-/// result anyway, and a dedicated `protected_*` query answers empty here.
+/// The resolved visibility of a single method (`private`/`protected`/public).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MethodVisibility {
     Public,
     Private,
+    Protected,
+}
+
+/// A reflection filter over method visibility -- what each `*_instance_methods`
+/// / `*_method_defined?` query keeps. `instance_methods` and `Object#methods`
+/// keep public+protected (`NotPrivate`); the prefixed forms match exactly one
+/// visibility.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum VisFilter {
+    NotPrivate,
+    Public,
+    Protected,
+    Private,
+}
+
+impl VisFilter {
+    fn matches(self, v: MethodVisibility) -> bool {
+        match self {
+            VisFilter::NotPrivate => v != MethodVisibility::Private,
+            VisFilter::Public => v == MethodVisibility::Public,
+            VisFilter::Protected => v == MethodVisibility::Protected,
+            VisFilter::Private => v == MethodVisibility::Private,
+        }
+    }
 }
 
 /// Kernel's C-implemented private functions -- present in the runtime's
@@ -1092,7 +1222,7 @@ fn is_hidden_kernel_private(name: &str) -> bool {
 /// subset of each class's methods), so a builtin class's list won't equal
 /// CRuby's exactly -- reflection callers assert membership, not equality. A
 /// user class's own list (`inherit=false`) is exact.
-pub fn instance_method_names(class: ClassId, vis: MethodVisibility, inherit: bool) -> Vec<Symbol> {
+pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -> Vec<Symbol> {
     let chain: Vec<ClassId> =
         if inherit { ancestors_of_value(class).to_vec() } else { vec![class] };
     let reg = REGISTRY.get();
@@ -1102,15 +1232,15 @@ pub fn instance_method_names(class: ClassId, vis: MethodVisibility, inherit: boo
         if let Some(r) = reg {
             // `inherit=false` restricts the user-method set to this class's own
             // definitions (materialization otherwise flattens inherited in).
-            for (name, is_private) in r.own_instance_method_names(anc, !inherit) {
-                let want = if vis == MethodVisibility::Private { is_private } else { !is_private };
-                if want && seen.insert(name) {
+            for (name, vis) in r.own_instance_method_names(anc, !inherit) {
+                if filter.matches(vis) && seen.insert(name) {
                     out.push(name);
                 }
             }
         }
-        // Builtin-table methods are all public; skip them for a private query.
-        if vis == MethodVisibility::Public {
+        // Builtin-table methods are all public; keep them only when the filter
+        // admits public names.
+        if filter.matches(MethodVisibility::Public) {
             for &n in crate::builtins::class_table_names(anc) {
                 if anc == KERNEL_CLASS && is_hidden_kernel_private(n) {
                     continue;
@@ -1123,6 +1253,32 @@ pub fn instance_method_names(class: ClassId, vis: MethodVisibility, inherit: boo
         }
     }
     out
+}
+
+/// The resolved visibility of instance method `name` on `class` (walking the
+/// MRO, nearest definition winning), or `None` if `class` has no such instance
+/// method. Backs `private_method_defined?`/`public_method_defined?`/
+/// `protected_method_defined?`.
+pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<MethodVisibility> {
+    let reg = REGISTRY.get()?;
+    let name_str = name.name();
+    for anc in ancestors_of_value(class) {
+        // A user/reopen definition on this ancestor carries its own visibility;
+        // `undef` here terminates the search with "no such method".
+        if reg.is_undefined(*anc, name) {
+            return None;
+        }
+        if let Some(vis) = reg.own_method_visibility(*anc, name) {
+            return Some(vis);
+        }
+        // A builtin-table method is public.
+        if crate::builtins::class_table_names(*anc).contains(&name_str.as_str())
+            && !(*anc == KERNEL_CLASS && is_hidden_kernel_private(&name_str))
+        {
+            return Some(MethodVisibility::Public);
+        }
+    }
+    None
 }
 
 /// The CLASS-method (`def self.x` + builtin class-method) names of `class`,
@@ -1158,6 +1314,19 @@ pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
     // `construct_by_class_id` path frozen classes use.
     if crate::runtime_meta::is_live() {
         return crate::runtime_meta::overlay_constructor(id);
+    }
+    None
+}
+
+/// A fresh uninitialized instance of `id` (`Class#allocate`) -- a user class's
+/// registered allocator, or a runtime (`Class.new`) class's name-keyed object.
+/// `None` for modules/builtins (handled at the `allocate` call site).
+pub(crate) fn allocate_of(id: ClassId) -> Option<RubyValue> {
+    if let Some(v) = REGISTRY.get().and_then(|r| r.allocate_instance(id)) {
+        return Some(v);
+    }
+    if crate::runtime_meta::is_live() {
+        return crate::runtime_meta::runtime_allocate(id);
     }
     None
 }

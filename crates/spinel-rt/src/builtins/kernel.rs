@@ -337,9 +337,10 @@ builtin_methods! {
         if let RubyValue::Class(cid) = recv {
             names.extend(crate::dispatch::class_method_names(*cid));
         }
+        // `Object#methods` returns public AND protected names.
         names.extend(crate::dispatch::instance_method_names(
             recv.class_id(),
-            crate::dispatch::MethodVisibility::Public,
+            crate::dispatch::VisFilter::NotPrivate,
             inherit,
         ));
         Ok(syms_to_array(dedup_syms(names)))
@@ -349,15 +350,20 @@ builtin_methods! {
         let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
         let names = crate::dispatch::instance_method_names(
             recv.class_id(),
-            crate::dispatch::MethodVisibility::Private,
+            crate::dispatch::VisFilter::Private,
             inherit,
         );
         Ok(syms_to_array(names))
     }
-    // No separate protected tracking in this runtime (documented) -- empty.
-    "protected_methods" => fn protected_methods_m(_recv, args, _block) {
+    "protected_methods" => fn protected_methods_m(recv, args, _block) {
         arity!(args, 0..=1);
-        Ok(syms_to_array(Vec::new()))
+        let inherit = !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil));
+        let names = crate::dispatch::instance_method_names(
+            recv.class_id(),
+            crate::dispatch::VisFilter::Protected,
+            inherit,
+        );
+        Ok(syms_to_array(names))
     }
     // A class/module receiver's own singleton methods are its `def self.`
     // methods; other receivers have no per-object singletons in this runtime's

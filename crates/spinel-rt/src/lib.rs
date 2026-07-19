@@ -60,7 +60,8 @@ pub use dispatch::{
     method_name_symbol, raise_error, raise_stop_iteration, raise_with_cause, responds_to, responds_to_value,
     run_initialize,
     send, send_in, send_super_from, send_value, send_value_in,
-    ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject, ValueMethodFn,
+    AllocatorFn, ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject,
+    ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
     ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
     INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS,
@@ -247,12 +248,22 @@ macro_rules! ruby_class {
                 args: &[$crate::RubyValue],
                 block: Option<$crate::RubyValue>,
             ) -> Result<$crate::RubyValue, $crate::Signal> {
-                let handle: $crate::RObj = std::sync::Arc::new($name {
-                    __frozen: std::sync::atomic::AtomicBool::new(false),
-                    $( $ivar: $crate::parking_lot::Mutex::new($crate::RubyValue::Nil), )*
-                });
+                let handle = Self::__allocate(Self::CLASS_ID);
                 $crate::run_initialize(Self::CLASS_ID, &handle, args, block)?;
                 Ok($crate::RubyValue::Object(handle))
+            }
+
+            /// The no-`initialize` allocator backing `Class#allocate` --
+            /// registered as this class's `AllocatorFn`. Builds the same
+            /// zero-initialized struct `__construct` does (every ivar `Nil`,
+            /// unfrozen) but stops there, so the caller gets a bare instance
+            /// to populate by hand. Ignores the passed id (uses its own
+            /// `Self::CLASS_ID`), matching `ConstructorFn`'s convention.
+            pub fn __allocate(_class: $crate::ClassId) -> $crate::RObj {
+                std::sync::Arc::new($name {
+                    __frozen: std::sync::atomic::AtomicBool::new(false),
+                    $( $ivar: $crate::parking_lot::Mutex::new($crate::RubyValue::Nil), )*
+                })
             }
 
             $(
@@ -349,6 +360,10 @@ macro_rules! ruby_class {
                     false,
                     vec![$($crate::ClassId($anc)),*],
                     Some(Self::__construct as $crate::ConstructorFn),
+                );
+                registry.define_allocator(
+                    Self::CLASS_ID,
+                    Self::__allocate as $crate::AllocatorFn,
                 );
                 $(
                     registry.define_method(

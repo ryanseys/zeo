@@ -553,15 +553,43 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let id = idx as u32;
         for &sid in &compiler.class(ClassId(id)).methods {
             let scope = compiler.scope(sid);
-            if matches!(scope.visibility, crate::hir::Visibility::Private) {
-                let key = &scope.name;
-                registrations.push(quote! {
+            let key = &scope.name;
+            match scope.visibility {
+                crate::hir::Visibility::Private => registrations.push(quote! {
                     __registry.mark_private(
                         spinel_rt::ClassId(#id),
                         spinel_rt::Symbol::intern(#key),
                     );
-                });
+                }),
+                // A protected method is recorded so the `protected_*` reflection
+                // and `protected_method_defined?` can report it (and `public_*`
+                // exclude it). See `ClassRegistry::mark_protected`.
+                crate::hir::Visibility::Protected => registrations.push(quote! {
+                    __registry.mark_protected(
+                        spinel_rt::ClassId(#id),
+                        spinel_rt::Symbol::intern(#key),
+                    );
+                }),
+                crate::hir::Visibility::Public => {}
             }
+        }
+        // A `private`/`public`/`protected :m` re-declaring an INHERITED method's
+        // visibility overrides the materialized stamp above -- emitted after the
+        // loop so the override wins (a HashSet insert/remove). `mark_public`
+        // clears any private/protected mark, promoting the method.
+        for (name, vis) in &compiler.class(ClassId(id)).visibility_overrides {
+            let mark = match vis {
+                crate::hir::Visibility::Private => quote! {
+                    __registry.mark_private(spinel_rt::ClassId(#id), spinel_rt::Symbol::intern(#name));
+                },
+                crate::hir::Visibility::Protected => quote! {
+                    __registry.mark_protected(spinel_rt::ClassId(#id), spinel_rt::Symbol::intern(#name));
+                },
+                crate::hir::Visibility::Public => quote! {
+                    __registry.mark_public(spinel_rt::ClassId(#id), spinel_rt::Symbol::intern(#name));
+                },
+            };
+            registrations.push(mark);
         }
         // Each method DEFINED DIRECTLY on this class (not materialized from an
         // ancestor) is recorded so `instance_methods(false)`/`methods(false)`
@@ -734,17 +762,24 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 // builtin's entry, keyed by the overlay's box (Phase 18).
                 let target = ci.builtin_overlay.map_or(id, |root| root.0);
                 // A PRIVATE `def` (every top-level def, and an explicit
-                // `private def x`) is recorded so `respond_to?` skips it --
-                // see `ClassRegistry::mark_private`.
-                let mark_private = matches!(scope.visibility, crate::hir::Visibility::Private)
-                    .then(|| {
-                        quote! {
-                            __registry.mark_private(
-                                spinel_rt::ClassId(#target),
-                                spinel_rt::Symbol::intern(#key),
-                            );
-                        }
-                    });
+                // `private def x`) is recorded so `respond_to?` skips it; a
+                // PROTECTED one so the `protected_*` reflection reports it. See
+                // `ClassRegistry::mark_private`/`mark_protected`.
+                let mark_vis = match scope.visibility {
+                    crate::hir::Visibility::Private => Some(quote! {
+                        __registry.mark_private(
+                            spinel_rt::ClassId(#target),
+                            spinel_rt::Symbol::intern(#key),
+                        );
+                    }),
+                    crate::hir::Visibility::Protected => Some(quote! {
+                        __registry.mark_protected(
+                            spinel_rt::ClassId(#target),
+                            spinel_rt::Symbol::intern(#key),
+                        );
+                    }),
+                    crate::hir::Visibility::Public => None,
+                };
                 quote! {
                     __registry.define_value_method(
                         spinel_rt::ClassId(#target),
@@ -752,7 +787,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         spinel_rt::Symbol::intern(#key),
                         #tramp,
                     );
-                    #mark_private
+                    #mark_vis
                 }
             });
             builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));

@@ -773,6 +773,7 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -1016,6 +1017,7 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

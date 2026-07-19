@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=81337cd
-# PASS=1700 FAIL_OUTPUT=330 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8cba7c4
+# PASS=1708 FAIL_OUTPUT=322 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -340,8 +340,8 @@ chunk_while	PASS	-	-
 clamp_bounds	PASS	-	-
 clamp_nil_open_bounds	PASS	-	-
 clamp_string_and_range	PASS	-	-
-class_allocate	FAIL_OUTPUT	expect	missing-method:allocate
-class_allocate_builtin_var	FAIL_OUTPUT	expect	missing-method:allocate
+class_allocate	PASS	-	-
+class_allocate_builtin_var	PASS	-	-
 class_ancestors_superclass	PASS	-	-
 class_basicobject_superclass	PASS	-	-
 class_case_eq	PASS	-	-
@@ -1229,9 +1229,9 @@ method_owner_receiver	PASS	-	-
 method_param_destructure	PASS	-	-
 method_return_mixed_int_string	PASS	-	-
 method_undefined_name_error	PASS	-	-
-method_visibility	FAIL_OUTPUT	expect	missing-method:public_method_defined?
-method_visibility_attr	FAIL_OUTPUT	expect	missing-method:private_method_defined?
-method_visibility_inherit	FAIL_OUTPUT	expect	missing-method:private_method_defined?
+method_visibility	PASS	-	-
+method_visibility_attr	PASS	-	-
+method_visibility_inherit	PASS	-	-
 middle_splat_param	PASS	-	-
 min_by_string_key	PASS	-	-
 minmax_by_count	FAIL_OUTPUT	expect	-
@@ -1595,15 +1595,15 @@ raise_non_exception_typeerror	PASS	-	-
 raise_reraise_in_def	PASS	-	-
 raise_shortform_default_args	PASS	-	-
 raise_unless_isa_narrow	PASS	-	-
-rand_prng_stream	FAIL_OUTPUT	expect	auto-invalid-argument-a354
+rand_prng_stream	PASS	-	-
 random_bignum_seed	PASS	-	-
 random_float_seed	PASS	-	-
 random_inspect	PASS	-	-
-random_methods	FAIL_OUTPUT	expect	auto-invalid-argument-c00e
+random_methods	PASS	-	-
 random_rand_argument	PASS	-	-
 random_seed_range_base64_pad	PASS	-	-
 range	PASS	-	-
-range_and_array_range_args	FAIL_OUTPUT	expect	auto-invalid-argument-a354
+range_and_array_range_args	FAIL_OUTPUT	expect	-
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
 range_bsearch	PASS	-	-
 range_bsearch_float	FAIL_OUTPUT	expect	-
@@ -1960,7 +1960,7 @@ thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	PASS	-	-
 time_at_in_offset	FAIL_OUTPUT	expect	auto-can-convert-hash-into-an-exact-number-778a
-time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-can-convert-rational-into-an-exact-number-127c
+time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-can-convert-time-into-an-exact-number-7699
 time_at_subsec	PASS	-	-
 time_at_unit_form	PASS	-	-
 time_between_clamp	PASS	-	-
@@ -1972,7 +1972,7 @@ time_localtime_gmtime	PASS	-	-
 time_mktime_local_utc	PASS	-	-
 time_new_in_kwarg	PASS	-	-
 time_numeric_string_args	PASS	-	-
-time_plus_rational	FAIL_OUTPUT	expect	auto-can-convert-rational-into-an-exact-number-127c
+time_plus_rational	PASS	-	-
 time_predicates_getgm	PASS	-	-
 time_respond_to	PASS	-	-
 time_round_floor_ceil	PASS	-	-

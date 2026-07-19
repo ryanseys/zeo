@@ -370,6 +370,14 @@ pub fn overlay_constructor(id: ClassId) -> Option<ConstructorFn> {
     c.get(&id.0)?.constructor
 }
 
+/// A fresh uninitialized instance of a runtime (`Class.new`) class, backing
+/// `Class#allocate` -- a name-keyed `DynObject` with no `initialize` run.
+/// `None` if `id` is not a known runtime class.
+pub fn runtime_allocate(id: ClassId) -> Option<RubyValue> {
+    let known = maps().classes.read().unwrap().contains_key(&id.0);
+    known.then(|| RubyValue::Object(Arc::new(DynObject::new(id))))
+}
+
 /// Coerce a `define_method`/`define_singleton_method` NAME argument (a Symbol
 /// or String) to a `Symbol` -- CRuby's `rb_to_id`.
 pub(crate) fn coerce_method_name(arg: Option<&RubyValue>) -> Result<Symbol, Signal> {

@@ -1425,6 +1425,18 @@ pub enum HirNode {
         new_name: String,
         old_name: String,
     },
+    /// `private :m` / `public :m` / `protected :m` naming a method NOT defined
+    /// earlier in the same class/module body -- an INHERITED method whose
+    /// visibility this class re-declares (`class Sub < Base; private :base_pub;
+    /// public :base_priv; end`). The same-body case is handled at lowering time
+    /// by `set_method_visibility` on the local `DefMethod`; there is no local
+    /// def here, so the name+visibility is recorded for `analyze::register_class`
+    /// to collect into the class's `visibility_overrides`, applied after
+    /// materialization stamps each method with its defining class's visibility.
+    MethodVisibility {
+        name: String,
+        visibility: Visibility,
+    },
     /// The last-match specials: `$~`, `$1`..`$9`, `$&`, `` $` ``, `$'`.
     ///
     /// NOT `GlobalRead`, even though they are spelled like globals: nothing

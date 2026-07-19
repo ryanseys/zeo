@@ -592,6 +592,14 @@ fn register_class(
                 let pair = (new_name.clone(), old_name.clone());
                 compiler.classes[class_id.0 as usize].pending_aliases.push(pair);
             }
+            // A `private`/`public`/`protected :m` re-declaring an INHERITED
+            // method's visibility -- applied by codegen after materialization.
+            // See `HirNode::MethodVisibility`.
+            HirNode::MethodVisibility { name, visibility } => {
+                compiler.classes[class_id.0 as usize]
+                    .visibility_overrides
+                    .push((name.clone(), *visibility));
+            }
             HirNode::Prepend(m) => {
                 let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
                 compiler.classes[class_id.0 as usize].prepends.push(target);
@@ -945,6 +953,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -1230,6 +1239,7 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

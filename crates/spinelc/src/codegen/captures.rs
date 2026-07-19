@@ -294,6 +294,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -456,6 +457,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)
@@ -888,6 +890,7 @@ fn walk(
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
         | HirNode::QualifiedConstRead(..)
         | HirNode::ConstReadOrNil(..)

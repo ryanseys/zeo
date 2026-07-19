@@ -21,23 +21,20 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
-| ? | auto-can-convert-rational-into-an-exact-number-127c | 2 | time_plus_rational, time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-cannot-load-such-file-time-856a | 2 | bundle_misc_c_34, bundle_misc_c_33 | cannot load such file -- time |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
-| ? | auto-invalid-argument-a354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-no-block-given-yield-cac6 | 2 | enum_terminal_chunk_zip_lazy, string_enum_inspect_source | uncaught exception: no block given (yield) |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | P | missing-const:Marshal | 2 | poly_hash_inspect, marshal_symlink_float | uncaught exception: uninitialized constant Marshal |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for an instance of NilClass |
-| P | missing-method:allocate | 2 | class_allocate, class_allocate_builtin_var | uncaught exception: undefined method 'allocate' for class Thing |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for an instance of Object |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
-| P | missing-method:private_method_defined? | 2 | method_visibility_inherit, method_visibility_attr | uncaught exception: undefined method 'private_method_defined?' for class Sub |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
 | ? | auto-assertion-failed-is-finite-2f37 | 1 | pp_store_float_inf_literal | assertion failed: f.is_finite() |
 | ? | auto-can-coerce-complex-into-float-4a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
 | ? | auto-can-convert-proc-into-integer-bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
+| ? | auto-can-convert-time-into-an-exact-number-7699 | 1 | time_at_kinds_string_ctor | uncaught exception: can't convert Time into an exact number |
 | ? | auto-can-iterate-from-string-c4d1 | 1 | bundle_tiny_num | uncaught exception: can't iterate from String |
 | ? | auto-can-modify-frozen-string-plain-a903 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" |
 | ? | auto-cannot-load-such-file-ffi-16c6 | 1 | ffi_gem_compat | cannot load such file -- ffi |
@@ -50,7 +47,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-constant-name-or-path-or-5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
-| ? | auto-invalid-argument-c00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
 | ? | auto-memory-allocation-of-bytes-failed-aad1 | 1 | string_multiply_overflow | memory allocation of 1152921504606846976 bytes failed |
 | ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
 | ? | auto-no-block-given-localjumperror-b554 | 1 | yield_no_block_raises | no block given (LocalJumpError) |
@@ -119,7 +115,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:pipe? | 1 | file_surface_extended | uncaught exception: undefined method 'pipe?' for class File |
 | P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for an instance of Object |
 | P | missing-method:produce | 1 | enumerator_produce | uncaught exception: undefined method 'produce' for class Enumerator |
-| P | missing-method:public_method_defined? | 1 | method_visibility | uncaught exception: undefined method 'public_method_defined?' for class Account |
 | P | missing-method:reset | 1 | set_conformance_batch2 | uncaught exception: undefined method 'reset' for an instance of Set |
 | P | missing-method:size | 1 | lazy_size | uncaught exception: undefined method 'size' for an instance of Enumerator::Lazy |
 | P | missing-method:system | 1 | system_argument_list | uncaught exception: undefined method 'system' for an instance of Object |

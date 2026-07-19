@@ -89,6 +89,11 @@ pub struct ClassInfo {
     /// `HirNode::AliasMethod` and resolved by `mro::resolve_aliases` once the
     /// ancestor chain is linearized. See `HirNode::AliasMethod`'s docs.
     pub pending_aliases: Vec<(String, String)>,
+    /// `(name, visibility)` from a `private`/`public`/`protected :m` that
+    /// re-declares an INHERITED method's visibility (no local `def` to retag).
+    /// Applied by codegen after materialization stamps each method with its
+    /// defining class's visibility. See `HirNode::MethodVisibility`.
+    pub visibility_overrides: Vec<(String, crate::hir::Visibility)>,
     /// `true` for `module Name ... end`: never instantiated (no `Name.new`,
     /// no generated Rust struct/`impl RubyObject`/`ClassRegistry` entry --
     /// see `codegen::mod::emit_class`'s docs), used only as a source for
@@ -252,6 +257,7 @@ impl Compiler {
                 extends: Vec::new(),
             undefined: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
+            visibility_overrides: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
@@ -498,6 +504,7 @@ impl Compiler {
             extends: Vec::new(),
             undefined: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
+            visibility_overrides: Vec::new(),
             is_module,
             ivars: Vec::new(),
             own_methods: Vec::new(),

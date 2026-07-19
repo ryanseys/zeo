@@ -16,6 +16,21 @@ fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     }
 }
 
+/// Whether `name_arg` names an instance method of `recv` with exactly `want`
+/// visibility -- shared by `public/private/protected_method_defined?`.
+fn method_defined_with_vis(
+    recv: &RubyValue,
+    arg: &RubyValue,
+    want: crate::dispatch::MethodVisibility,
+) -> Result<bool, crate::Signal> {
+    let name = name_arg(arg)?;
+    let vis = crate::dispatch::instance_method_visibility(
+        recv_cid(recv),
+        crate::Symbol::intern(&name),
+    );
+    Ok(vis == Some(want))
+}
+
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(args: &[RubyValue]) -> bool {
@@ -180,31 +195,39 @@ builtin_methods! {
         Ok(RubyValue::Array(crate::array_new(names)))
     }
     // `Module#method_defined?(:name)` -- does the class (or an ancestor)
-    // provide `name` as a public/protected INSTANCE method? Reuses the same
-    // MRO walk `respond_to?` does (`responds_to` with `include_all=false`,
-    // which skips private but keeps protected -- exactly method_defined?'s
-    // rule), so an inherited `object_id`/`frozen?` answers true too.
+    // provide `name` as a public OR protected INSTANCE method? (private and
+    // nonexistent answer false), so an inherited `object_id`/`frozen?` answers
+    // true too.
     "method_defined?" => fn method_defined(recv, args, _block) {
         // The optional second `inherit` flag (default true) is accepted; this
         // runtime always walks ancestors, so `inherit: false` is a documented
         // approximation rather than an error.
         arity!(args, 1..=2);
         let name = name_arg(&args[0])?;
-        Ok(RubyValue::Bool(crate::dispatch::responds_to(
+        Ok(RubyValue::Bool(crate::dispatch::method_defined(
             recv_cid(recv),
             crate::Symbol::intern(&name),
-            false,
         )))
     }
     // `instance_methods(inherit=true)` -- public+protected names of the
     // module/class (and its ancestors unless `inherit` is false). A builtin's
     // list is a subset of CRuby's (this runtime implements a subset), so
     // callers assert membership; a user class's own list is exact.
-    "instance_methods" | "public_instance_methods" => fn instance_methods(recv, args, _block) {
+    "instance_methods" => fn instance_methods(recv, args, _block) {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
-            crate::dispatch::MethodVisibility::Public,
+            crate::dispatch::VisFilter::NotPrivate,
+            inherit_flag(args),
+        );
+        Ok(syms_to_array(names))
+    }
+    // `public_instance_methods` narrows to public ONLY (protected excluded).
+    "public_instance_methods" => fn public_instance_methods(recv, args, _block) {
+        arity!(args, 0..=1);
+        let names = crate::dispatch::instance_method_names(
+            recv_cid(recv),
+            crate::dispatch::VisFilter::Public,
             inherit_flag(args),
         );
         Ok(syms_to_array(names))
@@ -213,17 +236,38 @@ builtin_methods! {
         arity!(args, 0..=1);
         let names = crate::dispatch::instance_method_names(
             recv_cid(recv),
-            crate::dispatch::MethodVisibility::Private,
+            crate::dispatch::VisFilter::Private,
             inherit_flag(args),
         );
         Ok(syms_to_array(names))
     }
-    // This runtime tracks no separate `protected` visibility, so the protected
-    // set is always empty (documented divergence; protected methods surface as
-    // public in `instance_methods`).
-    "protected_instance_methods" => fn protected_instance_methods(_recv, args, _block) {
+    "protected_instance_methods" => fn protected_instance_methods(recv, args, _block) {
         arity!(args, 0..=1);
-        Ok(syms_to_array(Vec::new()))
+        let names = crate::dispatch::instance_method_names(
+            recv_cid(recv),
+            crate::dispatch::VisFilter::Protected,
+            inherit_flag(args),
+        );
+        Ok(syms_to_array(names))
+    }
+    // `private_method_defined?`/`public_method_defined?`/
+    // `protected_method_defined?` -- true when `name` is an instance method of
+    // this exact visibility. A non-method (or a name of another visibility)
+    // answers false.
+    "public_method_defined?" => fn public_method_defined(recv, args, _block) {
+        arity!(args, 1..=2);
+        Ok(RubyValue::Bool(method_defined_with_vis(
+            recv, &args[0], crate::dispatch::MethodVisibility::Public)?))
+    }
+    "private_method_defined?" => fn private_method_defined(recv, args, _block) {
+        arity!(args, 1..=2);
+        Ok(RubyValue::Bool(method_defined_with_vis(
+            recv, &args[0], crate::dispatch::MethodVisibility::Private)?))
+    }
+    "protected_method_defined?" => fn protected_method_defined(recv, args, _block) {
+        arity!(args, 1..=2);
+        Ok(RubyValue::Bool(method_defined_with_vis(
+            recv, &args[0], crate::dispatch::MethodVisibility::Protected)?))
     }
     // `Module#instance_method(:name)` -> an UnboundMethod for the module/class.
     "instance_method" => fn instance_method(recv, args, _block) {
@@ -403,6 +447,41 @@ builtin_methods! {
                 ))
             }
         }
+    }
+
+    // `Class#allocate` -- a fresh instance WITHOUT running `initialize`. A user
+    // class allocates its zero-initialized struct via its registered allocator;
+    // a builtin value class answers its empty value (`String.allocate` -> `""`,
+    // like CRuby, whose `allocate` yields the class's default instance).
+    "allocate" => fn allocate_m(recv, _args, _block) {
+        let cid = recv_cid(recv);
+        if let Some(v) = builtin_allocate(cid) {
+            return Ok(v);
+        }
+        match crate::dispatch::allocate_of(cid) {
+            Some(v) => Ok(v),
+            None => {
+                let n = crate::dispatch::class_name(cid)
+                    .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
+                Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("allocator undefined for {n}"),
+                ))
+            }
+        }
+    }
+}
+
+/// The empty/default value a builtin value class's `allocate` yields, matching
+/// CRuby (`String.allocate == ""`, `Array.allocate == []`, `Hash.allocate ==
+/// {}`). `None` for a user or non-value class, which routes to its registered
+/// allocator instead.
+fn builtin_allocate(cid: crate::ClassId) -> Option<RubyValue> {
+    match cid {
+        spinel_abi::STRING_CLASS => Some(RubyValue::Str(crate::string_new(String::new()))),
+        spinel_abi::ARRAY_CLASS => Some(RubyValue::Array(crate::array_new(Vec::new()))),
+        spinel_abi::HASH_CLASS => Some(RubyValue::Hash(crate::hash_new(Vec::new()))),
+        _ => None,
     }
 }
 

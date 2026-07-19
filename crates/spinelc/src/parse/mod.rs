@@ -2936,6 +2936,15 @@ fn lower_class_body_statement(
                             matches!(&hir[id], HirNode::DefMethod { name: existing, .. } if *existing == target)
                         }) {
                             hir.set_method_visibility(id, new_vis);
+                        } else {
+                            // Re-declaring an INHERITED method's visibility (no
+                            // local `def` to retag): recorded for codegen to
+                            // apply after materialization. See
+                            // `HirNode::MethodVisibility`.
+                            out.push(hir.push(HirNode::MethodVisibility {
+                                name: target,
+                                visibility: new_vis,
+                            }));
                         }
                     }
                     return Ok(());

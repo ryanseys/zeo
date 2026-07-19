@@ -353,6 +353,7 @@ impl Walker {
         | HirNode::LastMatchRef(_)
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. }
         | HirNode::AliasGlobal(..)
             | HirNode::QualifiedConstRead(..)
             | HirNode::ConstReadOrNil(..)

@@ -17939,6 +17939,83 @@ fn rand_ranges_edge_cases_and_random_equality() {
 }
 
 #[test]
+fn class_allocate_skips_initialize() {
+    // `Class#allocate` builds an instance WITHOUT running `initialize` (so a
+    // required-arg `initialize` is bypassed); the object is still a usable
+    // instance whose ivars start nil and can be assigned by hand. A builtin
+    // value class allocates its empty value, and a variable-held class
+    // dispatches like the constant.
+    let result = run_ruby(
+        r#"
+        class Thing
+          def initialize(x) = (@x = x)
+          def x = @x
+        end
+        t = Thing.allocate
+        p t.class.name
+        p t.x
+        t2 = Thing.allocate
+        p t2.is_a?(Thing)
+        p String.allocate
+        p Array.allocate
+        p Hash.allocate
+        w = Thing
+        p w.allocate.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"Thing\"\nnil\ntrue\n\"\"\n[]\n{}\nThing\n",
+    );
+}
+
+#[test]
+fn three_way_method_visibility_reflection() {
+    // Private/public/protected are tracked distinctly: `instance_methods`
+    // keeps public+protected, the prefixed queries match exactly one
+    // visibility, `respond_to?`'s default skips private AND protected, and a
+    // subclass may re-declare an inherited method's visibility.
+    let result = run_ruby(
+        r#"
+        class Account
+          def deposit; end
+          private
+          def log; end
+          protected
+          def compare; end
+        end
+        def s(a); a.map(&:to_s).sort; end
+        p s(Account.instance_methods(false))
+        p s(Account.public_instance_methods(false))
+        p s(Account.protected_instance_methods(false))
+        p s(Account.private_instance_methods(false))
+        p Account.public_method_defined?(:deposit)
+        p Account.protected_method_defined?(:compare)
+        p Account.private_method_defined?(:log)
+        p Account.public_method_defined?(:compare)
+        a = Account.new
+        p a.respond_to?(:compare)
+        p a.respond_to?(:compare, true)
+        class Base
+          def m; end
+        end
+        class Sub < Base
+          private :m
+        end
+        p Sub.new.respond_to?(:m)
+        p Sub.private_method_defined?(:m)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"compare\", \"deposit\"]\n[\"deposit\"]\n[\"compare\"]\n[\"log\"]\n\
+         true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\ntrue\n",
+    );
+}
+
+#[test]
 fn top_level_scoped_constant_names_the_builtin_class() {
     // `::Integer` (and other `::Name` top-level anchors) resolve to the builtin
     // class in every position: is_a?/kind_of?/instance_of? arguments, `===`
