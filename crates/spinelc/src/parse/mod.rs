@@ -13,7 +13,7 @@ mod struct_def;
 
 use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, KeywordParam, KwArg, LastMatch, NodeId, Params,
-    Pattern, PatternArm, RegexpFlags, RescueClause, StrPart, Visibility,
+    Pattern, PatternArm, RaiseCause, RegexpFlags, RescueClause, StrPart, Visibility,
 };
 use ruby_prism::{CallNode, Node, ParseResult};
 
@@ -1328,7 +1328,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             "$&" => LastMatch::Group(0),
             "$`" => LastMatch::Pre,
             "$'" => LastMatch::Post,
-            // `$+` (the last non-empty group) has no slot of its own here.
+            "$+" => LastMatch::LastGroup,
             other => {
                 return Err(format!(
                     "the `{other}` back-reference global isn't supported yet (spike scope)"
@@ -1994,6 +1994,45 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 if arg_list.len() == 1 {
                     if let Some(sym) = arg_list[0].as_symbol_node() {
                         let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();
+                        // `define_method(:name, &:other)` -- a symbol-to-proc
+                        // block argument rather than a literal block.
+                        //
+                        // In CRuby the `&` conversion happens at the CALL SITE,
+                        // before `rb_mod_define_method` ever runs (proc.c:2872,
+                        // which rejects a bare Symbol as its second positional
+                        // argument), so the method body is the symbol proc:
+                        // `->(recv, *rest) { recv.other(*rest) }`. That is why
+                        // the defined method takes its RECEIVER as the first
+                        // argument -- `w.as_str(7)` answers `7.to_s`.
+                        if let Some(target) = block_node
+                            .as_block_argument_node()
+                            .and_then(|b| b.expression())
+                            .and_then(|e| e.as_symbol_node())
+                        {
+                            let target = String::from_utf8_lossy(target.unescaped()).into_owned();
+                            let recv = hir.push(HirNode::LocalRead("__sp_recv".to_string()));
+                            let rest = hir.push(HirNode::LocalRead("__sp_args".to_string()));
+                            let call = hir.push(HirNode::Call {
+                                receiver: Some(recv),
+                                name: target,
+                                args: vec![ArrayElem::Splat(rest)],
+                                kwargs: Vec::new(),
+                                block: None,
+                                block_arg: None,
+                                safe: false,
+                            });
+                            return Ok(hir.push(HirNode::DefMethod {
+                                name: method_name,
+                                params: Params {
+                                    required: vec!["__sp_recv".to_string()],
+                                    rest: Some(Some("__sp_args".to_string())),
+                                    ..Params::default()
+                                },
+                                body: vec![call],
+                                is_class_method: false,
+                                visibility: Visibility::Public,
+                            }));
+                        }
                         let block = block_node
                             .as_block_node()
                             .ok_or("define_method's second argument must be a block")?;
@@ -2187,17 +2226,44 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
                 .unwrap_or_default();
-            if arg_list.iter().any(|n| n.as_keyword_hash_node().is_some()) {
-                return Err("`raise`/`fail` with an explicit `cause:` keyword override isn't supported yet -- automatic cause chaining from an active `rescue` works (Exception#cause); only the explicit override is deferred".to_string());
+            // A trailing keyword hash carries `cause:`. Splitting it off the
+            // positional list is what keeps the three-state distinction: an
+            // ABSENT `cause:` chains from `$!`, while `cause: nil` is
+            // `Explicit` with a nil value and suppresses chaining.
+            let (kw_nodes, positional): (Vec<_>, Vec<_>) = arg_list
+                .iter()
+                .partition(|n| n.as_keyword_hash_node().is_some());
+            let mut cause = RaiseCause::Absent;
+            for kw in &kw_nodes {
+                let hash = kw.as_keyword_hash_node().expect("partitioned on this");
+                for element in hash.elements().iter() {
+                    let assoc = element
+                        .as_assoc_node()
+                        .ok_or("`raise` accepts only a `cause:` keyword")?;
+                    let key = assoc
+                        .key()
+                        .as_symbol_node()
+                        .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                        .unwrap_or_default();
+                    if key != "cause" {
+                        return Err(format!("`raise` doesn't accept the `{key}:` keyword"));
+                    }
+                    cause = RaiseCause::Explicit(lower_node(result, hir, &assoc.value())?);
+                }
             }
-            if arg_list.len() > 2 {
+            if positional.len() > 2 {
                 return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string());
             }
-            let args = arg_list
+            if positional.is_empty() && matches!(cause, RaiseCause::Explicit(_)) {
+                return Err(
+                    "only cause is given with no arguments".to_string()
+                );
+            }
+            let args = positional
                 .iter()
                 .map(|n| lower_node(result, hir, n))
                 .collect::<PResult<Vec<_>>>()?;
-            return Ok(hir.push(HirNode::Raise(args)));
+            return Ok(hir.push(HirNode::Raise(args, cause)));
         }
 
         // `eval("literal string")` -- ONLY the compile-time-constant-string
@@ -2362,11 +2428,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // name isn't known until runtime anyway, so there is nothing a
     // dedicated node could do that this doesn't.
     if let Some(isym) = node.as_interpolated_symbol_node() {
-        let parts = isym
-            .parts()
-            .iter()
-            .map(|part| lower_string_part(result, hir, &part))
-            .collect::<PResult<Vec<_>>>()?;
+        let parts = lower_string_parts(result, hir, isym.parts().iter())?;
         let text = hir.push(HirNode::StringLit(parts));
         return Ok(hir.push(HirNode::Call {
             receiver: Some(text),
@@ -2380,11 +2442,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     if let Some(istr) = node.as_interpolated_string_node() {
-        let parts = istr
-            .parts()
-            .iter()
-            .map(|part| lower_string_part(result, hir, &part))
-            .collect::<PResult<Vec<_>>>()?;
+        let parts = lower_string_parts(result, hir, istr.parts().iter())?;
         return Ok(hir.push(HirNode::StringLit(parts)));
     }
 
@@ -2419,11 +2477,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string(),
             );
         }
-        let parts = re
-            .parts()
-            .iter()
-            .map(|part| lower_string_part(result, hir, &part))
-            .collect::<PResult<Vec<_>>>()?;
+        let parts = lower_string_parts(result, hir, re.parts().iter())?;
         return Ok(hir.push(HirNode::RegexpLit(
             parts,
             RegexpFlags {
@@ -3950,6 +4004,30 @@ fn string_literal_part(bytes: &[u8]) -> StrPart {
         Ok(s) => StrPart::Lit(s.to_string()),
         Err(_) => StrPart::Bytes(bytes.to_vec()),
     }
+}
+
+/// Lower an interpolated literal's parts, FLATTENING any nested interpolated
+/// string into the outer list.
+///
+/// A part is not always a leaf: backslash-continued adjacent literals
+/// (`"<a w='#{px}' " \ "h='#{px}'>"`) parse as an `InterpolatedStringNode`
+/// whose own parts are themselves `InterpolatedStringNode`s. Splicing the
+/// inner parts in is exactly the concatenation the source spells, and it
+/// composes to any nesting depth. Shared by the string, symbol, and regexp
+/// literal paths, all of which can carry the same adjacency.
+fn lower_string_parts<'a>(
+    result: &ParseResult,
+    hir: &mut Hir,
+    parts: impl Iterator<Item = Node<'a>>,
+) -> PResult<Vec<StrPart>> {
+    let mut out = Vec::new();
+    for part in parts {
+        match part.as_interpolated_string_node() {
+            Some(inner) => out.extend(lower_string_parts(result, hir, inner.parts().iter())?),
+            None => out.push(lower_string_part(result, hir, &part)?),
+        }
+    }
+    Ok(out)
 }
 
 fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<StrPart> {

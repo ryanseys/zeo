@@ -334,8 +334,8 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *n, out);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 collect_locals(compiler, a, out);
             }
         }

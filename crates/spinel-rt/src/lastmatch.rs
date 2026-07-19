@@ -79,6 +79,27 @@ pub fn last_match_post() -> RubyValue {
     last_match_slice(|m, _, end| m.haystack[end..].to_string())
 }
 
+/// `$+` -- the text of the highest-numbered group that actually PARTICIPATED
+/// in the match.
+///
+/// CRuby's `rb_reg_match_last` (re.c:2093 -- note the confusingly-named
+/// `rb_reg_last_match` is `$&`, a different function) scans groups from the
+/// highest index downward, skipping any that were declared but did not match
+/// (`beg == -1`, e.g. the losing arm of `(a)|(b)` or an unmatched optional
+/// group), and stops at the first participant.
+///
+/// It yields nil when that search bottoms out at index 0: `$+` reports a
+/// CAPTURE GROUP only, never the whole match.
+pub fn last_match_last_group() -> RubyValue {
+    LAST_MATCH.with(|c| match &*c.borrow() {
+        Some(m) => match m.groups.iter().rposition(|g| g.is_some()) {
+            Some(i) if i > 0 => crate::regexp::matchdata_group(m, i as i64),
+            _ => RubyValue::Nil,
+        },
+        None => RubyValue::Nil,
+    })
+}
+
 /// Shared by `` $` ``/`$'`: both are a slice of the haystack cut at group
 /// 0's span, and both are nil when nothing matched.
 fn last_match_slice(f: impl Fn(&RMatchData, usize, usize) -> String) -> RubyValue {

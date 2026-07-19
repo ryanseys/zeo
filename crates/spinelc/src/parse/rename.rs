@@ -294,7 +294,16 @@ impl Walker {
                 let ids: Vec<_> = elems.iter().map(|e| { let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e; *n }).collect();
                 self.visit_all(hir, &ids)
             }
-            HirNode::Raise(args) => self.visit_all(hir, &args.clone()),
+            HirNode::Raise(args, cause) => {
+                // The `cause:` expression can reference locals, so it must be
+                // renamed along with the operands -- omitting it would leave a
+                // stale name behind after per-file local isolation.
+                let mut ids = args.clone();
+                if let crate::hir::RaiseCause::Explicit(c) = cause {
+                    ids.push(*c);
+                }
+                self.visit_all(hir, &ids)
+            }
             HirNode::CaseIn {
                 subject,
                 arms,

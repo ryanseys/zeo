@@ -236,8 +236,11 @@ fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, local
                 track_node(compiler, defining, box_id, locals, *n);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            // The `cause:` expression is an ordinary expression: it can read
+            // locals, capture them, or name constants, so every HIR walker
+            // must visit it alongside the positional operands.
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 track_node(compiler, defining, box_id, locals, a);
             }
         }

@@ -373,6 +373,36 @@ impl KwArg {
     }
 }
 
+/// The `cause:` keyword on a `raise`, as a genuine THREE-state value.
+///
+/// CRuby distinguishes these with a `Qundef`/`Qnil`/value sentinel
+/// (`rb_f_raise` -> eval.c:740) because the first two mean OPPOSITE things:
+/// an omitted `cause:` chains automatically from `$!`, while an explicit
+/// `cause: nil` suppresses that chaining. Modeling this as a plain
+/// `Option<NodeId>` invites exactly one bug -- lowering `cause: nil` to
+/// `None` -- which would silently chain anyway, so the states are named.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RaiseCause {
+    /// No `cause:` written: chain automatically from `$!`.
+    Absent,
+    /// `cause: <expr>` was written. The expression may still evaluate to
+    /// nil, which SUPPRESSES chaining rather than requesting it.
+    Explicit(NodeId),
+}
+
+/// The `cause:` expression of a `raise`, if one was written.
+///
+/// Every HIR walker must visit it alongside the positional operands -- it is
+/// an ordinary expression that can read locals, capture them into a block, or
+/// name constants. Exposed here so no walker has to re-match [`RaiseCause`]
+/// and risk quietly forgetting the node.
+pub fn raise_cause_node(cause: &RaiseCause) -> Option<NodeId> {
+    match cause {
+        RaiseCause::Absent => None,
+        RaiseCause::Explicit(id) => Some(*id),
+    }
+}
+
 /// Which last-match special a `LastMatchRef` reads -- see that variant's
 /// docs. All of them derive from the one `$~` slot.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -385,6 +415,9 @@ pub enum LastMatch {
     Pre,
     /// `$'` -- the text after it.
     Post,
+    /// `$+` -- the highest-numbered group that PARTICIPATED in the match
+    /// (skipping declared-but-unmatched ones), or nil if only group 0 did.
+    LastGroup,
 }
 
 /// A `case/in` pattern -- a small, directly-recursive tree, deliberately NOT
@@ -1265,11 +1298,8 @@ pub enum HirNode {
     /// which already has full type-inference machinery, decide" posture.
     /// Bare `raise` (re-raise, zero args) needs a currently-handled
     /// exception context that doesn't exist until `rescue` does (Phase 9) --
-    /// a clean rejection until then, not a silent no-op. The `cause:`
-    /// keyword-argument form isn't lowered (a documented, narrow scope-cut --
-    /// automatic cause chaining from an active `rescue` will still work once
-    /// Phase 9 lands; only the explicit override is deferred).
-    Raise(Vec<NodeId>),
+    /// a clean rejection until then, not a silent no-op.
+    Raise(Vec<NodeId>, RaiseCause),
     /// `case subject; in PATTERN [if/unless GUARD] ... [else ...] end` --
     /// see `Pattern`/`PatternArm`'s docs. Arms are tested top to bottom,
     /// first match wins (same "not a native `match`" reasoning as

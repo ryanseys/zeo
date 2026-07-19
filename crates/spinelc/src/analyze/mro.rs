@@ -699,8 +699,10 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
                 collect_const_refs(compiler, *n, cref, out);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            // The `cause:` expression is an ordinary expression and may name
+            // a constant of its own, so it is walked alongside the operands.
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 collect_const_refs(compiler, a, cref, out);
             }
         }
@@ -943,8 +945,8 @@ fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<St
                 collect_cvars(hir, *n, out);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 collect_cvars(hir, a, out);
             }
         }

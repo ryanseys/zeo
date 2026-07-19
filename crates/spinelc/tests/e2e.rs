@@ -18895,3 +18895,132 @@ fn operations_with_the_receiver_as_their_own_argument() {
          true\n",
     );
 }
+
+#[test]
+fn raise_cause_is_three_state() {
+    // CRuby distinguishes three states with a Qundef/Qnil/value sentinel
+    // (rb_f_raise, eval.c:740), and the first two mean OPPOSITE things: an
+    // omitted `cause:` chains automatically from $!, while `cause: nil`
+    // SUPPRESSES that chaining. Modeling this as Option<NodeId> would lower
+    // `cause: nil` to None and silently chain anyway -- so both are asserted
+    // here, along with the TypeError and circular-cause rejections.
+    let result = run_ruby(
+        r##"
+        def blow(m); raise "top", cause: ArgumentError.new(m); end
+        begin
+          blow("root")
+        rescue => e
+          p e.cause
+          puts e.message
+        end
+        begin
+          begin
+            raise ArgumentError, "inner"
+          rescue ArgumentError
+            raise "outer"
+          end
+        rescue => e
+          p e.cause
+        end
+        begin
+          begin
+            raise ArgumentError, "inner2"
+          rescue ArgumentError
+            raise "outer2", cause: nil
+          end
+        rescue => e
+          p e.cause
+        end
+        begin
+          raise "x", cause: 5
+        rescue TypeError => e
+          puts "TypeError: #{e.message}"
+        end
+        begin
+          a = RuntimeError.new("a")
+          b = RuntimeError.new("b")
+          begin
+            raise a, cause: b
+          rescue; end
+          raise b, cause: a
+        rescue ArgumentError => e
+          puts "ArgumentError: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<ArgumentError: root>\n\
+         top\n\
+         #<ArgumentError: inner>\n\
+         nil\n\
+         TypeError: exception object expected\n\
+         ArgumentError: circular causes\n",
+    );
+}
+
+#[test]
+fn last_paren_backreference_and_adjacent_interpolation() {
+    // `$+` is the highest-numbered group that PARTICIPATED, skipping
+    // declared-but-unmatched ones (rb_reg_match_last, re.c:2093), and is nil
+    // when only group 0 matched -- it never reports the whole match.
+    //
+    // Backslash-continued adjacent literals parse as an InterpolatedStringNode
+    // whose own parts are InterpolatedStringNodes, so parts must flatten
+    // recursively rather than being treated as leaves.
+    let result = run_ruby(
+        r##"
+        "abc123" =~ /([a-z]+)(\d+)/
+        puts $1
+        puts $2
+        puts $+
+        "abc" =~ /([a-z]+)(\d+)?/
+        puts $+
+        "xyz" =~ /xyz/
+        p $+
+        "b" =~ /(a)|(b)|(c)/
+        p $+
+        def svg(px, inner)
+          "<a width='#{px}' " \
+          "height='#{px}'>#{inner}</a>"
+        end
+        def tail(n)
+          "n=#{n}" \
+          " done"
+        end
+        puts svg(16, "x")
+        puts tail(7)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "abc\n123\n123\nabc\nnil\n\"b\"\n<a width='16' height='16'>x</a>\nn=7 done\n",
+    );
+}
+
+#[test]
+fn define_method_with_a_symbol_to_proc_block() {
+    // `define_method(:name, &:other)`. In CRuby the `&` conversion happens at
+    // the CALL SITE, before rb_mod_define_method runs (proc.c:2872, which
+    // rejects a bare Symbol as its second positional arg), so the body is the
+    // symbol proc `->(recv, *rest) { recv.other(*rest) }` -- which is why the
+    // defined method takes its RECEIVER as the first argument.
+    let result = run_ruby(
+        r#"
+        class Widget
+          define_method(:as_str, &:to_s)
+        end
+        class Gadget
+          define_method :label, &:to_s
+        end
+        puts Widget.new.as_str(7)
+        puts Gadget.new.label(8)
+        p [1, 2, 3].map(&:to_s)
+        p [10, 20, 30].inject(0, &:+)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n8\n[\"1\", \"2\", \"3\"]\n60\n");
+}

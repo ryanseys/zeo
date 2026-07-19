@@ -209,9 +209,10 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_escaping_block(compiler, *n)
         }),
-        HirNode::Raise(args) => {
-            args.iter().any(|&a| node_contains_escaping_block(compiler, a))
-        }
+        HirNode::Raise(args, cause) => args
+            .iter()
+            .chain(crate::hir::raise_cause_node(cause).iter())
+            .any(|&a| node_contains_escaping_block(compiler, a)),
         HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
         HirNode::New { args, block, .. } => {
             block.is_some()
@@ -404,7 +405,10 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_begin(compiler, *n)
         }),
-        HirNode::Raise(args) => args.iter().any(|&a| node_contains_begin(compiler, a)),
+        HirNode::Raise(args, cause) => args
+            .iter()
+            .chain(crate::hir::raise_cause_node(cause).iter())
+            .any(|&a| node_contains_begin(compiler, a)),
         HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
         HirNode::SuperCall { args, kwargs, block, .. } => {
             args.iter().any(|&a| node_contains_begin(compiler, a))
@@ -651,8 +655,8 @@ fn walk(
                 walk(compiler, *n, in_escaping, param_exclusions, caps, self_class);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
         }

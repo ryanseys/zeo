@@ -265,6 +265,56 @@ pub fn attach_cause(exc_value: &RubyValue) {
     }
 }
 
+/// `raise ..., cause: <value>` -- install an EXPLICIT cause.
+///
+/// CRuby keeps three states apart with a `Qundef`/`Qnil`/value sentinel
+/// (`rb_f_raise` -> eval.c:740), and they mean different things: an OMITTED
+/// `cause:` chains automatically from `$!`, an explicit `cause: nil`
+/// SUPPRESSES that chaining, and a value installs that cause. Suppression
+/// works here by construction -- codegen calls this instead of
+/// `raise_with_cause`, so nothing ever fills the slot from `$!`.
+///
+/// Note there is no separate "chain terminator" step as in CRuby
+/// (`exc_setup_cause`, eval.c:461). It exists there to tell an UNSET ivar
+/// from one holding nil; this runtime stores the cause as a `RubyValue` that
+/// starts out `Nil`, so the two already coincide and the walk below
+/// terminates on its own.
+pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(), Signal> {
+    let RubyValue::Object(o) = exc_value else { return Ok(()) };
+    let Some(e) = downcast_robj::<RubyException>(o) else { return Ok(()) };
+
+    // `cause: nil` -- leave the slot empty, suppressing chaining.
+    if matches!(cause, RubyValue::Nil) {
+        return Ok(());
+    }
+    let RubyValue::Object(cause_obj) = &cause else {
+        return Err(raise_error("TypeError", "exception object expected".to_string()));
+    };
+    if !crate::dispatch::is_a(cause_obj.class_id(), spinel_abi::EXCEPTION_CLASS) {
+        return Err(raise_error("TypeError", "exception object expected".to_string()));
+    }
+    // A DIRECT self-cause is silently dropped rather than raising -- an
+    // asymmetry with the indirect case below that CRuby's own comment flags,
+    // and that `raise err, cause: err` relies on.
+    if Arc::ptr_eq(cause_obj, o) {
+        return Ok(());
+    }
+    // Walk the prospective cause's own chain: if it leads back to this
+    // exception the result would be circular, and anything following the
+    // chain (`Exception#full_message`) would loop forever.
+    let mut cur = cause.clone();
+    while let RubyValue::Object(c) = &cur {
+        if Arc::ptr_eq(c, o) {
+            return Err(raise_error("ArgumentError", "circular causes".to_string()));
+        }
+        let Some(ce) = downcast_robj::<RubyException>(c) else { break };
+        let next = ce.cause.lock().clone();
+        cur = next;
+    }
+    *e.cause.lock() = cause;
+    Ok(())
+}
+
 /// `def full_message; self.class.name + ": " + message; end`
 fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);

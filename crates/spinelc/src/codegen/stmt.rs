@@ -129,5 +129,5 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
 }
 
 fn is_diverging_tail(node: &HirNode) -> bool {
-    matches!(node, HirNode::Raise(_) | HirNode::Return(_) | HirNode::Retry)
+    matches!(node, HirNode::Raise(..) | HirNode::Return(_) | HirNode::Retry)
 }

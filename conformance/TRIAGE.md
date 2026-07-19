@@ -7,7 +7,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| ? | spike-misc | 15 | singleton_method_object, basicobject_send_missing, issue_2973 | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
+| ? | spike-misc | 14 | singleton_class_block, basicobject_blank_slate, external_singleton_def | `class << self` at this position isn't supported yet (spike scope) -- use it inside a class/module body |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
@@ -26,6 +26,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for main |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
+| P | missing-method:name | 2 | exception_value_flow_match, exception_value_parity | uncaught exception: undefined method 'name' for an instance of NoMethodError |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
 | ? | auto-can-coerce-complex-into-float-4a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
@@ -37,7 +38,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-cannot-load-such-file-io-console-0bed | 1 | require_io_console_winsize | cannot load such file -- io/console |
 | ? | auto-cannot-load-such-file-monitor-3233 | 1 | mutex_synchronize_block | cannot load such file -- monitor |
 | ? | auto-cannot-load-such-file-optparse-ea47 | 1 | require_first_line | cannot load such file -- optparse |
-| ? | auto-define-method-second-argument-must-be-block-a4ab | 1 | symbol_to_proc_after_positional | define_method's second argument must be a block |
 | ? | auto-error-unrecognized-escape-sequence-9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-constant-name-or-path-or-5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
@@ -57,10 +57,8 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-uncaught-signal-escaped-the-top-level-break-00b3 | 1 | valued_break_proc | uncaught signal escaped the top level: Break(1) |
 | ? | auto-undefined-group-name-reference-nope-123c | 1 | matchdata_named_groups | undefined group name reference: nope |
 | ? | auto-unsupported-syntax-at-spike-handles-only-what-the-0f69 | 1 | bundle_io_sys | unsupported syntax at "`printf \'AB\\\\000CD\\\\000EF\' > #{path}`" (spike handles only what the 7 example programs need) |
-| ? | auto-with-an-explicit-keyword-override-isn-supported-yet-c0d6 | 1 | exception_value_parity | `raise`/`fail` with an explicit `cause:` keyword override isn't supported yet -- automatic cause chaining from an active `rescue` works (Exception#cause); only the explicit override is deferred |
 | ? | auto-wrong-argument-type-string-expected-regexp-87a8 | 1 | string_scan_literal | uncaught exception: wrong argument type String (expected Regexp) |
 | f | dynamic-require | 1 | require_parent | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
-| a | interpolation-shapes | 1 | interp_adjacent_concat | unsupported string interpolation part (spike scope) |
 | P | missing-const:File::FNM_DOTMATCH | 1 | dir_full_surface | uncaught exception: uninitialized constant File::FNM_DOTMATCH |
 | P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL |
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |
@@ -99,7 +97,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
 | P | missing-method:match | 1 | matchdata_methods | uncaught exception: undefined method 'match' for an instance of MatchData |
 | P | missing-method:members | 1 | struct_enumerable_wave8 | uncaught exception: undefined method 'members' for class Kk144 |
-| P | missing-method:name | 1 | exception_value_flow_match | uncaught exception: undefined method 'name' for an instance of NoMethodError |
 | P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB |
 | P | missing-method:open | 1 | wave_followups_2833 | uncaught exception: undefined method 'open' for class Dir |
 | P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |

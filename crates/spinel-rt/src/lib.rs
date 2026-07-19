@@ -50,7 +50,9 @@ pub use builtins::kernel::{
 pub use builtins::format::sprintf;
 pub use builtins::math::math_call;
 pub use builtins::BuiltinMethodFn;
-pub use builtins::exception::{register_exception_subclass, register_exceptions};
+pub use builtins::exception::{
+    register_exception_subclass, register_exceptions, set_explicit_cause,
+};
 pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
@@ -76,7 +78,8 @@ pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
 pub use method_params::{register_params, ParamKind};
 pub use lastmatch::{
-    last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
+    last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
+    set_last_match,
 };
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{

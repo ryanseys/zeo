@@ -344,7 +344,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_bare_loop_jump(compiler, *n)
         }),
-        HirNode::Raise(args) => args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a)),
+        HirNode::Raise(args, _) => args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a)),
         HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
             args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a))
                 || kwargs

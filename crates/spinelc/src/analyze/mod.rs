@@ -811,9 +811,16 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
             }
             found
         }
-        HirNode::New { args, .. } | HirNode::Raise(args) => {
+        HirNode::New { args, .. } => {
             let mut found = false;
             for &a in args {
+                found |= scan_bare_block_use(hir, a);
+            }
+            found
+        }
+        HirNode::Raise(args, cause) => {
+            let mut found = false;
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 found |= scan_bare_block_use(hir, a);
             }
             found
@@ -1166,8 +1173,8 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, *n, out);
             }
         }
-        HirNode::Raise(args) => {
-            for &a in args {
+        HirNode::Raise(args, cause) => {
+            for &a in args.iter().chain(crate::hir::raise_cause_node(cause).iter()) {
                 collect_ivars(hir, a, out);
             }
         }

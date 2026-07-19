@@ -225,7 +225,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::BoxScope { .. }
         | HirNode::BoxHandle(_)
         | HirNode::BlockGiven
-        | HirNode::Raise(_) => Some("method"),
+        | HirNode::Raise(..) => Some("method"),
         HirNode::IntegerLit(_)
         | HirNode::BigIntegerLit { .. }
         | HirNode::RationalLit { .. }
@@ -738,6 +738,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             crate::hir::LastMatch::Group(n) => quote! { spinel_rt::last_match_group(#n) },
             crate::hir::LastMatch::Pre => quote! { spinel_rt::last_match_pre() },
             crate::hir::LastMatch::Post => quote! { spinel_rt::last_match_post() },
+            crate::hir::LastMatch::LastGroup => quote! { spinel_rt::last_match_last_group() },
         },
         HirNode::GlobalWrite(name, value) => {
             let v = emit_expr(cx, *value);
@@ -899,7 +900,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::BlockGiven => quote! { spinel_rt::RubyValue::Bool(__blk.is_some()) },
-        HirNode::Raise(args) => emit_raise(cx, args),
+        HirNode::Raise(args, cause) => emit_raise(cx, args, cause),
         HirNode::CaseIn { subject, arms, else_body } => {
             super::patterns::emit_case_in(cx, *subject, arms, else_body)
         }
@@ -977,7 +978,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// erroring (confirmed via `ruby -e 'begin; raise; rescue => e; puts
 /// "[#{e.message}]"; end'` -> `"[]"`) -- faithfully mirrored here via
 /// `unwrap_or_else`, not a panic.
-fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
+fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCause) -> TokenStream {
     let exc = match args {
         [] => {
             // NOT `.unwrap_or_else(|| #fallback)` -- `#fallback` itself
@@ -1002,10 +1003,30 @@ fn emit_raise(cx: &Ctx, args: &[NodeId]) -> TokenStream {
         [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
         _ => unreachable!("lowering rejects `raise`/`fail` with more than 2 arguments"),
     };
-    // `raise_with_cause` threads the currently-handled exception (`$!`) into the
-    // raised exception's `cause` slot (CRuby's automatic cause chaining); it is a
-    // no-op for a bare re-raise or a non-exception operand.
-    quote! { return Err(spinel_rt::Signal::Raise(spinel_rt::raise_with_cause(#exc))) }
+    // An OMITTED `cause:` chains automatically: `raise_with_cause` threads the
+    // currently-handled exception (`$!`) into the raised exception's `cause`
+    // slot, and is a no-op for a bare re-raise or a non-exception operand.
+    //
+    // An EXPLICIT `cause:` takes the other branch and never calls
+    // `raise_with_cause` at all -- which is exactly what makes `cause: nil`
+    // SUPPRESS chaining rather than request it, since nothing is left to fill
+    // the slot from `$!`.
+    match cause {
+        crate::hir::RaiseCause::Absent => {
+            quote! { return Err(spinel_rt::Signal::Raise(spinel_rt::raise_with_cause(#exc))) }
+        }
+        crate::hir::RaiseCause::Explicit(node) => {
+            let cause_expr = emit_expr(cx, *node);
+            let cause_expr = box_if_object_typed(cx, *node, cause_expr);
+            quote! {
+                {
+                    let __exc = #exc;
+                    spinel_rt::set_explicit_cause(&__exc, #cause_expr)?;
+                    return Err(spinel_rt::Signal::Raise(__exc));
+                }
+            }
+        }
+    }
 }
 
 /// Builds the actual `RubyValue` to raise, mirroring spinel's own `raise`

@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=28b6aa5
-# PASS=1741 FAIL_OUTPUT=300 FAIL_COMPILE=33 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=fb30c7b
+# PASS=1744 FAIL_OUTPUT=301 FAIL_COMPILE=29 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -119,7 +119,7 @@ array_unshift_return	PASS	-	-
 at_exit_lifo	PASS	-	-
 attr	PASS	-	-
 attr_override_dispatch	PASS	-	-
-back_ref	FAIL_COMPILE	compile	spike-misc
+back_ref	PASS	-	-
 bang_exception_object	PASS	-	-
 bang_op_ruby_truthy	PASS	-	-
 bare_arg_in_module_body	PASS	-	-
@@ -617,7 +617,7 @@ exception_super_interpolated_message	PASS	-	-
 exception_super_message	PASS	-	-
 exception_user_subclass	PASS	-	-
 exception_value_flow_match	FAIL_OUTPUT	expect	missing-method:name
-exception_value_parity	FAIL_COMPILE	compile	auto-with-an-explicit-keyword-override-isn-supported-yet-c0d6
+exception_value_parity	FAIL_OUTPUT	expect	missing-method:name
 exit_poly_status	PASS	-	-
 expr_retry_equal_curry_methodobj	FAIL_OUTPUT	expect	missing-method:Integer
 extend_module	PASS	-	-
@@ -991,7 +991,7 @@ integer_rational_complex_ops	PASS	-	-
 integer_shift_float_and_coerce	PASS	-	-
 integer_step_no_limit	PASS	-	-
 integer_times_as_expr	FAIL_OUTPUT	expect	-
-interp_adjacent_concat	FAIL_COMPILE	compile	interpolation-shapes
+interp_adjacent_concat	PASS	-	-
 interp_array_container	PASS	-	-
 interp_call_arg_root	PASS	-	-
 interp_local_narrowed_key	PASS	-	-
@@ -1932,7 +1932,7 @@ symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-can-coerce-complex-into-floa
 symbol_nil_truthiness	PASS	-	-
 symbol_range_enum	PASS	-	-
 symbol_string_methods	PASS	-	-
-symbol_to_proc_after_positional	FAIL_COMPILE	compile	auto-define-method-second-argument-must-be-block-a4ab
+symbol_to_proc_after_positional	PASS	-	-
 symbol_to_proc_call	PASS	-	-
 symbol_upcase_interpolation	PASS	-	-
 system_argument_list	FAIL_OUTPUT	expect	missing-method:system
