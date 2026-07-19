@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8752ff4
-# PASS=1712 FAIL_OUTPUT=318 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=747ea80
+# PASS=1715 FAIL_OUTPUT=315 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1189,8 +1189,8 @@ map_shadowed_param_poly_arg	PASS	-	-
 map_to_heap_objects	PASS	-	-
 map_to_value_type_objects	PASS	-	-
 map_untyped_block_result	PASS	-	-
-marshal_roundtrip	FAIL_OUTPUT	expect	missing-const:Object::Marshal
-marshal_symlink_float	FAIL_OUTPUT	expect	missing-const:Marshal
+marshal_roundtrip	PASS	-	-
+marshal_symlink_float	PASS	-	-
 masgn_classvar_target	PASS	-	-
 masgn_constpath_target	PASS	-	-
 massign_captured_proc_cell	PASS	-	-
@@ -1455,7 +1455,7 @@ poly_gsub_str_str_hash	PASS	-	-
 poly_hash_fetch_dispatch	PASS	-	-
 poly_hash_fetch_with_default	PASS	-	-
 poly_hash_index_dispatch	PASS	-	-
-poly_hash_inspect	FAIL_OUTPUT	expect	missing-const:Marshal
+poly_hash_inspect	PASS	-	-
 poly_hash_with_range	PASS	-	-
 poly_hash_with_time	PASS	-	-
 poly_idx_int_nullable	PASS	-	-

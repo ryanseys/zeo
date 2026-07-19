@@ -17971,6 +17971,45 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn marshal_dump_load_roundtrip_and_wire_format() {
+    // Marshal round-trips the value tower (primitives, bignum, array, hash,
+    // Rational, shared refs and cycles) and writes CRuby's exact wire bytes for
+    // symbols (with ;-symlinks) and floats.
+    let result = run_ruby(
+        r#"
+        def rt(x) = Marshal.load(Marshal.dump(x))
+        p rt(42)
+        p rt(-987654321)
+        p rt(3.14)
+        p rt("hi")
+        p rt(:sym)
+        p rt([1, "x", :y, nil, true])
+        p rt(2 ** 200)
+        p rt(Rational(3, 4))
+        p [rt(Rational(1, 3)), rt(Rational(2, 5))]
+        shared = [1, 2]
+        sg = rt([shared, shared])
+        sg[0] << 99
+        p sg[1]
+        cyc = [10]
+        cyc << cyc
+        dc = rt(cyc)
+        p dc[1][1][0]
+        puts Marshal.dump([:ab, :cd, :ab]).bytes.join(",")
+        puts Marshal.dump(100.0).bytes.join(",")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "42\n-987654321\n3.14\n\"hi\"\n:sym\n[1, \"x\", :y, nil, true]\n\
+         1606938044258990275541962092341162602522202993782792835301376\n\
+         (3/4)\n[(1/3), (2/5)]\n[1, 2, 99]\n10\n\
+         4,8,91,8,58,7,97,98,58,7,99,100,59,0\n4,8,102,8,49,101,50\n",
+    );
+}
+
+#[test]
 fn enumerator_feed_sets_yield_return() {
     // #feed sets the value the paused y.yield returns on the next #next;
     // feeding twice before a #next raises TypeError; #feed answers nil.

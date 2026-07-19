@@ -232,6 +232,10 @@ pub const RANDOM_CLASS: ClassId = ClassId(63);
 /// bound (see `spinel_rt::queue_is_sized`).
 pub const SIZED_QUEUE_CLASS: ClassId = ClassId(64);
 
+/// `Marshal` -- the object-serialization module (`Marshal.dump`/`.load`).
+/// Always-on; accessed only through its class methods.
+pub const MARSHAL_MODULE: ClassId = ClassId(65);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -312,6 +316,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: YAML_MODULE, name: "YAML", is_module: true, superclass: None, includes: &[], feature: Some("psych") },
     BuiltinClass { id: RANDOM_CLASS, name: "Random", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: SIZED_QUEUE_CLASS, name: "Thread::SizedQueue", is_module: false, superclass: Some(QUEUE_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MARSHAL_MODULE, name: "Marshal", is_module: true, superclass: None, includes: &[], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

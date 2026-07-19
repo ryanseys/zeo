@@ -46,6 +46,7 @@ pub(crate) mod encoding;
 pub(crate) mod env;
 pub(crate) mod file;
 pub(crate) mod gc;
+pub(crate) mod marshal;
 pub(crate) mod numeric;
 pub(crate) mod object;
 pub(crate) mod pack;
@@ -165,6 +166,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::SET_CLASS => set::lookup_class,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         spinel_abi::RANDOM_CLASS => random::lookup_class,
+        spinel_abi::MARSHAL_MODULE => marshal::lookup_class,
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup_class,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
         spinel_abi::THREAD_CLASS => thread::lookup_class,
@@ -282,6 +284,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::ENCODING_CLASS => encoding::lookup_class_names(),
         spinel_abi::SET_CLASS => set::lookup_class_names(),
         spinel_abi::COMPLEX_CLASS => complex::lookup_class_names(),
+        spinel_abi::MARSHAL_MODULE => marshal::lookup_class_names(),
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup_class_names(),
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
         spinel_abi::THREAD_CLASS => thread::lookup_class_names(),
