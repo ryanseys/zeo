@@ -45,6 +45,21 @@ pub fn float_mod(a: f64, b: f64) -> f64 {
         r
     }
 }
+
+/// `Float#%` with CRuby's zero-divisor rule: `x % 0` (or `% 0.0`) raises
+/// ZeroDivisionError rather than answering NaN. The static Float `%` codegen
+/// emits this checked form (unlike `/`, whose zero divisor is Infinity, not an
+/// error).
+pub fn float_mod_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
+    if b == 0.0 {
+        Err(crate::dispatch::raise_error(
+            "ZeroDivisionError",
+            "divided by 0".to_string(),
+        ))
+    } else {
+        Ok(crate::RubyValue::Float(float_mod(a, b)))
+    }
+}
 pub fn float_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }

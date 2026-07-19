@@ -132,8 +132,18 @@ builtin_methods! {
     }
     "first" => fn first(recv, args, _block) {
         // `first(n)` is Enumerable's n-form (next ancestor in the chain
-        // implements it) -- only the 0-arg head accessor lives here.
+        // implements it) -- only the 0-arg head accessor lives here. A negative
+        // count is caught here so it carries Array's own message ("negative
+        // array size"), distinct from Enumerable's generic one.
         if !args.is_empty() {
+            if let Some(RubyValue::Int(n)) = args.first() {
+                if *n < 0 {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        "negative array size".to_string(),
+                    ));
+                }
+            }
             return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
                 .expect("Enumerable implements first(n)");
         }

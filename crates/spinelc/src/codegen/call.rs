@@ -3802,6 +3802,14 @@ fn dispatch(
                     }
                 };
             }
+            // `%` needs a fallible form: `x % 0` raises ZeroDivisionError,
+            // where every other Float op (incl. `/`, whose zero divisor is
+            // Infinity) is total -- so it can't ride the uniform table below.
+            if name == "%" {
+                return quote! {
+                    spinel_rt::float_mod_checked(#recv_f, #arg_f)?
+                };
+            }
             if let Some(&(_, rt_fn, result_ty)) = FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
                 let func = format_ident!("{rt_fn}");
                 let wrapper = format_ident!("{result_ty}");

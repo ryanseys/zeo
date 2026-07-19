@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=fc71513
-# PASS=1682 FAIL_OUTPUT=345 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=2dc40b9
+# PASS=1685 FAIL_OUTPUT=342 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -37,7 +37,7 @@ array_combination_block	PASS	-	-
 array_compact_eq	PASS	-	-
 array_conformance_batch	PASS	-	-
 array_conformance_batch5	PASS	-	-
-array_cycle_bounded	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
+array_cycle_bounded	PASS	-	-
 array_dup_sort_gc	PASS	-	-
 array_empty_and_pattern	PASS	-	-
 array_enum_materialize	PASS	-	-
@@ -589,7 +589,7 @@ env_string_inference	PASS	-	-
 eq_string_vs_int	PASS	-	-
 eql_equal	PASS	-	-
 eql_on_chain_result	PASS	-	-
-error_protocol_edges	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
+error_protocol_edges	PASS	-	-
 escaping_block_captures_self	PASS	-	-
 escaping_proc_captures_value_self	PASS	-	-
 exc_frame_break_next_pops	FAIL_COMPILE	compile	spike-misc
@@ -1421,7 +1421,7 @@ poly_array_index_to_h	PASS	-	-
 poly_array_plus_concat	PASS	-	-
 poly_array_push_with_user_push	PASS	-	-
 poly_array_range_aref	PASS	-	-
-poly_array_readers	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
+poly_array_readers	PASS	-	-
 poly_array_tally	PASS	-	-
 poly_attr_reader_box_dispatch	PASS	-	-
 poly_attr_reader_shadows_builtin	PASS	-	-

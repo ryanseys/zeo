@@ -270,6 +270,14 @@ builtin_methods! {
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
         if !args.is_empty() {
+            if let Some(RubyValue::Int(n)) = args.first() {
+                if *n < 0 {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        "negative array size (or size too big)".to_string(),
+                    ));
+                }
+            }
             return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
                 .expect("Enumerable implements first(n)");
         }

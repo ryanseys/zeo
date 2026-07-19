@@ -155,7 +155,18 @@ tower_binop!(
         let floored = num_floor_exact(&q);
         rat_sub(x, &rat_mul(y, &floored)?)
     })(),
-    flo(x, y) => Ok(RubyValue::Float(crate::float_mod(x, y))),
+    flo(x, y) => {
+        // Float#% by zero raises ZeroDivisionError (either an int or float
+        // divisor coerces into this lane), rather than answering NaN.
+        if y == 0.0 {
+            Err(crate::dispatch::raise_error(
+                "ZeroDivisionError",
+                "divided by 0".to_string(),
+            ))
+        } else {
+            Ok(RubyValue::Float(crate::float_mod(x, y)))
+        }
+    },
     cpx(_x, _y) => panic!("Complex has no modulo (NoMethodError in real Ruby; spike scope: raised as a panic)"),
 );
 

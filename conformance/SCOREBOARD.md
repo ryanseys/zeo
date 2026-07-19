@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1682/2074 passing (81.1%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `fc71513`
+Suite `spinel` — **1685/2074 passing (81.2%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `2dc40b9`
 
 | verdict | count |
 |---|---|
-| PASS | 1682 |
-| FAIL_OUTPUT | 345 |
+| PASS | 1685 |
+| FAIL_OUTPUT | 342 |
 | FAIL_COMPILE | 39 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
@@ -25,10 +25,10 @@ Suite `spinel` — **1682/2074 passing (81.1%)** — oracle `ruby 4.0.5 (2026-05
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | 4 | missing-method:new | P | issue_2968 | uncaught exception: undefined method 'new' for class Dir |
 | 3 | arity-panic | g | str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 0, expected 1+) |
-| 3 | auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739 | ? | poly_array_readers | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
 | 3 | auto-outside-constant-assignment-isn-supported-aot-write-f25f | ? | data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | 3 | dynamic-require | f | require_parent | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | 3 | missing-method:+ | P | enumerator_ops | uncaught exception: undefined method '+' for an instance of Enumerator |
+| 3 | missing-method:[] | P | struct_methods | uncaught exception: undefined method '[]' for class S |
 
 ## Skipped tests
 

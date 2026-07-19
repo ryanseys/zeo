@@ -590,7 +590,13 @@ fn first(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
             };
             let n = *n;
             if n < 0 {
-                panic!("attempt to take negative size (ArgumentError; spike scope: raised as a panic)");
+                // Generic Enumerable#first(n<0) -- an Enumerator (`cycle.first`),
+                // Set, etc. Array and Range override with their own messages
+                // before routing here.
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "attempt to take negative size".to_string(),
+                ));
             }
             if n == 0 {
                 return Ok(RubyValue::Array(array_new(Vec::new())));

@@ -12,7 +12,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
 | g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, bundle_tiny_string | uncaught exception: wrong number of arguments (given 0, expected 1+) |
-| ? | auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739 | 3 | poly_array_readers, array_cycle_bounded, error_protocol_edges | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
 | ? | auto-outside-constant-assignment-isn-supported-aot-write-f25f | 3 | data_define_duplicate_member, data_define_inline_receiver, anon_struct_local | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | f | dynamic-require | 3 | require_parent, user_enumerable_each_and_for, issue_2978 | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
