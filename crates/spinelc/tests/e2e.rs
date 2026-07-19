@@ -17915,6 +17915,63 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn warn_and_stderr_writes_land_on_stderr_not_stdout() {
+    // `warn`, `$stderr.puts`, and `STDERR.write` all go to the error stream;
+    // `$stdout.puts` stays on stdout. The two streams are asserted separately,
+    // so a leak in either direction fails the test.
+    let result = run_ruby(
+        r#"
+        $stdout.puts "out1"
+        warn "w1"
+        $stderr.puts "err1"
+        STDERR.write "err2\n"
+        $stdout.puts "out2"
+        warn "w2", "w3"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "out1\nout2\n");
+    assert_eq!(result.stderr, "w1\nerr1\nerr2\nw2\nw3\n");
+}
+
+#[test]
+fn warn_category_suppresses_only_deprecated() {
+    // :deprecated is off by default (prints nothing); :experimental and the
+    // uncategorized form print to stderr. The kwarg Hash is never itself
+    // printed.
+    let result = run_ruby(
+        r#"
+        warn("plain")
+        warn("dep", category: :deprecated)
+        warn("exp", category: :experimental)
+        warn("a", "b", category: :deprecated)
+        warn("c", "d", category: :experimental)
+        puts "done"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "done\n");
+    assert_eq!(result.stderr, "plain\nexp\nc\nd\n");
+}
+
+#[test]
+fn string_to_i_base_zero_auto_detects_the_prefix() {
+    let result = run_ruby(
+        r#"
+        puts "0xff".to_i(0)
+        puts "0b101".to_i(0)
+        puts "0o755".to_i(0)
+        puts "0777".to_i(0)
+        puts "42".to_i(0)
+        puts "-0xff".to_i(0)
+        puts "+0b101".to_i(0)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "255\n5\n493\n511\n42\n-255\n5\n");
+}
+
+#[test]
 fn numeric_and_collection_error_protocol_edges() {
     // Float#% by zero raises ZeroDivisionError (not NaN); a negative first/last
     // count raises ArgumentError with the receiver-specific message.

@@ -585,6 +585,13 @@ fn parse_int_lenient(text: &str, default_base: u32) -> RubyValue {
         (8, r)
     } else if let Some(r) = s.strip_prefix("0d").or_else(|| s.strip_prefix("0D")) {
         (10, r)
+    } else if default_base == 0 {
+        // Base 0 (auto-detect): a bare leading `0` with more digits is octal,
+        // C-style; anything else is decimal.
+        match s.strip_prefix('0') {
+            Some(rest) if !rest.is_empty() => (8, rest),
+            _ => (10, s),
+        }
     } else {
         (default_base, s)
     };
@@ -2025,6 +2032,11 @@ builtin_methods! {
     "to_i" => fn to_i(recv, args, _block) {
         arity!(args, 0..=1);
         let base = match args.first() {
+            // Base 0 auto-detects from the literal's prefix (`0x`/`0b`/`0o`/a
+            // bare leading `0` = octal), via the prefix-aware lenient parser.
+            Some(RubyValue::Int(0)) => {
+                return Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 0));
+            }
             Some(RubyValue::Int(b)) if (2..=36).contains(b) => *b as u32,
             Some(RubyValue::Int(b)) => {
                 return Err(crate::dispatch::raise_error(

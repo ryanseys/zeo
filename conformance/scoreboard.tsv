@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=2dc40b9
-# PASS=1685 FAIL_OUTPUT=342 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c5f5163
+# PASS=1687 FAIL_OUTPUT=340 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1881,7 +1881,7 @@ string_sub_hash_replacement	PASS	-	-
 string_succ_scan_slice_tilde_wave10	FAIL_OUTPUT	expect	-
 string_sum_bits	PASS	-	-
 string_to_i_base	PASS	-	-
-string_to_i_base_zero	FAIL_OUTPUT	expect	auto-invalid-radix-192c
+string_to_i_base_zero	PASS	-	-
 string_to_i_overflow_raises	FAIL_OUTPUT	expect	-
 string_undump	PASS	-	-
 string_upto	PASS	-	-
@@ -2044,7 +2044,7 @@ void_value_hash_store_nil	PASS	-	-
 void_value_if_writer_arm	PASS	-	-
 void_value_in_value_position	PASS	-	-
 volatile_strip_skips_coerced_arg	PASS	-	-
-warn_category	FAIL_OUTPUT	expect	auto-category-deprecated-da46
+warn_category	PASS	-	-
 warn_double_splat	PASS	-	-
 warn_kernel	PASS	-	-
 warn_unresolved_call_context	PASS	-	-

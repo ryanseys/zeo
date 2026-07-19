@@ -51,14 +51,12 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-cannot-load-such-file-io-console-0bed | 1 | require_io_console_winsize | cannot load such file -- io/console |
 | ? | auto-cannot-load-such-file-monitor-3233 | 1 | mutex_synchronize_block | cannot load such file -- monitor |
 | ? | auto-cannot-load-such-file-optparse-ea47 | 1 | require_first_line | cannot load such file -- optparse |
-| ? | auto-category-deprecated-da46 | 1 | warn_category | {category: :deprecated} |
 | ? | auto-define-method-second-argument-must-be-block-a4ab | 1 | symbol_to_proc_after_positional | define_method's second argument must be a block |
 | ? | auto-error-unrecognized-escape-sequence-9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-constant-name-or-path-or-5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
 | ? | auto-invalid-argument-c00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
-| ? | auto-invalid-radix-192c | 1 | string_to_i_base_zero | uncaught exception: invalid radix 0 |
 | ? | auto-invalid-value-for-float-nxnpn-d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
 | ? | auto-memory-allocation-of-bytes-failed-aad1 | 1 | string_multiply_overflow | memory allocation of 1152921504606846976 bytes failed |
 | ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |

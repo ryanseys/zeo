@@ -678,8 +678,29 @@ pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// `uplevel:` keyword isn't modeled (kwargs never reach the
 /// Kernel-function path).
 pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    // A trailing keyword Hash (`category:`/`uplevel:`) is consumed, not printed.
+    // CRuby leaves `Warning[:deprecated]` off by default (so a :deprecated
+    // warning prints nothing), while :experimental and every other category
+    // are on. The caller already evaluated the message arguments, so their
+    // side effects happen regardless of suppression.
+    let mut msgs = args;
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        let cat_key = RubyValue::Symbol(crate::Symbol::intern("category"));
+        let up_key = RubyValue::Symbol(crate::Symbol::intern("uplevel"));
+        let pairs = crate::hash_pairs(h);
+        let is_kwargs =
+            !pairs.is_empty() && pairs.iter().all(|(k, _)| k.rb_eq(&cat_key) || k.rb_eq(&up_key));
+        if is_kwargs {
+            msgs = &args[..args.len() - 1];
+            if let RubyValue::Symbol(s) = crate::hash_get(h, &cat_key) {
+                if s.name() == "deprecated" {
+                    return Ok(RubyValue::Nil);
+                }
+            }
+        }
+    }
     let mut buf = String::new();
-    for a in args {
+    for a in msgs {
         let s = a.to_display_string();
         buf.push_str(&s);
         if !s.ends_with('\n') {
