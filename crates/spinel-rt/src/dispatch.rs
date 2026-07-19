@@ -1089,14 +1089,12 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             _ => {
                 if let Some(table) = crate::builtins::class_table(anc) {
                     if table(n).is_some() {
-                        // Kernel's print family is PRIVATE in CRuby:
-                        // reachable via implicit self and `send` (both go
-                        // through the table), but invisible to
-                        // `respond_to?` -- its default ignores privates.
-                        if !include_all
-                            && anc == KERNEL_CLASS
-                            && matches!(n, "puts" | "print" | "p" | "pp" | "warn")
-                        {
+                        // Hidden builtin privates (Kernel's print family,
+                        // BasicObject's `initialize`) are reachable via
+                        // implicit self / `send` / `super` -- all through the
+                        // table -- but `respond_to?`'s default ignores privates,
+                        // so they answer false unless `include_all`.
+                        if !include_all && is_hidden_builtin_private(n) {
                             continue;
                         }
                         return true;
@@ -1203,12 +1201,17 @@ impl VisFilter {
     }
 }
 
-/// Kernel's C-implemented private functions -- present in the runtime's
-/// `kernel::lookup` table (reachable via implicit self / `send`) but INVISIBLE
-/// to reflection and `respond_to?`, exactly as in CRuby. Mirrors the
-/// special-case in `responds_to`.
-fn is_hidden_kernel_private(name: &str) -> bool {
-    matches!(name, "puts" | "print" | "p" | "pp" | "warn")
+/// Builtin-table methods that CRuby defines as PRIVATE, so they are reachable
+/// via implicit self / `send` / `super` (all of which go through the table)
+/// but are invisible to `respond_to?` and raise `NoMethodError: private
+/// method` on an explicit-receiver call. The table itself carries no
+/// visibility metadata, so this is the one place the runtime knows.
+///
+/// `initialize` (`BasicObject`'s, `object.c`'s `rb_obj_dummy`) is the load-
+/// bearing case: `super` from any `initialize` must reach it, but
+/// `obj.initialize` must raise. Kernel's print family is the same shape.
+fn is_hidden_builtin_private(name: &str) -> bool {
+    matches!(name, "initialize" | "puts" | "print" | "p" | "pp" | "warn")
 }
 
 /// The instance-method names of `class` and -- when `inherit` -- its
@@ -1242,7 +1245,9 @@ pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -
         // admits public names.
         if filter.matches(MethodVisibility::Public) {
             for &n in crate::builtins::class_table_names(anc) {
-                if anc == KERNEL_CLASS && is_hidden_kernel_private(n) {
+                // Hidden builtin privates (Kernel's print family, BasicObject's
+                // `initialize`) are reflection-invisible, exactly as in CRuby.
+                if is_hidden_builtin_private(n) {
                     continue;
                 }
                 let sym = Symbol::intern(n);
@@ -1273,7 +1278,7 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
         }
         // A builtin-table method is public.
         if crate::builtins::class_table_names(*anc).contains(&name_str.as_str())
-            && !(*anc == KERNEL_CLASS && is_hidden_kernel_private(&name_str))
+            && !is_hidden_builtin_private(&name_str)
         {
             return Some(MethodVisibility::Public);
         }
@@ -1375,12 +1380,24 @@ pub fn send_super_from(
         .iter()
         .position(|&a| a == defining_class)
         .map_or(0, |p| p + 1);
+    let method_name = name.to_string();
     for &anc in &ancestors[start..] {
         if let Some(f) = registry().lookup(anc, name) {
             return f.call(&obj, args, block);
         }
+        // Then the BUILTIN table for that ancestor, exactly as the ordinary
+        // send path does (`send_in`). Materialization copies a builtin into a
+        // user subclass's registry entry, which is why `super` already reached
+        // `Array#size` from a subclass -- but a method no user class ever
+        // subclassed toward is only ever in the table, and `BasicObject#
+        // initialize` is the one every `super` chain bottoms out on. Without
+        // this the ordinary `include SomeMixin` + `super` idiom raised
+        // "no superclass method 'initialize'" where CRuby succeeds.
+        if let Some(f) = crate::builtins::class_table(anc).and_then(|t| t(&method_name)) {
+            return f(recv, args, block);
+        }
     }
-    Err(raise_method_missing(recv, &name.to_string(), MissingReason::Super))
+    Err(raise_method_missing(recv, &method_name, MissingReason::Super))
 }
 
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:

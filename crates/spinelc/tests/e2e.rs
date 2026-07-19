@@ -19390,3 +19390,50 @@ fn monitor_mixin_layers_over_the_native_reentrant_lock() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "2\ntrue\nfalse\n");
 }
+
+/// `super` reaching the root `initialize` -- what every chain bottoms out on,
+/// and what makes the ordinary `include SomeMixin` + `super` idiom work. It
+/// used to raise "no superclass method 'initialize'": the runtime `super` walk
+/// consulted only the registry, never the builtin table. Arity 0 is enforced,
+/// and `initialize` stays private to reflection.
+#[test]
+fn super_reaches_the_root_initialize() {
+    let result = run_ruby(
+        r##"
+        module Greet
+          def initialize
+            super
+            @greeted = true
+          end
+          def greeted?; @greeted; end
+        end
+        class Person
+          include Greet
+        end
+        p Person.new.greeted?
+
+        class Strict
+          def initialize(x); super; end
+        end
+        begin
+          Strict.new(1)
+        rescue ArgumentError => e
+          p e.message
+        end
+
+        class Ok
+          def initialize(x); super(); @x = x; end
+          attr_reader :x
+        end
+        p Ok.new(42).x
+
+        p Object.new.respond_to?(:initialize)
+        p Object.new.respond_to?(:initialize, true)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\n\"wrong number of arguments (given 1, expected 0)\"\n42\nfalse\ntrue\n"
+    );
+}

@@ -36,6 +36,22 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(value_identity(recv, &args[0])))
     }
+    // The root `initialize`: private, takes NO arguments, does nothing
+    // (`rb_obj_dummy`, `object.c`; registered with arity 0 at
+    // `object.c`'s BasicObject setup). It exists so that `super` from ANY
+    // class's `initialize` has something to reach -- which is what makes the
+    // ordinary `include SomeMixin` + `super` idiom work. Without it, a bare
+    // `super` at the top of a chain raised "no superclass method".
+    //
+    // Arity 0 is load-bearing, not incidental: `def initialize(x); super; end`
+    // forwards `x` and must raise ArgumentError exactly as CRuby does, so a
+    // permissive signature here would silently accept programs CRuby rejects.
+    // `super()` (explicit empty parens) is the way to reach it from a method
+    // that takes parameters.
+    "initialize" => fn initialize(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Nil)
+    }
     // ONLY `__send__` belongs here. CRuby puts `send` and `public_send` on
     // KERNEL (`vm_eval.c:2961`, `:2963`), which a `BasicObject` subclass never
     // sees -- so `BO.new.send(:x)` must raise while `BO.new.__send__(:x)`
