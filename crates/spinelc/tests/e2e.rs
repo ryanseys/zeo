@@ -4859,6 +4859,33 @@ fn set_subtract_flatten_map_filter_classify_and_divide() {
 }
 
 #[test]
+fn struct_values_values_at_dig_and_filtered_deconstruct_keys() {
+    let result = run_ruby(
+        r#"
+        Point = Struct.new(:x, :y)
+        p Point.new(3, 4).values
+        p Point.new(3, 4).values_at(0, -1)
+        Config = Struct.new(:name, :opts)
+        c = Config.new("web", { port: 8080 })
+        p c.dig(:opts, :port)
+        p c.dig(:opts, :missing)
+        S = Struct.new(:a, :b, :c)
+        p S.new(1, 2, 3).deconstruct_keys([:a, :c])
+        p S.new(1, 2, 3).deconstruct_keys([:z, :a])
+        p S.new(1, 2, 3).deconstruct_keys([:a, :b, :c, :d])
+        D = Data.define(:a, :b)
+        p D.new(a: 1, b: 2).deconstruct_keys([:a])
+        p D.new(a: 1, b: 2).deconstruct_keys(nil)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[3, 4]\n[3, 4]\n8080\nnil\n{a: 1, c: 3}\n{}\n{}\n{a: 1}\n{a: 1, b: 2}\n"
+    );
+}
+
+#[test]
 fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
     let result = run_ruby(
         r#"

@@ -324,6 +324,13 @@ fn struct_template(name: &str, display: &str, members: &[String], keyword_init: 
     };
     let read_arms = index_when_arms(false);
     let write_arms = index_when_arms(true);
+    // `deconstruct_keys` collects the requested members in order, stopping at
+    // the first key that isn't a member (CRuby returns what it has so far).
+    let deconstruct_arms = members
+        .iter()
+        .map(|m| format!("      when :{m} then result[:{m}] = @{m}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let inspect_parts = members
         .iter()
         .map(|m| format!("{m}=#{{{m}.inspect}}"))
@@ -340,6 +347,17 @@ fn struct_template(name: &str, display: &str, members: &[String], keyword_init: 
   def to_a
     [{value_list}]
   end
+  def values
+    [{value_list}]
+  end
+  def values_at(*indices)
+    to_a.values_at(*indices)
+  end
+  def dig(key, *rest)
+    value = self[key]
+    return value if rest.empty? || value.nil?
+    value.dig(*rest)
+  end
   def deconstruct
     to_a
   end
@@ -347,7 +365,16 @@ fn struct_template(name: &str, display: &str, members: &[String], keyword_init: 
     {{ {hash_pairs} }}
   end
   def deconstruct_keys(keys)
-    to_h
+    return to_h if keys.nil?
+    return {{}} if keys.length > {n}
+    result = {{}}
+    keys.each do |key|
+      case key
+{deconstruct_arms}
+      else return result
+      end
+    end
+    result
   end
   def ==(other)
     other.is_a?({display}) && other.to_a == to_a
@@ -419,6 +446,11 @@ fn data_template(name: &str, display: &str, members: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let member_list = accessors.clone();
+    let deconstruct_arms = members
+        .iter()
+        .map(|m| format!("      when :{m} then result[:{m}] = @{m}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let ivar_list = members
         .iter()
         .map(|m| format!("@{m}"))
@@ -476,7 +508,16 @@ fn data_template(name: &str, display: &str, members: &[String]) -> String {
     [{ivar_list}]
   end
   def deconstruct_keys(keys)
-    to_h
+    return to_h if keys.nil?
+    return {{}} if keys.length > {n}
+    result = {{}}
+    keys.each do |key|
+      case key
+{deconstruct_arms}
+      else return result
+      end
+    end
+    result
   end
   def with(changes = {{}})
     __extra = changes.keys - [{member_list}]
