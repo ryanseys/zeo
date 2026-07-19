@@ -4831,6 +4831,34 @@ fn matchdata_offset_names_regexp_and_regexp_class_methods() {
 }
 
 #[test]
+fn set_subtract_flatten_map_filter_classify_and_divide() {
+    let result = run_ruby(
+        r#"
+        require "set"
+        s = Set[1, 2, 3, 4]
+        p s.subtract([2, 3]).to_a.sort
+        p s.replace([9, 8, 8, 7]).to_a.sort
+        p Set[Set[1, 2], Set[3, Set[4]]].flatten.to_a.sort
+        p Set[Set[1, 2], Set[3]].flatten!.to_a.sort
+        p Set[1, 2].flatten!
+        m = Set[1, 2, 3]; m.map! { |x| x * 10 }; p m.to_a.sort
+        p Set[1, 2, 3, 4].select! { |x| x.even? }.to_a.sort
+        p Set[2, 4].select! { |x| x.even? }
+        p Set[1, 2, 3, 4].reject! { |x| x.even? }.to_a.sort
+        p Set[1, 2, 3, 4, 5].classify { |x| x % 3 }.transform_values { |v| v.to_a.sort }
+        p Set[1, 2, 3, 4].divide { |i| i % 3 }.map { |g| g.to_a.sort }.sort
+        p Set[1, 2, 3, 4].divide { |x, y| (x - y).abs == 1 }.map { |g| g.to_a.sort }.sort
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 4]\n[7, 8, 9]\n[1, 2, 3, 4]\n[1, 2, 3]\nnil\n[10, 20, 30]\n[2, 4]\nnil\n\
+         [1, 3]\n{1 => [1, 4], 2 => [2, 5], 0 => [3]}\n[[1, 4], [2], [3]]\n[[1, 2, 3, 4]]\n"
+    );
+}
+
+#[test]
 fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
     let result = run_ruby(
         r#"

@@ -43,6 +43,16 @@ impl RSet {
         crate::hash_set(&self.hash, v, RubyValue::Bool(true));
         true
     }
+
+    /// Drops every element and re-seeds from `elements` (deduplicated by the
+    /// insert path) -- the in-place core of `replace`/`map!`/`flatten!` and
+    /// the `select!`/`reject!` family.
+    fn replace_contents(&self, elements: impl IntoIterator<Item = RubyValue>) {
+        self.hash.lock().clear();
+        for e in elements {
+            self.insert(e);
+        }
+    }
 }
 
 impl RubyObject for RSet {
@@ -129,6 +139,118 @@ fn check_frozen(recv: &RubyValue) -> Result<(), Signal> {
     Ok(())
 }
 
+/// Whether `v` is itself a Set -- the recursion test for `flatten`.
+fn is_set(v: &RubyValue) -> bool {
+    matches!(v, RubyValue::Object(o) if o.class_id() == SET_CLASS)
+}
+
+/// Appends `s`'s elements to `out`, recursively expanding any nested Set --
+/// the shared core of `flatten`/`flatten!`.
+fn flatten_into(s: &RSet, out: &mut Vec<RubyValue>) {
+    for e in s.elements() {
+        if is_set(&e) {
+            flatten_into(set_of(&e), out);
+        } else {
+            out.push(e);
+        }
+    }
+}
+
+/// Keeps the elements for which `block`'s truthiness equals `keep_truthy`
+/// (so `select!`/`keep_if` pass `true`, `reject!`/`delete_if` pass `false`),
+/// rewriting the receiver in place. Returns whether anything was removed --
+/// the `!`-variants answer nil on no change.
+fn filter_in_place(recv: &RubyValue, block: &crate::RProc, keep_truthy: bool) -> Result<bool, Signal> {
+    let s = set_of(recv);
+    let before = s.elements();
+    let mut kept = Vec::with_capacity(before.len());
+    for e in &before {
+        if block.call(std::slice::from_ref(e))?.truthy() == keep_truthy {
+            kept.push(e.clone());
+        }
+    }
+    let changed = kept.len() != before.len();
+    s.replace_contents(kept);
+    Ok(changed)
+}
+
+/// Groups the receiver's elements by `block`'s return value into a
+/// `Hash{ key => Set }`, keys in first-seen order (CRuby `Set#classify`).
+/// `divide`'s single-arg form is just the values of this map.
+fn classify_groups(recv: &RubyValue, block: &crate::RProc) -> Result<RHash, Signal> {
+    let groups = crate::hash_new(vec![]);
+    for e in set_of(recv).elements() {
+        let key = block.call(std::slice::from_ref(&e))?;
+        if !crate::hash_has_key(&groups, &key) {
+            crate::hash_set(&groups, key.clone(), empty_set());
+        }
+        set_of(&crate::hash_get(&groups, &key)).insert(e);
+    }
+    Ok(groups)
+}
+
+/// Tarjan's strongly-connected components over the directed graph `adj`
+/// (`adj[u]` = the nodes `u` points at). Backs `Set#divide`'s two-arg form,
+/// where an edge `u -> v` exists iff `block.call(u, v)` is truthy.
+fn strongly_connected_components(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut index = vec![usize::MAX; n]; // discovery order, MAX = unvisited
+    let mut low = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut stack: Vec<usize> = Vec::new();
+    let mut next = 0usize;
+    let mut out: Vec<Vec<usize>> = Vec::new();
+
+    // Iterative DFS -- an explicit frame stack of (node, next-child-cursor)
+    // avoids blowing the Rust stack on a large adjacency.
+    for start in 0..n {
+        if index[start] != usize::MAX {
+            continue;
+        }
+        let mut frames: Vec<(usize, usize)> = vec![(start, 0)];
+        index[start] = next;
+        low[start] = next;
+        next += 1;
+        stack.push(start);
+        on_stack[start] = true;
+
+        while let Some(&(u, cursor)) = frames.last() {
+            if cursor < adj[u].len() {
+                frames.last_mut().unwrap().1 += 1;
+                let v = adj[u][cursor];
+                if index[v] == usize::MAX {
+                    index[v] = next;
+                    low[v] = next;
+                    next += 1;
+                    stack.push(v);
+                    on_stack[v] = true;
+                    frames.push((v, 0));
+                } else if on_stack[v] {
+                    low[u] = low[u].min(index[v]);
+                }
+            } else {
+                if low[u] == index[u] {
+                    let mut component = Vec::new();
+                    loop {
+                        let w = stack.pop().unwrap();
+                        on_stack[w] = false;
+                        component.push(w);
+                        if w == u {
+                            break;
+                        }
+                    }
+                    out.push(component);
+                }
+                frames.pop();
+                if let Some(&(parent, _)) = frames.last() {
+                    low[parent] = low[parent].min(low[u]);
+                }
+            }
+        }
+    }
+    out
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -168,6 +290,129 @@ builtin_methods! {
             Ok(recv.clone())
         } else {
             Ok(RubyValue::Nil)
+        }
+    }
+    // `subtract(enum)` -- removes every element of `enum`, returning self
+    // (the in-place counterpart of `-`).
+    "subtract" => fn subtract(recv, args, _block) {
+        arity!(args, 1);
+        check_frozen(recv)?;
+        let s = set_of(recv);
+        for e in arg_elements(&args[0])? {
+            crate::hash_delete(&s.hash, &e);
+        }
+        Ok(recv.clone())
+    }
+    // `replace(enum)` -- discards the current members and re-seeds from
+    // `enum`, returning self.
+    "replace" => fn replace(recv, args, _block) {
+        arity!(args, 1);
+        check_frozen(recv)?;
+        let elements = arg_elements(&args[0])?;
+        set_of(recv).replace_contents(elements);
+        Ok(recv.clone())
+    }
+    // `flatten` -- a NEW Set with every nested Set expanded recursively.
+    "flatten" => fn flatten(recv, args, _block) {
+        arity!(args, 0);
+        let mut out = Vec::new();
+        flatten_into(set_of(recv), &mut out);
+        Ok(set_from(out))
+    }
+    // `flatten!` -- flattens in place; self if it held any nested Set, else
+    // nil (nothing to flatten).
+    "flatten!" => fn flatten_bang(recv, args, _block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let s = set_of(recv);
+        if !s.elements().iter().any(is_set) {
+            return Ok(RubyValue::Nil);
+        }
+        let mut out = Vec::new();
+        flatten_into(s, &mut out);
+        s.replace_contents(out);
+        Ok(recv.clone())
+    }
+    // `map!`/`collect!` -- replaces each element with the block's result,
+    // in place, returning self (dedup applies to the mapped values).
+    "map!" | "collect!" => fn map_bang(recv, args, block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let p = block_or_enum!(recv, "map!", args, block);
+        let s = set_of(recv);
+        let mut mapped = Vec::new();
+        for e in s.elements() {
+            mapped.push(p.call(&[e])?);
+        }
+        s.replace_contents(mapped);
+        Ok(recv.clone())
+    }
+    // `select!`/`filter!` -- keep the elements the block likes; self if any
+    // were dropped, else nil.
+    "select!" | "filter!" => fn select_bang(recv, args, block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let p = block_or_enum!(recv, "select!", args, block);
+        let changed = filter_in_place(recv, &p, true)?;
+        Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    }
+    // `keep_if` -- like `select!` but always returns self.
+    "keep_if" => fn keep_if(recv, args, block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let p = block_or_enum!(recv, "keep_if", args, block);
+        filter_in_place(recv, &p, true)?;
+        Ok(recv.clone())
+    }
+    // `reject!` -- drop the elements the block likes; self if any were
+    // dropped, else nil.
+    "reject!" => fn reject_bang(recv, args, block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let p = block_or_enum!(recv, "reject!", args, block);
+        let changed = filter_in_place(recv, &p, false)?;
+        Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    }
+    // `delete_if` -- like `reject!` but always returns self.
+    "delete_if" => fn delete_if(recv, args, block) {
+        arity!(args, 0);
+        check_frozen(recv)?;
+        let p = block_or_enum!(recv, "delete_if", args, block);
+        filter_in_place(recv, &p, false)?;
+        Ok(recv.clone())
+    }
+    // `classify { |o| key }` -- a `Hash{ key => Set }` grouping by block value.
+    "classify" => fn classify(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "classify", args, block);
+        Ok(RubyValue::Hash(classify_groups(recv, &p)?))
+    }
+    // `divide` -- partition into a Set of Sets. A one-arg block groups by its
+    // value (`classify`'s values); a two-arg block treats `block.call(u,v)` as
+    // a directed edge and returns the strongly-connected components.
+    "divide" => fn divide(recv, args, block) {
+        arity!(args, 0);
+        let p = block_or_enum!(recv, "divide", args, block);
+        if p.arity() == 2 {
+            let elements = set_of(recv).elements();
+            let n = elements.len();
+            let mut adj = vec![Vec::new(); n];
+            for (i, u) in elements.iter().enumerate() {
+                for (j, v) in elements.iter().enumerate() {
+                    if p.call(&[u.clone(), v.clone()])?.truthy() {
+                        adj[i].push(j);
+                    }
+                }
+            }
+            let components = strongly_connected_components(&adj);
+            let sets = components
+                .into_iter()
+                .map(|component| set_from(component.into_iter().map(|i| elements[i].clone())));
+            Ok(set_from(sets))
+        } else {
+            let groups = classify_groups(recv, &p)?;
+            let values: Vec<RubyValue> = groups.lock().values().map(|(_, v)| v.clone()).collect();
+            Ok(set_from(values))
         }
     }
     "each" => fn each(recv, args, block) {
@@ -412,6 +657,64 @@ mod tests {
             add(&s, &[RubyValue::Int(4)], None)
         }));
         assert!(frozen.is_err());
+    }
+
+    #[test]
+    fn bang_filters_report_change_and_flatten_reports_nesting() {
+        // `select!` returns self when it removed something, nil when it did not.
+        let s = ints(&[1, 2, 3, 4]);
+        assert!(matches!(select_bang(&s, &[], pred(|x| x % 2 == 0)).unwrap(), RubyValue::Object(_)));
+        let done = ints(&[2, 4]);
+        assert!(matches!(select_bang(&done, &[], pred(|x| x % 2 == 0)).unwrap(), RubyValue::Nil));
+        // `flatten!` returns nil on a flat Set.
+        assert!(matches!(flatten_bang(&ints(&[1, 2]), &[], None).unwrap(), RubyValue::Nil));
+        let nested = set_from([ints(&[1, 2]), ints(&[3])]);
+        assert!(matches!(flatten_bang(&nested, &[], None).unwrap(), RubyValue::Object(_)));
+        assert_eq!(elems_sorted(&nested), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn divide_by_value_and_by_connected_components() {
+        // One-arg block groups by return value.
+        let by_value = divide(&ints(&[1, 2, 3, 4]), &[], block(|x| x % 3)).unwrap();
+        assert!(matches!(size(&by_value, &[], None).unwrap(), RubyValue::Int(3)));
+        // Two-arg block: 1-2-3-4 chain is one strongly-connected component.
+        let chain = divide(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1)).unwrap();
+        assert!(matches!(size(&chain, &[], None).unwrap(), RubyValue::Int(1)));
+    }
+
+    fn elems_sorted(s: &RubyValue) -> Vec<i64> {
+        let mut got: Vec<i64> = set_of(s).elements().iter().map(|v| match v {
+            RubyValue::Int(i) => *i,
+            _ => panic!(),
+        }).collect();
+        got.sort();
+        got
+    }
+
+    /// A one-arg Int->Int test block wrapped as a `Proc` value.
+    fn block(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Option<RubyValue> {
+        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
+            let RubyValue::Int(x) = args[0] else { panic!() };
+            Ok(RubyValue::Int(f(x)))
+        }, 1, false)))
+    }
+
+    /// A one-arg Int predicate test block (returns a Bool, so truthiness is
+    /// meaningful) wrapped as a `Proc` value.
+    fn pred(f: impl Fn(i64) -> bool + Send + Sync + 'static) -> Option<RubyValue> {
+        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
+            let RubyValue::Int(x) = args[0] else { panic!() };
+            Ok(RubyValue::Bool(f(x)))
+        }, 1, false)))
+    }
+
+    /// A two-arg Int,Int->bool test block wrapped as a `Proc` value.
+    fn block2(f: impl Fn(i64, i64) -> bool + Send + Sync + 'static) -> Option<RubyValue> {
+        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
+            let (RubyValue::Int(x), RubyValue::Int(y)) = (&args[0], &args[1]) else { panic!() };
+            Ok(RubyValue::Bool(f(*x, *y)))
+        }, 2, false)))
     }
 
     #[test]
