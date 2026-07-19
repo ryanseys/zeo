@@ -1,0 +1,14 @@
+true
+[Walks, Kernel]
+true
+[]
+[:X]
+[:MC, :MD, :X, :Y]
+[:Y]
+[:MC, :MD]
+["MC", "MD", "X", "Y"]
+[P, Own1, I, Object, Kernel, BasicObject]
+[:Q, :PC, :IC]
+[:BC, :PC, :AC]
+[]
+[]

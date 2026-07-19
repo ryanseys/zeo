@@ -73,6 +73,49 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(chain)))
     }
+    // `Module#included_modules`: the modules in `recv`'s ancestor chain, in MRO
+    // order (the classes filtered out). Kernel and any mixed-in module appear;
+    // `Object`/`BasicObject` (classes) do not.
+    "included_modules" => fn included_modules(recv, args, _block) {
+        arity!(args, 0);
+        let mods = crate::dispatch::ancestors_of_value(recv_cid(recv))
+            .iter()
+            .filter(|&&a| crate::dispatch::class_is_module(a).unwrap_or(false))
+            .map(|&a| RubyValue::Class(a))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(mods)))
+    }
+    // `Module#constants([inherit=true])`: this module's own constant names as
+    // Symbols, then -- unless `inherit` is false -- its ancestors' (except
+    // `Object`'s, CRuby's rule), own group first. Order within one class is
+    // unspecified (an id table in CRuby, a HashMap here).
+    "constants" => fn constants(recv, args, _block) {
+        arity!(args, 0..=1);
+        let cid = recv_cid(recv);
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let mut push_owner = |owner: crate::ClassId, out: &mut Vec<RubyValue>| {
+            for name in crate::constants::const_names_of(owner.0) {
+                if seen.insert(name.clone()) {
+                    out.push(RubyValue::Symbol(crate::Symbol::intern(&name)));
+                }
+            }
+        };
+        push_owner(cid, &mut out);
+        if inherit_flag(args) {
+            for anc in crate::dispatch::ancestors_of_value(cid) {
+                // `Object`'s constants (every top-level constant) are excluded
+                // from a non-Object module's `constants`, matching CRuby.
+                if *anc == cid || *anc == spinel_abi::OBJECT_CLASS
+                    || *anc == spinel_abi::BASIC_OBJECT_CLASS
+                {
+                    continue;
+                }
+                push_owner(*anc, &mut out);
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
     // `Module#include?(mod)`: true when `mod` is a MODULE mixed into `recv` or
     // one of its ancestors (never `recv` itself, and never a superclass --
     // only included/prepended modules count). A non-class/module argument is a
@@ -326,6 +369,35 @@ builtin_methods! {
                 .iter()
                 .any(|&anc| crate::cvar_defined(anc.0, &name)),
         ))
+    }
+    // `Module#class_variables([inherit=true])` -- the `@@name` symbols owned by
+    // this class and (unless `inherit` is false) its ancestors, own first.
+    // Names store bare (`x`); the reflection re-adds the `@@` prefix.
+    "class_variables" => fn class_variables(recv, args, _block) {
+        arity!(args, 0..=1);
+        let cid = recv_cid(recv);
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let mut push_owner = |owner: crate::ClassId, out: &mut Vec<RubyValue>| {
+            for name in crate::cvar_names_of(owner.0) {
+                if seen.insert(name.clone()) {
+                    out.push(RubyValue::Symbol(crate::Symbol::intern(&format!("@@{name}"))));
+                }
+            }
+        };
+        push_owner(cid, &mut out);
+        if inherit_flag(args) {
+            for anc in crate::dispatch::ancestors_of_value(cid) {
+                if *anc == cid
+                    || *anc == spinel_abi::OBJECT_CLASS
+                    || *anc == spinel_abi::BASIC_OBJECT_CLASS
+                {
+                    continue;
+                }
+                push_owner(*anc, &mut out);
+            }
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
     }
 }
 

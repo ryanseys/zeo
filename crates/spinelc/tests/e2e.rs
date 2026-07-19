@@ -17971,6 +17971,35 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn module_constants_included_modules_and_class_variables() {
+    // Module#constants (own first, ancestors' next, Object's excluded),
+    // #included_modules (modules in the MRO), and #class_variables (own +
+    // ancestors).
+    let result = run_ruby(
+        r#"
+        module Walks; end
+        class Animal; end
+        class Dog < Animal; include Walks; end
+        p Dog.included_modules
+        module Mod; MC = 9; end
+        class A; X = 1; end
+        class B < A; Y = 2; include Mod; end
+        p A.constants
+        p B.constants.sort
+        p B.constants(false)
+        class C; @@x = 5; end
+        C.class_variable_set(:@@y, 9)
+        p C.class_variables.sort
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[Walks, Kernel]\n[:X]\n[:MC, :X, :Y]\n[:Y]\n[:@@x, :@@y]\n",
+    );
+}
+
+#[test]
 fn three_way_method_visibility_reflection() {
     // Private/public/protected are tracked distinctly: `instance_methods`
     // keeps public+protected, the prefixed queries match exactly one

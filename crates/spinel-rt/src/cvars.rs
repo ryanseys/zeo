@@ -46,6 +46,18 @@ pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) {
         .insert((owner_class_id, name.to_string()), value);
 }
 
+/// The class-variable names (`@@x`) owned DIRECTLY by `owner_class_id` -- the
+/// per-class half of `Module#class_variables`. Order is unspecified (a HashMap
+/// iteration); callers asserting a stable result sort it.
+pub fn cvar_names_of(owner_class_id: u32) -> Vec<String> {
+    CVARS
+        .lock()
+        .keys()
+        .filter(|(owner, _)| *owner == owner_class_id)
+        .map(|(_, name)| name.clone())
+        .collect()
+}
+
 /// Whether `@@name` has EVER been assigned on `owner_class_id` -- the
 /// genuine "defined" distinction `cvar_get`'s nil-on-miss convention can't
 /// express, needed by `Module#class_variable_defined?`/`class_variable_get`

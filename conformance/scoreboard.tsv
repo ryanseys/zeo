@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=8cba7c4
-# PASS=1708 FAIL_OUTPUT=322 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=0dbe744
+# PASS=1710 FAIL_OUTPUT=320 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1245,13 +1245,13 @@ module_body_string_const_interp	PASS	-	-
 module_class_body_side_effects	FAIL_OUTPUT	expect	-
 module_class_new	PASS	-	-
 module_class_reflection	PASS	-	-
-module_class_var_reflection_set	FAIL_OUTPUT	expect	missing-method:class_variables
+module_class_var_reflection_set	PASS	-	-
 module_cls_method_string_return	PASS	-	-
 module_const_array_widen	PASS	-	-
 module_const_defined	PASS	-	-
 module_const_root_path	PASS	-	-
 module_const_set	FAIL_OUTPUT	expect	missing-method:const_set
-module_constants_included_modules	FAIL_OUTPUT	expect	missing-method:included_modules
+module_constants_included_modules	PASS	-	-
 module_cvars	PASS	-	-
 module_def_self_ivar	PASS	-	-
 module_dispatch_param_widen	PASS	-	-

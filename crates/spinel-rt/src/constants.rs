@@ -40,6 +40,19 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     None
 }
 
+/// The constant names owned DIRECTLY by `owner_class_id` (not its ancestors)
+/// -- the per-class half of `Module#constants`. Order is unspecified (a
+/// `HashMap` iteration), matching CRuby's own id-table nondeterminism; callers
+/// asserting a stable result sort it.
+pub fn const_names_of(owner_class_id: u32) -> Vec<String> {
+    CONSTANTS
+        .lock()
+        .keys()
+        .filter(|(owner, _)| *owner == owner_class_id)
+        .map(|(_, name)| name.clone())
+        .collect()
+}
+
 pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     // Naming an anonymous runtime class (`Foo = Class.new`, #97 F4): the FIRST
     // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`

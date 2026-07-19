@@ -87,7 +87,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:caller | 1 | kernel_caller_wired | uncaught exception: undefined method 'caller' for an instance of Object |
 | P | missing-method:caller_locations | 1 | caller_locations | uncaught exception: undefined method 'caller_locations' for an instance of Object |
 | P | missing-method:class_exec | 1 | class_exec_def_body | uncaught exception: undefined method 'class_exec' for class C |
-| P | missing-method:class_variables | 1 | module_class_var_reflection_set | uncaught exception: undefined method 'class_variables' for class C |
 | P | missing-method:const_set | 1 | module_const_set | uncaught exception: undefined method 'const_set' for class Box |
 | P | missing-method:count | 1 | env_full_surface | uncaught exception: undefined method 'count' for an instance of Object |
 | P | missing-method:detailed_message | 1 | exception_detailed_message | uncaught exception: undefined method 'detailed_message' for an instance of RuntimeError |
@@ -102,7 +101,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for an instance of Object |
 | P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer |
 | P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for an instance of NilClass |
-| P | missing-method:included_modules | 1 | module_constants_included_modules | uncaught exception: undefined method 'included_modules' for class Dog |
 | P | missing-method:key | 1 | exception_introspection_accessors | uncaught exception: undefined method 'key' for an instance of KeyError |
 | P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |

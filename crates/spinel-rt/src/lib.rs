@@ -71,7 +71,7 @@ pub use dispatch::{
 };
 pub use eval_vm::{eval_string, eval_value};
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
-pub use cvars::{cvar_defined, cvar_get, cvar_set};
+pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
 pub use method_params::{register_params, ParamKind};
 pub use lastmatch::{
     last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
