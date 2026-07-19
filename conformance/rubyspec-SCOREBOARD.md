@@ -1,14 +1,14 @@
 # Conformance scoreboard
 
-Suite `rubyspec` — **4/67 passing (6.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `1c457a2`
+Suite `rubyspec` — **4/67 passing (6.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `9de980c`
 
 | verdict | count |
 |---|---|
 | PASS | 4 |
-| FAIL_OUTPUT | 6 |
-| FAIL_COMPILE | 54 |
-| FAIL_RUSTC | 1 |
-| FAIL_RUN | 2 |
+| FAIL_OUTPUT | 9 |
+| FAIL_COMPILE | 48 |
+| FAIL_RUSTC | 2 |
+| FAIL_RUN | 4 |
 | TIMEOUT_COMPILE | 0 |
 | TIMEOUT_RUN | 0 |
 | ORACLE_FAIL | 0 |
@@ -19,10 +19,10 @@ Suite `rubyspec` — **4/67 passing (6.0%)** — oracle `ruby 4.0.5 (2026-05-20 
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 34 | spike-misc | ? | send_spec | a nested escaping block capturing its enclosing BLOCK's own local `__f1_o` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell |
-| 8 | auto-362e8305 | ? | yield_spec | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
-| 3 | missing-method:raise | P | loop_spec | ERROR: The loop expression executes code in its own scope: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
+| 35 | spike-misc | ? | break_spec | a nested escaping block capturing its enclosing BLOCK's own local `__f1_value` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell |
+| 6 | missing-method:raise | P | numbers_spec | ERROR: A number literal must have a digit before the decimal point: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
 | 2 | missing-const:ScratchPad | P | BEGIN_spec | ERROR: The BEGIN keyword returns the top-level script's filename for __FILE__: NameError: uninitialized constant ScratchPad |
+| 2 | rustc-failure | ! | yield_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-b0a9d380fad8c2cc.rs) |
 | 2 | splat | a | variables_spec | /Users/ryanseys/dev/spec/language/variables_spec.rb: expected `*name` as a multi-assignment's splat target |
 | 1 | auto-619a71ee | ? | block_spec | /Users/ryanseys/dev/spec/language/block_spec.rb: unsupported syntax at "\"a\" => 1, a: 10" (spike handles only what the 7 example programs need) |
 | 1 | auto-72ea658f | ? | module_spec | /Users/ryanseys/dev/spec/language/module_spec.rb: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |

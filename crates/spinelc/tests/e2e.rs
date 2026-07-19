@@ -17714,3 +17714,31 @@ fn lambda_escaping_inside_an_escaping_block() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[10, 20, 30]\n12\n[1, 4, 9]\n");
 }
+
+#[test]
+fn nested_closure_captures_enclosing_blocks_own_local() {
+    // A name that is both an enclosing block's own local AND captured by a
+    // nested escaping closure must be declared once (as a shared cell), not
+    // also fresh-declared by the own-locals prelude.
+    let result = run_ruby(
+        r#"
+        adders = []
+        [1, 2, 3].each do |n|
+          base = n * 100
+          adders << -> { base + n }
+        end
+        p adders.map(&:call)
+
+        procs = []
+        [10, 20].each do |k|
+          acc = 0
+          procs << -> { acc }
+          acc = k + 1
+          procs << -> { acc }
+        end
+        p procs.map(&:call)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[101, 202, 303]\n[11, 11, 21, 21]\n");
+}

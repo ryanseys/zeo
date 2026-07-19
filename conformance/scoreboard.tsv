@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=1c457a2
-# PASS=1580 FAIL_OUTPUT=342 FAIL_COMPILE=56 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=9de980c
+# PASS=1584 FAIL_OUTPUT=344 FAIL_COMPILE=50 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -236,7 +236,7 @@ bundle_classd_09	PASS	-	-
 bundle_classd_10	PASS	-	-
 bundle_classd_11	PASS	-	-
 bundle_classd_12	PASS	-	-
-bundle_classd_13	FAIL_COMPILE	compile	auto-362e8305
+bundle_classd_13	PASS	-	-
 bundle_classd_14	PASS	-	-
 bundle_classd_17	PASS	-	-
 bundle_classd_18	PASS	-	-
@@ -258,7 +258,7 @@ bundle_classd_49	PASS	-	-
 bundle_classd_50	PASS	-	-
 bundle_classd_51	PASS	-	-
 bundle_file_a	PASS	-	-
-bundle_hash	FAIL_COMPILE	compile	auto-362e8305
+bundle_hash	PASS	-	-
 bundle_hash_b1	PASS	-	-
 bundle_hash_b2	FAIL_OUTPUT	expect	-
 bundle_int_a	PASS	-	-
@@ -523,7 +523,7 @@ each_with_object_memo	PASS	-	-
 elsif_isa_chain	PASS	-	-
 embedded_var	PASS	-	-
 empty_array_dispatch	PASS	-	-
-empty_array_local_arg_widen	FAIL_COMPILE	compile	auto-362e8305
+empty_array_local_arg_widen	PASS	-	-
 empty_array_loop_intermediate_push	PASS	-	-
 empty_array_param	PASS	-	-
 empty_array_push_container_elem	PASS	-	-
@@ -651,7 +651,7 @@ fiber_error_guards	FAIL_OUTPUT	expect	missing-method:transfer
 fiber_exception_boundary	PASS	-	-
 fiber_gc_root_isolation	PASS	-	-
 fiber_kill	FAIL_OUTPUT	expect	-
-fiber_nested_block	FAIL_COMPILE	compile	auto-362e8305
+fiber_nested_block	PASS	-	-
 fiber_nested_block_capture	PASS	-	-
 fiber_nested_fiber	FAIL_COMPILE	compile	spike-misc
 fiber_raise	PASS	-	-
@@ -1003,7 +1003,7 @@ interpolation_symbol_name	PASS	-	-
 introspection_constant_path	PASS	-	-
 io_class_methods_surface	FAIL_OUTPUT	expect	missing-method:read
 io_handle_value_surface	FAIL_OUTPUT	expect	-
-io_instance_read_surface	FAIL_COMPILE	compile	auto-362e8305
+io_instance_read_surface	FAIL_OUTPUT	expect	missing-method:lineno
 io_pipe	FAIL_OUTPUT	expect	missing-method:pipe
 io_puts_compound_arg	PASS	-	-
 io_stdout_tty_chain	PASS	-	-
@@ -1465,7 +1465,7 @@ proc_introspection	PASS	-	-
 proc_keyword_param	PASS	-	-
 proc_lambda_array_of_param	PASS	-	-
 proc_method_wave10	FAIL_OUTPUT	expect	-
-proc_nonlocal_return	FAIL_COMPILE	compile	auto-362e8305
+proc_nonlocal_return	FAIL_OUTPUT	expect	auto-adf38191
 proc_numbered_params	PASS	-	-
 proc_optional_params	PASS	-	-
 proc_param_container_input	PASS	-	-

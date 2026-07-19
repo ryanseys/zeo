@@ -1650,7 +1650,7 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
         let ident = safe_ident(name);
         quote! { let #ident = ::std::sync::Arc::clone(&#ident); }
     });
-    let own_only: std::collections::HashSet<String> = block_caps
+    let mut own_only: std::collections::HashSet<String> = block_caps
         .locals
         .iter()
         .filter(|n| !cx.captured_locals.contains(*n))
@@ -1717,6 +1717,13 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     let nested_captured: std::collections::HashSet<String> =
         super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
             .locals;
+    // A name that is both this block's own local AND captured by a nested
+    // block is cell-declared below (`nested_local_decls`) and lives in
+    // `proc_cx.captured_locals`; it must therefore leave `own_only`, or the
+    // own-locals prelude would ALSO fresh-declare it -- a second binding that
+    // shadows the shared cell (the inner closure then reads `nil`), which the
+    // prelude's own-only invariant (`hoisting.rs`) forbids outright.
+    own_only.retain(|n| !nested_captured.contains(n));
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
     if !nested_captured.is_empty() {
         proc_cx.captured_locals.to_mut().extend(nested_captured.iter().cloned());

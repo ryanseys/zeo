@@ -1,5 +1,5 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=1c457a2
-# PASS=4 FAIL_OUTPUT=6 FAIL_COMPILE=54 FAIL_RUSTC=1 FAIL_RUN=2 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=9de980c
+# PASS=4 FAIL_OUTPUT=9 FAIL_COMPILE=48 FAIL_RUSTC=2 FAIL_RUN=4 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 END_spec	FAIL_RUN	run	auto-f0c6b32f
 alias_spec	FAIL_COMPILE	compile	spike-misc
@@ -10,12 +10,12 @@ block_spec	FAIL_COMPILE	compile	auto-619a71ee
 break_spec	FAIL_COMPILE	compile	spike-misc
 case_spec	FAIL_COMPILE	compile	spike-misc
 class_spec	FAIL_COMPILE	compile	spike-misc
-class_variable_spec	FAIL_COMPILE	compile	auto-362e8305
+class_variable_spec	FAIL_OUTPUT	expect	missing-method:raise
 comment_spec	PASS	-	-
 constants_spec	FAIL_COMPILE	compile	spike-misc
 def_spec	FAIL_COMPILE	compile	spike-misc
 defined_spec	FAIL_COMPILE	compile	auto-e0dfb590
-delegation_spec	FAIL_COMPILE	compile	auto-362e8305
+delegation_spec	FAIL_OUTPUT	expect	missing-method:raise
 encoding_spec	FAIL_RUN	run	auto-8576fc82
 ensure_spec	FAIL_COMPILE	compile	spike-misc
 execution_spec	FAIL_COMPILE	compile	auto-80fe6faf
@@ -36,7 +36,7 @@ method_spec	FAIL_COMPILE	compile	spike-misc
 module_spec	FAIL_COMPILE	compile	auto-72ea658f
 next_spec	FAIL_COMPILE	compile	spike-misc
 not_spec	PASS	-	-
-numbered_parameters_spec	FAIL_COMPILE	compile	auto-362e8305
+numbered_parameters_spec	FAIL_RUN	run	missing-const:MSpecLite::RUBY_VERSION
 numbers_spec	FAIL_OUTPUT	expect	missing-method:raise
 optional_assignments_spec	FAIL_COMPILE	compile	compound-assign
 or_spec	FAIL_COMPILE	compile	spike-misc
@@ -44,10 +44,10 @@ order_spec	FAIL_RUSTC	compile	rustc-failure
 pattern_matching_spec	FAIL_COMPILE	compile	pattern-shapes
 precedence_spec	FAIL_COMPILE	compile	auto-ba2b7615
 predefined_spec	FAIL_COMPILE	compile	spike-misc
-private_spec	FAIL_COMPILE	compile	auto-362e8305
-proc_spec	FAIL_COMPILE	compile	auto-362e8305
+private_spec	FAIL_COMPILE	compile	toplevel-node-in-expr
+proc_spec	FAIL_COMPILE	compile	spike-misc
 range_spec	FAIL_OUTPUT	expect	missing-method:new
-redo_spec	FAIL_COMPILE	compile	auto-362e8305
+redo_spec	FAIL_OUTPUT	expect	missing-method:raise
 regexp_spec	FAIL_COMPILE	compile	spike-misc
 rescue_spec	FAIL_COMPILE	compile	spike-misc
 retry_spec	FAIL_OUTPUT	expect	missing-method:raise
@@ -57,7 +57,7 @@ safe_spec	PASS	-	-
 send_spec	FAIL_COMPILE	compile	spike-misc
 singleton_class_spec	FAIL_COMPILE	compile	spike-misc
 source_encoding_spec	FAIL_COMPILE	compile	spike-misc
-string_spec	FAIL_COMPILE	compile	auto-362e8305
+string_spec	FAIL_RUN	run	missing-method:define_method
 super_spec	FAIL_COMPILE	compile	super-arity
 symbol_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 throw_spec	FAIL_COMPILE	compile	spike-misc
@@ -66,4 +66,4 @@ unless_spec	PASS	-	-
 until_spec	FAIL_COMPILE	compile	spike-misc
 variables_spec	FAIL_COMPILE	compile	splat
 while_spec	FAIL_COMPILE	compile	spike-misc
-yield_spec	FAIL_COMPILE	compile	auto-362e8305
+yield_spec	FAIL_RUSTC	compile	rustc-failure
