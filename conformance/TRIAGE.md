@@ -7,12 +7,11 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| ? | spike-misc | 8 | exc_frame_break_next_pops, fiber_nested_fiber, singleton_class_block | `break`/`next`/`redo` inside a `begin`/`rescue`/`else` clause, targeting a loop OUTSIDE it, isn't supported yet (spike scope) -- a loop written INSIDE the `begin` itself is unaffected |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
 | g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, bundle_tiny_string | uncaught exception: wrong number of arguments (given 0, expected 1+) |
-| ? | auto-outside-constant-assignment-isn-supported-aot-write-f25f | 3 | data_define_duplicate_member, data_define_inline_receiver, anon_struct_local | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
+| ? | auto-no-block-given-yield-cac6 | 3 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy, external_singleton_def | uncaught exception: no block given (yield) |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
 | P | missing-method:[] | 3 | struct_methods, multi_write_call_rhs_as_expr, param_body_hash_inference | uncaught exception: undefined method '[]' for class S |
 | P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for main |
@@ -20,11 +19,12 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for nil |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
-| ? | auto-no-block-given-yield-cac6 | 2 | enum_terminal_chunk_zip_lazy, string_enum_inspect_source | uncaught exception: no block given (yield) |
+| ? | auto-outside-method-88d5 | 2 | singleton_class_object, singleton_method_object | `super` outside a method |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for main |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
+| P | missing-method:members | 2 | data_define_duplicate_member, struct_enumerable_wave8 | uncaught exception: undefined method 'members' for class Good |
 | P | missing-method:name | 2 | exception_value_flow_match, exception_value_parity | uncaught exception: undefined method 'name' for an instance of NoMethodError |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
@@ -40,7 +40,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
 | ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
-| ? | auto-no-block-given-localjumperror-b554 | 1 | yield_no_block_raises | no block given (LocalJumpError) |
 | ? | auto-no-implicit-conversion-of-float-into-integer-32aa | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
 | ? | auto-no-implicit-conversion-of-rational-into-integer-6e6a | 1 | time_fractional_seconds | uncaught exception: no implicit conversion of Rational into Integer |
 | ? | auto-not-file-5c85 | 1 | stdin_io | uncaught exception: not a file |
@@ -90,7 +89,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
 | P | missing-method:match | 1 | matchdata_methods | uncaught exception: undefined method 'match' for an instance of MatchData |
-| P | missing-method:members | 1 | struct_enumerable_wave8 | uncaught exception: undefined method 'members' for class Kk144 |
 | P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB |
 | P | missing-method:open | 1 | wave_followups_2833 | uncaught exception: undefined method 'open' for class Dir |
 | P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |
@@ -103,5 +101,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:value? | 1 | env_mutation_surface | uncaught exception: undefined method 'value?' for an instance of Object |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
 | k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |
+| ? | spike-misc | 1 | issue_2973 | Data.define members must be literal symbols (spike scope; the `Data.define("Name", ...)` string form isn't supported) |
 
 List one bucket's tests: `cargo run -p xtask -- conformance triage --bucket <name>`.

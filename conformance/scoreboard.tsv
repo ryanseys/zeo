@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=f148f92
-# PASS=1758 FAIL_OUTPUT=301 FAIL_COMPILE=15 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c8afc07
+# PASS=1766 FAIL_OUTPUT=301 FAIL_COMPILE=7 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -17,7 +17,7 @@ and_nullable_container_poly	PASS	-	-
 anon_block_forward	PASS	-	-
 anon_double_splat_forward	PASS	-	-
 anon_splat_forward	PASS	-	-
-anon_struct_local	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
+anon_struct_local	PASS	-	-
 arg_assigned_in_sequence	PASS	-	-
 argf_class_no_args	FAIL_OUTPUT	expect	missing-const:ARGF
 argf_reads_args	FAIL_OUTPUT	expect	missing-const:ARGF
@@ -462,8 +462,8 @@ cvar_method_first_assign	PASS	-	-
 cycle_block_value_position	PASS	-	-
 data_bare_new_in_factory	PASS	-	-
 data_define	PASS	-	-
-data_define_duplicate_member	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
-data_define_inline_receiver	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
+data_define_duplicate_member	FAIL_OUTPUT	expect	missing-method:members
+data_define_inline_receiver	PASS	-	-
 data_dup_clone_frozen	FAIL_OUTPUT	expect	-
 data_hash_key	FAIL_OUTPUT	expect	-
 data_inspect_in_container	PASS	-	-
@@ -592,7 +592,7 @@ eql_on_chain_result	PASS	-	-
 error_protocol_edges	PASS	-	-
 escaping_block_captures_self	PASS	-	-
 escaping_proc_captures_value_self	PASS	-	-
-exc_frame_break_next_pops	FAIL_COMPILE	compile	spike-misc
+exc_frame_break_next_pops	PASS	-	-
 exc_frame_early_return_pops	PASS	-	-
 exception_backtrace_empty	PASS	-	-
 exception_backtrace_wired	PASS	-	-
@@ -621,7 +621,7 @@ exception_value_parity	FAIL_OUTPUT	expect	missing-method:name
 exit_poly_status	PASS	-	-
 expr_retry_equal_curry_methodobj	FAIL_OUTPUT	expect	missing-method:Integer
 extend_module	PASS	-	-
-external_singleton_def	FAIL_COMPILE	compile	spike-misc
+external_singleton_def	FAIL_OUTPUT	expect	auto-no-block-given-yield-cac6
 features	PASS	-	-
 ffi_array_specs_decl	FAIL_OUTPUT	expect	missing-method:ffi_func
 ffi_binstr_recv	FAIL_OUTPUT	expect	missing-method:ffi_func
@@ -654,7 +654,7 @@ fiber_gc_root_isolation	PASS	-	-
 fiber_kill	FAIL_OUTPUT	expect	-
 fiber_nested_block	PASS	-	-
 fiber_nested_block_capture	PASS	-	-
-fiber_nested_fiber	FAIL_COMPILE	compile	spike-misc
+fiber_nested_fiber	PASS	-	-
 fiber_raise	PASS	-	-
 fiber_reassign_capture	FAIL_OUTPUT	expect	-
 fiber_shared_capture	PASS	-	-
@@ -1747,9 +1747,9 @@ setbyte_nul_bytes	PASS	-	-
 shareable_constant	PASS	-	-
 signal_module_surface	FAIL_OUTPUT	expect	missing-const:Signal
 signal_trap_stub	FAIL_OUTPUT	expect	missing-method:trap
-singleton_class_block	FAIL_COMPILE	compile	spike-misc
-singleton_class_object	FAIL_COMPILE	compile	spike-misc
-singleton_method_object	FAIL_COMPILE	compile	spike-misc
+singleton_class_block	PASS	-	-
+singleton_class_object	FAIL_COMPILE	compile	auto-outside-method-88d5
+singleton_method_object	FAIL_COMPILE	compile	auto-outside-method-88d5
 sized_poly_array_nil_n	PASS	-	-
 sleep_poly_arg	PASS	-	-
 sleep_return_value	PASS	-	-
@@ -1908,7 +1908,7 @@ struct_to_a_values	PASS	-	-
 struct_to_h	PASS	-	-
 struct_to_h_block	FAIL_OUTPUT	expect	-
 struct_value_equality	PASS	-	-
-struct_valuesat_hash_set_init_wave10	FAIL_OUTPUT	expect	-
+struct_valuesat_hash_set_init_wave10	PASS	-	-
 struct_yield_initialize	PASS	-	-
 subclass_inherits_module_parent	PASS	-	-
 super_forward_block_given	PASS	-	-
@@ -2010,7 +2010,7 @@ uninit_const_raises_nameerror	PASS	-	-
 uninit_ivar_returns_nil	PASS	-	-
 uniq_block	FAIL_OUTPUT	expect	-
 uniq_user_eql_hash	FAIL_OUTPUT	expect	-
-unless_return_path_hash	FAIL_COMPILE	compile	spike-misc
+unless_return_path_hash	PASS	-	-
 unpack1_literal_format	PASS	-	-
 unresolved_call_raises	PASS	-	-
 unsupported_feature_diagnostics	FAIL_OUTPUT	expect	missing-method:binding
@@ -2066,7 +2066,7 @@ yield_inline_receiver_self	PASS	-	-
 yield_into_local_divergent	PASS	-	-
 yield_method_call_in_method_body	PASS	-	-
 yield_mixed_block_types	PASS	-	-
-yield_no_block_raises	FAIL_OUTPUT	expect	auto-no-block-given-localjumperror-b554
+yield_no_block_raises	PASS	-	-
 yield_self_method_return	PASS	-	-
 yield_splat	PASS	-	-
 yield_typed_hash_block_local	PASS	-	-

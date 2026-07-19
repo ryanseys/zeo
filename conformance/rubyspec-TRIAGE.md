@@ -6,12 +6,13 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 31 | metaclass_spec, string_spec, def_spec | /Users/ryanseys/dev/spec/language/metaclass_spec.rb: /Users/ryanseys/dev/spec/fixtures/class.rb: `class << self` at this position isn't supported yet (spike scope) -- use it inside a class/module body |
+| ? | spike-misc | 29 | file_spec, metaclass_spec, source_encoding_spec | /Users/ryanseys/dev/spec/language/file_spec.rb: /Users/ryanseys/dev/spec/fixtures/code_loading.rb: `require` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body |
 | P | missing-method:raise | 7 | retry_spec, delegation_spec, numbers_spec | ERROR: The retry statement raises a SyntaxError when used outside of a rescue statement: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
 | P | missing-const:ScratchPad | 2 | BEGIN_spec, symbol_spec | ERROR: The BEGIN keyword returns the top-level script's filename for __FILE__: NameError: uninitialized constant ScratchPad |
-| ? | toplevel-node-in-expr | 2 | private_spec, next_spec | unexpected top-level-only node in expression position |
+| ? | toplevel-node-in-expr | 2 | private_spec, next_spec | internal error: unexpected top-level-only node in expression position |
 | ? | auto-eval-unsupported-syntax-in-this-build-the-eval-fc82 | 1 | encoding_spec | uncaught exception: eval: unsupported syntax in this build (the eval VM does not yet cover this node) |
-| ? | auto-fail-method-call-evaluates-block-pass-after-receiver-1192 | 1 | order_spec | FAIL: A method call evaluates block pass after receiver: expected [nil] == [false] |
+| ? | auto-fail-the-until-modifier-with-begin-end-block-c646 | 1 | until_spec | FAIL: The until modifier with begin .. end block restart the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
+| ? | auto-fail-the-while-modifier-with-begin-end-block-6764 | 1 | while_spec | FAIL: The while modifier with begin .. end block restarts the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
 | ? | auto-it-behaves-like-b32f | 1 | END_spec | uncaught exception: it_behaves_like |
 | ? | auto-users-ryanseys-dev-spec-language-array-spec-rb-e598 | 1 | array_spec | /Users/ryanseys/dev/spec/language/array_spec.rb: unsupported syntax at "\"foo\" => :bar, baz: 42" (spike handles only what the 7 example programs need) |
 | ? | auto-users-ryanseys-dev-spec-language-assignments-spec-rb-6e8b | 1 | assignments_spec | /Users/ryanseys/dev/spec/language/assignments_spec.rb: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
@@ -27,7 +28,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-const:MSpecLite::RUBY_VERSION | 1 | numbered_parameters_spec | uncaught exception: uninitialized constant MSpecLite::RUBY_VERSION |
 | P | missing-method:new | 1 | range_spec | ERROR: Literal Ranges creates beginless ranges: NoMethodError: undefined method 'new' for class Range |
 | k | pattern-shapes | 1 | pattern_matching_spec | /Users/ryanseys/dev/spec/language/pattern_matching_spec.rb: a pattern can't bind a variable inside a `\|` alternation (spike scope, matches real Ruby) |
-| ! | rustc-failure | 1 | yield_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-3e1a38cdfa127895.rs) |
+| ! | rustc-failure | 1 | yield_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-f4ea6f5f2e44bd17.rs) |
 | a | splat | 1 | for_spec | /Users/ryanseys/dev/spec/language/for_spec.rb: expected `*name` as a multi-assignment's splat target |
 | g | super-arity | 1 | super_spec | /Users/ryanseys/dev/spec/language/super_spec.rb: /Users/ryanseys/dev/spec/language/fixtures/super.rb: unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet |
 

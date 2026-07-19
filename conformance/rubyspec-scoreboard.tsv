@@ -1,5 +1,5 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b55c430
-# PASS=5 FAIL_OUTPUT=11 FAIL_COMPILE=47 FAIL_RUSTC=1 FAIL_RUN=3 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c8afc07
+# PASS=6 FAIL_OUTPUT=12 FAIL_COMPILE=45 FAIL_RUSTC=1 FAIL_RUN=3 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 END_spec	FAIL_RUN	run	auto-it-behaves-like-b32f
 alias_spec	FAIL_COMPILE	compile	spike-misc
@@ -40,7 +40,7 @@ numbered_parameters_spec	FAIL_RUN	run	missing-const:MSpecLite::RUBY_VERSION
 numbers_spec	FAIL_OUTPUT	expect	missing-method:raise
 optional_assignments_spec	FAIL_COMPILE	compile	compound-assign
 or_spec	FAIL_OUTPUT	expect	missing-method:raise
-order_spec	FAIL_OUTPUT	expect	auto-fail-method-call-evaluates-block-pass-after-receiver-1192
+order_spec	PASS	-	-
 pattern_matching_spec	FAIL_COMPILE	compile	pattern-shapes
 precedence_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-precedence-spec-rb-7615
 predefined_spec	FAIL_COMPILE	compile	spike-misc
@@ -63,7 +63,7 @@ symbol_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 throw_spec	FAIL_COMPILE	compile	spike-misc
 undef_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-undef-spec-rb-64ee
 unless_spec	PASS	-	-
-until_spec	FAIL_COMPILE	compile	spike-misc
+until_spec	FAIL_OUTPUT	expect	auto-fail-the-until-modifier-with-begin-end-block-c646
 variables_spec	FAIL_COMPILE	compile	spike-misc
-while_spec	FAIL_COMPILE	compile	spike-misc
+while_spec	FAIL_OUTPUT	expect	auto-fail-the-while-modifier-with-begin-end-block-6764
 yield_spec	FAIL_RUSTC	compile	rustc-failure
