@@ -29,6 +29,18 @@ fn dedup_syms(names: Vec<Symbol>) -> Vec<Symbol> {
 builtin_methods! {
     pub(crate) fn lookup;
 
+    // `send`/`public_send` are KERNEL's, not BasicObject's (vm_eval.c:2961,
+    // :2963) -- which is what makes them absent on a blank-slate receiver
+    // while `__send__` still works there. They share BasicObject's one
+    // implementation, as `rb_f_send` does in CRuby.
+    //
+    // `public_send`'s visibility gate lives in `dispatch::send_value_public_in`
+    // and is applied by codegen at the call site, so this row is the
+    // visibility-blind path both names funnel through once that check passes.
+    "send" | "public_send" => fn kernel_send(recv, args, block) {
+        crate::builtins::basic_object::dynamic_send(recv, args, block)
+    }
+
     // The print family as REAL Kernel methods (Path 2): `obj.send(:puts,
     // ...)`, `self.puts` on `main`, and any dynamic dispatch reach these;
     // the receiver is ignored, exactly like CRuby's private Kernel#puts.

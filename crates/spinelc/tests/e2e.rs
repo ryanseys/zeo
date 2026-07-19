@@ -19024,3 +19024,126 @@ fn define_method_with_a_symbol_to_proc_block() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "7\n8\n[\"1\", \"2\", \"3\"]\n60\n");
 }
+
+#[test]
+fn super_resolves_in_a_class_method() {
+    // In Ruby `def self.foo` is an ordinary instance method on the SINGLETON
+    // class, and singleton classes form a parallel chain --
+    // #<Class:C>.super == #<Class:C.superclass> (make_metaclass,
+    // class.c:1186) -- so `super` needs no special case. Covers a three-level
+    // chain, explicit args, and zsuper forwarding of a defaulted parameter.
+    let result = run_ruby(
+        r#"
+        class Foo
+          def self.base; 100; end
+          def self.greet(name); "hello #{name}"; end
+          def self.tag(pfx = "t"); pfx + "-foo"; end
+        end
+        class Bar < Foo
+          def self.base; super * 10; end
+          def self.greet(name); super(name.upcase) + "!"; end
+          def self.tag(pfx = "t"); super; end
+        end
+        class Baz < Bar
+          def self.base; super + 1; end
+        end
+        p Foo.base
+        p Bar.base
+        p Baz.base
+        p Bar.greet("matz")
+        p Bar.tag
+        p Bar.tag("x")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "100\n1000\n1001\n\"hello MATZ!\"\n\"t-foo\"\n\"x-foo\"\n",
+    );
+}
+
+#[test]
+fn basic_object_subclass_is_a_blank_slate() {
+    // Kernel is mixed into Object, so it sits BELOW BasicObject in the chain
+    // (object.c:4550 -> class.c:1853) and a BasicObject subclass never sees
+    // it -- the blank slate is pure chain position, not a special case.
+    // `send`/`public_send` are Kernel's; only `__send__` is BasicObject's
+    // (vm_eval.c:2960). An absent method must raise even when its result is
+    // immediately used as a receiver (`a.dup.own`).
+    let result = run_ruby(
+        r#"
+        class BO < BasicObject
+          def initialize; @x = 1; end
+          def greet; "hi"; end
+          def own; @x; end
+        end
+        a = BO.new
+        r1 = (a.class rescue $!.class); p r1
+        p a.greet
+        r2 = (a.inspect rescue "no-inspect"); p r2
+        r3 = (a.respond_to?(:greet) rescue "no-respond_to"); p r3
+        r4 = (a.send(:greet) rescue $!.class); p r4
+        p a.__send__(:greet)
+        p(a == a)
+        p(a == BO.new)
+        p a.equal?(a)
+        r5 = (a.dup.own rescue $!.class); p r5
+        p a.own
+        class Normal; end
+        p Normal.new.class
+        p Normal.new.respond_to?(:inspect)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "NoMethodError\n\"hi\"\n\"no-inspect\"\n\"no-respond_to\"\nNoMethodError\n\"hi\"\n\
+         true\nfalse\ntrue\nNoMethodError\n1\nNormal\ntrue\n",
+    );
+}
+
+#[test]
+fn a_bare_opened_class_can_be_reparented_by_a_later_reopen() {
+    // DIVERGENCE, deliberate: MRI rejects this split, but it arises in spinel
+    // from wholesale-inlined libraries where the bare opening (often just to
+    // hold a nested class) and the real declaration are separated. The parent
+    // must come from the reopen that declares it, or a subclass override
+    // would dispatch against the wrong chain. A GENUINE conflict --
+    // `class Sub < A` then `class Sub < B` -- still errors.
+    let result = run_ruby(
+        r#"
+        module M
+          class Base
+            def run; hook ? "blocked" : "ok"; end
+            def hook; false; end
+          end
+          class Sub
+            class Nested
+              def z; 1; end
+            end
+          end
+          class Sub < Base
+            def extra; "x"; end
+          end
+        end
+        class Child < M::Sub
+          def hook; true; end
+        end
+        puts Child.new.run
+        puts M::Sub.new.run
+        puts M::Sub.new.extra
+        puts M::Sub::Nested.new.z
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "blocked\nok\nx\n1\n");
+
+    let err = spinelc::compile_to_rust(
+        "class A\nend\nclass B\nend\nclass Sub < A\nend\nclass Sub < B\nend\n",
+    )
+    .unwrap_err();
+    assert!(
+        err.contains("superclass mismatch for class Sub"),
+        "a genuine conflict must still error: {err}"
+    );
+}

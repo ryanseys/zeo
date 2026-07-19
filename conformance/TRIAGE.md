@@ -7,7 +7,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| ? | spike-misc | 14 | singleton_class_block, basicobject_blank_slate, external_singleton_def | `class << self` at this position isn't supported yet (spike scope) -- use it inside a class/module body |
+| ? | spike-misc | 10 | singleton_method_object, external_singleton_def, require_in_conditional | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
@@ -48,7 +48,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-no-implicit-conversion-of-float-into-integer-32aa | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
 | ? | auto-no-implicit-conversion-of-rational-into-integer-6e6a | 1 | time_fractional_seconds | uncaught exception: no implicit conversion of Rational into Integer |
 | ? | auto-not-file-5c85 | 1 | stdin_io | uncaught exception: not a file |
-| ? | auto-outside-method-88d5 | 1 | cmethod_super | `super` outside a method |
 | ? | auto-parsing-error-at-position-invalid-back-reference-cd6e | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference |
 | ? | auto-parsing-error-at-position-invalid-character-class-e1f7 | 1 | regexp_encoding_introspection | uncaught exception: Parsing error at position 5: Invalid character class |
 | ? | auto-the-synthesized-value-class-template-for-failed-to-9692 | 1 | issue_2975 | internal error: the synthesized value-class template for `S` failed to parse |
@@ -109,6 +108,5 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:value? | 1 | env_mutation_surface | uncaught exception: undefined method 'value?' for an instance of Object |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
 | k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |
-| g | super-arity | 1 | reopen_split_superclass_dispatch | superclass mismatch for class Sub |
 
 List one bucket's tests: `cargo run -p xtask -- conformance triage --bucket <name>`.

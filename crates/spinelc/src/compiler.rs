@@ -68,6 +68,17 @@ pub struct ClassInfo {
     /// `[M]`). Every ordinary class gets `Some(_)`, defaulting to
     /// `OBJECT_CLASS` when no `< Super` was written.
     pub parent: Option<ClassId>,
+    /// Whether a `< Super` clause was ever WRITTEN for this class, as opposed
+    /// to `parent` merely defaulting to `OBJECT_CLASS`.
+    ///
+    /// Needed to tell a class opened bare (`class Sub` -- often just to hold a
+    /// nested class) from one explicitly declared `class Sub < Object`. A
+    /// later reopen carrying a superclass may ESTABLISH the parent link in the
+    /// first case, while the second is a genuine conflict. MRI rejects both,
+    /// but this arises in spinel from wholesale-inlined libraries where the
+    /// bare opening and the real declaration are separated -- a deliberate,
+    /// documented divergence (see `reopen_split_superclass_dispatch`).
+    pub explicit_superclass: bool,
     /// `prepend`ed modules, in source order (see `analyze::mro`'s
     /// linearization -- expanded in REVERSE source order, so the most
     /// recently prepended module ends up closest).
@@ -262,7 +273,8 @@ impl Compiler {
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
                 methods: Vec::new(),
-                own_class_methods: Vec::new(),
+                explicit_superclass: false,
+            own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
@@ -509,6 +521,7 @@ impl Compiler {
             ivars: Vec::new(),
             own_methods: Vec::new(),
             methods: Vec::new(),
+            explicit_superclass: false,
             own_class_methods: Vec::new(),
             class_methods: Vec::new(),
             cvar_owners: HashMap::new(),
@@ -615,6 +628,25 @@ impl Compiler {
         self.value_payload_root(cid).is_some()
     }
 
+    /// Whether `cid` is a BLANK SLATE -- a `BasicObject` subclass, which does
+    /// NOT inherit the Object/Kernel surface (`class`, `inspect`, `dup`,
+    /// `respond_to?`, `send`, ...).
+    ///
+    /// In CRuby this needs no flag at all: `Kernel` is spliced in as an ICLASS
+    /// *between* `Object` and `BasicObject` (`object.c:4550` ->
+    /// `class.c:1853`), and since method lookup only walks UP the chain,
+    /// anything rooted at BasicObject never sees it. So the blank slate is
+    /// purely a consequence of chain position, and the ancestor test below
+    /// says exactly that: reaches BasicObject, never passes through Object.
+    ///
+    /// This compiler still needs the predicate because codegen answers the
+    /// universal methods from static fast paths that would otherwise bypass
+    /// the ancestor walk entirely.
+    pub fn is_blank_slate(&self, cid: ClassId) -> bool {
+        let ancestors = &self.class(cid).ancestors;
+        ancestors.contains(&BASIC_OBJECT_CLASS) && !ancestors.contains(&OBJECT_CLASS)
+    }
+
     /// Either native-backed shape that has no generated struct and whose user
     /// methods emit as `define_method` deltas over runtime-installed behavior:
     /// an exception subclass (`RubyException`) or a value-builtin subclass
@@ -669,4 +701,32 @@ impl Compiler {
             .find(|&&s| self.scopes[s.0 as usize].name == name)
             .map(|&sid| (self.scopes[sid.0 as usize].defining_class, sid))
     }
+}
+
+/// The methods `BasicObject` itself defines -- the ENTIRE surface a blank
+/// slate answers before the user adds anything.
+///
+/// Taken from CRuby's own `Init` functions rather than inferred: `object.c`
+/// (`initialize`, `==`, `equal?`, `!`, `!=`, and the three
+/// `singleton_method_*` hooks), `vm_eval.c` (`instance_eval`,
+/// `instance_exec`, `method_missing`, `__send__`), and `gc.c` (`__id__`).
+/// Thirteen in total, and notably NOT `send` or `public_send` -- those live
+/// on `Kernel` (`vm_eval.c:2961`), which a BasicObject subclass never sees.
+pub fn is_basic_object_method(name: &str) -> bool {
+    matches!(
+        name,
+        "initialize"
+            | "=="
+            | "equal?"
+            | "!"
+            | "!="
+            | "__id__"
+            | "__send__"
+            | "instance_eval"
+            | "instance_exec"
+            | "method_missing"
+            | "singleton_method_added"
+            | "singleton_method_removed"
+            | "singleton_method_undefined"
+    )
 }

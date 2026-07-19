@@ -67,6 +67,9 @@ impl Runner {
         let results = Mutex::new(Vec::with_capacity(total));
         let done = std::sync::atomic::AtomicUsize::new(0);
         let stop = std::sync::atomic::AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        let progress_path = self.bin_dir.parent().unwrap_or(&self.bin_dir).join("progress");
+        std::fs::write(&progress_path, format!("0/{total} 0.0% starting\n")).ok();
 
         std::thread::scope(|scope| {
             for _ in 0..jobs.max(1) {
@@ -91,14 +94,29 @@ impl Runner {
                     // Per-test compile/run timing inline, so a single slow case
                     // stands out in the stream (the "many fast, then one stalls"
                     // pattern) instead of only showing up in the ranking below.
+                    // The percentage and ETA make a long run answerable at a
+                    // glance ("how far along?") without counting lines.
+                    let pct = n as f64 / total.max(1) as f64 * 100.0;
+                    let elapsed = started.elapsed();
+                    let eta = if n > 0 {
+                        let per = elapsed.as_secs_f64() / n as f64;
+                        format!(" eta {}", fmt_secs(per * (total - n) as f64))
+                    } else {
+                        String::new()
+                    };
                     println!(
-                        "[{n}/{total}] {} {} (c:{}ms r:{}ms){}",
+                        "[{n}/{total} {pct:5.1}%{eta}] {} {} (c:{}ms r:{}ms){}",
                         result.verdict.as_str(),
                         result.id,
                         result.compile_ms,
                         result.run_ms,
                         if result.cached { " (cached)" } else { "" }
                     );
+                    // A single-line heartbeat file, rewritten in place. stdout
+                    // can be redirected or swallowed by a pipe (`| tail` shows
+                    // nothing until the run ends), so progress also lands
+                    // somewhere that is cheap to poll at any moment.
+                    write_progress(&progress_path, n, total, pct, elapsed, &result.id);
                     if fail_fast && result.verdict != Verdict::Pass {
                         stop.store(true, std::sync::atomic::Ordering::Relaxed);
                     }
@@ -413,4 +431,46 @@ pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
         return Err("cargo build failed".to_owned());
     }
     Ok(())
+}
+
+/// A compact duration for the inline ETA: `45s`, `3m12s`, `1h04m`.
+fn fmt_secs(secs: f64) -> String {
+    let s = secs.max(0.0) as u64;
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m{:02}s", s / 60, s % 60),
+        _ => format!("{}h{:02}m", s / 3600, (s % 3600) / 60),
+    }
+}
+
+/// Rewrite the one-line progress heartbeat.
+///
+/// Written to a per-worker temp file and RENAMED into place: every worker
+/// rewrites this concurrently, and a plain truncate-then-write lets a reader
+/// (or a slower writer) leave the tail of a longer previous line behind, so
+/// the file would show `...last array_eq` followed by stray `lize`. A rename
+/// is atomic, so any reader sees one whole, current line and never a torn one.
+///
+/// Best-effort throughout -- a failure here must never disturb a run.
+fn write_progress(
+    path: &std::path::Path,
+    done: usize,
+    total: usize,
+    pct: f64,
+    elapsed: std::time::Duration,
+    last: &str,
+) {
+    let eta = if done > 0 {
+        fmt_secs(elapsed.as_secs_f64() / done as f64 * (total - done) as f64)
+    } else {
+        "?".to_owned()
+    };
+    let line = format!(
+        "{done}/{total} {pct:.1}% elapsed {} eta {eta} last {last}\n",
+        fmt_secs(elapsed.as_secs_f64())
+    );
+    let tmp = path.with_extension(format!("tmp{:?}", std::thread::current().id()));
+    if std::fs::write(&tmp, line).is_ok() {
+        std::fs::rename(&tmp, path).ok();
+    }
 }

@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=fb30c7b
-# PASS=1744 FAIL_OUTPUT=301 FAIL_COMPILE=29 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=2a16630
+# PASS=1750 FAIL_OUTPUT=301 FAIL_COMPILE=23 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -128,10 +128,10 @@ bare_rescue_standard_error_only	PASS	-	-
 bare_return_in_initialize	FAIL_OUTPUT	expect	-
 bare_sibling_cls_method_call	PASS	-	-
 bareword_freeze	PASS	-	-
-basicobject_blank_slate	FAIL_COMPILE	compile	spike-misc
-basicobject_dup_rescued	FAIL_COMPILE	compile	spike-misc
+basicobject_blank_slate	PASS	-	-
+basicobject_dup_rescued	PASS	-	-
 basicobject_new	FAIL_OUTPUT	expect	missing-method:new
-basicobject_send_missing	FAIL_COMPILE	compile	spike-misc
+basicobject_send_missing	PASS	-	-
 begin_rescue_as_expression	PASS	-	-
 begin_rescue_else_clause	FAIL_OUTPUT	expect	-
 bigint_div_by_zero	PASS	-	-
@@ -394,7 +394,7 @@ cmeth_return_nil_or_obj_via_intermediate	PASS	-	-
 cmethod_self_and_default	PASS	-	-
 cmethod_self_receiver	PASS	-	-
 cmethod_specialize_samename_unrelated	PASS	-	-
-cmethod_super	FAIL_COMPILE	compile	auto-outside-method-88d5
+cmethod_super	PASS	-	-
 cmethod_transitive_specialization	PASS	-	-
 codegen_class_in_module_with_explicit_parent	PASS	-	-
 codegen_const_lookup_in_toplevel_method	PASS	-	-
@@ -1095,7 +1095,7 @@ issue_2951	PASS	-	-
 issue_2952	FAIL_OUTPUT	expect	missing-method:attr
 issue_2953	FAIL_OUTPUT	expect	-
 issue_2956	PASS	-	-
-issue_2957	FAIL_COMPILE	compile	spike-misc
+issue_2957	PASS	-	-
 issue_2958	PASS	-	-
 issue_2959	PASS	-	-
 issue_2960	PASS	-	-
@@ -1692,7 +1692,7 @@ regexp_sub_gsub_length	PASS	-	-
 regexp_sub_gsub_realloc	FAIL_OUTPUT	expect	-
 regexp_threeq	PASS	-	-
 regexp_union_strings	PASS	-	-
-reopen_split_superclass_dispatch	FAIL_COMPILE	compile	super-arity
+reopen_split_superclass_dispatch	PASS	-	-
 require_first_line	FAIL_COMPILE	compile	auto-cannot-load-such-file-optparse-ea47
 require_in_conditional	FAIL_COMPILE	compile	spike-misc
 require_io_console_winsize	FAIL_COMPILE	compile	auto-cannot-load-such-file-io-console-0bed

@@ -14,7 +14,7 @@
 //! VM -- it raises NotImplementedError below, like every other eval path.
 
 use crate::builtins::{arity, builtin_methods};
-use crate::{RubyValue, Symbol};
+use crate::{RubyValue, Signal, Symbol};
 use std::sync::Arc;
 
 builtin_methods! {
@@ -36,27 +36,13 @@ builtin_methods! {
         arity!(args, 1);
         Ok(RubyValue::Bool(value_identity(recv, &args[0])))
     }
-    "send" | "__send__" | "public_send" => fn bo_send(recv, args, block) {
-        let Some((name_arg, rest)) = args.split_first() else {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "no method name given".to_string(),
-            ));
-        };
-        let sym = match name_arg {
-            RubyValue::Symbol(s) => *s,
-            RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
-            other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "{} is not a symbol nor a string",
-                        other.inspect_string()
-                    ),
-                ))
-            }
-        };
-        crate::dispatch::send_value(recv, sym, rest, block)
+    // ONLY `__send__` belongs here. CRuby puts `send` and `public_send` on
+    // KERNEL (`vm_eval.c:2961`, `:2963`), which a `BasicObject` subclass never
+    // sees -- so `BO.new.send(:x)` must raise while `BO.new.__send__(:x)`
+    // works. Ordinary objects still reach both through Kernel's own table,
+    // which shares this implementation.
+    "__send__" => fn bo_send(recv, args, block) {
+        dynamic_send(recv, args, block)
     }
     // `instance_exec(*args) { |*a| ... }` -- run the block with `self`
     // rebound to the receiver, forwarding args to the block's params.
@@ -101,9 +87,7 @@ fn block_proc(
 /// Reference identity, CRuby's `equal?`: by-value for immediates (real Ruby
 /// too -- `5.equal?(5)` is true, immediates have one identity per value),
 /// allocation identity for everything heap-backed (`"a".equal?("a")` is
-/// false). `send`/`public_send` are listed here rather than in `kernel.rs`
-/// because `__send__` is BasicObject's and the three share one
-/// implementation; the walk finds them regardless.
+/// false).
 pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
     match (a, b) {
         (RubyValue::Nil, RubyValue::Nil) => true,
@@ -162,4 +146,34 @@ mod tests {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eq(&RubyValue::Int(1), &[], None)));
         assert!(r.is_err());
     }
+}
+
+/// The shared `send`/`__send__` body: coerce the first argument to a method
+/// name and dispatch the rest to it.
+///
+/// Lives here because `__send__` is BasicObject's, but Kernel's `send` is the
+/// same operation on a receiver that also has the Object surface -- CRuby
+/// likewise gives both the one `rb_f_send` implementation (vm_eval.c:2960).
+pub(crate) fn dynamic_send(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some((name_arg, rest)) = args.split_first() else {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "no method name given".to_string(),
+        ));
+    };
+    let sym = match name_arg {
+        RubyValue::Symbol(s) => *s,
+        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("{} is not a symbol nor a string", other.inspect_string()),
+            ))
+        }
+    };
+    crate::dispatch::send_value(recv, sym, rest, block)
 }

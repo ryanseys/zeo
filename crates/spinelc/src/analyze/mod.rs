@@ -439,8 +439,26 @@ fn register_class(
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
                 })?;
                 if compiler.class(cid).parent != Some(want) {
-                    return Err(format!("superclass mismatch for class {name}"));
+                    // A class opened BARE first (`class Sub`, often just to
+                    // hold a nested class) defaulted its parent to Object
+                    // without any `< Super` ever being written. A later reopen
+                    // that does declare one ESTABLISHES the link rather than
+                    // conflicting with it -- otherwise the parent would be
+                    // silently wrong and a subclass override would dispatch
+                    // against the wrong chain.
+                    //
+                    // MRI rejects this split too; it arises in spinel from
+                    // wholesale-inlined libraries, so accepting it is a
+                    // deliberate divergence (see the checked-in expectation
+                    // for `reopen_split_superclass_dispatch`). A genuine
+                    // conflict -- `class Sub < A` then `class Sub < B` -- still
+                    // errors, because `explicit_superclass` is set by then.
+                    if compiler.class(cid).explicit_superclass {
+                        return Err(format!("superclass mismatch for class {name}"));
+                    }
+                    compiler.classes[cid.0 as usize].parent = Some(want);
                 }
+                compiler.classes[cid.0 as usize].explicit_superclass = true;
             }
             cid
         }
@@ -472,13 +490,23 @@ fn register_class(
                         // Still rejected: `Range` (no runtime constructor) and
                         // `Class`/`Module` (no per-value dispatch).
                         use crate::compiler::{
-                            ARRAY_CLASS, DATA_CLASS, FALSE_CLASS, FLOAT_CLASS, HASH_CLASS,
-                            INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRING_CLASS, STRUCT_CLASS,
-                            SYMBOL_CLASS, TRUE_CLASS,
+                            ARRAY_CLASS, BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FLOAT_CLASS,
+                            HASH_CLASS, INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRING_CLASS,
+                            STRUCT_CLASS, SYMBOL_CLASS, TRUE_CLASS,
                         };
                         let subclassable = matches!(
                             cid,
-                            STRUCT_CLASS
+                            // `BasicObject`: the blank-slate root. Its subclass
+                            // is a plain ivar-carrying object with NO payload,
+                            // and the blank slate needs no special gate -- it
+                            // falls out of chain position alone, since CRuby
+                            // splices Kernel in as an ICLASS BETWEEN Object and
+                            // BasicObject (object.c:4550 -> class.c:1853) and
+                            // MRO walks only go up. So `[BO, BasicObject]` is
+                            // the whole ancestry and the Object/Kernel surface
+                            // is simply absent.
+                            BASIC_OBJECT_CLASS
+                                | STRUCT_CLASS
                                 | DATA_CLASS
                                 | NUMERIC_CLASS
                                 | ARRAY_CLASS
@@ -502,6 +530,10 @@ fn register_class(
             };
             let cid = compiler.add_class(leaf, parent, is_module);
             let ci = &mut compiler.classes[cid.0 as usize];
+            // Record whether `< Super` was actually WRITTEN, so a later reopen
+            // can tell a bare opening (parent defaulted to Object) from a real
+            // declaration -- see the reopen arm above.
+            ci.explicit_superclass = superclass.is_some();
             ci.lexical_parent = lexical_parent;
             ci.qualified_def = qualified_def;
             ci.box_id = box_id;

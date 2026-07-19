@@ -997,12 +997,34 @@ pub fn emit_super_inline(
     zsuper: bool,
     block: Option<NodeId>,
 ) -> TokenStream {
-    let receiver_class = cx.current_class.expect("`super` outside a method");
+    // A CLASS method (`def self.foo`) has no `self: Arc<Self>` receiver, so
+    // `current_class` is deliberately None there and `class_self` carries the
+    // receiver class instead (see `codegen::mod`'s Ctx construction).
+    //
+    // Real Ruby needs no special case at all: `def self.foo` is an ordinary
+    // instance method on the SINGLETON class, and singleton classes form a
+    // parallel chain -- `#<Class:C>.super == #<Class:C.superclass>`
+    // (`make_metaclass`, class.c:1186) -- so one walk serves both. This
+    // compiler keeps class methods in their own flattened table rather than
+    // modeling singleton classes, so the walk is MIRRORED here instead of
+    // shared: same ancestor chain, `own_class_methods` instead of
+    // `own_methods`. (Documented divergence: the flattening copies bodies
+    // down, so it cannot see a class method added at runtime.)
+    let in_class_method = cx.current_class.is_none();
+    let receiver_class = cx
+        .current_class
+        .or(cx.class_self)
+        .expect("`super` outside a method");
     let defining_class = cx.defining_class.expect("`super` outside a method");
     let mname = cx
         .current_method
         .as_deref()
         .expect("`super` outside a method");
+    // Which pool a `super` search consults, per the note above.
+    let own_pool = |compiler: &crate::compiler::Compiler, anc: crate::compiler::ClassId| {
+        let info = compiler.class(anc);
+        if in_class_method { info.own_class_methods.clone() } else { info.own_methods.clone() }
+    };
 
     let ancestors = &cx.compiler.class(receiver_class).ancestors;
     let pos = ancestors
@@ -1016,9 +1038,7 @@ pub fn emit_super_inline(
             )
         });
     let found = ancestors[pos + 1..].iter().find_map(|&anc| {
-        cx.compiler
-            .class(anc)
-            .own_methods
+        own_pool(cx.compiler, anc)
             .iter()
             .find(|&&s| cx.compiler.scope(s).name == mname)
             .map(|&sid| (anc, sid))
@@ -1028,15 +1048,12 @@ pub fn emit_super_inline(
     // sits inside) -- needed for bare `super`'s forwarding case (in the splice
     // AND the runtime-dispatch branches below). Guaranteed to exist: this
     // `super` is inside `mname`'s own body on `defining_class`.
-    let current_sid = cx
-        .compiler
-        .class(defining_class)
-        .own_methods
+    let current_sid = own_pool(cx.compiler, defining_class)
         .iter()
         .find(|&&s| cx.compiler.scope(s).name == mname)
         .copied()
         .unwrap_or_else(|| {
-            panic!("internal error: `{mname}` not found in its own defining class's own_methods")
+            panic!("internal error: `{mname}` not found in its own defining class's own methods")
         });
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
@@ -1095,9 +1112,16 @@ pub fn emit_super_inline(
         // The spliced parent body resolves names against ITS OWN defining
         // box (CRuby's def->box stamp), not the caller's.
         box_id: cx.compiler.class(new_defining_class).box_id,
-        // UNCHANGED across the splice -- `self` is still the SAME concrete
-        // receiver instance throughout a chain of nested `super` calls.
-        current_class: Some(receiver_class),
+        // UNCHANGED across the splice -- `self` is still the SAME receiver
+        // throughout a chain of nested `super` calls. Propagated from `cx`
+        // rather than set to `Some(receiver_class)`: for an INSTANCE method
+        // the two are identical, but a CLASS method's `current_class` is
+        // deliberately `None` (its receiver is the class object, carried in
+        // `class_self`), and that `None` is exactly what tells a nested
+        // `super` to search class methods rather than instance methods.
+        // Forcing a value here made `Baz.base -> Bar.base -> Foo.base` look
+        // for `base` among Bar's INSTANCE methods and fail.
+        current_class: cx.current_class,
         defining_class: Some(new_defining_class),
         // Inherited for the same reason `current_class` is: a `super` splice
         // does not change WHAT `self` is, only which body is running. A
@@ -3156,6 +3180,44 @@ fn dispatch(
     bypass_visibility: bool,
 ) -> TokenStream {
     let __bx = cx.box_id;
+
+    // BLANK SLATE (a `BasicObject` subclass): the Object/Kernel surface does
+    // not exist on this receiver, so `class`/`inspect`/`respond_to?`/`dup`
+    // and friends must raise NoMethodError rather than being answered.
+    //
+    // Every universal fast path below folds its answer from static type info
+    // WITHOUT walking the ancestor chain, so each would happily reply for a
+    // receiver that has no such method. Guarding once here -- before any of
+    // them -- is both the smaller change and the faithful one: in CRuby the
+    // blank slate is not a special case anywhere, just the consequence of
+    // Kernel sitting BELOW the subclass's root in the chain
+    // (`class.c:1853`), and one check placed at the top of dispatch says
+    // exactly that.
+    //
+    // A method the user actually defined still resolves normally, as do
+    // BasicObject's own (`==`, `equal?`, `!`, `__send__`, `instance_eval`,
+    // ...), which reach their builtin table through the ordinary MRO walk.
+    if let Some(cid) = infer_class(cx, recv_id) {
+        if cx.compiler.is_blank_slate(cid)
+            && cx.compiler.method_in_chain(cid, name).is_none()
+            && !crate::compiler::is_basic_object_method(name)
+        {
+            let describe = format!("an instance of {}", cx.compiler.class(cid).name);
+            let msg = format!("undefined method '{name}' for {describe}");
+            // Typed `?`-propagation rather than a bare `return`: this
+            // expression can appear as the RECEIVER of a further call
+            // (`a.dup.own`), where codegen takes a reference to it -- and
+            // `&!` does not coerce to `&RubyValue`, so a diverging `return`
+            // fails to type-check there. Naming the type keeps it usable in
+            // every position while still carrying the raise outward.
+            return quote! {
+                Err::<spinel_rt::RubyValue, spinel_rt::Signal>(
+                    spinel_rt::raise_error("NoMethodError", #msg.to_string()),
+                )?
+            };
+        }
+    }
+
     // Every fast path below (operators, collection `[]`/`length`, `.times`)
     // is a fixed, positional-only shape that has nowhere to put a keyword
     // argument -- gated on `kwargs.is_empty()` so a call that actually
