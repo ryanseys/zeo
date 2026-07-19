@@ -17915,6 +17915,39 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn numeric_long_tail_ranges_bignum_iteration_and_hex_float() {
+    let result = run_ruby(
+        r##"
+        # Symbol range iterates by name succession.
+        p (:a..:e).to_a
+        # Float range: O(1) min/max, drift-free step, float bsearch, and each
+        # raises (can't iterate a float range).
+        p (1.0..3.0).min
+        p (1.0..3.0).max
+        p (1.0..3.0).step(0.5).to_a
+        p (0.0..10.0).bsearch { |x| x >= 3.5 }
+        p(begin; (1.0..3.0).to_a; rescue => e; e.message; end)
+        # Negative integer step walks a descending range.
+        p (10..2).step(-2).to_a
+        # downto/upto beyond i64 iterate as BigInt, and .size is exact.
+        big = 2 ** 100
+        p big.downto(big - 2).to_a
+        p big.downto(big - 2).size
+        # downto with a Float limit yields integers.
+        p 5.downto(2.0).to_a
+        # C99 hex-float strings.
+        p Float("0x1p4")
+        p Float("0xa")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[:a, :b, :c, :d, :e]\n1.0\n3.0\n[1.0, 1.5, 2.0, 2.5, 3.0]\n3.5\n\"can't iterate from Float\"\n[10, 8, 6, 4, 2]\n[1267650600228229401496703205376, 1267650600228229401496703205375, 1267650600228229401496703205374]\n3\n[5, 4, 3, 2]\n16.0\n10.0\n",
+    );
+}
+
+#[test]
 fn rational_and_complex_parse_string_arguments() {
     let result = run_ruby(
         r##"

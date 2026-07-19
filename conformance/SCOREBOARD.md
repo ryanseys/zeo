@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1690/2074 passing (81.5%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `68dc470`
+Suite `spinel` — **1697/2074 passing (81.8%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `e2b238e`
 
 | verdict | count |
 |---|---|
-| PASS | 1690 |
-| FAIL_OUTPUT | 340 |
+| PASS | 1697 |
+| FAIL_OUTPUT | 333 |
 | FAIL_COMPILE | 39 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 1 |
@@ -19,8 +19,8 @@ Suite `spinel` — **1690/2074 passing (81.5%)** — oracle `ruby 4.0.5 (2026-05
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 18 | spike-misc | ? | range_float_begin_iterate | Range#step on a non-Integer range isn't supported (spike scope) |
 | 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
+| 16 | spike-misc | ? | back_ref | the `$+` back-reference global isn't supported yet (spike scope) |
 | 5 | missing-method:ffi_lib | P | ffi_const_nested_module_path | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | 4 | missing-method:new | P | issue_2968 | uncaught exception: undefined method 'new' for class Dir |

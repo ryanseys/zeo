@@ -13,6 +13,66 @@ fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, boo
     }
 }
 
+/// `Range#bsearch` over a FLOAT range. Bisects on the doubles' monotonic
+/// integer image (a positive-float's bits are already monotonic; the sign flip
+/// extends that to the whole line), so a representable boundary is found
+/// exactly. Both CRuby modes are supported: find-minimum for a boolean/nil
+/// block result, find-any for a Numeric comparator result.
+fn range_bsearch_float(
+    start: Option<&RubyValue>,
+    end: Option<&RubyValue>,
+    exclusive: bool,
+    p: &crate::RProc,
+) -> Result<RubyValue, crate::Signal> {
+    let to_f = |v: Option<&RubyValue>| match v {
+        Some(RubyValue::Int(n)) => Some(*n as f64),
+        Some(RubyValue::Float(f)) => Some(*f),
+        _ => None,
+    };
+    let (Some(lo_f), Some(hi_f)) = (to_f(start), to_f(end)) else {
+        return Err(crate::dispatch::raise_error(
+            "TypeError",
+            "can't do binary search for the given Range".to_string(),
+        ));
+    };
+    // Map a double to a u64 that is monotonically increasing in its value.
+    let f2u = |f: f64| -> u64 {
+        let b = f.to_bits();
+        if b >> 63 == 1 { !b } else { b | (1 << 63) }
+    };
+    let u2f = |u: u64| -> f64 {
+        let b = if u >> 63 == 1 { u & !(1 << 63) } else { !u };
+        f64::from_bits(b)
+    };
+    let mut lo = f2u(lo_f);
+    // Inclusive end includes `hi_f`, so search up to the next representable u.
+    let mut hi = f2u(hi_f) + u64::from(!exclusive);
+    let mut satisfied: Option<f64> = None;
+    let mut numeric_mode = false;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let x = u2f(mid);
+        let r = p.call(&[RubyValue::Float(x)])?;
+        let cmp = match r {
+            RubyValue::Int(n) => Some(n.cmp(&0)),
+            RubyValue::Float(f) => f.partial_cmp(&0.0),
+            _ => None,
+        };
+        match cmp {
+            Some(std::cmp::Ordering::Equal) => return Ok(RubyValue::Float(x)),
+            Some(std::cmp::Ordering::Less) => { numeric_mode = true; hi = mid; }
+            Some(std::cmp::Ordering::Greater) => { numeric_mode = true; lo = mid + 1; }
+            None if r.truthy() => { satisfied = Some(x); hi = mid; }
+            None => lo = mid + 1,
+        }
+    }
+    Ok(if numeric_mode {
+        RubyValue::Nil
+    } else {
+        satisfied.map_or(RubyValue::Nil, RubyValue::Float)
+    })
+}
+
 /// Whether integer `i` is still within an integer-start range whose end is
 /// `end` -- unbounded for an endless (`nil`/`None`) or `+Float::INFINITY`
 /// end, so an infinite range keeps yielding until its consumer stops pulling.
@@ -78,13 +138,38 @@ builtin_methods! {
                     cur = crate::builtins::string::succ_str(&cur);
                 }
             }
-            // A beginless range (or an otherwise non-iterable element type)
-            // can't be walked forward -- CRuby's own TypeError.
+            // Symbol ranges iterate by NAME succession (like String ranges),
+            // yielding Symbols: `(:a..:e)` walks :a,:b,:c,:d,:e.
+            Some(RubyValue::Symbol(s)) if matches!(end, Some(RubyValue::Symbol(_))) => {
+                let RubyValue::Symbol(e) = end.unwrap() else { unreachable!() };
+                let end = e.name();
+                let mut cur = s.name();
+                loop {
+                    if cur.len() > end.len() || (cur.len() == end.len() && cur > end) {
+                        break;
+                    }
+                    if exclusive && cur == end {
+                        break;
+                    }
+                    p.call(&[RubyValue::Symbol(crate::Symbol::intern(&cur))])?;
+                    if cur == end {
+                        break;
+                    }
+                    cur = crate::builtins::string::succ_str(&cur);
+                }
+            }
+            // A beginless range, or a non-iterable element type (Float, ...),
+            // can't be walked forward -- CRuby names the begin's class:
+            // `(1.0..2.0).each` is "can't iterate from Float".
             _ => {
+                let ty = match start {
+                    Some(v) => crate::builtins::class_name_of(v),
+                    None => "NilClass".to_string(),
+                };
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    "can't iterate from the given Range".to_string(),
-                ))
+                    format!("can't iterate from {ty}"),
+                ));
             }
         }
         Ok(recv.clone())
@@ -99,6 +184,11 @@ builtin_methods! {
         arity!(args, 0);
         let p = crate::builtins::need_block!(block);
         let (start, end, exclusive) = range_parts(recv);
+        // A float range bisects over the doubles' monotonic integer image
+        // (CRuby's approach), so a representable boundary converges exactly.
+        if matches!(start, Some(RubyValue::Float(_))) || matches!(end, Some(RubyValue::Float(_))) {
+            return range_bsearch_float(start, end, exclusive, &p);
+        }
         let (Some(RubyValue::Int(lo0)), Some(RubyValue::Int(hi0))) = (start, end) else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
@@ -234,6 +324,47 @@ builtin_methods! {
         arity!(args, 1);
         let p = block_or_enum!(recv, "step", args, block);
         let (start, end, exclusive) = range_parts(recv);
+        // Float mode when any endpoint or the step is a Float. CRuby computes
+        // the element COUNT and multiplies (`beg + i*unit`) rather than
+        // repeatedly adding, so there's no drift and `1.0` lands exactly.
+        let is_float = matches!(start, Some(RubyValue::Float(_)))
+            || matches!(end, Some(RubyValue::Float(_)))
+            || matches!(&args[0], RubyValue::Float(_));
+        if is_float {
+            let to_f = |v: Option<&RubyValue>| match v {
+                Some(RubyValue::Int(n)) => Some(*n as f64),
+                Some(RubyValue::Float(f)) => Some(*f),
+                _ => None,
+            };
+            let (Some(beg), Some(fin)) = (to_f(start), to_f(end)) else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "can't iterate from the given Range".to_string(),
+                ));
+            };
+            let unit = match &args[0] {
+                RubyValue::Int(n) => *n as f64,
+                RubyValue::Float(f) => *f,
+                _ => unreachable!(),
+            };
+            if unit == 0.0 {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "step can't be 0".to_string(),
+                ));
+            }
+            let n_f = (fin - beg) / unit;
+            let err = (((beg.abs() + fin.abs() + (fin - beg).abs()) / unit.abs())
+                * f64::EPSILON)
+                .min(0.5);
+            let n = if exclusive { (n_f - err).floor() } else { (n_f + err).floor() };
+            let mut i = 0.0;
+            while i <= n {
+                p.call(&[RubyValue::Float(i * unit + beg)])?;
+                i += 1.0;
+            }
+            return Ok(recv.clone());
+        }
         let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
             panic!("Range#step on a non-Integer range isn't supported (spike scope)");
         };
@@ -246,11 +377,21 @@ builtin_methods! {
                 ),
             ));
         };
-        if *by <= 0 {
+        if *by == 0 {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
-                "step can't be 0 or negative".to_string(),
+                "step can't be 0".to_string(),
             ));
+        }
+        // A negative step walks a descending range downward (`(10..2).step(-2)`
+        // is 10,8,6,4,2); a step against the range's direction yields nothing.
+        if *by < 0 {
+            let mut i = *s;
+            while if exclusive { i > *e } else { i >= *e } {
+                p.call(&[RubyValue::Int(i)])?;
+                i += by;
+            }
+            return Ok(recv.clone());
         }
         let last = if exclusive { e - 1 } else { *e };
         let mut i = *s;
@@ -288,6 +429,49 @@ builtin_methods! {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         Ok(end.cloned().unwrap_or(RubyValue::Nil))
+    }
+    // `min`/`max` on a FLOAT range are O(1) endpoints -- a float range can't be
+    // iterated (`each`/`to_a` raise), so the Enumerable fallback would fail.
+    // Other element types keep iterating through Enumerable, whose behavior is
+    // already correct (and whose exclusive-`max` differs by type).
+    "min" => fn range_min(recv, args, block) {
+        let (start, end, _) = range_parts(recv);
+        let is_float = matches!(start, Some(RubyValue::Float(_)))
+            || matches!(end, Some(RubyValue::Float(_)));
+        if args.is_empty() && block.is_none() && is_float {
+            // The begin, or nil for an empty range (begin > end).
+            return Ok(match (start, end) {
+                (Some(s), Some(e)) if s.rb_cmp(e).is_some_and(|c| c > 0) => RubyValue::Nil,
+                (Some(s), _) => s.clone(),
+                _ => RubyValue::Nil,
+            });
+        }
+        crate::builtins::enumerable::enumerable_send(recv, "min", args, block)
+            .expect("Enumerable implements min")
+    }
+    "max" => fn range_max(recv, args, block) {
+        let (start, end, exclusive) = range_parts(recv);
+        let is_float = matches!(start, Some(RubyValue::Float(_)))
+            || matches!(end, Some(RubyValue::Float(_)));
+        if args.is_empty() && block.is_none() && is_float {
+            let Some(e) = end else { return Ok(RubyValue::Nil) };
+            if let Some(s) = start {
+                if s.rb_cmp(e).is_some_and(|c| c > 0) {
+                    return Ok(RubyValue::Nil);
+                }
+            }
+            // An exclusive float end has no maximum element -- CRuby's exact
+            // TypeError (only an Integer end can be decremented).
+            if exclusive {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    "cannot exclude non Integer end value".to_string(),
+                ));
+            }
+            return Ok(e.clone());
+        }
+        crate::builtins::enumerable::enumerable_send(recv, "max", args, block)
+            .expect("Enumerable implements max")
     }
 }
 

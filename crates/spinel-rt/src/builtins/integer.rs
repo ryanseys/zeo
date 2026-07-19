@@ -890,23 +890,39 @@ builtin_methods! {
     "upto" => fn upto(recv, args, block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "upto", args, block);
-        let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) else {
-            panic!("Integer#upto beyond i64 isn't supported (unrunnable iteration count)");
-        };
-        for i in *a..=*b {
-            p.call(&[RubyValue::Int(i)])?;
+        // Fast i64 path; otherwise iterate as BigInt -- the VALUES may exceed
+        // i64 even when the SPAN is small (`(2**100).upto(2**100 + 2)`).
+        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) {
+            for i in *a..=*b {
+                p.call(&[RubyValue::Int(i)])?;
+            }
+            return Ok(recv.clone());
+        }
+        // General path: a BigInt receiver and/or a Float/BigInt limit. The
+        // count is yielded as integers while `current <= limit`; `rb_cmp`
+        // handles the mixed comparison (a Float limit is compared, not
+        // converted). Spans are assumed small even when the values are huge.
+        let mut i = to_bigint(recv);
+        while matches!(int_value(i.clone()).rb_cmp(&args[0]), Some(c) if c <= 0) {
+            p.call(&[int_value(i.clone())])?;
+            i += 1;
         }
         Ok(recv.clone())
     }
     "downto" => fn downto(recv, args, block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "downto", args, block);
-        let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) else {
-            panic!("Integer#downto beyond i64 isn't supported (unrunnable iteration count)");
-        };
-        let mut i = *a;
-        while i >= *b {
-            p.call(&[RubyValue::Int(i)])?;
+        if let (RubyValue::Int(a), RubyValue::Int(b)) = (recv, &args[0]) {
+            let mut i = *a;
+            while i >= *b {
+                p.call(&[RubyValue::Int(i)])?;
+                i -= 1;
+            }
+            return Ok(recv.clone());
+        }
+        let mut i = to_bigint(recv);
+        while matches!(int_value(i.clone()).rb_cmp(&args[0]), Some(c) if c >= 0) {
+            p.call(&[int_value(i.clone())])?;
             i -= 1;
         }
         Ok(recv.clone())

@@ -6,8 +6,8 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 18 | range_float_begin_iterate, singleton_method_object, exc_frame_break_next_pops | Range#step on a non-Integer range isn't supported (spike scope) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
+| ? | spike-misc | 16 | back_ref, external_singleton_def, require_in_conditional | the `$+` back-reference global isn't supported yet (spike scope) |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
@@ -22,10 +22,8 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-can-convert-rational-into-an-exact-number-127c | 2 | time_plus_rational, time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
-| ? | auto-can-iterate-from-the-given-range-9693 | 2 | symbol_range_enum, range_float_type | uncaught exception: can't iterate from the given Range |
 | ? | auto-cannot-load-such-file-time-856a | 2 | bundle_misc_c_34, bundle_misc_c_33 | cannot load such file -- time |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
-| ? | auto-integer-downto-beyond-in-isn-supported-unrunnable-iteration-15d7 | 2 | array_float_conformance, bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |
 | ? | auto-invalid-argument-a354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-no-block-given-yield-cac6 | 2 | enum_terminal_chunk_zip_lazy, string_enum_inspect_source | uncaught exception: no block given (yield) |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
@@ -41,7 +39,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-assertion-failed-is-finite-2f37 | 1 | pp_store_float_inf_literal | assertion failed: f.is_finite() |
 | ? | auto-can-coerce-complex-into-float-4a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
 | ? | auto-can-convert-proc-into-integer-bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
-| ? | auto-can-do-binary-search-for-the-given-range-f864 | 1 | range_bsearch_float | uncaught exception: can't do binary search for the given Range |
 | ? | auto-can-iterate-from-string-c4d1 | 1 | bundle_tiny_num | uncaught exception: can't iterate from String |
 | ? | auto-can-modify-frozen-string-plain-a903 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" |
 | ? | auto-cannot-load-such-file-ffi-16c6 | 1 | ffi_gem_compat | cannot load such file -- ffi |
@@ -55,7 +52,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
 | ? | auto-invalid-argument-c00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
-| ? | auto-invalid-value-for-float-nxnpn-d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
 | ? | auto-memory-allocation-of-bytes-failed-aad1 | 1 | string_multiply_overflow | memory allocation of 1152921504606846976 bytes failed |
 | ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
 | ? | auto-no-block-given-localjumperror-b554 | 1 | yield_no_block_raises | no block given (LocalJumpError) |

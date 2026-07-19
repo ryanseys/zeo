@@ -405,14 +405,24 @@ fn receiver_size(recv: &RubyValue) -> RubyValue {
     }
 }
 
-/// `n.upto(m)` / `n.downto(m)` element counts (i64 pairs only; anything
-/// else answers nil).
+/// `n.upto(m)` / `n.downto(m)` element counts, over Integer/Bignum endpoints
+/// (a Float or other endpoint answers nil). Computed as BigInt so a bignum
+/// range (`(2**100).downto(2**100 - 2).size`) answers its true small count.
 fn int_span(recv: &RubyValue, to: Option<&RubyValue>, ascending: bool) -> RubyValue {
-    let (RubyValue::Int(a), Some(RubyValue::Int(b))) = (recv, to) else {
+    use num_bigint::BigInt;
+    let big = |v: &RubyValue| -> Option<BigInt> {
+        match v {
+            RubyValue::Int(n) => Some(BigInt::from(*n)),
+            RubyValue::BigInt(b) => Some((**b).clone()),
+            _ => None,
+        }
+    };
+    let (Some(a), Some(b)) = (big(recv), to.and_then(big)) else {
         return RubyValue::Nil;
     };
-    let span = if ascending { *b - *a + 1 } else { *a - *b + 1 };
-    RubyValue::Int(span.max(0))
+    let one = BigInt::from(1);
+    let span = if ascending { b - a + one } else { a - b + one };
+    crate::builtins::integer::int_value(span.max(BigInt::from(0)))
 }
 
 /// `with_index(offset)`/`each_with_index`'s driver: re-runs the internal

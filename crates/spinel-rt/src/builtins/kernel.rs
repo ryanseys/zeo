@@ -550,6 +550,8 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 .parse::<f64>()
                 .ok()
                 .filter(|f| f.is_finite() || clean.to_ascii_lowercase().contains("inf"))
+                // C99 hex-float (`"0x1p4"` = 16.0), which `str::parse` rejects.
+                .or_else(|| parse_hex_float(&clean))
                 .map(RubyValue::Float)
                 .ok_or_else(|| {
                     crate::dispatch::raise_error(
@@ -570,6 +572,38 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             ),
         )),
     }
+}
+
+/// Parse a C99 hexadecimal float (`[±]0x<hex>.<hex>p<dec-exp>`, the exponent a
+/// power of TWO), which `str::parse::<f64>` rejects: `"0x1p4"` -> 16.0,
+/// `"0x1.8p1"` -> 3.0. `None` if the string isn't this shape.
+fn parse_hex_float(s: &str) -> Option<f64> {
+    let t = s.trim();
+    let (neg, t) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let t = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))?;
+    // The binary exponent `p<dec>` is optional: `"0xa"` is 10.0 (exponent 0).
+    let (mantissa, exp): (&str, i32) = match t.find(['p', 'P']) {
+        Some(idx) => (&t[..idx], t[idx + 1..].parse().ok()?),
+        None => (t, 0),
+    };
+    let (int_str, frac_str) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if int_str.is_empty() && frac_str.is_empty() {
+        return None;
+    }
+    let mut value = 0.0f64;
+    for c in int_str.chars() {
+        value = value * 16.0 + c.to_digit(16)? as f64;
+    }
+    let mut scale = 1.0 / 16.0;
+    for c in frac_str.chars() {
+        value += c.to_digit(16)? as f64 * scale;
+        scale /= 16.0;
+    }
+    let result = value * 2f64.powi(exp);
+    Some(if neg { -result } else { result })
 }
 
 /// `Kernel#Rational(num, den = 1)` -- exact components only (string forms

@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=68dc470
-# PASS=1690 FAIL_OUTPUT=340 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=e2b238e
+# PASS=1697 FAIL_OUTPUT=333 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -51,7 +51,7 @@ array_filter_bang_return	FAIL_OUTPUT	expect	-
 array_first_last_empty	PASS	-	-
 array_flat_map_scalar_block	PASS	-	-
 array_flatten_typed_elements	PASS	-	-
-array_float_conformance	FAIL_OUTPUT	expect	auto-integer-downto-beyond-in-isn-supported-unrunnable-iteration-15d7
+array_float_conformance	PASS	-	-
 array_fold_delete_flatten_rindex	FAIL_OUTPUT	expect	-
 array_frozen_mutate_raises	FAIL_OUTPUT	expect	-
 array_frozen_slice_bang	FAIL_OUTPUT	expect	-
@@ -144,7 +144,7 @@ bigint_propagation_chain	PASS	-	-
 bigint_return_int_literal	PASS	-	-
 bigint_volatile_combo	PASS	-	-
 bignum_bit_length	PASS	-	-
-bignum_downto_upto_to_a	FAIL_OUTPUT	expect	auto-integer-downto-beyond-in-isn-supported-unrunnable-iteration-15d7
+bignum_downto_upto_to_a	PASS	-	-
 bignum_modulo_bit_pow	PASS	-	-
 bignum_query_to_i	PASS	-	-
 bignum_rational_arith	PASS	-	-
@@ -684,7 +684,7 @@ flat_map_poly_return	PASS	-	-
 float_array_first_last_nil	PASS	-	-
 float_clamp	PASS	-	-
 float_divmod_zerodiv	FAIL_OUTPUT	expect	-
-float_hex_encoding_isa_bool_wave10	FAIL_OUTPUT	expect	auto-invalid-value-for-float-nxnpn-d0b1
+float_hex_encoding_isa_bool_wave10	PASS	-	-
 float_limit_constants	PASS	-	-
 float_modulo	PASS	-	-
 float_pow_negative_fractional	FAIL_OUTPUT	expect	-
@@ -1606,7 +1606,7 @@ range	PASS	-	-
 range_and_array_range_args	FAIL_OUTPUT	expect	auto-invalid-argument-a354
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
 range_bsearch	PASS	-	-
-range_bsearch_float	FAIL_OUTPUT	expect	auto-can-do-binary-search-for-the-given-range-f864
+range_bsearch_float	FAIL_OUTPUT	expect	-
 range_case_eq_range	FAIL_OUTPUT	expect	-
 range_case_eq_type_mismatch	PASS	-	-
 range_comparable_wave8	PASS	-	-
@@ -1623,13 +1623,13 @@ range_equality	PASS	-	-
 range_exclude_end_size	PASS	-	-
 range_exclusive_nonliteral	PASS	-	-
 range_flat_map	PASS	-	-
-range_float_begin_iterate	FAIL_OUTPUT	expect	spike-misc
-range_float_type	FAIL_OUTPUT	expect	auto-can-iterate-from-the-given-range-9693
+range_float_begin_iterate	PASS	-	-
+range_float_type	PASS	-	-
 range_object_bounds_limit	PASS	-	-
 range_overlap_array_flatten_depth	PASS	-	-
 range_size_infinite_local	PASS	-	-
 range_step	PASS	-	-
-range_step_float	FAIL_OUTPUT	expect	spike-misc
+range_step_float	PASS	-	-
 range_string_cover	PASS	-	-
 range_sum_endless_wave10	PASS	-	-
 range_to_s_inspect	PASS	-	-
@@ -1930,7 +1930,7 @@ symbol_inspect_quoting	FAIL_OUTPUT	expect	-
 symbol_multibyte_length	PASS	-	-
 symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-can-coerce-complex-into-float-4a45
 symbol_nil_truthiness	PASS	-	-
-symbol_range_enum	FAIL_OUTPUT	expect	auto-can-iterate-from-the-given-range-9693
+symbol_range_enum	PASS	-	-
 symbol_string_methods	PASS	-	-
 symbol_to_proc_after_positional	FAIL_COMPILE	compile	auto-define-method-second-argument-must-be-block-a4ab
 symbol_to_proc_call	PASS	-	-
