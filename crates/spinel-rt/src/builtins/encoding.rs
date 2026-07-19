@@ -234,6 +234,13 @@ builtin_methods! {
 fn compat_of(a: &RubyValue, b: &RubyValue) -> Option<EncodingId> {
     match (a, b) {
         (RubyValue::Str(a), RubyValue::Str(b)) => {
+            // Identity first: `Encoding.compatible?(s, s)` passes one
+            // `Arc<Mutex<..>>` twice, and holding both guards at once
+            // deadlocks (parking_lot's Mutex is not reentrant). A string is
+            // trivially compatible with itself.
+            if std::sync::Arc::ptr_eq(a, b) {
+                return Some(a.lock().encoding());
+            }
             let (a, b) = (a.lock(), b.lock());
             if a.encoding() == b.encoding() {
                 return Some(a.encoding());

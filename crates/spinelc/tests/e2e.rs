@@ -18847,3 +18847,51 @@ fn blockless_thread_and_fiber_raise() {
          7\n",
     );
 }
+
+#[test]
+fn operations_with_the_receiver_as_their_own_argument() {
+    // `s + s` hands the SAME Arc<Mutex<..>> in as both receiver and argument.
+    // parking_lot's Mutex is not reentrant, so any implementation taking both
+    // guards in one expression deadlocks -- the process hangs with no output
+    // and no error, which is strictly worse than a wrong answer. Every
+    // self-argument shape is covered here because the bug is silent: it
+    // surfaces as a timeout, never as a failed assertion.
+    let result = run_ruby(
+        r#"
+        s = "ab"
+        p s + s
+        p s * 2
+        p s.concat(s)
+        p Encoding.compatible?(s, s)
+        a = [1, 2]
+        p(a <=> a)
+        p a == a
+        p a + a
+        p a - a
+        p a & a
+        p a | a
+        h = {x: 1}
+        p h == h
+        p h.merge(h)
+        r = Random.new(5)
+        p r == r
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"abab\"\n\
+         \"abab\"\n\
+         \"abab\"\n\
+         #<Encoding:UTF-8>\n\
+         0\n\
+         true\n\
+         [1, 2, 1, 2]\n\
+         []\n\
+         [1, 2]\n\
+         [1, 2]\n\
+         true\n\
+         {x: 1}\n\
+         true\n",
+    );
+}

@@ -1239,7 +1239,13 @@ builtin_methods! {
     "+" => fn plus(recv, args, _block) {
         arity!(args, 1);
         let other = arg_str!(args, 0);
-        let joined = format!("{}{}", recv_str!(recv).lock(), other.lock());
+        // Read the receiver out and RELEASE its guard before locking `other`.
+        // `s + s` hands the same `Arc<Mutex<..>>` in twice, and parking_lot's
+        // Mutex is not reentrant, so taking both guards in one expression
+        // (`format!("{}{}", recv.lock(), other.lock())`) deadlocks the process
+        // -- a hang, with no output and no error.
+        let mut joined = recv_str!(recv).lock().to_string();
+        joined.push_str(&other.lock().to_string());
         Ok(str_value(joined))
     }
     // Mutating append -- returns the receiver (the same object).

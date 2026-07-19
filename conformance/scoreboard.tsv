@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=5b174d6
-# PASS=1740 FAIL_OUTPUT=300 FAIL_COMPILE=33 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=28b6aa5
+# PASS=1741 FAIL_OUTPUT=300 FAIL_COMPILE=33 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -742,7 +742,7 @@ global_var	PASS	-	-
 global_var_punct	FAIL_OUTPUT	expect	-
 grapheme_clusters_alias	PASS	-	-
 grep_v_runtime_recv	PASS	-	-
-gsub_sub_block	TIMEOUT_RUN	run	-
+gsub_sub_block	PASS	-	-
 gsub_with_hash_replacement	PASS	-	-
 gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
