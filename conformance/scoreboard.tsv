@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=3b36020
-# PASS=1733 FAIL_OUTPUT=300 FAIL_COMPILE=37 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=5b174d6
+# PASS=1740 FAIL_OUTPUT=300 FAIL_COMPILE=33 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -982,7 +982,7 @@ integer_digits_base	PASS	-	-
 integer_digits_invalid_radix	FAIL_OUTPUT	expect	-
 integer_div_by_zero	PASS	-	-
 integer_extra_methods	PASS	-	-
-integer_hash_range_batch9	TIMEOUT_RUN	run	-
+integer_hash_range_batch9	PASS	-	-
 integer_literal_no_int32_overflow	PASS	-	-
 integer_numeric_projection	PASS	-	-
 integer_poly_arg_methods	PASS	-	-
@@ -1115,7 +1115,7 @@ issue_2973	FAIL_COMPILE	compile	spike-misc
 issue_2974	PASS	-	-
 issue_2975	FAIL_COMPILE	compile	auto-the-synthesized-value-class-template-for-failed-to-9692
 issue_2976	PASS	-	-
-issue_2978	FAIL_COMPILE	compile	dynamic-require
+issue_2978	PASS	-	-
 issue_2979	PASS	-	-
 issue_2980	PASS	-	-
 issue_2984	PASS	-	-
@@ -1506,7 +1506,7 @@ poly_value_into_str_str_hash	PASS	-	-
 polyarray_insert_delete_at	PASS	-	-
 polypoly_hash_assoc_to_proc	PASS	-	-
 post_execution	PASS	-	-
-pp_store_float_inf_literal	FAIL_COMPILE	compile	auto-assertion-failed-is-finite-2f37
+pp_store_float_inf_literal	PASS	-	-
 pre_execution	PASS	-	-
 predicate_class_arg	PASS	-	-
 prepend_super_basic	PASS	-	-
@@ -1585,7 +1585,7 @@ ptr_array	PASS	-	-
 ptr_array_to_poly_array_at_call	PASS	-	-
 public_method	PASS	-	-
 public_send	PASS	-	-
-public_send_visibility	FAIL_COMPILE	compile	spike-misc
+public_send_visibility	PASS	-	-
 puts_class_value	PASS	-	-
 puts_in_case_value_arm	PASS	-	-
 puts_nested_inspect_container	PASS	-	-
@@ -1641,7 +1641,7 @@ rational_ctor_exact	PASS	-	-
 rational_div_family	PASS	-	-
 rational_i_to_complex	FAIL_OUTPUT	expect	-
 rational_mod_cmp_slice_default_wave10	FAIL_OUTPUT	expect	-
-rational_step	TIMEOUT_RUN	run	-
+rational_step	PASS	-	-
 recursive_block_forward_value	PASS	-	-
 recursive_block_method	PASS	-	-
 recursive_implicit_yield_value	PASS	-	-
@@ -1846,7 +1846,7 @@ string_index_nil_typeerror	FAIL_OUTPUT	expect	-
 string_index_regex	PASS	-	-
 string_lshift_int_codepoint	PASS	-	-
 string_match_block	FAIL_OUTPUT	expect	-
-string_multiply_overflow	FAIL_RUN	expect	auto-memory-allocation-of-bytes-failed-aad1
+string_multiply_overflow	PASS	-	-
 string_mutation_plus	PASS	-	-
 string_new_capacity	PASS	-	-
 string_nil_arg_typeerror	FAIL_OUTPUT	expect	-
@@ -2016,7 +2016,7 @@ unresolved_call_raises	PASS	-	-
 unsupported_feature_diagnostics	FAIL_OUTPUT	expect	missing-method:binding
 upto_downto_block	PASS	-	-
 user_class_aset_dispatch	PASS	-	-
-user_enumerable_each_and_for	FAIL_COMPILE	compile	dynamic-require
+user_enumerable_each_and_for	PASS	-	-
 user_to_hash_splat	PASS	-	-
 user_to_proc_block_arg	PASS	-	-
 user_value_object_freeze	PASS	-	-

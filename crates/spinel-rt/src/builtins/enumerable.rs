@@ -208,7 +208,8 @@ pub fn each_values(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
         out2.lock().push(pack(yielded));
         Ok(RubyValue::Nil)
     })?;
-    Ok(std::mem::take(&mut *out.lock()))
+    let items = std::mem::take(&mut *out.lock());
+    Ok(items)
 }
 
 fn reject_args(args: &[RubyValue], method: &str, what: &str) {

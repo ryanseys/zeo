@@ -226,7 +226,11 @@ fn emit_missing_block_raise(cx: &Ctx, target: &str) -> TokenStream {
         _ => ("ArgumentError", "must be called with a block"),
     };
     let err = emit_simple_error(cx, class_name, msg);
-    quote! { return Err(spinel_rt::Signal::Raise(#err)) }
+    // `?`-propagate rather than `return`: a block body wraps its tail
+    // expression in `Ok(...)`, and a bare `return` inside that wrapper
+    // generates an `unreachable call` warning in the emitted crate. The `?`
+    // form carries the signal out just as well and reads as ordinary Rust.
+    quote! { Err(spinel_rt::Signal::Raise(#err))? }
 }
 
 fn emit_frozen_error(cx: &Ctx, class_name: &str, recv_value: TokenStream) -> TokenStream {
@@ -2024,6 +2028,28 @@ pub fn emit_call(
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
+        // `public_send` on the IMPLICIT self still enforces visibility: real
+        // Ruby checks the RESOLVED method entry's visibility with a
+        // `CALL_PUBLIC` scope (`rb_method_call_status`, vm_eval.c:837), which
+        // has nothing to do with whether the call site wrote a receiver. So a
+        // receiverless `public_send(:private_one)` raises just like
+        // `obj.public_send(:private_one)` -- route it through the same gated
+        // runtime entry rather than letting it resolve as a sibling call.
+        // Plain `send`/`__send__` stay on their existing path: they are
+        // deliberately visibility-blind, so nothing needs intercepting.
+        if name == "public_send" && !args.is_empty() {
+            let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+            let name_expr = emit_symbol_expr(cx, args[0]);
+            let rest_args = args[1..].iter().map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            });
+            let block_value = emit_block_option(cx, block, block_arg);
+            let call = quote! {
+                spinel_rt::send_value_public_in(#__bx, &#recv, #name_expr, &[#(#rest_args),*], #block_value)
+            };
+            return wrap_dynamic_result(block.is_some() || block_arg.is_some(), call);
+        }
         // A no-receiver call to a sibling method on the CURRENT class (`foo(x)`
         // inside a method body, calling another method on the same object) --
         // composes directly onto the existing `self: Arc<Self>` receiver:

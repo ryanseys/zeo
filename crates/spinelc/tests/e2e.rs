@@ -4558,9 +4558,15 @@ fn send_bypasses_visibility_entirely() {
 }
 
 #[test]
-#[should_panic(expected = "`public_send` cannot call non-public method `secret`")]
 fn public_send_still_enforces_visibility_unlike_send() {
-    let _ = spinelc::compile_to_rust(
+    // Same intent as when this asserted a compile-time panic, now asserting
+    // the CORRECT mechanism: real Ruby resolves visibility at call time
+    // (`rb_method_call_status`, vm_eval.c:837) and raises a rescuable
+    // NoMethodError. Rejecting it during codegen was wrong -- it killed any
+    // program that merely mentions such a call, even in a rescued branch --
+    // so the program must now compile and the raise must be catchable, while
+    // `send` stays visibility-blind.
+    let result = run_ruby(
         r#"
         class Box
           private
@@ -4570,8 +4576,18 @@ fn public_send_still_enforces_visibility_unlike_send() {
           end
         end
 
-        puts Box.new.public_send(:secret)
+        begin
+          puts Box.new.public_send(:secret)
+        rescue NoMethodError => e
+          puts e.message
+        end
+        puts Box.new.send(:secret)
         "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "private method 'secret' called for an instance of Box\nshh\n",
     );
 }
 
@@ -18639,5 +18655,195 @@ fn method_missing_receiver_descriptions_match_cruby() {
          undefined method 'nope' for module Helper\n\
          undefined method 'nope' for class String\n\
          undefined method 'nope' for an instance of Integer\n",
+    );
+}
+
+#[test]
+fn public_send_enforces_visibility_at_runtime() {
+    // `public_send` is stricter than an ordinary explicit-receiver call: it
+    // rejects private AND protected, with no self-relatedness relaxation,
+    // because CRuby implements it by passing `Qundef` as the caller's self
+    // (vm_eval.c:1230) -- a sentinel nothing can be a kind of. This is a
+    // RUNTIME check (rb_method_call_status), so the program must compile and
+    // the NoMethodError must be rescuable. Covers explicit-receiver, implicit
+    // self, and a runtime-computed method name.
+    let result = run_ruby(
+        r##"
+        def err
+          yield
+        rescue NoMethodError => e
+          "#{e.class}: #{e.message}"
+        end
+        class Acct
+          def balance = 100
+          def peer_check(other) = other.guarded
+          protected
+          def guarded = "prot"
+          private
+          def secret = 42
+        end
+        class Inner
+          def run = public_send(:hidden)
+          private
+          def hidden = 1
+        end
+        def dyn(o, m) = o.public_send(m)
+        a = Acct.new
+        p a.public_send(:balance)
+        puts err { a.public_send(:secret) }
+        puts err { a.public_send(:guarded) }
+        p a.send(:secret)
+        p a.peer_check(Acct.new)
+        puts err { Inner.new.run }
+        puts err { dyn(a, :secret) }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "100\n\
+         NoMethodError: private method 'secret' called for an instance of Acct\n\
+         NoMethodError: protected method 'guarded' called for an instance of Acct\n\
+         42\n\
+         \"prot\"\n\
+         NoMethodError: private method 'hidden' called for an instance of Inner\n\
+         NoMethodError: private method 'secret' called for an instance of Acct\n",
+    );
+}
+
+#[test]
+fn for_iterates_any_object_answering_each() {
+    // Ruby's `for` performs NO type dispatch: `for x in obj` compiles to
+    // `obj.each { |x| ... }` (compile_iter, compile.c:8548). So a user class
+    // iterates, a pair-yielding each destructures, the loop variable outlives
+    // the loop (`for` introduces no scope), and an object with no `each`
+    // fails at RUNTIME rather than failing the compile.
+    let result = run_ruby(
+        r##"
+        class Nums
+          include Enumerable
+          def initialize(*xs) = @xs = xs
+          def each; @xs.each { |x| yield x }; end
+        end
+        class Pairs
+          include Enumerable
+          def each; yield [1, :a]; yield [2, :b]; end
+        end
+        total = 0
+        for x in Nums.new(1, 2, 3, 4)
+          total += x
+        end
+        p total
+        pairs = []
+        for k, v in Pairs.new
+          pairs << "#{k}:#{v}"
+        end
+        p pairs
+        for survivor in [10, 20, 30]
+        end
+        p survivor
+        begin
+          for z in 5; end
+        rescue NoMethodError => e
+          puts e.message
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "10\n[\"1:a\", \"2:b\"]\n30\nundefined method 'each' for an instance of Integer\n",
+    );
+}
+
+#[test]
+fn nonterminating_and_aborting_operations_raise() {
+    // Guards for operations that would otherwise hang or kill the process.
+    // A zero step never advances, so CRuby rejects it up front
+    // (numeric.c:2888) -- via a Ruby-level `==`, so `0.0` trips it too.
+    // Materializing an endless range would grow a vector until the process
+    // died (range.c:1023). `String#*` past a sane cap would hand the
+    // allocator an impossible request, which ABORTS rather than raising;
+    // spinel caps it and raises a catchable ArgumentError, where CRuby --
+    // whose guard covers only the length multiplication -- reaches the
+    // allocator and raises NoMemoryError. That last one is a deliberate,
+    // documented divergence toward a rescuable failure.
+    let result = run_ruby(
+        r##"
+        def err
+          yield
+        rescue => e
+          "#{e.class}: #{e.message}"
+        end
+        puts err { 1.step(10, 0) { } }
+        puts err { 1.step(10, 0.0) { } }
+        puts err { Rational(1, 2).step(Rational(5, 2), 0) { } }
+        puts err { (1..).to_a }
+        puts err { (1..).entries }
+        p (1..4).to_a
+        puts err { "x" * -1 }
+        puts err { "x" * (1 << 60) }
+        p "ab" * 3
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ArgumentError: step can't be 0\n\
+         ArgumentError: step can't be 0\n\
+         ArgumentError: step can't be 0\n\
+         RangeError: cannot convert endless range to an array\n\
+         RangeError: cannot convert endless range to an array\n\
+         [1, 2, 3, 4]\n\
+         ArgumentError: negative argument\n\
+         ArgumentError: string size too big\n\
+         \"ababab\"\n",
+    );
+}
+
+#[test]
+fn non_finite_float_literals_compile() {
+    // `1e400` overflows to Infinity at parse time. It cannot be emitted as a
+    // Rust float TOKEN (`Literal::f64_suffixed` asserts `is_finite()` and
+    // panics inside proc-macro2), so codegen must emit the `f64` constant
+    // path instead -- the value is perfectly ordinary Ruby.
+    let result = run_ruby(
+        r##"
+        big = 1e400
+        p big
+        p(-1e400)
+        p big.infinite?
+        p (big - big).nan?
+        p [1e400, -1e400].max
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Infinity\n-Infinity\n1\ntrue\nInfinity\n");
+}
+
+#[test]
+fn blockless_thread_and_fiber_raise() {
+    // A blockless `Thread.new`/`Fiber.new` raises at runtime in real Ruby
+    // (thread.c:1034) rather than being a static error, and both are
+    // rescuable -- so the program must compile and run.
+    let result = run_ruby(
+        r##"
+        def err
+          yield
+        rescue => e
+          "#{e.class}: #{e.message}"
+        end
+        puts err { Thread.new }
+        puts err { Fiber.new }
+        t = Thread.new { 7 }
+        p t.value
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ThreadError: must be called with a block\n\
+         ArgumentError: tried to create Proc object without a block\n\
+         7\n",
     );
 }
