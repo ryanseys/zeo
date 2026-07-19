@@ -4744,6 +4744,50 @@ fn ruby_version_build_constants_and_file_separators() {
 }
 
 #[test]
+fn math_hyperbolic_gamma_and_frexp_family() {
+    // Backed by the system libm CRuby also calls, so values match exactly;
+    // gamma uses an exact factorial table + ±0/±inf/negative-integer rules.
+    let result = run_ruby(
+        r#"
+        puts Math.tanh(1.0).round(10)
+        puts Math.acosh(2.0).round(10)
+        p Math.atanh(1.0)
+        puts Math.gamma(6.0)
+        p Math.gamma(0.0)
+        p Math.lgamma(-1.0)
+        p Math.frexp(8.0)
+        puts Math.ldexp(0.75, 3)
+        begin; Math.gamma(-2.0); rescue Math::DomainError => e; puts e.message; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "0.761594156\n1.3169578969\nInfinity\n120.0\nInfinity\n[Infinity, 1]\n[0.5, 4]\n6.0\n\
+         Numerical argument is out of domain - gamma\n"
+    );
+}
+
+#[test]
+fn float_to_s_scientific_notation_threshold() {
+    // Fixed for decpt in -3..=15, else scientific -- matches CRuby's Float#to_s.
+    let result = run_ruby(
+        r#"
+        puts 999999999999999.0
+        puts 1000000000000000.0
+        puts 6402373705728000.0
+        puts 0.0001
+        puts 0.00009
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "999999999999999.0\n1.0e+15\n6.402373705728e+15\n0.0001\n9.0e-05\n"
+    );
+}
+
+#[test]
 fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
     let result = run_ruby(
         r#"

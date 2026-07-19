@@ -116,13 +116,14 @@ fn float_to_display_string(f: f64) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
     }
-    // Ruby switches to scientific notation when the decimal exponent
-    // leaves [-4, 16) (`1e16.to_s == "1.0e+16"`, `Float::EPSILON ==
-    // "2.220446049250313e-16"`); Rust's positional `{}` never does, so the
-    // threshold is applied here. Mantissas keep at least one fractional
-    // digit and positive exponents an explicit `+`, both Ruby's shapes.
+    // Ruby switches to scientific notation when the shortest decimal's point
+    // position `decpt` leaves `-3..=15` -- i.e. `|x| >= 1e15` or `|x| < 1e-4`
+    // (`999999999999999.0` stays fixed but `1e15.to_s == "1.0e+15"`;
+    // `Float::EPSILON == "2.220446049250313e-16"`). Rust's positional `{}`
+    // never does, so the threshold is applied here. Mantissas keep at least one
+    // fractional digit and positive exponents an explicit `+`, both Ruby's shapes.
     let abs = f.abs();
-    if abs != 0.0 && !(1e-4..1e16).contains(&abs) {
+    if abs != 0.0 && !(1e-4..1e15).contains(&abs) {
         let sci = format!("{f:e}");
         let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
         let mantissa = if mantissa.contains('.') {
