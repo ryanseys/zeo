@@ -17444,7 +17444,10 @@ fn time_at_units_matchdata_slice_and_float_exponent() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "0.5\n5.0e-07\n[\"01\", \"31\"]\n[\"01\", \"31\"]\ntrue\n5.0e-07\n1.0e+20\n"
+        // MatchData indexes like an array `[full, g1, g2, g3]`, so `md[1, 2]`
+        // is `[g1, g2]` and `md[1..]` is `[g1, g2, g3]` (verified against
+        // ruby 4.0.5 -- the previous expectation dropped the first capture).
+        "0.5\n5.0e-07\n[\"2024\", \"01\"]\n[\"2024\", \"01\", \"31\"]\ntrue\n5.0e-07\n1.0e+20\n"
     );
 }
 
@@ -17492,9 +17495,11 @@ fn data_constructs_positionally_or_by_keyword() {
         p [a.x, a.y]
         p(a == b)
         p a.frozen?
-        p(Point.new(1) rescue $!.class)
-        p(Point.new(x: 1, y: 2, z: 3) rescue $!.class)
-        p(a.with(z: 9) rescue $!.class)
+        # The `rescue` modifier needs its own parens inside a call's arguments
+        # (a bare `p(x rescue y)` is a SyntaxError in ruby 4.0.5 too).
+        p((Point.new(1) rescue $!.class))
+        p((Point.new(x: 1, y: 2, z: 3) rescue $!.class))
+        p((a.with(z: 9) rescue $!.class))
         p a.with(y: 5).to_h
         "#,
     );
@@ -17522,7 +17527,11 @@ fn rational_round_family_takes_precision() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "(157/50)\n0\n3\n(157/50)\n(157/50)\n(157/50)\n-4\n"
+        // floor/ceil/truncate WITH a precision keep the fraction: 157/50 is
+        // 3.14, so floor(1)=3.1=(31/10), ceil(1)=3.2=(16/5), truncate(1)=(31/10)
+        // (verified against ruby 4.0.5 -- the previous expectation wrongly kept
+        // (157/50) for all three).
+        "(157/50)\n0\n3\n(31/10)\n(16/5)\n(31/10)\n-4\n"
     );
 }
 
