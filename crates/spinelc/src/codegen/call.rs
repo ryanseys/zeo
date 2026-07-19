@@ -1820,7 +1820,7 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
                         #terminal_arm
                     }
                 }
-            }, #default_arg #arity, #is_lambda).with_params(#proc_params))
+            }, #default_arg #arity, #is_lambda).with_home().with_params(#proc_params))
         }
     }
 }

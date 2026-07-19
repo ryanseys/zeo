@@ -38,7 +38,7 @@ use crate::{RubyValue, Signal};
 /// fault, not a catchable error. (Passing bytes here read as words -- 64
 /// MiB -- trips macOS's RLIMIT_STACK hard cap at startup; found
 /// empirically, hence this comment.)
-const STACK_SIZE_WORDS: usize = 1024 * 1024;
+const STACK_SIZE_WORDS: usize = 2 * 1024 * 1024;
 
 /// Runs `body` -- the generated program's entire top level -- as `may`'s
 /// first coroutine, blocking the real OS main thread on its completion.

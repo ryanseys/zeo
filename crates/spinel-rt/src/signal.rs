@@ -53,3 +53,48 @@ pub fn catch_break(result: Result<RubyValue, Signal>) -> Result<RubyValue, Signa
         other => other,
     }
 }
+
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+/// A method activation's "home is still on the stack" flag. A non-lambda
+/// `Proc` constructed while that method runs captures a clone of it (see
+/// `RProc::with_home`); the method marks it dead the moment its body finishes
+/// -- normally OR via a signal/exception (`home_pop`). A `return` in the Proc
+/// then consults it (`RProc::call`): live home -> a real `Signal::Return` that
+/// unwinds to the method (CRuby non-local return); dead home -> `LocalJumpError`,
+/// rather than a `Signal::Return` longjmping into a freed frame.
+pub type ProcHome = Arc<AtomicBool>;
+
+// The per-coroutine stack of live method-activation homes, innermost on top.
+// Coroutine-local (each `Thread`/`Fiber` is its own coroutine, so its frames
+// never mingle with another's); the top-level program is itself a coroutine.
+may::coroutine_local!(static HOME_STACK: RefCell<Vec<ProcHome>> = RefCell::new(Vec::new()));
+
+/// Enter a method activation: push a fresh live home. Balanced by `home_pop`.
+pub fn home_push() {
+    HOME_STACK.with(|s| s.borrow_mut().push(Arc::new(AtomicBool::new(true))));
+}
+
+/// Leave a method activation: mark its home dead (any `Proc` that captured it
+/// now sees a dead home) and pop it.
+pub fn home_pop() {
+    HOME_STACK.with(|s| {
+        if let Some(home) = s.borrow_mut().pop() {
+            home.store(false, Ordering::Relaxed);
+        }
+    });
+}
+
+/// The innermost live home, captured by a `Proc` at construction so its
+/// `return` knows which method to unwind to (`None` at the top level -- a
+/// `return` from such a `Proc` is an unconditional `LocalJumpError`).
+pub fn home_current() -> Option<ProcHome> {
+    HOME_STACK.with(|s| s.borrow().last().cloned())
+}
+
+/// Whether a captured home's method is still on the stack.
+pub fn proc_home_alive(home: &ProcHome) -> bool {
+    home.load(Ordering::Relaxed)
+}

@@ -17742,3 +17742,83 @@ fn nested_closure_captures_enclosing_blocks_own_local() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[101, 202, 303]\n[11, 11, 21, 21]\n");
 }
+
+#[test]
+fn nonlocal_return_from_proc_unwinds_the_home_method() {
+    // A non-lambda Proc's `return` returns from its creating method (live
+    // home), including through builtin iterators and `yield`; a lambda's is
+    // local.
+    let result = run_ruby(
+        r#"
+        def simple; proc { return 30 }.call; 40; end
+        p simple
+        def cond(x); proc { return "yes" if x > 0 }.call; "no"; end
+        p cond(5); p cond(-1)
+        def multi; proc { return 1, 2, 3 }.call; [9]; end
+        p multi
+        def thru_each; proc { [1,2,3].each { |x| return x*10 if x==2 }; :none }.call; end
+        p thru_each
+        def thru_ewi; proc { [10,20,30].each_with_index { |v,i| return i if v==20 }; -1 }.call; end
+        p thru_ewi
+        def gives; yield; end
+        def via_yield; gives { return 55 }; 66; end
+        p via_yield
+        def inner; proc { return "IR" }.call; "IN"; end
+        def outer; x = inner; proc { return "O:#{x}" }.call; "ON"; end
+        p outer
+        def cd(n, acc); proc { return acc if n==0 }.call; cd(n-1, acc+n); end
+        p cd(5, 0)
+        def with_lambda; -> { return 30 }.call; 40; end
+        p with_lambda
+        def dbl(x); proc { return x*2 }.call; -1; end
+        s = 0; 300.times { |i| s += dbl(i) }; p s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "30\n\"yes\"\n\"no\"\n[1, 2, 3]\n20\n1\n55\n\"O:IR\"\n15\n40\n89700\n"
+    );
+}
+
+#[test]
+fn return_from_proc_whose_home_is_gone_raises_localjumperror() {
+    // Once the home method has unwound -- via exception OR normal return --
+    // the Proc's `return` finds no live home and raises LocalJumpError rather
+    // than leaking a Signal::Return.
+    let result = run_ruby(
+        r#"
+        $escaped = nil
+        def home_raises; $escaped = proc { return 99 }; raise "boom"; end
+        begin; home_raises; rescue; end
+        begin
+          $escaped.call; puts "WRONG"
+        rescue LocalJumpError => e
+          puts "exc: #{e.message}"
+        end
+
+        class Deferred
+          def arm; @job = proc { return :never }; self; end
+          def fire; @job.call; end
+        end
+        begin
+          Deferred.new.arm.fire; puts "WRONG"
+        rescue LocalJumpError => e
+          puts "norm: #{e.message}"
+        end
+
+        def collect; [proc { return 4 }]; end
+        arr = collect
+        begin
+          arr[0].call; puts "WRONG"
+        rescue LocalJumpError => e
+          puts "arr: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "exc: unexpected return\nnorm: unexpected return\narr: unexpected return\n"
+    );
+}

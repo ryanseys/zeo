@@ -294,6 +294,30 @@ impl<'a> Ctx<'a> {
     }
 }
 
+/// Wrap a method body that needs a `Signal::Return` catch. `home_push`/
+/// `home_pop` bracket the activation so a Proc constructed inside it captures
+/// this frame as its non-local-return home (see `spinel_rt::signal`); the pop
+/// marks the home dead on EVERY exit (normal or signal), so a later `return`
+/// through a Proc whose home has unwound raises `LocalJumpError`. Then the
+/// method's own `Signal::Return` folds to a normal value. A method with no
+/// escaping block / `begin` catches nothing and pushes no home (a bare-`yield`
+/// method must not intercept a `Return` meant for a different frame).
+fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStream {
+    if needs_return_catch {
+        quote! {
+            spinel_rt::home_push();
+            let __ret = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { #inner })();
+            spinel_rt::home_pop();
+            __ret.or_else(|__e| match __e {
+                spinel_rt::Signal::Return(__v) => Ok(__v),
+                __e => Err(__e),
+            })
+        }
+    } else {
+        inner
+    }
+}
+
 /// The `spinel_rt::register_params` entries for one method's `Params`, in
 /// Ruby's canonical `#parameters` order (required, optional, rest, post,
 /// keywords, keyword-rest, block). Internal destructure-slot names
@@ -1037,16 +1061,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     // method gets when it contains either.
     let needs_return_catch = captures::body_contains_begin(compiler, &scope.body)
         || captures::body_contains_escaping_block(compiler, &scope.body);
-    let body_tokens = if needs_return_catch {
-        quote! {
-            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> { #body })().or_else(|__e| match __e {
-                spinel_rt::Signal::Return(__v) => Ok(__v),
-                __e => Err(__e),
-            })
-        }
-    } else {
-        body
-    };
+    let body_tokens = wrap_method_return(needs_return_catch, body);
     quote! {
         #[allow(unused_variables)]
         pub fn #method_ident(#sig_params) -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
@@ -1209,22 +1224,7 @@ fn emit_builtin_method_fn(
     // see the long comment there.
     let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
         || captures::body_contains_begin(compiler, &scope.body);
-    let body_tokens = if needs_return_catch {
-        quote! {
-            (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-                #prologue
-                #body
-            })().or_else(|__e| match __e {
-                spinel_rt::Signal::Return(__v) => Ok(__v),
-                __e => Err(__e),
-            })
-        }
-    } else {
-        quote! {
-            #prologue
-            #body
-        }
-    };
+    let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
     // `allow(unused_variables)`: a reopen method that never references
     // `self` leaves `__self` unread -- unlike a real `self` receiver
     // parameter, which rustc never warns about.
@@ -1303,22 +1303,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         // literal `return` can't cross either).
         let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
             || captures::body_contains_begin(compiler, &scope.body);
-        let body_tokens = if needs_return_catch {
-            quote! {
-                (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
-                    #prologue
-                    #body
-                })().or_else(|__e| match __e {
-                    spinel_rt::Signal::Return(__v) => Ok(__v),
-                    __e => Err(__e),
-                })
-            }
-        } else {
-            quote! {
-                #prologue
-                #body
-            }
-        };
+        let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
         quote! {
             def #method_ident(self: std::sync::Arc<Self> #sig_params) {
                 #body_tokens

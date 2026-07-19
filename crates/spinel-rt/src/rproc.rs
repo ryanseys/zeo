@@ -53,6 +53,12 @@ pub struct ProcData {
     /// proc (`RProc::new`), matching CRuby's `[[:rest]]`-ish C-proc reporting
     /// only where codegen supplied it.
     params: Vec<ProcParamMeta>,
+    /// The method activation this block/lambda was constructed inside (see
+    /// `crate::signal::home_current`). A non-lambda Proc's `return` unwinds to
+    /// this home if it is still on the stack, else raises `LocalJumpError`.
+    /// `None` for a runtime-internal proc or one built at the top level (a
+    /// `return` from the latter is an unconditional `LocalJumpError`).
+    home: Option<crate::signal::ProcHome>,
 }
 
 /// One entry of `Proc#parameters` -- a parameter's kind (`"req"`, `"opt"`,
@@ -93,6 +99,7 @@ impl RProc {
             arity: -1,
             is_lambda: false,
             params: Vec::new(),
+            home: None,
         }))
     }
 
@@ -110,6 +117,7 @@ impl RProc {
             arity,
             is_lambda,
             params: Vec::new(),
+            home: None,
         }))
     }
 
@@ -129,6 +137,7 @@ impl RProc {
             arity,
             is_lambda,
             params: Vec::new(),
+            home: None,
         }))
     }
 
@@ -147,9 +156,45 @@ impl RProc {
         &self.0.params
     }
 
+    /// Capture the current method activation as this Proc's home (see
+    /// `ProcData::home`). Codegen appends this to every block/lambda it builds
+    /// from Ruby source, right after construction (refcount 1, like
+    /// `with_params`); runtime-internal procs skip it, leaving `home: None`.
+    pub fn with_home(mut self) -> RProc {
+        let home = crate::signal::home_current();
+        if let Some(data) = Arc::get_mut(&mut self.0) {
+            data.home = home;
+        }
+        self
+    }
+
+    /// Resolve a non-lambda Proc's `Signal::Return` against its captured home:
+    /// a live home means a genuine CRuby non-local return (propagate it to
+    /// unwind the method); a dead home (or none) means the `return` has no
+    /// method to jump to -- `LocalJumpError`, as in CRuby. (A lambda folds its
+    /// own `return` internally and never reaches here with one.)
+    fn resolve_home_return(&self, result: Result<RubyValue, Signal>) -> Result<RubyValue, Signal> {
+        match result {
+            // Convert ONLY when THIS proc captured a home that has since died.
+            // A `None` home is either a runtime-internal proc merely RELAYING a
+            // `Signal::Return` from a user block it invoked (must propagate,
+            // not swallow), or a top-level proc (current leak behavior kept);
+            // a live home is a genuine non-local return in flight.
+            Err(Signal::Return(v)) if !self.0.is_lambda => match &self.0.home {
+                Some(home) if !crate::signal::proc_home_alive(home) => Err(crate::dispatch::raise_error(
+                    "LocalJumpError",
+                    "unexpected return".to_string(),
+                )),
+                _ => Err(Signal::Return(v)),
+            },
+            other => other,
+        }
+    }
+
     /// Invoke under the block's own lexical self -- ordinary `#call`/`yield`.
     pub fn call(&self, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-        (self.0.f)(&self.0.self_val, args)
+        let result = (self.0.f)(&self.0.self_val, args);
+        self.resolve_home_return(result)
     }
 
     /// Invoke with `self` REBOUND to `recv` -- `instance_exec`/`instance_eval`.
@@ -160,7 +205,8 @@ impl RProc {
         recv: &RubyValue,
         args: &[RubyValue],
     ) -> Result<RubyValue, Signal> {
-        (self.0.f)(recv, args)
+        let result = (self.0.f)(recv, args);
+        self.resolve_home_return(result)
     }
 
     /// The block's lexical self -- `Proc#binding`-adjacent reflection, and
@@ -330,6 +376,41 @@ mod tests {
         let p = RProc::with_meta(|_| Ok(RubyValue::Nil), 2, true);
         assert_eq!(p.arity(), 2);
         assert!(p.is_lambda());
+    }
+
+    /// A Proc with no captured home (`RProc::new`, or `with_meta` without
+    /// `with_home`) PROPAGATES a `Signal::Return` -- it is either internal
+    /// machinery relaying a user block's non-local return, or a top-level
+    /// proc; either way it must not swallow the return.
+    #[test]
+    fn a_homeless_proc_propagates_a_return_signal() {
+        let p = RProc::new(|_| Err(Signal::Return(RubyValue::Int(7))));
+        assert!(matches!(p.call(&[]), Err(Signal::Return(RubyValue::Int(7)))));
+    }
+
+    /// A Proc whose captured home is still alive propagates its `Signal::Return`
+    /// (a genuine non-local return in flight); once the home dies the same
+    /// return becomes a `LocalJumpError` -- here surfacing as a panic only
+    /// because the unit test runs without a `ClassRegistry` to build the
+    /// exception.
+    #[test]
+    fn a_captured_home_gates_return_between_propagate_and_localjump() {
+        crate::signal::home_push();
+        let live = RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(1))), 0, false).with_home();
+        // Home is on the stack: the return propagates.
+        assert!(matches!(live.call(&[]), Err(Signal::Return(RubyValue::Int(1)))));
+        // Kill the home; the SAME proc now finds no live home.
+        crate::signal::home_pop();
+        let dead = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| live.call(&[])));
+        assert!(dead.is_err() || dead.unwrap().is_err());
+    }
+
+    /// A lambda folds its own return internally, so it never reaches the
+    /// home-return resolution even if its body yields a `Signal::Return`.
+    #[test]
+    fn a_lambda_never_converts_a_return() {
+        let lam = RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(9))), 0, true).with_home();
+        assert!(matches!(lam.call(&[]), Err(Signal::Return(RubyValue::Int(9)))));
     }
 
     /// The newtype still CALLS like the bare `Arc<dyn Fn>` it replaced --

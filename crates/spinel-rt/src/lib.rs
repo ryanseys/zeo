@@ -92,7 +92,7 @@ pub use runtime_meta::{
     name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
     runtime_define_singleton_method,
 };
-pub use signal::{catch_break, Signal};
+pub use signal::{catch_break, home_pop, home_push, Signal};
 pub use symbol::Symbol;
 pub use thread::{
     mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock, queue_close,
