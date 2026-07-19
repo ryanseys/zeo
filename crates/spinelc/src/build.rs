@@ -231,16 +231,18 @@ pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Resul
         cmd.arg("-C").arg("prefer-dynamic");
         // Link with `lld` when it's on PATH. The dominant cost of a generated
         // program's build is NOT rustc's own codegen (~2s of CPU) but the link
-        // step: the default macOS linker resolving the ~20MB `libspinel_rt.dylib`
+        // step: the default macOS linker resolving the ~17MB `libspinel_rt.dylib`
         // plus ad-hoc codesigning the output. Measured, this takes a `puts 1`
         // build from ~7-8s to ~3s and a trivial one-liner from ~5.9s to ~2.4s.
         //
         // Scoped to Dynamic (the harness path) on purpose: `Static` produces the
-        // shippable, self-contained binary a user runs, and its link is a
-        // different, less hot code path. `lld` is a build-time-only choice with
-        // no effect on the produced binary's behaviour, so a machine without it
-        // just falls back to the default linker and builds the same program,
-        // slower. See `lld_available`.
+        // shippable, self-contained binary a user runs, and for its large static
+        // Mach-O link Apple's default linker is actually FASTER than `ld64.lld`
+        // (measured 2026-07: static-with-lld 3.9s vs static-default 1.75s -- lld
+        // helps a dylib resolve but loses on a big static archive). `lld` is a
+        // build-time-only choice with no effect on the produced binary's
+        // behaviour, so a machine without it just falls back to the default
+        // linker and builds the same program. See `lld_available`.
         if lld_available() {
             cmd.arg("-C").arg("link-arg=-fuse-ld=lld");
         }
@@ -394,16 +396,18 @@ fn link_or_copy(from: &Path, to: &Path) -> Result<(), String> {
 /// the output filename), so byte-identical results also require callers to
 /// pick a stable output path.
 ///
-/// A fixed crate name also makes `-C incremental` theoretically useful here,
-/// since ~99% of any two generated programs is the identical exception prelude
-/// and a shared crate identity lets `rustc` reuse one program's codegen units
-/// for another (measured in isolation: 514ms -> 246ms). It is deliberately NOT
-/// enabled: `libtest` runs each `#[test]` on its own thread, so any per-thread
-/// keying produces one cold directory per test (measured: 449 directories,
-/// 7.7GB, and a 10s NET LOSS on the e2e suite). Reuse would need a fixed-size
-/// pool of directories leased across tests, since `rustc` locks each one
-/// exclusively -- the shared-prelude work in `docs/todo/runtime-exception-model.md`
-/// addresses the same duplication structurally instead.
+/// A fixed crate name also makes `-C incremental` theoretically useful for the
+/// small residue two generated programs still share, letting `rustc` reuse one
+/// program's codegen units for another. It is deliberately NOT enabled: `libtest`
+/// runs each `#[test]` on its own thread, so any per-thread keying produces one
+/// cold directory per test (measured: 449 directories, 7.7GB, and a 10s NET LOSS
+/// on the e2e suite). It would also buy little now -- the large per-program
+/// "exception prelude" this once referred to has since moved OUT of codegen into
+/// the prebuilt runtime (`main()` calls `spinel_rt::ClassRegistry::with_core()`;
+/// `puts 1` emits ~74 lines, not thousands), so the emitted crates no longer share
+/// a big prelude to dedup. The remaining per-program build cost is the link +
+/// codesign of the runtime artifact (see the `lld`/linkage notes above), not
+/// codegen -- so compile-time work belongs in `spinel-rt`/linkage, not here.
 const GENERATED_CRATE_NAME: &str = "spinelc_gen";
 
 /// Where the generated source is written, named by a hash of its own content.

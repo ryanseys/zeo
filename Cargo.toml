@@ -11,3 +11,18 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
+
+# Faster generated-program compiles + faster spinel-rt rebuilds. Every compiled
+# program links the runtime; it is a large, rarely-step-debugged artifact, so trim
+# its debug info. `line-tables-only` keeps panic backtraces and line numbers -- only
+# interactive lldb step-through of the runtime is lost.
+[profile.dev.package.spinel-rt]
+debug = "line-tables-only"
+
+# All third-party dependencies (regex, ruby-prism, num-bigint, may, ...): build them
+# optimized ONCE (they change rarely) and drop full debug info. Shrinks the linked
+# runtime and speeds its execution; one-time rebuild cost, no effect on incremental
+# rebuilds of the workspace crates themselves.
+[profile.dev.package."*"]
+opt-level = 1
+debug = "line-tables-only"

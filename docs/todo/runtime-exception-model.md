@@ -4,6 +4,23 @@ Deferred. This is the eventual destination for the exception hierarchy; anything
 we change in this area should keep it reachable rather than entrench the current
 shape further.
 
+> **Status update (2026-07): the BUILD-TIME premise below is obsolete — that win
+> was already banked by the interim step.** The per-program "exception prelude"
+> (the `ruby_class!` blocks and the exception/StopIteration factories) has moved
+> OUT of codegen into the prebuilt runtime: generated `main()` calls
+> `spinel_rt::ClassRegistry::with_core()` (`codegen/mod.rs`), bootstrap classes
+> are filtered out of emission, and the runtime constructs exceptions by name
+> (`ClassRegistry::construct_exception`). `puts 1` is now ~74 lines, not 2,296, so
+> the "81% of every program is exception machinery / recompiled per program"
+> numbers in "The problem" below no longer hold, and the remaining per-program
+> compile cost is link + codesign of the runtime artifact, not codegen (see
+> `build.rs`). **Re-scope this doc as a FEATURE effort, not a build-time one:** its
+> blockers (name-keyed ivars instead of typed struct fields, runtime `super`,
+> MRO-walking dispatch) are the shared prerequisites for `Exception#cause`
+> chaining, Ractor deep-copy, and `instance_variable_set` on arbitrary names —
+> that is what now justifies the work, not compile time. The historical
+> build-time analysis is retained below for context.
+
 ## The problem
 
 `EXCEPTION_PRELUDE` (`crates/spinelc/src/parse/mod.rs:44`) is 27 Ruby exception

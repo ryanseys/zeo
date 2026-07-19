@@ -50,7 +50,13 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         suite: None,
         dir: None,
         filters: Vec::new(),
-        jobs: std::thread::available_parallelism().map_or(4, |n| n.get()),
+        // Leave headroom below the core count: each worker runs a full `spinelc`
+        // subprocess whose `rustc` + multithreaded `lld` link already spawn several
+        // threads, so `ncpu` workers on `ncpu` cores oversubscribe and inflate every
+        // per-compile wall-clock (a single clean compile is ~1.5s but climbs to 4-6s
+        // under `ncpu` workers). `ncpu - 2` keeps the box busy without the thrash and
+        // is overridable via the `--jobs` flag.
+        jobs: std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(2).max(1)),
         run_timeout: Duration::from_secs(10),
         compile_timeout: Duration::from_secs(60),
         force: false,

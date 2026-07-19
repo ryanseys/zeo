@@ -263,9 +263,6 @@ impl<'a> Ctx<'a> {
     /// reset to `None`: a `break`/`next`/`redo`/`for`-variable lexically
     /// inside the closure is never targeting a loop OUTSIDE it (a Rust
     /// closure is its own function boundary, unlike inlined splices).
-    // Not consumed yet -- wired up together with Proc construction, later in
-    // this same phase.
-    #[allow(dead_code)]
     fn in_proc(&self, needs_self_capture: bool, own_params: &HashSet<String>) -> Ctx<'a> {
         // A block's own PARAMETERS shadow whatever the enclosing scope calls
         // the same name -- they are fresh bindings, and nothing about the
