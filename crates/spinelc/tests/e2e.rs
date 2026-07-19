@@ -17915,6 +17915,30 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn top_level_scoped_constant_names_the_builtin_class() {
+    // `::Integer` (and other `::Name` top-level anchors) resolve to the builtin
+    // class in every position: is_a?/kind_of?/instance_of? arguments, `===`
+    // receivers, and as a first-class Class value.
+    let result = run_ruby(
+        r#"
+        p 5.is_a?(::Integer)
+        p "x".is_a?(::String)
+        p 3.14.kind_of?(::Numeric)
+        p 5.instance_of?(::Integer)
+        p(::Integer === 7)
+        p(::String === "a")
+        p ::Integer
+        p ::Array.new(2, 0)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\nInteger\n[0, 0]\n",
+    );
+}
+
+#[test]
 fn numeric_long_tail_ranges_bignum_iteration_and_hex_float() {
     let result = run_ruby(
         r##"

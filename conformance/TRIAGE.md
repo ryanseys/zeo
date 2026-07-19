@@ -28,7 +28,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-no-block-given-yield-cac6 | 2 | enum_terminal_chunk_zip_lazy, string_enum_inspect_source | uncaught exception: no block given (yield) |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | P | missing-const:Marshal | 2 | poly_hash_inspect, marshal_symlink_float | uncaught exception: uninitialized constant Marshal |
-| P | missing-const:Object::Integer | 2 | is_a_toplevel_scoped_const, issue_2889 | uncaught exception: uninitialized constant Object::Integer |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for an instance of NilClass |
 | P | missing-method:allocate | 2 | class_allocate, class_allocate_builtin_var | uncaught exception: undefined method 'allocate' for class Thing |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for an instance of Object |
@@ -73,7 +72,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-wrong-argument-type-string-expected-regexp-87a8 | 1 | string_scan_literal | uncaught exception: wrong argument type String (expected Regexp) |
 | a | interpolation-shapes | 1 | interp_adjacent_concat | unsupported string interpolation part (spike scope) |
 | P | missing-const:File::FNM_DOTMATCH | 1 | dir_full_surface | uncaught exception: uninitialized constant File::FNM_DOTMATCH |
-| P | missing-const:Object::Kernel | 1 | sleep_return_value | uncaught exception: uninitialized constant Object::Kernel |
 | P | missing-const:Object::Marshal | 1 | marshal_roundtrip | uncaught exception: uninitialized constant Object::Marshal |
 | P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL |
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |

@@ -3105,7 +3105,13 @@ fn dispatch(
     // receiver's actual runtime `class_id()`.
     if no_kwargs && (name == "is_a?" || name == "kind_of?") && args.len() == 1 {
         if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            let Some(target) = cx.resolve_class(&target_name) else {
+            // A top-level anchor `::Name` carries the scope "Object" (the
+            // root); its name is an ordinary top-level class, so fall back to
+            // resolving the tail when `Object::Name` doesn't resolve directly.
+            let resolved = cx
+                .resolve_class(&target_name)
+                .or_else(|| target_name.strip_prefix("Object::").and_then(|t| cx.resolve_class(t)));
+            let Some(target) = resolved else {
                 // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
                 // F4): resolve it at runtime and ancestry-check its id.
                 let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());
@@ -3186,7 +3192,13 @@ fn dispatch(
     // the dynamic path (`send`/`send_value`'s Class-argument arms).
     if no_kwargs && name == "instance_of?" && args.len() == 1 {
         if let Some(target_name) = super::expr::const_path_of(cx, args[0]) {
-            let Some(target) = cx.resolve_class(&target_name) else {
+            // A top-level anchor `::Name` carries the scope "Object" (the
+            // root); its name is an ordinary top-level class, so fall back to
+            // resolving the tail when `Object::Name` doesn't resolve directly.
+            let resolved = cx
+                .resolve_class(&target_name)
+                .or_else(|| target_name.strip_prefix("Object::").and_then(|t| cx.resolve_class(t)));
+            let Some(target) = resolved else {
                 // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
                 // F4): resolve it at runtime and check EXACT class identity.
                 let recv_boxed = box_if_object_typed(cx, recv_id, recv_expr.clone());

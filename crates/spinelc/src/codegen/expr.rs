@@ -645,11 +645,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
             None => emit_const_read(cx, None, name),
         },
-        HirNode::QualifiedConstRead(scope, name) if cx.resolve_class(&format!("{scope}::{name}")).is_some() => {
-            let id = cx
-                .resolve_class(&format!("{scope}::{name}"))
-                .expect("guarded above")
-                .0;
+        HirNode::QualifiedConstRead(scope, name) if qualified_const_class(cx, scope, name).is_some() => {
+            let id = qualified_const_class(cx, scope, name).expect("guarded above").0;
             quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
         }
         HirNode::New { class_name, args, kwargs, block } => {
@@ -1339,6 +1336,21 @@ pub(super) fn const_owner_id_opt(cx: &Ctx, scope: Option<&str>, name: &str) -> O
 /// convention) -- matches actual Ruby, and is cheap here since the runtime
 /// `const_get` already distinguishes "never set" (`None`) from "set to
 /// `nil`" (`Some(RubyValue::Nil)`).
+/// The class a `Scope::NAME` path names, if any: the nested `Scope::NAME`
+/// directly, or -- since a top-level constant lives on `Object` and is visible
+/// through any scope -- a top-level class of that name (so `::Integer`, lowered
+/// as `Object::Integer`, resolves to the builtin `Integer` class rather than an
+/// unset value constant).
+fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
+    cx.resolve_class(&format!("{scope}::{name}"))
+        // A top-level anchor `::Name` lowers with scope "Object" (the root),
+        // where the name is an ordinary top-level class -- resolve it directly.
+        // Restricted to the "Object" scope: an arbitrary `Scope::Name` must NOT
+        // fall back to a same-named top-level class (`M::V` is M's own value
+        // constant `V`, not the unrelated top-level module `V`).
+        .or_else(|| (scope == "Object").then(|| cx.resolve_class(name)).flatten())
+}
+
 fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     // An explicit `Scope::NAME` whose scope class isn't registered is a
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),

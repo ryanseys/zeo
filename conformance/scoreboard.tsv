@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=e2b238e
-# PASS=1697 FAIL_OUTPUT=333 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=81337cd
+# PASS=1700 FAIL_OUTPUT=330 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1013,7 +1013,7 @@ is_a_builtin_classes	PASS	-	-
 is_a_descendant_runtime	PASS	-	-
 is_a_included_module	PASS	-	-
 is_a_string_narrow_to_primitive	PASS	-	-
-is_a_toplevel_scoped_const	FAIL_OUTPUT	expect	missing-const:Object::Integer
+is_a_toplevel_scoped_const	PASS	-	-
 is_a_undefined_const	PASS	-	-
 isa_narrow	PASS	-	-
 issue203_string_new	PASS	-	-
@@ -1044,7 +1044,7 @@ issue_2884	FAIL_OUTPUT	expect	-
 issue_2885	PASS	-	-
 issue_2887	PASS	-	-
 issue_2888	PASS	-	-
-issue_2889	FAIL_OUTPUT	expect	missing-const:Object::Integer
+issue_2889	PASS	-	-
 issue_2890	PASS	-	-
 issue_2893	PASS	-	-
 issue_2896	PASS	-	-
@@ -1752,7 +1752,7 @@ singleton_class_object	FAIL_COMPILE	compile	spike-misc
 singleton_method_object	FAIL_COMPILE	compile	spike-misc
 sized_poly_array_nil_n	PASS	-	-
 sleep_poly_arg	PASS	-	-
-sleep_return_value	FAIL_OUTPUT	expect	missing-const:Object::Kernel
+sleep_return_value	PASS	-	-
 slice_before_after_block	PASS	-	-
 slice_when_first_class	PASS	-	-
 sort_by_array_key	PASS	-	-
