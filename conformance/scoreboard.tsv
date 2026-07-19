@@ -1,5 +1,5 @@
-# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=befeb9a
-# PASS=1655 FAIL_OUTPUT=351 FAIL_COMPILE=53 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
+# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=105d20c
+# PASS=1663 FAIL_OUTPUT=350 FAIL_COMPILE=46 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -328,8 +328,8 @@ case_when_string_range	PASS	-	-
 case_when_string_range_nil_bound	FAIL_OUTPUT	expect	-
 case_when_value_constant	PASS	-	-
 catch_in_fiber_body	PASS	-	-
-catch_throw_ensure	FAIL_COMPILE	compile	unknown-class
-catch_throw_tags_values	FAIL_COMPILE	compile	unknown-class
+catch_throw_ensure	PASS	-	-
+catch_throw_tags_values	PASS	-	-
 catch_throw_through_loop	PASS	-	-
 chained_aset_on_poly_hash_recv	PASS	-	-
 chained_ivar_write_call_rhs	PASS	-	-
@@ -547,7 +547,7 @@ encoding_constant_compare	PASS	-	-
 endless_method	PASS	-	-
 endless_method_rescue	PASS	-	-
 ensure_runs_on_return	PASS	-	-
-enum_chain_splat_sliceb_wave6	FAIL_COMPILE	compile	splat
+enum_chain_splat_sliceb_wave6	PASS	-	-
 enum_chain_with_index_object	PASS	-	-
 enum_each_family_receiver	PASS	-	-
 enum_for_each	PASS	-	-
@@ -1389,7 +1389,7 @@ parser_long_ast_record	PASS	-	-
 pattern	PASS	-	-
 pattern_deconstruct	PASS	-	-
 pattern_element_subpatterns	PASS	-	-
-pattern_implicit_rest	FAIL_COMPILE	compile	splat
+pattern_implicit_rest	PASS	-	-
 pattern_match_as_and_guard	PASS	-	-
 pattern_match_splat_rest	PASS	-	-
 pattern_methodobj_kwsplat_undersupply	PASS	-	-
@@ -1397,7 +1397,7 @@ pattern_pin	PASS	-	-
 pattern_pin_regexp	PASS	-	-
 pattern_poly_scrutinee_bindings	PASS	-	-
 pattern_post_splat	PASS	-	-
-pattern_rightward_oneline	FAIL_COMPILE	compile	splat
+pattern_rightward_oneline	PASS	-	-
 poly	PASS	-	-
 poly2	PASS	-	-
 poly_arg_int_keyed_hash	PASS	-	-
@@ -1522,8 +1522,8 @@ proc_arity_opt_rest	PASS	-	-
 proc_block_param_call	FAIL_RUSTC	compile	rustc-failure
 proc_call_array_autosplat	PASS	-	-
 proc_call_blk_gc_root	PASS	-	-
-proc_call_kw_and_lead_splat	FAIL_COMPILE	compile	splat
-proc_call_splat	FAIL_COMPILE	compile	splat
+proc_call_kw_and_lead_splat	PASS	-	-
+proc_call_splat	PASS	-	-
 proc_call_value_return	PASS	-	-
 proc_capture_enclosing_lambda	FAIL_OUTPUT	expect	-
 proc_capture_inline_block_param	PASS	-	-
@@ -1556,7 +1556,7 @@ proc_poly_value_return	PASS	-	-
 proc_range_time_return	PASS	-	-
 proc_recursive	PASS	-	-
 proc_rest_post_params	PASS	-	-
-proc_return_catch_no_leak	FAIL_OUTPUT	expect	auto-b07debb8
+proc_return_catch_no_leak	PASS	-	-
 proc_return_ensure_raise	PASS	-	-
 proc_return_escape_localjump	PASS	-	-
 proc_return_fiber_isolation	PASS	-	-
