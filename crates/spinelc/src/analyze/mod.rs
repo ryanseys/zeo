@@ -128,24 +128,43 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             // `Object`'s own copy through the builtin-reopen container
             // (`__bm_Object`), dispatched on the runtime `main` object at
             // top-level call sites.
-            if *is_class_method {
-                return Err(
-                    "`def self.name` at the top level isn't supported yet (spike scope: it \
-                     defines a singleton method on the `main` object)"
-                        .to_string(),
-                );
+            let (name, params, body, is_class_method) =
+                (name.clone(), params.clone(), body.clone(), *is_class_method);
+            if is_class_method {
+                // A TOP-LEVEL `def self.name` is a SINGLETON method on the
+                // `main` object -- CRuby's asymmetry with `def name` above (a
+                // private `Object` instance method callable via implicit self
+                // anywhere): `def self.name` is callable only where `self` is
+                // `main`, i.e. at the top level itself, NOT from inside another
+                // object's method. Desugar to the same runtime install a
+                // `def obj.name` uses, with `self` (which is `main` here) as the
+                // receiver, so a block-taking body threads its block too (the
+                // `method_body` lambda -- Batch G).
+                let self_ref = compiler.hir.push(HirNode::SelfRef);
+                let lambda = compiler.hir.push(HirNode::Lambda { params, body, method_body: true });
+                let sym = compiler.hir.push(HirNode::SymbolLit(name));
+                let call = compiler.hir.push(HirNode::Call {
+                    receiver: Some(self_ref),
+                    name: "define_singleton_method".to_string(),
+                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                main_statements.push(call);
+            } else {
+                let sid = register_method(
+                    &mut compiler,
+                    OBJECT_CLASS,
+                    OBJECT_CLASS,
+                    name,
+                    params,
+                    body,
+                    crate::hir::Visibility::Private,
+                )?;
+                add_own_method(&mut compiler, OBJECT_CLASS, sid, false);
             }
-            let (name, params, body) = (name.clone(), params.clone(), body.clone());
-            let sid = register_method(
-                &mut compiler,
-                OBJECT_CLASS,
-                OBJECT_CLASS,
-                name,
-                params,
-                body,
-                crate::hir::Visibility::Private,
-            )?;
-            add_own_method(&mut compiler, OBJECT_CLASS, sid, false);
         } else if let HirNode::Include(m) = &compiler.hir[stmt] {
             // A TOP-LEVEL `include M` mixes M into `Object` (real Ruby: the
             // main object's class is Object, so `include` there adds M to

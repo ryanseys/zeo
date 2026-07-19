@@ -1087,6 +1087,15 @@ pub enum HirNode {
     Lambda {
         params: Params,
         body: Vec<NodeId>,
+        /// True when this lambda is a METHOD BODY installed at runtime -- the
+        /// desugar of a per-object singleton (`def obj.name`, `class << obj`)
+        /// or a `def`/`define_method` in expression position. Such a body's
+        /// `yield`/`block_given?`/`&blk` targets the block the METHOD is called
+        /// with (threaded through `ProcData`'s call-site block slot via
+        /// `with_self_and_block`), NOT the lexically enclosing method's block
+        /// an ordinary lambda would clone in. CRuby draws the same line --
+        /// `invoke_bmethod`'s specval vs the captured env (`vm.c:1786`).
+        method_body: bool,
     },
     /// `class Name < Super ... end` / `module Name ... end` -- `is_module`
     /// distinguishes the two: a module has no `superclass` (always `None`)

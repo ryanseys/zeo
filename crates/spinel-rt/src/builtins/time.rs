@@ -421,7 +421,6 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
 /// A count of seconds as an EXACT `(num, den)` -- `Time.at`'s argument and
 /// `+`/`-`'s delta agree on this reading.
 fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
-    use num_bigint::BigInt;
     match v {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
             Ok(crate::builtins::rational::as_ratio(v))

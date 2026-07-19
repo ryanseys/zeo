@@ -1068,6 +1068,7 @@ pub fn emit_proc_param_bindings(
     params: &Params,
     args_ident: &proc_macro2::Ident,
     is_lambda: bool,
+    method_body: bool,
 ) -> TokenStream {
     let nreq = params.required.len();
     let nopt = params.optional.len();
@@ -1241,19 +1242,25 @@ pub fn emit_proc_param_bindings(
         }
     });
 
-    // A `&block` parameter on a proc/lambda (`->(&b) { ... }`). A block passed
-    // to the proc's OWN `.call` isn't threaded through the runtime's proc
-    // invocation yet, so it binds to nil -- an omitted block. This keeps the
-    // no-block forms exact (`b.nil?` is true, matching `Proc#call` with no
-    // block) and, critically, never emits a reference to an unbound `b` (the
-    // previous behavior, which was invalid Rust); a block that IS passed
-    // surfaces as a clean runtime NoMethodError on nil rather than compiling
-    // to garbage.
+    // A `&block` parameter (`->(&b) { ... }` / `def obj.m(&b)`). A METHOD-BODY
+    // lambda binds it from the method's call-site block (`__blk`, the closure's
+    // third parameter -- see `emit_proc_or_lambda_value`), so `b.call`/`b.nil?`
+    // reflect the block the method was actually called with. An ordinary
+    // proc/lambda has no such slot -- a block passed to its OWN `.call` isn't
+    // threaded through proc invocation -- so it binds to nil (`b.nil?` true,
+    // matching a blockless `Proc#call`); this also never emits a reference to
+    // an unbound `b`, and a block that IS passed to such a proc surfaces as a
+    // clean runtime NoMethodError on nil rather than compiling to garbage.
+    let block_source = if method_body {
+        quote! { __blk.clone().unwrap_or(spinel_rt::RubyValue::Nil) }
+    } else {
+        quote! { spinel_rt::RubyValue::Nil }
+    };
     let block_let = params.block.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
             #[allow(unused_variables, unused_mut)]
-            let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+            let mut #ident: spinel_rt::RubyValue = #block_source;
         }
     });
 
@@ -1511,6 +1518,6 @@ mod tests {
             in_real_proc: false,
             self_is_dynamic: false,
         };
-        emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda).to_string()
+        emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda, false).to_string()
     }
 }

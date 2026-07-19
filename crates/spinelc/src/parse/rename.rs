@@ -260,7 +260,7 @@ impl Walker {
                 self.visit_all(hir, &kw_ids);
                 self.visit_opt(hir, block);
             }
-            HirNode::Block { params, body } | HirNode::Lambda { params, body } => {
+            HirNode::Block { params, body } | HirNode::Lambda { params, body, .. } => {
                 let suspended = self.suspend_params(params);
                 for d in params.default_ids() {
                     self.visit(hir, d);

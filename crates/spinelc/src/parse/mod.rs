@@ -555,11 +555,8 @@ fn desugar_singleton_class_defs(
                 return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string());
             }
         };
-        if crate::analyze::scan_bare_block_use_body(hir, &body) {
-            return Err("a singleton method in `class << obj` that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install".to_string());
-        }
         let recv = lower_node(result, hir, &recv_node)?;
-        let lambda = hir.push(HirNode::Lambda { params, body });
+        let lambda = hir.push(HirNode::Lambda { params, body, method_body: true });
         let sym = hir.push(HirNode::SymbolLit(mname));
         out.push(hir.push(HirNode::Call {
             receiver: Some(recv),
@@ -1051,7 +1048,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(lambda) = node.as_lambda_node() {
         let params = lower_block_like_params(result, hir, lambda.parameters())?;
         let body = lower_body(result, hir, lambda.body())?;
-        return Ok(hir.push(HirNode::Lambda { params, body }));
+        return Ok(hir.push(HirNode::Lambda { params, body, method_body: false }));
     }
 
     if let Some(sym) = node.as_symbol_node() {
@@ -1786,15 +1783,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 let recv = lower_node(result, hir, &r)?;
                 let params = lower_params(result, hir, def.parameters())?;
                 let body = lower_body(result, hir, def.body())?;
-                // The lambda body can't receive the METHOD's block (the runtime
-                // install has no block slot), so `yield`/`block_given?`/`&block`
-                // inside a singleton `def obj.name` is a clean rejection (#97
-                // fast-follow), not the invalid `__blk`-referencing code it
-                // would otherwise emit.
-                if crate::analyze::scan_bare_block_use_body(hir, &body) {
-                    return Err("a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install".to_string());
-                }
-                let lambda = hir.push(HirNode::Lambda { params, body });
+                // A method-body lambda: its `yield`/`block_given?`/`&block`
+                // reach the block the METHOD is called with, threaded through
+                // `ProcData`'s call-site block slot (see `HirNode::Lambda`'s
+                // `method_body`).
+                let lambda = hir.push(HirNode::Lambda { params, body, method_body: true });
                 let sym = hir.push(HirNode::SymbolLit(name));
                 return Ok(hir.push(HirNode::Call {
                     receiver: Some(recv),
@@ -1826,15 +1819,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
 
     // `class << obj` at expression/statement position (#97 F3) -- top level or
-    // inside a method body. A non-`self` receiver desugars to a sequence of
-    // per-object `define_singleton_method` installs; its value is the last
-    // (Ruby's own rule, the last `def`'s symbol). `class << self` here isn't
-    // supported (it reopens the enclosing `self`'s singleton, which at these
-    // positions has no compile-time class to attach to).
+    // inside a method body. Desugars to a sequence of per-object
+    // `define_singleton_method` installs on the receiver; its value is the last
+    // (Ruby's own rule, the last `def`'s symbol). `class << self` takes the
+    // same route: the receiver lowers to `self` -- `main` at the top level, or
+    // a method's own receiver inside a body -- and the runtime install attaches
+    // the singleton to whatever object that is. (A `class << self` inside a
+    // CLASS body is handled earlier by `lower_class_body`, defining class
+    // methods; this generic path is only top-level/method-body.)
     if let Some(singleton) = node.as_singleton_class_node() {
-        if singleton.expression().as_self_node().is_some() {
-            return Err("`class << self` at this position isn't supported yet (spike scope) -- use it inside a class/module body".to_string());
-        }
         let stmts = desugar_singleton_class_defs(result, hir, &singleton)?;
         return Ok(hir.push(HirNode::Seq(stmts)));
     }
@@ -2211,7 +2204,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     if let Some(block) = block_node.as_block_node() {
                         let params = lower_block_like_params(result, hir, block.parameters())?;
                         let body = lower_body(result, hir, block.body())?;
-                        return Ok(hir.push(HirNode::Lambda { params, body }));
+                        return Ok(hir.push(HirNode::Lambda { params, body, method_body: false }));
                     }
                 }
             }

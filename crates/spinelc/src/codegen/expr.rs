@@ -444,7 +444,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { spinel_rt::RubyValue::Float(#konst) }
         }
         HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
-        HirNode::Lambda { params, body } => super::call::emit_lambda_value(cx, params, body),
+        HirNode::Lambda { params, body, method_body } => {
+            super::call::emit_lambda_value(cx, params, body, *method_body)
+        }
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }
         }
@@ -871,12 +873,21 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // uses `yield`/`block_given?`/`&block` gets (see
             // `codegen::params`'s `emit_signature_params`/`emit_prologue`) --
             // an `Option<RubyValue>`, `None` when the call passed no block.
-            // Panics with a clear "no block given" message otherwise,
-            // mirroring real Ruby's `LocalJumpError`.
+            // A `yield` with no block is a RESCUABLE `LocalJumpError` at
+            // runtime (CRuby's `no block given (yield)`), so raise it as a
+            // Signal rather than panicking -- a `begin/rescue LocalJumpError`
+            // around the call must catch it, and codegen lowers all branches
+            // eagerly so an unreached `yield` must not abort the process.
             // Boxed: `yield self` (or any Object-typed value) crosses the
             // Proc boundary as a `RubyValue` slice element.
             let invoke = quote! {
-                __blk.as_ref().expect("no block given (LocalJumpError)").as_proc_unchecked()
+                match __blk.as_ref() {
+                    Some(__b) => __b.as_proc_unchecked(),
+                    None => return Err(spinel_rt::raise_error(
+                        "LocalJumpError",
+                        "no block given (yield)".to_string(),
+                    )),
+                }
             };
             // No splat: the arguments are a fixed-length list, so they go
             // straight into a borrowed slice literal with no Vec allocated.
@@ -940,14 +951,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let Some(self_val) = super::call::boxed_implicit_self(cx) else {
                 panic!("a `def` in expression position needs a runtime self (only supported inside a block, e.g. `Class.new {{ ... }}`)");
             };
-            // The body becomes a lambda with no slot for the method's own block
-            // (same limit as a singleton `def obj.name`), so `yield`/
-            // `block_given?`/`&block` inside a `def` in a `Class.new` block is
-            // rejected rather than emitting invalid `__blk`-referencing code.
-            if crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body) {
-                panic!("a `def` inside a `Class.new` block that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- use `define_method` on a named class, or thread the block explicitly");
-            }
-            let proc = super::call::emit_proc_or_lambda_value(cx, params, body, true);
+            // The body becomes a method-body lambda: its `yield`/
+            // `block_given?`/`&block` reach the block the installed method is
+            // called with, threaded through `ProcData`'s call-site block slot
+            // (see `HirNode::Lambda`'s `method_body`).
+            let proc = super::call::emit_proc_or_lambda_value(cx, params, body, true, true);
             let installer =
                 if *is_class_method { "define_singleton_method" } else { "define_method" };
             quote! {

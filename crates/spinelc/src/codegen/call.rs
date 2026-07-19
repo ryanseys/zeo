@@ -1700,7 +1700,7 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
         panic!("internal error: expected a Block node at block_id")
     };
-    emit_proc_or_lambda_value(cx, params, body, false)
+    emit_proc_or_lambda_value(cx, params, body, false, false)
 }
 
 /// `-> (x) { ... }` / `lambda { ... }` (`HirNode::Lambda`) -- see that
@@ -1710,11 +1710,11 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
 /// arity (`is_lambda: true` gates a runtime `ArgumentError` check
 /// `emit_proc_or_lambda_value` inserts) and folding `Signal::Return`/`Break`
 /// into a normal `Ok` return instead of letting them propagate.
-pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream {
-    emit_proc_or_lambda_value(cx, params, body, true)
+pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], method_body: bool) -> TokenStream {
+    emit_proc_or_lambda_value(cx, params, body, true, method_body)
 }
 
-pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool) -> TokenStream {
+pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool, method_body: bool) -> TokenStream {
     let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
 
     let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
@@ -1752,26 +1752,35 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
         }
     }
 
-    // A `yield`/`block_given?` anywhere in this block's body (nested blocks
-    // included) targets the enclosing METHOD's implicit block -- clone its
-    // `__blk: Option<RubyValue>` into the closure so the spliced yield
-    // codegen (`expr.rs`'s `HirNode::Yield`) finds it. Composes through
-    // nesting: an outer closure whose inner block yields captures `__blk`
-    // itself first (the scan is transitive), so each closure clones from
-    // its lexical parent. The enclosing method is guaranteed to HAVE
-    // `__blk`: the same transitive scan sets its `uses_bare_block`
-    // (`analyze::scan_bare_block_use`).
-    let blk_clone = crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body)
-        .then(|| quote! { let __blk = __blk.clone(); });
+    // BARE block use (`yield`/`block_given?`) in this body (nested blocks
+    // included) targets the LEXICALLY enclosing METHOD's block, so an ordinary
+    // block/lambda clones that method's `__blk` in from the parent scope.
+    // Composes through nesting (the transitive scan makes each enclosing
+    // closure capture `__blk` first), and the enclosing method is guaranteed to
+    // HAVE one (same scan sets its `uses_bare_block`). A METHOD-BODY lambda
+    // never clones a lexical `__blk` -- its block is the call-site block, taken
+    // as the closure's own third parameter below (CRuby's `invoke_bmethod`
+    // specval vs the captured env, `vm.c:1786`).
+    let bare_block_use = crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body);
+    let blk_clone = (bare_block_use && !method_body).then(|| quote! { let __blk = __blk.clone(); });
+
+    // Whether a METHOD-BODY closure must name its call-site block parameter
+    // `__blk` (vs `_`): needed if the body uses bare block OR declares a `&blk`
+    // param, whose binding reads `__blk` (`params::emit_proc_param_bindings`).
+    // A `&blk` param is a declaration, not a body use, so the bare scan misses
+    // it. (Irrelevant to an ordinary block/lambda, which takes no block param.)
+    let needs_blk_param = bare_block_use || params.block.is_some();
 
     // A block that mentions `self` (an ivar, a bare `self`, an implicit-self
     // call) does NOT capture it: it takes it as the closure's first
     // parameter, and the value below is only the DEFAULT -- the lexical self
     // that ordinary `#call`/`yield` runs under. `instance_exec` passes a
     // different one. `boxed_implicit_self` is exactly the "self here, as a
-    // RubyValue" rule this needs, so it isn't re-derived.
+    // RubyValue" rule this needs, so it isn't re-derived. A method-body lambda
+    // always takes a self parameter (the runtime install rebinds it per call),
+    // so it needs the default even when the body itself never mentions `self`.
     let needs_self = block_caps.self_captured;
-    let self_default = needs_self.then(|| {
+    let self_default = (needs_self || method_body).then(|| {
         let boxed = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
         quote! { let __self_default = #boxed; }
     });
@@ -1830,7 +1839,7 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
     let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =
-        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda);
+        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda, method_body);
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
     // this block references (including the genuine captures above) and
     // declare them AGAIN, shadowing the shared `Arc::clone`s just captured
@@ -1859,25 +1868,49 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     let arity = super::params::proc_arity(params, is_lambda);
     // `Proc#parameters` metadata, attached to the constructed proc.
     let proc_params = super::params::proc_parameters(params, is_lambda);
-    // Two shapes, differing only in whether the body needs a receiver:
-    // `with_self` takes one as a parameter (so `instance_exec` can rebind
-    // it); `with_meta` is for a body that never mentions `self` and so has
-    // nothing to rebind.
-    let (ctor, self_param) = if needs_self {
+    // Three shapes:
+    // - `with_self_and_block` for a METHOD-BODY lambda -- takes the receiver
+    //   (rebound per call by the runtime install) AND the call-site block
+    //   (`__blk`, bound directly as the closure's third parameter so the body's
+    //   `yield`/`block_given?`/`&blk` codegen finds it). Named `_` when the
+    //   body doesn't actually use that slot, to avoid an unused-binding warning.
+    // - `with_self` when the body mentions `self` (so `instance_exec` can
+    //   rebind it), and `with_meta` when it never does (nothing to rebind).
+    let (ctor, closure_params, default_arg) = if method_body {
+        let self_p = if needs_self {
+            quote! { __self: &spinel_rt::RubyValue }
+        } else {
+            quote! { _: &spinel_rt::RubyValue }
+        };
+        let blk_p = if needs_blk_param {
+            quote! { __blk: Option<spinel_rt::RubyValue> }
+        } else {
+            quote! { _: Option<spinel_rt::RubyValue> }
+        };
+        (
+            quote! { spinel_rt::RProc::with_self_and_block },
+            quote! { #self_p, __args: &[spinel_rt::RubyValue], #blk_p },
+            quote! { __self_default, },
+        )
+    } else if needs_self {
         (
             quote! { spinel_rt::RProc::with_self },
-            quote! { __self: &spinel_rt::RubyValue, },
+            quote! { __self: &spinel_rt::RubyValue, __args: &[spinel_rt::RubyValue] },
+            quote! { __self_default, },
         )
     } else {
-        (quote! { spinel_rt::RProc::with_meta }, quote! {})
+        (
+            quote! { spinel_rt::RProc::with_meta },
+            quote! { __args: &[spinel_rt::RubyValue] },
+            quote! {},
+        )
     };
-    let default_arg = needs_self.then(|| quote! { __self_default, });
     quote! {
         {
             #(#capture_clones)*
             #blk_clone
             #self_default
-            spinel_rt::RubyValue::Proc(#ctor(move |#self_param __args: &[spinel_rt::RubyValue]| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
+            spinel_rt::RubyValue::Proc(#ctor(move |#closure_params| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                 #redo_label: loop {
                     let __result: Result<spinel_rt::RubyValue, spinel_rt::Signal> = (|| -> Result<spinel_rt::RubyValue, spinel_rt::Signal> {
                         #arity_check

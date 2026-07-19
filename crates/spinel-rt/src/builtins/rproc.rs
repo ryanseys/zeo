@@ -164,7 +164,6 @@ fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> Ruby
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn case_eq_invokes_the_proc() {

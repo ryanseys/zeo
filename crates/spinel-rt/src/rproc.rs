@@ -38,7 +38,19 @@ pub struct ProcData {
     /// of the proc shares one `Arc<ProcData>`, so that would race, and a
     /// save/restore around the call would corrupt any concurrent use). A
     /// parameter is immutable, reentrant, and thread-safe by construction.
-    f: Box<dyn Fn(&RubyValue, &[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync>,
+    /// The third parameter is the CALL-SITE block, which is a different
+    /// thing from the closure env this proc already captured. CRuby keeps
+    /// them apart too: `invoke_bmethod` (`vm.c:1786`) threads the proc's
+    /// captured env through `VM_GUARDED_PREV_EP` while writing the caller's
+    /// block handler into the frame's specval, and `yield` reads the latter
+    /// (`vm.c:1843`). Collapsing them would make a `define_method` body's
+    /// `yield` see the block that was passed to `define_method` rather than
+    /// the one passed to the resulting method.
+    f: Box<
+        dyn Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>
+            + Send
+            + Sync,
+    >,
     /// The block's LEXICAL self -- the receiver `#call` runs under, i.e.
     /// what `self` meant where the block was written. `instance_exec`
     /// bypasses it; everything else uses it.
@@ -94,7 +106,7 @@ impl RProc {
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(move |_self, args| f(args)),
+            f: Box::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity: -1,
             is_lambda: false,
@@ -112,7 +124,7 @@ impl RProc {
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(move |_self, args| f(args)),
+            f: Box::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity,
             is_lambda,
@@ -127,6 +139,21 @@ impl RProc {
     /// supply a different one (see `call_with_self`).
     pub fn with_self(
         f: impl Fn(&RubyValue, &[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
+        self_val: RubyValue,
+        arity: i32,
+        is_lambda: bool,
+    ) -> RProc {
+        RProc::with_self_and_block(move |s, args, _block| f(s, args), self_val, arity, is_lambda)
+    }
+
+    /// `with_self` for a body that can also see the CALL-SITE block -- what a
+    /// `define_method`'d method needs so `yield` and `&blk` inside it reach
+    /// the block passed to the method, not the one passed to define_method.
+    pub fn with_self_and_block(
+        f: impl Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>
+            + Send
+            + Sync
+            + 'static,
         self_val: RubyValue,
         arity: i32,
         is_lambda: bool,
@@ -193,7 +220,7 @@ impl RProc {
 
     /// Invoke under the block's own lexical self -- ordinary `#call`/`yield`.
     pub fn call(&self, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-        let result = (self.0.f)(&self.0.self_val, args);
+        let result = (self.0.f)(&self.0.self_val, args, None);
         self.resolve_home_return(result)
     }
 
@@ -205,7 +232,17 @@ impl RProc {
         recv: &RubyValue,
         args: &[RubyValue],
     ) -> Result<RubyValue, Signal> {
-        let result = (self.0.f)(recv, args);
+        self.call_with_self_and_block(recv, args, None)
+    }
+
+    /// `call_with_self` that also hands the body a call-site block.
+    pub fn call_with_self_and_block(
+        &self,
+        recv: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
+        let result = (self.0.f)(recv, args, block);
         self.resolve_home_return(result)
     }
 

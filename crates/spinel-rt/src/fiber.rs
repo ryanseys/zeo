@@ -329,7 +329,6 @@ fn pack_values(mut vals: Vec<RubyValue>) -> RubyValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc as StdArc;
 
     fn proc_counting_yields() -> RubyValue {
         RubyValue::Proc(crate::RProc::new(|args: &[RubyValue]| {

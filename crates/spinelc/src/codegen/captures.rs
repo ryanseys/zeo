@@ -576,7 +576,7 @@ fn walk(
         // COMPOSES through this same walk (its captures flow into the outer
         // block's capture set); the one genuinely unsupported sub-case is
         // rejected downstream at `emit_proc_or_lambda_value`, not here.
-        HirNode::Lambda { params, body } => {
+        HirNode::Lambda { params, body, .. } => {
             let next_exclusions: HashSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {

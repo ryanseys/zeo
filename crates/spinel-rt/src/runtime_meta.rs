@@ -122,13 +122,14 @@ fn obj_identity(o: &RObj) -> usize {
 
 /// Wrap a compiled block as an instance method: the method's receiver becomes
 /// the block's `self` (`instance_exec`-style rebinding, which `RProc` supports
-/// by taking self as a parameter). The block a define_method'd method itself
-/// receives is NOT forwarded into the body -- `ProcData` has no block slot --
-/// so `yield`/`&blk` inside a `define_method` body is a documented fast-follow.
+/// by taking self as a parameter), and the block the METHOD is called with is
+/// forwarded into the body, so `yield`/`&blk` inside a `define_method` body
+/// see the method's caller's block -- CRuby's `invoke_bmethod` specval, not
+/// the closure env (see `ProcData::f`).
 pub fn dynamic_from_proc(body: RProc) -> MethodImpl {
-    MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], _block| {
+    MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], block| {
         let self_val = RubyValue::Object(recv.clone());
-        body.call_with_self(&self_val, args)
+        body.call_with_self_and_block(&self_val, args, block)
     }))
 }
 

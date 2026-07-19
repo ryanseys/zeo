@@ -554,19 +554,22 @@ fn multi_assign_with_and_without_a_splat() {
 }
 
 #[test]
-fn class_shift_self_at_top_level_is_a_clean_error() {
-    // `class << obj` on a non-`self` receiver now works (#97 F3), but
-    // `class << self` at an EXPRESSION/statement position (top level, method
-    // body) still isn't supported -- there's no compile-time class to attach
-    // the reopened singleton to. A clean compile error, never a panic.
-    let err = spinelc::compile_to_rust(
-        "class << self\n  def hi; 1; end\nend\n",
-    )
-    .unwrap_err();
-    assert!(
-        err.contains("class << self"),
-        "expected a `class << self` scope-cut error, got: {err}"
+fn class_shift_self_at_top_level_defines_singleton_methods_on_main() {
+    // `class << self` at the top level reopens `main`'s singleton (Batch G):
+    // it desugars to `self.define_singleton_method(...)`, `self` being `main`,
+    // so each inner `def` installs on `main` and is callable via implicit self.
+    let result = run_ruby(
+        r#"
+        class << self
+          def shout; "MAIN"; end
+          def echo(x); "<#{x}>"; end
+        end
+        puts shout
+        puts echo("hi")
+        "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "MAIN\n<hi>\n");
 }
 
 #[test]
@@ -13400,9 +13403,25 @@ fn top_level_self_is_the_main_object() {
 }
 
 #[test]
-fn top_level_def_self_is_a_clean_error() {
-    let err = spinelc::compile_to_rust("def self.x\n  1\nend\n").unwrap_err();
-    assert!(err.contains("`def self.name` at the top level"), "{err}");
+fn top_level_def_self_defines_a_singleton_method_on_main() {
+    // A top-level `def self.name` is a SINGLETON method on `main` (Batch G) --
+    // callable via implicit self at the top level, but (CRuby's asymmetry with
+    // a plain top-level `def`, a private Object instance method) NOT from
+    // inside another object's method, where self isn't `main`.
+    let result = run_ruby(
+        r#"
+        def self.only_main; "main-only"; end
+        def self.wrap; "[#{yield}]"; end
+        puts only_main
+        puts wrap { "b" }
+        class Widget
+          def try; only_main rescue "not-visible"; end
+        end
+        puts Widget.new.try
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "main-only\n[b]\nnot-visible\n");
 }
 
 #[test]
@@ -19539,4 +19558,236 @@ fn raising_an_undefined_constant_with_a_message_raises_name_error() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "NameError: uninitialized constant Nope\n");
+}
+
+// --- Batch G: a runtime-installed singleton method now threads its call-site
+// block through ProcData, so `yield`/`block_given?`/`&blk` work inside a
+// per-object singleton (`def obj.m`, `class << obj`) and a `def` in a
+// Class.new block -- previously clean rejections.
+
+#[test]
+fn external_singleton_def_yields_its_call_site_block() {
+    let result = run_ruby(
+        r#"
+        obj = Object.new
+        def obj.greet
+          yield "world"
+        end
+        puts obj.greet { |x| "hello #{x}" }
+        def obj.maybe
+          block_given? ? yield(5) : "none"
+        end
+        puts obj.maybe
+        puts obj.maybe { |n| n * 100 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello world\nnone\n500\n");
+}
+
+#[test]
+fn singleton_method_object_binds_a_named_block_param() {
+    // A `&blk` param on a per-object singleton binds to the method's call-site
+    // block (nil when none is passed), not the unconditional nil it used to.
+    let result = run_ruby(
+        r#"
+        obj = Object.new
+        def obj.wrap(&blk)
+          blk.nil? ? "no block" : blk.call(41) + 1
+        end
+        puts obj.wrap { |n| n }
+        puts obj.wrap
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\nno block\n");
+}
+
+#[test]
+fn singleton_class_object_yields_inside_class_shift_obj() {
+    let result = run_ruby(
+        r#"
+        obj = Object.new
+        class << obj
+          def each_pair
+            yield 1
+            yield 2
+            block_given? ? "done" : "noblock"
+          end
+        end
+        collected = []
+        r = obj.each_pair { |n| collected << n }
+        p collected
+        puts r
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 2]\ndone\n");
+}
+
+#[test]
+fn def_in_class_new_block_yields() {
+    // A `def` in expression position (a `Class.new` block) now threads its
+    // block too -- previously a `panic!`/spike-scope rejection.
+    let result = run_ruby(
+        r#"
+        k = Class.new do
+          def run
+            yield 10
+          end
+        end
+        puts k.new.run { |x| x * 2 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "20\n");
+}
+
+#[test]
+fn singleton_method_yields_params_and_multiple_values() {
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        def obj.combine(a, b)
+          yield a, b, a + b
+        end
+        obj.combine(2, 3) { |x, y, s| puts "#{x} #{y} #{s}" }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2 3 5\n");
+}
+
+#[test]
+fn singleton_method_yield_with_no_block_raises_rescuable_local_jump_error() {
+    // A `yield` reached with no block is a RESCUABLE LocalJumpError, not a
+    // process abort -- true for a singleton method now that its block is
+    // threaded (Batch G).
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        def obj.needs_block
+          yield
+        end
+        begin
+          obj.needs_block
+        rescue LocalJumpError => e
+          puts "caught #{e.class}: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught LocalJumpError: no block given (yield)\n");
+}
+
+#[test]
+fn an_ordinary_method_yield_with_no_block_raises_rescuable_local_jump_error() {
+    // The same LocalJumpError path an ordinary method has always needed -- it
+    // used to abort the process with a Rust panic instead of raising.
+    let result = run_ruby(
+        r##"
+        def m
+          yield
+        end
+        begin
+          m
+        rescue LocalJumpError => e
+          puts "caught #{e.class}"
+        end
+        puts m { "with-block" }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught LocalJumpError\nwith-block\n");
+}
+
+#[test]
+fn singleton_method_inner_block_yields_to_the_methods_own_block() {
+    // Inside a singleton method, an ORDINARY block's `yield` targets the
+    // method's own (call-site) block -- the lexical-clone path composing over
+    // the method-body lambda's call-site `__blk`.
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        def obj.sum_pairs
+          total = 0
+          [1, 2, 3].each { |n| total += yield(n) }
+          total
+        end
+        p obj.sum_pairs { |n| n * 10 }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "60\n");
+}
+
+#[test]
+fn singleton_method_reads_ivars_and_yields() {
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        obj.instance_variable_set(:@base, 100)
+        def obj.add
+          @base + yield
+        end
+        p obj.add { 5 }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "105\n");
+}
+
+#[test]
+fn top_level_def_self_singletons_can_call_each_other_and_yield() {
+    let result = run_ruby(
+        r##"
+        def self.outer
+          "o:#{inner { 1 }}"
+        end
+        def self.inner
+          yield + 41
+        end
+        puts outer
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "o:42\n");
+}
+
+#[test]
+fn break_from_a_block_passed_to_a_singleton_method_returns_from_it() {
+    // `break` in the block yields the method's return value -- the method-body
+    // lambda's terminal arm folds `Signal::Break` into an `Ok` return, exactly
+    // as an ordinary method does.
+    let result = run_ruby(
+        r##"
+        obj = Object.new
+        def obj.count
+          yield 1
+          yield 2
+          yield 3
+          "finished"
+        end
+        p(obj.count { |n| break "stop#{n}" if n == 2 })
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"stop2\"\n");
+}
+
+#[test]
+fn next_from_a_block_passed_to_a_singleton_method_is_its_yield_value() {
+    let result = run_ruby(
+        r#"
+        obj = Object.new
+        def obj.run
+          a = yield 1
+          b = yield 2
+          [a, b]
+        end
+        p(obj.run { |n| next n * 10 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[10, 20]\n");
 }
