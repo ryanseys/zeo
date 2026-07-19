@@ -1,0 +1,9 @@
+"file"
+"directory"
+L:one
+L:two
+L:three
+["one", "two", "three"]
+[".", "..", "a.txt", "b.log", "sub"]
+nil
+[".", "..", "a.txt", "b.log", "sub"]

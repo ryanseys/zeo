@@ -9,7 +9,7 @@
 //! one of those points; the rules themselves are short.
 
 use crate::builtins::file::{path_arg, raise_errno};
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::{RubyValue, Signal};
 
 /// A per-process monotonic counter making each `Dir.mktmpdir` name unique
@@ -273,6 +273,21 @@ builtin_methods! {
         Ok(RubyValue::Array(crate::collections::array_new(
             names.into_iter().map(str_val).collect(),
         )))
+    }
+    // `Dir.foreach(path)` -- yield each entry name (INCLUDING `.` and `..`,
+    // like `entries`); without a block, an Enumerator.
+    "foreach" => fn dir_foreach(recv, args, block) {
+        arity!(args, 1..=2);
+        let path = path_arg(&args[0], "foreach")?;
+        let p = block_or_enum!(recv, "foreach", args, block);
+        let mut names = read_names(&path)?;
+        names.push(".".to_string());
+        names.push("..".to_string());
+        names.sort();
+        for n in names {
+            p.call(&[str_val(n)])?;
+        }
+        Ok(RubyValue::Nil)
     }
     "each_child" => fn dir_each_child(_recv, args, block) {
         arity!(args, 1);

@@ -4859,6 +4859,31 @@ fn set_subtract_flatten_map_filter_classify_and_divide() {
 }
 
 #[test]
+fn file_ftype_foreach_and_dir_foreach() {
+    let result = run_ruby(
+        r#"
+        Dir.mktmpdir do |dir|
+          File.write(File.join(dir, "a.txt"), "one\ntwo\nthree\n")
+          Dir.mkdir(File.join(dir, "sub"))
+          p File.ftype(File.join(dir, "a.txt"))
+          p File.ftype(File.join(dir, "sub"))
+          File.foreach(File.join(dir, "a.txt")) { |line| print "L:", line }
+          p File.foreach(File.join(dir, "a.txt"), chomp: true).to_a
+          # Enumerator form gives the entries; block form returns nil.
+          p Dir.foreach(dir).to_a.sort
+          p(Dir.foreach(dir) { |e| })
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"file\"\n\"directory\"\nL:one\nL:two\nL:three\n[\"one\", \"two\", \"three\"]\n\
+         [\".\", \"..\", \"a.txt\", \"sub\"]\nnil\n"
+    );
+}
+
+#[test]
 fn kernel_callee_putc_and_public_method() {
     let result = run_ruby(
         r##"

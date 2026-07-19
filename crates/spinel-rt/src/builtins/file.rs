@@ -9,7 +9,7 @@
 //! (plan E1+), paths become a real encoding concern; today they round-trip
 //! through `String` and non-UTF-8 paths are out of reach.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 
@@ -286,6 +286,31 @@ fn meta(path: &str) -> Option<std::fs::Metadata> {
     std::fs::metadata(path).ok()
 }
 
+/// `File.ftype`'s answer: the file type of `path` WITHOUT following a final
+/// symlink (`lstat`), as CRuby's fixed strings.
+fn ftype_string(path: &str) -> Result<&'static str, Signal> {
+    use std::os::unix::fs::FileTypeExt;
+    let md = std::fs::symlink_metadata(path).map_err(|e| raise_errno(&e, "lstat", path))?;
+    let ft = md.file_type();
+    Ok(if ft.is_symlink() {
+        "link"
+    } else if ft.is_dir() {
+        "directory"
+    } else if ft.is_file() {
+        "file"
+    } else if ft.is_fifo() {
+        "fifo"
+    } else if ft.is_socket() {
+        "socket"
+    } else if ft.is_char_device() {
+        "characterSpecial"
+    } else if ft.is_block_device() {
+        "blockSpecial"
+    } else {
+        "unknown"
+    })
+}
+
 /// A `File.open` mode string (`"r"`, `"w"`, `"a"`, `"r+"`, ... with an
 /// optional `b`/`t` suffix, which only matter once encodings exist).
 fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
@@ -386,6 +411,33 @@ builtin_methods! {
                 .collect();
         }
         Ok(RubyValue::Array(crate::collections::array_new(lines)))
+    }
+    // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
+    // `chomp: true` strips terminators, mirroring `readlines`.
+    "foreach" => fn file_foreach(recv, args, block) {
+        arity!(args, 1..=2);
+        let path = path_arg(&args[0], "foreach")?;
+        let p = block_or_enum!(recv, "foreach", args, block);
+        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let chomp = kwarg_truthy(args.get(1), "chomp");
+        for line in crate::builtins::string::split_lines(&text) {
+            let line = if chomp {
+                let s = line.to_display_string();
+                str_val(s.trim_end_matches('\n').trim_end_matches('\r').to_string())
+            } else {
+                line
+            };
+            p.call(&[line])?;
+        }
+        Ok(RubyValue::Nil)
+    }
+    // `File.ftype(path)` -- the `lstat` file-type string (doesn't follow a
+    // trailing symlink).
+    "ftype" => fn file_ftype(_recv, args, _block) {
+        arity!(args, 1);
+        let path = path_arg(&args[0], "ftype")?;
+        Ok(str_val(ftype_string(&path)?.to_string()))
     }
     "write" => fn file_write(_recv, args, _block) {
         arity!(args, 2..=3);
