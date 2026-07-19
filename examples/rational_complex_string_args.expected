@@ -1,0 +1,14 @@
+(3/4)
+(-5/2)
+(6/1)
+(5/2)
+(3/1)
+(2+3i)
+(1+2i)
+(3+0i)
+(0-1i)
+(0+4i)
+(1.5-2.5i)
+"ArgumentError: invalid value for convert(): \"abc\""
+"ArgumentError: invalid value for convert(): \"xyz\""
+"ZeroDivisionError: divided by 0"

@@ -584,6 +584,10 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             // A Float contributes its EXACT dyadic value (`Rational(0.3)` is
             // the true `5404.../18014...`, not `3/10`).
             RubyValue::Float(f) => Ok(crate::builtins::float::float_exact_parts(*f)),
+            // A String is PARSED as a rational literal (`"3/4"`, `"-5/2"`,
+            // `"2.5"`, `"6"`) -- its DECIMAL value, not its Float value, so
+            // `"2.5"` is exactly `5/2`.
+            RubyValue::Str(s) => parse_rational_string(&s.lock().to_utf8_lossy()),
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(
@@ -602,11 +606,98 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::rational::rational_new(nn * dd, nd * dn)
 }
 
-/// `Kernel#Complex(real, imag = 0)`.
+/// `Kernel#Complex(real, imag = 0)`. A single String argument is parsed as a
+/// complex literal (`"2+3i"`, `"3"`, `"-i"`).
 pub fn kernel_complex(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=2);
+    if let (RubyValue::Str(s), None) = (&args[0], args.get(1)) {
+        let (real, imag) = parse_complex_string(&s.lock().to_utf8_lossy())?;
+        return crate::builtins::complex::complex_new(real, imag);
+    }
     let imag = args.get(1).cloned().unwrap_or(RubyValue::Int(0));
     crate::builtins::complex::complex_new(args[0].clone(), imag)
+}
+
+/// The `ArgumentError` CRuby's numeric-string converters raise on an
+/// unparseable value: `invalid value for convert(): "<original>"`.
+fn convert_error(original: &str) -> Signal {
+    crate::dispatch::raise_error(
+        "ArgumentError",
+        format!("invalid value for convert(): {original:?}"),
+    )
+}
+
+/// Parse a rational literal string to its `(numerator, denominator)` DECIMAL
+/// value: `"3/4"` -> `(3, 4)`, `"2.5"` -> `(25, 10)` (exactly `5/2`, not the
+/// Float value), `"6"` -> `(6, 1)`. Leading/trailing whitespace and a sign are
+/// allowed. A `"n/0"` denominator is ZeroDivisionError, like the numeric form.
+fn parse_rational_string(s: &str) -> Result<(num_bigint::BigInt, num_bigint::BigInt), Signal> {
+    use num_bigint::BigInt;
+    let t = s.trim();
+    if let Some((n, d)) = t.split_once('/') {
+        let num: BigInt = n.trim().parse().map_err(|_| convert_error(s))?;
+        let den: BigInt = d.trim().parse().map_err(|_| convert_error(s))?;
+        if den == BigInt::from(0) {
+            return Err(crate::dispatch::raise_error(
+                "ZeroDivisionError",
+                "divided by 0".to_string(),
+            ));
+        }
+        Ok((num, den))
+    } else if let Some((int_part, frac_part)) = t.split_once('.') {
+        let neg = int_part.trim_start().starts_with('-');
+        let int_digits: String = int_part.chars().filter(char::is_ascii_digit).collect();
+        let frac_digits: String = frac_part.chars().filter(char::is_ascii_digit).collect();
+        if int_digits.is_empty() && frac_digits.is_empty() {
+            return Err(convert_error(s));
+        }
+        let mut num: BigInt = format!("{int_digits}{frac_digits}")
+            .parse()
+            .map_err(|_| convert_error(s))?;
+        if neg {
+            num = -num;
+        }
+        Ok((num, BigInt::from(10).pow(frac_digits.len() as u32)))
+    } else {
+        Ok((t.parse().map_err(|_| convert_error(s))?, BigInt::from(1)))
+    }
+}
+
+/// Parse a complex literal string to `(real, imag)` values: `"2+3i"`,
+/// `"1+2i"`, `"3"` (-> `(3, 0)`), `"-i"` (-> `(0, -1)`), `"4i"` (-> `(0, 4)`).
+/// Each component is an Integer when it has no decimal point, else a Float.
+fn parse_complex_string(s: &str) -> Result<(RubyValue, RubyValue), Signal> {
+    let t = s.trim();
+    let num = |part: &str| -> Result<RubyValue, Signal> {
+        if part.contains('.') {
+            part.parse::<f64>().map(RubyValue::Float).map_err(|_| convert_error(s))
+        } else {
+            part.parse::<i64>().map(RubyValue::Int).map_err(|_| convert_error(s))
+        }
+    };
+    // The imaginary coefficient: an empty/sign-only string is the unit `±1`.
+    let imag = |part: &str| -> Result<RubyValue, Signal> {
+        match part {
+            "" | "+" => Ok(RubyValue::Int(1)),
+            "-" => Ok(RubyValue::Int(-1)),
+            other => num(other),
+        }
+    };
+    let Some(body) = t.strip_suffix('i').or_else(|| t.strip_suffix('I')) else {
+        // No imaginary unit -> a pure real value.
+        return Ok((num(t)?, RubyValue::Int(0)));
+    };
+    // Split real+imag at the sign joining them (not a leading sign, and not an
+    // exponent sign after `e`/`E`).
+    let split = body.char_indices().rev().find(|&(idx, c)| {
+        (c == '+' || c == '-')
+            && idx != 0
+            && !matches!(body.as_bytes().get(idx - 1), Some(b'e' | b'E'))
+    });
+    match split {
+        Some((idx, _)) => Ok((num(&body[..idx])?, imag(&body[idx..])?)),
+        None => Ok((RubyValue::Int(0), imag(body)?)),
+    }
 }
 
 /// `Kernel#String(arg)` -- `to_s` (the `to_str`-first nuance is invisible

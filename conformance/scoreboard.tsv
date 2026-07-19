@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=db40ef1
-# PASS=1689 FAIL_OUTPUT=341 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=68dc470
+# PASS=1690 FAIL_OUTPUT=340 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1131,7 +1131,7 @@ ivar_polymorphic	PASS	-	-
 ivar_ternary_mixed	PASS	-	-
 ivar_widen_poly_writer	PASS	-	-
 kernel_array_coercion	PASS	-	-
-kernel_array_format_negx_wave10	FAIL_OUTPUT	expect	auto-can-convert-string-into-complex-b59c
+kernel_array_format_negx_wave10	FAIL_OUTPUT	expect	-
 kernel_caller_wired	FAIL_OUTPUT	expect	missing-method:caller
 kernel_complex	PASS	-	-
 kernel_conversions	PASS	-	-
@@ -1142,7 +1142,7 @@ kernel_float_strict	PASS	-	-
 kernel_integer_float_errors	FAIL_OUTPUT	expect	-
 kernel_integer_float_strict_nil	FAIL_OUTPUT	expect	-
 kernel_integer_with_base	PASS	-	-
-kernel_rational_string_zerodenom	FAIL_OUTPUT	expect	auto-can-convert-string-into-rational-269a
+kernel_rational_string_zerodenom	PASS	-	-
 kernel_underscore_id	FAIL_OUTPUT	expect	-
 kwarg_back_propagate_callee_type	PASS	-	-
 kwargs	PASS	-	-
@@ -1636,7 +1636,7 @@ range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
 rational_complex_literals	PASS	-	-
-rational_complex_wave9	FAIL_OUTPUT	expect	auto-can-convert-string-into-complex-b59c
+rational_complex_wave9	FAIL_OUTPUT	expect	auto-expected-numeric-value-got-ni-4730
 rational_ctor_exact	PASS	-	-
 rational_div_family	PASS	-	-
 rational_i_to_complex	FAIL_OUTPUT	expect	-

@@ -22,7 +22,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-can-convert-rational-into-an-exact-number-127c | 2 | time_plus_rational, time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
-| ? | auto-can-convert-string-into-complex-b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-can-iterate-from-the-given-range-9693 | 2 | symbol_range_enum, range_float_type | uncaught exception: can't iterate from the given Range |
 | ? | auto-cannot-load-such-file-time-856a | 2 | bundle_misc_c_34, bundle_misc_c_33 | cannot load such file -- time |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
@@ -42,7 +41,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-assertion-failed-is-finite-2f37 | 1 | pp_store_float_inf_literal | assertion failed: f.is_finite() |
 | ? | auto-can-coerce-complex-into-float-4a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
 | ? | auto-can-convert-proc-into-integer-bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
-| ? | auto-can-convert-string-into-rational-269a | 1 | kernel_rational_string_zerodenom | uncaught exception: can't convert String into Rational |
 | ? | auto-can-do-binary-search-for-the-given-range-f864 | 1 | range_bsearch_float | uncaught exception: can't do binary search for the given Range |
 | ? | auto-can-iterate-from-string-c4d1 | 1 | bundle_tiny_num | uncaught exception: can't iterate from String |
 | ? | auto-can-modify-frozen-string-plain-a903 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" |
@@ -54,6 +52,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-error-unrecognized-escape-sequence-9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-constant-name-or-path-or-5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
+| ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
 | ? | auto-invalid-argument-c00e | 1 | random_methods | uncaught exception: invalid argument - 5...5 |
 | ? | auto-invalid-value-for-float-nxnpn-d0b1 | 1 | float_hex_encoding_isa_bool_wave10 | uncaught exception: invalid value for Float(): "0x1p4" |
