@@ -1,10 +1,10 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c25cfc6
-# PASS=4 FAIL_OUTPUT=9 FAIL_COMPILE=48 FAIL_RUSTC=2 FAIL_RUN=4 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b54ec9f
+# PASS=5 FAIL_OUTPUT=10 FAIL_COMPILE=46 FAIL_RUSTC=2 FAIL_RUN=4 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 END_spec	FAIL_RUN	run	auto-f0c6b32f
 alias_spec	FAIL_COMPILE	compile	spike-misc
-and_spec	FAIL_COMPILE	compile	spike-misc
-array_spec	FAIL_COMPILE	compile	spike-misc
+and_spec	PASS	-	-
+array_spec	FAIL_COMPILE	compile	auto-7de7e598
 assignments_spec	FAIL_COMPILE	compile	auto-bcd16e8b
 block_spec	FAIL_COMPILE	compile	auto-619a71ee
 break_spec	FAIL_COMPILE	compile	spike-misc
@@ -23,7 +23,7 @@ file_spec	FAIL_COMPILE	compile	spike-misc
 for_spec	FAIL_COMPILE	compile	splat
 hash_spec	FAIL_COMPILE	compile	spike-misc
 heredoc_spec	FAIL_COMPILE	compile	spike-misc
-if_spec	FAIL_COMPILE	compile	spike-misc
+if_spec	FAIL_COMPILE	compile	auto-6f3c779d
 it_parameter_spec	FAIL_COMPILE	compile	spike-misc
 keyword_arguments_spec	FAIL_COMPILE	compile	spike-misc
 lambda_spec	FAIL_COMPILE	compile	spike-misc
@@ -32,14 +32,14 @@ loop_spec	FAIL_OUTPUT	expect	missing-method:raise
 magic_comment_spec	FAIL_COMPILE	compile	spike-misc
 match_spec	FAIL_COMPILE	compile	spike-misc
 metaclass_spec	FAIL_COMPILE	compile	spike-misc
-method_spec	FAIL_COMPILE	compile	spike-misc
+method_spec	FAIL_COMPILE	compile	auto-792f6bff
 module_spec	FAIL_COMPILE	compile	auto-72ea658f
-next_spec	FAIL_COMPILE	compile	spike-misc
+next_spec	FAIL_COMPILE	compile	toplevel-node-in-expr
 not_spec	PASS	-	-
 numbered_parameters_spec	FAIL_RUN	run	missing-const:MSpecLite::RUBY_VERSION
 numbers_spec	FAIL_OUTPUT	expect	missing-method:raise
 optional_assignments_spec	FAIL_COMPILE	compile	compound-assign
-or_spec	FAIL_COMPILE	compile	spike-misc
+or_spec	FAIL_OUTPUT	expect	missing-method:raise
 order_spec	FAIL_RUSTC	compile	rustc-failure
 pattern_matching_spec	FAIL_COMPILE	compile	pattern-shapes
 precedence_spec	FAIL_COMPILE	compile	auto-ba2b7615

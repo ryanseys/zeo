@@ -1,5 +1,5 @@
-# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c25cfc6
-# PASS=1666 FAIL_OUTPUT=353 FAIL_COMPILE=40 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
+# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b54ec9f
+# PASS=1670 FAIL_OUTPUT=351 FAIL_COMPILE=38 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -26,7 +26,7 @@ arity_keyword_argument_errors	PASS	-	-
 array_assoc_rassoc	PASS	-	-
 array_at_out_of_bounds	PASS	-	-
 array_bounds_guards	FAIL_OUTPUT	expect	-
-array_bsearch_find_any	FAIL_OUTPUT	expect	spike-misc
+array_bsearch_find_any	PASS	-	-
 array_callforms_strbuf_cycle	PASS	-	-
 array_chain_no_arg	PASS	-	-
 array_clear_expr	PASS	-	-
@@ -201,7 +201,7 @@ box_nullable_obj	PASS	-	-
 box_pointer_to_poly	PASS	-	-
 box_unbox_local_assign_cond	PASS	-	-
 boxed_nil_string_identity	FAIL_OUTPUT	expect	-
-bsearch_find_any_mixed	FAIL_OUTPUT	expect	spike-misc
+bsearch_find_any_mixed	PASS	-	-
 builtin_array_method_capture	PASS	-	-
 bundle_array_a	FAIL_OUTPUT	expect	auto-3fa590af
 bundle_array_b	PASS	-	-
@@ -746,7 +746,7 @@ gsub_sub_block	TIMEOUT_RUN	run	-
 gsub_with_hash_replacement	PASS	-	-
 gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
-hangs_548	FAIL_COMPILE	compile	spike-misc
+hangs_548	FAIL_OUTPUT	expect	-
 harness_batch_2453_2456	FAIL_OUTPUT	expect	missing-const:OpenSSL
 hash_all_pattern	PASS	-	-
 hash_array_string_batch8	PASS	-	-
@@ -1608,7 +1608,7 @@ range_cycle_block	PASS	-	-
 range_each_fusion	PASS	-	-
 range_each_no_block	PASS	-	-
 range_each_slice_cons	PASS	-	-
-range_enum_family	FAIL_OUTPUT	expect	spike-misc
+range_enum_family	PASS	-	-
 range_enumerable	PASS	-	-
 range_enumerable_blocks	PASS	-	-
 range_enumerable_finite	PASS	-	-
@@ -2030,7 +2030,7 @@ valued_break_yield	FAIL_OUTPUT	expect	-
 values_at	PASS	-	-
 virtual_dispatch_void_override	PASS	-	-
 virtual_dispatch_void_override_empty_base	PASS	-	-
-void_value_and_case	FAIL_COMPILE	compile	spike-misc
+void_value_and_case	PASS	-	-
 void_value_begin_writer_tail	PASS	-	-
 void_value_case_writer_arm	PASS	-	-
 void_value_hash_store_nil	PASS	-	-

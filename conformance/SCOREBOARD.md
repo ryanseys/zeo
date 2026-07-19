@@ -1,12 +1,12 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1666/2067 passing (80.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `c25cfc6`
+Suite `spinel` — **1670/2067 passing (80.8%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `b54ec9f`
 
 | verdict | count |
 |---|---|
-| PASS | 1666 |
-| FAIL_OUTPUT | 353 |
-| FAIL_COMPILE | 40 |
+| PASS | 1670 |
+| FAIL_OUTPUT | 351 |
+| FAIL_COMPILE | 38 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
 | TIMEOUT_COMPILE | 0 |
@@ -19,7 +19,7 @@ Suite `spinel` — **1666/2067 passing (80.6%)** — oracle `ruby 4.0.5 (2026-05
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 28 | spike-misc | ? | singleton_method_object | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
+| 23 | spike-misc | ? | enumerable_tally_accumulator | Enumerable#tally with arguments isn't supported yet (spike scope) |
 | 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
 | 5 | missing-method:ffi_lib | P | ffi_const_nested_module_path | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |

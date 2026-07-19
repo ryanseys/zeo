@@ -89,11 +89,12 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    // `Range#bsearch` in find-minimum mode over an integer range: the block
-    // partitions the range into a false prefix then a true suffix, and the
-    // first true element is answered (`nil` if none). Binary search on the
-    // bounds -- no materialization, so a huge range is fine. A numeric block
-    // result (find-any mode) is the same documented gap as `Array#bsearch`.
+    // `Range#bsearch` over an integer range, in both CRuby modes selected by
+    // the block's return type (see `Array#bsearch`'s `bsearch_find`):
+    // find-minimum for a boolean/nil result (first true, `nil` if none) and
+    // find-any for a Numeric comparator result (`0` hits, negative searches
+    // low, positive high; `nil` on no hit). Binary search on the bounds -- no
+    // materialization, so a huge range is fine.
     "bsearch" => fn bsearch(recv, args, block) {
         arity!(args, 0);
         let p = crate::builtins::need_block!(block);
@@ -105,18 +106,24 @@ builtin_methods! {
             ));
         };
         let (mut lo, mut hi) = (*lo0, if exclusive { *hi0 } else { *hi0 + 1 });
+        // `found` tracks the first true (find-minimum) or an exact `0` hit
+        // (find-any); a non-zero numeric result only narrows the bounds, so
+        // find-any with no hit leaves `found` unset -> nil.
         let mut found = None;
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            match p.call(&[RubyValue::Int(mid)])? {
-                RubyValue::Int(_) | RubyValue::Float(_) => {
-                    return Err(crate::dispatch::raise_error(
-                        "NotImplementedError",
-                        "Range#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope)".to_string(),
-                    ))
-                }
-                r if r.truthy() => { found = Some(mid); hi = mid; }
-                _ => lo = mid + 1,
+            let r = p.call(&[RubyValue::Int(mid)])?;
+            let cmp = match r {
+                RubyValue::Int(n) => Some(n.cmp(&0)),
+                RubyValue::Float(f) => f.partial_cmp(&0.0),
+                _ => None,
+            };
+            match cmp {
+                Some(std::cmp::Ordering::Equal) => { found = Some(mid); break; }
+                Some(std::cmp::Ordering::Less) => hi = mid,
+                Some(std::cmp::Ordering::Greater) => lo = mid + 1,
+                None if r.truthy() => { found = Some(mid); hi = mid; }
+                None => lo = mid + 1,
             }
         }
         Ok(found.map_or(RubyValue::Nil, RubyValue::Int))

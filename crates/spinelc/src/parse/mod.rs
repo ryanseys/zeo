@@ -1082,12 +1082,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // 2)` leaves `a == 5` visible afterwards, so these are ordinary
     // statements in the enclosing scope, not a nested one.
     //
-    // `()` stays an error: prism only produces an empty-bodied
-    // `ParenthesesNode` for source that Ruby itself rejects in an
-    // expression position, so there is no correct value to answer.
+    // `()` is `nil` -- valid Ruby in expression position (`p(())` prints
+    // `nil`), falsy as a condition (`while () ; end` never enters, matching
+    // CRuby), and the falsy operand of a `&&`/`||`.
     if let Some(paren) = node.as_parentheses_node() {
         return match paren.body() {
-            None => Err("empty parentheses `()` aren't supported yet (spike scope)".to_string()),
+            None => Ok(hir.push(HirNode::NilLit)),
             Some(n) => match n.as_statements_node() {
                 Some(stmts) => {
                     let body: Vec<_> = stmts.body().iter().collect();

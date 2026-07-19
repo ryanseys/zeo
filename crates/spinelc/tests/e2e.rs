@@ -17915,6 +17915,48 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn bsearch_find_any_mode_follows_the_comparator_protocol() {
+    // A Numeric block result selects find-any mode: 0 is a hit, negative
+    // searches the lower half, positive the upper; a non-hit answers nil. The
+    // boolean find-minimum mode still works alongside it.
+    let result = run_ruby(
+        r#"
+        a = [0, 4, 7, 10, 12]
+        p a.bsearch { |x| 7 <=> x }
+        p a.bsearch { |x| 10 <=> x }
+        p a.bsearch_index { |x| 12 <=> x }
+        p(a.bsearch { |x| 3 <=> x })
+        p a.bsearch { |x| x >= 10 }
+        p [1, 2, 3].bsearch { |x| 1 - x }
+        p((1..100).bsearch { |x| x >= 8 })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n10\n4\nnil\n10\n1\n8\n");
+}
+
+#[test]
+fn empty_parens_are_nil_and_concat_snapshots_its_sources() {
+    // `()` is nil (falsy as a condition, a nil value in expression position);
+    // `Array#concat` copies all sources before appending, so a self-aliasing
+    // `a.concat(a, a)` terminates at 6 elements rather than feeding itself.
+    let result = run_ruby(
+        r#"
+        p(())
+        p((() && true))
+        n = 0
+        while () ; n += 1 ; end
+        p n
+        a = [1, 2]
+        a.concat(a, a)
+        p a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\nnil\n0\n[1, 2, 1, 2, 1, 2]\n");
+}
+
+#[test]
 fn the_core_exception_tree_is_nameable_and_rescuable() {
     // The `Exception`-direct classes (uncaught by a bare `rescue`) and the
     // refined `StandardError`-branch classes all register with the right

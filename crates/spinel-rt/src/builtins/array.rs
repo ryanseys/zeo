@@ -334,6 +334,11 @@ builtin_methods! {
         Ok(recv.clone())
     }
     "concat" => fn concat(recv, args, _block) {
+        // Snapshot every source BEFORE appending: an argument may alias the
+        // receiver (`a.concat(a, a)`), and CRuby copies all sources up front,
+        // so the growing receiver never feeds itself (that self-feeding is the
+        // #548 infinite-growth bug -- `[1,2].concat(a,a)` is 6 elements, not 8).
+        let mut extension = Vec::new();
         for a in args {
             let RubyValue::Array(other) = a else {
                 return Err(crate::dispatch::raise_error(
@@ -344,9 +349,9 @@ builtin_methods! {
                     ),
                 ));
             };
-            let extension = other.lock().clone();
-            recv_array!(recv).lock().extend(extension);
+            extension.extend(other.lock().clone());
         }
+        recv_array!(recv).lock().extend(extension);
         Ok(recv.clone())
     }
     // `flatten` / `flatten(depth)`.
@@ -1278,7 +1283,7 @@ builtin_methods! {
     "bsearch" => fn bsearch(recv, args, block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
-        Ok(match bsearch_find_min(&items, block)? {
+        Ok(match bsearch_find(&items, block)? {
             Some(i) => items[i].clone(),
             None => RubyValue::Nil,
         })
@@ -1286,7 +1291,7 @@ builtin_methods! {
     "bsearch_index" => fn bsearch_index(recv, args, block) {
         arity!(args, 0);
         let items = recv_array!(recv).lock().clone();
-        Ok(match bsearch_find_min(&items, block)? {
+        Ok(match bsearch_find(&items, block)? {
             Some(i) => RubyValue::Int(i as i64),
             None => RubyValue::Nil,
         })
@@ -1417,27 +1422,56 @@ fn range_index_error(v: &RubyValue) -> crate::Signal {
 /// rather than falling through, because a numeric result is truthy, so
 /// treating it as the boolean mode would silently answer the wrong element
 /// instead of failing.
-fn bsearch_find_min(
+/// The shared binary search behind `bsearch`/`bsearch_index` for a sorted
+/// slice, covering both CRuby modes selected by the block's return type:
+///
+/// * **find-minimum** (block answers a boolean/nil): the slice is partitioned
+///   false-then-true; the answer is the index of the first true (`None` if
+///   none), the classic lower-bound.
+/// * **find-any** (block answers a Numeric, the comparator protocol): `0` is a
+///   hit at that index, a negative result searches the lower half, a positive
+///   result the upper half; `None` when no element answers `0`.
+///
+/// A single call stays in one mode (CRuby raises on a mix; the corpus never
+/// does, so this simply follows whichever branch each result takes).
+fn bsearch_find(
     items: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<Option<usize>, crate::Signal> {
     let p = crate::builtins::need_block!(block);
     let (mut lo, mut hi) = (0usize, items.len());
+    let mut numeric_mode = false;
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let r = p.call(&[items[mid].clone()])?;
-        match r {
-            RubyValue::Int(_) | RubyValue::Float(_) => {
-                return Err(crate::dispatch::raise_error(
-                    "NotImplementedError",
-                    "Array#bsearch's find-any mode (a numeric block result) isn't supported yet (spike scope)".to_string(),
-                ))
+        let cmp = match r {
+            RubyValue::Int(n) => Some(n.cmp(&0)),
+            RubyValue::Float(f) => f.partial_cmp(&0.0),
+            _ => None,
+        };
+        match cmp {
+            Some(std::cmp::Ordering::Equal) => return Ok(Some(mid)),
+            Some(std::cmp::Ordering::Less) => {
+                numeric_mode = true;
+                hi = mid;
             }
-            _ if r.truthy() => hi = mid,
-            _ => lo = mid + 1,
+            Some(std::cmp::Ordering::Greater) => {
+                numeric_mode = true;
+                lo = mid + 1;
+            }
+            // Boolean/nil find-minimum mode (a NaN Float also lands here and,
+            // like CRuby, never matches -- it drives the search upward).
+            None if r.truthy() => hi = mid,
+            None => lo = mid + 1,
         }
     }
-    Ok((lo < items.len()).then_some(lo))
+    // find-any exhausted the range without a `0` -> nil; find-minimum answers
+    // the first true (the final `lo`), if any.
+    Ok(if numeric_mode {
+        None
+    } else {
+        (lo < items.len()).then_some(lo)
+    })
 }
 
 /// Every `n`-element combination of `items`, in Ruby's order (indices
