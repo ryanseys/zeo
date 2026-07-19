@@ -1,0 +1,7 @@
+super: no superclass method 'as_json' for an instance of Rec
+[hi]
+F[M2(M1)]
+undefined method 'no_such_method' for an instance of Object
+undefined method 'no_such_method' for nil
+undefined method 'no_such_method' for module Helper
+undefined method 'no_such_method' for class String

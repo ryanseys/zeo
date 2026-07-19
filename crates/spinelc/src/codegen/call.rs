@@ -194,14 +194,39 @@ fn wrap_dynamic_result(has_block: bool, call: TokenStream) -> TokenStream {
 
 /// A `FiberError` with a fixed message -- CRuby's own wording, passed
 /// verbatim from the dispatch sites (Phase 13.3).
-fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
+/// A boxed `class_name` exception carrying `msg` -- what a codegen site emits
+/// when real Ruby RAISES where a compile-time check would otherwise reject.
+fn emit_simple_error(cx: &Ctx, class_name: &str, msg: &str) -> TokenStream {
     super::expr::emit_boxed_new(
         cx,
-        "FiberError",
+        class_name,
         vec![quote! {
             spinel_rt::RubyValue::Str(spinel_rt::string_new(#msg.to_string()))
         }],
     )
+}
+
+fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
+    emit_simple_error(cx, "FiberError", msg)
+}
+
+/// `Thread.new` / `Fiber.new` / `Ractor.new` written with NO block at all.
+/// Every one of them raises at runtime in real Ruby rather than being a static
+/// error, and each is rescuable -- so emit the raise instead of rejecting the
+/// program. Messages verbatim: `thread.c:1034`, `ractor.rb:231`, and Fiber's
+/// via the Proc creation it performs.
+///
+/// This is only for the genuinely blockless form; `&proc` conversion (a real
+/// block argument that just isn't a literal) stays a compile-time gap, since
+/// silently raising "no block" for it would be wrong.
+fn emit_missing_block_raise(cx: &Ctx, target: &str) -> TokenStream {
+    let (class_name, msg) = match target {
+        "Thread" => ("ThreadError", "must be called with a block"),
+        "Fiber" => ("ArgumentError", "tried to create Proc object without a block"),
+        _ => ("ArgumentError", "must be called with a block"),
+    };
+    let err = emit_simple_error(cx, class_name, msg);
+    quote! { return Err(spinel_rt::Signal::Raise(#err)) }
 }
 
 fn emit_frozen_error(cx: &Ctx, class_name: &str, recv_value: TokenStream) -> TokenStream {
@@ -1021,12 +1046,19 @@ pub fn emit_super_inline(
         return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block);
     }
 
-    let (new_defining_class, sid) = found.unwrap_or_else(|| {
-        panic!(
-            "`super`: no `{mname}` found above {}",
-            cx.compiler.class(defining_class).name
-        )
-    });
+    // No user definition above the defining class. Real Ruby has NO
+    // definition-time check here at all -- `super` resolves at CALL time
+    // against the receiver's live ancestry (`vm_search_super_method`,
+    // vm_insnhelper.c:5041) and raises `NoMethodError: super: no superclass
+    // method 'x' for ...` only if that walk comes up empty (vm_eval.c:993).
+    // Rejecting at compile time is wrong twice over: it kills programs that
+    // merely *mention* such a `super` in a rescued or dead branch (codegen
+    // lowers every branch eagerly), and it cannot see methods a compile-time
+    // scan misses -- an included module's, or one registered at runtime. Hand
+    // off to the runtime walk, which finds those and raises correctly if not.
+    let Some((new_defining_class, sid)) = found else {
+        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+    };
 
     // `super` into a NATIVE exception method (D3): the resolved parent is a
     // pristine `BUILTIN_EXCEPTIONS_RB` body (`native_default`) whose real
@@ -1038,7 +1070,7 @@ pub fn emit_super_inline(
     // exception parent's own method (`!native_default`) still splices below --
     // its HIR body runs correctly against the dynamic-self receiver.
     if cx.compiler.scope(sid).native_default {
-        return emit_super_native(cx, mname, &current_params, args, kwargs, zsuper, block);
+        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
     }
 
     let defining_scope = cx.compiler.scope(sid);
@@ -1120,17 +1152,20 @@ pub fn emit_super_inline(
     quote! { { #bindings #blk_binding #inlined } }
 }
 
-/// `super` from an exception-backed method into a NATIVE default parent
-/// (`native_default`), dispatched through `spinel_rt::send_super_from` rather
-/// than spliced (see `emit_super_inline`'s native-branch comment for why).
+/// `super` dispatched through `spinel_rt::send_super_from` rather than spliced,
+/// resuming the receiver's REAL ancestor walk after `defining_class`.
+///
+/// Two callers, one mechanism:
+///  - a `super` into a NATIVE default parent (`native_default`), where there is
+///    no HIR worth splicing (see `emit_super_inline`'s native-branch comment);
+///  - a `super` the compile-time scan could not resolve at all, which real Ruby
+///    resolves at CALL time against the receiver's live ancestry.
+///
 /// Builds the forwarded argument slice -- explicit `super(a, b)` args, or, for
 /// bare `super`, the current method's own positional parameters (required /
-/// optional / splatted `*rest` / post) -- then resumes the receiver's MRO walk
-/// after `defining_class`. Keyword arguments append as one trailing Hash (the
-/// runtime's G2 convention); the native `Exception` methods take none, so this
-/// only matters for a user parent reached transitively, which the runtime walk
-/// resolves correctly.
-fn emit_super_native(
+/// optional / splatted `*rest` / post) -- with keyword arguments appended as
+/// one trailing Hash (the runtime's G2 convention).
+fn emit_runtime_super(
     cx: &Ctx,
     mname: &str,
     current_params: &Params,
@@ -1139,7 +1174,14 @@ fn emit_super_native(
     zsuper: bool,
     block: Option<NodeId>,
 ) -> TokenStream {
-    let self_ident = &cx.self_ident;
+    // `send_super_from` takes a boxed `RubyValue`. An exception-backed self is
+    // already one, but a plain generated-struct self is an `Arc<Concrete>` --
+    // so box through the same helper an implicit-self call uses rather than
+    // passing `self_ident` raw.
+    let self_val = boxed_implicit_self(cx).unwrap_or_else(|| {
+        let slf = &cx.self_ident;
+        quote! { (#slf).clone() }
+    });
     let def_id = cx.defining_class.expect("`super` outside a method").0;
     let (pushes, block_expr) =
         emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
@@ -1148,7 +1190,7 @@ fn emit_super_native(
             let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
             #(#pushes)*
             spinel_rt::send_super_from(
-                &#self_ident,
+                &#self_val,
                 spinel_rt::ClassId(#def_id),
                 spinel_rt::Symbol::intern(#mname),
                 &__super_args,
@@ -2473,7 +2515,10 @@ pub fn emit_call(
                 }
                 ("Fiber", "new") => {
                     let Some(block_id) = block else {
-                        panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                        if block_arg.is_some() {
+                            panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                        }
+                        return emit_missing_block_raise(cx, "Fiber");
                     };
                     let proc = emit_proc_value(cx, block_id);
                     return quote! { spinel_rt::fiber_new(#proc) };
@@ -2501,7 +2546,10 @@ pub fn emit_call(
                 // through to the block's params, matching CRuby.
                 ("Thread", "new") => {
                     let Some(block_id) = block else {
-                        panic!("`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                        if block_arg.is_some() {
+                            panic!("`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                        }
+                        return emit_missing_block_raise(cx, "Thread");
                     };
                     let proc = emit_proc_value(cx, block_id);
                     let arg_exprs: Vec<TokenStream> = args
@@ -2533,7 +2581,10 @@ pub fn emit_call(
                 // deep-copied; a rejection raises `RactorError`).
                 ("Ractor", "new") => {
                     let Some(block_id) = block else {
-                        panic!("`Ractor.new` requires a literal block (spike scope)");
+                        if block_arg.is_some() {
+                            panic!("`Ractor.new` requires a literal block (spike scope)");
+                        }
+                        return emit_missing_block_raise(cx, "Ractor");
                     };
                     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
                         panic!("a Block should only be reached via the Call that invokes it");
@@ -3970,12 +4021,23 @@ fn dispatch(
                     // ordinary explicit-receiver call, matching real Ruby).
                     // Checked HERE (not via `enforce_visibility`, whose
                     // rules are deliberately looser) before recursing.
-                    if name == "public_send" && cx.compiler.scope(sid).visibility != Visibility::Public {
-                        panic!(
-                            "`public_send` cannot call non-public method `{target}` (spike scope, matches real Ruby)"
-                        );
+                    // `public_send` -- unlike `send` -- only ever calls
+                    // `Public` methods, with NO self-receiver/protected-
+                    // relatedness relaxation at all (stricter than an
+                    // ordinary explicit-receiver call, matching real Ruby).
+                    //
+                    // A non-public target is NOT a compile error, though:
+                    // real Ruby resolves visibility at CALL time and raises a
+                    // rescuable NoMethodError. So decline the Path-1
+                    // shortcut and fall through to the dynamic path, whose
+                    // `send_value_public_in` performs exactly that check --
+                    // keeping the rule in ONE place rather than duplicating
+                    // the message here.
+                    let public_ok = name != "public_send"
+                        || cx.compiler.scope(sid).visibility == Visibility::Public;
+                    if public_ok {
+                        return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr, true);
                     }
-                    return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr, true);
                 }
             }
         }
@@ -4006,8 +4068,15 @@ fn dispatch(
         });
         let kw_hash = kw_hash.into_iter();
         let block_value = emit_block_option(cx, block, block_arg);
+        // `public_send` routes through the visibility-gated entry point; plain
+        // `send`/`__send__` stay deliberately visibility-blind.
+        let send_fn = if name == "public_send" {
+            quote! { spinel_rt::send_value_public_in }
+        } else {
+            quote! { spinel_rt::send_value_in }
+        };
         let dyn_call = quote! {
-            spinel_rt::send_value_in(#__bx, &#recv_obj_expr, #name_expr, &[#(#rest_args,)* #(#kw_hash,)*], #block_value)
+            #send_fn(#__bx, &#recv_obj_expr, #name_expr, &[#(#rest_args,)* #(#kw_hash,)*], #block_value)
         };
         return wrap_dynamic_result(block.is_some() || block_arg.is_some(), dyn_call);
     }

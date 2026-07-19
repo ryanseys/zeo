@@ -16,16 +16,16 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | f | dynamic-require | 3 | require_parent, user_enumerable_each_and_for, issue_2978 | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
 | P | missing-method:[] | 3 | struct_methods, multi_write_call_rhs_as_expr, param_body_hash_inference | uncaught exception: undefined method '[]' for class S |
-| P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of Object |
+| P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for main |
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
-| P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
+| P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for nil |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-cannot-load-such-file-time-856a | 2 | bundle_misc_c_34, bundle_misc_c_33 | cannot load such file -- time |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
 | ? | auto-no-block-given-yield-cac6 | 2 | enum_terminal_chunk_zip_lazy, string_enum_inspect_source | uncaught exception: no block given (yield) |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
-| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for an instance of NilClass |
-| P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for an instance of Object |
+| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil |
+| P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for main |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
@@ -48,8 +48,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-memory-allocation-of-bytes-failed-aad1 | 1 | string_multiply_overflow | memory allocation of 1152921504606846976 bytes failed |
 | ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
 | ? | auto-no-block-given-localjumperror-b554 | 1 | yield_no_block_raises | no block given (LocalJumpError) |
-| ? | auto-no-found-above-e324 | 1 | super_into_included_module | `super`: no `orphan` found above E |
-| ? | auto-no-found-above-rec-ef9d | 1 | super_missing_hash_slot | `super`: no `as_json` found above Rec |
 | ? | auto-no-implicit-conversion-of-float-into-integer-32aa | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
 | ? | auto-no-implicit-conversion-of-rational-into-integer-6e6a | 1 | time_fractional_seconds | uncaught exception: no implicit conversion of Rational into Integer |
 | ? | auto-not-file-5c85 | 1 | stdin_io | uncaught exception: not a file |
@@ -70,19 +68,19 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |
 | P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers |
 | P | missing-const:Signal | 1 | signal_module_surface | uncaught exception: uninitialized constant Signal |
-| P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for an instance of NilClass |
-| P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for an instance of NilClass |
-| P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for an instance of NilClass |
+| P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil |
+| P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil |
+| P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil |
 | P | missing-method:Integer | 1 | expr_retry_equal_curry_methodobj | uncaught exception: undefined method 'Integer' for class 'Object' |
 | P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber |
 | P | missing-method:attr | 1 | issue_2952 | uncaught exception: undefined method 'attr' for class C001 |
 | P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute |
 | P | missing-method:begin | 1 | i974 | uncaught exception: undefined method 'begin' for an instance of MatchData |
-| P | missing-method:block_given? | 1 | block_given_block_param | uncaught exception: undefined method 'block_given?' for an instance of Object |
+| P | missing-method:block_given? | 1 | block_given_block_param | uncaught exception: undefined method 'block_given?' for main |
 | P | missing-method:bytebegin | 1 | matchdata_values_at_byteoffset | uncaught exception: undefined method 'bytebegin' for an instance of MatchData |
-| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for an instance of NilClass |
-| P | missing-method:caller | 1 | kernel_caller_wired | uncaught exception: undefined method 'caller' for an instance of Object |
-| P | missing-method:caller_locations | 1 | caller_locations | uncaught exception: undefined method 'caller_locations' for an instance of Object |
+| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for nil |
+| P | missing-method:caller | 1 | kernel_caller_wired | uncaught exception: undefined method 'caller' for main |
+| P | missing-method:caller_locations | 1 | caller_locations | uncaught exception: undefined method 'caller_locations' for main |
 | P | missing-method:class_exec | 1 | class_exec_def_body | uncaught exception: undefined method 'class_exec' for class C |
 | P | missing-method:const_set | 1 | module_const_set | uncaught exception: undefined method 'const_set' for class Box |
 | P | missing-method:count | 1 | env_full_surface | uncaught exception: undefined method 'count' for an instance of Object |
@@ -93,10 +91,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:ffi_const | 1 | ffi_const | uncaught exception: undefined method 'ffi_const' for module Flags |
 | P | missing-method:ffi_struct | 1 | ffi_struct | uncaught exception: undefined method 'ffi_struct' for module M |
 | P | missing-method:foo | 1 | poly_keyed_hash_method_dedup | uncaught exception: undefined method 'foo' for class 'Class' |
-| P | missing-method:format | 1 | splat_print_builtins | uncaught exception: undefined method 'format' for an instance of Object |
-| P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for an instance of Object |
+| P | missing-method:format | 1 | splat_print_builtins | uncaught exception: undefined method 'format' for main |
+| P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for main |
 | P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer |
-| P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for an instance of NilClass |
+| P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for nil |
 | P | missing-method:key | 1 | exception_introspection_accessors | uncaught exception: undefined method 'key' for an instance of KeyError |
 | P | missing-method:kill | 1 | thread_kill_raise | uncaught exception: undefined method 'kill' for an instance of Thread |
 | P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
@@ -108,11 +106,11 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:open | 1 | wave_followups_2833 | uncaught exception: undefined method 'open' for class Dir |
 | P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |
 | P | missing-method:pipe? | 1 | file_surface_extended | uncaught exception: undefined method 'pipe?' for class File |
-| P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for an instance of Object |
+| P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for main |
 | P | missing-method:reset | 1 | set_conformance_batch2 | uncaught exception: undefined method 'reset' for an instance of Set |
 | P | missing-method:size | 1 | lazy_size | uncaught exception: undefined method 'size' for an instance of Enumerator::Lazy |
-| P | missing-method:system | 1 | system_argument_list | uncaught exception: undefined method 'system' for an instance of Object |
-| P | missing-method:trap | 1 | signal_trap_stub | uncaught exception: undefined method 'trap' for an instance of Object |
+| P | missing-method:system | 1 | system_argument_list | uncaught exception: undefined method 'system' for main |
+| P | missing-method:trap | 1 | signal_trap_stub | uncaught exception: undefined method 'trap' for main |
 | P | missing-method:value? | 1 | env_mutation_surface | uncaught exception: undefined method 'value?' for an instance of Object |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
 | k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |

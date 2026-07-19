@@ -37,6 +37,7 @@ pub use collections::*;
 pub use encoding::{EncodingId, StrBuf};
 pub use constants::{const_get, const_set};
 pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
+pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
 pub use builtins::kernel::{
@@ -54,12 +55,13 @@ pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
-    downcast_robj, install_class_registry,
+    describe_receiver, downcast_robj, install_class_registry,
     instance_variable_get, instance_variable_set, instance_variables, is_a,
-    ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object,
-    method_name_symbol, raise_error, raise_stop_iteration, raise_with_cause, responds_to, responds_to_value,
+    ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, MissingReason,
+    method_name_symbol, raise_error, raise_method_missing, raise_stop_iteration, raise_with_cause,
+    responds_to, responds_to_value,
     run_initialize,
-    send, send_in, send_super_from, send_value, send_value_in,
+    send, send_in, send_super_from, send_value, send_value_in, send_value_public_in,
     AllocatorFn, ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject,
     ValueMethodFn,
     ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,

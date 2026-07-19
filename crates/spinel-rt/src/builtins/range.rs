@@ -101,6 +101,32 @@ fn int_in_range(i: i64, end: Option<&RubyValue>, exclusive: bool) -> bool {
 builtin_methods! {
     pub(crate) fn lookup;
 
+    // Materializing an UNBOUNDED range would spin forever growing a vector
+    // until the process died, so CRuby guards `Range#to_a` specifically
+    // (`range_to_a`, range.c:1023) and delegates to Enumerable otherwise.
+    // Registered for both spellings because they are separate entries there
+    // (range.c:2986) -- an alias would silently skip the guard on one.
+    //
+    // The test is on the END only, matching CRuby: a BEGINLESS range isn't
+    // caught here and instead fails in `each`, which cannot start.
+    "to_a" | "entries" => fn to_a(recv, args, _block) {
+        arity!(args, 0);
+        let (_, end, _) = range_parts(recv);
+        let unbounded = match end {
+            None => true,
+            Some(RubyValue::Float(f)) => f.is_infinite() && *f > 0.0,
+            Some(_) => false,
+        };
+        if unbounded {
+            return Err(crate::dispatch::raise_error(
+                "RangeError",
+                "cannot convert endless range to an array".to_string(),
+            ));
+        }
+        crate::builtins::enumerable::enumerable_send(recv, "to_a", &[], None)
+            .expect("Enumerable implements to_a")
+    }
+
     "each" => fn each(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);

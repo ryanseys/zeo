@@ -8,6 +8,17 @@
 use crate::builtins::{arg_int, arg_str, arity, block_or_enum, builtin_methods, recv_str};
 use crate::{RubyValue, Signal};
 
+/// The largest string this runtime will attempt to allocate (1 GiB).
+///
+/// A request past this is answered with `ArgumentError: string size too big`
+/// rather than being passed to the allocator, where an over-large request
+/// ABORTS the process instead of raising something a program can rescue.
+/// CRuby has no equivalent flat cap -- it guards only the length
+/// multiplication and lets the allocator raise `NoMemoryError` -- so this is a
+/// deliberate divergence toward a deterministic, catchable failure. See the
+/// `String#*` guard for the full rationale.
+const MAX_STRING_SIZE: usize = 1 << 30;
+
 /// `capitalize`'s rule: first char upcased, the REST downcased.
 pub(crate) fn capitalize_str(s: &str) -> String {
     let mut chars = s.chars();
@@ -1282,7 +1293,28 @@ builtin_methods! {
                 "negative argument".to_string(),
             ));
         }
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().repeat(n as usize)))
+        let src = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        // Guard the RESULT size before allocating. Without this, `"x" * (1 <<
+        // 60)` hands the allocator a 2^60-byte request and the process ABORTS
+        // -- an uncatchable failure, strictly worse than any exception.
+        //
+        // Divergence from CRuby, deliberate: `rb_str_times` (string.c:2591)
+        // only guards the multiplication itself (`LONG_MAX/len <
+        // RSTRING_LEN(str)` -> ArgumentError "argument too big"), which does
+        // NOT trip for a 1-byte string times 2^60 -- so real Ruby reaches the
+        // allocator here and raises NoMemoryError, a memory-dependent outcome.
+        // The corpus pins the deterministic ArgumentError instead (its
+        // expectation is checked in rather than oracle-generated, and its
+        // header cites the segfault this replaced), so cap on total size.
+        match src.len().checked_mul(n as usize) {
+            Some(total) if total <= MAX_STRING_SIZE => {
+                Ok(str_value(src.repeat(n as usize)))
+            }
+            _ => Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "string size too big".to_string(),
+            )),
+        }
     }
     "to_s" | "to_str" => fn to_s(recv, args, _block) {
         arity!(args, 0);

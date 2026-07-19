@@ -18534,3 +18534,110 @@ fn the_core_exception_tree_is_nameable_and_rescuable() {
         "Exception\nSignalException\nException\nNoMatchingPatternError\nRegexpError\nIOError\nSecurityError: denied\n",
     );
 }
+
+#[test]
+fn super_with_no_definition_above_raises_at_runtime() {
+    // Real Ruby has no definition-time check for `super`: it resolves against
+    // the receiver's live ancestry at CALL time and raises NoMethodError only
+    // if that walk comes up empty (vm_search_super_method / vm_eval.c). So a
+    // `super` with nothing above it must compile, and the raise must be
+    // rescuable -- rejecting it at compile time would kill this whole program.
+    let result = run_ruby(
+        r#"
+        class Rec
+          def as_json
+            h = super
+            h[:x] = 1
+            h
+          end
+        end
+        begin
+          Rec.new.as_json
+        rescue NoMethodError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "super: no superclass method 'as_json' for an instance of Rec\n",
+    );
+}
+
+#[test]
+fn super_resolves_into_an_included_module() {
+    // A compile-time scan of the SUPERCLASS chain alone misses a method that
+    // only an included module defines; the runtime walk covers the real
+    // ancestry, so both a class->module and a module->module `super` land.
+    let result = run_ruby(
+        r#"
+        module Greet
+          def hi
+            "[hi]"
+          end
+        end
+        class C
+          include Greet
+          def hi
+            super
+          end
+        end
+        module M1
+          def tag
+            "M1"
+          end
+        end
+        module M2
+          include M1
+          def tag
+            "M2(#{super})"
+          end
+        end
+        class F
+          include M2
+          def tag
+            "F[#{super}]"
+          end
+        end
+        puts C.new.hi
+        puts F.new.tag
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[hi]\nF[M2(M1)]\n");
+}
+
+#[test]
+fn method_missing_receiver_descriptions_match_cruby() {
+    // One raiser builds every NoMethodError message, so the four receiver
+    // shapes stay in step: an instance, nil (rendered bare, no "an instance
+    // of" prefix), a module, and a class. Critically the receiver is described
+    // by CLASS NAME and never by calling `inspect` on it -- CRuby's formats
+    // carry no receiver-inspect directive, which is what lets an object with
+    // no `inspect` still raise an error about itself.
+    let result = run_ruby(
+        r#"
+        def msg
+          yield
+        rescue NoMethodError => e
+          puts e.message
+        end
+        module Helper; end
+        msg { Object.new.nope }
+        msg { nil.nope }
+        msg { Helper.nope }
+        msg { String.nope }
+        msg { 5.nope }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "undefined method 'nope' for an instance of Object\n\
+         undefined method 'nope' for nil\n\
+         undefined method 'nope' for module Helper\n\
+         undefined method 'nope' for class String\n\
+         undefined method 'nope' for an instance of Integer\n",
+    );
+}

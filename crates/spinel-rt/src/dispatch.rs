@@ -1380,10 +1380,7 @@ pub fn send_super_from(
             return f.call(&obj, args, block);
         }
     }
-    Err(raise_error(
-        "NoMethodError",
-        format!("super: no superclass method '{name}'"),
-    ))
+    Err(raise_method_missing(recv, &name.to_string(), MissingReason::Super))
 }
 
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:
@@ -1614,6 +1611,100 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// Why a method lookup failed, mirroring CRuby's `method_missing_reason`
+/// (`internal/vm.h:32`). CRuby routes every one of these through a SINGLE
+/// raiser (`raise_method_missing`, `vm_eval.c:968`) that picks a format string
+/// per reason, rather than growing a separate error site per failure mode --
+/// so a `super` that finds nothing above its defining class and a
+/// `public_send` aimed at a private method produce their messages from one
+/// place, and stay in step by construction.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MissingReason {
+    /// No entry anywhere in the receiver's ancestry.
+    NoEntry,
+    /// Found, but private and reached with an explicit receiver
+    /// (`obj.secret`, or any `public_send`).
+    Private,
+    /// Found, but protected and the CALLER's `self` isn't a kind of the
+    /// method's owner -- a receiver-sensitive test, hence runtime-only.
+    Protected,
+    /// A bare identifier that resolved to neither a local nor a method.
+    /// The one reason that raises `NameError` instead of `NoMethodError`.
+    VCall,
+    /// `super` found no definition above the defining class.
+    Super,
+}
+
+impl MissingReason {
+    /// The exception class and message template CRuby pairs with this reason
+    /// (`vm_eval.c:985-1006`). `{name}` is the method, `{recv}` the
+    /// [`describe_receiver`] rendering.
+    fn format(self) -> (&'static str, &'static str) {
+        match self {
+            Self::NoEntry => ("NoMethodError", "undefined method '{name}' for {recv}"),
+            Self::Private => ("NoMethodError", "private method '{name}' called for {recv}"),
+            Self::Protected => ("NoMethodError", "protected method '{name}' called for {recv}"),
+            Self::VCall => {
+                ("NameError", "undefined local variable or method '{name}' for {recv}")
+            }
+            Self::Super => ("NoMethodError", "super: no superclass method '{name}' for {recv}"),
+        }
+    }
+}
+
+/// CRuby's receiver description for a method-missing message -- the
+/// `"%3$s%4$s"` prefix+name pair built in `name_err_mesg_to_str`
+/// (`error.c:2660`).
+///
+/// This deliberately NEVER calls `inspect` on the receiver. None of CRuby's
+/// five default formats contains the receiver-inspect directive (`%2$s`), and
+/// the formatter only computes one when the format actually asks for it
+/// (`error.c:2641`). That is precisely what lets a `BasicObject` subclass --
+/// whose blank slate has no `inspect` -- raise a `NoMethodError` describing
+/// itself, instead of failing a second lookup while building the message for
+/// the first.
+pub fn describe_receiver(recv: &RubyValue) -> String {
+    // Real Ruby names the class of an anonymous/unregistered receiver with
+    // its id rather than raising while building an error message.
+    let named = |id: ClassId| class_name(id).unwrap_or_else(|| format!("#<Class:{}>", id.0));
+    match recv {
+        // nil/true/false render bare -- no "an instance of" prefix.
+        RubyValue::Nil => "nil".to_string(),
+        RubyValue::Bool(b) => b.to_string(),
+        // A class or module receiver gets its own shape ("for class Widget" /
+        // "for module Helper"), oracle-verified.
+        RubyValue::Class(cid) => {
+            let kind = if class_is_module(*cid).unwrap_or(false) { "module" } else { "class" };
+            format!("{kind} {}", named(*cid))
+        }
+        // The top-level `self` is rendered literally as `main`
+        // (`error.c:2678`), not as `#<Object:0x...>`.
+        RubyValue::Object(o) => match main_object() {
+            RubyValue::Object(m) if Arc::ptr_eq(&m, o) => "main".to_string(),
+            _ => format!("an instance of {}", named(o.class_id())),
+        },
+        // Every remaining variant maps to a builtin ClassId via the ABI table.
+        _ => format!(
+            "an instance of {}",
+            spinel_abi::builtin_name(recv.class_id()).unwrap_or("Object")
+        ),
+    }
+}
+
+/// THE method-missing raise: CRuby's single `raise_method_missing`
+/// (`vm_eval.c:968`), reason-selected message and all.
+///
+/// Every failed lookup -- a plain miss, a visibility rejection, a bare
+/// identifier, a `super` with nothing above it -- ends here, so the five
+/// message shapes cannot drift apart.
+pub fn raise_method_missing(recv: &RubyValue, name: &str, reason: MissingReason) -> Signal {
+    let (class_name, template) = reason.format();
+    let msg = template
+        .replace("{name}", name)
+        .replace("{recv}", &describe_receiver(recv));
+    raise_error(class_name, msg)
+}
+
 /// Thread the currently-handled exception (`$!`) into `exc`'s `cause` slot
 /// (CRuby's automatic cause chaining) and return `exc` unchanged, for use at a
 /// `raise` site: `Err(Signal::Raise(raise_with_cause(exc)))`. A no-op for a
@@ -1713,6 +1804,39 @@ pub fn send_value(
 /// internal callers (Enumerable driving `each`, Comparable driving `<=>`,
 /// ...) go through the box-0 wrapper above -- builtins run in ROOT, which
 /// is CRuby's own documented builtins-call-builtins leak, faithfully.
+/// `public_send`'s dispatch: `send_value_in` plus the visibility gate.
+///
+/// CRuby implements `public_send` as an ordinary send carrying the
+/// `CALL_PUBLIC` scope, and `rb_method_call_status` (`vm_eval.c:837`) then
+/// rejects private AND protected targets. Protected is rejected
+/// unconditionally here -- normally it is receiver-sensitive, allowed when the
+/// CALLER's `self` is a kind of the method's owner, but `public_send` passes
+/// `Qundef` as that self (`vm_eval.c:1230`), a sentinel nothing can ever be a
+/// kind of. Hence the plain `!= Public` test: no relatedness relaxation
+/// applies, which is what makes `public_send` stricter than a plain
+/// explicit-receiver call.
+///
+/// This is a RUNTIME check by necessity, not by preference: visibility can be
+/// changed after the fact (`private :foo`), and the method name reaching
+/// `public_send` is frequently a runtime value.
+pub fn send_value_public_in(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let reason = match instance_method_visibility(recv.class_id(), name) {
+        Some(MethodVisibility::Private) => Some(MissingReason::Private),
+        Some(MethodVisibility::Protected) => Some(MissingReason::Protected),
+        _ => None,
+    };
+    match reason {
+        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), reason)),
+        None => send_value_in(box_id, recv, name, args, block),
+    }
+}
+
 pub fn send_value_in(
     box_id: u32,
     recv: &RubyValue,
@@ -1814,26 +1938,10 @@ pub fn send_value_in(
             }
         }
     }
-    // A class/module receiver gets real Ruby's own distinct message shape
-    // ("for class Widget" / "for module Helper", oracle-verified) rather
-    // than the instance form below.
-    if let RubyValue::Class(cid) = recv {
-        let kind = if class_is_module(*cid).unwrap_or(false) { "module" } else { "class" };
-        let msg = format!(
-            "undefined method '{name}' for {kind} {}",
-            class_name(*cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0))
-        );
-        return Err(raise_error("NoMethodError", msg));
-    }
-    // The receiver's Ruby class name comes straight from the ABI table
-    // (`class_id()` -> `builtin_name`) -- the hand-maintained variant->name
-    // match this replaced was one more list to keep in sync.
-    let class_name = spinel_abi::builtin_name(recv.class_id())
-        .expect("every non-Object/non-Class RubyValue variant maps to a builtin ClassId");
-    Err(raise_error(
-        "NoMethodError",
-        format!("undefined method '{name}' for an instance of {class_name}"),
-    ))
+    // Every receiver shape -- class, module, immediate, object -- gets its
+    // message from the one method-missing raiser, so the class/module form
+    // ("for class Widget") and the instance form stay in step.
+    Err(raise_method_missing(recv, &name.to_string(), MissingReason::NoEntry))
 }
 
 pub fn send(
@@ -1956,14 +2064,12 @@ pub fn send_in(
     // eprintln-and-`process::exit(1)` shortcut): propagates like any other
     // raised exception -- rescuable at the call site, re-raised at a
     // Thread's `join`/`value` if uncaught there, and printed by the
-    // top-level uncaught handler otherwise. Real Ruby's exact message
-    // shape, with the registered class NAME (Phase 16.1).
-    Err(raise_error(
-        "NoMethodError",
-        format!(
-            "undefined method '{name}' for an instance of {}",
-            class_name(id).unwrap_or_else(|| format!("class {}", id.0))
-        ),
+    // top-level uncaught handler otherwise. Shares the one method-missing
+    // raiser with every other failure mode.
+    Err(raise_method_missing(
+        &RubyValue::Object(recv.clone()),
+        &name.to_string(),
+        MissingReason::NoEntry,
     ))
 }
 

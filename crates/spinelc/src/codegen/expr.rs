@@ -428,6 +428,21 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let inner_expr = emit_expr(cx, *inner);
             quote! { spinel_rt::complex_from_literal(#inner_expr) }
         }
+        // A non-finite literal (`1e400` overflows to Infinity at parse time,
+        // and `Float::NAN` folds here too) cannot be emitted as a Rust float
+        // TOKEN: `Literal::f64_suffixed` asserts `is_finite()` and panics
+        // inside proc-macro2. Emit the corresponding `f64` constant PATH
+        // instead -- same value, and it survives tokenization.
+        HirNode::FloatLit(v) if !v.is_finite() => {
+            let konst = if v.is_nan() {
+                quote! { f64::NAN }
+            } else if *v > 0.0 {
+                quote! { f64::INFINITY }
+            } else {
+                quote! { f64::NEG_INFINITY }
+            };
+            quote! { spinel_rt::RubyValue::Float(#konst) }
+        }
         HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
         HirNode::Lambda { params, body } => super::call::emit_lambda_value(cx, params, body),
         HirNode::SymbolLit(s) => {

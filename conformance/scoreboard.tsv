@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=a82012c
-# PASS=1729 FAIL_OUTPUT=302 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=3b36020
+# PASS=1733 FAIL_OUTPUT=300 FAIL_COMPILE=37 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1320,7 +1320,7 @@ nil_match_op_variable	PASS	-	-
 nil_rationalize_variable	PASS	-	-
 nil_receiver_tap_then	PASS	-	-
 nil_spaceship_variable	PASS	-	-
-nil_string_receiver_raises	FAIL_OUTPUT	expect	-
+nil_string_receiver_raises	PASS	-	-
 nil_time_return_guard_narrow	PASS	-	-
 nil_to_r_rational	PASS	-	-
 nil_typed_equality	PASS	-	-
@@ -1328,7 +1328,7 @@ nil_value_class_union	PASS	-	-
 nilable_poly_array	PASS	-	-
 nilable_time_strftime	PASS	-	-
 nilclass_bool_ops_conversions	PASS	-	-
-nomethod_message_shapes	FAIL_OUTPUT	expect	-
+nomethod_message_shapes	PASS	-	-
 nomethod_scalar_slot	PASS	-	-
 not_match_op	PASS	-	-
 not_user_object	PASS	-	-
@@ -1913,8 +1913,8 @@ struct_yield_initialize	PASS	-	-
 subclass_inherits_module_parent	PASS	-	-
 super_forward_block_given	PASS	-	-
 super_in_non_initialize	PASS	-	-
-super_into_included_module	FAIL_COMPILE	compile	auto-no-found-above-e324
-super_missing_hash_slot	FAIL_COMPILE	compile	auto-no-found-above-rec-ef9d
+super_into_included_module	PASS	-	-
+super_missing_hash_slot	PASS	-	-
 super_qualified_superclass	PASS	-	-
 super_with_args	PASS	-	-
 sym_hash_cross_variant_merge	PASS	-	-

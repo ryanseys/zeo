@@ -193,6 +193,24 @@ fn for_each(
     }
 }
 
+/// Every value `recv`'s `each` yields, in order -- the primitive a `for` loop
+/// over an arbitrary object needs.
+///
+/// Real Ruby's `for x in obj` compiles to nothing more than `obj.each { |x|
+/// ... }` (`compile_iter`, compile.c:8548), so `for` works on ANY receiver
+/// answering `each`, and one that doesn't raises NoMethodError at runtime.
+/// A multi-value yield packs into an Array exactly as a block param would,
+/// which is what lets `for k, v in pairs` destructure.
+pub fn each_values(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
+    let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
+    let out2 = out.clone();
+    for_each(recv, move |yielded| {
+        out2.lock().push(pack(yielded));
+        Ok(RubyValue::Nil)
+    })?;
+    Ok(std::mem::take(&mut *out.lock()))
+}
+
 fn reject_args(args: &[RubyValue], method: &str, what: &str) {
     if !args.is_empty() {
         panic!("Enumerable#{method} with {what} isn't supported yet (spike scope)");

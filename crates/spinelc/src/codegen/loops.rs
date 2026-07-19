@@ -195,7 +195,34 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 }
             }
         },
-        other => panic!("`for` requires an Array, Range, or Hash iterable (spike scope), got {other:?}"),
+        // ANY other iterable -- a user class with `each`, a Poly local, an
+        // Enumerator. This is the GENERAL case, not a fallback: real Ruby's
+        // `for` performs no type dispatch whatsoever. `compile_iter`
+        // (compile.c:8548) emits `ADD_SEND_WITH_BLOCK(..., idEach, ...)`, so
+        // `for x in obj` simply *is* `obj.each { |x| ... }`, and an iterable
+        // that answers no `each` raises NoMethodError at RUNTIME. The
+        // Array/Range/Hash arms above are fast paths over this, which is why
+        // an unrecognized type must reach here rather than fail the compile.
+        //
+        // Elements are collected up front so the body keeps the labelled
+        // `break`/`next` shape the other arms rely on -- the same snapshot
+        // semantics the Array and Hash arms already have.
+        _ => {
+            let coll = super::expr::box_if_object_typed(cx, iterable, iter_expr);
+            quote! {
+                {
+                    let __coll = #coll;
+                    let __iter = spinel_rt::each_values(&__coll)?;
+                    let mut __idx: usize = 0;
+                    #outer: loop {
+                        if __idx >= __iter.len() { break #outer __coll.clone(); }
+                        #bind_array
+                        #inner
+                        __idx += 1;
+                    }
+                }
+            }
+        }
     }
 }
 

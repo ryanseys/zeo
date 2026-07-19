@@ -435,6 +435,18 @@ builtin_methods! {
         if let Some(s) = positional.get(1) {
             step = s.clone();
         }
+        // A zero step never advances `cur`, so the loop below would spin
+        // forever calling the block. CRuby rejects it up front in both the
+        // block and blockless paths (`num_step_check_fix_args`, numeric.c:2888
+        // and `num_step`, numeric.c:3036). The comparison is a Ruby-level
+        // `==` there (`rb_equal`), so `0.0` and `Rational(0, 1)` are rejected
+        // too -- hence `num_cmp` rather than a native `== 0` test.
+        if matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(0))) {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "step can't be 0".to_string(),
+            ));
+        }
         let descending = matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(-1)));
         // CRuby's rule: a Float limit OR step moves the WHOLE iteration
         // into the Float domain (`1.step(2.0, 0.5)` yields 1.0 first).
