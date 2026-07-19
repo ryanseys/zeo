@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=e722c39
-# PASS=1575 FAIL_OUTPUT=342 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=9f455a0
+# PASS=1577 FAIL_OUTPUT=340 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1859,7 +1859,7 @@ thread_condvar	PASS	-	-
 thread_kill_raise	FAIL_OUTPUT	expect	missing-method:report_on_exception=
 thread_list	FAIL_OUTPUT	expect	missing-method:list
 thread_local	PASS	-	-
-thread_mutex	FAIL_OUTPUT	expect	missing-method:try_lock
+thread_mutex	PASS	-	-
 thread_name	PASS	-	-
 thread_new_args	PASS	-	-
 thread_new_value	PASS	-	-
@@ -1867,7 +1867,7 @@ thread_pass_fairness	FAIL_OUTPUT	expect	-
 thread_preempt	PASS	-	-
 thread_queue	PASS	-	-
 thread_raise_main	FAIL_OUTPUT	expect	missing-method:report_on_exception=
-thread_sized_queue	FAIL_OUTPUT	expect	missing-const:SizedQueue
+thread_sized_queue	PASS	-	-
 thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	PASS	-	-

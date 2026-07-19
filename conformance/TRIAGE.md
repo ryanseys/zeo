@@ -22,7 +22,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
-| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-14cc3095c83dd703.rs) |
+| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-2cebfebb1eedde03.rs) |
 | ? | auto-03f2cac6 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-176da354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-1a5f778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
@@ -91,7 +91,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-const:Object::Marshal | 1 | marshal_roundtrip | uncaught exception: uninitialized constant Object::Marshal |
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |
 | P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers |
-| P | missing-const:SizedQueue | 1 | thread_sized_queue | uncaught exception: uninitialized constant SizedQueue |
 | P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for an instance of NilClass |
 | P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for an instance of NilClass |
 | P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for an instance of NilClass |
@@ -135,7 +134,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:size | 1 | lazy_size | uncaught exception: undefined method 'size' for an instance of Enumerator::Lazy |
 | P | missing-method:system | 1 | system_argument_list | uncaught exception: undefined method 'system' for an instance of Object |
 | P | missing-method:trap | 1 | signal_trap_stub | uncaught exception: undefined method 'trap' for an instance of Object |
-| P | missing-method:try_lock | 1 | thread_mutex | uncaught exception: undefined method 'try_lock' for an instance of Mutex |
 | P | missing-method:value? | 1 | env_mutation_surface | uncaught exception: undefined method 'value?' for an instance of Object |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
 | k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |
