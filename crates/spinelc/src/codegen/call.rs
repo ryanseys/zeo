@@ -2483,8 +2483,10 @@ pub fn emit_call(
                         emit_fiber_error(cx, "attempt to yield on a not resumed fiber");
                     return quote! {
                         match spinel_rt::fiber_yield(vec![#(#arg_exprs),*]) {
-                            Some(__v) => __v,
-                            None => return Err(spinel_rt::Signal::Raise(#root_error)),
+                            spinel_rt::FiberYield::Value(__v) => __v,
+                            // `Fiber#raise` injected an exception at this yield.
+                            spinel_rt::FiberYield::Raise(__e) => return Err(spinel_rt::Signal::Raise(__e)),
+                            spinel_rt::FiberYield::Root => return Err(spinel_rt::Signal::Raise(#root_error)),
                         }
                     };
                 }

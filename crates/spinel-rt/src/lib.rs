@@ -76,7 +76,10 @@ pub use lastmatch::{
     last_match, last_match_group, last_match_post, last_match_pre, set_last_match,
 };
 pub use exec::{at_exit_register, run_at_exit, run_main};
-pub use fiber::{fiber_alive, fiber_new, fiber_resume, fiber_yield, FiberHandle, FiberResume, RFiber};
+pub use fiber::{
+    fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_yield, FiberHandle,
+    FiberResume, FiberYield, RFiber,
+};
 pub use globals::{global_alias, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use ractor::{

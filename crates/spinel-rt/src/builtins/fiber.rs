@@ -5,9 +5,22 @@
 //! error messages included.
 
 use crate::dispatch::raise_error;
-use crate::fiber::{fiber_alive, fiber_resume, FiberResume};
+use crate::fiber::{self, fiber_alive, fiber_resume, FiberResume};
 use crate::signal::Signal;
 use crate::value::RubyValue;
+use crate::Symbol;
+
+/// A Symbol/String storage-key argument as a `Symbol`.
+fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(*s),
+        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
+        other => Err(raise_error(
+            "TypeError",
+            format!("{} is not a symbol nor a string", other.inspect_string()),
+        )),
+    }
+}
 
 fn f_resume(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     match fiber_resume(&recv.as_fiber_unchecked(), args.to_vec()) {
@@ -32,17 +45,144 @@ fn f_alive_p(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
     Ok(RubyValue::Bool(fiber_alive(&recv.as_fiber_unchecked())))
 }
 
+fn f_kill(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fiber::fiber_kill(&recv.as_fiber_unchecked());
+    // CRuby answers the (now terminated) fiber itself.
+    Ok(recv.clone())
+}
+
+/// CRuby restricts `#storage`/`#storage=` to the fiber they belong to.
+fn require_current(recv: &RubyValue) -> Result<crate::fiber::RFiber, Signal> {
+    let handle = recv.as_fiber_unchecked();
+    if !fiber::fiber_is_current(&handle) {
+        return Err(raise_error(
+            "ArgumentError",
+            "Fiber storage can only be accessed from the Fiber it belongs to".to_string(),
+        ));
+    }
+    Ok(handle)
+}
+
+fn f_storage(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(fiber::fiber_storage_hash(&require_current(recv)?))
+}
+
+fn f_set_storage(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let handle = require_current(recv)?;
+    let pairs = match &args[0] {
+        RubyValue::Nil => Vec::new(),
+        RubyValue::Hash(h) => {
+            let mut out = Vec::new();
+            for (k, v) in h.lock().values() {
+                out.push((key_sym(k)?, v.clone()));
+            }
+            out
+        }
+        other => {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(other)),
+            ))
+        }
+    };
+    fiber::fiber_set_storage(&handle, pairs);
+    Ok(args[0].clone())
+}
+
+/// Resolve `Fiber#raise`'s arguments to the exception value to inject, mirroring
+/// `Kernel#raise`: no args -> `RuntimeError ""`; a class (optionally + message)
+/// -> an instance of it; a String -> `RuntimeError`; an Exception -> itself.
+fn resolve_raise_exc(args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    match args.first() {
+        None => Ok(exc_of("RuntimeError", String::new())),
+        Some(RubyValue::Class(cid)) => {
+            let name = crate::dispatch::class_name(*cid).unwrap_or_else(|| "RuntimeError".to_string());
+            let msg = args.get(1).map(|m| m.to_display_string()).unwrap_or_default();
+            Ok(exc_of(&name, msg))
+        }
+        Some(v) => Ok(crate::dispatch::coerce_raise_arg(v.clone())),
+    }
+}
+
+/// Build an exception value by class name + message (unwrapping the Signal the
+/// runtime raise channel produces).
+fn exc_of(class_name: &str, msg: String) -> RubyValue {
+    match raise_error(class_name, msg) {
+        Signal::Raise(exc) => exc,
+        _ => RubyValue::Nil,
+    }
+}
+
+fn f_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let exc = resolve_raise_exc(args)?;
+    match fiber::fiber_raise(&recv.as_fiber_unchecked(), exc) {
+        FiberResume::Value(v) => Ok(v),
+        FiberResume::RubyError(sig) => Err(sig),
+        FiberResume::Dead => Err(raise_error(
+            "FiberError",
+            "attempt to resume a terminated fiber".to_string(),
+        )),
+        FiberResume::DoubleResume => Err(raise_error(
+            "FiberError",
+            "attempt to resume the current fiber (double resume)".to_string(),
+        )),
+        FiberResume::CrossThread => Err(raise_error(
+            "FiberError",
+            "fiber called across threads".to_string(),
+        )),
+    }
+}
+
+// Two Fiber objects are equal iff they are the same fiber (identity).
+fn f_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let same = matches!(&args[0], RubyValue::Fiber(o) if std::sync::Arc::ptr_eq(&recv.as_fiber_unchecked(), o));
+    Ok(RubyValue::Bool(same))
+}
+
 pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "resume" => f_resume,
         "alive?" => f_alive_p,
+        "kill" => f_kill,
+        "raise" => f_raise,
+        "storage" => f_storage,
+        "storage=" => f_set_storage,
+        "==" | "eql?" | "equal?" => f_eq,
         _ => return None,
     })
 }
 
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
-    &["resume", "alive?"]
+    &["resume", "alive?", "kill", "raise", "storage", "storage=", "==", "eql?", "equal?"]
+}
+
+// --- Class methods (`Fiber.current`, `Fiber[]`, `Fiber.[]=`) ---------------
+
+fn c_current(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(fiber::fiber_current())
+}
+
+fn c_aref(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(fiber::fiber_storage_get(key_sym(&args[0])?))
+}
+
+fn c_aset(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    fiber::fiber_storage_set(key_sym(&args[0])?, args[1].clone());
+    Ok(args[1].clone())
+}
+
+pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
+    Some(match name {
+        "current" => c_current,
+        "[]" => c_aref,
+        "[]=" => c_aset,
+        _ => return None,
+    })
+}
+
+pub fn lookup_class_names() -> &'static [&'static str] {
+    &["current", "[]", "[]="]
 }
 
 #[cfg(test)]

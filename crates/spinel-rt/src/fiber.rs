@@ -40,7 +40,7 @@
 //! code executes -- matching this spike's general "no ensure on
 //! never-finished fibers" simplification.
 
-use crate::{RubyValue, Signal};
+use crate::{RubyValue, Signal, Symbol};
 use spinel_fiber::{Coroutine, CoroutineResult};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -66,14 +66,69 @@ pub struct FiberHandle {
     /// research addendum). Starts empty: a fresh fiber has no exception in
     /// flight regardless of what its creator was rescuing.
     handling: parking_lot::Mutex<Vec<RubyValue>>,
+    /// `Fiber[]`/`Fiber.[]=` / `#storage` -- inheritable fiber-local storage.
+    /// `None` until the first write, so `#storage` reads nil rather than an
+    /// empty Hash (CRuby lazily allocates it). A new fiber COPIES its
+    /// creator's storage at creation; writes are private thereafter.
+    storage: parking_lot::Mutex<Option<HashMap<Symbol, RubyValue>>>,
 }
 
 pub type RFiber = Arc<FiberHandle>;
 
-type FiberCoro = Coroutine<Vec<RubyValue>, RubyValue, Result<RubyValue, Signal>>;
+/// What a `resume`/`raise` feeds into a suspended fiber: either the values to
+/// return from its `Fiber.yield` (or bind as its first block args), or an
+/// exception to raise AT that yield point (`Fiber#raise`).
+pub enum FiberInput {
+    Resume(Vec<RubyValue>),
+    Raise(RubyValue),
+}
+
+type FiberCoro = Coroutine<FiberInput, RubyValue, Result<RubyValue, Signal>>;
 
 thread_local! {
     static FIBERS: RefCell<HashMap<u64, FiberCoro>> = RefCell::new(HashMap::new());
+    /// The stack of fibers currently executing on this thread (innermost
+    /// last) -- backs `Fiber.current`. Empty means the root fiber is running.
+    static CURRENT_FIBER: RefCell<Vec<RFiber>> = const { RefCell::new(Vec::new()) };
+    /// This thread's root fiber -- the implicit fiber the thread runs in
+    /// before any `Fiber.new`. Lazily created so its identity stays stable
+    /// (`Fiber.current.equal?(Fiber.current)` at the top level).
+    static ROOT_FIBER: RefCell<Option<RFiber>> = const { RefCell::new(None) };
+}
+
+/// This thread's root fiber handle, created on first need. It never holds a
+/// coroutine (the thread's native stack IS its stack) and is always alive.
+fn root_fiber() -> RFiber {
+    ROOT_FIBER.with(|r| {
+        r.borrow_mut()
+            .get_or_insert_with(|| {
+                Arc::new(FiberHandle {
+                    id: 0,
+                    owner: std::thread::current().id(),
+                    finished: AtomicBool::new(false),
+                    handling: parking_lot::Mutex::new(Vec::new()),
+                    storage: parking_lot::Mutex::new(None),
+                })
+            })
+            .clone()
+    })
+}
+
+/// The fiber running right now on this thread -- the innermost resumed one,
+/// or the root fiber when none is resumed.
+fn current_handle() -> RFiber {
+    CURRENT_FIBER.with(|s| s.borrow().last().cloned()).unwrap_or_else(root_fiber)
+}
+
+/// Whether `handle` is the fiber executing right now -- `#storage`/`#storage=`
+/// are legal only on the current fiber (CRuby's own restriction).
+pub fn fiber_is_current(handle: &RFiber) -> bool {
+    Arc::ptr_eq(handle, &current_handle())
+}
+
+/// `Fiber.current` -- the running fiber as a Ruby value.
+pub fn fiber_current() -> RubyValue {
+    RubyValue::Fiber(current_handle())
 }
 
 /// Process-wide (not per-thread) so a handle's id says which fiber it is
@@ -87,13 +142,21 @@ static NEXT_FIBER_ID: AtomicU64 = AtomicU64::new(1);
 pub fn fiber_new(block: RubyValue) -> RubyValue {
     let body = block.as_proc_unchecked();
     let id = NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed);
-    let coro = spinel_fiber::new_fiber(move |args: Vec<RubyValue>| body.call(&args));
+    // The first input becomes the block's args -- or, if the very first thing
+    // done to the fiber is `#raise`, the body raises before running at all.
+    let coro = spinel_fiber::new_fiber(move |first: FiberInput| match first {
+        FiberInput::Resume(args) => body.call(&args),
+        FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
+    });
     FIBERS.with(|f| f.borrow_mut().insert(id, coro));
+    // Inherit the creating fiber's storage (CRuby copies it at creation).
+    let inherited = current_handle().storage.lock().clone();
     RubyValue::Fiber(Arc::new(FiberHandle {
         id,
         owner: std::thread::current().id(),
         finished: AtomicBool::new(false),
         handling: parking_lot::Mutex::new(Vec::new()),
+        storage: parking_lot::Mutex::new(inherited),
     }))
 }
 
@@ -116,7 +179,21 @@ pub enum FiberResume {
     CrossThread,
 }
 
+/// `Fiber#resume(*args)` -- feed values in and run to the next yield/return.
 pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
+    fiber_drive(handle, FiberInput::Resume(args))
+}
+
+/// `Fiber#raise(exc)` -- resume the fiber but make its suspended `Fiber.yield`
+/// raise `exc` instead of returning a value. A fresh fiber (never resumed)
+/// raises before its body runs. Same outcome shape as `resume`: the exception
+/// either is rescued inside the fiber (which then yields/returns normally) or
+/// propagates back here as `RubyError`.
+pub fn fiber_raise(handle: &RFiber, exc: RubyValue) -> FiberResume {
+    fiber_drive(handle, FiberInput::Raise(exc))
+}
+
+fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     if std::thread::current().id() != handle.owner {
         return FiberResume::CrossThread;
     }
@@ -140,7 +217,11 @@ pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
     // acceptable: a runtime panic is already a dying process in this
     // spike's posture.
     let resumer_stack = crate::handling::swap_handling(std::mem::take(&mut handle.handling.lock()));
-    let result = spinel_fiber::resume(&mut coro, args);
+    // Mark THIS fiber as current for the duration of the switch, so
+    // `Fiber.current` inside the body finds it (and nested resumes stack).
+    CURRENT_FIBER.with(|s| s.borrow_mut().push(handle.clone()));
+    let result = spinel_fiber::resume(&mut coro, input);
+    CURRENT_FIBER.with(|s| { s.borrow_mut().pop(); });
     *handle.handling.lock() = crate::handling::swap_handling(resumer_stack);
     match result {
         CoroutineResult::Yield(v) => {
@@ -157,18 +238,82 @@ pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
     }
 }
 
+/// What a `Fiber.yield` returns to the compiled call site.
+pub enum FiberYield {
+    /// The value the next `resume` passed in.
+    Value(RubyValue),
+    /// The next call was `Fiber#raise`: the yield must raise this exception.
+    Raise(RubyValue),
+    /// No fiber is running -- the "can't yield from root fiber" `FiberError`.
+    Root,
+}
+
 /// `Fiber.yield(*args)` -- packs `args` per the CRuby convention (module
-/// docs), suspends the innermost running fiber, and returns the value the
-/// NEXT `resume` passes in (packed the same way). `None` = no fiber is
-/// running: the call site raises `FiberError` ("can't yield from root
-/// fiber").
-pub fn fiber_yield(args: Vec<RubyValue>) -> Option<RubyValue> {
+/// docs), suspends the innermost running fiber, and reports what the NEXT
+/// `resume`/`raise` fed in.
+pub fn fiber_yield(args: Vec<RubyValue>) -> FiberYield {
     let payload = pack_values(args);
-    spinel_fiber::yield_current::<Vec<RubyValue>, RubyValue>(payload).map(pack_values)
+    match spinel_fiber::yield_current::<FiberInput, RubyValue>(payload) {
+        None => FiberYield::Root,
+        Some(FiberInput::Resume(vals)) => FiberYield::Value(pack_values(vals)),
+        Some(FiberInput::Raise(exc)) => FiberYield::Raise(exc),
+    }
 }
 
 pub fn fiber_alive(handle: &RFiber) -> bool {
     !handle.finished.load(Ordering::Relaxed)
+}
+
+/// `Fiber[key]` -- read the CURRENT fiber's storage (nil if unset).
+pub fn fiber_storage_get(key: Symbol) -> RubyValue {
+    current_handle()
+        .storage
+        .lock()
+        .as_ref()
+        .and_then(|m| m.get(&key).cloned())
+        .unwrap_or(RubyValue::Nil)
+}
+
+/// `Fiber[key] = value` -- write the current fiber's storage (allocating it
+/// on first write).
+pub fn fiber_storage_set(key: Symbol, value: RubyValue) {
+    current_handle()
+        .storage
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .insert(key, value);
+}
+
+/// `Fiber#storage` -- a Hash of `handle`'s storage, or nil if it was never
+/// written (CRuby's lazy allocation).
+pub fn fiber_storage_hash(handle: &RFiber) -> RubyValue {
+    match &*handle.storage.lock() {
+        None => RubyValue::Nil,
+        Some(map) => {
+            let pairs = map.iter().map(|(k, v)| (RubyValue::Symbol(*k), v.clone())).collect();
+            RubyValue::Hash(crate::hash_new(pairs))
+        }
+    }
+}
+
+/// `Fiber#storage = { ... }` -- replace `handle`'s storage from `pairs`
+/// (Symbol keys); the caller answers the assigned value.
+pub fn fiber_set_storage(handle: &RFiber, pairs: Vec<(Symbol, RubyValue)>) {
+    *handle.storage.lock() = Some(pairs.into_iter().collect());
+}
+
+/// `Fiber#kill` -- terminate a suspended fiber: drop its coroutine (whose
+/// `Drop` force-unwinds the parked stack, running only Rust destructors) and
+/// mark it finished. A cross-thread kill is a no-op, mirroring resume's
+/// thread-pinning. Returns nil.
+pub fn fiber_kill(handle: &RFiber) -> RubyValue {
+    if std::thread::current().id() == handle.owner {
+        handle.finished.store(true, Ordering::Relaxed);
+        FIBERS.with(|f| {
+            f.borrow_mut().remove(&handle.id);
+        });
+    }
+    RubyValue::Nil
 }
 
 /// CRuby's `make_passing_arg` (`cont.c:1978`): 0 -> nil, 1 -> the value,
@@ -189,7 +334,10 @@ mod tests {
     fn proc_counting_yields() -> RubyValue {
         RubyValue::Proc(crate::RProc::new(|args: &[RubyValue]| {
             let first = args.first().cloned().unwrap_or(RubyValue::Nil);
-            let second = fiber_yield(vec![first]).expect("inside a fiber");
+            let second = match fiber_yield(vec![first]) {
+                FiberYield::Value(v) => v,
+                _ => panic!("expected a resume value inside a fiber"),
+            };
             Ok(second)
         }))
     }
@@ -230,7 +378,7 @@ mod tests {
 
     #[test]
     fn yield_with_no_running_fiber_is_the_root_fiber_case() {
-        assert!(fiber_yield(vec![RubyValue::Int(1)]).is_none());
+        assert!(matches!(fiber_yield(vec![RubyValue::Int(1)]), FiberYield::Root));
     }
 
     #[test]
