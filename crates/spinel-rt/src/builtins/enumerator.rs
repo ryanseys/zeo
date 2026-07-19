@@ -61,6 +61,10 @@ use std::thread::ThreadId;
 enum EnumSource {
     Method { recv: RubyValue, meth: String, args: Vec<RubyValue> },
     Generator { block: RProc },
+    /// `Enumerator.produce(initial) { |prev| ... }` -- an infinite generator.
+    /// The first yielded value is `initial` (or, absent, `block.call(nil)`);
+    /// each subsequent value is `block` applied to the previous one.
+    Produce { initial: Option<RubyValue>, block: RProc },
 }
 
 /// The mutable external-iteration half, all behind one short-held lock
@@ -175,6 +179,28 @@ pub(crate) fn enumerator_new(
     })))
 }
 
+builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    // `Enumerator.produce([initial]) { |prev| ... }` -- an endless generator
+    // (#2483). With `initial`, that value is yielded first; then each block
+    // result is yielded, forever (bounded by the consumer, e.g. `take`/`first`).
+    "produce" => fn produce(_recv, args, block) {
+        arity!(args, 0..=1);
+        let Some(RubyValue::Proc(generator)) = block else {
+            return Err(raise_error(
+                "ArgumentError",
+                "tried to create Producer without a block".to_string(),
+            ));
+        };
+        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
+            source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
+            size_hint: None,
+            state: Mutex::new(ExternState::default()),
+        })))
+    }
+}
+
 fn recv_enum(recv: &RubyValue) -> &REnumerator {
     match recv {
         RubyValue::Enumerator(e) => e,
@@ -201,6 +227,17 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
         EnumSource::Generator { block: generator } => {
             let each_block = block.as_proc_unchecked();
             generator.call(&[RubyValue::Yielder(each_block)])
+        }
+        EnumSource::Produce { initial, block: generator } => {
+            let each_block = block.as_proc_unchecked();
+            let mut cur = match initial {
+                Some(v) => v.clone(),
+                None => generator.call(&[RubyValue::Nil])?,
+            };
+            loop {
+                each_block.call(&[cur.clone()])?;
+                cur = generator.call(&[cur])?;
+            }
         }
     }
 }
@@ -344,6 +381,9 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
         EnumSource::Generator { .. } => {
             "#<Enumerator: #<Enumerator::Generator>:each>".to_string()
         }
+        EnumSource::Produce { .. } => {
+            "#<Enumerator: #<Enumerator::Producer>:each>".to_string()
+        }
         EnumSource::Method { recv, meth, args } => {
             let mut s = format!("#<Enumerator: {}:{meth}", recv.inspect_string());
             if !args.is_empty() {
@@ -366,6 +406,8 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
 fn enum_size(e: &EnumeratorData) -> RubyValue {
     match &e.source {
         EnumSource::Generator { .. } => e.size_hint.clone().unwrap_or(RubyValue::Nil),
+        // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
+        EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
         EnumSource::Method { recv, meth, args } => match meth.as_str() {
             "each" | "map" | "collect" | "select" | "filter" | "find_all" | "reject"
             | "sort_by" | "min_by" | "max_by" | "group_by" | "partition" | "flat_map"

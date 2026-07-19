@@ -112,7 +112,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |
 | P | missing-method:pipe? | 1 | file_surface_extended | uncaught exception: undefined method 'pipe?' for class File |
 | P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for an instance of Object |
-| P | missing-method:produce | 1 | enumerator_produce | uncaught exception: undefined method 'produce' for class Enumerator |
 | P | missing-method:reset | 1 | set_conformance_batch2 | uncaught exception: undefined method 'reset' for an instance of Set |
 | P | missing-method:size | 1 | lazy_size | uncaught exception: undefined method 'size' for an instance of Enumerator::Lazy |
 | P | missing-method:system | 1 | system_argument_list | uncaught exception: undefined method 'system' for an instance of Object |

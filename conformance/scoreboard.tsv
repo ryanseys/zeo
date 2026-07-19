@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=0dbe744
-# PASS=1710 FAIL_OUTPUT=320 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=03751b1
+# PASS=1711 FAIL_OUTPUT=319 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -573,7 +573,7 @@ enumerator_generator_lazy	PASS	-	-
 enumerator_lazy	PASS	-	-
 enumerator_new	PASS	-	-
 enumerator_ops	FAIL_OUTPUT	expect	missing-method:+
-enumerator_produce	FAIL_OUTPUT	expect	missing-method:produce
+enumerator_produce	PASS	-	-
 enumerator_range	PASS	-	-
 enumerator_result_source	FAIL_OUTPUT	expect	-
 enumerator_size	FAIL_OUTPUT	expect	auto-can-convert-proc-into-integer-bd61

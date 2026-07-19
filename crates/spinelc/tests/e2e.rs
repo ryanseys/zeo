@@ -17971,6 +17971,29 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn enumerator_produce_endless_generator() {
+    // Enumerator.produce(initial) { |prev| ... } yields initial, then each
+    // block result, forever -- bounded by the consumer. Without initial, the
+    // first value is block.call(nil).
+    let result = run_ruby(
+        r#"
+        p(Enumerator.produce(1) { |n| n * 2 }.take(3))
+        p(Enumerator.produce(1) { |n| n + 1 }.first(4))
+        g = Enumerator.produce(0) { |n| n + 2 }
+        p g.next
+        p g.next
+        e = Enumerator.produce { |n| (n || 0) + 1 }
+        p e.take(3)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 4]\n[1, 2, 3, 4]\n0\n2\n[1, 2, 3]\n",
+    );
+}
+
+#[test]
 fn module_constants_included_modules_and_class_variables() {
     // Module#constants (own first, ancestors' next, Object's excluded),
     // #included_modules (modules in the MRO), and #class_variables (own +
