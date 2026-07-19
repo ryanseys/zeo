@@ -17599,3 +17599,44 @@ fn numeric_step_accepts_by_and_to_keywords() {
         "1 3 5 7 9 \n1 3 5 7 9 \n1 2 3 4 5 \n10 7 4 1 \n"
     );
 }
+
+#[test]
+fn queue_and_mutex_methods_on_a_poly_receiver() {
+    // A Queue/Mutex held in a collection is a dynamically-typed (Poly)
+    // receiver, so these methods dispatch through the runtime Path-2 tables
+    // rather than the static Path-1 codegen arm. Both must agree.
+    let result = run_ruby(
+        r#"
+        qs = [Queue.new]
+        qs.each do |q|
+          q.push(10)
+          q << 20
+          q.enq(30)
+        end
+        q = qs.first
+        p q.length
+        p q.empty?
+        p q.pop
+        q.close
+        p q.closed?
+        p q.pop
+        p q.pop
+
+        locks = { m: Mutex.new }
+        m = locks[:m]
+        p m.locked?
+        r = m.synchronize do
+          p m.owned?
+          42
+        end
+        p r
+        p m.locked?
+        p q.send(:size)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3\nfalse\n10\ntrue\n20\n30\nfalse\ntrue\n42\nfalse\n0\n"
+    );
+}

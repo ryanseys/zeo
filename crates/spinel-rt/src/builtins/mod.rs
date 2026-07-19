@@ -40,6 +40,7 @@ pub(crate) mod lazy;
 pub(crate) mod method_obj;
 pub(crate) mod matchdata;
 pub(crate) mod math;
+pub(crate) mod mutex;
 pub(crate) mod dir;
 pub(crate) mod encoding;
 pub(crate) mod env;
@@ -49,6 +50,7 @@ pub(crate) mod numeric;
 pub(crate) mod object;
 pub(crate) mod pack;
 pub(crate) mod process;
+pub(crate) mod queue;
 pub(crate) mod time;
 pub(crate) mod range;
 pub(crate) mod rational;
@@ -109,6 +111,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::SET_CLASS => set::lookup,
         spinel_abi::LAZY_CLASS => lazy::lookup,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
+        spinel_abi::QUEUE_CLASS => queue::lookup,
+        spinel_abi::MUTEX_CLASS => mutex::lookup,
         // In-tree `ext/` extensions with instances (modules like CGI/JSON have
         // none -- they appear only in `class_method_table`).
         #[cfg(feature = "ext-stringio")]
@@ -164,6 +168,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
         spinel_abi::THREAD_CLASS => thread::lookup_class,
         spinel_abi::FIBER_CLASS => fiber::lookup_class,
+        spinel_abi::QUEUE_CLASS => queue::lookup_class,
+        spinel_abi::MUTEX_CLASS => mutex::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         #[cfg(feature = "ext-base64")]
@@ -234,6 +240,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::SET_CLASS => set::lookup_names(),
         spinel_abi::LAZY_CLASS => lazy::lookup_names(),
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
+        spinel_abi::QUEUE_CLASS => queue::lookup_names(),
+        spinel_abi::MUTEX_CLASS => mutex::lookup_names(),
         spinel_abi::ENUMERABLE_CLASS => enumerable::NAMES,
         spinel_abi::COMPARABLE_CLASS => comparable::NAMES,
         spinel_abi::MATH_CLASS => math::NAMES,
@@ -275,6 +283,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
         spinel_abi::THREAD_CLASS => thread::lookup_class_names(),
         spinel_abi::FIBER_CLASS => fiber::lookup_class_names(),
+        spinel_abi::QUEUE_CLASS => queue::lookup_class_names(),
+        spinel_abi::MUTEX_CLASS => mutex::lookup_class_names(),
         #[cfg(feature = "ext-base64")]
         spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
         #[cfg(feature = "ext-stringio")]
