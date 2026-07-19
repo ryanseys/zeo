@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=747ea80
-# PASS=1715 FAIL_OUTPUT=315 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=54c286c
+# PASS=1720 FAIL_OUTPUT=311 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -42,7 +42,7 @@ array_dup_sort_gc	PASS	-	-
 array_empty_and_pattern	PASS	-	-
 array_enum_materialize	PASS	-	-
 array_eq_cross_kind	PASS	-	-
-array_eql_strict	FAIL_OUTPUT	expect	-
+array_eql_strict	PASS	-	-
 array_fill_block_form	PASS	-	-
 array_fill_incompatible	PASS	-	-
 array_fill_poly	PASS	-	-
@@ -64,7 +64,7 @@ array_index_int_opt_narrow	PASS	-	-
 array_index_op_write_poly_rhs	PASS	-	-
 array_index_or_write	PASS	-	-
 array_index_range_variable	PASS	-	-
-array_insert_pads_nil	FAIL_OUTPUT	expect	-
+array_insert_pads_nil	PASS	-	-
 array_join_nested	FAIL_OUTPUT	expect	-
 array_join_poly_separator	PASS	-	-
 array_literal_empty_elem	PASS	-	-
@@ -102,7 +102,7 @@ array_slice_start_oob_nil	PASS	-	-
 array_slice_when_chunk	PASS	-	-
 array_sort_by_bang	PASS	-	-
 array_sort_by_schwartzian	PASS	-	-
-array_spaceship	TIMEOUT_RUN	run	-
+array_spaceship	PASS	-	-
 array_splice	PASS	-	-
 array_splice_exceptions	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-90af
 array_splice_to_ary	PASS	-	-
@@ -1941,10 +1941,10 @@ tap_then_expr	PASS	-	-
 tap_then_tail_value	PASS	-	-
 ternary_lazy_arms	PASS	-	-
 thread_alloc_heavy_workers	PASS	-	-
-thread_basic	FAIL_OUTPUT	expect	missing-method:report_on_exception=
+thread_basic	PASS	-	-
 thread_concurrent_alloc	PASS	-	-
 thread_condvar	PASS	-	-
-thread_kill_raise	FAIL_OUTPUT	expect	missing-method:report_on_exception=
+thread_kill_raise	FAIL_OUTPUT	expect	missing-method:kill
 thread_list	FAIL_OUTPUT	expect	missing-method:list
 thread_local	PASS	-	-
 thread_mutex	PASS	-	-
@@ -1954,7 +1954,7 @@ thread_new_value	PASS	-	-
 thread_pass_fairness	FAIL_OUTPUT	expect	-
 thread_preempt	PASS	-	-
 thread_queue	PASS	-	-
-thread_raise_main	FAIL_OUTPUT	expect	missing-method:report_on_exception=
+thread_raise_main	PASS	-	-
 thread_sized_queue	PASS	-	-
 thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-

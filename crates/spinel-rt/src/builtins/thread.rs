@@ -161,15 +161,31 @@ fn c_pass(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     Ok(thread::thread_pass())
 }
 
+/// `Thread.report_on_exception` -- the process-wide default a new thread
+/// inherits (true by CRuby default); setting it false silences the
+/// at-termination stderr report.
+static REPORT_ON_EXCEPTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+fn c_report_on_exception(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(REPORT_ON_EXCEPTION.load(std::sync::atomic::Ordering::Relaxed)))
+}
+
+fn c_set_report_on_exception(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    REPORT_ON_EXCEPTION.store(args[0].truthy(), std::sync::atomic::Ordering::Relaxed);
+    Ok(args[0].clone())
+}
+
 pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "current" => c_current,
         "main" => c_main,
         "pass" => c_pass,
+        "report_on_exception" => c_report_on_exception,
+        "report_on_exception=" => c_set_report_on_exception,
         _ => return None,
     })
 }
 
 pub fn lookup_class_names() -> &'static [&'static str] {
-    &["current", "main", "pass"]
+    &["current", "main", "pass", "report_on_exception", "report_on_exception="]
 }

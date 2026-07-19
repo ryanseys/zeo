@@ -289,7 +289,17 @@ builtin_methods! {
         let RubyValue::Array(other) = &args[0] else {
             return Ok(RubyValue::Nil);
         };
-        let (a, b) = (recv_array!(recv).lock().clone(), other.lock().clone());
+        let me = recv_array!(recv);
+        // Comparing an array to itself (including a self-referential one) is 0
+        // -- and short-circuiting avoids both a self-deadlock on the shared
+        // mutex and unbounded recursion into a cyclic element.
+        if std::sync::Arc::ptr_eq(me, other) {
+            return Ok(RubyValue::Int(0));
+        }
+        // Snapshot each side in its own statement so the first lock is released
+        // before the second is taken (the two could still alias deeper).
+        let a = me.lock().clone();
+        let b = other.lock().clone();
         for (x, y) in a.iter().zip(b.iter()) {
             match x.rb_cmp(y) {
                 Some(0) => continue,
@@ -302,6 +312,21 @@ builtin_methods! {
     "==" => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
+    }
+    // `Array#eql?` -- like `==` but per element with `eql?` (class-strict:
+    // `1.eql?(1.0)` is false, unlike `==`).
+    "eql?" => fn eql(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Array(other) = &args[0] else {
+            return Ok(RubyValue::Bool(false));
+        };
+        let me = recv_array!(recv);
+        if std::sync::Arc::ptr_eq(me, other) {
+            return Ok(RubyValue::Bool(true));
+        }
+        let (a, b) = (me.lock().clone(), other.lock().clone());
+        let eq = a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| values_eql(x, y));
+        Ok(RubyValue::Bool(eq))
     }
     // `pop`/`shift` answer ONE element (nil when empty); `pop(n)`/`shift(n)`
     // answer an ARRAY of up to n -- a different return type, not just a
@@ -410,7 +435,9 @@ builtin_methods! {
         arity!(args, 0);
         let mut out: Vec<RubyValue> = Vec::new();
         for e in recv_array!(recv).lock().iter() {
-            if !out.iter().any(|x| e.rb_eq(x)) {
+            // `uniq` dedups by `eql?`/`hash`, not `==` (so `[1.0, 1]` keeps
+            // both -- `1.0` and `1` are `==` but not `eql?`).
+            if !out.iter().any(|x| values_eql(e, x)) {
                 out.push(e.clone());
             }
         }
@@ -422,7 +449,7 @@ builtin_methods! {
         let mut out: Vec<RubyValue> = Vec::new();
         let before = h.lock().len();
         for e in h.lock().iter() {
-            if !out.iter().any(|x| e.rb_eq(x)) {
+            if !out.iter().any(|x| values_eql(e, x)) {
                 out.push(e.clone());
             }
         }
@@ -750,14 +777,25 @@ builtin_methods! {
                 format!("wrong number of arguments (given {}, expected 2+)", args.len()),
             ));
         }
-        let at = arg_int!(args, 0);
+        let orig = arg_int!(args, 0);
         let handle = recv_array!(recv);
         let mut guard = handle.lock();
         let n = guard.len() as i64;
-        let at = if at < 0 { at + n + 1 } else { at };
+        let at = if orig < 0 { orig + n + 1 } else { orig };
+        if at < 0 {
+            return Err(crate::dispatch::raise_error(
+                "IndexError",
+                format!("index {orig} too small for array; minimum: {}", -n - 1),
+            ));
+        }
+        let at = at as usize;
+        // An index past the end pads the gap with nils (CRuby's rule), rather
+        // than clamping the insertion to the current length.
+        if at > guard.len() {
+            guard.resize(at, RubyValue::Nil);
+        }
         for (offset, v) in args[1..].iter().enumerate() {
-            let pos = (at as usize + offset).min(guard.len());
-            guard.insert(pos, v.clone());
+            guard.insert(at + offset, v.clone());
         }
         drop(guard);
         Ok(recv.clone())
@@ -1392,6 +1430,23 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
         }
     }
     out
+}
+
+/// Per-element `eql?` (class-strict): `1.eql?(1.0)` is false because Integer
+/// and Float differ, whereas `==` coerces. Nested arrays compare element-wise
+/// (identity short-circuits a self-reference); other values require the same
+/// value kind plus `==`.
+fn values_eql(a: &RubyValue, b: &RubyValue) -> bool {
+    match (a, b) {
+        (RubyValue::Array(x), RubyValue::Array(y)) => {
+            if std::sync::Arc::ptr_eq(x, y) {
+                return true;
+            }
+            let (xs, ys) = (x.lock().clone(), y.lock().clone());
+            xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(p, q)| values_eql(p, q))
+        }
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b) && a.rb_eq(b),
+    }
 }
 
 fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {

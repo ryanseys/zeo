@@ -19,7 +19,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of Object |
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
-| P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-cannot-load-such-file-time-856a | 2 | bundle_misc_c_34, bundle_misc_c_33 | cannot load such file -- time |
 | ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
@@ -99,6 +98,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer |
 | P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for an instance of NilClass |
 | P | missing-method:key | 1 | exception_introspection_accessors | uncaught exception: undefined method 'key' for an instance of KeyError |
+| P | missing-method:kill | 1 | thread_kill_raise | uncaught exception: undefined method 'kill' for an instance of Thread |
 | P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
 | P | missing-method:match | 1 | matchdata_methods | uncaught exception: undefined method 'match' for an instance of MatchData |

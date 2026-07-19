@@ -17971,6 +17971,32 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn array_insert_eql_uniq_spaceship_edges() {
+    // insert past the end pads with nil; eql?/uniq are class-strict (1 != 1.0);
+    // <=> of an array with itself (incl. a cycle) is 0 without deadlock.
+    let result = run_ruby(
+        r#"
+        b = [1, 2, 3]
+        b.insert(5, 8)
+        p b
+        p [1, 2].eql?([1, 2.0])
+        p [1, 2].eql?([1, 2])
+        p [1.0, 1].uniq
+        a = [1, 2, 3]
+        p(a <=> a)
+        r = [1, 2]
+        r.push(r)
+        p(r <=> r)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3, nil, nil, 8]\nfalse\ntrue\n[1.0, 1]\n0\n0\n",
+    );
+}
+
+#[test]
 fn marshal_dump_load_roundtrip_and_wire_format() {
     // Marshal round-trips the value tower (primitives, bignum, array, hash,
     // Rational, shared refs and cycles) and writes CRuby's exact wire bytes for
