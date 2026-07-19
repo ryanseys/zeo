@@ -1,4 +1,4 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b54ec9f
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=568ffab
 # PASS=5 FAIL_OUTPUT=10 FAIL_COMPILE=46 FAIL_RUSTC=2 FAIL_RUN=4 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 END_spec	FAIL_RUN	run	auto-f0c6b32f

@@ -6,7 +6,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 23 | enumerable_tally_accumulator, issue_2973, singleton_class_block | Enumerable#tally with arguments isn't supported yet (spike scope) |
+| ? | spike-misc | 18 | range_float_begin_iterate, singleton_method_object, exc_frame_break_next_pops | Range#step on a non-Integer range isn't supported (spike scope) |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
@@ -14,6 +14,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, bundle_tiny_string | uncaught exception: wrong number of arguments (given 0, expected 1+) |
 | ? | auto-20dcf25f | 3 | data_define_inline_receiver, anon_struct_local, data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3e862739 | 3 | error_protocol_edges, poly_array_readers, array_cycle_bounded | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
+| f | dynamic-require | 3 | require_parent, user_enumerable_each_and_for, issue_2978 | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
 | P | missing-method:[] | 3 | struct_methods, multi_write_call_rhs_as_expr, param_body_hash_inference | uncaught exception: undefined method '[]' for class S |
 | P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of Object |
@@ -30,7 +31,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33, bundle_misc_c_34 | cannot load such file -- time |
 | ? | auto-c7d3b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-d04215d7 | 2 | array_float_conformance, bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |
-| f | dynamic-require | 2 | require_parent, user_enumerable_each_and_for | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | P | missing-const:Marshal | 2 | poly_hash_inspect, marshal_symlink_float | uncaught exception: uninitialized constant Marshal |
 | P | missing-const:Object::Integer | 2 | is_a_toplevel_scoped_const, issue_2889 | uncaught exception: uninitialized constant Object::Integer |
@@ -40,7 +40,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
 | P | missing-method:private_method_defined? | 2 | method_visibility_inherit, method_visibility_attr | uncaught exception: undefined method 'private_method_defined?' for class Sub |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
-| P | missing-method:source_location | 2 | proc_source_location, proc_source_location_var | uncaught exception: undefined method 'source_location' for an instance of Proc |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
 | ? | auto-029b9692 | 1 | issue_2975 | internal error: the synthesized value-class template for `S` failed to parse |
 | ? | auto-1ae200b3 | 1 | valued_break_proc | uncaught signal escaped the top level: Break(1) |

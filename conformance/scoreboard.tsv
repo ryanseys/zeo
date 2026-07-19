@@ -1,5 +1,5 @@
-# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b54ec9f
-# PASS=1670 FAIL_OUTPUT=351 FAIL_COMPILE=38 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=568ffab
+# PASS=1682 FAIL_OUTPUT=345 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -560,7 +560,7 @@ enumerable_chain_more	PASS	-	-
 enumerable_grep_sum_entry	PASS	-	-
 enumerable_methods	PASS	-	-
 enumerable_reduce_proc_arg	PASS	-	-
-enumerable_tally_accumulator	FAIL_OUTPUT	expect	spike-misc
+enumerable_tally_accumulator	PASS	-	-
 enumerable_to_set_param	PASS	-	-
 enumerable_via_each	PASS	-	-
 enumerator_bare_yield	PASS	-	-
@@ -675,7 +675,7 @@ file_unlink_rename	PASS	-	-
 file_write_at_tail_position	PASS	-	-
 filter_map	PASS	-	-
 find_block_poly_array	PASS	-	-
-find_ifnone	FAIL_OUTPUT	expect	spike-misc
+find_ifnone	PASS	-	-
 find_pattern_match	PASS	-	-
 find_pattern_poly_scrutinee	PASS	-	-
 flat_map_identity	PASS	-	-
@@ -812,7 +812,7 @@ hash_param_each_kv_inference	PASS	-	-
 hash_param_each_kv_weak_default	PASS	-	-
 hash_param_widen_from_callee_slot	PASS	-	-
 hash_poly_value_local	PASS	-	-
-hash_predicates_merge_minby_wave10	FAIL_OUTPUT	expect	spike-misc
+hash_predicates_merge_minby_wave10	PASS	-	-
 hash_range_enum_extensions	PASS	-	-
 hash_reduce_inject_ewi	PASS	-	-
 hash_reduce_predicate	PASS	-	-
@@ -1094,6 +1094,7 @@ issue_2949	PASS	-	-
 issue_2951	PASS	-	-
 issue_2952	FAIL_OUTPUT	expect	missing-method:attr
 issue_2953	FAIL_OUTPUT	expect	-
+issue_2956	PASS	-	-
 issue_2957	FAIL_COMPILE	compile	spike-misc
 issue_2958	PASS	-	-
 issue_2959	PASS	-	-
@@ -1114,6 +1115,12 @@ issue_2973	FAIL_COMPILE	compile	spike-misc
 issue_2974	PASS	-	-
 issue_2975	FAIL_COMPILE	compile	auto-029b9692
 issue_2976	PASS	-	-
+issue_2978	FAIL_COMPILE	compile	dynamic-require
+issue_2979	PASS	-	-
+issue_2980	PASS	-	-
+issue_2984	PASS	-	-
+issue_2988	PASS	-	-
+issue_3086	PASS	-	-
 iter_block_autosplat	PASS	-	-
 ivar_assign_and_expr	PASS	-	-
 ivar_conditional_nil	PASS	-	-
@@ -1227,7 +1234,7 @@ method_visibility_attr	FAIL_OUTPUT	expect	missing-method:private_method_defined?
 method_visibility_inherit	FAIL_OUTPUT	expect	missing-method:private_method_defined?
 middle_splat_param	PASS	-	-
 min_by_string_key	PASS	-	-
-minmax_by_count	FAIL_OUTPUT	expect	spike-misc
+minmax_by_count	FAIL_OUTPUT	expect	-
 misc	PASS	-	-
 missing_positional_arg_warns	PASS	-	-
 mixin	PASS	-	-
@@ -1562,8 +1569,8 @@ proc_return_escape_localjump	PASS	-	-
 proc_return_fiber_isolation	PASS	-	-
 proc_return_nested_ensure	PASS	-	-
 proc_return_rescue_modifier_escape	PASS	-	-
-proc_source_location	FAIL_OUTPUT	expect	missing-method:source_location
-proc_source_location_var	FAIL_OUTPUT	expect	missing-method:source_location
+proc_source_location	PASS	-	-
+proc_source_location_var	PASS	-	-
 proc_universal_return	PASS	-	-
 proc_unknown_tail_raise	PASS	-	-
 process_clock_constants	PASS	-	-
@@ -1929,7 +1936,7 @@ symbol_to_proc_after_positional	FAIL_COMPILE	compile	auto-a8d5a4ab
 symbol_to_proc_call	PASS	-	-
 symbol_upcase_interpolation	PASS	-	-
 system_argument_list	FAIL_OUTPUT	expect	missing-method:system
-tally_accumulator	FAIL_OUTPUT	expect	spike-misc
+tally_accumulator	PASS	-	-
 tap_then_expr	PASS	-	-
 tap_then_tail_value	PASS	-	-
 ternary_lazy_arms	PASS	-	-

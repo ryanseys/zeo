@@ -544,12 +544,13 @@ fn any_all(
     }
 }
 
-/// find/detect: first PACKED element whose raw-yield block result is
-/// truthy; nil otherwise. The optional `if_none` callable argument is
-/// rejected (spike scope).
+/// find/detect: first PACKED element whose raw-yield block result is truthy.
+/// The optional `ifnone` callable argument is invoked (with no arguments) only
+/// when NO element matches, and its result becomes the answer; a match --
+/// including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
 fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    reject_args(args, "find", "an `if_none` argument");
-    let blk = block_or_enum!(recv, "find", args, block);
+    let ifnone = args.first().cloned();
+    let blk = block_or_enum!(recv, "find", &[], block);
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let hit2 = hit.clone();
     for_each(recv, move |yielded| {
@@ -559,8 +560,14 @@ fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resul
         }
         Ok(RubyValue::Nil)
     })?;
-    let result = hit.lock().take().unwrap_or(RubyValue::Nil);
-    Ok(result)
+    let found = hit.lock().take();
+    match found {
+        Some(v) => Ok(v),
+        None => match ifnone {
+            Some(p) => p.as_proc_unchecked().call(&[]),
+            None => Ok(RubyValue::Nil),
+        },
+    }
 }
 
 /// first / first(n): break-on-first(-nth) yield; `first(0)` returns `[]`
@@ -931,9 +938,51 @@ fn min_max_by(
     block: Option<RubyValue>,
     min: bool,
 ) -> Result<RubyValue, Signal> {
-    reject_args(args, if min { "min_by" } else { "max_by" }, "arguments");
-    let blk = block_or_enum!(recv, if min { "min_by" } else { "max_by" }, args, block);
+    let name = if min { "min_by" } else { "max_by" };
+    // Optional count `n`: the n smallest (min_by, ascending) / largest (max_by,
+    // descending) elements by key, as an Array. A negative count raises
+    // ArgumentError; no count answers the single best element.
+    let count = match args.first() {
+        None | Some(RubyValue::Nil) => None,
+        Some(RubyValue::Int(n)) => {
+            if *n < 0 {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    format!("negative size ({n})"),
+                ));
+            }
+            Some(*n as usize)
+        }
+        Some(other) => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::class_name_of(other)
+                ),
+            ))
+        }
+    };
+    let blk = block_or_enum!(recv, name, &[], block);
     let items = collect_elements(recv)?;
+
+    if let Some(n) = count {
+        let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
+        for e in items {
+            let key = blk.call(&e.raw)?;
+            keyed.push((key, e.packed));
+        }
+        // Ascending by key for min_by, descending for max_by; ties are
+        // order-unspecified in CRuby (a heap), and the corpus uses distinct
+        // keys, so a stable sort on the comparison is faithful enough.
+        keyed.sort_by(|a, b| {
+            let ord = a.0.rb_cmp(&b.0).map_or(std::cmp::Ordering::Equal, |c| c.cmp(&0));
+            if min { ord } else { ord.reverse() }
+        });
+        let out = keyed.into_iter().take(n).map(|(_, e)| e).collect();
+        return Ok(RubyValue::Array(array_new(out)));
+    }
+
     let mut best: Option<(RubyValue, RubyValue)> = None;
     for e in items {
         let key = blk.call(&e.raw)?;
@@ -1136,9 +1185,23 @@ fn take_drop_while(
 }
 
 fn tally(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    reject_args(args, "tally", "arguments");
+    // Optional accumulator hash: counts add onto its existing values and the
+    // same hash is returned (Enumerable#tally(hash), #2533). No arg -> a fresh
+    // hash.
+    let counts = match args.first() {
+        None => crate::hash_new(Vec::new()),
+        Some(RubyValue::Hash(h)) => h.clone(),
+        Some(other) => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Hash",
+                    crate::builtins::class_name_of(other)
+                ),
+            ))
+        }
+    };
     let items = collect_packed(recv)?;
-    let counts = crate::hash_new(Vec::new());
     for e in items {
         let n = match crate::hash_get(&counts, &e) {
             RubyValue::Int(n) => n + 1,

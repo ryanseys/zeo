@@ -17915,6 +17915,49 @@ fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
 }
 
 #[test]
+fn find_ifnone_tally_hash_and_min_max_by_count() {
+    let result = run_ruby(
+        r#"
+        p [1, 2, 3].find(-> { -1 }) { |x| x > 10 }
+        p [1, 20, 3].find(-> { -1 }) { |x| x > 10 }
+        p [1, nil, 3].find(-> { :fallback }) { |x| x.nil? }
+        h = Hash.new(0)
+        p [1, 1, 2, 3, 3, 3].tally(h)
+        p h
+        p [5, 5, 6].tally({ 5 => 10 })
+        p %w[bbbb a ccc dd].max_by(2, &:length)
+        p %w[bbbb a ccc dd].min_by(2, &:length)
+        p [1, 2, 3].min_by(0) { |n| n }
+        begin
+          [1, 2, 3].max_by(-1) { |n| n }
+        rescue ArgumentError => e
+          p e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "-1\n20\nnil\n{1 => 2, 2 => 1, 3 => 3}\n{1 => 2, 2 => 1, 3 => 3}\n{5 => 12, 6 => 1}\n[\"bbbb\", \"ccc\"]\n[\"a\", \"dd\"]\n[]\n\"negative size (-1)\"\n",
+    );
+}
+
+#[test]
+fn proc_source_location_is_a_string_integer_pair() {
+    let result = run_ruby(
+        r#"
+        loc = ->(x) { x }.source_location
+        p loc.class
+        p loc.length
+        p loc[0].class
+        p loc[1].class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Array\n2\nString\nInteger\n");
+}
+
+#[test]
 fn bsearch_find_any_mode_follows_the_comparator_protocol() {
     // A Numeric block result selects find-any mode: 0 is a hit, negative
     // searches the lower half, positive the upper; a non-hit answers nil. The

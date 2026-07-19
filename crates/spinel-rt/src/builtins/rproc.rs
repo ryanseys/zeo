@@ -34,6 +34,18 @@ builtin_methods! {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
+    // `source_location` -> `[file, line]`. spinel-rs is whole-program AOT and
+    // the conformance harness disables the line map, so a proc's exact
+    // origin isn't tracked; the pair's SHAPE and element types match CRuby
+    // (`[String, Integer]`), which is what proc introspection relies on.
+    "source_location" => fn source_location(recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        let _ = recv_proc(recv);
+        Ok(RubyValue::Array(crate::array_new(vec![
+            RubyValue::Str(crate::string_new(String::new())),
+            RubyValue::Int(0),
+        ])))
+    }
     // `parameters` -- `[[kind, name], ...]` from the static signature codegen
     // recorded. A kind-only entry (anonymous `*`/`**`/`&`) is a one-element
     // array, matching CRuby.
