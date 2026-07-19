@@ -1102,7 +1102,8 @@ fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
     for chunk in items.chunks(n) {
         blk.call(&[RubyValue::Array(array_new(chunk.to_vec()))])?;
     }
-    Ok(RubyValue::Nil)
+    // The block form answers the receiver (Ruby 3.1+), not nil.
+    Ok(recv.clone())
 }
 
 fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -1114,7 +1115,8 @@ fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
             blk.call(&[RubyValue::Array(array_new(window.to_vec()))])?;
         }
     }
-    Ok(RubyValue::Nil)
+    // The block form answers the receiver (Ruby 3.1+), not nil.
+    Ok(recv.clone())
 }
 
 fn each_with_object(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {

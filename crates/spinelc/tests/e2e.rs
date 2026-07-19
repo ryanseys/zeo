@@ -17971,6 +17971,58 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn array_product_block_sample_and_each_slice_return() {
+    // product's block form yields each tuple and returns self; sample(-n) has
+    // its own message; each_slice/each_cons block forms return the receiver.
+    let result = run_ruby(
+        r#"
+        r = []
+        ret = [1, 2].product([3, 4]) { |t| r << t }
+        p r
+        p ret
+        p([1, 2, 3].each_slice(2) { |s| })
+        p([1, 2, 3].each_cons(2) { |s| })
+        begin
+          [1, 2].sample(-1)
+        rescue ArgumentError => e
+          p e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[1, 3], [1, 4], [2, 3], [2, 4]]\n[1, 2]\n[1, 2, 3]\n[1, 2, 3]\n\"negative sample number\"\n",
+    );
+}
+
+#[test]
+fn array_frozen_mutation_raises() {
+    // Every mutating Array method raises FrozenError on a frozen receiver.
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3].freeze
+        def caught(a, name)
+          yield
+          "BUG #{name}"
+        rescue FrozenError => e
+          e.message
+        end
+        p caught(a, "reverse!") { a.reverse! }
+        p caught(a, "sort!") { a.sort! }
+        p caught(a, "delete") { a.delete(1) }
+        p caught(a, "insert") { a.insert(0, 9) }
+        p caught(a, "clear") { a.clear }
+        p caught(a, "pop") { a.pop }
+        p caught(a, "select!") { a.select! { true } }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    let line = "can't modify frozen Array: [1, 2, 3]";
+    assert_eq!(result.stdout, format!("{line:?}\n").repeat(7));
+}
+
+#[test]
 fn array_join_recursive_and_delete_block() {
     // join flattens nested arrays under the same separator; delete's not-found
     // block supplies the answer.

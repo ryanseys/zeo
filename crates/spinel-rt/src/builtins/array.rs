@@ -335,6 +335,7 @@ builtin_methods! {
     "pop" => fn pop(recv, args, _block) {
         arity!(args, 0..=1);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         let Some(n) = count_arg(args)? else {
             return Ok(guard.pop().unwrap_or(RubyValue::Nil));
@@ -346,6 +347,7 @@ builtin_methods! {
     "shift" => fn shift(recv, args, _block) {
         arity!(args, 0..=1);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         let Some(n) = count_arg(args)? else {
             return Ok(if guard.is_empty() {
@@ -369,6 +371,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     "concat" => fn concat(recv, args, _block) {
+        check_frozen(recv_array!(recv), recv)?;
         // Snapshot every source BEFORE appending: an argument may alias the
         // receiver (`a.concat(a, a)`), and CRuby copies all sources up front,
         // so the growing receiver never feeds itself (that self-feeding is the
@@ -481,7 +484,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "product" => fn product(recv, args, _block) {
+    "product" => fn product(recv, args, block) {
         // Cartesian product of self with every argument array, CRuby's
         // element order (leftmost varies slowest).
         let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().clone()];
@@ -509,6 +512,14 @@ builtin_methods! {
         }
         out.clear();
         out.extend(tuples.into_iter().map(|t| RubyValue::Array(crate::array_new(t))));
+        // The block form yields each tuple and answers self; blockless returns
+        // the product array.
+        if let Some(RubyValue::Proc(p)) = &block {
+            for tuple in &out {
+                p.call(std::slice::from_ref(tuple))?;
+            }
+            return Ok(recv.clone());
+        }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "transpose" => fn transpose(recv, args, _block) {
@@ -546,6 +557,7 @@ builtin_methods! {
         // `slice!(i)` / `slice!(i, len)` / `slice!(start..end)` -- remove and
         // return the removed span.
         let h = recv_array!(recv);
+        check_frozen(h, recv)?;
         let len = h.lock().len() as i64;
         // Range form: remove and return the sub-array (nil if the start is
         // past the end).
@@ -602,6 +614,7 @@ builtin_methods! {
     }
     "reverse!" => fn reverse_bang(recv, args, _block) {
         arity!(args, 0);
+        check_frozen(recv_array!(recv), recv)?;
         recv_array!(recv).lock().reverse();
         Ok(recv.clone())
     }
@@ -744,6 +757,7 @@ builtin_methods! {
     "delete" => fn delete(recv, args, block) {
         arity!(args, 1);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         let before = guard.len();
         guard.retain(|e| !e.rb_eq(&args[0]));
@@ -760,6 +774,7 @@ builtin_methods! {
     }
     "delete_at" => fn delete_at(recv, args, _block) {
         arity!(args, 1);
+        check_frozen(recv_array!(recv), recv)?;
         let i = arg_int!(args, 0);
         let handle = recv_array!(recv);
         let mut guard = handle.lock();
@@ -780,6 +795,7 @@ builtin_methods! {
         }
         let orig = arg_int!(args, 0);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         let n = guard.len() as i64;
         let at = if orig < 0 { orig + n + 1 } else { orig };
@@ -925,6 +941,7 @@ builtin_methods! {
     // any gap with nil.
     "fill" => fn fill(recv, args, block) {
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let cur_len = handle.lock().len() as i64;
         let (value, span): (Option<RubyValue>, &[RubyValue]) = match &block {
             Some(RubyValue::Proc(_)) => {
@@ -990,6 +1007,7 @@ builtin_methods! {
     }
     "clear" => fn clear(recv, args, _block) {
         arity!(args, 0);
+        check_frozen(recv_array!(recv), recv)?;
         recv_array!(recv).lock().clear();
         Ok(recv.clone())
     }
@@ -1017,6 +1035,7 @@ builtin_methods! {
     }
     "sort!" => fn sort_bang(recv, args, block) {
         arity!(args, 0);
+        check_frozen(recv_array!(recv), recv)?;
         let mut items = recv_array!(recv).lock().clone();
         sort_items(&mut items, &block)?;
         *recv_array!(recv).lock() = items;
@@ -1024,6 +1043,7 @@ builtin_methods! {
     }
     "map!" | "collect!" => fn map_bang(recv, args, block) {
         arity!(args, 0);
+        check_frozen(recv_array!(recv), recv)?;
         let p = block_or_enum!(recv, "map!", args, block);
         let items = recv_array!(recv).lock().clone();
         let mut out = Vec::with_capacity(items.len());
@@ -1068,6 +1088,12 @@ builtin_methods! {
     "sample" => fn sample(recv, args, _block) {
         arity!(args, 0..=1);
         let mut items = recv_array!(recv).lock().clone();
+        if matches!(args.first(), Some(RubyValue::Int(n)) if *n < 0) {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "negative sample number".to_string(),
+            ));
+        }
         let Some(n) = count_arg(args)? else {
             return Ok(if items.is_empty() {
                 RubyValue::Nil
@@ -1244,6 +1270,7 @@ builtin_methods! {
     "compact!" => fn compact_bang(recv, args, _block) {
         arity!(args, 0);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let before = handle.lock().len();
         let kept: Vec<RubyValue> = handle
             .lock()
@@ -1259,6 +1286,7 @@ builtin_methods! {
     }
     "rotate!" => fn rotate_bang(recv, args, _block) {
         arity!(args, 0..=1);
+        check_frozen(recv_array!(recv), recv)?;
         let n = match args.first() {
             None => 1,
             Some(RubyValue::Int(v)) => *v,
@@ -1288,6 +1316,7 @@ builtin_methods! {
     "shuffle!" => fn shuffle_bang(recv, args, _block) {
         arity!(args, 0);
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut items = handle.lock().clone();
         for i in (1..items.len()).rev() {
             let j = (crate::builtins::kernel::prng_next() % (i as u64 + 1)) as usize;
@@ -1355,6 +1384,7 @@ builtin_methods! {
             Some(_) => arg_int!(args, 0),
         };
         let cell = recv_array!(recv);
+        check_frozen(cell, recv)?;
         let before = cell.lock().clone();
         let after = flatten_to_depth(&before, depth);
         if after.len() == before.len()
@@ -1367,6 +1397,7 @@ builtin_methods! {
     }
     "sort_by!" => fn sort_by_bang(recv, args, block) {
         arity!(args, 0);
+        check_frozen(recv_array!(recv), recv)?;
         let p = block_or_enum!(recv, "sort_by!", args, block);
         let cell = recv_array!(recv);
         let items = cell.lock().clone();
@@ -1431,6 +1462,18 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
         }
     }
     out
+}
+
+/// Raise `FrozenError` if `recv` (an Array) is frozen -- the guard every
+/// mutating method runs before touching its storage.
+fn check_frozen(handle: &crate::collections::RArray, recv: &RubyValue) -> Result<(), crate::Signal> {
+    if handle.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen Array: {}", recv.inspect_string()),
+        ));
+    }
+    Ok(())
 }
 
 /// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
@@ -1897,6 +1940,7 @@ fn in_place_filter(
     let RubyValue::Array(handle) = recv else {
         unreachable!("Array table row dispatched on a non-Array receiver");
     };
+    check_frozen(handle, recv)?;
     let p = block_or_enum!(recv, meth, &[], block);
     let items = handle.lock().clone();
     let mut out = Vec::with_capacity(items.len());

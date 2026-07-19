@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=d360350
-# PASS=1722 FAIL_OUTPUT=309 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=a82012c
+# PASS=1729 FAIL_OUTPUT=302 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -25,12 +25,12 @@ argv_gc	PASS	-	-
 arity_keyword_argument_errors	PASS	-	-
 array_assoc_rassoc	PASS	-	-
 array_at_out_of_bounds	PASS	-	-
-array_bounds_guards	FAIL_OUTPUT	expect	-
+array_bounds_guards	PASS	-	-
 array_bsearch_find_any	PASS	-	-
 array_callforms_strbuf_cycle	PASS	-	-
 array_chain_no_arg	PASS	-	-
 array_clear_expr	PASS	-	-
-array_clear_frozen_guard	FAIL_OUTPUT	expect	-
+array_clear_frozen_guard	PASS	-	-
 array_clone_poly	PASS	-	-
 array_combination	PASS	-	-
 array_combination_block	PASS	-	-
@@ -47,14 +47,14 @@ array_fill_block_form	PASS	-	-
 array_fill_incompatible	PASS	-	-
 array_fill_poly	PASS	-	-
 array_fill_widen	PASS	-	-
-array_filter_bang_return	FAIL_OUTPUT	expect	-
+array_filter_bang_return	PASS	-	-
 array_first_last_empty	PASS	-	-
 array_flat_map_scalar_block	PASS	-	-
 array_flatten_typed_elements	PASS	-	-
 array_float_conformance	PASS	-	-
 array_fold_delete_flatten_rindex	PASS	-	-
-array_frozen_mutate_raises	FAIL_OUTPUT	expect	-
-array_frozen_slice_bang	FAIL_OUTPUT	expect	-
+array_frozen_mutate_raises	PASS	-	-
+array_frozen_slice_bang	PASS	-	-
 array_get_oob_negative	PASS	-	-
 array_grep	PASS	-	-
 array_grep_empty_literal	PASS	-	-
@@ -88,7 +88,7 @@ array_permutation	PASS	-	-
 array_predicate_no_block	PASS	-	-
 array_predicate_no_block_param	PASS	-	-
 array_product	PASS	-	-
-array_product_flatten_combination_wave10	FAIL_OUTPUT	expect	-
+array_product_flatten_combination_wave10	PASS	-	-
 array_product_multi_arg	PASS	-	-
 array_push_multi_arg	PASS	-	-
 array_reduce_search_methods	PASS	-	-
@@ -575,7 +575,7 @@ enumerator_new	PASS	-	-
 enumerator_ops	FAIL_OUTPUT	expect	missing-method:+
 enumerator_produce	PASS	-	-
 enumerator_range	PASS	-	-
-enumerator_result_source	FAIL_OUTPUT	expect	-
+enumerator_result_source	PASS	-	-
 enumerator_size	FAIL_OUTPUT	expect	auto-can-convert-proc-into-integer-bd61
 enumerator_to_a	PASS	-	-
 enumerator_wave10	PASS	-	-
