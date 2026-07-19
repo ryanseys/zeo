@@ -162,19 +162,31 @@ fn rand_range(
     hi: &Option<Box<RubyValue>>,
     exclusive: bool,
 ) -> Result<RubyValue, Signal> {
-    // A beginless/endless range is a domain error (Errno::EDOM); an
-    // empty/reversed range answers nil, matching Kernel#rand.
+    // A beginless/endless range is a domain error (Errno::EDOM). Unlike
+    // `Kernel#rand` (which answers nil for an empty/reversed range),
+    // `Random#rand` raises `ArgumentError: invalid argument - <range>`.
     let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) else {
         return Err(raise_error(
             "Errno::EDOM",
             "Numerical argument out of domain".to_string(),
         ));
     };
+    let invalid = || {
+        let sep = if exclusive { "..." } else { ".." };
+        raise_error(
+            "ArgumentError",
+            format!(
+                "invalid argument - {}{sep}{}",
+                lo.to_display_string(),
+                hi.to_display_string()
+            ),
+        )
+    };
     match (lo, hi) {
         (RubyValue::Int(a), RubyValue::Int(b)) => {
             let span = b - a + if exclusive { 0 } else { 1 };
             if span <= 0 {
-                return Ok(RubyValue::Nil);
+                return Err(invalid());
             }
             Ok(RubyValue::Int(a + (next_u64(state) % span as u64) as i64))
         }
@@ -182,7 +194,7 @@ fn rand_range(
             let a = to_f64(lo)?;
             let b = to_f64(hi)?;
             if b < a || (b == a && exclusive) {
-                return Ok(RubyValue::Nil);
+                return Err(invalid());
             }
             Ok(RubyValue::Float(a + to_unit_float(next_u64(state)) * (b - a)))
         }
