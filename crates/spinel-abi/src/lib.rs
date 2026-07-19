@@ -442,6 +442,23 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     // difference).
     ExceptionClass { id: exc_id(46), name: "SyntaxError", superclass: Some(exc_id(1)), is_module: false },
     ExceptionClass { id: exc_id(47), name: "UncaughtThrowError", superclass: Some(exc_id(5)), is_module: false },
+    // The non-`StandardError` exception tail: a bare `rescue` never catches
+    // these (they descend from `Exception` directly), so a program must name
+    // them explicitly. `Interrupt < SignalException` mirrors CRuby's SIGINT
+    // class. Pinned here (see `analyze::pin_builtin_exceptions_tail`).
+    ExceptionClass { id: exc_id(48), name: "SystemExit", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(49), name: "SignalException", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(50), name: "Interrupt", superclass: Some(exc_id(49)), is_module: false },
+    // The remaining core `Exception`-tree classes CRuby defines (gem- and
+    // Ractor-specific ones excluded). `NoMemoryError`/`SecurityError`/
+    // `SystemStackError` descend from `Exception` directly (uncaught by a bare
+    // `rescue`); the rest refine an existing `StandardError` branch.
+    ExceptionClass { id: exc_id(51), name: "NoMemoryError", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(52), name: "SecurityError", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(53), name: "SystemStackError", superclass: Some(exc_id(0)), is_module: false },
+    ExceptionClass { id: exc_id(54), name: "NoMatchingPatternKeyError", superclass: Some(exc_id(24)), is_module: false },
+    ExceptionClass { id: exc_id(55), name: "Regexp::TimeoutError", superclass: Some(exc_id(21)), is_module: false },
+    ExceptionClass { id: exc_id(56), name: "IO::TimeoutError", superclass: Some(exc_id(11)), is_module: false },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

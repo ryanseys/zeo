@@ -8,7 +8,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 |---|---|---|---|---|
 | ? | spike-misc | 28 | singleton_method_object, bsearch_find_any_mixed, issue_2973 | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| ? | unknown-class | 6 | harness_batch_2453_2456, const_path_unresolved_require, defined_guard_dead_branch | unknown class/module `OpenSSL` |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
@@ -84,11 +83,12 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-fd71e1f7 | 1 | regexp_encoding_introspection | uncaught exception: Parsing error at position 5: Invalid character class |
 | a | interpolation-shapes | 1 | interp_adjacent_concat | unsupported string interpolation part (spike scope) |
 | P | missing-const:File::FNM_DOTMATCH | 1 | dir_full_surface | uncaught exception: uninitialized constant File::FNM_DOTMATCH |
-| P | missing-const:Interrupt | 1 | exception_reflection_surface | uncaught exception: uninitialized constant Interrupt |
 | P | missing-const:Object::Kernel | 1 | sleep_return_value | uncaught exception: uninitialized constant Object::Kernel |
 | P | missing-const:Object::Marshal | 1 | marshal_roundtrip | uncaught exception: uninitialized constant Object::Marshal |
+| P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL |
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |
 | P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers |
+| P | missing-const:Signal | 1 | signal_module_surface | uncaught exception: uninitialized constant Signal |
 | P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for an instance of NilClass |
 | P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for an instance of NilClass |
 | P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for an instance of NilClass |
@@ -118,6 +118,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer |
 | P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for an instance of NilClass |
 | P | missing-method:included_modules | 1 | module_constants_included_modules | uncaught exception: undefined method 'included_modules' for class Dog |
+| P | missing-method:key | 1 | exception_introspection_accessors | uncaught exception: undefined method 'key' for an instance of KeyError |
 | P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
 | P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
 | P | missing-method:match | 1 | matchdata_methods | uncaught exception: undefined method 'match' for an instance of MatchData |

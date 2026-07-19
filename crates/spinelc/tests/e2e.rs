@@ -17886,3 +17886,57 @@ fn splat_into_a_proc_or_lambda_receiver() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "6\n6\n6\n6\n20\n");
 }
+
+#[test]
+fn a_defined_guard_over_a_missing_constant_folds_its_dead_branch_away() {
+    // The dead arm references `Absent::Thing` and calls a method that doesn't
+    // exist on `Shim` -- both must be eliminated, not emitted, or the program
+    // fails to compile. CRuby's reachability agrees the branch never runs.
+    let result = run_ruby(
+        r#"
+        class Shim; end
+        v = defined?(Absent::Thing) ? Absent::Thing : "fallback"
+        p v
+        def guard
+          if defined?(NoSuchFeature) && NoSuchFeature.on?
+            Shim.new.method_that_does_not_exist
+            "on"
+          else
+            "off"
+          end
+        end
+        p guard
+        p defined?(Absent::Thing)
+        p defined?(String)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"fallback\"\n\"off\"\nnil\n\"constant\"\n");
+}
+
+#[test]
+fn the_core_exception_tree_is_nameable_and_rescuable() {
+    // The `Exception`-direct classes (uncaught by a bare `rescue`) and the
+    // refined `StandardError`-branch classes all register with the right
+    // superclass and can be raised/rescued by name.
+    let result = run_ruby(
+        r##"
+        p SystemExit.superclass
+        p Interrupt.superclass
+        p NoMemoryError.superclass
+        p NoMatchingPatternKeyError.superclass
+        p Regexp::TimeoutError.superclass
+        p IO::TimeoutError.superclass
+        begin
+          raise SecurityError, "denied"
+        rescue Exception => e
+          puts "#{e.class}: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Exception\nSignalException\nException\nNoMatchingPatternError\nRegexpError\nIOError\nSecurityError: denied\n",
+    );
+}

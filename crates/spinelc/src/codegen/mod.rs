@@ -18,6 +18,7 @@
 mod call;
 mod captures;
 mod collections;
+mod constfold;
 mod exceptions;
 mod expr;
 mod hoisting;

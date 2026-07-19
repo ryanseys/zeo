@@ -1,5 +1,5 @@
-# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=105d20c
-# PASS=1663 FAIL_OUTPUT=350 FAIL_COMPILE=46 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
+# suite=spinel corpus=2067 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c25cfc6
+# PASS=1666 FAIL_OUTPUT=353 FAIL_COMPILE=40 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2067
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -439,7 +439,7 @@ const_init_block_param_scan	PASS	-	-
 const_int_rows_destructure	PASS	-	-
 const_path_compound_assign	PASS	-	-
 const_path_deep_nesting	PASS	-	-
-const_path_unresolved_require	FAIL_COMPILE	compile	unknown-class
+const_path_unresolved_require	FAIL_OUTPUT	expect	-
 const_recv_yield_inline	PASS	-	-
 const_self_ref_raises_name_error	FAIL_OUTPUT	expect	-
 constant_path	FAIL_OUTPUT	expect	auto-497fab8d
@@ -487,9 +487,9 @@ default_args	PASS	-	-
 default_nil_param_with_str_return	PASS	-	-
 define_singleton_method_literal	PASS	-	-
 defined_classification	FAIL_OUTPUT	expect	-
-defined_const_fallback	FAIL_COMPILE	compile	unknown-class
+defined_const_fallback	PASS	-	-
 defined_globals_methods	FAIL_OUTPUT	expect	-
-defined_guard_dead_branch	FAIL_COMPILE	compile	unknown-class
+defined_guard_dead_branch	PASS	-	-
 defined_op	FAIL_OUTPUT	expect	-
 defined_yield_no_block	FAIL_OUTPUT	expect	-
 destructure_splat_underflow	PASS	-	-
@@ -601,13 +601,13 @@ exception_class_array_inspect	PASS	-	-
 exception_class_constants	PASS	-	-
 exception_class_new	PASS	-	-
 exception_detailed_message	FAIL_OUTPUT	expect	missing-method:detailed_message
-exception_introspection_accessors	FAIL_COMPILE	compile	unknown-class
+exception_introspection_accessors	FAIL_OUTPUT	expect	missing-method:key
 exception_message_override	PASS	-	-
 exception_namespaced_default_message	PASS	-	-
 exception_object_methods	PASS	-	-
 exception_object_surface	FAIL_RUSTC	compile	rustc-failure
 exception_real_objects	PASS	-	-
-exception_reflection_surface	FAIL_OUTPUT	expect	missing-const:Interrupt
+exception_reflection_surface	PASS	-	-
 exception_subclass_custom_method	PASS	-	-
 exception_subclass_ivar	PASS	-	-
 exception_subclass_ivar_reraise	PASS	-	-
@@ -747,7 +747,7 @@ gsub_with_hash_replacement	PASS	-	-
 gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
 hangs_548	FAIL_COMPILE	compile	spike-misc
-harness_batch_2453_2456	FAIL_COMPILE	compile	unknown-class
+harness_batch_2453_2456	FAIL_OUTPUT	expect	missing-const:OpenSSL
 hash_all_pattern	PASS	-	-
 hash_array_string_batch8	PASS	-	-
 hash_block_methods_variants	PASS	-	-
@@ -1738,7 +1738,7 @@ set_full_api	FAIL_OUTPUT	expect	-
 set_operations	PASS	-	-
 setbyte_nul_bytes	PASS	-	-
 shareable_constant	PASS	-	-
-signal_module_surface	FAIL_COMPILE	compile	unknown-class
+signal_module_surface	FAIL_OUTPUT	expect	missing-const:Signal
 signal_trap_stub	FAIL_OUTPUT	expect	missing-method:trap
 singleton_class_block	FAIL_COMPILE	compile	spike-misc
 singleton_class_object	FAIL_COMPILE	compile	spike-misc

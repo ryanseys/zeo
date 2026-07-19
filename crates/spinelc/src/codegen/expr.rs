@@ -188,7 +188,15 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(_) => Some("instance-variable"),
         HirNode::ClassVarRead(_) => Some("class variable"),
-        HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..) => Some("constant"),
+        // A constant reference classifies as `"constant"` only when it
+        // provably resolves at compile time; an unresolvable `Scope::NAME`/
+        // bare-`NAME` answers `nil` (CRuby's `defined?` on a missing constant).
+        HirNode::ClassRef(_) | HirNode::QualifiedConstRead(..) => {
+            match super::constfold::const_form_resolves(cx, id) {
+                Some(true) => Some("constant"),
+                _ => None,
+            }
+        }
         // Same narrowing posture as `IvarRead` just above (classified
         // whenever it's syntactically a `$foo` read, without tracking
         // whether it was ever actually assigned -- a documented
@@ -284,6 +292,15 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
 /// body, just a value nested inside the enclosing one), matching every
 /// other `emit_expr` fragment's contract.
 fn emit_if(cx: &Ctx, cond: NodeId, then_body: &[NodeId], else_body: &[NodeId]) -> TokenStream {
+    // A `defined?`-guarded branch whose constant provably can't exist folds
+    // away at compile time: the dead branch is never EMITTED (its body may be
+    // MRI-only/uncompilable code), matching CRuby's own reachability. The
+    // condition itself is a pure guard, so dropping it elides no side effect.
+    match super::constfold::static_cond(cx, cond) {
+        Some(true) => return super::stmt::emit_body_boxed(cx, then_body),
+        Some(false) => return super::stmt::emit_body_boxed(cx, else_body),
+        None => {}
+    }
     // Boxed: an Object-typed condition is an unboxed `Arc<Concrete>` with
     // no `truthy()` (always truthy in Ruby, but the boxing keeps one code
     // shape).
@@ -719,8 +736,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::QualifiedConstRead(scope, name) => emit_const_read(cx, Some(scope), name),
         HirNode::ConstReadOrNil(scope, name) => {
-            let owner = const_owner_id(cx, scope.as_deref(), name);
-            quote! { spinel_rt::const_get(#owner, #name).unwrap_or(spinel_rt::RubyValue::Nil) }
+            // The `defined?`/`X ||= ...` fallback: an unregistered scope class
+            // means the constant is simply absent -> `nil`, never a panic.
+            match const_owner_id_opt(cx, scope.as_deref(), name) {
+                Some(owner) => quote! { spinel_rt::const_get(#owner, #name).unwrap_or(spinel_rt::RubyValue::Nil) },
+                None => quote! { spinel_rt::RubyValue::Nil },
+            }
         }
         HirNode::ConstWrite { scope, name, value } => {
             let v = emit_expr(cx, *value);
@@ -1253,10 +1274,20 @@ pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// an unset constant is legitimately-valid-but-erroring Ruby, not a
 /// programming mistake in the compiler itself.
 pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
+    const_owner_id_opt(cx, scope, name)
+        .unwrap_or_else(|| panic!("unknown class/module `{}`", scope.unwrap_or(name)))
+}
+
+/// Fallible companion to [`const_owner_id`]: returns `None` when an explicit
+/// `Scope::NAME` names a scope class that isn't registered (e.g. a reference to
+/// `OpenSSL::Digest` when `require "openssl"` didn't materialize the module).
+/// Callers that lower EVERY branch eagerly (a `defined?` guard, a dead `if`
+/// arm) use this to emit a runtime `NameError`/`nil` instead of a compile-time
+/// panic -- CRuby only raises `uninitialized constant` if the branch actually
+/// runs, so a never-executed reference must compile cleanly.
+pub(super) fn const_owner_id_opt(cx: &Ctx, scope: Option<&str>, name: &str) -> Option<u32> {
     let owner_class = match scope {
-        Some(class_name) => cx
-            .resolve_class(class_name)
-            .unwrap_or_else(|| panic!("unknown class/module `{class_name}`")),
+        Some(class_name) => cx.resolve_class(class_name)?,
         // A bare constant at a BOX's top level (Phase 18) is owned by the
         // box's surrogate -- readable externally as `box::CONST`, invisible
         // to other boxes; `Object` (the shared id-0 root) stays the owner
@@ -1271,13 +1302,15 @@ pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
             }
         }),
     };
-    cx.compiler
-        .class(owner_class)
-        .const_owners
-        .get(name)
-        .copied()
-        .unwrap_or(owner_class)
-        .0
+    Some(
+        cx.compiler
+            .class(owner_class)
+            .const_owners
+            .get(name)
+            .copied()
+            .unwrap_or(owner_class)
+            .0,
+    )
 }
 
 /// A constant READ -- `scope: None` for a bare `NAME` (see `const_owner_id`'s
@@ -1288,7 +1321,28 @@ pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
 /// `const_get` already distinguishes "never set" (`None`) from "set to
 /// `nil`" (`Some(RubyValue::Nil)`).
 fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
-    let owner = const_owner_id(cx, scope, name);
+    // An explicit `Scope::NAME` whose scope class isn't registered is a
+    // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
+    // deferred to runtime so a dead/guarded branch still compiles.
+    let Some(owner) = const_owner_id_opt(cx, scope, name) else {
+        let missing = scope.unwrap_or(name);
+        let err = emit_boxed_new(
+            cx,
+            "NameError",
+            vec![quote! {
+                spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #missing)))
+            }],
+        );
+        // Same `match`-yields-`RubyValue` shape the resolved read below uses,
+        // so this type-checks in every position a const read appears (incl. a
+        // borrowed argument `&(...)`); the `Ok` arm is unreachable.
+        return quote! {
+            match Err::<spinel_rt::RubyValue, spinel_rt::Signal>(spinel_rt::Signal::Raise(#err)) {
+                Ok(__v) => __v,
+                Err(__s) => return Err(__s),
+            }
+        };
+    };
     // The `NameError` message mirrors real Ruby's: an explicit path prints
     // as written (`uninitialized constant Store::MISSING`); a bare miss
     // inside a class/module body is qualified by the cref head's

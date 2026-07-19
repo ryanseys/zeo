@@ -2845,32 +2845,7 @@ fn is_valid_const_name(s: &str) -> bool {
     }
 }
 
-/// The class/module `target::cname` names, if any -- a nested definition in
-/// `target`'s own namespace, or (const lookup inherits) a top-level class,
-/// which lives on `Object` and so is visible from every receiver.
-fn class_const_in(
-    cx: &Ctx,
-    target: crate::compiler::ClassId,
-    cname: &str,
-) -> Option<crate::compiler::ClassId> {
-    if let Some(c) = cx.resolve_class(&format!("{}::{cname}", cx.compiler.fq_name(target))) {
-        return Some(c);
-    }
-    cx.compiler.resolve_class(cname, &[], cx.box_id)
-}
-
-/// Whether a VALUE constant named `cname` is defined on `target` or any
-/// ancestor (constant lookup inherits, up through `Object`) -- read from the
-/// compile-time `const_owners` registry `resolve_consts` populates.
-fn value_const_defined_in(cx: &Ctx, target: crate::compiler::ClassId, cname: &str) -> bool {
-    let mut chain = cx.compiler.class(target).ancestors.clone();
-    if !chain.contains(&crate::compiler::OBJECT_CLASS) {
-        chain.push(crate::compiler::OBJECT_CLASS);
-    }
-    chain
-        .iter()
-        .any(|&anc| cx.compiler.class(anc).const_owners.contains_key(cname))
-}
+use super::constfold::{class_const_in, value_const_defined_in};
 
 /// Compile-time fold of `Klass.const_get(:NAME)` / `Klass.const_defined?(:NAME)`
 /// on a statically-known class/module `target` with a LITERAL name -- the

@@ -269,6 +269,50 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
     )?;
+    // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
+    // uncaught by a bare `rescue`, so a program names them explicitly. Order
+    // matches `spinel-abi::EXCEPTION_CLASSES` exc_id(48..50); `Interrupt`
+    // follows its parent `SignalException`.
+    register_class(
+        compiler,
+        "SystemExit".to_string(),
+        Some("Exception".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
+    register_class(
+        compiler,
+        "SignalException".to_string(),
+        Some("Exception".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
+    register_class(
+        compiler,
+        "Interrupt".to_string(),
+        Some("SignalException".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
+    // The remaining core `Exception`-tree classes, ids matching
+    // `spinel-abi::EXCEPTION_CLASSES` exc_id(51..56). Each parent is already
+    // registered (a builtin exception or, for the nested names, a core class).
+    for (name, superclass) in [
+        ("NoMemoryError", "Exception"),
+        ("SecurityError", "Exception"),
+        ("SystemStackError", "Exception"),
+        ("NoMatchingPatternKeyError", "NoMatchingPatternError"),
+        ("Regexp::TimeoutError", "RegexpError"),
+        ("IO::TimeoutError", "IOError"),
+    ] {
+        register_class(compiler, name.to_string(), Some(superclass.to_string()), false, &[], &[], 0)?;
+    }
     for c in &mut compiler.classes[before..] {
         c.is_bootstrap = true;
     }

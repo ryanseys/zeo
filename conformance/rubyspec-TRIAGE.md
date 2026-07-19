@@ -9,7 +9,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | spike-misc | 35 | break_spec, keyword_arguments_spec, regexp_spec | a nested escaping block capturing its enclosing BLOCK's own local `__f1_value` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell |
 | P | missing-method:raise | 6 | numbers_spec, retry_spec, delegation_spec | ERROR: A number literal must have a digit before the decimal point: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
 | P | missing-const:ScratchPad | 2 | BEGIN_spec, symbol_spec | ERROR: The BEGIN keyword returns the top-level script's filename for __FILE__: NameError: uninitialized constant ScratchPad |
-| ! | rustc-failure | 2 | yield_spec, order_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-665fda53922a0ae2.rs) |
+| ! | rustc-failure | 2 | yield_spec, order_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-ccd93bfc2d30cf73.rs) |
 | a | splat | 2 | variables_spec, for_spec | /Users/ryanseys/dev/spec/language/variables_spec.rb: expected `*name` as a multi-assignment's splat target |
 | ? | auto-619a71ee | 1 | block_spec | /Users/ryanseys/dev/spec/language/block_spec.rb: unsupported syntax at "\"a\" => 1, a: 10" (spike handles only what the 7 example programs need) |
 | ? | auto-72ea658f | 1 | module_spec | /Users/ryanseys/dev/spec/language/module_spec.rb: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
