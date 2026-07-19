@@ -2722,8 +2722,13 @@ fn emit_splat_call(
                     let class_ident = super::ident::class_ident(cx.compiler, cid);
                     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
                 }
-                None if infer(cx, recv_id) == TyKind::Poly => quote! { (#recv_expr) },
-                None => panic!("a splat argument call on a receiver whose class isn't statically known (and isn't a `rescue` binding) isn't supported yet (spike scope)"),
+                // A receiver with no user-class type -- `Poly`, or a builtin
+                // value type like `Proc`/`Array` (`pr.call(*args)`,
+                // `arr.push(*xs)`): pass the raw receiver so `send_value_in`
+                // dispatches through its runtime method table (`rproc::lookup`
+                // answers `call`/`[]`/`yield`, etc.), the same dynamic path a
+                // non-splat call on such a receiver already takes.
+                None => quote! { (#recv_expr) },
             }
             }
         }

@@ -812,12 +812,23 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(crate::builtins::integer::int_value(num_bigint::BigInt::from(previous)))
 }
 
+// The per-coroutine stack of tags with a live `catch` frame. `throw` consults
+// it so an unmatched tag becomes an `UncaughtThrowError` AT THE THROW (as in
+// CRuby), rather than a `Signal::Throw` leaking past every `rescue` to the top
+// level. Coroutine-local: each `Thread`/`Fiber` unwinds its own catch frames.
+may::coroutine_local!(static CATCH_TAGS: std::cell::RefCell<Vec<RubyValue>> = std::cell::RefCell::new(Vec::new()));
+
 /// `Kernel#catch(tag) { ... }` / `Kernel#throw(tag[, value])`.
 pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signal> {
     let RubyValue::Proc(p) = &block else {
         panic!("Kernel#catch requires a block");
     };
-    match p.call(std::slice::from_ref(&tag)) {
+    CATCH_TAGS.with(|s| s.borrow_mut().push(tag.clone()));
+    let result = p.call(std::slice::from_ref(&tag));
+    CATCH_TAGS.with(|s| {
+        s.borrow_mut().pop();
+    });
+    match result {
         Err(Signal::Throw(t, v)) if t.rb_eq(&tag) => Ok(v),
         other => other,
     }
@@ -825,10 +836,18 @@ pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signa
 
 pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=2);
-    Err(Signal::Throw(
-        args[0].clone(),
-        args.get(1).cloned().unwrap_or(RubyValue::Nil),
-    ))
+    let tag = args[0].clone();
+    // Only a tag with a live `catch` frame may unwind; otherwise it is an
+    // `UncaughtThrowError` right here, catchable by an ordinary `rescue`.
+    let has_live_catch = CATCH_TAGS.with(|s| s.borrow().iter().any(|t| t.rb_eq(&tag)));
+    if has_live_catch {
+        Err(Signal::Throw(tag, args.get(1).cloned().unwrap_or(RubyValue::Nil)))
+    } else {
+        Err(crate::dispatch::raise_error(
+            "UncaughtThrowError",
+            format!("uncaught throw {}", tag.inspect_string()),
+        ))
+    }
 }
 
 /// `Kernel#sleep(seconds)` -- cooperative (`may`'s coroutine sleep, like

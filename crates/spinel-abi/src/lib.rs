@@ -441,6 +441,7 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
     // rather than in `BUILTIN_EXCEPTIONS_RB` (id-ordering, not a semantic
     // difference).
     ExceptionClass { id: exc_id(46), name: "SyntaxError", superclass: Some(exc_id(1)), is_module: false },
+    ExceptionClass { id: exc_id(47), name: "UncaughtThrowError", superclass: Some(exc_id(5)), is_module: false },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

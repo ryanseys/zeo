@@ -17822,3 +17822,67 @@ fn return_from_proc_whose_home_is_gone_raises_localjumperror() {
         "exc: unexpected return\nnorm: unexpected return\narr: unexpected return\n"
     );
 }
+
+#[test]
+fn catch_throw_delivers_values_and_uncaught_throw_raises() {
+    let result = run_ruby(
+        r#"
+        def thrower; throw :done, [1, 2]; end
+        p catch(:done) { thrower }
+        outer = Object.new; inner = Object.new
+        p (catch(outer) { catch(inner) { throw outer, :to_outer }; :nr })
+        begin
+          throw :nope, 5; puts "WRONG"
+        rescue UncaughtThrowError => e
+          puts e.message
+        end
+        catch(:gone) { }
+        begin
+          throw :gone
+        rescue UncaughtThrowError => e
+          puts "gone: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2]\n:to_outer\nuncaught throw :nope\ngone: uncaught throw :gone\n"
+    );
+}
+
+#[test]
+fn array_pattern_trailing_comma_is_an_implicit_rest() {
+    let result = run_ruby(
+        r#"
+        case [0, 1, 2, 3]
+        in [0, 1, ] then puts "matched"
+        else puts "no"
+        end
+        case [5]
+        in [0, 1, ] then puts "wrong"
+        else puts "too short"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "matched\ntoo short\n");
+}
+
+#[test]
+fn splat_into_a_proc_or_lambda_receiver() {
+    let result = run_ruby(
+        r#"
+        add3 = ->(a, b, c) { a + b + c }
+        args = [1, 2, 3]
+        p add3.call(*args)
+        p add3[*args]
+        p add3.(*args)
+        p add3.yield(*args)
+        prc = proc { |a, b| a * b }
+        p prc.call(*[4, 5])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n6\n6\n6\n20\n");
+}

@@ -6,12 +6,13 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 26 | require_in_conditional, array_bsearch_find_any, external_singleton_def | `require` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body |
+| ? | spike-misc | 28 | singleton_method_object, bsearch_find_any_mixed, issue_2973 | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
 | P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | a | splat | 5 | pattern_rightward_oneline, proc_call_kw_and_lead_splat, proc_call_splat | expected a `*name` splat in this array pattern (spike scope) |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
+| P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
 | g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, bundle_tiny_string | uncaught exception: wrong number of arguments (given 0, expected 1+) |
 | ? | auto-20dcf25f | 3 | data_define_inline_receiver, anon_struct_local, data_define_duplicate_member | `Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`) |
 | ? | auto-3e862739 | 3 | error_protocol_edges, poly_array_readers, array_cycle_bounded | attempt to take negative size (ArgumentError; spike scope: raised as a panic) |
@@ -21,7 +22,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
-| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-2cebfebb1eedde03.rs) |
+| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-bfed0fb13e14ed61.rs) |
 | ? | auto-03f2cac6 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) |
 | ? | auto-176da354 | 2 | rand_prng_stream, range_and_array_range_args | uncaught exception: invalid argument - 1..1000 |
 | ? | auto-1a5f778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
@@ -31,19 +32,19 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-8e5c856a | 2 | bundle_misc_c_33, bundle_misc_c_34 | cannot load such file -- time |
 | ? | auto-c7d3b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
 | ? | auto-d04215d7 | 2 | array_float_conformance, bignum_downto_upto_to_a | Integer#downto beyond i64 isn't supported (unrunnable iteration count) |
-| ? | auto-d46bf646 | 2 | proc_return_rescue_modifier_escape, proc_return_escape_localjump | uncaught signal escaped the top level: Return(99) |
 | f | dynamic-require | 2 | require_parent, user_enumerable_each_and_for | /Users/ryanseys/dev/spinel/test/require_parent/views/articles/index.rb: cannot load such file -- /Users/ryanseys/dev/spinel/test/require_parent/views/articles/...rb |
 | P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
 | P | missing-const:Marshal | 2 | poly_hash_inspect, marshal_symlink_float | uncaught exception: uninitialized constant Marshal |
+| P | missing-const:Object::Integer | 2 | is_a_toplevel_scoped_const, issue_2889 | uncaught exception: uninitialized constant Object::Integer |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for an instance of NilClass |
 | P | missing-method:allocate | 2 | class_allocate, class_allocate_builtin_var | uncaught exception: undefined method 'allocate' for class Thing |
 | P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for an instance of Object |
 | P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
-| P | missing-method:new | 2 | dir_handle_objects, basicobject_new | uncaught exception: undefined method 'new' for class Dir |
 | P | missing-method:private_method_defined? | 2 | method_visibility_inherit, method_visibility_attr | uncaught exception: undefined method 'private_method_defined?' for class Sub |
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:source_location | 2 | proc_source_location, proc_source_location_var | uncaught exception: undefined method 'source_location' for an instance of Proc |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
+| ? | auto-029b9692 | 1 | issue_2975 | internal error: the synthesized value-class template for `S` failed to parse |
 | ? | auto-1ae200b3 | 1 | valued_break_proc | uncaught signal escaped the top level: Break(1) |
 | ? | auto-1e00ef9d | 1 | super_missing_hash_slot | `super`: no `as_json` found above Rec |
 | ? | auto-27bada46 | 1 | warn_category | {category: :deprecated} |
@@ -69,7 +70,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-9b378cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') |
 | ? | auto-a2980bed | 1 | require_io_console_winsize | cannot load such file -- io/console |
 | ? | auto-a8d5a4ab | 1 | symbol_to_proc_after_positional | define_method's second argument must be a block |
-| ? | auto-adf38191 | 1 | proc_nonlocal_return | coroutine in thread '<unknown>' has overflowed its stack |
 | ? | auto-b07debb8 | 1 | proc_return_catch_no_leak | uncaught signal escaped the top level: Throw(tag, 5) |
 | ? | auto-ba7c5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-cd5e05c6 | 1 | hash_dig | expected an Integer, got b |
@@ -87,7 +87,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | a | interpolation-shapes | 1 | interp_adjacent_concat | unsupported string interpolation part (spike scope) |
 | P | missing-const:File::FNM_DOTMATCH | 1 | dir_full_surface | uncaught exception: uninitialized constant File::FNM_DOTMATCH |
 | P | missing-const:Interrupt | 1 | exception_reflection_surface | uncaught exception: uninitialized constant Interrupt |
-| P | missing-const:Object::Integer | 1 | is_a_toplevel_scoped_const | uncaught exception: uninitialized constant Object::Integer |
 | P | missing-const:Object::Kernel | 1 | sleep_return_value | uncaught exception: uninitialized constant Object::Kernel |
 | P | missing-const:Object::Marshal | 1 | marshal_roundtrip | uncaught exception: uninitialized constant Object::Marshal |
 | P | missing-const:Process::Status | 1 | scoped_builtin_class_values | uncaught exception: uninitialized constant Process::Status |
@@ -97,6 +96,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for an instance of NilClass |
 | P | missing-method:Integer | 1 | expr_retry_equal_curry_methodobj | uncaught exception: undefined method 'Integer' for class 'Object' |
 | P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber |
+| P | missing-method:attr | 1 | issue_2952 | uncaught exception: undefined method 'attr' for class C001 |
 | P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute |
 | P | missing-method:begin | 1 | i974 | uncaught exception: undefined method 'begin' for an instance of MatchData |
 | P | missing-method:block_given? | 1 | block_given_block_param | uncaught exception: undefined method 'block_given?' for an instance of Object |

@@ -257,6 +257,18 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         0,
     )?;
+    // `UncaughtThrowError < ArgumentError` -- raised by `throw` with no live
+    // `catch` for its tag. Pinned right after `SyntaxError` so it takes the
+    // matching `spinel-abi::EXCEPTION_CLASSES` id, leaving every other fixed.
+    register_class(
+        compiler,
+        "UncaughtThrowError".to_string(),
+        Some("ArgumentError".to_string()),
+        false,
+        &[],
+        &[],
+        0,
+    )?;
     for c in &mut compiler.classes[before..] {
         c.is_bootstrap = true;
     }

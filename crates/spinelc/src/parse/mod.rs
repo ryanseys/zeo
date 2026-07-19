@@ -3672,6 +3672,12 @@ fn splat_target_name(splat: &ruby_prism::SplatNode<'_>) -> PResult<Option<String
 /// be a `SplatNode` (unlike `Find`'s `left`/`right`, which prism already
 /// types as `SplatNode` directly).
 fn array_or_find_rest_name(node: &Node<'_>) -> PResult<Option<String>> {
+    // A trailing comma (`in [0, 1, ]`) is prism's `ImplicitRestNode`: an
+    // anonymous "at least this many elements" rest that binds nothing --
+    // exactly the `Some(None)` shape codegen already emits for a bare `*`.
+    if node.as_implicit_rest_node().is_some() {
+        return Ok(None);
+    }
     let splat = node
         .as_splat_node()
         .ok_or("expected a `*name` splat in this array pattern (spike scope)")?;
