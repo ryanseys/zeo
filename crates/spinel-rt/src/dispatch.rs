@@ -704,6 +704,19 @@ impl ClassRegistry {
         self.entries.get(&id.0)?.methods.get(&name)
     }
 
+    /// Whether `name` is defined DIRECTLY on `id` (a `def` here, or a builtin
+    /// reopen), as opposed to materialized in from an ancestor. This is the
+    /// signal `Method#owner` needs: materialization copies an inherited method
+    /// onto every descendant's `methods` table, so `lookup` can't tell where it
+    /// originated, but `own_methods`/`value_methods` record only local defs.
+    fn defines_own(&self, id: ClassId, name: Symbol) -> bool {
+        let Some(e) = self.entries.get(&id.0) else {
+            return false;
+        };
+        e.own_methods.contains(&name)
+            || e.value_methods.keys().any(|(_, n)| *n == name)
+    }
+
     /// This class's registered instance-method names, each tagged private/not,
     /// excluding `undef`'d names -- the registry half of `instance_methods`/
     /// `methods` reflection. `own_only` narrows the user-method set to those
@@ -984,6 +997,46 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
         }
     }
     false
+}
+
+/// The class or module that actually defines `name` for an instance of
+/// `recv_class` -- the first ancestor in the MRO carrying a definition.
+/// Backs `Method#owner`/`UnboundMethod#owner`. Reflection sees privates, so
+/// this is the `include_all` walk. `None` when nothing in the chain defines
+/// it (callers construct the method only after a `responds_to` check, so this
+/// is the belt-and-suspenders arm).
+pub fn method_owner(recv_class: ClassId, name: Symbol) -> Option<ClassId> {
+    let n = name.name();
+    let n = n.as_str();
+    let overlay_live = crate::runtime_meta::is_live();
+    for &anc in ancestors_of_value(recv_class) {
+        if overlay_live && crate::runtime_meta::overlay_has_instance_method(anc, name) {
+            return Some(anc);
+        }
+        if let Some(r) = REGISTRY.get() {
+            if r.is_undefined(anc, name) {
+                return None;
+            }
+            // `defines_own`, not `lookup`: materialization flattens an inherited
+            // method onto every descendant's table, so only the direct-def set
+            // pins down where it actually originated.
+            if r.defines_own(anc, name) {
+                return Some(anc);
+            }
+        }
+        match anc {
+            ENUMERABLE_CLASS if crate::builtins::enumerable::responds(n) => return Some(anc),
+            COMPARABLE_CLASS if crate::builtins::comparable::responds(n) => return Some(anc),
+            _ => {
+                if let Some(table) = crate::builtins::class_table(anc) {
+                    if table(n).is_some() {
+                        return Some(anc);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// The ancestor chain the MRO walk runs over: the registry's (richer --
