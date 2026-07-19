@@ -1,0 +1,16 @@
+body 0
+body 1
+body 2
+after while
+odd 1
+odd 3
+odd 5
+b0
+e0
+b1
+e1
+e2
+inner 0
+inner 1
+after nested
+caught: rethrow boom

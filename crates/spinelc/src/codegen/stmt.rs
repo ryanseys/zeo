@@ -101,16 +101,20 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
     } else {
         let e = emit_expr(cx, stmt);
         if is_tail {
-            // `raise`/a bare `return`/`retry` already compile to a literal
-            // Rust `return ...;` (see `codegen::expr::emit_raise`/`HirNode::
-            // Return`'s docs, `codegen::exceptions::emit_retry`) -- a
-            // diverging expression whose type (`!`) already unifies with
-            // anything, so wrapping it in `Ok(...)` here would build an
-            // `Ok(return ...)` that can never actually construct its `Ok`
-            // (the `return` always exits first). Harmless in principle
-            // (`!` coerces fine either way) but `rustc` flags the `Ok(...)`
-            // call itself as unreachable -- skip the wrap for exactly these
-            // three diverging shapes rather than accept the warning.
+            // `raise`/a bare `return`/`retry`/`break`/`next`/`redo` all
+            // compile to a literal diverging Rust statement -- `return ...;`
+            // (`codegen::expr::emit_raise`/`HirNode::Return`'s docs,
+            // `codegen::exceptions::emit_retry`), or a labeled `break`/
+            // `continue`/`return Err(Signal::..)` (`codegen::loops`). Their
+            // type (`!`) already unifies with anything, so wrapping in
+            // `Ok(...)` here would build an `Ok(break ...)`/`Ok(return ...)`
+            // that can never actually construct its `Ok` (the jump always
+            // exits first). Harmless in principle (`!` coerces fine either
+            // way) but `rustc` flags the `Ok(...)` call itself as unreachable
+            // -- skip the wrap for exactly these diverging shapes rather than
+            // accept the warning. (A tail `break`/`next`/`redo` reaches here
+            // once its clause is inside a `begin`'s closure -- see
+            // `codegen::exceptions`.)
             if wrap_ok && !is_diverging_tail(&cx.compiler.hir[stmt]) {
                 // Box a bare tail `New`/`SelfRef`/`Shadowed`-local-read into
                 // `RubyValue::Object` before wrapping -- this whole body's
@@ -129,5 +133,13 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
 }
 
 fn is_diverging_tail(node: &HirNode) -> bool {
-    matches!(node, HirNode::Raise(..) | HirNode::Return(_) | HirNode::Retry)
+    matches!(
+        node,
+        HirNode::Raise(..)
+            | HirNode::Return(_)
+            | HirNode::Retry
+            | HirNode::Break(_)
+            | HirNode::Next(_)
+            | HirNode::Redo
+    )
 }

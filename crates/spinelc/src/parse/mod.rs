@@ -1884,12 +1884,6 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     Some((_, path)) => path.clone(),
                     None => constant_path_name(&recv)?,
                 };
-                if class_name == "Struct" {
-                    return Err(
-                        "`Struct.new` outside a constant assignment isn't supported (AOT: write `Name = Struct.new(:a, :b)`)"
-                            .to_string(),
-                    );
-                }
                 // `Enumerator.new { |y| ... }` joins the block-keeping set
                 // (Phase 17.2): it falls through to the generic `Call`
                 // lowering so the block reaches the runtime allocator via
@@ -1932,7 +1926,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         // the block IS the anonymous class's body; `HirNode::New`
                         // has no slot for it, so it falls through to the generic
                         // `Call` and the runtime `Class#new`.
-                        "Fiber" | "Thread" | "Mutex" | "Queue" | "SizedQueue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class"
+                        // A NON-CONSTANT `Struct.new(...)`/`Data.define` (an
+                        // anonymous struct assigned to a local, used inline, or
+                        // passed as an argument -- Batch E) MINTS A CLASS at
+                        // runtime (`rstruct::struct_new`); it must reach the
+                        // generic dynamic `new` dispatch rather than a static
+                        // `New`. Its block is the new class's body, kept the same
+                        // way `Class.new`'s is. (A CONSTANT `Name = Struct.new(...)`
+                        // is instead recognized at lowering time and compile-time
+                        // synthesized -- see `parse::struct_def` -- so the class
+                        // NAME is known for `super`/subclassing.)
+                        "Fiber" | "Thread" | "Mutex" | "Queue" | "SizedQueue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class" | "Struct"
                     )
                 {
                     // A trailing keyword hash lands in `kwargs`, kept apart

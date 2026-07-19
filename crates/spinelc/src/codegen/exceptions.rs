@@ -30,22 +30,30 @@
 //! ALWAYS raises `Signal::Retry` (see `emit_retry`'s docs), caught right
 //! here by the retry loop below.
 //!
-//! **The one gap this doesn't solve**: a `break`/`next`/`redo` lexically
-//! inside `body`/a `rescue` clause/`else`, intended to target a native loop
-//! LEXICALLY OUTSIDE the `begin` (e.g. `while cond; begin; break; rescue;
-//! end; end`), has nowhere correct to go -- the native loop machinery
-//! (`codegen::loops`) relies entirely on literal Rust `break`/`continue` and
-//! never inspects a `Result` for a bubbled-up `Signal::Break`/`Next`/`Redo`,
-//! and teaching it to do so would mean wrapping every loop body in the same
-//! kind of closure this module uses, undoing the zero-cost literal-label
-//! design Phase 4 deliberately chose. Rather than silently miscompiling
-//! this (the signal would `?`-propagate past the loop and out of the whole
-//! method, wrong), `reject_unsupported_loop_crossing` detects it and panics
-//! with a clear message -- a narrow, real, DOCUMENTED scope-cut, not an
-//! oversight. A loop written INSIDE the `begin` itself is completely
-//! unaffected (its own labels are established inside the very same closure,
-//! so a `break`/`next`/`redo` targeting IT works via ordinary literal jumps,
-//! no signal involved at all).
+//! **A `break`/`next`/`redo` targeting a native loop OUTSIDE the `begin`**
+//! (e.g. `while cond; begin; break; rescue; end; end`) needs no loop-body
+//! closure at all -- the key observation is that the `begin` EXPRESSION is
+//! itself spliced INLINE into the loop body (only its sub-bodies are
+//! closures), so the point where the `begin` yields its value is ordinary
+//! inline Rust where the enclosing loop's own literal labels are still in
+//! scope. So instead of `?`-propagating the bubbled `Signal::Break`/`Next`/
+//! `Redo` out of the whole method (which would skip the loop, wrong), the
+//! `begin`'s final settling MATCHES on it and translates it into the exact
+//! literal `break`/`continue` the loop machinery already uses -- reaching
+//! `cx.loop_labels`, which is always the innermost enclosing native loop,
+//! exactly the target a bare (label-less) Ruby `break`/`next`/`redo` means.
+//! The loop body keeps its zero-cost literal-label shape untouched. This
+//! composes through NESTED `begin`s: an inner `begin` (whose own
+//! `cx.loop_labels` was cleared to `None` by the outer `begin`'s closure)
+//! `?`-propagates the signal up to the outer `begin`, which -- being inline
+//! in the loop -- performs the translation. `loop_crossing_target` decides
+//! when this applies (a bubbling jump present AND a native loop lexically
+//! encloses the `begin`); `node_contains_bubbling_loop_jump` descends
+//! THROUGH nested `begin`s (they re-raise, they don't absorb) but stops at
+//! any construct that establishes its OWN loop label or closure boundary. A
+//! loop written INSIDE the `begin` itself is unaffected either way (its own
+//! labels are established inside the very same closure, so a jump targeting
+//! IT works via ordinary literal jumps, no signal involved at all).
 
 use quote::quote;
 
@@ -101,7 +109,11 @@ pub fn emit_begin(
     else_body: &Option<Vec<NodeId>>,
     ensure_body: &Option<Vec<NodeId>>,
 ) -> TokenStream {
-    reject_unsupported_loop_crossing(cx, body, rescues, else_body);
+    // When a bare `break`/`next`/`redo` inside this `begin` targets a native
+    // loop lexically OUTSIDE it, capture that loop's labels so the final
+    // settling below can translate the bubbled `Signal` into a literal jump
+    // (see the module docs). `None` -> ordinary `?`-propagation.
+    let crossing = loop_crossing_target(cx, body, rescues, else_body);
 
     // See the module docs for why `loop_labels` is cleared and
     // `in_real_proc` is forced on: `body`/each rescue clause's
@@ -140,6 +152,24 @@ pub fn emit_begin(
         quote! { { #e }; }
     });
 
+    // Settle `__final`. Normally `?`-propagate (any `Signal` unwinds past this
+    // `begin`). But when a bare loop-jump inside this `begin` targets a native
+    // loop OUTSIDE it, translate that bubbled `Signal` into the loop's literal
+    // `break`/`continue` right here -- this `match` is spliced INLINE in the
+    // loop body, so those labels are in scope (see the module docs). A
+    // `Signal::Next`'s value is discarded, matching a native loop's own `next`.
+    let settle = match &crossing {
+        Some((redo_label, outer_label)) => quote! {
+            match __final {
+                Err(spinel_rt::Signal::Break(__bv)) => break #outer_label __bv,
+                Err(spinel_rt::Signal::Next(_)) => continue #outer_label,
+                Err(spinel_rt::Signal::Redo) => continue #redo_label,
+                __other => __other?,
+            }
+        },
+        None => quote! { __final? },
+    };
+
     quote! {
         {
             let __final: Result<spinel_rt::RubyValue, spinel_rt::Signal> = #retry_label: loop {
@@ -156,7 +186,7 @@ pub fn emit_begin(
                 }
             };
             #ensure_tokens
-            __final?
+            #settle
         }
     }
 }
@@ -243,77 +273,85 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
     quote! { #(#checks)||* }
 }
 
-/// See the module's top-level docs for why this is needed at all: a
-/// `break`/`next`/`redo` lexically inside `body`/a `rescue` clause/`else`,
-/// intended to reach a native loop OUTSIDE the `begin`, has no correct
-/// codegen target once those bodies are wrapped in their own closure
-/// boundary. Only checked when a native loop actually lexically encloses
-/// this `begin` (`cx.loop_labels.is_some()`) -- otherwise there's no
-/// possible conflicting target at all (either no loop encloses this code,
-/// or the code is already inside a real Proc, whose own existing
-/// `in_real_proc` signal-raising path already handles it correctly).
-fn reject_unsupported_loop_crossing(
+/// The enclosing native loop's `(redo_label, outer_label)` when a bare
+/// `break`/`next`/`redo` inside `body`/a `rescue` clause/`else` targets a
+/// loop OUTSIDE this `begin` -- the labels `emit_begin`'s final settling
+/// translates the bubbled `Signal` into (see the module's top-level docs).
+/// `None` (ordinary `?`-propagation) when no native loop lexically encloses
+/// this `begin` (`cx.loop_labels` is `None` -- either nothing encloses this
+/// code, or it's already inside a real Proc, whose own `in_real_proc`
+/// signal-raising path handles a `break`/`next`/`redo` correctly) or when no
+/// such crossing jump is present at all. `ensure` is deliberately NOT scanned:
+/// it's emitted with the ORIGINAL `cx` (loop labels intact), so a jump there
+/// already compiles to a literal jump with no signal involved.
+fn loop_crossing_target(
     cx: &Ctx,
     body: &[NodeId],
     rescues: &[RescueClause],
     else_body: &Option<Vec<NodeId>>,
-) {
-    if cx.loop_labels.is_none() {
-        return;
-    }
-    let mut offending = body_contains_bare_loop_jump(cx.compiler, body);
+) -> Option<(syn::Lifetime, syn::Lifetime)> {
+    let (redo_label, outer_label) = cx.loop_labels.as_ref()?;
+    let mut crosses = body_contains_bubbling_loop_jump(cx.compiler, body);
     for r in rescues {
-        offending |= body_contains_bare_loop_jump(cx.compiler, &r.body);
+        crosses |= body_contains_bubbling_loop_jump(cx.compiler, &r.body);
     }
     if let Some(b) = else_body {
-        offending |= body_contains_bare_loop_jump(cx.compiler, b);
+        crosses |= body_contains_bubbling_loop_jump(cx.compiler, b);
     }
-    if offending {
-        panic!(
-            "`break`/`next`/`redo` inside a `begin`/`rescue`/`else` clause, targeting a loop OUTSIDE it, isn't supported yet (spike scope) -- a loop written INSIDE the `begin` itself is unaffected"
-        );
-    }
+    crosses.then(|| (redo_label.clone(), outer_label.clone()))
 }
 
-fn body_contains_bare_loop_jump(compiler: &Compiler, body: &[NodeId]) -> bool {
-    body.iter().any(|&n| node_contains_bare_loop_jump(compiler, n))
+fn body_contains_bubbling_loop_jump(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter().any(|&n| node_contains_bubbling_loop_jump(compiler, n))
 }
 
-/// Stops descending at anything that establishes its OWN native-loop label
-/// or its OWN closure boundary -- a `break`/`next`/`redo` lexically inside
-/// one of those targets THAT construct, never whatever loop encloses the
-/// `begin` we're scanning from (each such construct is independently correct
-/// / independently re-checked on its own terms when it's emitted).
-fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
+/// Whether `id` lexically contains a bare `break`/`next`/`redo` that would
+/// BUBBLE (as a `Signal`) out to a native loop enclosing the `begin` we're
+/// scanning from. Descends THROUGH a nested `Begin` -- a jump inside one
+/// still re-raises past every `begin` to the loop, so it's a crossing jump
+/// too. Stops at anything that establishes its OWN native-loop label
+/// (`While`/`Loop`/`For`) or its OWN closure boundary (an escaping block):
+/// a jump inside one of those targets THAT construct, and is independently
+/// correct on its own terms when it's emitted.
+fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo => true,
-        HirNode::While { .. } | HirNode::Loop { .. } | HirNode::For { .. } | HirNode::Begin { .. } => false,
+        HirNode::While { .. } | HirNode::Loop { .. } | HirNode::For { .. } => false,
+        HirNode::Begin { body, rescues, else_body, ensure_body } => {
+            // A nested `begin` re-raises the jump rather than absorbing it, so
+            // descend into every clause EXCEPT `ensure` (its jumps compile to
+            // literal jumps directly, never a bubbling `Signal`).
+            let _ = ensure_body;
+            body_contains_bubbling_loop_jump(compiler, body)
+                || rescues.iter().any(|r| body_contains_bubbling_loop_jump(compiler, &r.body))
+                || else_body.as_deref().is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
+        }
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
-            node_contains_bare_loop_jump(compiler, *v)
+            node_contains_bubbling_loop_jump(compiler, *v)
         }
         HirNode::And(l, r) | HirNode::Or(l, r) => {
-            node_contains_bare_loop_jump(compiler, *l) || node_contains_bare_loop_jump(compiler, *r)
+            node_contains_bubbling_loop_jump(compiler, *l) || node_contains_bubbling_loop_jump(compiler, *r)
         }
         HirNode::If { cond, then_body, else_body } => {
-            node_contains_bare_loop_jump(compiler, *cond)
-                || body_contains_bare_loop_jump(compiler, then_body)
-                || body_contains_bare_loop_jump(compiler, else_body)
+            node_contains_bubbling_loop_jump(compiler, *cond)
+                || body_contains_bubbling_loop_jump(compiler, then_body)
+                || body_contains_bubbling_loop_jump(compiler, else_body)
         }
         HirNode::CaseWhen { subject, arms, else_body } => {
-            subject.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))
+            subject.is_some_and(|s| node_contains_bubbling_loop_jump(compiler, s))
                 || arms.iter().any(|(values, body)| {
                     values.iter().any(|e| {
                         let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                        node_contains_bare_loop_jump(compiler, *v)
+                        node_contains_bubbling_loop_jump(compiler, *v)
                     })
-                        || body_contains_bare_loop_jump(compiler, body)
+                        || body_contains_bubbling_loop_jump(compiler, body)
                 })
-                || body_contains_bare_loop_jump(compiler, else_body)
+                || body_contains_bubbling_loop_jump(compiler, else_body)
         }
         HirNode::CaseIn { subject, arms, else_body } => {
-            node_contains_bare_loop_jump(compiler, *subject)
-                || arms.iter().any(|arm| body_contains_bare_loop_jump(compiler, &arm.body))
-                || else_body.as_deref().is_some_and(|b| body_contains_bare_loop_jump(compiler, b))
+            node_contains_bubbling_loop_jump(compiler, *subject)
+                || arms.iter().any(|arm| body_contains_bubbling_loop_jump(compiler, &arm.body))
+                || else_body.as_deref().is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
         }
         HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             let block_jumps = block.is_some_and(|b| {
@@ -326,58 +364,58 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
                 // already its own separate Rust closure, independently
                 // correct via its own `in_real_proc` handling.
                 super::call::is_times_fast_path(compiler, *receiver, name, kwargs.is_empty())
-                    && body_contains_bare_loop_jump(compiler, body)
+                    && body_contains_bubbling_loop_jump(compiler, body)
             });
             block_jumps
-                || receiver.is_some_and(|r| node_contains_bare_loop_jump(compiler, r))
+                || receiver.is_some_and(|r| node_contains_bubbling_loop_jump(compiler, r))
                 || args.iter().any(|a| {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                    node_contains_bare_loop_jump(compiler, *n)
+                    node_contains_bubbling_loop_jump(compiler, *n)
                 })
                 || kwargs
                     .iter()
                     .flat_map(|kw| kw.node_ids())
-                    .any(|n| node_contains_bare_loop_jump(compiler, n))
-                || block_arg.is_some_and(|b| node_contains_bare_loop_jump(compiler, b))
+                    .any(|n| node_contains_bubbling_loop_jump(compiler, n))
+                || block_arg.is_some_and(|b| node_contains_bubbling_loop_jump(compiler, b))
         }
         HirNode::MultiWrite { targets, value } => {
             let mut found = false;
-            targets.for_each_node(&mut |n| found |= node_contains_bare_loop_jump(compiler, n));
-            found || node_contains_bare_loop_jump(compiler, *value)
+            targets.for_each_node(&mut |n| found |= node_contains_bubbling_loop_jump(compiler, n));
+            found || node_contains_bubbling_loop_jump(compiler, *value)
         }
-        HirNode::GlobalWrite(_, value) => node_contains_bare_loop_jump(compiler, *value),
-        HirNode::ConstWrite { value, .. } => node_contains_bare_loop_jump(compiler, *value),
-        HirNode::PreExec(body) | HirNode::Seq(body) => body_contains_bare_loop_jump(compiler, body),
+        HirNode::GlobalWrite(_, value) => node_contains_bubbling_loop_jump(compiler, *value),
+        HirNode::ConstWrite { value, .. } => node_contains_bubbling_loop_jump(compiler, *value),
+        HirNode::PreExec(body) | HirNode::Seq(body) => body_contains_bubbling_loop_jump(compiler, body),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-            node_contains_bare_loop_jump(compiler, *n)
+            node_contains_bubbling_loop_jump(compiler, *n)
         }),
-        HirNode::Raise(args, _) => args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a)),
+        HirNode::Raise(args, _) => args.iter().any(|&a| node_contains_bubbling_loop_jump(compiler, a)),
         HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
-            args.iter().any(|&a| node_contains_bare_loop_jump(compiler, a))
+            args.iter().any(|&a| node_contains_bubbling_loop_jump(compiler, a))
                 || kwargs
                     .iter()
                     .flat_map(|kw| kw.node_ids())
-                    .any(|a| node_contains_bare_loop_jump(compiler, a))
+                    .any(|a| node_contains_bubbling_loop_jump(compiler, a))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-            node_contains_bare_loop_jump(compiler, *n)
+            node_contains_bubbling_loop_jump(compiler, *n)
         }),
         HirNode::HashLit(pairs) => {
-            pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_bare_loop_jump(compiler, n))
+            pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_bubbling_loop_jump(compiler, n))
         }
         HirNode::RangeLit { start, end, .. } => {
-            start.is_some_and(|s| node_contains_bare_loop_jump(compiler, s))
-                || end.is_some_and(|e| node_contains_bare_loop_jump(compiler, e))
+            start.is_some_and(|s| node_contains_bubbling_loop_jump(compiler, s))
+                || end.is_some_and(|e| node_contains_bubbling_loop_jump(compiler, e))
         }
         HirNode::StringLit(parts) => parts.iter().any(|p| match p {
-            StrPart::Interp(n) => node_contains_bare_loop_jump(compiler, *n),
+            StrPart::Interp(n) => node_contains_bubbling_loop_jump(compiler, *n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
-        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_bare_loop_jump(compiler, body),
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_bubbling_loop_jump(compiler, body),
         HirNode::MatchPredicate { subject, .. } | HirNode::MatchRequired { subject, .. } => {
-            node_contains_bare_loop_jump(compiler, *subject)
+            node_contains_bubbling_loop_jump(compiler, *subject)
         }
         _ => false,
     }

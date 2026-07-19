@@ -58,6 +58,7 @@ pub(crate) mod rational;
 pub(crate) mod random;
 pub(crate) mod condition_variable;
 pub(crate) mod set;
+pub(crate) mod rstruct;
 pub(crate) mod regexp;
 pub(crate) mod fiber;
 pub(crate) mod rproc;
@@ -110,6 +111,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::TIME_CLASS => time::lookup,
         spinel_abi::ENCODING_CLASS => encoding::lookup,
         spinel_abi::SET_CLASS => set::lookup,
+        spinel_abi::STRUCT_CLASS => rstruct::lookup,
+        spinel_abi::DATA_CLASS => rstruct::lookup_data,
         spinel_abi::LAZY_CLASS => lazy::lookup,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup,
         spinel_abi::QUEUE_CLASS | spinel_abi::SIZED_QUEUE_CLASS => queue::lookup,
@@ -166,6 +169,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::GC_CLASS => gc::lookup_class,
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         spinel_abi::SET_CLASS => set::lookup_class,
+        spinel_abi::STRUCT_CLASS => rstruct::lookup_class,
+        spinel_abi::DATA_CLASS => rstruct::lookup_class_data,
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         spinel_abi::RANDOM_CLASS => random::lookup_class,
         spinel_abi::MARSHAL_MODULE => marshal::lookup_class,
@@ -246,6 +251,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::TIME_CLASS => time::lookup_names(),
         spinel_abi::ENCODING_CLASS => encoding::lookup_names(),
         spinel_abi::SET_CLASS => set::lookup_names(),
+        spinel_abi::STRUCT_CLASS => rstruct::lookup_names(),
+        spinel_abi::DATA_CLASS => rstruct::lookup_data_names(),
         spinel_abi::LAZY_CLASS => lazy::lookup_names(),
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
         spinel_abi::QUEUE_CLASS | spinel_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),

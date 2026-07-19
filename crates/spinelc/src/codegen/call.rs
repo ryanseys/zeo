@@ -630,14 +630,29 @@ pub fn emit_new(
     // synthetic-argument caller needs.
     let Some(cid) = cx.resolve_class(class_name) else {
         // Not a compile-time class -- a constant bound to a RUNTIME class
-        // (`Foo = Class.new`, #97 F4). Read the constant at runtime and
-        // dispatch `.new` dynamically; a truly-undefined constant raises
-        // NameError via `const_get`, matching Ruby. Positional args + block
-        // are threaded; kwargs on a runtime-class `.new` are a fast-follow.
-        let arg_exprs = args.iter().map(|&a| {
-            let e = emit_expr(cx, a);
-            box_if_object_typed(cx, a, e)
-        });
+        // (`Foo = Class.new`, a native `Struct`/`Data` class -- Batch E). Read
+        // the constant at runtime and dispatch `.new` dynamically; a
+        // truly-undefined constant raises NameError via `const_get`, matching
+        // Ruby. Positional args + block thread directly; keywords ride as one
+        // trailing Hash (the G2 convention), which the runtime constructor
+        // unpacks -- so `Point.new(x: 1, y: 2)` on a `Data.define` class binds.
+        let mut arg_exprs: Vec<TokenStream> = args
+            .iter()
+            .map(|&a| {
+                let e = emit_expr(cx, a);
+                box_if_object_typed(cx, a, e)
+            })
+            .collect();
+        if !kwargs.is_empty() {
+            let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
+            arg_exprs.push(quote! {
+                {
+                    let __kw = spinel_rt::hash_new(vec![]);
+                    #inserts
+                    spinel_rt::RubyValue::Hash(__kw)
+                }
+            });
+        }
         let block_expr = match block {
             Some(b) => {
                 let p = emit_proc_value(cx, b);
@@ -4087,21 +4102,58 @@ fn dispatch(
             };
             let outer = super::loops::fresh_label(cx, "times");
             let redo = super::loops::fresh_label(cx, "times_body");
-            let loop_cx = cx.in_loop(redo.clone(), outer.clone());
+            // This inlined block's OWN param/block-locals that a NESTED
+            // escaping block captures (e.g.
+            // `arr.each { 3.times { |i| store << ->{ i } } }`). Since the
+            // `.times` body shares this Rust scope rather than being a
+            // closure, its param would otherwise be a plain per-iteration
+            // `let` that a `move` closure can't share -- so cell-wrap exactly
+            // those names into `Arc<Mutex<RubyValue>>` (fresh per iteration,
+            // matching Ruby's per-iteration block-param binding), register
+            // them as `captured_locals` so the body's own reads/writes route
+            // through the cell, and let the nested closure `Arc::clone` them
+            // -- the identical treatment a real block param gets via
+            // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
+            // this, the nested block would fresh-declare the name and read
+            // `nil` (the case the old nested-capture guard rejected outright).
+            let nested_captured: std::collections::HashSet<String> =
+                super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class).locals;
+            let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+            if !nested_captured.is_empty() {
+                loop_cx.captured_locals.to_mut().extend(nested_captured.iter().cloned());
+            }
             let bind = params.required.first().map(|p| {
                 let ident = safe_ident(p);
                 // `mut`: a block param is an ordinary reassignable local.
-                quote! { #[allow(unused_mut)] let mut #ident = spinel_rt::RubyValue::Int(__i); }
+                let plain = quote! { #[allow(unused_mut)] let mut #ident = spinel_rt::RubyValue::Int(__i); };
+                if nested_captured.contains(p) {
+                    quote! {
+                        #plain
+                        let #ident: ::std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                            ::std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(#ident));
+                    }
+                } else {
+                    plain
+                }
             });
             // `3.times { |i; n| ... }` -- block-locals get a fresh `nil` per
             // iteration here, exactly as `emit_proc_param_bindings` does for
             // a real Proc. Inside the loop, not outside: the reset-every-
-            // invocation semantics is the whole point of the declaration.
+            // invocation semantics is the whole point of the declaration. A
+            // block-local a nested escaping block captures is cell-wrapped for
+            // the same reason as the param above.
             let block_locals = params.block_locals.iter().map(|name| {
                 let ident = safe_ident(name);
-                quote! {
-                    #[allow(unused_variables, unused_mut)]
-                    let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+                if nested_captured.contains(name) {
+                    quote! {
+                        let #ident: ::std::sync::Arc<spinel_rt::parking_lot::Mutex<spinel_rt::RubyValue>> =
+                            ::std::sync::Arc::new(spinel_rt::parking_lot::Mutex::new(spinel_rt::RubyValue::Nil));
+                    }
+                } else {
+                    quote! {
+                        #[allow(unused_variables, unused_mut)]
+                        let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+                    }
                 }
             });
             let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);

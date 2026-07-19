@@ -379,6 +379,12 @@ fn struct_template(name: &str, display: &str, members: &[String], keyword_init: 
   def ==(other)
     other.is_a?({display}) && other.to_a == to_a
   end
+  def eql?(other)
+    other.is_a?({display}) && other.to_a == to_a
+  end
+  def hash
+    to_a.hash
+  end
   def each
     return to_enum(:each) unless block_given?
 {each_yields}

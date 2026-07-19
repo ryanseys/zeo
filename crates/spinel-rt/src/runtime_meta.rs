@@ -236,6 +236,42 @@ pub fn runtime_class_new(
     Ok(class_val)
 }
 
+/// Mint a fresh runtime class rooted at `root` (e.g. `STRUCT_CLASS`/
+/// `DATA_CLASS`), pre-populated with `methods` and a native `constructor` --
+/// the counterpart of `runtime_class_new` for a native-backed class the user
+/// never wrote a `class` body for (Batch E's `Struct.new`/`Data.define`). The
+/// ancestry is `[new_id, *root.ancestors]`, leaked to `'static` like every
+/// other runtime class's.
+pub fn intern_native_class(
+    root: ClassId,
+    methods: HashMap<Symbol, MethodImpl>,
+    constructor: ConstructorFn,
+) -> ClassId {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let super_chain = ancestors_of_value(root);
+    let mut anc = Vec::with_capacity(super_chain.len() + 1);
+    anc.push(new_id);
+    anc.extend_from_slice(super_chain);
+    let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                name: RwLock::new(None),
+                is_module: false,
+                ancestors: leaked,
+                methods,
+                class_methods: HashMap::new(),
+                constructor: Some(constructor),
+            },
+        );
+    }
+    mark_live();
+    new_id
+}
+
 /// Name a runtime class the first time it's assigned to a constant
 /// (`Foo = Class.new`). A no-op for a frozen id or an already-named runtime
 /// class (CRuby names on FIRST binding only).
@@ -307,6 +343,17 @@ fn walk_runtime_class(id: ClassId, name: Symbol) -> Option<MethodImpl> {
 pub fn overlay_class_method(id: ClassId, name: Symbol) -> Option<RProc> {
     let c = maps().classes.read().unwrap();
     c.get(&id.0)?.class_methods.get(&name).cloned()
+}
+
+/// The instance method THIS class's OWN overlay delta defines -- no ancestor
+/// walk (unlike `resolve_dynamic`), so it is safe to call from the
+/// reentrancy-sensitive `call_user_method` (which needs only "does THIS class
+/// define the method itself"). Lets a runtime-defined `inspect`/`to_s`/`hash`
+/// -- e.g. a native `Struct`/`Data` class's -- be honoured by `p`/string
+/// interpolation, not just by `send`.
+pub fn overlay_own_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    let c = maps().classes.read().unwrap();
+    c.get(&id.0)?.methods.get(&name).cloned()
 }
 
 /// Whether `recv` (an object) has a per-object singleton method `name` --

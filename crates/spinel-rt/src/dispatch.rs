@@ -1488,6 +1488,15 @@ pub(crate) fn call_user_method(
     if let Some(f) = REGISTRY.get().and_then(|r| r.lookup(id, Symbol::intern(name))) {
         return Some(f.call(recv, args, None));
     }
+    // A RUNTIME-defined method on the receiver's OWN class (a `define_method`
+    // delta, or a native `Struct`/`Data` class's `inspect`/`to_s`/`hash`
+    // forwarder) -- so `p`/interpolation honour it, not just `send`. THIS
+    // class only, no ancestor walk (see the reentrancy note below).
+    if crate::runtime_meta::is_live() {
+        if let Some(m) = crate::runtime_meta::overlay_own_method(id, Symbol::intern(name)) {
+            return Some(m.call(recv, args, None));
+        }
+    }
     // A RUNTIME-RESIDENT class (`Time`, `File`, ... -- plan P-B) is an
     // `Object(RObj)` with no registry entry, but it does have a builtin
     // table. Without this probe its own `to_s`/`inspect`/`hash` would be
@@ -1897,6 +1906,16 @@ pub fn send_value_in(
         }
         if let Some(lookup) = crate::builtins::class_method_table(*cid) {
             if let Some(f) = lookup(n) {
+                return f(recv, args, block);
+            }
+        }
+        // Class methods on a MINTED native struct/data class (`Point.members`,
+        // `Point[1, 2]`): these hang off `STRUCT_CLASS`/`DATA_CLASS` but are NOT
+        // reached by the MRO walk below (which runs over the class VALUE's own
+        // ancestry -- Class/Module -- not the struct's). Gated on the receiver
+        // actually being a struct class, so no other class is affected.
+        if crate::builtins::rstruct::is_struct_class(*cid) {
+            if let Some(f) = crate::builtins::rstruct::class_lookup(n) {
                 return f(recv, args, block);
             }
         }

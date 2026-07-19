@@ -3298,25 +3298,185 @@ fn break_next_from_inside_begin_rescue_nested_in_a_real_escaping_block_works() {
 }
 
 #[test]
-#[should_panic(expected = "targeting a loop OUTSIDE it")]
-fn break_inside_begin_rescue_targeting_an_outer_native_loop_is_a_clean_compile_error() {
-    // See `codegen::exceptions`'s module docs for why this specific shape
-    // (a native `while`/`for`/`.times` loop OUTSIDE the `begin`) can't be
-    // supported without abandoning loops' own zero-cost literal-label
-    // design -- a deliberate, documented scope-cut, not an oversight. A loop
-    // written INSIDE the `begin` itself (the previous test) is unaffected.
-    let _ = spinelc::compile_to_rust(
+fn break_inside_begin_rescue_targets_the_enclosing_native_loop() {
+    // A bare `break`/`next`/`redo` inside a `begin`/`rescue`/`else` clause
+    // targeting a native loop OUTSIDE the `begin` (Batch H2). The `begin`
+    // expression is spliced INLINE in the loop body, so its final settling
+    // translates the bubbled `Signal` into the loop's own literal jump -- no
+    // loop-body closure needed (see `codegen::exceptions`'s module docs). A
+    // loop written INSIDE the `begin` is unaffected (the previous test).
+    let result = run_ruby(
         r#"
         i = 0
-        while i < 3
+        while i < 5
           begin
-            break if i == 1
+            break if i == 3
+            puts "body #{i}"
           rescue
+          end
+          i += 1
+        end
+        puts "after"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "body 0\nbody 1\nbody 2\nafter\n");
+}
+
+#[test]
+fn next_inside_begin_rescue_continues_the_enclosing_native_loop() {
+    // `next` from a `rescue` clause -> `continue` the enclosing loop (H2).
+    let result = run_ruby(
+        r#"
+        i = 0
+        while i < 5
+          i += 1
+          begin
+            raise "x" if i.even?
+            puts "odd #{i}"
+          rescue
+            next
+          end
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "odd 1\nodd 3\nodd 5\n");
+}
+
+#[test]
+fn ensure_still_runs_when_break_crosses_out_of_a_begin() {
+    // The bubbled `break` is translated only AFTER `ensure` runs, exactly once
+    // -- the loop-crossing settle sits below the ensure block (H2).
+    let result = run_ruby(
+        r#"
+        i = 0
+        while i < 4
+          begin
+            break if i == 2
+            puts "b#{i}"
+          ensure
+            puts "e#{i}"
           end
           i += 1
         end
         "#,
     );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "b0\ne0\nb1\ne1\ne2\n");
+}
+
+#[test]
+fn break_bubbles_through_nested_begins_to_the_outer_loop() {
+    // An inner `begin` (loop labels cleared) `?`-propagates the `break` up to
+    // the outer `begin`, which -- inline in the loop -- performs the literal
+    // translation. The crossing scan descends THROUGH nested begins (H2).
+    let result = run_ruby(
+        r#"
+        i = 0
+        while i < 4
+          begin
+            begin
+              break if i == 2
+              puts "inner #{i}"
+            rescue
+            end
+          rescue
+          end
+          i += 1
+        end
+        puts "out"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "inner 0\ninner 1\nout\n");
+}
+
+#[test]
+fn break_in_begin_still_leaves_a_raise_free_to_propagate() {
+    // The loop-crossing settle only translates Break/Next/Redo; a re-raised
+    // exception still `?`-propagates out to the outer handler (H2).
+    let result = run_ruby(
+        r#"
+        begin
+          i = 0
+          while i < 3
+            begin
+              raise "boom" if i == 1
+            rescue => e
+              raise "rethrow #{e.message}"
+            end
+            i += 1
+          end
+        rescue => e
+          puts "caught: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught: rethrow boom\n");
+}
+
+#[test]
+fn nested_escaping_block_captures_an_inlined_times_param() {
+    // An escaping closure capturing the param of an INLINED `.times` block
+    // (Batch H1). The `.times` body shares the enclosing Rust scope, so the
+    // param is cell-wrapped per iteration -- fresh each turn, matching Ruby --
+    // and the nested closure `Arc::clone`s it, exactly like a real block
+    // param. Previously a clean compile-error scope-cut.
+    let result = run_ruby(
+        r#"
+        store = []
+        [1, 2].each do |a|
+          store << ->() { a }
+          2.times do |b|
+            store << ->() { a + b }
+          end
+        end
+        store.each { |p| puts p.call }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    // a=1: {1}, {1+0}, {1+1}; a=2: {2}, {2+0}, {2+1}
+    assert_eq!(result.stdout, "1\n1\n2\n2\n2\n3\n");
+}
+
+#[test]
+fn inlined_times_block_local_is_captured_by_a_nested_block() {
+    // A `.times` block-LOCAL (`|i; n|`) captured by a nested escaping block is
+    // cell-wrapped for the same reason as its param (H1).
+    let result = run_ruby(
+        r##"
+        store = []
+        [1].each do |a|
+          3.times do |i; n|
+            n = i * 10
+            store << ->() { "#{a}:#{i}:#{n}" }
+          end
+        end
+        store.each { |p| puts p.call }
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1:0:0\n1:1:10\n1:2:20\n");
+}
+
+#[test]
+fn uncaptured_inlined_times_param_keeps_the_plain_fast_path() {
+    // Regression guard for H1: when NOTHING captures the `.times` param it
+    // stays a plain per-iteration `let` (no cell), and `break`/`next` inside
+    // the inlined block keep working via literal labels.
+    let result = run_ruby(
+        r#"
+        total = 0
+        5.times { |i| total += i }
+        puts total
+        r = 5.times { |i| break i * 2 if i == 3 }
+        p r
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n6\n");
 }
 
 // --- Phase 9 continued: deeper edge-case and composition coverage, added
@@ -12775,12 +12935,76 @@ fn struct_synthesis_matches_the_oracle() {
     );
 }
 
-/// The clean rejections: `Struct.new` outside a constant assignment, and
-/// non-symbol members (both surface as lowering errors).
+/// `Struct.new` OUTSIDE a constant assignment now mints a native anonymous
+/// struct class at runtime (Batch E) rather than being a lowering error --
+/// the constant form is still compile-time synthesized (for `super`/subclass
+/// support), but an anonymous local/inline struct is a runtime value.
 #[test]
-fn struct_new_rejections_are_clean_errors() {
-    let err = spinelc::compile_to_rust("s = Struct.new(:a)\n").unwrap_err();
-    assert!(err.contains("outside a constant assignment"), "{err}");
+fn anonymous_struct_mints_a_native_class_at_runtime() {
+    let result = run_ruby(
+        r#"
+        k = Struct.new(:a, :b)
+        o = k.new(1, 2)
+        p o
+        p o.a
+        p o.to_a
+        p o.members
+        o.a = 9
+        p o.a
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "#<struct a=1, b=2>\n1\n[1, 2]\n[:a, :b]\n9\n");
+}
+
+/// A native anonymous struct is Enumerable and honours a class-body method
+/// block, exactly like the synthesized constant form (Batch E).
+#[test]
+fn anonymous_struct_is_enumerable_and_keeps_its_method_block() {
+    let result = run_ruby(
+        r#"
+        k = Struct.new(:a, :b, :c) do
+          def sum
+            to_a.sum
+          end
+        end
+        o = k.new(1, 2, 3)
+        p o.map { |v| v * 10 }
+        p o.sum
+        p o.select { |v| v.odd? }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[10, 20, 30]\n6\n[1, 3]\n");
+}
+
+/// `Data.define` outside a constant assignment mints a native immutable data
+/// class -- keyword construction, `with`, frozen, byte-exact `inspect`.
+#[test]
+fn anonymous_data_define_mints_a_native_immutable_class() {
+    let result = run_ruby(
+        r#"
+        d = Data.define(:x, :y)
+        pt = d.new(x: 1, y: 2)
+        p pt
+        p pt.x
+        p pt.to_h
+        p pt.with(x: 9)
+        p pt.frozen?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<data x=1, y=2>\n1\n{x: 1, y: 2}\n#<data x=9, y=2>\ntrue\n"
+    );
+}
+
+/// The constant-position clean rejection still holds: a `Name = Struct.new(...)`
+/// with a string first argument is the compile-time-synthesized form, which
+/// requires literal symbol members.
+#[test]
+fn struct_new_string_name_at_const_is_a_clean_error() {
     let err = spinelc::compile_to_rust("P = Struct.new(\"Name\", :a)\n").unwrap_err();
     assert!(err.contains("must be literal symbols"), "{err}");
 }
