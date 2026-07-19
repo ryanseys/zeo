@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c5f5163
-# PASS=1687 FAIL_OUTPUT=340 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=4e29a81
+# PASS=1688 FAIL_OUTPUT=342 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -605,7 +605,7 @@ exception_introspection_accessors	FAIL_OUTPUT	expect	missing-method:key
 exception_message_override	PASS	-	-
 exception_namespaced_default_message	PASS	-	-
 exception_object_methods	PASS	-	-
-exception_object_surface	FAIL_RUSTC	compile	rustc-failure
+exception_object_surface	FAIL_OUTPUT	expect	missing-method:exception
 exception_real_objects	PASS	-	-
 exception_reflection_surface	PASS	-	-
 exception_subclass_custom_method	PASS	-	-
@@ -1302,7 +1302,7 @@ nested_massign	PASS	-	-
 nested_massign_poly	PASS	-	-
 nested_send_dispatch	PASS	-	-
 nested_yield_with_block_param	PASS	-	-
-new_forwarded_block_stored	FAIL_RUSTC	compile	rustc-failure
+new_forwarded_block_stored	PASS	-	-
 next_in_proc_and_yield	PASS	-	-
 next_runs_ensure	PASS	-	-
 next_value_each_index	PASS	-	-
@@ -1526,7 +1526,7 @@ proc_anonymous_rest	PASS	-	-
 proc_arg_object	PASS	-	-
 proc_arity_nil	PASS	-	-
 proc_arity_opt_rest	PASS	-	-
-proc_block_param_call	FAIL_RUSTC	compile	rustc-failure
+proc_block_param_call	FAIL_OUTPUT	expect	missing-method:call
 proc_call_array_autosplat	PASS	-	-
 proc_call_blk_gc_root	PASS	-	-
 proc_call_kw_and_lead_splat	PASS	-	-

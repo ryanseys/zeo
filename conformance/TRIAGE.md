@@ -20,7 +20,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
 | P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for an instance of NilClass |
 | P | missing-method:report_on_exception= | 3 | thread_raise_main, thread_basic, thread_kill_raise | uncaught exception: undefined method 'report_on_exception=' for class Thread |
-| ! | rustc-failure | 3 | proc_block_param_call, exception_object_surface, new_forwarded_block_stored | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-bfed0fb13e14ed61.rs) |
 | ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
 | ? | auto-can-convert-rational-into-an-exact-number-127c | 2 | time_plus_rational, time_at_kinds_string_ctor | uncaught exception: can't convert Rational into an exact number |
 | ? | auto-can-convert-string-into-complex-b59c | 2 | rational_complex_wave9, kernel_array_format_negx_wave10 | uncaught exception: can't convert String into Complex |
@@ -95,6 +94,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:begin | 1 | i974 | uncaught exception: undefined method 'begin' for an instance of MatchData |
 | P | missing-method:block_given? | 1 | block_given_block_param | uncaught exception: undefined method 'block_given?' for an instance of Object |
 | P | missing-method:bytebegin | 1 | matchdata_values_at_byteoffset | uncaught exception: undefined method 'bytebegin' for an instance of MatchData |
+| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for an instance of NilClass |
 | P | missing-method:caller | 1 | kernel_caller_wired | uncaught exception: undefined method 'caller' for an instance of Object |
 | P | missing-method:caller_locations | 1 | caller_locations | uncaught exception: undefined method 'caller_locations' for an instance of Object |
 | P | missing-method:class_exec | 1 | class_exec_def_body | uncaught exception: undefined method 'class_exec' for class C |
@@ -103,6 +103,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:count | 1 | env_full_surface | uncaught exception: undefined method 'count' for an instance of Object |
 | P | missing-method:detailed_message | 1 | exception_detailed_message | uncaught exception: undefined method 'detailed_message' for an instance of RuntimeError |
 | P | missing-method:each_value | 1 | env_grep_lazy_followups | uncaught exception: undefined method 'each_value' for an instance of Object |
+| P | missing-method:exception | 1 | exception_object_surface | uncaught exception: undefined method 'exception' for an instance of RuntimeError |
 | P | missing-method:feed | 1 | enumerator_feed_result | uncaught exception: undefined method 'feed' for an instance of Enumerator |
 | P | missing-method:ffi_callback | 1 | ffi_callback | uncaught exception: undefined method 'ffi_callback' for module L |
 | P | missing-method:ffi_cflags | 1 | i1011 | uncaught exception: undefined method 'ffi_cflags' for module Pathy |

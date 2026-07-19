@@ -1014,20 +1014,39 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
     // resolve falls through to the value cases below (a constant can
     // legitimately hold a pre-built exception).
     let class_path = const_path_of(cx, node).filter(|p| cx.resolve_class(p).is_some());
-    if let Some(msg_id) = explicit_msg {
-        let Some(class_name) = class_path else {
-            panic!("`raise Class, message` requires a literal class name (spike scope)");
+    if let Some(class_name) = &class_path {
+        // Only an Exception subclass can be raised. A non-exception class
+        // (`raise String`, `raise Object, "m"`) is CRuby's TypeError, NOT an
+        // attempt to instantiate it -- the builtin has no generated struct to
+        // `new_handle`, so this both fixes invalid codegen and matches Ruby.
+        let cid = cx.resolve_class(class_name).unwrap();
+        let exc = spinel_abi::EXCEPTION_CLASS.0;
+        let is_exc = cid.0 == exc || cx.compiler.class(cid).ancestors.iter().any(|a| a.0 == exc);
+        if !is_exc {
+            return emit_boxed_new(
+                cx,
+                "TypeError",
+                vec![quote! {
+                    spinel_rt::RubyValue::Str(spinel_rt::string_new(
+                        "exception class/object expected".to_string()
+                    ))
+                }],
+            );
+        }
+        // `raise SomeError` / `raise SomeError, "msg"` constructs via
+        // `SomeError.new(...)`, running any custom `initialize` (defaults and
+        // `super` chain included), exactly like CRuby's `exc.exception` path.
+        let args = match explicit_msg {
+            Some(msg_id) => vec![emit_expr(cx, msg_id)],
+            None => vec![],
         };
-        let msg_expr = emit_expr(cx, msg_id);
-        return emit_boxed_new(cx, &class_name, vec![msg_expr]);
+        return emit_boxed_new(cx, class_name, args);
     }
-    if let Some(class_name) = class_path {
-        // `raise SomeError` (no message) constructs via `SomeError.new` with
-        // NO arguments -- running any custom `initialize` (its own defaults
-        // and `super` chain included), exactly like CRuby's `exc.exception`
-        // path. The class-name-as-message default lives in the prelude's
-        // `Exception#to_s` (`@message || self.class.name`), not here.
-        return emit_boxed_new(cx, &class_name, vec![]);
+    if let Some(msg_id) = explicit_msg {
+        // `raise <non-class-expr>, message` -- a computed class isn't
+        // supported; a value operand with a message isn't a CRuby shape.
+        let _ = msg_id;
+        panic!("`raise Class, message` requires a literal class name (spike scope)");
     }
     match infer(cx, node) {
         TyKind::Str => {

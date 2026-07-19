@@ -227,19 +227,25 @@ pub fn infer_type_with_locals(
         // classes kept OUT of `HirNode::New` by parse -- see the `.new`
         // lowering's exclusion list -- so this never collides with the
         // ordinary user-class `New` arm above.)
-        // A `.new` carrying a `*args` splat or `**h` double-splat can't take
-        // the static construction path (see `parse`'s `New` lowering) -- it
-        // dispatches dynamically through `send_value`, which answers a
-        // `RubyValue`, so it must type as `Poly`, not the concrete class.
+        // A `.new` carrying a `*args` splat, a `**h` double-splat, or a
+        // forwarded `&block` argument can't take the static construction path
+        // (see `parse`'s `New` lowering; a `&block` stays a `Call`, not a
+        // `New`) -- it dispatches dynamically through `send_value`, which
+        // answers a `RubyValue`, so it must type as `Poly`, not the concrete
+        // class. Typing it `Object(cid)` made a chained method call take the
+        // static struct-method path (`.run(..)`) against a boxed `RubyValue`,
+        // emitting invalid Rust.
         HirNode::Call {
             receiver: Some(_),
             name,
             args,
             kwargs,
+            block_arg,
             ..
         } if name == "new"
             && (args.iter().any(|a| matches!(a, crate::hir::ArrayElem::Splat(_)))
-                || kwargs.iter().any(|k| matches!(k, crate::hir::KwArg::DoubleSplat(_)))) =>
+                || kwargs.iter().any(|k| matches!(k, crate::hir::KwArg::DoubleSplat(_)))
+                || block_arg.is_some()) =>
         {
             TyKind::Poly
         }

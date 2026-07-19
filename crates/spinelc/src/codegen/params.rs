@@ -1241,6 +1241,22 @@ pub fn emit_proc_param_bindings(
         }
     });
 
+    // A `&block` parameter on a proc/lambda (`->(&b) { ... }`). A block passed
+    // to the proc's OWN `.call` isn't threaded through the runtime's proc
+    // invocation yet, so it binds to nil -- an omitted block. This keeps the
+    // no-block forms exact (`b.nil?` is true, matching `Proc#call` with no
+    // block) and, critically, never emits a reference to an unbound `b` (the
+    // previous behavior, which was invalid Rust); a block that IS passed
+    // surfaces as a clean runtime NoMethodError on nil rather than compiling
+    // to garbage.
+    let block_let = params.block.iter().flatten().map(|name| {
+        let ident = safe_ident(name);
+        quote! {
+            #[allow(unused_variables, unused_mut)]
+            let mut #ident: spinel_rt::RubyValue = spinel_rt::RubyValue::Nil;
+        }
+    });
+
     // `__opt_bound`/`__rest_count` are computed even when there's no
     // rest/optional param at all -- harmless dead-ish locals the compiler
     // won't warn about here since they're always at least read by the
@@ -1267,6 +1283,7 @@ pub fn emit_proc_param_bindings(
         #(#keyword_rest_let)*
         #destructures
         #(#block_local_lets)*
+        #(#block_let)*
     }
 }
 
