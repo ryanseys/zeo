@@ -226,6 +226,12 @@ pub const YAML_MODULE: ClassId = ClassId(62);
 /// ext), appended at the end of the builtin id block.
 pub const RANDOM_CLASS: ClassId = ClassId(63);
 
+/// `SizedQueue < Queue` -- a bounded blocking queue. Shares the whole `Queue`
+/// method table via the ancestor chain, adding only `max`/`max=`; its
+/// instances are `RubyValue::Queue` values whose runtime payload carries the
+/// bound (see `spinel_rt::queue_is_sized`).
+pub const SIZED_QUEUE_CLASS: ClassId = ClassId(64);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -248,8 +254,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: MATCH_DATA_CLASS, name: "MatchData", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: FIBER_CLASS, name: "Fiber", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: THREAD_CLASS, name: "Thread", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
-    BuiltinClass { id: MUTEX_CLASS, name: "Mutex", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
-    BuiltinClass { id: QUEUE_CLASS, name: "Queue", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: MUTEX_CLASS, name: "Thread::Mutex", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: QUEUE_CLASS, name: "Thread::Queue", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: RACTOR_CLASS, name: "Ractor", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: ENUMERABLE_CLASS, name: "Enumerable", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: CLASS_CLASS, name: "Class", is_module: false, superclass: Some(MODULE_CLASS), includes: &[], feature: None },
@@ -276,7 +282,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: DATA_CLASS, name: "Data", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: SET_CLASS, name: "Set", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
     BuiltinClass { id: LAZY_CLASS, name: "Enumerator::Lazy", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
-    BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: CONDITION_VARIABLE_CLASS, name: "Thread::ConditionVariable", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: UNBOUND_METHOD_CLASS, name: "UnboundMethod", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
     BuiltinClass { id: BASE64_MODULE, name: "Base64", is_module: true, superclass: None, includes: &[], feature: Some("base64") },
     // In-tree `ext/` extensions -- CRuby's ext/ model. Each is require-gated
@@ -305,6 +311,21 @@ pub const BUILTINS: &[BuiltinClass] = &[
     // loader) makes both constants resolve, and both dispatch to `ext::psych`.
     BuiltinClass { id: YAML_MODULE, name: "YAML", is_module: true, superclass: None, includes: &[], feature: Some("psych") },
     BuiltinClass { id: RANDOM_CLASS, name: "Random", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: SIZED_QUEUE_CLASS, name: "Thread::SizedQueue", is_module: false, superclass: Some(QUEUE_CLASS), includes: &[], feature: None },
+];
+
+/// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
+/// top level: `::Queue = Thread::Queue`, `::Mutex = Thread::Mutex`, etc. The
+/// class is defined `Thread::`-nested (so `.name`/`inspect` report the
+/// qualified path, matching CRuby), while these aliases let bare `Queue`/
+/// `Mutex`/`SizedQueue`/`ConditionVariable` still resolve at the top level.
+/// `(alias_name, target_id)`; consulted last in name resolution so a user's
+/// own top-level constant of the same name still wins.
+pub const TOP_LEVEL_ALIASES: &[(&str, ClassId)] = &[
+    ("Queue", QUEUE_CLASS),
+    ("SizedQueue", SIZED_QUEUE_CLASS),
+    ("Mutex", MUTEX_CLASS),
+    ("ConditionVariable", CONDITION_VARIABLE_CLASS),
 ];
 
 /// `Object`'s own hierarchy slot (it isn't a [`BUILTINS`] row):

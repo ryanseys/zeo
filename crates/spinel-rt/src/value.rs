@@ -9,8 +9,8 @@ use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ClassId, ARRAY_CLASS, CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
     INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, STRING_CLASS, SYMBOL_CLASS,
-    THREAD_CLASS, TRUE_CLASS,
+    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS,
+    SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
 };
 use crate::fiber::RFiber;
 use crate::ractor::RRactor;
@@ -336,8 +336,14 @@ impl RubyValue {
             RubyValue::Enumerator(e) => crate::builtins::enumerator::enum_inspect(e),
             RubyValue::Yielder(_) => "#<Enumerator::Yielder>".to_string(),
             RubyValue::Thread(_) => "#<Thread>".to_string(),
-            RubyValue::Mutex(_) => "#<Mutex>".to_string(),
-            RubyValue::Queue(_) => "#<Thread::Queue>".to_string(),
+            RubyValue::Mutex(_) => "#<Thread::Mutex>".to_string(),
+            RubyValue::Queue(q) => {
+                if crate::thread::queue_is_sized(q) {
+                    "#<Thread::SizedQueue>".to_string()
+                } else {
+                    "#<Thread::Queue>".to_string()
+                }
+            }
             RubyValue::Ractor(_) => "#<Ractor>".to_string(),
             // The registered fully-qualified name (`puts Widget` ->
             // "Widget", `puts Store::Item` -> "Store::Item"); the id form
@@ -499,7 +505,13 @@ impl RubyValue {
             RubyValue::Yielder(_) => crate::dispatch::YIELDER_CLASS,
             RubyValue::Thread(_) => THREAD_CLASS,
             RubyValue::Mutex(_) => MUTEX_CLASS,
-            RubyValue::Queue(_) => QUEUE_CLASS,
+            RubyValue::Queue(q) => {
+                if crate::thread::queue_is_sized(q) {
+                    SIZED_QUEUE_CLASS
+                } else {
+                    QUEUE_CLASS
+                }
+            }
             RubyValue::Ractor(_) => RACTOR_CLASS,
             // `Widget.class` -> `Class`, `Enumerable.class` -> `Module`
             // (real Ruby; `Class < Module` handled by the registered

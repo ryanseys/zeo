@@ -7,9 +7,12 @@
 //! agree. `Queue` has a dedicated `RubyValue::Queue` variant (like
 //! Thread/Fiber), unwrapped with `as_queue_unchecked`.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, arg_int, builtin_methods};
 use crate::dispatch::raise_error;
-use crate::thread::{queue_close, queue_closed, queue_len, queue_new, queue_pop, queue_push};
+use crate::thread::{
+    queue_close, queue_closed, queue_len, queue_max, queue_new, queue_pop, queue_push,
+    queue_set_max, sized_queue_new,
+};
 use crate::RubyValue;
 
 builtin_methods! {
@@ -49,6 +52,20 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Bool(queue_len(&recv.as_queue_unchecked()) == 0))
     }
+    // `SizedQueue#max`/`max=` -- the bound. `max` on an unbounded `Queue`
+    // answers `nil` (a documented divergence: CRuby has no `Queue#max`).
+    "max" => fn max(recv, args, _block) {
+        arity!(args, 0);
+        Ok(match queue_max(&recv.as_queue_unchecked()) {
+            Some(n) => RubyValue::Int(n),
+            None => RubyValue::Nil,
+        })
+    }
+    "max=" => fn set_max(recv, args, _block) {
+        arity!(args, 1);
+        queue_set_max(&recv.as_queue_unchecked(), arg_int!(args, 0));
+        Ok(args[0].clone())
+    }
 }
 
 builtin_methods! {
@@ -57,6 +74,16 @@ builtin_methods! {
     "new" => fn new_m(_recv, args, _block) {
         arity!(args, 0);
         Ok(queue_new())
+    }
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_class_sized;
+
+    // `SizedQueue.new(n)` -- the bounded constructor.
+    "new" => fn sized_new(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(sized_queue_new(arg_int!(args, 0)))
     }
 }
 

@@ -389,7 +389,7 @@ impl Compiler {
             return Some(cid);
         }
         if box_id != 0 {
-            return self
+            if let Some(cid) = self
                 .classes
                 .iter()
                 .position(|c| {
@@ -399,9 +399,19 @@ impl Compiler {
                         && (c.is_builtin || c.is_bootstrap)
                 })
                 .map(|i| ClassId(i as u32))
-                .filter(|&c| self.feature_active(c));
+                .filter(|&c| self.feature_active(c))
+            {
+                return Some(cid);
+            }
         }
-        None
+        // A top-level constant alias for a `Thread::`-nested builtin
+        // (`::Queue = Thread::Queue`, ...) -- consulted LAST so a user's own
+        // top-level `Queue`/`Mutex`/etc. shadows it, as in real Ruby.
+        spinel_abi::TOP_LEVEL_ALIASES
+            .iter()
+            .find(|(alias, _)| *alias == name)
+            .map(|&(_, cid)| cid)
+            .filter(|&c| self.feature_active(c))
     }
 
     /// First class/module named `name` defined directly inside

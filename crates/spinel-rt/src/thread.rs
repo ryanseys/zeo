@@ -300,6 +300,23 @@ pub fn mutex_locked(m: &RMutex) -> bool {
     m.owner.lock().is_some()
 }
 
+/// `Mutex#try_lock` -- acquire without blocking. `true` if the lock was free
+/// and is now ours; `false` if it was already held (by anyone, including
+/// ourselves -- CRuby never deadlocks on a recursive `try_lock`).
+pub fn mutex_try_lock(m: &RMutex) -> bool {
+    let me = execution_id();
+    if *m.owner.lock() == Some(me) {
+        return false;
+    }
+    match m.token_rx.try_recv() {
+        Ok(()) => {
+            *m.owner.lock() = Some(me);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 pub fn mutex_owned(m: &RMutex) -> bool {
     *m.owner.lock() == Some(execution_id())
 }
@@ -311,6 +328,9 @@ pub fn mutex_owned(m: &RMutex) -> bool {
 struct QueueInner {
     items: VecDeque<RubyValue>,
     closed: bool,
+    /// `Some(n)` for a `SizedQueue` -- `push` back-pressures at `n` items.
+    /// `None` for an unbounded `Queue`. Mutable via `SizedQueue#max=`.
+    max: Option<usize>,
 }
 
 pub struct QueueData {
@@ -320,18 +340,62 @@ pub struct QueueData {
     /// scheduler.
     inner: may::sync::Mutex<QueueInner>,
     not_empty: may::sync::Condvar,
+    /// Wakes a `push` back-pressured on a full `SizedQueue` after a `pop`
+    /// frees a slot.
+    not_full: may::sync::Condvar,
+    /// Whether this value is a `SizedQueue` (vs a plain `Queue`) -- fixed at
+    /// construction, so `class_id` reads it lock-free. Distinct from `max`,
+    /// which is the (mutable) bound: the class never changes even if `max=`
+    /// does.
+    is_sized: bool,
 }
 
 pub type RQueue = Arc<QueueData>;
 
-pub fn queue_new() -> RubyValue {
+/// Whether a queue value is a `SizedQueue` -- drives `RubyValue::class_id`.
+pub fn queue_is_sized(q: &RQueue) -> bool {
+    q.is_sized
+}
+
+fn queue_with(max: Option<usize>, is_sized: bool) -> RubyValue {
     RubyValue::Queue(Arc::new(QueueData {
         inner: may::sync::Mutex::new(QueueInner {
             items: VecDeque::new(),
             closed: false,
+            max,
         }),
         not_empty: may::sync::Condvar::new(),
+        not_full: may::sync::Condvar::new(),
+        is_sized,
     }))
+}
+
+pub fn queue_new() -> RubyValue {
+    queue_with(None, false)
+}
+
+/// `SizedQueue.new(n)` -- a bounded queue whose `push` blocks (coroutine-
+/// yieldingly) once `n` items are enqueued, until a `pop` frees a slot.
+pub fn sized_queue_new(n: i64) -> RubyValue {
+    queue_with(Some(n.max(0) as usize), true)
+}
+
+/// `SizedQueue#max` -- the current bound (`None` for an unbounded `Queue`).
+pub fn queue_max(q: &RQueue) -> Option<i64> {
+    q.inner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .max
+        .map(|m| m as i64)
+}
+
+/// `SizedQueue#max=` -- raise or lower the bound; a raised bound wakes any
+/// back-pressured pushers.
+pub fn queue_set_max(q: &RQueue, n: i64) {
+    let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+    inner.max = Some(n.max(0) as usize);
+    drop(inner);
+    q.not_full.notify_all();
 }
 
 /// `Err` = `ClosedQueueError: "queue closed"` (message via codegen, as
@@ -341,8 +405,18 @@ pub fn queue_new() -> RubyValue {
 /// everywhere else.
 pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
-    if inner.closed {
-        return Err("queue closed");
+    loop {
+        if inner.closed {
+            return Err("queue closed");
+        }
+        // A `SizedQueue` at capacity back-pressures until a `pop` frees a
+        // slot; an unbounded `Queue` (`max` = None) never waits.
+        match inner.max {
+            Some(m) if inner.items.len() >= m => {
+                inner = q.not_full.wait(inner).unwrap_or_else(|e| e.into_inner());
+            }
+            _ => break,
+        }
     }
     inner.items.push_back(value);
     q.not_empty.notify_one();
@@ -355,6 +429,8 @@ pub fn queue_pop(q: &RQueue) -> RubyValue {
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if let Some(v) = inner.items.pop_front() {
+            // A freed slot may unblock a `SizedQueue` pusher.
+            q.not_full.notify_one();
             return v;
         }
         if inner.closed {

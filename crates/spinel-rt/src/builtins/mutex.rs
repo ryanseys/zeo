@@ -9,7 +9,9 @@
 
 use crate::builtins::{arity, builtin_methods, need_block};
 use crate::dispatch::raise_error;
-use crate::thread::{mutex_lock, mutex_locked, mutex_owned, mutex_new, mutex_unlock};
+use crate::thread::{
+    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
+};
 use crate::RubyValue;
 
 /// A runtime lock/unlock `Err(&str)` as the `ThreadError` CRuby raises -- the
@@ -38,6 +40,11 @@ builtin_methods! {
     "locked?" => fn locked_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(mutex_locked(&recv.as_mutex_unchecked())))
+    }
+    // `try_lock` -- acquire without blocking; `true` iff it was free.
+    "try_lock" => fn try_lock(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(mutex_try_lock(&recv.as_mutex_unchecked())))
     }
     "owned?" => fn owned_p(recv, args, _block) {
         arity!(args, 0);

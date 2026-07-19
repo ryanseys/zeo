@@ -1938,7 +1938,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         // the block IS the anonymous class's body; `HirNode::New`
                         // has no slot for it, so it falls through to the generic
                         // `Call` and the runtime `Class#new`.
-                        "Fiber" | "Thread" | "Mutex" | "Queue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class"
+                        "Fiber" | "Thread" | "Mutex" | "Queue" | "SizedQueue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class"
                     )
                 {
                     // A trailing keyword hash lands in `kwargs`, kept apart

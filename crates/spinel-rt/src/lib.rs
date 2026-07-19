@@ -95,9 +95,10 @@ pub use runtime_meta::{
 pub use signal::{catch_break, Signal};
 pub use symbol::Symbol;
 pub use thread::{
-    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_unlock, queue_close, queue_closed,
-    queue_len, queue_new, queue_pop, queue_push, thread_new, thread_outcome, MutexData,
-    QueueData, RMutex, RQueue, RThread, ThreadData,
+    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock, queue_close,
+    queue_closed, queue_is_sized, queue_len, queue_max, queue_new, queue_pop, queue_push,
+    queue_set_max, sized_queue_new, thread_new, thread_outcome, MutexData, QueueData, RMutex,
+    RQueue, RThread, ThreadData,
 };
 pub use value::rb_eq_checked;
 pub use value::RubyValue;

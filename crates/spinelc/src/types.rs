@@ -252,6 +252,11 @@ pub fn infer_type_with_locals(
             HirNode::ClassRef(n) if n == "Thread" => TyKind::Thread,
             HirNode::ClassRef(n) if n == "Mutex" => TyKind::Mutex,
             HirNode::ClassRef(n) if n == "Queue" => TyKind::Queue,
+            // A `SizedQueue` value IS a `Queue` (bounded) -- it shares the
+            // whole `Queue` method surface, so it types as `Queue` for static
+            // dispatch; its distinct class identity lives in the runtime
+            // payload (`queue_is_sized`), not the static type.
+            HirNode::ClassRef(n) if n == "SizedQueue" => TyKind::Queue,
             HirNode::ClassRef(n) if n == "Ractor" => TyKind::Ractor,
             // `x.new(...)` through a class-value-typed receiver (Phase
             // 16.1) constructs exactly what a literal `Widget.new(...)`

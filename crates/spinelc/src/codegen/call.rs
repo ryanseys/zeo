@@ -2512,6 +2512,12 @@ pub fn emit_call(
                 ("Queue", "new") if args.is_empty() && block.is_none() => {
                     return quote! { spinel_rt::queue_new() };
                 }
+                ("SizedQueue", "new") if args.len() == 1 && block.is_none() => {
+                    let n = emit_expr(cx, args[0]);
+                    return quote! {
+                        spinel_rt::sized_queue_new((#n).as_int_unchecked())
+                    };
+                }
                 // `Ractor.new(*args) { |*params| }` (Phase 13.8) -- block
                 // ISOLATION is enforced HERE, at compile time (the capture
                 // set is statically known), strictly earlier than CRuby's
@@ -3245,11 +3251,15 @@ fn dispatch(
         };
         if !user_defined {
             return match infer_any_class(cx, recv_id) {
-                Some(cid) => {
+                // `Queue` is the one builtin whose runtime value may be a
+                // subclass (`SizedQueue`, which types as `Queue` but carries
+                // its own class id in the payload), so its `.class` is read
+                // at runtime rather than constant-folded.
+                Some(cid) if cid != spinel_abi::QUEUE_CLASS => {
                     let id = cid.0;
                     quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) } }
                 }
-                None => quote! { spinel_rt::RubyValue::Class((#recv_expr).class_id()) },
+                _ => quote! { spinel_rt::RubyValue::Class((#recv_expr).class_id()) },
             };
         }
     }
@@ -3580,6 +3590,12 @@ fn dispatch(
                     spinel_rt::RubyValue::Bool(spinel_rt::mutex_owned(&(#recv_expr).as_mutex_unchecked()))
                 };
             }
+            // `try_lock` -- acquire without blocking; true iff it was free.
+            ("try_lock", 0, None) => {
+                return quote! {
+                    spinel_rt::RubyValue::Bool(spinel_rt::mutex_try_lock(&(#recv_expr).as_mutex_unchecked()))
+                };
+            }
             // `synchronize { }`: lock, run the block (an ordinary escaping
             // Proc), ALWAYS unlock -- including on a signal (an exception/
             // `break` inside the block must release the lock on its way
@@ -3662,6 +3678,15 @@ fn dispatch(
             ("empty?", 0) => {
                 return quote! {
                     spinel_rt::RubyValue::Bool(spinel_rt::queue_len(&(#recv_expr).as_queue_unchecked()) == 0)
+                };
+            }
+            // `SizedQueue#max` -- the bound (nil on an unbounded `Queue`).
+            ("max", 0) => {
+                return quote! {
+                    match spinel_rt::queue_max(&(#recv_expr).as_queue_unchecked()) {
+                        Some(__n) => spinel_rt::RubyValue::Int(__n),
+                        None => spinel_rt::RubyValue::Nil,
+                    }
                 };
             }
             _ => {}

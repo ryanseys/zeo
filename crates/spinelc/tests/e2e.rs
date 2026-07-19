@@ -17640,3 +17640,47 @@ fn queue_and_mutex_methods_on_a_poly_receiver() {
         "3\nfalse\n10\ntrue\n20\n30\nfalse\ntrue\n42\nfalse\n0\n"
     );
 }
+
+#[test]
+fn sized_queue_back_pressure_try_lock_and_thread_namespacing() {
+    // SizedQueue bounds #push; Mutex#try_lock is non-blocking; and the whole
+    // Thread::* family reports its CRuby-faithful qualified name.
+    let result = run_ruby(
+        r#"
+        p Queue
+        p SizedQueue
+        p Mutex
+        q = SizedQueue.new(2)
+        p q.class
+        p q.is_a?(Queue)
+        p q.max
+        producer = Thread.new do
+          5.times { |i| q.push(i) }
+          q.close
+        end
+        got = []
+        while (v = q.pop)
+          got << v
+        end
+        producer.join
+        p got
+        s = SizedQueue.new(3)
+        s << "a" << "b"
+        p s.size
+        s.max = 5
+        p s.max
+        m = Mutex.new
+        p m.try_lock
+        p m.try_lock
+        m.unlock
+        p m.try_lock
+        m.unlock
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Thread::Queue\nThread::SizedQueue\nThread::Mutex\n\
+         Thread::SizedQueue\ntrue\n2\n[0, 1, 2, 3, 4]\n2\n5\ntrue\nfalse\ntrue\n"
+    );
+}
