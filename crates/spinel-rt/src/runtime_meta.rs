@@ -25,12 +25,13 @@
 //! lock held across its own execution.
 
 use crate::dispatch::{
-    ancestors_of_value, raise_error, registry_lookup_cloned, ConstructorFn, MethodImpl, RObj,
-    RubyObject,
+    ancestors_of_value, raise_error, registry_lookup_cloned, send_super_from, ConstructorFn,
+    MethodImpl, RObj, RubyObject,
 };
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
 use spinel_abi::RUNTIME_CLASS_ID_BASE;
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
@@ -126,11 +127,74 @@ fn obj_identity(o: &RObj) -> usize {
 /// forwarded into the body, so `yield`/`&blk` inside a `define_method` body
 /// see the method's caller's block -- CRuby's `invoke_bmethod` specval, not
 /// the closure env (see `ProcData::f`).
-pub fn dynamic_from_proc(body: RProc) -> MethodImpl {
+///
+/// `defining` is the class this method is installed on and `name` its name; the
+/// wrapper pushes them as the current method frame for the duration of the call
+/// so a `super` in the body (which has no compile-time defining class -- the
+/// class was minted at runtime) can resume the receiver's MRO walk after
+/// `defining`. See [`send_super_dynamic`].
+pub fn dynamic_from_proc(defining: ClassId, name: Symbol, body: RProc) -> MethodImpl {
     MethodImpl::Dynamic(Arc::new(move |recv: &RObj, args: &[RubyValue], block| {
         let self_val = RubyValue::Object(recv.clone());
-        body.call_with_self_and_block(&self_val, args, block)
+        push_method_frame(defining, name);
+        // Control flow here is `Result<_, Signal>`, never an unwinding panic, so
+        // this pop runs on every exit (value OR signal) without a guard type.
+        let out = body.call_with_self_and_block(&self_val, args, block);
+        pop_method_frame();
+        out
     }))
+}
+
+// ---------------------------------------------------------------------------
+// Runtime method frames -- what a `super` in a runtime-defined method resolves
+// against
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    /// The stack of runtime-defined methods currently executing on this thread,
+    /// each `(defining class, method name)`. `dynamic_from_proc`'s wrapper
+    /// pushes on entry and pops on exit, so the top frame is always the
+    /// innermost runtime method -- exactly what a bare `super` there needs.
+    static METHOD_FRAMES: RefCell<Vec<(ClassId, Symbol)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A sentinel "defining class" for a per-object singleton method: it is never a
+/// real class id (`u32::MAX` is above every runtime id), so `send_super_from`'s
+/// ancestor lookup misses it and resumes from the TOP of the receiver's own
+/// ancestry -- which is exactly where a singleton method's `super` belongs (the
+/// conceptual singleton class sits ahead of the object's real class).
+const SINGLETON_DEFINING: ClassId = ClassId(u32::MAX);
+
+fn push_method_frame(defining: ClassId, name: Symbol) {
+    METHOD_FRAMES.with(|f| f.borrow_mut().push((defining, name)));
+}
+
+fn pop_method_frame() {
+    METHOD_FRAMES.with(|f| {
+        f.borrow_mut().pop();
+    });
+}
+
+/// `super` from inside a RUNTIME-defined method (a `def` in a `Class.new` /
+/// `Struct.new` / `Data.define` body, or a `define_method`) whose defining class
+/// is not known at compile time. Reads this thread's current method frame --
+/// pushed by [`dynamic_from_proc`] on entry -- and resumes the receiver's MRO
+/// walk after that class, exactly like the compile-time `send_super_from`.
+/// Raises `RuntimeError` when there is no active runtime frame (a `super`
+/// written outside any method), matching CRuby's runtime error rather than a
+/// compile-time rejection.
+pub fn send_super_dynamic(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    match METHOD_FRAMES.with(|f| f.borrow().last().copied()) {
+        Some((defining, name)) => send_super_from(recv, defining, name, args, block),
+        None => Err(raise_error(
+            "RuntimeError",
+            "super called outside of method".to_string(),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +204,7 @@ pub fn dynamic_from_proc(body: RProc) -> MethodImpl {
 /// `some_class.define_method(name) { body }` -- install/override an instance
 /// method on the class with id `id` (frozen or runtime). Returns the name.
 pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> RubyValue {
-    let m = dynamic_from_proc(body);
+    let m = dynamic_from_proc(id, name, body);
     {
         let mut w = maps().classes.write().unwrap();
         w.entry(id.0).or_insert_with(OverlayEntry::delta).methods.insert(name, m);
@@ -172,7 +236,7 @@ pub fn runtime_define_singleton_method(
         }
         RubyValue::Object(o) => {
             let key = obj_identity(o);
-            let m = dynamic_from_proc(body);
+            let m = dynamic_from_proc(SINGLETON_DEFINING, name, body);
             {
                 let mut w = maps().singletons.write().unwrap();
                 w.entry(key).or_default().insert(name, m);

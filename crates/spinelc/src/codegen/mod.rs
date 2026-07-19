@@ -176,6 +176,19 @@ struct Ctx<'a> {
     /// are not `Proc`s, can't be handed to `instance_exec`, and keep the
     /// static field fast path.
     self_is_dynamic: bool,
+    /// `Some` exactly while emitting the body of a RUNTIME-defined method -- a
+    /// `def`/`define_method` installed inside a `Class.new`/`Struct.new`/
+    /// `Data.define` block, whose class is minted at runtime and so has no
+    /// compile-time `defining_class`. Its presence is what tells
+    /// `emit_super_inline` to resolve `super` through the runtime method-frame
+    /// stack (`spinel_rt::send_super_dynamic`) rather than the compile-time
+    /// ancestor splice; the carried `Params` are the enclosing method's own,
+    /// for a bare `super`'s argument forwarding. Propagates through `in_proc`
+    /// (a `super` inside a block still targets the enclosing method), and is
+    /// deliberately cleared alongside the class fields when a runtime method
+    /// body is nested inside a compile-time one (see `emit_expr`'s
+    /// `DefMethod`).
+    runtime_super_params: Option<std::rc::Rc<crate::hir::Params>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -844,6 +857,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        runtime_super_params: None,
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
@@ -981,6 +995,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        runtime_super_params: None,
     };
     // Hoist the class body's own locals and emit its statements as a scoped
     // block that evaluates to `Result` -- `?` propagates a raised Signal into
@@ -1077,6 +1092,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_ident: format_ident!("self"),
         in_real_proc: false,
         self_is_dynamic: false,
+        runtime_super_params: None,
     };
     let prologue = params::emit_prologue(&cx, &scope.params);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1247,6 +1263,7 @@ fn emit_builtin_method_fn(
         // isn't supported yet (the `main` object has no ivar storage)"; it
         // has storage now (`dispatch::Object`).
         self_is_dynamic: true,
+        runtime_super_params: None,
     };
     let prologue = params::emit_prologue(&cx, &scope.params);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1315,6 +1332,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             self_ident: format_ident!("self"),
             in_real_proc: false,
             self_is_dynamic: false,
+            runtime_super_params: None,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params);
         let body = hoisting::emit_hoisted_body_with_extra_roots(

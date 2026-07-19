@@ -1015,6 +1015,16 @@ pub fn emit_super_inline(
     zsuper: bool,
     block: Option<NodeId>,
 ) -> TokenStream {
+    // A `super` inside a RUNTIME-defined method body (a `def`/`define_method`
+    // installed in a `Class.new`/`Struct.new`/`Data.define` block) has no
+    // compile-time defining class -- the class is minted at runtime. `emit_expr`
+    // marks such a body with `runtime_super_params`; resolve through the runtime
+    // method-frame stack (`spinel_rt::send_super_dynamic`) instead of splicing a
+    // compile-time ancestor's HIR.
+    if let Some(params) = cx.runtime_super_params.clone() {
+        return emit_super_dynamic(cx, &params, args, kwargs, zsuper, block);
+    }
+
     // A CLASS method (`def self.foo`) has no `self: Arc<Self>` receiver, so
     // `current_class` is deliberately None there and `class_self` carries the
     // receiver class instead (see `codegen::mod`'s Ctx construction).
@@ -1163,6 +1173,10 @@ pub fn emit_super_inline(
         // encloses this splice (a real Proc closure or not).
         self_ident: cx.self_ident.clone(),
         in_real_proc: cx.in_real_proc,
+        // A compile-time `super` splice (this path only runs when
+        // `defining_class` was known); a nested `super` in the spliced body
+        // resolves through `defining_class` above, not the runtime frame.
+        runtime_super_params: None,
     };
     // Binds the parent's OWN parameter names fresh, before splicing its body
     // in -- previously this relied on the parent's params
@@ -1242,6 +1256,36 @@ fn emit_runtime_super(
                 &__super_args,
                 #block_expr,
             )?
+        }
+    }
+}
+
+/// `super` from inside a RUNTIME-defined method body (a `def`/`define_method`
+/// in a `Class.new`/`Struct.new`/`Data.define` block), whose defining class is
+/// unknown at compile time. Forwards args exactly like `emit_runtime_super` --
+/// explicit `super(a, b)`, or the enclosing method's own params for a bare
+/// `super` -- but dispatches through `spinel_rt::send_super_dynamic`, which
+/// reads the class off the runtime method-frame stack (pushed when the method
+/// was entered) rather than from a compile-time `defining_class`.
+fn emit_super_dynamic(
+    cx: &Ctx,
+    current_params: &Params,
+    args: &[NodeId],
+    kwargs: &[KwArg],
+    zsuper: bool,
+    block: Option<NodeId>,
+) -> TokenStream {
+    let self_val = boxed_implicit_self(cx).unwrap_or_else(|| {
+        let slf = &cx.self_ident;
+        quote! { (#slf).clone() }
+    });
+    let (pushes, block_expr) =
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+    quote! {
+        {
+            let mut __super_args: Vec<spinel_rt::RubyValue> = Vec::new();
+            #(#pushes)*
+            spinel_rt::send_super_dynamic(&#self_val, &__super_args, #block_expr)?
         }
     }
 }

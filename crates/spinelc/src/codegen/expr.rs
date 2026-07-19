@@ -954,8 +954,22 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // The body becomes a method-body lambda: its `yield`/
             // `block_given?`/`&block` reach the block the installed method is
             // called with, threaded through `ProcData`'s call-site block slot
-            // (see `HirNode::Lambda`'s `method_body`).
-            let proc = super::call::emit_proc_or_lambda_value(cx, params, body, true, true);
+            // (see `HirNode::Lambda`'s `method_body`). It is a RUNTIME-defined
+            // method: the class it lands on is minted at runtime, so a `super`
+            // in its body resolves through the runtime method-frame stack, not
+            // a compile-time ancestor splice. Marking `runtime_super_params` is
+            // what routes it there; `emit_super_inline` checks that marker
+            // BEFORE reading `defining_class`, so a `def` nested inside a real
+            // class's method (`class Foo; def m; Class.new { def g; super; end
+            // }; end; end`) resolves `g`'s `super` at runtime without wrongly
+            // splicing against Foo. The enclosing class context is otherwise
+            // left intact so lexical constant resolution in the body still sees
+            // the surrounding module nesting (a method-body lambda already runs
+            // under a dynamic `self`, so it never statically dispatches against
+            // that class).
+            let mut body_cx = cx.clone();
+            body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+            let proc = super::call::emit_proc_or_lambda_value(&body_cx, params, body, true, true);
             let installer =
                 if *is_class_method { "define_singleton_method" } else { "define_method" };
             quote! {

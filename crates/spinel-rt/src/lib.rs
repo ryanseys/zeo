@@ -96,7 +96,7 @@ pub use regexp::*;
 pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, ProcParamMeta, RProc};
 pub use runtime_meta::{
     name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
-    runtime_define_singleton_method,
+    runtime_define_singleton_method, send_super_dynamic,
 };
 pub use signal::{catch_break, home_pop, home_push, Signal};
 pub use symbol::Symbol;

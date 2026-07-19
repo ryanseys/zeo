@@ -13000,6 +13000,68 @@ fn anonymous_data_define_mints_a_native_immutable_class() {
     );
 }
 
+/// #192 feature (1): a `super` inside a method defined in a NON-const
+/// `Struct.new`/`Data.define` block resolves through the runtime method-frame
+/// stack into the native member-binding `initialize`, where previously it
+/// panicked "`super` outside a method" at codegen. Bare (zsuper) and explicit
+/// positional forms, plus the keyword form for Data.
+#[test]
+fn anonymous_struct_and_data_custom_initialize_super() {
+    let result = run_ruby(
+        r#"
+        pair = Struct.new(:x, :y) do
+          def initialize(x)
+            super(x, x * 2)
+          end
+        end
+        p pair.new(5).to_a
+
+        echo = Struct.new(:a, :b) do
+          def initialize(a, b)
+            super
+          end
+        end
+        p echo.new(1, 2).to_a
+
+        coord = Data.define(:lat, :lng) do
+          def initialize(lat:, lng:)
+            super(lat: lat * 10, lng: lng)
+          end
+        end
+        p coord.new(lat: 1, lng: 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[5, 10]\n[1, 2]\n#<data lat=10, lng=2>\n"
+    );
+}
+
+/// #192 feature (1): a `super` in an override installed via a `Class.new(Parent)`
+/// block reaches the parent's method, when the parent is a runtime class. The
+/// override forwards args and composes the parent's result.
+#[test]
+fn class_new_override_supers_into_a_runtime_parent() {
+    let result = run_ruby(
+        r#"
+        base = Class.new do
+          def greet(n)
+            "hi #{n}"
+          end
+        end
+        sub = Class.new(base) do
+          def greet(n)
+            super(n) + "!"
+          end
+        end
+        p sub.new.greet("x")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"hi x!\"\n");
+}
+
 /// The constant-position clean rejection still holds: a `Name = Struct.new(...)`
 /// with a string first argument is the compile-time-synthesized form, which
 /// requires literal symbol members.

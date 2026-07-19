@@ -1382,6 +1382,15 @@ pub fn send_super_from(
         .map_or(0, |p| p + 1);
     let method_name = name.to_string();
     for &anc in &ancestors[start..] {
+        // A runtime-defined ancestor's own method lives in the overlay, not the
+        // frozen registry -- so `super` from a `Class.new(parent)` override into
+        // `parent`'s (also runtime-defined) method is found here, mirroring
+        // `walk_runtime_class`'s per-ancestor overlay-then-registry order.
+        if crate::runtime_meta::is_live() {
+            if let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {
+                return m.call(&obj, args, block);
+            }
+        }
         if let Some(f) = registry().lookup(anc, name) {
             return f.call(&obj, args, block);
         }

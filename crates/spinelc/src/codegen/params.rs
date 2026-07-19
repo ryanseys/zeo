@@ -1517,6 +1517,7 @@ mod tests {
             self_ident: quote::format_ident!("__self"),
             in_real_proc: false,
             self_is_dynamic: false,
+            runtime_super_params: None,
         };
         emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda, false).to_string()
     }

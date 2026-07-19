@@ -754,6 +754,14 @@ fn walk(
             }
         }
         HirNode::SuperCall { args, kwargs, block, .. } => {
+            // `super` implicitly dispatches on the receiver, so an escaping
+            // block containing one must capture `self` -- same flag `SelfRef`/
+            // `IvarRead` set above. Without this a `super` in a method-body
+            // lambda (a `def` in a `Class.new`/`Struct.new` block) would emit
+            // a self reference the closure never binds.
+            if in_escaping {
+                caps.self_captured = true;
+            }
             for &a in args {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
             }
