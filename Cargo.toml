@@ -26,3 +26,14 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 1
 debug = "line-tables-only"
+
+# The runtime a SHIPPED binary links (`spinelc foo.rb -o app` builds spinel-rt in
+# release and statically links it -- see build.rs's Profile). Optimized and stripped
+# so user binaries are small and fast, instead of embedding the ~10MB unoptimized
+# debug runtime. All behavior-preserving: NOT panic="abort" (the `may` coroutine
+# scheduler, catch_break/fiber unwinding, and deliberate divide-by-zero panics as a
+# control path all require panic=unwind).
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1

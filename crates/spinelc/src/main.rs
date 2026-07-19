@@ -136,20 +136,15 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    // Everything past here LINKS the runtime, so make sure it's built. Cheap
-    // existence check when it already is (the common case); a one-time
-    // `cargo build -p spinel-rt` on a fresh tree so `spinelc foo.rb` just works.
-    spinelc::build::ensure_runtime_built()?;
+    use spinelc::build::{build_binary, ensure_runtime_built, Linkage, Profile};
 
     // `-e`: compile to a throwaway binary, run it, and exit with ITS status
     // (stdout/stderr stream straight through) -- the differential-harness path.
+    // Run-once, so it uses the fast `Debug` runtime (never an optimized build).
     if matches!(args.source, Source::Eval(_)) {
+        ensure_runtime_built(Profile::Debug)?;
         let bin = std::env::temp_dir().join(format!("spinelc-e-{}", std::process::id()));
-        spinelc::build::build_binary(
-            &compiled.rust_source,
-            &bin,
-            spinelc::build::Linkage::from_env(),
-        )?;
+        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), Profile::Debug)?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -165,11 +160,12 @@ fn run() -> Result<(), String> {
         p.set_extension("");
         p
     });
-    spinelc::build::build_binary(
-        &compiled.rust_source,
-        &output,
-        spinelc::build::Linkage::from_env(),
-    )
+    // `spinelc foo.rb -o app` produces a SHIPPED binary: link the release-profiled
+    // runtime (optimized + stripped) so the artifact is small and fast, rather than
+    // embedding the unoptimized debug runtime. One-time `cargo build --release -p
+    // spinel-rt` on first use.
+    ensure_runtime_built(Profile::Release)?;
+    build_binary(&compiled.rust_source, &output, Linkage::from_env(), Profile::Release)
 }
 
 fn main() -> ExitCode {

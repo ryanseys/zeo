@@ -77,23 +77,36 @@ fn target_dir() -> PathBuf {
 /// just does a cheap existence check, with none of the old
 /// env-var/per-crate-memoization machinery and none of the cargo build-lock
 /// contention that made a per-call `cargo build` cost the conformance suite ~153s.
-pub fn ensure_runtime_built() -> Result<(), String> {
-    static ONCE: OnceLock<Result<(), String>> = OnceLock::new();
-    ONCE.get_or_init(|| {
+pub fn ensure_runtime_built(profile: Profile) -> Result<(), String> {
+    // Memoized PER PROFILE: a single process almost always uses one (the CLI's
+    // `-e` and the harness build `Debug`; only `spinelc foo.rb -o app` builds
+    // `Release`), but keying the once-cell by profile keeps it correct if both
+    // are ever exercised, and still collapses the e2e harness's many `#[test]`
+    // threads to one build.
+    static DEBUG: OnceLock<Result<(), String>> = OnceLock::new();
+    static RELEASE: OnceLock<Result<(), String>> = OnceLock::new();
+    let cell = match profile {
+        Profile::Debug => &DEBUG,
+        Profile::Release => &RELEASE,
+    };
+    cell.get_or_init(|| {
         // Already built -- the common case (harness prebuild, or a prior build
         // in this tree). `cargo build -p spinel-rt` co-produces the rlib and the
         // dylib, so the rlib's presence answers for both linkages.
-        if linkable_for("spinel-rt", Linkage::Static).is_ok() {
+        if linkable_for("spinel-rt", Linkage::Static, profile).is_ok() {
             return Ok(());
         }
-        match std::process::Command::new("cargo")
-            .args(["build", "--quiet", "-p", "spinel-rt"])
-            .current_dir(workspace_root())
-            .status()
-        {
+        let mut cmd = std::process::Command::new("cargo");
+        cmd.arg("build").arg("--quiet");
+        if let Some(flag) = profile.cargo_flag() {
+            cmd.arg(flag);
+        }
+        cmd.args(["-p", "spinel-rt"]).current_dir(workspace_root());
+        let label = profile.cargo_flag().map(|f| format!("{f} ")).unwrap_or_default();
+        match cmd.status() {
             Ok(status) if status.success() => Ok(()),
-            Ok(status) => Err(format!("`cargo build -p spinel-rt` exited with {status}")),
-            Err(e) => Err(format!("running `cargo build -p spinel-rt`: {e}")),
+            Ok(status) => Err(format!("`cargo build {label}-p spinel-rt` exited with {status}")),
+            Err(e) => Err(format!("running `cargo build {label}-p spinel-rt`: {e}")),
         }
     })
     .clone()
@@ -143,25 +156,67 @@ impl Linkage {
     }
 }
 
+/// Which cargo profile's `spinel-rt` a generated program links against --
+/// orthogonal to `Linkage`.
+///
+/// `Debug` is the fast-iteration answer: the run-once `-e` path, the e2e harness,
+/// and the conformance suite all use it so they never pay an optimized runtime
+/// build. `Release` is for a SHIPPED artifact (`spinelc foo.rb -o app`): it links
+/// the release-profiled runtime (optimized + stripped, see `[profile.release]`),
+/// so the produced binary is small and fast instead of embedding the ~10MB
+/// unoptimized debug runtime. Keyed off intent (`-o` output vs `-e`/throwaway),
+/// NOT off `Linkage`, since the interactive `-e` path is also `Static`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    Debug,
+    Release,
+}
+
+impl Profile {
+    /// The `target/` subdirectory cargo writes this profile's artifacts to.
+    fn subdir(self) -> &'static str {
+        match self {
+            Profile::Debug => "debug",
+            Profile::Release => "release",
+        }
+    }
+
+    /// The `cargo build` flag that produces it (`Debug` is the default, no flag).
+    fn cargo_flag(self) -> Option<&'static str> {
+        match self {
+            Profile::Debug => None,
+            Profile::Release => Some("--release"),
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        match self {
+            Profile::Debug => b"debug;",
+            Profile::Release => b"release;",
+        }
+    }
+}
+
 /// The built library a generated program should link against: the `dylib` when
 /// linking dynamically and the crate publishes one, else the `rlib`.
 ///
 /// A crate without a `dylib` (any `[native]` package that hasn't asked for one)
 /// falls back to its rlib and links statically even in dynamic mode, which is
 /// fine -- `-C prefer-dynamic` is a preference, not a requirement.
-fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
+fn linkable_for(crate_name: &str, linkage: Linkage, profile: Profile) -> Result<PathBuf, String> {
     let underscored = crate_name.replace('-', "_");
-    let debug = target_dir().join("debug");
+    let dir = target_dir().join(profile.subdir());
     if linkage == Linkage::Dynamic {
-        let dylib = debug.join(format!("lib{underscored}.dylib"));
+        let dylib = dir.join(format!("lib{underscored}.dylib"));
         if dylib.exists() {
             return Ok(dylib);
         }
     }
-    let rlib = debug.join(format!("lib{underscored}.rlib"));
+    let rlib = dir.join(format!("lib{underscored}.rlib"));
     if !rlib.exists() {
+        let flag = profile.cargo_flag().map(|f| format!("{f} ")).unwrap_or_default();
         return Err(format!(
-            "{crate_name} is not built: expected {} -- run `cargo build -p {crate_name}` \
+            "{crate_name} is not built: expected {} -- run `cargo build {flag}-p {crate_name}` \
              (or call `ensure_runtime_built` first)",
             rlib.display()
         ));
@@ -169,15 +224,20 @@ fn linkable_for(crate_name: &str, linkage: Linkage) -> Result<PathBuf, String> {
     Ok(rlib)
 }
 
-pub fn build_binary(rust_source: &str, output: &Path, linkage: Linkage) -> Result<(), String> {
+pub fn build_binary(
+    rust_source: &str,
+    output: &Path,
+    linkage: Linkage,
+    profile: Profile,
+) -> Result<(), String> {
     // Pure: only LINKS the already-built runtime, never runs cargo or mutates
     // the workspace. Callers that can't assume a prior build (`spinelc`'s own
     // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
     // prebuilds (the conformance harness) needs nothing here.
-    let runtime = linkable_for("spinel-rt", linkage)?;
-    let deps_dir = target_dir().join("debug").join("deps");
+    let runtime = linkable_for("spinel-rt", linkage, profile)?;
+    let deps_dir = target_dir().join(profile.subdir()).join("deps");
 
-    let cached = cache_path(rust_source, linkage)?;
+    let cached = cache_path(rust_source, linkage, profile)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -331,15 +391,19 @@ fn cache_dir() -> PathBuf {
 /// the 32MB rlib could not be amortized and would cost more than it saves.
 /// Cargo does not touch mtimes on a no-op rebuild, so this only
 /// over-invalidates when the runtime genuinely got rebuilt.
-fn cache_path(rust_source: &str, linkage: Linkage) -> Result<PathBuf, String> {
-    // Linkage is part of the generation, not just a detail: the same source
-    // compiles to a 9.8MB self-contained binary or a 616K one that needs the
-    // dylib, and handing a caller the wrong kind would either bloat their
-    // output or hand them something that dies in `dyld`.
+fn cache_path(rust_source: &str, linkage: Linkage, profile: Profile) -> Result<PathBuf, String> {
+    // Linkage AND profile are part of the generation, not just details: the same
+    // source compiles to a 9.8MB self-contained binary or a 616K one that needs the
+    // dylib (linkage), and to a debug or a release-optimized binary (profile) --
+    // handing a caller the wrong kind would bloat their output, hand them something
+    // that dies in `dyld`, or serve a debug binary where a shipped release one was
+    // asked for. The profile's own rlib is also stat'd below, so its mtime already
+    // distinguishes the two; the tag makes the intent explicit and collision-proof.
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, linkage.tag());
+    generation = fnv1a64_with(generation, profile.tag());
     {
         let name = "spinel-rt";
-        let lib = linkable_for(name, linkage)?;
+        let lib = linkable_for(name, linkage, profile)?;
         let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
         let mtime = meta
             .modified()

@@ -49,11 +49,13 @@ pub fn run_ruby_packages(
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::ensure_runtime_built().expect("building spinel-rt for the e2e harness");
+    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug)
+        .expect("building spinel-rt for the e2e harness");
     spinelc::build::build_binary(
         rust_source,
         &bin,
         spinelc::build::Linkage::Dynamic,
+        spinelc::build::Profile::Debug,
     )
         .unwrap_or_else(|e| {
             panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
@@ -135,8 +137,9 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::ensure_runtime_built().expect("building spinel-rt for the e2e harness");
-    spinelc::build::build_binary(&rust_source, &bin, spinelc::build::Linkage::Dynamic).unwrap_or_else(|e| {
+    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug)
+        .expect("building spinel-rt for the e2e harness");
+    spinelc::build::build_binary(&rust_source, &bin, spinelc::build::Linkage::Dynamic, spinelc::build::Profile::Debug).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 
