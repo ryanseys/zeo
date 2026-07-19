@@ -1,0 +1,14 @@
+["file.txt", "-notaflag"]
+["file.txt", "-notaflag"]
+true
+"matz"
+"3"
+Usage: demo [options] FILE
+
+    -v, --verbose                    run verbosely
+    -n, --name NAME                  the name
+    -c, --count=N                    how many
+["x"]
+"invalid option: --nope"
+true
+"missing argument: --name"

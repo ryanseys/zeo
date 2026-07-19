@@ -1,12 +1,12 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1750/2074 passing (84.4%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `b55c430`
+Suite `spinel` — **1758/2074 passing (84.8%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `f148f92`
 
 | verdict | count |
 |---|---|
-| PASS | 1750 |
+| PASS | 1758 |
 | FAIL_OUTPUT | 301 |
-| FAIL_COMPILE | 23 |
+| FAIL_COMPILE | 15 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
@@ -20,7 +20,7 @@ Suite `spinel` — **1750/2074 passing (84.4%)** — oracle `ruby 4.0.5 (2026-05
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
 | 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
-| 10 | spike-misc | ? | singleton_method_object | a singleton method (`def obj.name`) that uses `yield`/`block_given?`/`&block` isn't supported yet (spike scope) -- the method's own block isn't threaded through the runtime install |
+| 8 | spike-misc | ? | exc_frame_break_next_pops | `break`/`next`/`redo` inside a `begin`/`rescue`/`else` clause, targeting a loop OUTSIDE it, isn't supported yet (spike scope) -- a loop written INSIDE the `begin` itself is unaffected |
 | 5 | missing-method:ffi_lib | P | ffi_const_nested_module_path | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
 | 4 | missing-method:new | P | issue_2968 | uncaught exception: undefined method 'new' for class Dir |

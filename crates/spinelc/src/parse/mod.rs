@@ -2290,6 +2290,29 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         if call.receiver().is_none()
             && matches!(name.as_str(), "require" | "require_relative" | "load")
         {
+            // ...EXCEPT when the feature is one spinel already provides
+            // natively. Then there is nothing to splice and nothing to
+            // search for: the whole effect of the require is to activate a
+            // gated builtin, which is a compile-time act that works from any
+            // position. CRuby's `require` returns true the first time a
+            // feature is loaded and false thereafter (`load.c:1413`), and
+            // `activated_features` doubles as that loaded-features table --
+            // so the call folds to the bool `insert` reports.
+            //
+            // Only `require` folds. `load` re-executes unconditionally and
+            // `require_relative` names a file that must actually be spliced,
+            // neither of which a literal can stand in for.
+            if name == "require" {
+                if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
+                    if loader::is_builtin_feature(&feature) {
+                        let newly_loaded = hir
+                            .activated_features
+                            .insert(loader::canonical_ext_feature(&feature).to_string());
+                        let first = newly_loaded && !loader::is_preloaded_at_boot(&feature);
+                        return Ok(hir.push(HirNode::BoolLit(first)));
+                    }
+                }
+            }
             return Err(format!(
                 "`{name}` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
             ));
@@ -3785,6 +3808,29 @@ fn hash_pattern_rest(node: Option<Node<'_>>) -> PResult<HashPatternRest> {
 
 /// If `id` is a `StringLit` HIR node with no interpolation, its concatenated
 /// literal text -- the exact structural check `eval`'s literal-splice path
+/// The single string-literal argument of a `require`-shaped call, or `None`
+/// when the call has any other argument shape (no arguments, several, or one
+/// that isn't a compile-time-constant string).
+///
+/// Lowering the argument through the ordinary path is deliberate -- it picks
+/// up prism's adjacent-literal folding for free -- and the throwaway node left
+/// behind on a `None` return is harmless append-only arena bookkeeping.
+fn single_literal_string_arg(
+    result: &ParseResult,
+    hir: &mut Hir,
+    call: &CallNode<'_>,
+) -> PResult<Option<String>> {
+    let args: Vec<_> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    let [arg] = args.as_slice() else {
+        return Ok(None);
+    };
+    let id = lower_node(result, hir, arg)?;
+    Ok(literal_string_text(hir, id))
+}
+
 /// needs (a `StringLit` is compile-time-constant iff every `StrPart` is
 /// `Lit`, never `Interp`). Reusable for any future "must be a literal"
 /// construct.

@@ -52,6 +52,8 @@ pub(crate) mod date;
 pub(crate) mod digest;
 #[cfg(feature = "ext-json")]
 pub(crate) mod json;
+#[cfg(feature = "ext-monitor")]
+pub(crate) mod monitor;
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
 #[cfg(feature = "ext-psych")]

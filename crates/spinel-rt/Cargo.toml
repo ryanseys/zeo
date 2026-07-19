@@ -93,6 +93,7 @@ default = ["ext-all", "eval-vm"]
 eval-vm = ["dep:ruby-prism"]
 ext-all = [
     "ext-base64",
+    "ext-monitor",
     "ext-stringio",
     "ext-strscan",
     "ext-cgi",
@@ -105,6 +106,7 @@ ext-all = [
     "ext-openssl",
 ]
 ext-base64 = []
+ext-monitor = []
 ext-stringio = []
 ext-strscan = []
 ext-cgi = []

@@ -826,6 +826,13 @@ builtin_methods! {
         }
         Ok(RubyValue::Str(crate::collections::string_new(z)))
     }
+    // `tm_isdst` is tri-state in C (>0 in effect, 0 not, <0 unknown); Ruby
+    // reports a plain bool, so anything that isn't a positive answer is
+    // false -- the same `> 0` test `to_a`/`strftime` already use above.
+    "isdst" | "dst?" => fn isdst(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_isdst > 0))
+    }
     "utc?" | "gmt?" => fn utc_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_time(recv).offset() == Some(0)))

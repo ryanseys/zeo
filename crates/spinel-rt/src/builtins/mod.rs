@@ -118,6 +118,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         // none -- they appear only in `class_method_table`).
         #[cfg(feature = "ext-stringio")]
         spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup,
+        #[cfg(feature = "ext-monitor")]
+        spinel_abi::MONITOR_CLASS => crate::ext::monitor::lookup,
         #[cfg(feature = "ext-strscan")]
         spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup,
         #[cfg(feature = "ext-digest")]
@@ -180,6 +182,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
         #[cfg(feature = "ext-stringio")]
         spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
+        #[cfg(feature = "ext-monitor")]
+        spinel_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class,
         #[cfg(feature = "ext-strscan")]
         spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class,
         #[cfg(feature = "ext-cgi")]
@@ -251,6 +255,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::MATH_CLASS => math::NAMES,
         #[cfg(feature = "ext-stringio")]
         spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
+        #[cfg(feature = "ext-monitor")]
+        spinel_abi::MONITOR_CLASS => crate::ext::monitor::lookup_names(),
         #[cfg(feature = "ext-strscan")]
         spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_names(),
         #[cfg(feature = "ext-digest")]
@@ -296,6 +302,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
         #[cfg(feature = "ext-stringio")]
         spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
+        #[cfg(feature = "ext-monitor")]
+        spinel_abi::MONITOR_CLASS => crate::ext::monitor::lookup_class_names(),
         #[cfg(feature = "ext-strscan")]
         spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_class_names(),
         #[cfg(feature = "ext-cgi")]

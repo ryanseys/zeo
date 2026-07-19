@@ -48,8 +48,10 @@
 //! deliberately does NOT search package roots (its compile-time uses are
 //! project-local; a package's own files arrive via `require`).
 //!
-//! Documented divergences: `require`'s return value is unobservable (only
-//! statement position is accepted; real Ruby returns true/false); `load`'s
+//! Documented divergences: a `require` that must SPLICE a file is still
+//! statement-position-only, so its return value is unobservable there (a
+//! `require` of a natively-provided feature does return real Ruby's
+//! true/false from any position -- see `parse::mod`); `load`'s
 //! plain relative names resolve against the roots then the requiring
 //! file's directory (real Ruby: `$LOAD_PATH` then cwd -- cwd is
 //! meaningless at compile time); `load`'s `wrap` parameter, `.so`/native
@@ -61,7 +63,7 @@ use super::{lower_node, rename, PResult};
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 // Per-FILE `box = Ruby::Box.new` handle bindings (Phase 18), as a stack --
 // one frame per file currently being lowered (recognition happens during
@@ -445,10 +447,14 @@ impl Loader {
             // is recorded for them. Alias spellings collapse first, so
             // `require "yaml"` activates the same `psych` feature `require
             // "psych"` does.
-            let canonical = canonical_ext_feature(feature);
-            if spinel_abi::is_ext_feature(canonical) {
-                hir.activate_feature(canonical);
-            }
+            // An in-tree `ext/` feature's `require` ACTIVATES its gated
+            // builtin (`require "base64"` -> `Base64` resolves). Always-on
+            // core no-ops (`set`/`tmpdir`) name no gated class, so recording
+            // them gates nothing -- but it is recorded all the same, because
+            // the same set doubles as the loaded-features table the
+            // non-top-level `require` (`parse::mod`) reads to decide whether
+            // it evaluates to `true` or `false`.
+            hir.activate_feature(canonical_ext_feature(feature));
             return Ok(Vec::new());
         }
 
@@ -656,11 +662,59 @@ fn resolve_require_relative(feature: &str, dir: Option<&Path>) -> PResult<PathBu
             "`require_relative \"{feature}\"`: native (.so/.bundle) features aren't supported (spike scope)"
         ));
     }
-    let cand = dir.join(with_rb_ext(feature));
+    // ORDER MATTERS, and CRuby's is the inverse of the obvious one.
+    // `rb_require_relative_entrypoint` (load.c:1054) absolutizes against the
+    // requiring file's directory as its very FIRST step, and
+    // `rb_find_file_ext` (file.c:7173) expands the path BEFORE its
+    // `rb_str_cat2(fname, ext[i])` loop. So `require_relative ".."` from
+    // `views/articles/index.rb` resolves `views/articles/..` -> `views` and
+    // only then appends `.rb`, giving `views.rb`. Appending first would glue
+    // `.rb` onto a literal `..` and search for the nonexistent `...rb`.
+    let base = lexically_normalize(&dir.join(feature));
+    let cand = if feature.ends_with(".rb") {
+        base.clone()
+    } else {
+        PathBuf::from(format!("{}.rb", base.display()))
+    };
     if cand.is_file() {
         return Ok(cand);
     }
-    Err(cannot_load(&cand.display().to_string()))
+    // `require_relative` reports the ABSOLUTIZED, extension-less path --
+    // `require_relative "nope"` from /tmp says `cannot load such file --
+    // /tmp/nope`. (Plain `require` is the one that echoes the feature as
+    // written; the two differ because require_relative has already
+    // absolutized by the time the search fails.)
+    Err(cannot_load(&base.display().to_string()))
+}
+
+/// Collapses `.` and `..` components without touching the filesystem.
+///
+/// CRuby's expansion is likewise purely lexical (`file.c:4432`): `..` rewinds
+/// the write pointer in the buffer, with no `lstat` and no symlink
+/// resolution. That difference is observable -- `a/symlink_to_b/..` is `a`
+/// here and to CRuby, but `b`'s real parent to `canonicalize` -- so this must
+/// NOT be `Path::canonicalize`, which would also fail outright on the
+/// not-yet-extended path.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            // Only a real directory name can be rewound over. A leading `..`
+            // (or one following another) has nothing above it to cancel, so
+            // it is kept and the path stays relative to wherever it started.
+            Component::ParentDir
+                if out
+                    .components()
+                    .next_back()
+                    .is_some_and(|c| matches!(c, Component::Normal(_))) =>
+            {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Discovers packages under each dir, in dir order: every subdirectory
@@ -815,8 +869,30 @@ pub(super) fn canonical_ext_feature(feature: &str) -> &str {
     }
 }
 
-fn is_builtin_feature(feature: &str) -> bool {
-    matches!(feature, "tmpdir" | "set") || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
+/// Features CRuby has ALREADY loaded before the program's first line, so
+/// `require`ing one answers `false` even the first time. Verified by running
+/// `p require "<f>"` under ruby 4.0.5 for every feature `is_builtin_feature`
+/// accepts; only these two came back false.
+///
+/// Deliberately NOT folded into `Hir::activated_features`: that set also
+/// gates CONSTANT visibility, so pre-seeding `monitor` there would make
+/// `Monitor` resolve without its require.
+pub(super) fn is_preloaded_at_boot(feature: &str) -> bool {
+    matches!(feature, "set" | "monitor")
+}
+
+pub(super) fn is_builtin_feature(feature: &str) -> bool {
+    // `time` names no gated class: `Time` is an always-on builtin here, so
+    // the require is a pure no-op. CRuby's real gate is finer -- `Time` is
+    // core but `Time#iso8601` only exists after `require "time"` -- and
+    // spinel has no per-method activation precedent to hang that on, so the
+    // extra methods are unconditionally present. A program that calls
+    // `#iso8601` WITHOUT the require works here and raises in CRuby.
+    // `io/console` names no gated constant either -- `IO` is core and its
+    // `#winsize` is an unconditional row on the IO table, so the require is
+    // pure ceremony. Same shape of divergence as `time` above.
+    matches!(feature, "tmpdir" | "set" | "time" | "io/console")
+        || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
 }
 
 /// Whether `feature` is a mspec/spec_helper require the rubyspec conformance

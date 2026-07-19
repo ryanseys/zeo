@@ -309,6 +309,29 @@ fn io_tty(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
     }))
 }
 
+/// `IO#winsize` (from `require "io/console"`) -- `[rows, columns]`.
+///
+/// **Documented divergence.** CRuby raises `Errno::ENOTTY` ("Inappropriate
+/// ioctl for device") when the stream isn't a terminal; here a failed ioctl
+/// answers `[0, 0]`. That is deliberate: the corpus expectation is checked in
+/// rather than oracle-generated, its header states the `[0, 0]` contract, and
+/// the conformance harness always redirects stdout -- so raising would make
+/// the test unrunnable rather than more faithful. A program that must
+/// distinguish the two cases should ask `tty?` first.
+fn io_winsize(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
+        unreachable!("io_fileno answers an Int");
+    };
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    // A nonzero return leaves `ws` zeroed, which is the answer we want.
+    unsafe { libc::ioctl(fd as libc::c_int, libc::TIOCGWINSZ, &mut ws) };
+    Ok(RubyValue::Array(crate::collections::array_new(vec![
+        RubyValue::Int(ws.ws_row as i64),
+        RubyValue::Int(ws.ws_col as i64),
+    ])))
+}
+
 fn io_inspect(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let name = match stream_of(recv) {
         Some(StdStream::Stdin) => "#<IO:<STDIN>>".to_string(),
@@ -589,6 +612,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "flush" => io_flush,
         "fileno" | "to_i" => io_fileno,
         "tty?" | "isatty" => io_tty,
+        "winsize" => io_winsize,
         "inspect" | "to_s" => io_inspect,
         "sync" => io_sync,
         "sync=" => io_sync_set,
@@ -610,7 +634,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
     &[
-        "puts", "print", "write", "<<", "flush", "fileno", "to_i", "tty?", "isatty",
+        "puts", "print", "write", "<<", "flush", "fileno", "to_i", "tty?", "isatty", "winsize",
         "inspect", "to_s", "sync", "sync=", "path", "to_path", "read", "gets",
         "readlines", "each_line", "each", "seek", "tell", "pos", "rewind", "eof?",
         "eof", "close", "closed?",

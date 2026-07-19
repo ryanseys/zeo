@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=b55c430
-# PASS=1750 FAIL_OUTPUT=301 FAIL_COMPILE=23 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=f148f92
+# PASS=1758 FAIL_OUTPUT=301 FAIL_COMPILE=15 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -275,8 +275,8 @@ bundle_misc_c_23	PASS	-	-
 bundle_misc_c_26	FAIL_OUTPUT	expect	-
 bundle_misc_c_30	PASS	-	-
 bundle_misc_c_31	PASS	-	-
-bundle_misc_c_33	FAIL_COMPILE	compile	auto-cannot-load-such-file-time-856a
-bundle_misc_c_34	FAIL_COMPILE	compile	auto-cannot-load-such-file-time-856a
+bundle_misc_c_33	PASS	-	-
+bundle_misc_c_34	PASS	-	-
 bundle_misc_c_35	PASS	-	-
 bundle_misc_c_36	FAIL_OUTPUT	expect	missing-method:length
 bundle_misc_c_37	PASS	-	-
@@ -1290,7 +1290,7 @@ mutable_str_alias_uaf	PASS	-	-
 mutable_str_force_encoding_return	PASS	-	-
 mutable_str_into_str_array	PASS	-	-
 mutator_value_forms_bang_nil	PASS	-	-
-mutex_synchronize_block	FAIL_COMPILE	compile	auto-cannot-load-such-file-monitor-3233
+mutex_synchronize_block	PASS	-	-
 mutex_synchronize_ensure	PASS	-	-
 narrow_and_predicate	PASS	-	-
 native_binding_poc	FAIL_OUTPUT	expect	missing-method:native_obj
@@ -1693,11 +1693,11 @@ regexp_sub_gsub_realloc	FAIL_OUTPUT	expect	-
 regexp_threeq	PASS	-	-
 regexp_union_strings	PASS	-	-
 reopen_split_superclass_dispatch	PASS	-	-
-require_first_line	FAIL_COMPILE	compile	auto-cannot-load-such-file-optparse-ea47
-require_in_conditional	FAIL_COMPILE	compile	spike-misc
-require_io_console_winsize	FAIL_COMPILE	compile	auto-cannot-load-such-file-io-console-0bed
-require_modifier	FAIL_COMPILE	compile	spike-misc
-require_parent	FAIL_COMPILE	compile	dynamic-require
+require_first_line	PASS	-	-
+require_in_conditional	PASS	-	-
+require_io_console_winsize	PASS	-	-
+require_modifier	PASS	-	-
+require_parent	PASS	-	-
 require_same_line	PASS	-	-
 require_unsupported_lib	PASS	-	-
 rescue	PASS	-	-

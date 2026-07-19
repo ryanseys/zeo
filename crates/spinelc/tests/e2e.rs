@@ -9246,7 +9246,11 @@ fn missing_require_relative_reports_the_absolutized_path() {
     )
     .unwrap_err();
     assert!(
-        err.contains("cannot load such file -- ") && err.contains("nope.rb"),
+        // CRuby names the absolutized path WITHOUT the extension it tried:
+        // `require_relative "nope"` from /tmp says `... -- /tmp/nope`.
+        err.contains("cannot load such file -- ")
+            && err.contains("nope")
+            && !err.contains("nope.rb"),
         "unexpected error: {err}"
     );
 }
@@ -19145,5 +19149,139 @@ fn a_bare_opened_class_can_be_reparented_by_a_later_reopen() {
     assert!(
         err.contains("superclass mismatch for class Sub"),
         "a genuine conflict must still error: {err}"
+    );
+}
+
+/// A `require` of a natively-provided feature is a compile-time act, so it
+/// works from any position -- and it has CRuby's real return value, true the
+/// first time and false thereafter (`load.c:1413`).
+#[test]
+fn require_of_a_builtin_feature_works_from_any_position() {
+    let result = run_ruby(
+        r##"
+        p(require "digest")
+        p(require "digest")
+        if 1 > 0
+          require "json"
+        end
+        def load_it
+          require "set"
+          "ok"
+        end
+        p load_it
+        require "base64" if false
+        require "zlib" rescue nil
+        puts "done"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\n\"ok\"\ndone\n");
+}
+
+/// `set` and `monitor` are already loaded before a CRuby program's first
+/// line, so even their FIRST require answers false.
+#[test]
+fn require_of_a_boot_preloaded_feature_is_false_even_the_first_time() {
+    let result = run_ruby("p(require \"set\")\np(require \"monitor\")\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\nfalse\n");
+}
+
+/// A non-builtin feature still can't be resolved from a non-top-level
+/// position -- there is genuinely a file to splice and nowhere to splice it.
+#[test]
+fn require_of_a_file_feature_is_still_a_clean_rejection_off_top_level() {
+    let err = spinelc::compile_to_rust("if true\n  require \"some_lib\"\nend\n").unwrap_err();
+    assert!(
+        err.contains("only supported as a top-level statement"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `Monitor` is reentrant where `Mutex` deadlocks: the owner may enter again,
+/// and the lock releases only at the outermost exit.
+#[test]
+fn monitor_is_a_reentrant_lock() {
+    let result = run_ruby(
+        r##"
+        require "monitor"
+        m = Monitor.new
+        m.synchronize do
+          m.synchronize { p m.mon_owned? }
+          p m.mon_locked?
+        end
+        p m.mon_locked?
+        p(m.synchronize { 21 * 2 })
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\nfalse\n42\n");
+}
+
+/// `Monitor` is invisible without its require -- the ext gate, not a
+/// permanently-present constant.
+#[test]
+fn monitor_needs_its_require() {
+    let result = run_ruby("Monitor.new\n");
+    assert!(
+        !result.status.success() || result.stderr.contains("Monitor"),
+        "Monitor must not resolve without `require \"monitor\"`: {}",
+        result.stderr
+    );
+}
+
+/// `Time#isdst`/`#dst?` report the broken-down time's DST flag; a UTC time is
+/// never in DST.
+#[test]
+fn time_reports_its_dst_flag() {
+    let result = run_ruby("t = Time.at(0).utc\np t.isdst\np t.dst?\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\nfalse\n");
+}
+
+/// The bundled `optparse` package parses the switch shapes it advertises,
+/// with CRuby's own error messages. The full-fidelity check against real
+/// `OptionParser` lives in `examples/optparse_subset.rb`.
+#[test]
+fn bundled_optparse_parses_switches_and_leaves_positionals() {
+    // The bundled `packages/` dir is a CLI default (`main.rs`), not a library
+    // one, so a library-level test has to name it. `Path::join` with an
+    // absolute path answers that path, so this reaches the real package.
+    let bundled = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages");
+    let result = support::run_ruby_packages(
+        &[(
+            "main.rb",
+            r##"
+        require "optparse"
+        opts = {}
+        parser = OptionParser.new do |o|
+          o.on("-v", "--verbose", "loud") { |x| opts[:verbose] = x }
+          o.on("-n", "--name NAME", "who") { |v| opts[:name] = v }
+        end
+        argv = ["-v", "--name=matz", "file.txt", "--", "-notaflag"]
+        parser.parse!(argv)
+        p argv
+        p opts[:verbose]
+        p opts[:name]
+        begin
+          parser.parse!(["--nope"])
+        rescue OptionParser::InvalidOption => e
+          p e.message
+        end
+        begin
+          parser.parse!(["--name"])
+        rescue OptionParser::MissingArgument => e
+          p e.message
+        end
+        "##,
+        )],
+        "main.rb",
+        &[],
+        &[bundled],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"file.txt\", \"-notaflag\"]\ntrue\n\"matz\"\n\"invalid option: --nope\"\n\"missing argument: --name\"\n"
     );
 }
