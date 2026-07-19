@@ -80,6 +80,10 @@ struct ExternState {
     /// `peek`'s cached element (CRuby's `lookahead`): `peek` fills it
     /// without consuming, `next` consumes it before resuming the fiber.
     lookahead: Option<Vec<RubyValue>>,
+    /// `#feed`'s injected value -- what the generator's paused `y.yield`
+    /// returns on the next resume (CRuby's `feedvalue`). Consumed by that
+    /// resume; `#feed` twice before a `#next` is a TypeError.
+    feed: Option<RubyValue>,
     /// The underlying `each`'s return value once iteration completed --
     /// every subsequent `next` re-raises `StopIteration` carrying it
     /// (CRuby rebuilds a fresh exception each time, from `stop_exc`).
@@ -261,10 +265,12 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
     let source = e.source.clone();
     let coro: EnumCoro = spinel_fiber::new_fiber(move |_: Vec<RubyValue>| {
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
-            spinel_fiber::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
-                array_new(raw.to_vec()),
-            ));
-            Ok(RubyValue::Nil)
+            // `y.yield` suspends, then returns the value `#feed` injected on the
+            // resume (empty resume -> nil), so `got = y.yield(x)` sees it.
+            let fed = spinel_fiber::yield_current::<Vec<RubyValue>, RubyValue>(
+                RubyValue::Array(array_new(raw.to_vec())),
+            );
+            Ok(fed.and_then(|v| v.into_iter().next()).unwrap_or(RubyValue::Nil))
         });
         internal_each(&source, RubyValue::Proc(shuttle))
     });
@@ -309,8 +315,11 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
     };
     // The same execution-context swap as `Fiber#resume` (fiber.rs): the
     // iteration runs with its own `$!`/rescue-nesting stack.
+    // The fed value (if `#feed` set one) crosses in as the resume payload --
+    // the shuttle returns it from the paused `y.yield`. Cleared once consumed.
+    let feed_in: Vec<RubyValue> = e.state.lock().feed.take().into_iter().collect();
     let saved = crate::handling::swap_handling(std::mem::take(&mut e.state.lock().handling));
-    let outcome = spinel_fiber::resume(&mut coro, Vec::new());
+    let outcome = spinel_fiber::resume(&mut coro, feed_in);
     e.state.lock().handling = crate::handling::swap_handling(saved);
     match outcome {
         // The shuttle's arity-preserving Array payload -- the normal case.
@@ -548,6 +557,19 @@ builtin_methods! {
     "peek_values" => fn peek_values(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(array_new(fill_peek(recv_enum(recv))?)))
+    }
+
+    // `#feed(value)` -- set the value the generator's paused `y.yield` returns
+    // on the next `#next`. Setting it twice before a `#next` consumes it is a
+    // TypeError; the call itself answers nil.
+    "feed" => fn feed(recv, args, _block) {
+        arity!(args, 1);
+        let mut st = recv_enum(recv).state.lock();
+        if st.feed.is_some() {
+            return Err(raise_error("TypeError", "feed value already set".to_string()));
+        }
+        st.feed = Some(args[0].clone());
+        Ok(RubyValue::Nil)
     }
 
     "rewind" => fn rewind(recv, args, _block) {

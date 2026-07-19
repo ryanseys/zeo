@@ -17971,6 +17971,33 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn enumerator_feed_sets_yield_return() {
+    // #feed sets the value the paused y.yield returns on the next #next;
+    // feeding twice before a #next raises TypeError; #feed answers nil.
+    let result = run_ruby(
+        r#"
+        g = Enumerator.new { |y| got = y.yield(10); y << (got * 2) }
+        p g.next
+        g.feed(5)
+        p g.next
+        k = Enumerator.new { |y| y.yield(1) }
+        k.next
+        p k.feed(:x)
+        m = Enumerator.new { |y| y.yield(1); y.yield(2) }
+        m.next
+        m.feed(:a)
+        begin
+          m.feed(:b)
+        rescue => e
+          p e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n10\nnil\n\"feed value already set\"\n");
+}
+
+#[test]
 fn enumerator_produce_endless_generator() {
     // Enumerator.produce(initial) { |prev| ... } yields initial, then each
     // block result, forever -- bounded by the consumer. Without initial, the
