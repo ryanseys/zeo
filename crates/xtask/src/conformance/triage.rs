@@ -83,10 +83,42 @@ pub fn classify(stderr: &str) -> Triage {
             };
         }
     }
-    let bucket = format!("auto-{:08x}", fnv1a64(normalized.as_bytes()) as u32);
     Triage {
         cluster: "?".to_owned(),
-        bucket,
+        bucket: auto_bucket(&normalized),
+    }
+}
+
+/// A self-describing bucket name for a message no curated cluster matched: a
+/// kebab slug of the (normalized) message plus a short stable hash. The slug
+/// makes the bucket readable at a glance in the scoreboard/triage ("what is
+/// this gap") -- e.g. `auto-cant-convert-string-into-complex-a1b2` -- while the
+/// hash keeps two messages that share a leading phrase in distinct buckets and
+/// preserves the stability the auto scheme has always guaranteed (same
+/// normalized message -> same bucket). Single-character tokens (apostrophe
+/// fragments like the `t` in "can't", collapsed-identifier/`N` noise) are
+/// dropped so the slug reads cleanly.
+fn auto_bucket(normalized: &str) -> String {
+    let hash = fnv1a64(normalized.as_bytes()) as u32;
+    // Strip the boilerplate lead-in shared by every runtime failure / internal
+    // abort so the slug starts at the informative part; the hash still folds
+    // over the FULL message, so stability is unchanged.
+    let core = normalized
+        .trim_start_matches("uncaught exception: ")
+        .trim_start_matches("internal error: ");
+    let slug = core
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .filter(|w| w.len() > 1)
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() {
+        format!("auto-{hash:08x}")
+    } else {
+        format!("auto-{slug}-{:04x}", hash & 0xffff)
     }
 }
 
@@ -215,9 +247,34 @@ mod tests {
 
     #[test]
     fn auto_bucket_is_stable() {
+        // The same NORMALIZED message (identifiers and digits collapse) yields
+        // the same bucket regardless of the specific names/numbers.
         let a = classify("spinelc: something entirely novel happened with `x` at 42");
         let b = classify("spinelc: something entirely novel happened with `y` at 7");
         assert_eq!(a.bucket, b.bucket);
         assert!(a.bucket.starts_with("auto-"));
+    }
+
+    #[test]
+    fn auto_bucket_is_human_readable() {
+        // The bucket name spells out the gap instead of an opaque hash, so the
+        // scoreboard/triage lists are debuggable at a glance.
+        let t = classify("can't convert String into Complex");
+        assert!(
+            t.bucket.starts_with("auto-can-convert-string-into-complex-"),
+            "bucket was {}",
+            t.bucket
+        );
+        // The apostrophe fragment `t` (from "can't") is dropped, not left as a
+        // bare `-t-` token.
+        assert!(!t.bucket.contains("-t-"), "bucket was {}", t.bucket);
+    }
+
+    #[test]
+    fn distinct_messages_sharing_a_prefix_stay_in_distinct_buckets() {
+        let a = classify("can't convert Hash into an exact number");
+        let b = classify("can't convert Rational into an exact number");
+        // Same readable slug prefix, but the hash suffix keeps them apart.
+        assert_ne!(a.bucket, b.bucket);
     }
 }

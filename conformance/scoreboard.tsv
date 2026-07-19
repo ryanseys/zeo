@@ -1,4 +1,4 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=568ffab
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=fc71513
 # PASS=1682 FAIL_OUTPUT=345 FAIL_COMPILE=39 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
@@ -11,13 +11,13 @@ analyze_fail/attributes_non_symbol	FAIL_OUTPUT	expect	missing-method:attributes
 analyze_fail/dynamic_define_method	PASS	-	-
 analyze_fail/instance_exec_def_in_block	FAIL_OUTPUT	expect	missing-method:define_method
 analyze_fail/instance_exec_define_method	FAIL_OUTPUT	expect	missing-method:define_method
-analyze_fail/instance_exec_no_block	FAIL_OUTPUT	expect	auto-9b378cab
+analyze_fail/instance_exec_no_block	FAIL_OUTPUT	expect	auto-tried-to-create-proc-object-without-block-in-8cab
 analyze_fail/nonliteral_define_method_each	PASS	-	-
 and_nullable_container_poly	PASS	-	-
 anon_block_forward	PASS	-	-
 anon_double_splat_forward	PASS	-	-
 anon_splat_forward	PASS	-	-
-anon_struct_local	FAIL_COMPILE	compile	auto-20dcf25f
+anon_struct_local	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
 arg_assigned_in_sequence	PASS	-	-
 argf_class_no_args	FAIL_OUTPUT	expect	missing-const:ARGF
 argf_reads_args	FAIL_OUTPUT	expect	missing-const:ARGF
@@ -37,7 +37,7 @@ array_combination_block	PASS	-	-
 array_compact_eq	PASS	-	-
 array_conformance_batch	PASS	-	-
 array_conformance_batch5	PASS	-	-
-array_cycle_bounded	FAIL_OUTPUT	expect	auto-3e862739
+array_cycle_bounded	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
 array_dup_sort_gc	PASS	-	-
 array_empty_and_pattern	PASS	-	-
 array_enum_materialize	PASS	-	-
@@ -51,7 +51,7 @@ array_filter_bang_return	FAIL_OUTPUT	expect	-
 array_first_last_empty	PASS	-	-
 array_flat_map_scalar_block	PASS	-	-
 array_flatten_typed_elements	PASS	-	-
-array_float_conformance	FAIL_OUTPUT	expect	auto-d04215d7
+array_float_conformance	FAIL_OUTPUT	expect	auto-integer-downto-beyond-in-isn-supported-unrunnable-iteration-15d7
 array_fold_delete_flatten_rindex	FAIL_OUTPUT	expect	-
 array_frozen_mutate_raises	FAIL_OUTPUT	expect	-
 array_frozen_slice_bang	FAIL_OUTPUT	expect	-
@@ -104,7 +104,7 @@ array_sort_by_bang	PASS	-	-
 array_sort_by_schwartzian	PASS	-	-
 array_spaceship	TIMEOUT_RUN	run	-
 array_splice	PASS	-	-
-array_splice_exceptions	FAIL_OUTPUT	expect	auto-3fa590af
+array_splice_exceptions	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-90af
 array_splice_to_ary	PASS	-	-
 array_splice_widen	PASS	-	-
 array_sum_concat_init	PASS	-	-
@@ -144,7 +144,7 @@ bigint_propagation_chain	PASS	-	-
 bigint_return_int_literal	PASS	-	-
 bigint_volatile_combo	PASS	-	-
 bignum_bit_length	PASS	-	-
-bignum_downto_upto_to_a	FAIL_OUTPUT	expect	auto-d04215d7
+bignum_downto_upto_to_a	FAIL_OUTPUT	expect	auto-integer-downto-beyond-in-isn-supported-unrunnable-iteration-15d7
 bignum_modulo_bit_pow	PASS	-	-
 bignum_query_to_i	PASS	-	-
 bignum_rational_arith	PASS	-	-
@@ -203,7 +203,7 @@ box_unbox_local_assign_cond	PASS	-	-
 boxed_nil_string_identity	FAIL_OUTPUT	expect	-
 bsearch_find_any_mixed	PASS	-	-
 builtin_array_method_capture	PASS	-	-
-bundle_array_a	FAIL_OUTPUT	expect	auto-3fa590af
+bundle_array_a	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-90af
 bundle_array_b	PASS	-	-
 bundle_array_c	PASS	-	-
 bundle_array_d	PASS	-	-
@@ -264,7 +264,7 @@ bundle_hash_b2	FAIL_OUTPUT	expect	-
 bundle_int_a	PASS	-	-
 bundle_int_array	PASS	-	-
 bundle_integer	PASS	-	-
-bundle_io_sys	FAIL_COMPILE	compile	auto-2d4c0f69
+bundle_io_sys	FAIL_COMPILE	compile	auto-unsupported-syntax-at-spike-handles-only-what-the-0f69
 bundle_misc_a	FAIL_OUTPUT	expect	-
 bundle_misc_b	PASS	-	-
 bundle_misc_c_08	FAIL_OUTPUT	expect	-
@@ -275,8 +275,8 @@ bundle_misc_c_23	PASS	-	-
 bundle_misc_c_26	FAIL_OUTPUT	expect	-
 bundle_misc_c_30	PASS	-	-
 bundle_misc_c_31	PASS	-	-
-bundle_misc_c_33	FAIL_COMPILE	compile	auto-8e5c856a
-bundle_misc_c_34	FAIL_COMPILE	compile	auto-8e5c856a
+bundle_misc_c_33	FAIL_COMPILE	compile	auto-cannot-load-such-file-time-856a
+bundle_misc_c_34	FAIL_COMPILE	compile	auto-cannot-load-such-file-time-856a
 bundle_misc_c_35	PASS	-	-
 bundle_misc_c_36	FAIL_OUTPUT	expect	missing-method:length
 bundle_misc_c_37	PASS	-	-
@@ -288,7 +288,7 @@ bundle_string_c	FAIL_OUTPUT	expect	-
 bundle_sym	PASS	-	-
 bundle_tiny_array	PASS	-	-
 bundle_tiny_misc	PASS	-	-
-bundle_tiny_num	FAIL_OUTPUT	expect	auto-7eb1c4d1
+bundle_tiny_num	FAIL_OUTPUT	expect	auto-can-iterate-from-string-c4d1
 bundle_tiny_string	FAIL_OUTPUT	expect	arity-panic
 call_and_write	PASS	-	-
 call_arg_int_to_obj_cast	PASS	-	-
@@ -394,7 +394,7 @@ cmeth_return_nil_or_obj_via_intermediate	PASS	-	-
 cmethod_self_and_default	PASS	-	-
 cmethod_self_receiver	PASS	-	-
 cmethod_specialize_samename_unrelated	PASS	-	-
-cmethod_super	FAIL_COMPILE	compile	auto-3afe88d5
+cmethod_super	FAIL_COMPILE	compile	auto-outside-method-88d5
 cmethod_transitive_specialization	PASS	-	-
 codegen_class_in_module_with_explicit_parent	PASS	-	-
 codegen_const_lookup_in_toplevel_method	PASS	-	-
@@ -442,7 +442,7 @@ const_path_deep_nesting	PASS	-	-
 const_path_unresolved_require	FAIL_OUTPUT	expect	-
 const_recv_yield_inline	PASS	-	-
 const_self_ref_raises_name_error	FAIL_OUTPUT	expect	-
-constant_path	FAIL_OUTPUT	expect	auto-497fab8d
+constant_path	FAIL_OUTPUT	expect	auto-tried-to-create-proc-object-without-block-ab8d
 constant_path_write	PASS	-	-
 constant_path_write_undeclared	PASS	-	-
 constants	PASS	-	-
@@ -462,8 +462,8 @@ cvar_method_first_assign	PASS	-	-
 cycle_block_value_position	PASS	-	-
 data_bare_new_in_factory	PASS	-	-
 data_define	PASS	-	-
-data_define_duplicate_member	FAIL_COMPILE	compile	auto-20dcf25f
-data_define_inline_receiver	FAIL_COMPILE	compile	auto-20dcf25f
+data_define_duplicate_member	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
+data_define_inline_receiver	FAIL_COMPILE	compile	auto-outside-constant-assignment-isn-supported-aot-write-f25f
 data_dup_clone_frozen	FAIL_OUTPUT	expect	-
 data_hash_key	FAIL_OUTPUT	expect	-
 data_inspect_in_container	PASS	-	-
@@ -551,7 +551,7 @@ enum_chain_splat_sliceb_wave6	PASS	-	-
 enum_chain_with_index_object	PASS	-	-
 enum_each_family_receiver	PASS	-	-
 enum_for_each	PASS	-	-
-enum_terminal_chunk_zip_lazy	FAIL_OUTPUT	expect	auto-03f2cac6
+enum_terminal_chunk_zip_lazy	FAIL_OUTPUT	expect	auto-no-block-given-yield-cac6
 enum_with_index_map	PASS	-	-
 enum_with_index_value	PASS	-	-
 enum_with_object	PASS	-	-
@@ -576,7 +576,7 @@ enumerator_ops	FAIL_OUTPUT	expect	missing-method:+
 enumerator_produce	FAIL_OUTPUT	expect	missing-method:produce
 enumerator_range	PASS	-	-
 enumerator_result_source	FAIL_OUTPUT	expect	-
-enumerator_size	FAIL_OUTPUT	expect	auto-d453bd61
+enumerator_size	FAIL_OUTPUT	expect	auto-can-convert-proc-into-integer-bd61
 enumerator_to_a	PASS	-	-
 enumerator_wave10	PASS	-	-
 enumerator_with_index_gc	PASS	-	-
@@ -589,7 +589,7 @@ env_string_inference	PASS	-	-
 eq_string_vs_int	PASS	-	-
 eql_equal	PASS	-	-
 eql_on_chain_result	PASS	-	-
-error_protocol_edges	FAIL_OUTPUT	expect	auto-3e862739
+error_protocol_edges	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
 escaping_block_captures_self	PASS	-	-
 escaping_proc_captures_value_self	PASS	-	-
 exc_frame_break_next_pops	FAIL_COMPILE	compile	spike-misc
@@ -617,7 +617,7 @@ exception_super_interpolated_message	PASS	-	-
 exception_super_message	PASS	-	-
 exception_user_subclass	PASS	-	-
 exception_value_flow_match	FAIL_OUTPUT	expect	missing-method:name
-exception_value_parity	FAIL_COMPILE	compile	auto-ee43c0d6
+exception_value_parity	FAIL_COMPILE	compile	auto-with-an-explicit-keyword-override-isn-supported-yet-c0d6
 exit_poly_status	PASS	-	-
 expr_retry_equal_curry_methodobj	FAIL_OUTPUT	expect	missing-method:Integer
 extend_module	PASS	-	-
@@ -633,7 +633,7 @@ ffi_const	FAIL_OUTPUT	expect	missing-method:ffi_const
 ffi_const_leaf_collision	FAIL_OUTPUT	expect	missing-method:ffi_lib
 ffi_const_nested_module_path	FAIL_OUTPUT	expect	missing-method:ffi_lib
 ffi_foreign_ptr_gc	FAIL_OUTPUT	expect	missing-method:ffi_lib
-ffi_gem_compat	FAIL_COMPILE	compile	auto-2d0f16c6
+ffi_gem_compat	FAIL_COMPILE	compile	auto-cannot-load-such-file-ffi-16c6
 ffi_int_arg_bigint	FAIL_OUTPUT	expect	missing-method:ffi_lib
 ffi_int_arg_poly_value	FAIL_OUTPUT	expect	missing-method:ffi_func
 ffi_libc_libm_basic	FAIL_OUTPUT	expect	missing-method:ffi_func
@@ -684,7 +684,7 @@ flat_map_poly_return	PASS	-	-
 float_array_first_last_nil	PASS	-	-
 float_clamp	PASS	-	-
 float_divmod_zerodiv	FAIL_OUTPUT	expect	-
-float_hex_encoding_isa_bool_wave10	FAIL_OUTPUT	expect	auto-3814d0b1
+float_hex_encoding_isa_bool_wave10	FAIL_OUTPUT	expect	auto-invalid-value-for-float-nxnpn-d0b1
 float_limit_constants	PASS	-	-
 float_modulo	PASS	-	-
 float_pow_negative_fractional	FAIL_OUTPUT	expect	-
@@ -695,7 +695,7 @@ float_rationalize_simplest	PASS	-	-
 float_round_half	PASS	-	-
 float_round_ndigits_return_type	PASS	-	-
 float_round_nonliteral	PASS	-	-
-float_round_truncate_ndigits	FAIL_OUTPUT	expect	auto-dfbd22ee
+float_round_truncate_ndigits	FAIL_OUTPUT	expect	auto-nan-22ee
 float_round_value_based_type	PASS	-	-
 float_round_zero	PASS	-	-
 float_spaceship	PASS	-	-
@@ -725,7 +725,7 @@ frozen_string_append_guard	FAIL_OUTPUT	expect	-
 frozen_string_global_survives_gc	PASS	-	-
 frozen_string_literal_gc_root	PASS	-	-
 frozen_string_literal_per_file	FAIL_OUTPUT	expect	-
-frozen_string_literal_per_file_rev	FAIL_OUTPUT	expect	auto-e6bba903
+frozen_string_literal_per_file_rev	FAIL_OUTPUT	expect	auto-can-modify-frozen-string-plain-a903
 frozen_string_literal_pragma	PASS	-	-
 gc_grandparent_ivar_scan	PASS	-	-
 gc_poly_local_int	PASS	-	-
@@ -762,7 +762,7 @@ hash_default_proc_assign	PASS	-	-
 hash_default_proc_key	PASS	-	-
 hash_delete_if_select_reject_bang	PASS	-	-
 hash_delete_returns_value	PASS	-	-
-hash_dig	FAIL_OUTPUT	expect	auto-cd5e05c6
+hash_dig	FAIL_OUTPUT	expect	auto-expected-an-integer-got-05c6
 hash_dig_into_array	PASS	-	-
 hash_dispatch_missing_cells	PASS	-	-
 hash_double_splat	PASS	-	-
@@ -848,7 +848,7 @@ hash_variant_unify	PASS	-	-
 heterogeneous_tuple_return	PASS	-	-
 i1006	PASS	-	-
 i1007	PASS	-	-
-i1009	FAIL_OUTPUT	expect	auto-8c9acd6e
+i1009	FAIL_OUTPUT	expect	auto-parsing-error-at-position-invalid-back-reference-cd6e
 i1011	FAIL_OUTPUT	expect	missing-method:ffi_cflags
 i1015	PASS	-	-
 i1017	FAIL_OUTPUT	expect	missing-method:ffi_buffer
@@ -1113,7 +1113,7 @@ issue_2971	PASS	-	-
 issue_2972	PASS	-	-
 issue_2973	FAIL_COMPILE	compile	spike-misc
 issue_2974	PASS	-	-
-issue_2975	FAIL_COMPILE	compile	auto-029b9692
+issue_2975	FAIL_COMPILE	compile	auto-the-synthesized-value-class-template-for-failed-to-9692
 issue_2976	PASS	-	-
 issue_2978	FAIL_COMPILE	compile	dynamic-require
 issue_2979	PASS	-	-
@@ -1131,7 +1131,7 @@ ivar_polymorphic	PASS	-	-
 ivar_ternary_mixed	PASS	-	-
 ivar_widen_poly_writer	PASS	-	-
 kernel_array_coercion	PASS	-	-
-kernel_array_format_negx_wave10	FAIL_OUTPUT	expect	auto-c7d3b59c
+kernel_array_format_negx_wave10	FAIL_OUTPUT	expect	auto-can-convert-string-into-complex-b59c
 kernel_caller_wired	FAIL_OUTPUT	expect	missing-method:caller
 kernel_complex	PASS	-	-
 kernel_conversions	PASS	-	-
@@ -1142,7 +1142,7 @@ kernel_float_strict	PASS	-	-
 kernel_integer_float_errors	FAIL_OUTPUT	expect	-
 kernel_integer_float_strict_nil	FAIL_OUTPUT	expect	-
 kernel_integer_with_base	PASS	-	-
-kernel_rational_string_zerodenom	FAIL_OUTPUT	expect	auto-8945269a
+kernel_rational_string_zerodenom	FAIL_OUTPUT	expect	auto-can-convert-string-into-rational-269a
 kernel_underscore_id	FAIL_OUTPUT	expect	-
 kwarg_back_propagate_callee_type	PASS	-	-
 kwargs	PASS	-	-
@@ -1204,7 +1204,7 @@ match_tilde_pre_post	PASS	-	-
 matchdata_gsub_named_backref	FAIL_OUTPUT	expect	-
 matchdata_index_eq	PASS	-	-
 matchdata_methods	FAIL_OUTPUT	expect	missing-method:match
-matchdata_named_groups	FAIL_OUTPUT	expect	auto-4063123c
+matchdata_named_groups	FAIL_OUTPUT	expect	auto-undefined-group-name-reference-nope-123c
 matchdata_value_varargs_symstr	PASS	-	-
 matchdata_values_at_byteoffset	FAIL_OUTPUT	expect	missing-method:bytebegin
 matchdata_values_at_named	PASS	-	-
@@ -1290,7 +1290,7 @@ mutable_str_alias_uaf	PASS	-	-
 mutable_str_force_encoding_return	PASS	-	-
 mutable_str_into_str_array	PASS	-	-
 mutator_value_forms_bang_nil	PASS	-	-
-mutex_synchronize_block	FAIL_COMPILE	compile	auto-5c693233
+mutex_synchronize_block	FAIL_COMPILE	compile	auto-cannot-load-such-file-monitor-3233
 mutex_synchronize_ensure	PASS	-	-
 narrow_and_predicate	PASS	-	-
 native_binding_poc	FAIL_OUTPUT	expect	missing-method:native_obj
@@ -1340,7 +1340,7 @@ nullable_poly_hash_arg_unbox	PASS	-	-
 numbered_param_arity	PASS	-	-
 numeric_coerce	PASS	-	-
 numeric_conformance_batch2	PASS	-	-
-numeric_edges_wave10	FAIL_OUTPUT	expect	auto-d7c58806
+numeric_edges_wave10	FAIL_OUTPUT	expect	auto-hash-can-be-coerced-into-integer-8806
 numeric_tower_methods	PASS	-	-
 numeric_tower_remainder	FAIL_OUTPUT	expect	-
 obj_array_param_accumulator	PASS	-	-
@@ -1381,7 +1381,7 @@ p_as_expression	PASS	-	-
 p_bignum	PASS	-	-
 pack_base64	FAIL_OUTPUT	expect	-
 pack_endian_modifiers	PASS	-	-
-pack_float_directives	FAIL_OUTPUT	expect	auto-454832aa
+pack_float_directives	FAIL_OUTPUT	expect	auto-no-implicit-conversion-of-float-into-integer-32aa
 pack_utf8	PASS	-	-
 param_body_array_hash_inference	PASS	-	-
 param_body_hash_inference	FAIL_OUTPUT	expect	missing-method:[]
@@ -1421,7 +1421,7 @@ poly_array_index_to_h	PASS	-	-
 poly_array_plus_concat	PASS	-	-
 poly_array_push_with_user_push	PASS	-	-
 poly_array_range_aref	PASS	-	-
-poly_array_readers	FAIL_OUTPUT	expect	auto-3e862739
+poly_array_readers	FAIL_OUTPUT	expect	auto-attempt-to-take-negative-size-argumenterror-spike-scope-2739
 poly_array_tally	PASS	-	-
 poly_attr_reader_box_dispatch	PASS	-	-
 poly_attr_reader_shadows_builtin	PASS	-	-
@@ -1506,7 +1506,7 @@ poly_value_into_str_str_hash	PASS	-	-
 polyarray_insert_delete_at	PASS	-	-
 polypoly_hash_assoc_to_proc	PASS	-	-
 post_execution	PASS	-	-
-pp_store_float_inf_literal	FAIL_COMPILE	compile	auto-5d152f37
+pp_store_float_inf_literal	FAIL_COMPILE	compile	auto-assertion-failed-is-finite-2f37
 pre_execution	PASS	-	-
 predicate_class_arg	PASS	-	-
 prepend_super_basic	PASS	-	-
@@ -1595,18 +1595,18 @@ raise_non_exception_typeerror	PASS	-	-
 raise_reraise_in_def	PASS	-	-
 raise_shortform_default_args	PASS	-	-
 raise_unless_isa_narrow	PASS	-	-
-rand_prng_stream	FAIL_OUTPUT	expect	auto-176da354
+rand_prng_stream	FAIL_OUTPUT	expect	auto-invalid-argument-a354
 random_bignum_seed	PASS	-	-
 random_float_seed	PASS	-	-
 random_inspect	PASS	-	-
-random_methods	FAIL_OUTPUT	expect	auto-ceefc00e
+random_methods	FAIL_OUTPUT	expect	auto-invalid-argument-c00e
 random_rand_argument	PASS	-	-
 random_seed_range_base64_pad	PASS	-	-
 range	PASS	-	-
-range_and_array_range_args	FAIL_OUTPUT	expect	auto-176da354
+range_and_array_range_args	FAIL_OUTPUT	expect	auto-invalid-argument-a354
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
 range_bsearch	PASS	-	-
-range_bsearch_float	FAIL_OUTPUT	expect	auto-767cf864
+range_bsearch_float	FAIL_OUTPUT	expect	auto-can-do-binary-search-for-the-given-range-f864
 range_case_eq_range	FAIL_OUTPUT	expect	-
 range_case_eq_type_mismatch	PASS	-	-
 range_comparable_wave8	PASS	-	-
@@ -1624,7 +1624,7 @@ range_exclude_end_size	PASS	-	-
 range_exclusive_nonliteral	PASS	-	-
 range_flat_map	PASS	-	-
 range_float_begin_iterate	FAIL_OUTPUT	expect	spike-misc
-range_float_type	FAIL_OUTPUT	expect	auto-1b4f9693
+range_float_type	FAIL_OUTPUT	expect	auto-can-iterate-from-the-given-range-9693
 range_object_bounds_limit	PASS	-	-
 range_overlap_array_flatten_depth	PASS	-	-
 range_size_infinite_local	PASS	-	-
@@ -1636,7 +1636,7 @@ range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
 rational_complex_literals	PASS	-	-
-rational_complex_wave9	FAIL_OUTPUT	expect	auto-c7d3b59c
+rational_complex_wave9	FAIL_OUTPUT	expect	auto-can-convert-string-into-complex-b59c
 rational_ctor_exact	PASS	-	-
 rational_div_family	PASS	-	-
 rational_i_to_complex	FAIL_OUTPUT	expect	-
@@ -1666,13 +1666,13 @@ regexp_alternation_priority	PASS	-	-
 regexp_brace_zero_lower	FAIL_OUTPUT	expect	-
 regexp_capture_ivar_hash	PASS	-	-
 regexp_captures_family	FAIL_OUTPUT	expect	-
-regexp_encoding_introspection	FAIL_OUTPUT	expect	auto-fd71e1f7
+regexp_encoding_introspection	FAIL_OUTPUT	expect	auto-parsing-error-at-position-invalid-character-class-e1f7
 regexp_error_catchable	FAIL_OUTPUT	expect	-
 regexp_gsub_zero_width	FAIL_OUTPUT	expect	-
 regexp_inline_comment	PASS	-	-
 regexp_inline_options	FAIL_OUTPUT	expect	-
 regexp_last_match_capture	PASS	-	-
-regexp_line_anchors	FAIL_OUTPUT	expect	auto-74de9804
+regexp_line_anchors	FAIL_OUTPUT	expect	auto-error-unrecognized-escape-sequence-9804
 regexp_local_if_else_union	PASS	-	-
 regexp_match_data	FAIL_OUTPUT	expect	missing-method:length
 regexp_match_p_position	FAIL_OUTPUT	expect	-
@@ -1693,9 +1693,9 @@ regexp_sub_gsub_realloc	FAIL_OUTPUT	expect	-
 regexp_threeq	PASS	-	-
 regexp_union_strings	PASS	-	-
 reopen_split_superclass_dispatch	FAIL_COMPILE	compile	super-arity
-require_first_line	FAIL_COMPILE	compile	auto-6dc7ea47
+require_first_line	FAIL_COMPILE	compile	auto-cannot-load-such-file-optparse-ea47
 require_in_conditional	FAIL_COMPILE	compile	spike-misc
-require_io_console_winsize	FAIL_COMPILE	compile	auto-a2980bed
+require_io_console_winsize	FAIL_COMPILE	compile	auto-cannot-load-such-file-io-console-0bed
 require_modifier	FAIL_COMPILE	compile	spike-misc
 require_parent	FAIL_COMPILE	compile	dynamic-require
 require_same_line	PASS	-	-
@@ -1777,7 +1777,7 @@ splat_value_positions	PASS	-	-
 split_on_unresolved_chain	PASS	-	-
 sprintf_long_interp	PASS	-	-
 sprintf_positional	PASS	-	-
-stdin_io	FAIL_OUTPUT	expect	auto-ebd75c85
+stdin_io	FAIL_OUTPUT	expect	auto-not-file-5c85
 stdlib_class_in_ivar	PASS	-	-
 stored_block_call_returns_value	PASS	-	-
 str_array_max_min_by	PASS	-	-
@@ -1832,7 +1832,7 @@ string_embedded_nul_core	PASS	-	-
 string_encoding	FAIL_OUTPUT	expect	-
 string_enum_arg_forms	FAIL_OUTPUT	expect	arity-panic
 string_enum_block_returns_self	FAIL_OUTPUT	expect	-
-string_enum_inspect_source	FAIL_OUTPUT	expect	auto-03f2cac6
+string_enum_inspect_source	FAIL_OUTPUT	expect	auto-no-block-given-yield-cac6
 string_equal_identity	FAIL_OUTPUT	expect	-
 string_format_poly_array_rhs	PASS	-	-
 string_format_polyarr	PASS	-	-
@@ -1846,7 +1846,7 @@ string_index_nil_typeerror	FAIL_OUTPUT	expect	-
 string_index_regex	PASS	-	-
 string_lshift_int_codepoint	PASS	-	-
 string_match_block	FAIL_OUTPUT	expect	-
-string_multiply_overflow	FAIL_RUN	expect	auto-f876aad1
+string_multiply_overflow	FAIL_RUN	expect	auto-memory-allocation-of-bytes-failed-aad1
 string_mutation_plus	PASS	-	-
 string_new_capacity	PASS	-	-
 string_nil_arg_typeerror	FAIL_OUTPUT	expect	-
@@ -1863,7 +1863,7 @@ string_range_each_inspect	PASS	-	-
 string_range_to_a	PASS	-	-
 string_replace_prepend_insert_clear	PASS	-	-
 string_rpartition_regex	FAIL_OUTPUT	expect	-
-string_scan_literal	FAIL_OUTPUT	expect	auto-e43187a8
+string_scan_literal	FAIL_OUTPUT	expect	auto-wrong-argument-type-string-expected-regexp-87a8
 string_scrub	FAIL_OUTPUT	expect	-
 string_search_binary	PASS	-	-
 string_search_slice	PASS	-	-
@@ -1881,7 +1881,7 @@ string_sub_hash_replacement	PASS	-	-
 string_succ_scan_slice_tilde_wave10	FAIL_OUTPUT	expect	-
 string_sum_bits	PASS	-	-
 string_to_i_base	PASS	-	-
-string_to_i_base_zero	FAIL_OUTPUT	expect	auto-5d6a192c
+string_to_i_base_zero	FAIL_OUTPUT	expect	auto-invalid-radix-192c
 string_to_i_overflow_raises	FAIL_OUTPUT	expect	-
 string_undump	PASS	-	-
 string_upto	PASS	-	-
@@ -1896,7 +1896,7 @@ struct_data_inspect	PASS	-	-
 struct_dig	PASS	-	-
 struct_display_to_s	PASS	-	-
 struct_enumerable_wave8	FAIL_OUTPUT	expect	missing-method:members
-struct_inherit	FAIL_COMPILE	compile	auto-ba7c5361
+struct_inherit	FAIL_COMPILE	compile	auto-expected-constant-name-or-path-or-5361
 struct_int_member_unboxed	PASS	-	-
 struct_kw	PASS	-	-
 struct_member_name_no_global_merge	PASS	-	-
@@ -1913,8 +1913,8 @@ struct_yield_initialize	PASS	-	-
 subclass_inherits_module_parent	PASS	-	-
 super_forward_block_given	PASS	-	-
 super_in_non_initialize	PASS	-	-
-super_into_included_module	FAIL_COMPILE	compile	auto-867ee324
-super_missing_hash_slot	FAIL_COMPILE	compile	auto-1e00ef9d
+super_into_included_module	FAIL_COMPILE	compile	auto-no-found-above-e324
+super_missing_hash_slot	FAIL_COMPILE	compile	auto-no-found-above-rec-ef9d
 super_qualified_superclass	PASS	-	-
 super_with_args	PASS	-	-
 sym_hash_cross_variant_merge	PASS	-	-
@@ -1928,11 +1928,11 @@ symbol_id2name_ruby_desc_minmax	PASS	-	-
 symbol_inspect_nonascii	FAIL_OUTPUT	expect	-
 symbol_inspect_quoting	FAIL_OUTPUT	expect	-
 symbol_multibyte_length	PASS	-	-
-symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-63954a45
+symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-can-coerce-complex-into-float-4a45
 symbol_nil_truthiness	PASS	-	-
-symbol_range_enum	FAIL_OUTPUT	expect	auto-1b4f9693
+symbol_range_enum	FAIL_OUTPUT	expect	auto-can-iterate-from-the-given-range-9693
 symbol_string_methods	PASS	-	-
-symbol_to_proc_after_positional	FAIL_COMPILE	compile	auto-a8d5a4ab
+symbol_to_proc_after_positional	FAIL_COMPILE	compile	auto-define-method-second-argument-must-be-block-a4ab
 symbol_to_proc_call	PASS	-	-
 symbol_upcase_interpolation	PASS	-	-
 system_argument_list	FAIL_OUTPUT	expect	missing-method:system
@@ -1959,27 +1959,27 @@ thread_sized_queue	PASS	-	-
 thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	PASS	-	-
-time_at_in_offset	FAIL_OUTPUT	expect	auto-1a5f778a
-time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-434a127c
+time_at_in_offset	FAIL_OUTPUT	expect	auto-can-convert-hash-into-an-exact-number-778a
+time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-can-convert-rational-into-an-exact-number-127c
 time_at_subsec	PASS	-	-
 time_at_unit_form	PASS	-	-
 time_between_clamp	PASS	-	-
 time_compare_nontime	PASS	-	-
 time_deconstruct_keys	PASS	-	-
-time_fractional_seconds	FAIL_OUTPUT	expect	auto-98d36e6a
+time_fractional_seconds	FAIL_OUTPUT	expect	auto-no-implicit-conversion-of-rational-into-integer-6e6a
 time_interpolation	PASS	-	-
 time_localtime_gmtime	PASS	-	-
 time_mktime_local_utc	PASS	-	-
 time_new_in_kwarg	PASS	-	-
 time_numeric_string_args	PASS	-	-
-time_plus_rational	FAIL_OUTPUT	expect	auto-434a127c
+time_plus_rational	FAIL_OUTPUT	expect	auto-can-convert-rational-into-an-exact-number-127c
 time_predicates_getgm	PASS	-	-
 time_respond_to	PASS	-	-
 time_round_floor_ceil	PASS	-	-
 time_strftime_directives	FAIL_OUTPUT	expect	-
 time_strftime_epoch_zone	PASS	-	-
 time_strftime_long_format	PASS	-	-
-time_strftime_z_minimal	FAIL_OUTPUT	expect	auto-1a5f778a
+time_strftime_z_minimal	FAIL_OUTPUT	expect	auto-can-convert-hash-into-an-exact-number-778a
 time_subsec_offset_family	PASS	-	-
 time_subsec_utc	PASS	-	-
 time_to_a_to_r	PASS	-	-
@@ -2030,7 +2030,7 @@ value_type_tuple_gc_scan	PASS	-	-
 valued_break	FAIL_OUTPUT	expect	-
 valued_break_deep	PASS	-	-
 valued_break_ensure	FAIL_OUTPUT	expect	-
-valued_break_proc	FAIL_OUTPUT	expect	auto-1ae200b3
+valued_break_proc	FAIL_OUTPUT	expect	auto-uncaught-signal-escaped-the-top-level-break-00b3
 valued_break_recv	FAIL_OUTPUT	expect	-
 valued_break_tail	FAIL_OUTPUT	expect	-
 valued_break_yield	FAIL_OUTPUT	expect	-
@@ -2044,7 +2044,7 @@ void_value_hash_store_nil	PASS	-	-
 void_value_if_writer_arm	PASS	-	-
 void_value_in_value_position	PASS	-	-
 volatile_strip_skips_coerced_arg	PASS	-	-
-warn_category	FAIL_OUTPUT	expect	auto-27bada46
+warn_category	FAIL_OUTPUT	expect	auto-category-deprecated-da46
 warn_double_splat	PASS	-	-
 warn_kernel	PASS	-	-
 warn_unresolved_call_context	PASS	-	-
@@ -2066,7 +2066,7 @@ yield_inline_receiver_self	PASS	-	-
 yield_into_local_divergent	PASS	-	-
 yield_method_call_in_method_body	PASS	-	-
 yield_mixed_block_types	PASS	-	-
-yield_no_block_raises	FAIL_OUTPUT	expect	auto-f715b554
+yield_no_block_raises	FAIL_OUTPUT	expect	auto-no-block-given-localjumperror-b554
 yield_self_method_return	PASS	-	-
 yield_splat	PASS	-	-
 yield_typed_hash_block_local	PASS	-	-
