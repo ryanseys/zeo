@@ -620,12 +620,8 @@ builtin_methods! {
                 ))
             }
         };
-        let parts: Vec<String> = recv_array!(recv)
-            .lock()
-            .iter()
-            .map(|e| e.to_display_string())
-            .collect();
-        Ok(RubyValue::Str(crate::string_new(parts.join(&sep))))
+        let elems = recv_array!(recv).lock().clone();
+        Ok(RubyValue::Str(crate::string_new(join_recursive(&elems, &sep))))
     }
     "index" | "find_index" => fn find_index(recv, args, block) {
         let items = recv_array!(recv).lock().clone();
@@ -745,17 +741,22 @@ builtin_methods! {
         }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "delete" => fn delete(recv, args, _block) {
+    "delete" => fn delete(recv, args, block) {
         arity!(args, 1);
         let handle = recv_array!(recv);
         let mut guard = handle.lock();
         let before = guard.len();
         guard.retain(|e| !e.rb_eq(&args[0]));
-        Ok(if guard.len() < before {
-            args[0].clone()
-        } else {
-            RubyValue::Nil
-        })
+        if guard.len() < before {
+            return Ok(args[0].clone());
+        }
+        drop(guard);
+        // Not found: a block supplies the answer (yielded the searched value),
+        // else nil.
+        match &block {
+            Some(RubyValue::Proc(p)) => p.call(&[args[0].clone()]),
+            _ => Ok(RubyValue::Nil),
+        }
     }
     "delete_at" => fn delete_at(recv, args, _block) {
         arity!(args, 1);
@@ -1430,6 +1431,20 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
         }
     }
     out
+}
+
+/// `Array#join`: each element's `to_s`, joined by `sep`, with nested arrays
+/// flattened recursively under the SAME separator (`[1, [2, 3]].join("-")` ->
+/// `"1-2-3"`).
+fn join_recursive(elems: &[RubyValue], sep: &str) -> String {
+    elems
+        .iter()
+        .map(|e| match e {
+            RubyValue::Array(inner) => join_recursive(&inner.lock().clone(), sep),
+            _ => e.to_display_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(sep)
 }
 
 /// Per-element `eql?` (class-strict): `1.eql?(1.0)` is false because Integer

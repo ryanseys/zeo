@@ -1,5 +1,5 @@
-# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=54c286c
-# PASS=1720 FAIL_OUTPUT=311 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
+# suite=spinel corpus=2074 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=d360350
+# PASS=1722 FAIL_OUTPUT=309 FAIL_COMPILE=39 FAIL_RUSTC=0 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=3 ORACLE_FAIL=0 SKIP=0 TOTAL=2074
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -52,7 +52,7 @@ array_first_last_empty	PASS	-	-
 array_flat_map_scalar_block	PASS	-	-
 array_flatten_typed_elements	PASS	-	-
 array_float_conformance	PASS	-	-
-array_fold_delete_flatten_rindex	FAIL_OUTPUT	expect	-
+array_fold_delete_flatten_rindex	PASS	-	-
 array_frozen_mutate_raises	FAIL_OUTPUT	expect	-
 array_frozen_slice_bang	FAIL_OUTPUT	expect	-
 array_get_oob_negative	PASS	-	-
@@ -65,7 +65,7 @@ array_index_op_write_poly_rhs	PASS	-	-
 array_index_or_write	PASS	-	-
 array_index_range_variable	PASS	-	-
 array_insert_pads_nil	PASS	-	-
-array_join_nested	FAIL_OUTPUT	expect	-
+array_join_nested	PASS	-	-
 array_join_poly_separator	PASS	-	-
 array_literal_empty_elem	PASS	-	-
 array_local_append_prepend_widen	PASS	-	-

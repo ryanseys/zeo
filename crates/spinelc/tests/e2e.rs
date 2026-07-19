@@ -17971,6 +17971,23 @@ fn class_allocate_skips_initialize() {
 }
 
 #[test]
+fn array_join_recursive_and_delete_block() {
+    // join flattens nested arrays under the same separator; delete's not-found
+    // block supplies the answer.
+    let result = run_ruby(
+        r#"
+        p [1, [2, [3, 4]], 5].join("-")
+        p [[1], "a", [2, [3]]].join("|")
+        p ["a", "b"].delete("z") { "missing" }
+        p ["a", "b"].delete("a") { "missing" }
+        p [1, 2].delete(9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"1-2-3-4-5\"\n\"1|a|2|3\"\n\"missing\"\n\"a\"\nnil\n");
+}
+
+#[test]
 fn array_insert_eql_uniq_spaceship_edges() {
     // insert past the end pads with nil; eql?/uniq are class-strict (1 != 1.0);
     // <=> of an array with itself (incl. a cycle) is 0 without deadlock.
