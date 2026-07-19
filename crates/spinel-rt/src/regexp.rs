@@ -133,6 +133,8 @@ pub struct MatchDataInner {
     pub haystack: String,
     pub groups: Vec<Option<(usize, usize)>>,
     pub names: Vec<(String, usize)>,
+    /// The `Regexp` that produced this match -- `MatchData#regexp`.
+    pub regexp: RRegexp,
 }
 
 pub type RMatchData = Arc<MatchDataInner>;
@@ -268,7 +270,78 @@ fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
         haystack: haystack.to_string(),
         groups: caps.spans.clone(),
         names: re.engine.capture_names(),
+        regexp: re.clone(),
     })
+}
+
+/// `MatchData#offset(n)` / `#byteoffset(n)`: the `[start, end]` of group `n`
+/// (an index, or a named-group Symbol/String) as char indices (`byte_mode`
+/// false) or byte indices (true). `[nil, nil]` for a group that didn't
+/// participate; `IndexError` for an out-of-range index or unknown name.
+pub fn matchdata_offset(
+    md: &RMatchData,
+    key: &RubyValue,
+    byte_mode: bool,
+) -> Result<RubyValue, crate::Signal> {
+    let idx = match key {
+        RubyValue::Int(n) => *n,
+        RubyValue::Symbol(s) => name_group_index(md, &s.name())?,
+        RubyValue::Str(s) => name_group_index(md, &s.lock().to_utf8_lossy())?,
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::class_name_of(other)
+                ),
+            ))
+        }
+    };
+    let span = md.groups.get(usize::try_from(idx).unwrap_or(usize::MAX)).ok_or_else(|| {
+        crate::dispatch::raise_error("IndexError", format!("index {idx} out of matches"))
+    })?;
+    let (lo, hi) = match span {
+        Some((lo, hi)) => (*lo, *hi),
+        None => return Ok(offset_pair(RubyValue::Nil, RubyValue::Nil)),
+    };
+    let (lo, hi) = if byte_mode {
+        (lo as i64, hi as i64)
+    } else {
+        (char_index(&md.haystack, lo) as i64, char_index(&md.haystack, hi) as i64)
+    };
+    Ok(offset_pair(RubyValue::Int(lo), RubyValue::Int(hi)))
+}
+
+fn offset_pair(a: RubyValue, b: RubyValue) -> RubyValue {
+    RubyValue::Array(crate::array_new(vec![a, b]))
+}
+
+fn name_group_index(md: &RMatchData, name: &str) -> Result<i64, crate::Signal> {
+    md.names
+        .iter()
+        .find(|(n, _)| n.as_str() == name)
+        .map(|(_, i)| *i as i64)
+        .ok_or_else(|| {
+            crate::dispatch::raise_error(
+                "IndexError",
+                format!("undefined group name reference: {name}"),
+            )
+        })
+}
+
+/// `MatchData#names` -- the named capture groups, in group order.
+pub fn matchdata_names(md: &RMatchData) -> RubyValue {
+    let out = md
+        .names
+        .iter()
+        .map(|(n, _)| RubyValue::Str(crate::string_new(n.clone())))
+        .collect();
+    RubyValue::Array(crate::array_new(out))
+}
+
+/// `MatchData#regexp` -- the `Regexp` that produced the match.
+pub fn matchdata_regexp(md: &RMatchData) -> RubyValue {
+    RubyValue::Regexp(md.regexp.clone())
 }
 
 /// `Regexp#match`/`String#match` -- a real `MatchData`, or `nil` if the

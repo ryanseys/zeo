@@ -669,6 +669,76 @@ builtin_methods! {
     }
 }
 
+/// Rounding mode for `Time#round`/`#floor`/`#ceil`.
+enum Rounding {
+    Floor,
+    Ceil,
+    Round,
+}
+
+/// The sub-second precision argument (`ndigits`, default 0), as a non-negative
+/// count of decimal places.
+fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
+    match args.first() {
+        None => Ok(0),
+        Some(RubyValue::Int(n)) => Ok((*n).max(0) as u32),
+        Some(other) => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// A new Time with the instant reduced to `10**ndigits`-of-a-second precision.
+/// `round` is half-up toward +Infinity (`Time.at(-0.5).round` is `0`, not `-1`
+/// -- oracle-verified): `floor(value*scale + 1/2) / scale`.
+fn time_reduce(t: &RTime, args: &[RubyValue], kind: Rounding) -> Result<RubyValue, Signal> {
+    use num_integer::Integer;
+    let scale = num_bigint::BigInt::from(10u32).pow(round_ndigits(args)?);
+    let n = &t.num * &scale;
+    let d = &t.den;
+    let two = num_bigint::BigInt::from(2);
+    let q = match kind {
+        Rounding::Floor => n.div_floor(d),
+        Rounding::Ceil => n.div_ceil(d),
+        Rounding::Round => (&two * &n + d).div_floor(&(&two * d)),
+    };
+    Ok(time_exact(q, scale, t.offset()))
+}
+
+/// `[(key, value)]` for every field `Time#deconstruct_keys` can answer, in
+/// CRuby's order. Reused by `deconstruct_keys` (whole or filtered).
+fn time_field_pairs(t: &RTime) -> Vec<(&'static str, RubyValue)> {
+    let c = civil(t);
+    let (frac_num, frac_den) = t.frac();
+    let subsec = if frac_num == num_bigint::BigInt::from(0) {
+        RubyValue::Int(0)
+    } else {
+        crate::builtins::rational::rational_new(frac_num, frac_den).expect("nonzero denominator")
+    };
+    let zone = if c.zone.is_empty() {
+        RubyValue::Nil
+    } else {
+        RubyValue::Str(crate::collections::string_new(c.zone.clone()))
+    };
+    vec![
+        ("year", RubyValue::Int(c.tm.tm_year as i64 + 1900)),
+        ("month", RubyValue::Int(c.tm.tm_mon as i64 + 1)),
+        ("day", RubyValue::Int(c.tm.tm_mday as i64)),
+        ("yday", RubyValue::Int(c.tm.tm_yday as i64 + 1)),
+        ("wday", RubyValue::Int(c.tm.tm_wday as i64)),
+        ("hour", RubyValue::Int(c.tm.tm_hour as i64)),
+        ("min", RubyValue::Int(c.tm.tm_min as i64)),
+        ("sec", RubyValue::Int(c.tm.tm_sec as i64)),
+        ("subsec", subsec),
+        ("dst", RubyValue::Bool(c.tm.tm_isdst > 0)),
+        ("zone", zone),
+    ]
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -873,6 +943,111 @@ builtin_methods! {
     "thursday?" => fn thursday_p(recv, args, _block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 4)) }
     "friday?" => fn friday_p(recv, args, _block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 5)) }
     "saturday?" => fn saturday_p(recv, args, _block) { arity!(args, 0); Ok(RubyValue::Bool(civil(recv_time(recv)).tm.tm_wday == 6)) }
+
+    // `asctime`/`ctime`: the fixed C `ctime` shape, in the Time's own zone.
+    "asctime" | "ctime" => fn asctime(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::collections::string_new(
+            strftime(recv_time(recv), "%a %b %e %H:%M:%S %Y"),
+        )))
+    }
+    // `[sec, min, hour, mday, mon, year, wday, yday, isdst, zone]`.
+    "to_a" => fn to_a(recv, args, _block) {
+        arity!(args, 0);
+        let c = civil(recv_time(recv));
+        let zone = if c.zone.is_empty() {
+            RubyValue::Nil
+        } else {
+            RubyValue::Str(crate::collections::string_new(c.zone.clone()))
+        };
+        Ok(RubyValue::Array(crate::collections::array_new(vec![
+            RubyValue::Int(c.tm.tm_sec as i64),
+            RubyValue::Int(c.tm.tm_min as i64),
+            RubyValue::Int(c.tm.tm_hour as i64),
+            RubyValue::Int(c.tm.tm_mday as i64),
+            RubyValue::Int(c.tm.tm_mon as i64 + 1),
+            RubyValue::Int(c.tm.tm_year as i64 + 1900),
+            RubyValue::Int(c.tm.tm_wday as i64),
+            RubyValue::Int(c.tm.tm_yday as i64 + 1),
+            RubyValue::Bool(c.tm.tm_isdst > 0),
+            zone,
+        ])))
+    }
+    // The exact instant as `Rational` seconds since the epoch (always a
+    // Rational, even for a whole second: `Time.at(100).to_r == (100/1)`).
+    "to_r" => fn to_r(recv, args, _block) {
+        arity!(args, 0);
+        let t = recv_time(recv);
+        crate::builtins::rational::rational_new(t.num.clone(), t.den.clone())
+    }
+    "round" => fn round(recv, args, _block) {
+        arity!(args, 0..=1);
+        time_reduce(recv_time(recv), args, Rounding::Round)
+    }
+    "floor" => fn floor(recv, args, _block) {
+        arity!(args, 0..=1);
+        time_reduce(recv_time(recv), args, Rounding::Floor)
+    }
+    "ceil" => fn ceil(recv, args, _block) {
+        arity!(args, 0..=1);
+        time_reduce(recv_time(recv), args, Rounding::Ceil)
+    }
+    // ISO 8601 / `xmlschema`: `YYYY-MM-DDTHH:MM:SS`, an optional `.fff`
+    // fractional part (`fraction_digits`), and the zone (`Z` for UTC else
+    // `+HH:MM`).
+    "xmlschema" | "iso8601" => fn xmlschema(recv, args, _block) {
+        arity!(args, 0..=1);
+        let t = recv_time(recv);
+        let mut s = strftime(t, "%Y-%m-%dT%H:%M:%S");
+        let digits = round_ndigits(args)?;
+        if digits > 0 {
+            use num_integer::Integer;
+            let (n, d) = t.frac();
+            let scaled = (n * num_bigint::BigInt::from(10u32).pow(digits)).div_floor(&d);
+            s.push('.');
+            s.push_str(&format!("{frac:0>width$}", frac = scaled.to_string(), width = digits as usize));
+        }
+        match t.offset() {
+            Some(0) => s.push('Z'),
+            Some(off) => s.push_str(&offset_str_colon(off, 1)),
+            None => s.push_str(&offset_str_colon(civil(t).offset, 1)),
+        }
+        Ok(RubyValue::Str(crate::collections::string_new(s)))
+    }
+    // A pattern-matching view: `nil` -> every field, an Array -> only the
+    // requested keys (in the requested order), CRuby's shape.
+    "deconstruct_keys" => fn deconstruct_keys(recv, args, _block) {
+        arity!(args, 1);
+        let all = time_field_pairs(recv_time(recv));
+        let pairs: Vec<(RubyValue, RubyValue)> = match &args[0] {
+            RubyValue::Nil => all
+                .into_iter()
+                .map(|(k, v)| (RubyValue::Symbol(crate::Symbol::intern(k)), v))
+                .collect(),
+            RubyValue::Array(keys) => {
+                let mut out = Vec::new();
+                for key in keys.lock().iter() {
+                    if let RubyValue::Symbol(s) = key {
+                        let name = s.name();
+                        if let Some((_, v)) = all.iter().find(|(k, _)| *k == name.as_str()) {
+                            out.push((key.clone(), v.clone()));
+                        }
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "wrong argument type {} (expected Array or nil)",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ))
+            }
+        };
+        Ok(RubyValue::Hash(crate::hash_new(pairs)))
+    }
 }
 
 #[cfg(test)]

@@ -80,4 +80,22 @@ builtin_methods! {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_s(&recv_md(recv)))
     }
+    // `offset(n)`/`byteoffset(n)` -- the char/byte `[start, end]` of group `n`
+    // (index or named-group Symbol/String).
+    "offset" => fn offset(recv, args, _block) {
+        arity!(args, 1);
+        crate::regexp::matchdata_offset(&recv_md(recv), &args[0], false)
+    }
+    "byteoffset" => fn byteoffset(recv, args, _block) {
+        arity!(args, 1);
+        crate::regexp::matchdata_offset(&recv_md(recv), &args[0], true)
+    }
+    "names" => fn names(recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::regexp::matchdata_names(&recv_md(recv)))
+    }
+    "regexp" => fn regexp(recv, args, _block) {
+        arity!(args, 0);
+        Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
+    }
 }

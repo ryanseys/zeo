@@ -97,6 +97,46 @@ builtin_methods! {
             + (re.multiline as i64) * MULTILINE;
         Ok(RubyValue::Int(bits))
     }
+    // `#linear_time?` -- whether matching is guaranteed linear-time. True
+    // unless the pattern uses a backreference (lookaround and nested
+    // quantifiers stay linear); oracle-verified.
+    "linear_time?" => fn linear_time_p(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(!has_backreference(&re_of(recv).source)))
+    }
+}
+
+/// True if `source` contains a backreference (`\1`..`\9` or `\k<name>`/
+/// `\k'name'`) -- the only construct that forces non-linear matching in
+/// `Regexp.linear_time?`. A backslash always consumes the next character, so
+/// an escaped backslash (`\\1`) is a literal, not a backref.
+fn has_backreference(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            let c = bytes[i + 1];
+            if c.is_ascii_digit() && c != b'0' {
+                return true;
+            }
+            if c == b'k' && matches!(bytes.get(i + 2), Some(b'<' | b'\'')) {
+                return true;
+            }
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+/// A `Regexp`'s `#to_s` (`(?-mix:src)`) as a plain `String` -- `Regexp.union`
+/// embeds each member regexp this way, preserving its own flags.
+fn regexp_to_s_string(re: &crate::RRegexp) -> String {
+    match crate::regexp::regexp_to_s(re) {
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+        _ => unreachable!("regexp_to_s always returns a Str"),
+    }
 }
 
 /// The receiver of a Regexp instance row, already known to be a Regexp.
@@ -226,6 +266,65 @@ builtin_methods! {
         crate::regexp_new(&source, ignore_case, extended, multiline)
             .map(RubyValue::Regexp)
             .map_err(|e| crate::dispatch::raise_error("RegexpError", e))
+    }
+
+    // `Regexp.union(pat, ...)` / `Regexp.union([pat, ...])`: an alternation of
+    // the patterns. A String member is escaped; a Regexp member keeps its own
+    // flags via its `(?-mix:src)` form. Empty -> the never-matching `(?!)`.
+    "union" => fn union_c(_recv, args, _block) {
+        let items: Vec<RubyValue> = match args {
+            [RubyValue::Array(a)] => a.lock().clone(),
+            _ => args.to_vec(),
+        };
+        let source = if items.is_empty() {
+            "(?!)".to_string()
+        } else {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in &items {
+                match item {
+                    RubyValue::Regexp(re) => parts.push(regexp_to_s_string(re)),
+                    RubyValue::Str(s) => {
+                        parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
+                    }
+                    other => {
+                        return Err(crate::dispatch::raise_error(
+                            "TypeError",
+                            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                        ))
+                    }
+                }
+            }
+            parts.join("|")
+        };
+        crate::regexp_new(&source, false, false, false)
+            .map(RubyValue::Regexp)
+            .map_err(|e| crate::dispatch::raise_error("RegexpError", e))
+    }
+
+    // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, else `nil`
+    // (never raises, unlike a coercion).
+    "try_convert" => fn try_convert_c(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(match &args[0] {
+            RubyValue::Regexp(_) => args[0].clone(),
+            _ => RubyValue::Nil,
+        })
+    }
+
+    // `Regexp.linear_time?(re_or_str, flags = nil)` -- see the instance method.
+    "linear_time?" => fn linear_time_c(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let source = match &args[0] {
+            RubyValue::Regexp(re) => re.source.clone(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                ))
+            }
+        };
+        Ok(RubyValue::Bool(!has_backreference(&source)))
     }
 }
 

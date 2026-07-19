@@ -101,6 +101,7 @@ mod tests {
             // "ell" of "hello", with one capture group over "ll".
             groups: vec![Some((1, 4)), Some((2, 4))],
             names: Vec::new(),
+            regexp: crate::regexp::regexp_new("(ll)", false, false, false).expect("valid test regexp"),
         })
     }
 

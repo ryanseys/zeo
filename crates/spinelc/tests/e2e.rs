@@ -4788,6 +4788,49 @@ fn float_to_s_scientific_notation_threshold() {
 }
 
 #[test]
+fn time_asctime_to_a_to_r_round_xmlschema_deconstruct() {
+    let result = run_ruby(
+        r#"
+        t = Time.at(1_700_000_000.5).utc
+        puts t.asctime
+        p t.to_a
+        p Time.at(100).to_r
+        p Time.at(1_700_000_000.7654321).round(3).subsec
+        puts t.xmlschema(3)
+        p t.deconstruct_keys([:year, :month])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Tue Nov 14 22:13:20 2023\n[20, 13, 22, 14, 11, 2023, 2, 318, false, \"UTC\"]\n\
+         (100/1)\n(153/200)\n2023-11-14T22:13:20.500Z\n{year: 2023, month: 11}\n"
+    );
+}
+
+#[test]
+fn matchdata_offset_names_regexp_and_regexp_class_methods() {
+    let result = run_ruby(
+        r#"
+        m = "abc123".match(/([a-z]+)(\d+)/)
+        p m.offset(2)
+        p m.byteoffset(2)
+        p "x1".match(/(?<a>[a-z])(?<b>\d)/).names
+        p Regexp.union("a", "b").source
+        p Regexp.union.source
+        p Regexp.linear_time?(/(a+)+/)
+        p Regexp.linear_time?(/(a)\1/)
+        p Regexp.try_convert("x")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[3, 6]\n[3, 6]\n[\"a\", \"b\"]\n\"a|b\"\n\"(?!)\"\ntrue\nfalse\nnil\n"
+    );
+}
+
+#[test]
 fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
     let result = run_ruby(
         r#"
