@@ -162,6 +162,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::COMPLEX_CLASS => complex::lookup_class,
         spinel_abi::RANDOM_CLASS => random::lookup_class,
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class,
+        spinel_abi::THREAD_CLASS => thread::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         #[cfg(feature = "ext-base64")]
@@ -271,6 +272,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::SET_CLASS => set::lookup_class_names(),
         spinel_abi::COMPLEX_CLASS => complex::lookup_class_names(),
         spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_class_names(),
+        spinel_abi::THREAD_CLASS => thread::lookup_class_names(),
         #[cfg(feature = "ext-base64")]
         spinel_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
         #[cfg(feature = "ext-stringio")]

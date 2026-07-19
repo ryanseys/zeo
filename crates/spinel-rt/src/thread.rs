@@ -36,11 +36,11 @@
 //! `ec_serial`, and correct even if a coroutine migrates OS threads
 //! (unlike a `thread_local!`).
 
-use crate::{RubyValue, Signal};
+use crate::{RubyValue, Signal, Symbol};
 use parking_lot::Mutex as PlMutex;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 /// A unique id per execution context (the main coroutine, each Thread) --
 /// CRuby's `ec_serial` analogue, backing `Mutex` ownership.
@@ -64,19 +64,147 @@ enum ThreadState {
 
 pub struct ThreadData {
     state: PlMutex<Option<ThreadState>>,
+    /// `Thread#name`/`name=` -- nil until set.
+    name: PlMutex<Option<String>>,
+    /// `Thread#report_on_exception` -- CRuby defaults this to true.
+    report_on_exception: AtomicBool,
+    /// `Thread#[]`/`#[]=` storage. CRuby scopes this per-FIBER; with no
+    /// separate fiber identity here it is per-thread, a documented narrowing
+    /// that the common one-fiber-per-thread programs can't observe.
+    locals: PlMutex<HashMap<Symbol, RubyValue>>,
+    /// `Thread#thread_variable_get`/`set` storage -- genuinely per-thread.
+    tvars: PlMutex<HashMap<Symbol, RubyValue>>,
+    /// The main thread never holds a join handle yet is always "running"; this
+    /// flag lets `#status`/`#alive?` answer for it without a handle.
+    is_main: bool,
 }
 
 pub type RThread = Arc<ThreadData>;
+
+impl ThreadData {
+    fn build(state: Option<ThreadState>, is_main: bool) -> RThread {
+        Arc::new(ThreadData {
+            state: PlMutex::new(state),
+            name: PlMutex::new(None),
+            report_on_exception: AtomicBool::new(true),
+            locals: PlMutex::new(HashMap::new()),
+            tvars: PlMutex::new(HashMap::new()),
+            is_main,
+        })
+    }
+}
+
+/// The main thread's `Thread` object -- one process-wide instance, so
+/// `Thread.main` and a top-level `Thread.current` are the same identity.
+static MAIN_THREAD: OnceLock<RThread> = OnceLock::new();
+
+fn main_thread() -> RThread {
+    MAIN_THREAD.get_or_init(|| ThreadData::build(None, true)).clone()
+}
+
+may::coroutine_local!(static CURRENT: PlMutex<Option<RThread>> = PlMutex::new(None));
+
+/// `Thread.current` -- the running thread's object, or the main thread's when
+/// called outside any spawned coroutine.
+pub fn thread_current() -> RubyValue {
+    let here = CURRENT.with(|c| c.lock().clone());
+    RubyValue::Thread(here.unwrap_or_else(main_thread))
+}
+
+/// `Thread.main` -- the process's main thread object.
+pub fn thread_main() -> RubyValue {
+    RubyValue::Thread(main_thread())
+}
+
+/// `Thread.pass` -- a scheduler hint to let other coroutines run; nil.
+pub fn thread_pass() -> RubyValue {
+    may::coroutine::yield_now();
+    RubyValue::Nil
+}
 
 /// `Thread.new(*args) { |*params| ... }` -- `args` pass through to the
 /// block's params (bound leniently by the ordinary Proc machinery),
 /// matching CRuby.
 pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let body = block.as_proc_unchecked();
-    let handle = may::go!(move || body.call(&args));
-    RubyValue::Thread(Arc::new(ThreadData {
-        state: PlMutex::new(Some(ThreadState::Running(handle))),
-    }))
+    let data = ThreadData::build(None, false);
+    let for_coro = data.clone();
+    let handle = may::go!(move || {
+        // Record identity so `Thread.current` inside the body finds THIS
+        // thread rather than falling through to main.
+        CURRENT.with(|c| *c.lock() = Some(for_coro));
+        body.call(&args)
+    });
+    *data.state.lock() = Some(ThreadState::Running(handle));
+    RubyValue::Thread(data)
+}
+
+/// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`
+/// after one that ended in an exception. (We can only observe the exit code
+/// once the outcome is cached, i.e. after a `join`; before that a finished
+/// thread still reads "run", matching what this cooperative scheduler can
+/// see without joining.)
+pub fn thread_status(t: &RThread) -> RubyValue {
+    if t.is_main {
+        return RubyValue::Str(crate::string_new("run".to_string()));
+    }
+    match &*t.state.lock() {
+        Some(ThreadState::Running(_)) | None => RubyValue::Str(crate::string_new("run".to_string())),
+        Some(ThreadState::Done(Ok(_))) => RubyValue::Bool(false),
+        Some(ThreadState::Done(Err(_))) => RubyValue::Nil,
+    }
+}
+
+pub fn thread_name(t: &RThread) -> RubyValue {
+    match &*t.name.lock() {
+        Some(n) => RubyValue::Str(crate::string_new(n.clone())),
+        None => RubyValue::Nil,
+    }
+}
+
+pub fn thread_set_name(t: &RThread, name: Option<String>) {
+    *t.name.lock() = name;
+}
+
+pub fn thread_report_on_exception(t: &RThread) -> bool {
+    t.report_on_exception.load(Ordering::Relaxed)
+}
+
+pub fn thread_set_report_on_exception(t: &RThread, v: bool) {
+    t.report_on_exception.store(v, Ordering::Relaxed);
+}
+
+/// `Thread#[]` -- a fiber-local value, or nil.
+pub fn thread_local_get(t: &RThread, key: Symbol) -> RubyValue {
+    t.locals.lock().get(&key).cloned().unwrap_or(RubyValue::Nil)
+}
+
+pub fn thread_local_set(t: &RThread, key: Symbol, value: RubyValue) {
+    t.locals.lock().insert(key, value);
+}
+
+pub fn thread_local_key(t: &RThread, key: Symbol) -> bool {
+    t.locals.lock().contains_key(&key)
+}
+
+pub fn thread_local_keys(t: &RThread) -> Vec<RubyValue> {
+    t.locals.lock().keys().map(|k| RubyValue::Symbol(*k)).collect()
+}
+
+pub fn thread_variable_get(t: &RThread, key: Symbol) -> RubyValue {
+    t.tvars.lock().get(&key).cloned().unwrap_or(RubyValue::Nil)
+}
+
+pub fn thread_variable_set(t: &RThread, key: Symbol, value: RubyValue) {
+    t.tvars.lock().insert(key, value);
+}
+
+pub fn thread_variable_key(t: &RThread, key: Symbol) -> bool {
+    t.tvars.lock().contains_key(&key)
+}
+
+pub fn thread_variable_keys(t: &RThread) -> Vec<RubyValue> {
+    t.tvars.lock().keys().map(|k| RubyValue::Symbol(*k)).collect()
 }
 
 /// Blocks (a real `may` yield point) until the thread finishes, then
@@ -114,7 +242,7 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
 /// Whether the thread is still running (`Thread#alive?`) -- a peek at the
 /// state that, unlike `thread_outcome`, never joins or consumes the handle.
 pub fn thread_alive(t: &RThread) -> bool {
-    matches!(&*t.state.lock(), Some(ThreadState::Running(_)))
+    t.is_main || matches!(&*t.state.lock(), Some(ThreadState::Running(_)))
 }
 
 // ---------------------------------------------------------------------------

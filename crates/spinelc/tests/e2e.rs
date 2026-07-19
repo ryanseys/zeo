@@ -4859,6 +4859,38 @@ fn set_subtract_flatten_map_filter_classify_and_divide() {
 }
 
 #[test]
+fn thread_current_name_status_and_thread_locals() {
+    let result = run_ruby(
+        r#"
+        p Thread.current == Thread.main
+        p Thread.pass
+        t = Thread.new { 20 + 22 }
+        t.name = "worker"
+        p t.name
+        p t.value
+        p t.status
+        p Thread.main.status
+        Thread.current[:tag] = "root"
+        p Thread.current[:tag]
+        p Thread.current.key?(:tag)
+        p Thread.current.keys
+        Thread.current.thread_variable_set(:count, 3)
+        p Thread.current.thread_variable_get(:count)
+        p Thread.current.thread_variables
+        p Thread.current.report_on_exception
+        workers = [Thread.new { 1 }, Thread.new { 2 }]
+        workers.each(&:join)
+        p workers.map(&:status)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nnil\n\"worker\"\n42\nfalse\n\"run\"\n\"root\"\ntrue\n[:tag]\n3\n[:count]\ntrue\n[false, false]\n"
+    );
+}
+
+#[test]
 fn file_ftype_foreach_and_dir_foreach() {
     let result = run_ruby(
         r#"

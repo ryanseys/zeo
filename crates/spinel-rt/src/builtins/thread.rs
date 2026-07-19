@@ -2,11 +2,27 @@
 //! receiver (a thread stored in an Array/Hash/ivar, or `threads.each { |t|
 //! t.join }` where `t` is `Poly`). The static Path-1 codegen arm emits
 //! `thread_outcome` directly and never reaches here; these rows mirror it,
-//! so both paths agree on join/value semantics.
+//! so both paths agree on join/value semantics. The reflection/state rows
+//! (name/status/`[]`/thread-variables) live only here.
 
-use crate::thread::{thread_alive, thread_outcome};
+use crate::dispatch::raise_error;
+use crate::thread::{
+    self, thread_alive, thread_outcome, thread_status,
+};
 use crate::value::RubyValue;
-use crate::Signal;
+use crate::{Signal, Symbol};
+
+/// A Symbol/String storage-key argument as a `Symbol`.
+fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
+    match v {
+        RubyValue::Symbol(s) => Ok(*s),
+        RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
+        other => Err(raise_error(
+            "TypeError",
+            format!("{} is not a symbol nor a string", other.inspect_string()),
+        )),
+    }
+}
 
 // `Thread#join(limit = nil)` -- block until the thread finishes, re-raising a
 // stored exception in the caller, then answer the thread itself. A timeout
@@ -26,16 +42,134 @@ fn t_alive_p(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
     Ok(RubyValue::Bool(thread_alive(&recv.as_thread_unchecked())))
 }
 
+fn t_status(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread_status(&recv.as_thread_unchecked()))
+}
+
+fn t_name(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_name(&recv.as_thread_unchecked()))
+}
+
+fn t_set_name(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let name = match &args[0] {
+        RubyValue::Nil => None,
+        RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+        other => {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            ))
+        }
+    };
+    thread::thread_set_name(&recv.as_thread_unchecked(), name);
+    Ok(args[0].clone())
+}
+
+fn t_report_on_exception(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(thread::thread_report_on_exception(&recv.as_thread_unchecked())))
+}
+
+fn t_set_report_on_exception(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    thread::thread_set_report_on_exception(&recv.as_thread_unchecked(), args[0].truthy());
+    Ok(args[0].clone())
+}
+
+fn t_aref(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_local_get(&recv.as_thread_unchecked(), key_sym(&args[0])?))
+}
+
+fn t_aset(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    thread::thread_local_set(&recv.as_thread_unchecked(), key_sym(&args[0])?, args[1].clone());
+    Ok(args[1].clone())
+}
+
+fn t_key_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(thread::thread_local_key(&recv.as_thread_unchecked(), key_sym(&args[0])?)))
+}
+
+fn t_keys(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Array(crate::array_new(thread::thread_local_keys(&recv.as_thread_unchecked()))))
+}
+
+fn t_tvar_get(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_variable_get(&recv.as_thread_unchecked(), key_sym(&args[0])?))
+}
+
+fn t_tvar_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    thread::thread_variable_set(&recv.as_thread_unchecked(), key_sym(&args[0])?, args[1].clone());
+    Ok(args[1].clone())
+}
+
+fn t_tvar_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(thread::thread_variable_key(&recv.as_thread_unchecked(), key_sym(&args[0])?)))
+}
+
+fn t_tvars(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Array(crate::array_new(thread::thread_variable_keys(&recv.as_thread_unchecked()))))
+}
+
+// Two Thread objects are equal iff they are the same thread (identity).
+fn t_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let same = matches!(&args[0], RubyValue::Thread(o) if std::sync::Arc::ptr_eq(&recv.as_thread_unchecked(), o));
+    Ok(RubyValue::Bool(same))
+}
+
 pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "join" => t_join,
         "value" => t_value,
         "alive?" => t_alive_p,
+        "status" => t_status,
+        "name" => t_name,
+        "name=" => t_set_name,
+        "report_on_exception" => t_report_on_exception,
+        "report_on_exception=" => t_set_report_on_exception,
+        "[]" => t_aref,
+        "[]=" => t_aset,
+        "key?" => t_key_p,
+        "keys" => t_keys,
+        "thread_variable_get" => t_tvar_get,
+        "thread_variable_set" => t_tvar_set,
+        "thread_variable?" => t_tvar_p,
+        "thread_variables" => t_tvars,
+        "==" | "eql?" | "equal?" => t_eq,
         _ => return None,
     })
 }
 
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
-    &["join", "value", "alive?"]
+    &[
+        "join", "value", "alive?", "status", "name", "name=",
+        "report_on_exception", "report_on_exception=", "[]", "[]=", "key?",
+        "keys", "thread_variable_get", "thread_variable_set",
+        "thread_variable?", "thread_variables", "==", "eql?", "equal?",
+    ]
+}
+
+// --- Class methods (`Thread.current`/`.main`/`.pass`) -----------------------
+
+fn c_current(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_current())
+}
+
+fn c_main(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_main())
+}
+
+fn c_pass(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(thread::thread_pass())
+}
+
+pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
+    Some(match name {
+        "current" => c_current,
+        "main" => c_main,
+        "pass" => c_pass,
+        _ => return None,
+    })
+}
+
+pub fn lookup_class_names() -> &'static [&'static str] {
+    &["current", "main", "pass"]
 }
