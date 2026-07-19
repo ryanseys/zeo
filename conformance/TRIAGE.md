@@ -6,7 +6,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | spike-misc | 31 | proc_capture_enclosing_lambda, singleton_method_object, bsearch_find_any_mixed | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
+| ? | spike-misc | 26 | require_in_conditional, array_bsearch_find_any, external_singleton_def | `require` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body |
 | P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
 | ? | unknown-class | 8 | defined_guard_dead_branch, harness_batch_2453_2456, catch_throw_ensure | unknown class/module `MissingRoot::Sub` |
 | ? | auto-362e8305 | 6 | bundle_hash, fiber_nested_block, proc_nonlocal_return | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |
@@ -45,6 +45,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
 | P | missing-method:source_location | 2 | proc_source_location, proc_source_location_var | uncaught exception: undefined method 'source_location' for an instance of Proc |
 | P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
+| ? | auto-1ae200b3 | 1 | valued_break_proc | uncaught signal escaped the top level: Break(1) |
 | ? | auto-1e00ef9d | 1 | super_missing_hash_slot | `super`: no `as_json` found above Rec |
 | ? | auto-27bada46 | 1 | warn_category | {category: :deprecated} |
 | ? | auto-2d0f16c6 | 1 | ffi_gem_compat | cannot load such file -- ffi |

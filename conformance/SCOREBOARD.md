@@ -1,12 +1,12 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1577/1986 passing (79.4%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `9f455a0`
+Suite `spinel` — **1580/1986 passing (79.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `1c457a2`
 
 | verdict | count |
 |---|---|
-| PASS | 1577 |
-| FAIL_OUTPUT | 340 |
-| FAIL_COMPILE | 61 |
+| PASS | 1580 |
+| FAIL_OUTPUT | 342 |
+| FAIL_COMPILE | 56 |
 | FAIL_RUSTC | 3 |
 | FAIL_RUN | 1 |
 | TIMEOUT_COMPILE | 0 |
@@ -19,7 +19,7 @@ Suite `spinel` — **1577/1986 passing (79.4%)** — oracle `ruby 4.0.5 (2026-05
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 31 | spike-misc | ? | proc_capture_enclosing_lambda | a lambda escaping from inside another escaping block isn't supported yet (spike scope) |
+| 26 | spike-misc | ? | require_in_conditional | `require` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body |
 | 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
 | 8 | unknown-class | ? | defined_guard_dead_branch | unknown class/module `MissingRoot::Sub` |
 | 6 | auto-362e8305 | ? | bundle_hash | internal error: entered unreachable code: an own-only name is by definition not in captured_locals (see call.rs's split) |

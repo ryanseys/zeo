@@ -1,5 +1,5 @@
-# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=9f455a0
-# PASS=1577 FAIL_OUTPUT=340 FAIL_COMPILE=61 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
+# suite=spinel corpus=1986 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=1c457a2
+# PASS=1580 FAIL_OUTPUT=342 FAIL_COMPILE=56 FAIL_RUSTC=3 FAIL_RUN=1 TIMEOUT_COMPILE=0 TIMEOUT_RUN=4 ORACLE_FAIL=0 SKIP=0 TOTAL=1986
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1031,7 +1031,7 @@ issue_2870	PASS	-	-
 issue_2871	PASS	-	-
 issue_2872	PASS	-	-
 issue_2873	PASS	-	-
-issue_2874	FAIL_COMPILE	compile	spike-misc
+issue_2874	PASS	-	-
 issue_2875	PASS	-	-
 issue_2876	PASS	-	-
 iter_block_autosplat	PASS	-	-
@@ -1074,7 +1074,7 @@ lambda_explicit_return	PASS	-	-
 lambda_float_captures_with_float_param	PASS	-	-
 lambda_inference_chain	PASS	-	-
 lambda_keyword_call	PASS	-	-
-lambda_nested_emit	FAIL_COMPILE	compile	spike-misc
+lambda_nested_emit	PASS	-	-
 lambda_strict_arity	PASS	-	-
 late_ret_through_local_chain	PASS	-	-
 lazy_blockless_take_drop	PASS	-	-
@@ -1445,8 +1445,8 @@ proc_call_blk_gc_root	PASS	-	-
 proc_call_kw_and_lead_splat	FAIL_COMPILE	compile	splat
 proc_call_splat	FAIL_COMPILE	compile	splat
 proc_call_value_return	PASS	-	-
-proc_capture_enclosing_lambda	FAIL_COMPILE	compile	spike-misc
-proc_capture_inline_block_param	FAIL_COMPILE	compile	spike-misc
+proc_capture_enclosing_lambda	FAIL_OUTPUT	expect	-
+proc_capture_inline_block_param	PASS	-	-
 proc_case_eq	PASS	-	-
 proc_cell_opassign_returns_new_value	FAIL_OUTPUT	expect	-
 proc_closure	PASS	-	-
@@ -1942,7 +1942,7 @@ value_type_tuple_gc_scan	PASS	-	-
 valued_break	FAIL_OUTPUT	expect	-
 valued_break_deep	PASS	-	-
 valued_break_ensure	FAIL_OUTPUT	expect	-
-valued_break_proc	FAIL_COMPILE	compile	spike-misc
+valued_break_proc	FAIL_OUTPUT	expect	auto-1ae200b3
 valued_break_recv	FAIL_OUTPUT	expect	-
 valued_break_tail	FAIL_OUTPUT	expect	-
 valued_break_yield	FAIL_OUTPUT	expect	-

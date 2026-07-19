@@ -17684,3 +17684,33 @@ fn sized_queue_back_pressure_try_lock_and_thread_namespacing() {
          Thread::SizedQueue\ntrue\n2\n[0, 1, 2, 3, 4]\n2\n5\ntrue\nfalse\ntrue\n"
     );
 }
+
+#[test]
+fn lambda_escaping_inside_an_escaping_block() {
+    // A lambda literal nested inside a stored (escaping) block used to be
+    // rejected at compile time; it now composes through the capture analysis
+    // like any other escaping closure.
+    let result = run_ruby(
+        r#"
+        makers = [1, 2, 3].map do |n|
+          -> { n * 10 }
+        end
+        p makers.map(&:call)
+
+        def build
+          total = 0
+          adder = ->(x) { total += x }
+          [adder, -> { total }]
+        end
+        add, get = build
+        add.call(5)
+        add.call(7)
+        p get.call
+
+        squares = (1..3).map { |i| -> { i * i } }
+        p squares.map(&:call)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[10, 20, 30]\n12\n[1, 4, 9]\n");
+}

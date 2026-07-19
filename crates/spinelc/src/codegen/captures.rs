@@ -564,14 +564,13 @@ fn walk(
         HirNode::ClassVarRead(_) => {}
         HirNode::ClassVarWrite(_, value) => walk(compiler, *value, in_escaping, param_exclusions, caps, self_class),
         // A lambda literal ALWAYS escapes (never an inline fast path, unlike
-        // `.times`'s block) -- same shape as an escaping `Call.block` below,
-        // minus the `is_inline` branch. Nested inside another escaping
-        // construct is the same unsupported "two-level closure capture"
-        // shape that block-within-escaping-block already rejects.
+        // `.times`'s block) -- so it recurses with `in_escaping = true`
+        // unconditionally, exactly like the escaping `Call.block`/`New`/
+        // `SuperCall` arms. A lambda nested inside another escaping construct
+        // COMPOSES through this same walk (its captures flow into the outer
+        // block's capture set); the one genuinely unsupported sub-case is
+        // rejected downstream at `emit_proc_or_lambda_value`, not here.
         HirNode::Lambda { params, body } => {
-            if in_escaping {
-                panic!("a lambda escaping from inside another escaping block isn't supported yet (spike scope)");
-            }
             let next_exclusions: HashSet<String> =
                 param_exclusions.union(&own_param_names(params)).cloned().collect();
             for &n in body {
