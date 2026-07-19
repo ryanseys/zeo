@@ -140,7 +140,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             if let Some(b) = block {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
-                    panic!("a Block should only be reached via the Call that invokes it");
+                    panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
                 if !is_times_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
                     return true;
@@ -346,7 +346,7 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
                 || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| {
                     let HirNode::Block { body, .. } = &compiler.hir[b] else {
-                        panic!("a Block should only be reached via the Call that invokes it");
+                        panic!("internal error: a Block node should only be reached via the Call that invokes it");
                     };
                     body_contains_begin(compiler, body)
                 })
@@ -832,7 +832,7 @@ fn walk(
             }
             if let Some(b) = block {
                 let HirNode::Block { params, body } = &compiler.hir[*b] else {
-                    panic!("a Block should only be reached via the Call that invokes it");
+                    panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
                 let is_inline = is_times_fast_path(compiler, *receiver, name, kwargs.is_empty());
                 // A real escaping block nested inside another escaping block
@@ -875,7 +875,7 @@ fn walk(
             }
         }
         HirNode::Block { .. } => {
-            panic!("a Block should only be reached via the Call that invokes it")
+            panic!("internal error: a Block node should only be reached via the Call that invokes it")
         }
         HirNode::Program(_)
         | HirNode::IntegerLit(_)

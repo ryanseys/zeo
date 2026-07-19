@@ -19437,3 +19437,106 @@ fn super_reaches_the_root_initialize() {
         "true\n\"wrong number of arguments (given 1, expected 0)\"\n42\nfalse\ntrue\n"
     );
 }
+
+// --- Batch A6: eager-codegen panics that name a legitimate runtime error are
+// deferred to a runtime raise, so an undefined-constant reference in a dead or
+// rescued branch compiles cleanly (CRuby only raises `uninitialized constant`
+// if the branch actually runs) instead of aborting the whole compile.
+
+#[test]
+fn rescue_naming_an_undefined_constant_compiles_and_never_fires_if_no_exception() {
+    // The `rescue` clause's class expression is only evaluated while matching
+    // an actually-raised exception. A clause that never fires must not fail
+    // the compile just because its class isn't defined.
+    let result = run_ruby(
+        r##"
+        begin
+          1 + 1
+        rescue NeverDefined
+          puts "caught"
+        end
+        puts "ok"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ok\n");
+}
+
+#[test]
+fn rescue_naming_an_undefined_constant_raises_name_error_when_matched() {
+    // When the body DOES raise, evaluating the undefined rescue constant is a
+    // runtime NameError (which replaces the original exception) -- exactly
+    // CRuby's behavior.
+    let result = run_ruby(
+        r##"
+        begin
+          begin
+            raise "boom"
+          rescue NeverDefined
+            puts "caught"
+          end
+        rescue => e
+          puts "#{e.class}: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "NameError: uninitialized constant NeverDefined\n");
+}
+
+#[test]
+fn a_pattern_naming_an_undefined_constant_raises_name_error_when_tried() {
+    let result = run_ruby(
+        r##"
+        x = 5
+        r = begin
+          case x
+          in NopeClass then "a"
+          else "b"
+          end
+        rescue => e
+          "#{e.class}: #{e.message}"
+        end
+        puts r
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "NameError: uninitialized constant NopeClass\n");
+}
+
+#[test]
+fn a_scoped_const_write_to_an_undefined_scope_raises_before_the_rhs_runs() {
+    // CRuby resolves the scope BEFORE evaluating the value, so the RHS side
+    // effect never runs.
+    let result = run_ruby(
+        r##"
+        r = begin
+          Nope::X = (puts "rhs-ran"; 5)
+          "assigned"
+        rescue => e
+          "#{e.class}: #{e.message}"
+        end
+        puts r
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "NameError: uninitialized constant Nope\n");
+}
+
+#[test]
+fn raising_an_undefined_constant_with_a_message_raises_name_error() {
+    // `raise UndefinedConst, "msg"` -- CRuby evaluates the constant (and
+    // raises NameError) before the message is ever consulted.
+    let result = run_ruby(
+        r##"
+        r = begin
+          raise Nope, "msg"
+        rescue => e
+          "#{e.class}: #{e.message}"
+        end
+        puts r
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "NameError: uninitialized constant Nope\n");
+}

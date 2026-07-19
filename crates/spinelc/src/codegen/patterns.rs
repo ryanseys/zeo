@@ -207,9 +207,14 @@ fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &Toke
     if let Some(check) = emit_builtin_class_check(name, scrutinee_ty, scrutinee) {
         return check;
     }
-    let cid = cx
-        .resolve_class(name)
-        .unwrap_or_else(|| panic!("unknown class/module `{name}` used in a pattern"));
+    let Some(cid) = cx.resolve_class(name) else {
+        // `in UndefinedConst` -- CRuby evaluates a pattern's constant when the
+        // pattern is checked, and an undefined one is a runtime NameError.
+        // Deferred here (this check runs only when the arm is tried) so a
+        // never-matched pattern arm still compiles.
+        let err = super::expr::uninitialized_constant_error(cx, name);
+        return super::expr::raise_in_expr_position(err, quote! { bool });
+    };
     match scrutinee_ty {
         // The receiver's class is already statically known -- constant-folds
         // to a literal `true`/`false` via the SAME linearized `ancestors`

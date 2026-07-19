@@ -222,9 +222,17 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
         classes
     };
     let checks = targets.iter().map(|name| {
-        let cid = cx
-            .resolve_class(name)
-            .unwrap_or_else(|| panic!("unknown class `{name}` in a `rescue` clause (must be defined earlier in the file)"));
+        let Some(cid) = cx.resolve_class(name) else {
+            // A `rescue UndefinedConst` names a constant that isn't a class
+            // here. CRuby evaluates a rescue clause's class expression only
+            // while MATCHING an actually-raised exception, and an undefined
+            // constant there is a runtime NameError -- deferred to that point
+            // (this `||`-joined check runs only when a rescue is being matched,
+            // and short-circuits if an earlier listed class already matched),
+            // so a `rescue` clause that never fires still compiles.
+            let err = super::expr::uninitialized_constant_error(cx, name);
+            return super::expr::raise_in_expr_position(err, quote! { bool });
+        };
         // The raw baked id, not `#ident::CLASS_ID`: a rescue target may be
         // a MODULE (`rescue Alertable => e` -- real Ruby matches any
         // exception whose class includes it), which has no generated
@@ -310,7 +318,7 @@ fn node_contains_bare_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             let block_jumps = block.is_some_and(|b| {
                 let HirNode::Block { body, .. } = &compiler.hir[b] else {
-                    panic!("a Block should only be reached via the Call that invokes it");
+                    panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
                 // `.times` shares THIS same Rust scope (an inline splice,
                 // not a closure) -- its own label handles a break/next/redo

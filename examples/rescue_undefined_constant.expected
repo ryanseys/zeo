@@ -1,0 +1,2 @@
+no exception: ok
+NameError: uninitialized constant NeverDefined

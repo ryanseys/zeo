@@ -698,7 +698,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             safe,
         } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
         HirNode::Block { .. } => {
-            panic!("a Block should only be reached via the Call that invokes it")
+            panic!("internal error: a Block node should only be reached via the Call that invokes it")
         }
         HirNode::GlobalRead(name) if name == "$!" => {
             // `$!` is the exception currently being handled -- the SAME
@@ -758,6 +758,16 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         }
         HirNode::ConstWrite { scope, name, value } => {
+            // An explicit `Scope::NAME = ...` whose scope isn't a registered
+            // class raises `NameError` on the scope BEFORE the RHS is evaluated
+            // (`Nope::X = (puts 1; 5)` raises without printing -- verified
+            // against ruby 4.0.5), so short-circuit without emitting `value`.
+            // (A bare `NAME =` never takes this branch: `const_owner_id_opt`
+            // falls back to `Object`/the box surrogate for `scope: None`.)
+            if const_owner_id_opt(cx, scope.as_deref(), name).is_none() {
+                let err = uninitialized_constant_error(cx, scope.as_deref().unwrap_or(name));
+                return quote! { return Err(spinel_rt::Signal::Raise(#err)) };
+            }
             let v = emit_expr(cx, *value);
             // See `IvarWrite`'s docs: constant storage is likewise always
             // `RubyValue` (`spinel_rt::const_set`'s own signature).
@@ -957,7 +967,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::Undef(_)
         | HirNode::AliasMethod { .. }
         | HirNode::MethodVisibility { .. } => {
-            panic!("unexpected top-level-only node in expression position")
+            panic!("internal error: unexpected top-level-only node in expression position")
         }
     }
 }
@@ -1078,10 +1088,18 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         return emit_boxed_new(cx, class_name, args);
     }
     if let Some(msg_id) = explicit_msg {
-        // `raise <non-class-expr>, message` -- a computed class isn't
-        // supported; a value operand with a message isn't a CRuby shape.
         let _ = msg_id;
-        panic!("`raise Class, message` requires a literal class name (spike scope)");
+        // `raise <expr>, message` where `<expr>` didn't resolve to a class
+        // above. A constant-SHAPED operand that failed to resolve is an
+        // undefined constant: CRuby evaluates it -- and raises `uninitialized
+        // constant` -- before the message is ever consulted, so lowering it as
+        // an ordinary const read yields the correctly-scoped runtime NameError
+        // (and compiles cleanly in a dead/rescued branch). A genuinely
+        // COMPUTED class operand (a variable, a call) stays unsupported.
+        if const_path_of(cx, node).is_some() {
+            return emit_expr(cx, node);
+        }
+        panic!("`raise <expr>, message` with a computed (non-constant) class operand isn't supported (spike scope) -- name the exception class as a literal constant");
     }
     match infer(cx, node) {
         TyKind::Str => {
@@ -1137,7 +1155,11 @@ pub(super) fn const_path_of(cx: &Ctx, id: NodeId) -> Option<String> {
 pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
     let cid = cx
         .resolve_class(class_name)
-        .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+        // Callers pass a class already known to resolve (a filtered user class,
+        // or a literal builtin like `NameError`/`TypeError`); an undefined
+        // constant in a user program raises a runtime NameError well before
+        // reaching here (see `emit_const_read`).
+        .unwrap_or_else(|| panic!("internal error: unknown class `{class_name}` in emit_boxed_new"));
     // A NATIVE-BACKED class (exception or value-builtin subclass, D3) has no
     // generated struct to `new_handle` -- `emit_new_with_arg_tokens` already
     // returns a fully-boxed `RubyValue` built by the runtime, so hand it back
@@ -1148,6 +1170,39 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
     let class_ident = super::ident::class_ident(cx.compiler, cid);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
     quote! { spinel_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
+}
+
+/// The boxed `NameError: uninitialized constant <name>` value, for a constant
+/// reference lowered in a branch that may be dead or rescued -- CRuby only
+/// raises `uninitialized constant` if the branch actually runs, so an
+/// unresolved reference defers to this runtime raise instead of a
+/// compile-time panic (see `emit_const_read`, the rescue-clause and pattern
+/// class checks, and `raise <undefined-const>, msg`). `name` is printed
+/// verbatim, so callers pass whatever text CRuby's message shows in their
+/// position (the missing head, or the full path).
+pub(super) fn uninitialized_constant_error(cx: &Ctx, name: &str) -> TokenStream {
+    emit_boxed_new(
+        cx,
+        "NameError",
+        vec![quote! {
+            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #name)))
+        }],
+    )
+}
+
+/// Wraps a raised exception VALUE so it fires in EXPRESSION (or boolean)
+/// position: the `match` `return`s the error, and its unreachable `Ok` arm
+/// yields `ok_ty`, so the whole thing type-unifies wherever a value of that
+/// type is expected. `ok_ty` is the Rust type the surrounding position wants
+/// -- `spinel_rt::RubyValue` for a value read, `bool` for a `rescue`/pattern
+/// class check.
+pub(super) fn raise_in_expr_position(err: TokenStream, ok_ty: TokenStream) -> TokenStream {
+    quote! {
+        match Err::<#ok_ty, spinel_rt::Signal>(spinel_rt::Signal::Raise(#err)) {
+            Ok(__v) => __v,
+            Err(__s) => return Err(__s),
+        }
+    }
 }
 
 /// Boxes `value` into `RubyValue::Object` if `id`'s own static type is
@@ -1328,8 +1383,14 @@ pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// an unset constant is legitimately-valid-but-erroring Ruby, not a
 /// programming mistake in the compiler itself.
 pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
-    const_owner_id_opt(cx, scope, name)
-        .unwrap_or_else(|| panic!("unknown class/module `{}`", scope.unwrap_or(name)))
+    const_owner_id_opt(cx, scope, name).unwrap_or_else(|| {
+        // Reached only when the caller guarantees a resolvable scope (the sole
+        // caller passes an already-registered class's own fq name). An eager
+        // or dead-branch reference must use `const_owner_id_opt` and raise a
+        // runtime `NameError` instead -- see `emit_const_read`/
+        // `emit_const_write_stmt`.
+        panic!("internal error: unknown class/module `{}` in const_owner_id", scope.unwrap_or(name))
+    })
 }
 
 /// Fallible companion to [`const_owner_id`]: returns `None` when an explicit
@@ -1395,22 +1456,13 @@ fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     // deferred to runtime so a dead/guarded branch still compiles.
     let Some(owner) = const_owner_id_opt(cx, scope, name) else {
         let missing = scope.unwrap_or(name);
-        let err = emit_boxed_new(
-            cx,
-            "NameError",
-            vec![quote! {
-                spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #missing)))
-            }],
+        // Yields `RubyValue` on its unreachable `Ok` arm, so this type-checks
+        // in every position a const read appears (incl. a borrowed argument
+        // `&(...)`).
+        return raise_in_expr_position(
+            uninitialized_constant_error(cx, missing),
+            quote! { spinel_rt::RubyValue },
         );
-        // Same `match`-yields-`RubyValue` shape the resolved read below uses,
-        // so this type-checks in every position a const read appears (incl. a
-        // borrowed argument `&(...)`); the `Ok` arm is unreachable.
-        return quote! {
-            match Err::<spinel_rt::RubyValue, spinel_rt::Signal>(spinel_rt::Signal::Raise(#err)) {
-                Ok(__v) => __v,
-                Err(__s) => return Err(__s),
-            }
-        };
     };
     // The `NameError` message mirrors real Ruby's: an explicit path prints
     // as written (`uninitialized constant Store::MISSING`); a bare miss
@@ -1441,6 +1493,14 @@ fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
 /// docs for why this is factored out the same way (reused by
 /// `codegen::loops::emit_target_write`'s `Const` multi-assignment target).
 pub(super) fn emit_const_write_stmt(cx: &Ctx, scope: Option<&str>, name: &str, value: TokenStream) -> TokenStream {
-    let owner = const_owner_id(cx, scope, name);
+    // An explicit `Scope::NAME = ...` whose scope class isn't registered is a
+    // `NameError` on the missing scope. CRuby resolves the scope BEFORE
+    // evaluating the value (`Nope::X = (puts 1; 5)` raises without printing --
+    // verified against ruby 4.0.5), so the value is deliberately NOT emitted
+    // here. Deferred to runtime so a dead/guarded branch still compiles.
+    let Some(owner) = const_owner_id_opt(cx, scope, name) else {
+        let err = uninitialized_constant_error(cx, scope.unwrap_or(name));
+        return quote! { return Err(spinel_rt::Signal::Raise(#err)); };
+    };
     quote! { spinel_rt::const_set(#owner, #name, #value); }
 }

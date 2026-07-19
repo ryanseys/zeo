@@ -91,7 +91,7 @@ const OPERATOR_METHOD_NAMES: &[(&str, &str)] = &[
 
 pub fn safe_ident(name: &str) -> Ident {
     if UNESCAPABLE.contains(&name) {
-        panic!("`{name}` is not a valid Ruby identifier and can't be escaped as a Rust one");
+        panic!("internal error: `{name}` is a Rust path keyword with no raw-identifier form and isn't a legal Ruby identifier either, so safe_ident should never receive it");
     }
     // Ruby's `_` is an ordinary (readable) local; Rust's `_` is not a named
     // binding at all (`let mut _` won't parse, macro `$x:ident` matchers
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not a valid Ruby identifier")]
+    #[should_panic(expected = "internal error: `self` is a Rust path keyword")]
     fn an_unescapable_rust_path_keyword_panics_clearly() {
         // `self`/`Self`/`super`/`crate` can't be raw identifiers at all --
         // none is a legal Ruby identifier either, so reaching here is an

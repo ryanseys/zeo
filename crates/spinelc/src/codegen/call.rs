@@ -759,7 +759,10 @@ pub fn emit_new_with_arg_tokens(
     let __bx = cx.box_id;
     let cid = cx
         .resolve_class(class_name)
-        .unwrap_or_else(|| panic!("unknown class `{class_name}`"));
+        // An undefined `X.new` raises a runtime NameError via the const read
+        // for `X` well before construction; reaching here with an unresolved
+        // name is a compiler invariant violation, not a user error.
+        .unwrap_or_else(|| panic!("internal error: unknown class `{class_name}` in emit_new_with_arg_tokens"));
     // A BUILT-IN's `.new` -- no generated struct exists to construct, but
     // that doesn't make the call an error: `Time.new(...)` is ordinary Ruby,
     // answered by the runtime's own class-method table. Route it dynamically
@@ -1695,7 +1698,7 @@ fn emit_super_explicit_keyword_bindings(
 /// own boundary (`codegen::mod`'s per-method wrapping).
 pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-        panic!("expected a block")
+        panic!("internal error: expected a Block node at block_id")
     };
     emit_proc_or_lambda_value(cx, params, body, false)
 }
@@ -2637,7 +2640,7 @@ pub fn emit_call(
                         return emit_missing_block_raise(cx, "Ractor");
                     };
                     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                        panic!("a Block should only be reached via the Call that invokes it");
+                        panic!("internal error: a Block node should only be reached via the Call that invokes it");
                     };
                     let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
                     // `block_captures` reports every referenced non-param
