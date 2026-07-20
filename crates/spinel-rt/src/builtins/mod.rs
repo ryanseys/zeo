@@ -22,6 +22,7 @@ use crate::{ClassId, RubyValue, Signal};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+pub(crate) mod argf;
 pub(crate) mod array;
 pub(crate) mod basic_object;
 pub(crate) mod class_module;
@@ -106,6 +107,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup,
         spinel_abi::FILE_STAT_CLASS => stat::lookup,
+        spinel_abi::DIR_CLASS => dir::lookup,
+        spinel_abi::ARGF_CLASS => argf::lookup,
         spinel_abi::METHOD_CLASS => method_obj::lookup,
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         spinel_abi::FIBER_CLASS => fiber::lookup,
@@ -257,6 +260,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup_names(),
         spinel_abi::FILE_STAT_CLASS => stat::lookup_names(),
+        spinel_abi::DIR_CLASS => dir::lookup_names(),
+        spinel_abi::ARGF_CLASS => argf::lookup_names(),
         spinel_abi::METHOD_CLASS => method_obj::lookup_names(),
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         spinel_abi::FIBER_CLASS => fiber::lookup_names(),

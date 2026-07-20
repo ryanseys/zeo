@@ -273,6 +273,11 @@ pub const SIGNAL_MODULE: ClassId = ClassId(72);
 /// `file::lookup_class` for it rather than a parallel table.
 pub const FILE_TEST_MODULE: ClassId = ClassId(73);
 
+/// The class of the singleton `ARGF` object. CRuby names it literally
+/// `"ARGF.class"` (so `ARGF.class.to_s == "ARGF.class"`); it includes
+/// `Enumerable` and is never user-instantiated.
+pub const ARGF_CLASS: ClassId = ClassId(74);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -365,6 +370,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: FFI_STRUCT_CLASS, name: "FFI::Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
     BuiltinClass { id: SIGNAL_MODULE, name: "Signal", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: FILE_TEST_MODULE, name: "FileTest", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: ARGF_CLASS, name: "ARGF.class", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

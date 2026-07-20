@@ -2148,6 +2148,27 @@ pub fn emit_call(
         .collect();
     let args = &args[..];
 
+    // `binding.local_variable_get(:name)` -- with a literal symbol naming an
+    // in-scope local, this is the one Binding operation with a fully STATIC
+    // answer (the value of that local), so it lowers to a direct read. It is
+    // also the only way to read a reserved-word parameter (`def f(then:)` ->
+    // `binding.local_variable_get(:then)`). The receiver must be a bare
+    // `binding` call; a stored Binding (`b = binding; b.local_variable_get`)
+    // is out of scope (it would need a captured-scope object).
+    if name == "local_variable_get" && args.len() == 1 {
+        if let Some(rid) = receiver {
+            if let HirNode::Call { receiver: None, name: bname, args: bargs, .. } =
+                &cx.compiler.hir[rid]
+            {
+                if bname == "binding" && bargs.is_empty() {
+                    if let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]] {
+                        return super::hoisting::emit_local_read(cx, local);
+                    }
+                }
+            }
+        }
+    }
+
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {

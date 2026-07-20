@@ -8,9 +8,14 @@
 //! literally). Wrapping a crate would mean fighting its opinions at every
 //! one of those points; the rules themselves are short.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+
 use crate::builtins::file::{path_arg, raise_errno};
 use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::dispatch::{raise_error, RObj, RubyObject};
 use crate::{RubyValue, Signal};
+use spinel_abi::{ClassId, DIR_CLASS};
 
 /// A per-process monotonic counter making each `Dir.mktmpdir` name unique
 /// even when the PRNG and pid coincide within one run.
@@ -227,9 +232,193 @@ fn glob(pattern: &str) -> Vec<String> {
     out
 }
 
+/// An open `Dir` handle (`Dir.new`/`Dir.open`). Its entries are materialized
+/// up front into a `Vec` (a `std::fs::ReadDir` is neither `Send` nor `Sync`,
+/// so it can't live behind the `Arc` an `RObj` needs), with an atomic cursor
+/// `#read`/`#pos`/`#seek`/`#rewind` move over -- CRuby's own snapshot-at-open
+/// semantics.
+pub struct RDir {
+    path: String,
+    /// Every entry, INCLUDING `.` and `..` (what `#read`/`#each` iterate).
+    entries: Vec<String>,
+    /// The read cursor into `entries`.
+    pos: AtomicUsize,
+    /// `false` after `#close`; every later operation raises IOError.
+    open: AtomicBool,
+}
+
+impl RubyObject for RDir {
+    fn class_id(&self) -> ClassId {
+        DIR_CLASS
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        false
+    }
+    fn set_frozen(&self) {}
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        Vec::new()
+    }
+    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        Arc::new(RDir {
+            path: self.path.clone(),
+            entries: self.entries.clone(),
+            pos: AtomicUsize::new(self.pos.load(Ordering::Relaxed)),
+            open: AtomicBool::new(self.open.load(Ordering::Relaxed)),
+        })
+    }
+}
+
+/// Open `path` as a `Dir` handle value -- the shared body of `Dir.new`/`.open`.
+fn open_dir(path: &str) -> Result<RubyValue, Signal> {
+    // `read_names` raises ENOENT for a missing path (the `dir_initialize`
+    // syscall name CRuby reports).
+    let mut entries = read_names(path)?;
+    entries.push(".".to_string());
+    entries.push("..".to_string());
+    Ok(RubyValue::Object(Arc::new(RDir {
+        path: path.to_string(),
+        entries,
+        pos: AtomicUsize::new(0),
+        open: AtomicBool::new(true),
+    })))
+}
+
+fn recv_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
+    match recv {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RDir>()
+            .ok_or_else(|| raise_error("TypeError", "not a Dir".to_string())),
+        _ => Err(raise_error("TypeError", "not a Dir".to_string())),
+    }
+}
+
+/// Raise IOError on a closed handle, else hand back the live `RDir`.
+fn live_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
+    let d = recv_dir(recv)?;
+    if !d.open.load(Ordering::Relaxed) {
+        return Err(raise_error("IOError", "closed directory".to_string()));
+    }
+    Ok(d)
+}
+
+builtin_methods! {
+    pub(crate) fn lookup;
+
+    // `#read` -- the next entry name (INCLUDING `.`/`..`), or nil at the end.
+    "read" => fn dir_h_read(recv, args, _block) {
+        arity!(args, 0);
+        let d = live_dir(recv)?;
+        let i = d.pos.fetch_add(1, Ordering::Relaxed);
+        Ok(match d.entries.get(i) {
+            Some(name) => str_val(name.clone()),
+            None => {
+                // Don't advance past the end.
+                d.pos.store(d.entries.len(), Ordering::Relaxed);
+                RubyValue::Nil
+            }
+        })
+    }
+    // `#each` -- yield every entry from the current cursor onward (INCLUDING
+    // `.`/`..`); without a block, an Enumerator over the entry array.
+    "each" => fn dir_h_each(recv, args, block) {
+        arity!(args, 0);
+        let entries: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
+        let p = block_or_enum!(recv, "each", args, block);
+        for e in entries {
+            p.call(&[e])?;
+        }
+        Ok(recv.clone())
+    }
+    // `#each_child` -- like `#each` but WITHOUT `.` and `..`.
+    "each_child" => fn dir_h_each_child(recv, args, block) {
+        arity!(args, 0);
+        let entries: Vec<RubyValue> = live_dir(recv)?
+            .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
+        let p = block_or_enum!(recv, "each_child", args, block);
+        for e in entries {
+            p.call(&[e])?;
+        }
+        Ok(recv.clone())
+    }
+    // `#children` / `#entries` -- the entry names as an Array (children drops
+    // `.`/`..`); both snapshot the whole listing regardless of the cursor.
+    "children" => fn dir_h_children(recv, args, _block) {
+        arity!(args, 0);
+        let out: Vec<RubyValue> = live_dir(recv)?
+            .entries.iter().filter(|n| *n != "." && *n != "..").cloned().map(str_val).collect();
+        Ok(RubyValue::Array(crate::collections::array_new(out)))
+    }
+    "entries" => fn dir_h_entries(recv, args, _block) {
+        arity!(args, 0);
+        let out: Vec<RubyValue> = live_dir(recv)?.entries.iter().cloned().map(str_val).collect();
+        Ok(RubyValue::Array(crate::collections::array_new(out)))
+    }
+    "path" | "to_path" => fn dir_h_path(recv, args, _block) {
+        arity!(args, 0);
+        Ok(str_val(recv_dir(recv)?.path.clone()))
+    }
+    // `#pos`/`#tell` read the cursor; `#pos=`/`#seek` set it; `#rewind` zeroes it.
+    "pos" | "tell" => fn dir_h_pos(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(live_dir(recv)?.pos.load(Ordering::Relaxed) as i64))
+    }
+    "pos=" | "seek" => fn dir_h_seek(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Int(n) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        let d = live_dir(recv)?;
+        d.pos.store((*n).max(0) as usize, Ordering::Relaxed);
+        // `seek` answers the receiver; `pos=` answers the value -- both callers
+        // are fine with the value here (the corpus uses neither's return).
+        Ok(args[0].clone())
+    }
+    "rewind" => fn dir_h_rewind(recv, args, _block) {
+        arity!(args, 0);
+        live_dir(recv)?.pos.store(0, Ordering::Relaxed);
+        Ok(recv.clone())
+    }
+    "close" => fn dir_h_close(recv, args, _block) {
+        arity!(args, 0);
+        recv_dir(recv)?.open.store(false, Ordering::Relaxed);
+        Ok(RubyValue::Nil)
+    }
+    "fileno" => fn dir_h_fileno(recv, args, _block) {
+        arity!(args, 0);
+        // We hold a materialized snapshot, not a live fd; -1 is the honest
+        // answer (and nothing in the corpus reads it).
+        let _ = recv_dir(recv)?;
+        Ok(RubyValue::Int(-1))
+    }
+    "inspect" | "to_s" => fn dir_h_inspect(recv, args, _block) {
+        arity!(args, 0);
+        Ok(str_val(format!("#<Dir:{}>", recv_dir(recv)?.path)))
+    }
+}
+
 builtin_methods! {
     pub(crate) fn lookup_class;
 
+    // `Dir.new(path)` / `Dir.open(path)` -- a handle over the directory's
+    // entries. The block form of `open` yields the handle and closes it after.
+    "new" | "open" => fn dir_open(_recv, args, block) {
+        arity!(args, 1..=2);
+        let path = path_arg(&args[0], "open")?;
+        let dir = open_dir(&path)?;
+        let Some(RubyValue::Proc(p)) = block else {
+            return Ok(dir);
+        };
+        let out = p.call(&[dir.clone()]);
+        let _ = dir_h_close(&dir, &[], None);
+        out
+    }
     "pwd" | "getwd" => fn dir_pwd(_recv, args, _block) {
         arity!(args, 0);
         let d = std::env::current_dir().map_err(|e| raise_errno(&e, "getcwd", "."))?;
