@@ -7,7 +7,7 @@
 
 use crate::dispatch::raise_error;
 use crate::thread::{
-    self, thread_alive, thread_outcome, thread_status,
+    self, thread_alive, thread_kill, thread_list, thread_outcome, thread_raise, thread_status,
 };
 use crate::value::RubyValue;
 use crate::{Signal, Symbol};
@@ -108,6 +108,30 @@ fn t_tvars(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     Ok(RubyValue::Array(crate::array_new(thread::thread_variable_keys(&recv.as_thread_unchecked()))))
 }
 
+// `Thread#kill`/`#exit`/`#terminate` -- request termination, running the
+// thread's `ensure` blocks; answers the thread itself.
+fn t_kill(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    thread_kill(&recv.as_thread_unchecked());
+    Ok(recv.clone())
+}
+
+// `Thread#raise(exc = RuntimeError)` -- inject an exception into the thread,
+// caught by its next `rescue`. A String becomes a RuntimeError; an exception
+// class/instance raises as itself (the shared `raise` coercion). A two-argument
+// `raise(Class, message)` builds `Class` with that message.
+fn t_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let exc = match args {
+        [] => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(String::new()))),
+        [one] => crate::dispatch::coerce_raise_arg(one.clone()),
+        [class, msg, ..] => {
+            // `Class.exception(message)` -- the CRuby two-arg form.
+            crate::dispatch::send_value(class, crate::Symbol::intern("exception"), &[msg.clone()], None)?
+        }
+    };
+    thread_raise(&recv.as_thread_unchecked(), exc);
+    Ok(RubyValue::Nil)
+}
+
 // Two Thread objects are equal iff they are the same thread (identity).
 fn t_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let same = matches!(&args[0], RubyValue::Thread(o) if std::sync::Arc::ptr_eq(&recv.as_thread_unchecked(), o));
@@ -118,6 +142,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "join" => t_join,
         "value" => t_value,
+        "kill" | "exit" | "terminate" => t_kill,
+        "raise" => t_raise,
         "alive?" => t_alive_p,
         "status" => t_status,
         "name" => t_name,
@@ -140,7 +166,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
     &[
-        "join", "value", "alive?", "status", "name", "name=",
+        "join", "value", "kill", "exit", "terminate", "raise", "alive?", "status", "name", "name=",
         "report_on_exception", "report_on_exception=", "[]", "[]=", "key?",
         "keys", "thread_variable_get", "thread_variable_set",
         "thread_variable?", "thread_variables", "==", "eql?", "equal?",
@@ -191,9 +217,8 @@ pub fn lookup_class_names() -> &'static [&'static str] {
     &["current", "main", "list", "pass", "report_on_exception", "report_on_exception="]
 }
 
-/// `Thread.list` -- the live threads. spinel keeps no live-thread registry, so
-/// it answers the main thread (a single-threaded program's whole list); a joined
-/// program reads this after its spawns finish anyway.
+/// `Thread.list` -- main plus every still-running spawned thread, from the
+/// process-wide live registry (finished/joined threads are pruned out).
 fn c_list(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Array(crate::array_new(vec![thread::thread_main()])))
+    Ok(RubyValue::Array(crate::array_new(thread_list())))
 }

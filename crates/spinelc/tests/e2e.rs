@@ -8756,6 +8756,64 @@ fn file_stat_io_pipe_and_io_read_family() {
 }
 
 #[test]
+fn thread_registry_and_kill_raise() {
+    // Batch 12: Thread.list (main plus live spawns, joined ones pruned) and
+    // Thread.list.include? by identity; Thread#kill unwinding a blocked thread
+    // through its ensure; Thread#raise injecting a rescuable exception; #kill
+    // returning the thread; #exit/#terminate aliases.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        p Thread.list.size
+        p Thread.list.include?(Thread.current)
+        ts = (1..3).map { Thread.new { 1 } }
+        p Thread.list.size
+        ts.each(&:join)
+        p Thread.list.size
+
+        q = Queue.new
+        log = []
+        t = Thread.new do
+          begin
+            log << :started
+            q.pop
+            log << :unreached
+          ensure
+            log << :ensure_ran
+          end
+        end
+        Thread.pass
+        t.kill
+        t.join
+        p log
+        p t.alive?
+
+        q2 = Queue.new
+        r = Thread.new do
+          begin
+            q2.pop
+            "no"
+          rescue => e
+            "caught: #{e.message}"
+          end
+        end
+        Thread.pass
+        r.raise("boom")
+        p r.value
+
+        v = Thread.new { q.pop }
+        p v.kill.equal?(v)
+        v.join
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\ntrue\n4\n1\n[:started, :ensure_ran]\nfalse\n\"caught: boom\"\ntrue\n"
+    );
+}
+
+#[test]
 fn dir_handle_argf_class_and_binding_local_variable_get() {
     // Batch 11: Dir.new/Dir.open handles (#path/#read/#each/#children/#entries/
     // #rewind/#close, the block form, ENOENT on a missing path), ARGF's

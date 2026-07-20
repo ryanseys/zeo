@@ -885,6 +885,12 @@ impl RubyValue {
             // enumerator never equals a structurally-identical sibling).
             (RubyValue::Enumerator(a), RubyValue::Enumerator(b)) => std::sync::Arc::ptr_eq(a, b),
             (RubyValue::Yielder(a), RubyValue::Yielder(b)) => a.ptr_eq(b),
+            // The concurrency handles compare by identity too -- what
+            // `Thread.list.include?(Thread.current)` and Mutex/Queue membership
+            // checks rely on.
+            (RubyValue::Thread(a), RubyValue::Thread(b)) => std::sync::Arc::ptr_eq(a, b),
+            (RubyValue::Mutex(a), RubyValue::Mutex(b)) => std::sync::Arc::ptr_eq(a, b),
+            (RubyValue::Queue(a), RubyValue::Queue(b)) => std::sync::Arc::ptr_eq(a, b),
             _ => false,
         }
     }

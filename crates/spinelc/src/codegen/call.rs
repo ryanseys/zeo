@@ -3913,7 +3913,10 @@ fn dispatch(
                 };
             }
             ("pop" | "shift" | "deq", 0) => {
-                return quote! { spinel_rt::queue_pop(&(#recv_expr).as_queue_unchecked()) };
+                // `queue_pop` is an interruption checkpoint (`Thread#kill`/
+                // `#raise` delivery), so it returns `Result` -- propagate with
+                // `?`, exactly like any other fallible builtin call.
+                return quote! { spinel_rt::queue_pop(&(#recv_expr).as_queue_unchecked())? };
             }
             ("close", 0) => {
                 return quote! {

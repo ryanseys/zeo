@@ -32,7 +32,7 @@ builtin_methods! {
     // empty queue pops `nil`.
     "pop" | "shift" | "deq" => fn pop(recv, args, _block) {
         arity!(args, 0);
-        Ok(queue_pop(&recv.as_queue_unchecked()))
+        queue_pop(&recv.as_queue_unchecked())
     }
     "close" => fn close(recv, args, _block) {
         arity!(args, 0);

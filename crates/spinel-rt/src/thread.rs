@@ -40,7 +40,22 @@ use crate::{RubyValue, Signal, Symbol};
 use parking_lot::Mutex as PlMutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
+use std::time::Duration;
+
+/// A pending asynchronous interrupt delivered by `Thread#kill`/`#raise`. It is
+/// noticed at the next interruption CHECKPOINT the target thread reaches (an
+/// empty `Queue#pop`, which the corpus uses as the deterministic delivery
+/// point); the target then unwinds, running its `ensure` blocks.
+enum InterruptKind {
+    /// `Thread#kill`/`#exit`/`#terminate` -- unwind and die silently. Carried
+    /// as an `Exception` (NOT a `StandardError`), so a bare `rescue` does not
+    /// swallow it; the `was_killed` flag makes termination authoritative even
+    /// past a `rescue Exception`.
+    Kill,
+    /// `Thread#raise(exc)` -- inject `exc`, which an ordinary `rescue` catches.
+    Raise(RubyValue),
+}
 
 /// A unique id per execution context (the main coroutine, each Thread) --
 /// CRuby's `ec_serial` analogue, backing `Mutex` ownership.
@@ -77,6 +92,12 @@ pub struct ThreadData {
     /// The main thread never holds a join handle yet is always "running"; this
     /// flag lets `#status`/`#alive?` answer for it without a handle.
     is_main: bool,
+    /// A pending `Thread#kill`/`#raise`, taken at the next checkpoint.
+    interrupt: PlMutex<Option<InterruptKind>>,
+    /// Set by `#kill`; makes the thread's outcome a silent `nil` no matter what
+    /// the unwinding exception was (so even a `rescue Exception` can't keep a
+    /// killed thread alive).
+    was_killed: AtomicBool,
 }
 
 pub type RThread = Arc<ThreadData>;
@@ -90,8 +111,43 @@ impl ThreadData {
             locals: PlMutex::new(HashMap::new()),
             tvars: PlMutex::new(HashMap::new()),
             is_main,
+            interrupt: PlMutex::new(None),
+            was_killed: AtomicBool::new(false),
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// The live-thread registry (`Thread.list`)
+// ---------------------------------------------------------------------------
+
+/// Every thread ever spawned (plus main), held WEAKLY so a finished, dropped
+/// thread leaves the list on its own. `Thread.list` upgrades and filters to
+/// the ones still alive.
+static LIVE: OnceLock<PlMutex<Vec<Weak<ThreadData>>>> = OnceLock::new();
+
+fn live() -> &'static PlMutex<Vec<Weak<ThreadData>>> {
+    LIVE.get_or_init(|| PlMutex::new(Vec::new()))
+}
+
+fn register_live(t: &RThread) {
+    live().lock().push(Arc::downgrade(t));
+}
+
+/// `Thread.list` -- main plus every still-running spawned thread (a joined or
+/// finished thread is excluded, matching CRuby's "live threads" contract).
+/// Prunes dead weak refs as a side effect.
+pub fn thread_list() -> Vec<RubyValue> {
+    // Make sure main is registered even if no thread was ever spawned.
+    let _ = main_thread();
+    let mut guard = live().lock();
+    guard.retain(|w| w.strong_count() > 0);
+    guard
+        .iter()
+        .filter_map(|w| w.upgrade())
+        .filter(|t| thread_alive(t))
+        .map(RubyValue::Thread)
+        .collect()
 }
 
 /// The main thread's `Thread` object -- one process-wide instance, so
@@ -99,7 +155,13 @@ impl ThreadData {
 static MAIN_THREAD: OnceLock<RThread> = OnceLock::new();
 
 fn main_thread() -> RThread {
-    MAIN_THREAD.get_or_init(|| ThreadData::build(None, true)).clone()
+    MAIN_THREAD
+        .get_or_init(|| {
+            let m = ThreadData::build(None, true);
+            register_live(&m);
+            m
+        })
+        .clone()
 }
 
 may::coroutine_local!(static CURRENT: PlMutex<Option<RThread>> = PlMutex::new(None));
@@ -128,15 +190,76 @@ pub fn thread_pass() -> RubyValue {
 pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let body = block.as_proc_unchecked();
     let data = ThreadData::build(None, false);
+    register_live(&data);
     let for_coro = data.clone();
     let handle = may::go!(move || {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
-        CURRENT.with(|c| *c.lock() = Some(for_coro));
-        body.call(&args)
+        CURRENT.with(|c| *c.lock() = Some(for_coro.clone()));
+        let result = body.call(&args);
+        // A killed thread dies silently with a nil value, whatever exception
+        // unwound it (its `ensure` blocks already ran during that unwind).
+        if for_coro.was_killed.load(Ordering::Relaxed) {
+            Ok(RubyValue::Nil)
+        } else {
+            result
+        }
     });
     *data.state.lock() = Some(ThreadState::Running(handle));
     RubyValue::Thread(data)
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous interrupts (`Thread#kill`/`#raise`) and their checkpoints
+// ---------------------------------------------------------------------------
+
+/// `Thread#kill`/`#exit`/`#terminate` -- request the thread unwind and die. It
+/// takes effect at the target's next checkpoint (or immediately, when it next
+/// reaches one); `was_killed` makes the eventual outcome an authoritative nil.
+pub fn thread_kill(t: &RThread) {
+    t.was_killed.store(true, Ordering::Relaxed);
+    *t.interrupt.lock() = Some(InterruptKind::Kill);
+}
+
+/// `Thread#raise(exc)` -- queue `exc` to be raised inside the target thread at
+/// its next checkpoint, where an ordinary `rescue` can catch it.
+pub fn thread_raise(t: &RThread, exc: RubyValue) {
+    // Delivery to the MAIN thread is unsupported (it has no checkpoint loop of
+    // its own here) -- a documented no-op, matching `thread_raise_main`.
+    if t.is_main {
+        return;
+    }
+    *t.interrupt.lock() = Some(InterruptKind::Raise(exc));
+}
+
+/// The `Exception` (deliberately NOT a `StandardError`) a `#kill` unwinds with.
+/// Its message is irrelevant -- the `was_killed` flag turns the outcome into
+/// nil regardless -- but its CLASS being `Exception` keeps a bare `rescue`
+/// (which only catches `StandardError`) from swallowing the kill mid-unwind.
+fn kill_signal() -> Signal {
+    crate::dispatch::raise_error("Exception", String::new())
+}
+
+/// A checkpoint: if the CURRENT thread has a pending interrupt, take it and
+/// return the `Signal` that delivers it (unwinding the thread's body). Called
+/// from every blocking primitive that can park a thread indefinitely.
+pub fn check_interrupt() -> Result<(), Signal> {
+    let here = CURRENT.with(|c| c.lock().clone());
+    let Some(t) = here else { return Ok(()) };
+    let taken = t.interrupt.lock().take();
+    match taken {
+        Some(InterruptKind::Kill) => Err(kill_signal()),
+        Some(InterruptKind::Raise(exc)) => Err(Signal::Raise(exc)),
+        None => Ok(()),
+    }
+}
+
+/// Whether the CURRENT thread has a pending interrupt (a cheap peek used inside
+/// a condvar-wait loop before committing to `check_interrupt`'s take).
+fn interrupt_pending() -> bool {
+    CURRENT
+        .with(|c| c.lock().clone())
+        .is_some_and(|t| t.interrupt.lock().is_some())
 }
 
 /// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`
@@ -424,19 +547,35 @@ pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
 }
 
 /// Blocks (coroutine-yielding) while empty and open; a CLOSED empty queue
-/// returns nil -- CRuby `thread_sync.c:1034`.
-pub fn queue_pop(q: &RQueue) -> RubyValue {
+/// returns nil -- CRuby `thread_sync.c:1034`. This is an interruption
+/// CHECKPOINT: a `Thread#kill`/`#raise` on the blocked thread is delivered
+/// here (`Err(Signal)`), so the wait uses a short TIMEOUT and re-checks the
+/// interrupt each cycle (the killer doesn't own this condvar to notify it).
+pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
+    check_interrupt()?;
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if let Some(v) = inner.items.pop_front() {
             // A freed slot may unblock a `SizedQueue` pusher.
             q.not_full.notify_one();
-            return v;
+            return Ok(v);
         }
         if inner.closed {
-            return RubyValue::Nil;
+            return Ok(RubyValue::Nil);
         }
-        inner = q.not_empty.wait(inner).unwrap_or_else(|e| e.into_inner());
+        let (guard, _timed_out) = q
+            .not_empty
+            .wait_timeout(inner, Duration::from_millis(2))
+            .unwrap_or_else(|e| e.into_inner());
+        inner = guard;
+        // Deliver a pending kill/raise now that we're awake, dropping the lock
+        // first so the unwinding thread isn't holding the queue mutex.
+        if interrupt_pending() {
+            drop(inner);
+            check_interrupt()?;
+            // No interrupt after all (a spurious peek); re-acquire and continue.
+            inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+        }
     }
 }
 
@@ -469,12 +608,12 @@ mod tests {
         queue_push(q, RubyValue::Int(1)).unwrap();
         queue_push(q, RubyValue::Int(2)).unwrap();
         assert_eq!(queue_len(q), 2);
-        assert!(matches!(queue_pop(q), RubyValue::Int(1)));
+        assert!(matches!(queue_pop(q), Ok(RubyValue::Int(1))));
         queue_close(q);
         assert!(queue_push(q, RubyValue::Int(3)).is_err(), "push to closed queue");
         // Closed queues still DRAIN before returning nil.
-        assert!(matches!(queue_pop(q), RubyValue::Int(2)));
-        assert!(matches!(queue_pop(q), RubyValue::Nil));
+        assert!(matches!(queue_pop(q), Ok(RubyValue::Int(2))));
+        assert!(matches!(queue_pop(q), Ok(RubyValue::Nil)));
     }
 
     #[test]
