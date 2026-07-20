@@ -313,6 +313,13 @@ builtin_methods! {
     "empty?" => fn dir_empty_p(_recv, args, _block) {
         arity!(args, 1);
         let path = path_arg(&args[0], "empty?")?;
+        // A missing path raises (ENOENT); an existing NON-directory is simply
+        // not an empty directory -> false (CRuby doesn't raise there).
+        let md = std::fs::metadata(&path)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "empty?", &path))?;
+        if !md.is_dir() {
+            return Ok(RubyValue::Bool(false));
+        }
         Ok(RubyValue::Bool(read_names(&path)?.is_empty()))
     }
     "mkdir" => fn dir_mkdir(_recv, args, _block) {
@@ -404,10 +411,11 @@ builtin_methods! {
                         all.extend(glob(&path_arg(p, "glob")?));
                     }
                 }
-                // A trailing options Hash (`base:`, `File::FNM_*`) is
-                // accepted and ignored rather than mis-globbed as a pattern.
+                // A trailing options Hash (`base:`) or an Integer FNM flags
+                // argument (`File::FNM_DOTMATCH`, ...) is accepted and ignored
+                // rather than mis-globbed as a pattern.
                 // TODO(plan P-B): honor `base:` and the FNM flags.
-                RubyValue::Hash(_) => {}
+                RubyValue::Hash(_) | RubyValue::Int(_) => {}
                 v => all.extend(glob(&path_arg(v, "glob")?)),
             }
         }

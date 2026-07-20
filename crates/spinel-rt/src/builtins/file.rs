@@ -286,6 +286,77 @@ fn meta(path: &str) -> Option<std::fs::Metadata> {
     std::fs::metadata(path).ok()
 }
 
+/// The special file kinds `pipe?`/`socket?`/`blockdev?`/`chardev?` test for.
+enum SpecialKind {
+    Fifo,
+    Socket,
+    Block,
+    Char,
+}
+
+/// Whether `path`'s `stat` (following a final symlink) is of the given special
+/// kind. Absent/unreadable -> false.
+fn ftype_is(path: &str, kind: SpecialKind) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    let Some(m) = meta(path) else { return false };
+    let t = m.file_type();
+    match kind {
+        SpecialKind::Fifo => t.is_fifo(),
+        SpecialKind::Socket => t.is_socket(),
+        SpecialKind::Block => t.is_block_device(),
+        SpecialKind::Char => t.is_char_device(),
+    }
+}
+
+/// Whether `path`'s permission bits include every bit in `mask` (the set-uid,
+/// set-gid, and sticky checks). Absent/unreadable -> false.
+fn mode_has(path: &str, mask: libc::mode_t) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    meta(path).is_some_and(|m| (m.mode() & mask as u32) == mask as u32)
+}
+
+/// Coerce a `File.utime` time argument (an Integer/Float of epoch seconds, or a
+/// Time) to whole epoch seconds.
+fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
+    match v {
+        RubyValue::Int(i) => Ok(*i as libc::time_t),
+        RubyValue::Float(f) => Ok(*f as libc::time_t),
+        // A Time (or anything Integer-ish) answers via `to_i`.
+        other => match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
+            RubyValue::Int(i) => Ok(i as libc::time_t),
+            _ => Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            )),
+        },
+    }
+}
+
+/// `world_readable?`/`world_writable?`: the permission bits (`mode & 0777`) when
+/// `others` hold the access `bit` names, else nil -- CRuby returns the mask, not
+/// a boolean.
+fn world_perm(path: &str, bit: libc::mode_t) -> RubyValue {
+    use std::os::unix::fs::MetadataExt;
+    match meta(path) {
+        Some(m) if m.mode() & bit as u32 != 0 => RubyValue::Int((m.mode() & 0o777) as i64),
+        _ => RubyValue::Nil,
+    }
+}
+
+/// Seed `File`'s `FNM_*` fnmatch flag constants (consumed by `File.fnmatch`).
+/// Darwin values; `SHORTNAME`/`SYSCASE` are 0 (case-sensitive filesystem).
+pub fn seed_file() {
+    let cid = spinel_abi::FILE_CLASS.0;
+    let set = |name: &str, v: i64| crate::constants::const_set(cid, name, RubyValue::Int(v));
+    set("FNM_NOESCAPE", 1);
+    set("FNM_PATHNAME", 2);
+    set("FNM_DOTMATCH", 4);
+    set("FNM_CASEFOLD", 8);
+    set("FNM_EXTGLOB", 16);
+    set("FNM_SHORTNAME", 0);
+    set("FNM_SYSCASE", 0);
+}
+
 /// `File.ftype`'s answer: the file type of `path` WITHOUT following a final
 /// symlink (`lstat`), as CRuby's fixed strings.
 fn ftype_string(path: &str) -> Result<&'static str, Signal> {
@@ -496,6 +567,213 @@ builtin_methods! {
         arity!(args, 1);
         let p = path_arg(&args[0], "writable?")?;
         Ok(RubyValue::Bool(access(&p, libc::W_OK)))
+    }
+    // File-type predicates (follow a final symlink, unlike `ftype`'s lstat).
+    "pipe?" => fn file_pipe_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "pipe?")?, SpecialKind::Fifo)))
+    }
+    "socket?" => fn file_socket_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "socket?")?, SpecialKind::Socket)))
+    }
+    "blockdev?" => fn file_blockdev_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "blockdev?")?, SpecialKind::Block)))
+    }
+    "chardev?" => fn file_chardev_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(ftype_is(&path_arg(&args[0], "chardev?")?, SpecialKind::Char)))
+    }
+    // Set-user/group-id and sticky bits.
+    "setuid?" => fn file_setuid_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "setuid?")?, libc::S_ISUID)))
+    }
+    "setgid?" => fn file_setgid_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "setgid?")?, libc::S_ISGID)))
+    }
+    "sticky?" => fn file_sticky_p(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(mode_has(&path_arg(&args[0], "sticky?")?, libc::S_ISVTX)))
+    }
+    // Ownership by the effective uid/gid.
+    "owned?" => fn file_owned_p(_recv, args, _block) {
+        use std::os::unix::fs::MetadataExt;
+        arity!(args, 1);
+        let p = path_arg(&args[0], "owned?")?;
+        Ok(RubyValue::Bool(meta(&p).is_some_and(|m| m.uid() == unsafe { libc::geteuid() })))
+    }
+    "grpowned?" => fn file_grpowned_p(_recv, args, _block) {
+        use std::os::unix::fs::MetadataExt;
+        arity!(args, 1);
+        let p = path_arg(&args[0], "grpowned?")?;
+        Ok(RubyValue::Bool(meta(&p).is_some_and(|m| m.gid() == unsafe { libc::getegid() })))
+    }
+    // `File.identical?(a, b)` -- same device and inode.
+    "identical?" => fn file_identical_p(_recv, args, _block) {
+        use std::os::unix::fs::MetadataExt;
+        arity!(args, 2);
+        let a = path_arg(&args[0], "identical?")?;
+        let b = path_arg(&args[1], "identical?")?;
+        let same = match (meta(&a), meta(&b)) {
+            (Some(x), Some(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => false,
+        };
+        Ok(RubyValue::Bool(same))
+    }
+    // `File.atime(path)` -- last access time as a Time.
+    "atime" => fn file_atime(_recv, args, _block) {
+        arity!(args, 1);
+        let path = path_arg(&args[0], "atime")?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "atime", &path))?;
+        let t = m
+            .accessed()
+            .map_err(|e| raise_errno(&e, "atime", &path))?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| raise_error("SystemCallError", "atime before the epoch".to_string()))?;
+        Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
+    }
+    // `File.ctime(path)` -- inode change time as a Time (st_ctime, which std
+    // exposes only through the unix `ctime`/`ctime_nsec` seconds pair).
+    "ctime" => fn file_ctime(_recv, args, _block) {
+        use std::os::unix::fs::MetadataExt;
+        arity!(args, 1);
+        let path = path_arg(&args[0], "ctime")?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "ctime", &path))?;
+        Ok(crate::builtins::time::time_from_parts(m.ctime(), m.ctime_nsec() as u32))
+    }
+    // `File.world_readable?`/`world_writable?` -- the low permission bits
+    // (`mode & 0777`) when others have the access, else nil (CRuby's contract).
+    "world_readable?" => fn file_world_readable(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(world_perm(&path_arg(&args[0], "world_readable?")?, libc::S_IROTH))
+    }
+    "world_writable?" => fn file_world_writable(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(world_perm(&path_arg(&args[0], "world_writable?")?, libc::S_IWOTH))
+    }
+    // `File.birthtime(path)` -- the creation time as a Time (st_birthtime).
+    "birthtime" => fn file_birthtime(_recv, args, _block) {
+        arity!(args, 1);
+        let path = path_arg(&args[0], "birthtime")?;
+        let m = std::fs::metadata(&path).map_err(|e| raise_errno(&e, "birthtime", &path))?;
+        let t = m
+            .created()
+            .map_err(|e| raise_errno(&e, "birthtime", &path))?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| raise_error("SystemCallError", "birthtime before the epoch".to_string()))?;
+        Ok(crate::builtins::time::time_from_parts(t.as_secs() as i64, t.subsec_nanos()))
+    }
+    // `File.link(old, new)` -- create a hard link; answers 0.
+    "link" => fn file_link(_recv, args, _block) {
+        arity!(args, 2);
+        let old = path_arg(&args[0], "link")?;
+        let new = path_arg(&args[1], "link")?;
+        std::fs::hard_link(&old, &new).map_err(|e| raise_errno(&e, "link", &new))?;
+        Ok(RubyValue::Int(0))
+    }
+    // `File.realpath(path [, dir])` -- the absolute, symlink-resolved path; every
+    // component (including the last) must exist. `realdirpath` is the same here.
+    "realpath" | "realdirpath" => fn file_realpath(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let raw = path_arg(&args[0], "realpath")?;
+        let joined = match args.get(1) {
+            Some(d) if !d.is_nil() => {
+                let base = path_arg(d, "realpath")?;
+                if raw.starts_with('/') { raw } else { format!("{base}/{raw}") }
+            }
+            _ => raw,
+        };
+        let real = std::fs::canonicalize(&joined).map_err(|e| raise_errno(&e, "realpath", &joined))?;
+        Ok(str_val(real.to_string_lossy().into_owned()))
+    }
+    // `File.symlink(target, link)` -- create a symbolic link; answers 0.
+    "symlink" => fn file_symlink(_recv, args, _block) {
+        arity!(args, 2);
+        let target = path_arg(&args[0], "symlink")?;
+        let link = path_arg(&args[1], "symlink")?;
+        std::os::unix::fs::symlink(&target, &link).map_err(|e| raise_errno(&e, "symlink", &link))?;
+        Ok(RubyValue::Int(0))
+    }
+    "symlink?" => fn file_symlink_p(_recv, args, _block) {
+        arity!(args, 1);
+        let p = path_arg(&args[0], "symlink?")?;
+        Ok(RubyValue::Bool(
+            std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()),
+        ))
+    }
+    // `File.readlink(link)` -- the path a symlink points to.
+    "readlink" => fn file_readlink(_recv, args, _block) {
+        arity!(args, 1);
+        let p = path_arg(&args[0], "readlink")?;
+        let target = std::fs::read_link(&p).map_err(|e| raise_errno(&e, "readlink", &p))?;
+        Ok(str_val(target.to_string_lossy().into_owned()))
+    }
+    // `File.utime(atime, mtime, *paths)` -- set each file's access and
+    // modification times; answers the number of files touched.
+    "utime" => fn file_utime(_recv, args, _block) {
+        if args.len() < 2 {
+            return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 2+)".to_string()));
+        }
+        let atime = time_secs(&args[0])?;
+        let mtime = time_secs(&args[1])?;
+        let tv = [
+            libc::timeval { tv_sec: atime, tv_usec: 0 },
+            libc::timeval { tv_sec: mtime, tv_usec: 0 },
+        ];
+        for p in &args[2..] {
+            let path = path_arg(p, "utime")?;
+            let c = std::ffi::CString::new(path.clone())
+                .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))?;
+            // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
+            if unsafe { libc::utimes(c.as_ptr(), tv.as_ptr()) } != 0 {
+                return Err(raise_errno(&std::io::Error::last_os_error(), "utime", &path));
+            }
+        }
+        Ok(RubyValue::Int((args.len() - 2) as i64))
+    }
+    // `File.umask` -- the current file-creation mask; `File.umask(mask)` sets it
+    // and answers the previous value. Reading is non-destructive (set-then-restore).
+    "umask" => fn file_umask(_recv, args, _block) {
+        arity!(args, 0..=1);
+        match args.first() {
+            Some(v) => {
+                let new = match v {
+                    RubyValue::Int(m) => *m as libc::mode_t,
+                    other => return Err(raise_error("TypeError",
+                        format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)))),
+                };
+                Ok(RubyValue::Int(unsafe { libc::umask(new) } as i64))
+            }
+            None => {
+                // No portable getter: set to 0, read the old value, restore it.
+                let old = unsafe { libc::umask(0) };
+                unsafe { libc::umask(old) };
+                Ok(RubyValue::Int(old as i64))
+            }
+        }
+    }
+    // `File.chmod(mode, *paths)` -- set each file's permission bits; answers the
+    // number of files changed.
+    "chmod" => fn file_chmod(_recv, args, _block) {
+        use std::os::unix::fs::PermissionsExt;
+        if args.is_empty() {
+            return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 1+)".to_string()));
+        }
+        let RubyValue::Int(mode) = &args[0] else {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0])),
+            ));
+        };
+        for p in &args[1..] {
+            let path = path_arg(p, "chmod")?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(*mode as u32))
+                .map_err(|e| raise_errno(&e, "chmod", &path))?;
+        }
+        Ok(RubyValue::Int((args.len() - 1) as i64))
     }
     "executable?" => fn file_executable_p(_recv, args, _block) {
         arity!(args, 1);
