@@ -174,6 +174,14 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             // bare `M`-method call resolves through implicit self.
             let target = resolve_module_target(&compiler, m, &[], 0)?;
             compiler.classes[OBJECT_CLASS.0 as usize].includes.push(target);
+        } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
+            // Top-level `undef m` -- Object's reopen, exactly like the
+            // `include` above and like the class-body arm in `walk_class_body`.
+            let names = names.clone();
+            compiler.classes[OBJECT_CLASS.0 as usize].undefined.extend(names);
+        } else if let HirNode::AliasMethod { new_name, old_name } = &compiler.hir[stmt] {
+            let pair = (new_name.clone(), old_name.clone());
+            compiler.classes[OBJECT_CLASS.0 as usize].pending_aliases.push(pair);
         } else {
             main_statements.push(stmt);
         }

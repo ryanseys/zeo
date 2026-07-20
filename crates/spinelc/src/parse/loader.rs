@@ -406,6 +406,36 @@ impl Loader {
                     }
                 }
             }
+            // Top-level `undef m` / `alias n m`, the same Object reopen the
+            // `include` above is: top-level `def` is a private method ON
+            // Object, so the keyword that undefines or aliases one targets
+            // Object too. Both are class-body keywords in `lower_class_body`,
+            // and handling them HERE rather than in `lower_node` keeps them
+            // statement-only -- in expression position they have no value to
+            // produce and would silently do nothing.
+            if let Some(undef) = n.as_undef_node() {
+                let names = undef
+                    .names()
+                    .iter()
+                    .map(|name| super::alias_target_name(&name))
+                    .collect::<PResult<Vec<_>>>()?;
+                let id = hir.push(crate::hir::HirNode::Undef(names));
+                combined.push(id);
+                own.push(id);
+                continue;
+            }
+            if let Some(alias) = n.as_alias_method_node() {
+                // Deferred rather than resolved to a second `DefMethod` here:
+                // at top level the target may be an inherited Kernel method,
+                // which only `mro::resolve_aliases` can see.
+                let id = hir.push(crate::hir::HirNode::AliasMethod {
+                    new_name: super::alias_target_name(&alias.new_name())?,
+                    old_name: super::alias_target_name(&alias.old_name())?,
+                });
+                combined.push(id);
+                own.push(id);
+                continue;
+            }
             let id = lower_node(result, hir, &n)?;
             combined.push(id);
             own.push(id);
