@@ -185,6 +185,11 @@ pub(super) struct Loader {
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
     store_exclusions: HashMap<String, String>,
+    /// How each `require`d library was satisfied (Phase 2b), in require order.
+    /// A LOG of what resolution did, not a property of the program -- it used
+    /// to hang off `Hir`, which made the IR depend on the gem reporter for
+    /// bookkeeping no consumer of the arena ever reads.
+    gem_records: Vec<crate::gem_report::GemRecord>,
 }
 
 /// Lowers the MAIN file's statements, resolving require/require_relative/
@@ -200,7 +205,7 @@ pub(super) fn lower_main_file(
     package_dirs: &[PathBuf],
     gem_path: Option<&Path>,
     lockfile: Option<&Path>,
-) -> PResult<Vec<NodeId>> {
+) -> PResult<(Vec<NodeId>, Vec<crate::gem_report::GemRecord>)> {
     // The requiring-file directory for the main file's own require_relative
     // calls -- canonicalized so require_relative composes with the dedup
     // layer exactly like CRuby's realpath-of-the-requiring-iseq base.
@@ -233,6 +238,7 @@ pub(super) fn lower_main_file(
         required: HashSet::new(),
         splicing: Vec::new(),
         store_exclusions: HashMap::new(),
+        gem_records: Vec::new(),
     };
     // The external gem store (Phase 3): a `--gem-path` + `--lockfile` pair adds
     // the pure-Ruby gems spinel can compile as extra roots, and records a
@@ -253,7 +259,7 @@ pub(super) fn lower_main_file(
             if let crate::gem_report::SatisfiedBy::Excluded { reason, .. } = &record.by {
                 loader.store_exclusions.insert(record.name.clone(), reason.clone());
             }
-            hir.record_gem(record);
+            loader.record_gem(record);
         }
     }
     let result = ruby_prism::parse(source.as_bytes());
@@ -267,17 +273,28 @@ pub(super) fn lower_main_file(
     // The main file is `__FILE__`'s answer for its own statements -- held
     // for exactly this lowering, and restored by the guard's Drop.
     let _file = SourceFileFrame::push(input_path);
-    loader.lower_file_statements(
+    let statements = loader.lower_file_statements(
         hir,
         &result,
         program.statements().body(),
         dir.as_deref(),
         None,
         0,
-    )
+    )?;
+    Ok((statements, loader.gem_records))
 }
 
 impl Loader {
+    /// Records how one `require`d library was satisfied (Phase 2b), deduped by
+    /// name (first-wins): a bundled gem's user-facing `.rb` is recorded before
+    /// its internal `.so` require, so the entry point wins.
+    fn record_gem(&mut self, record: crate::gem_report::GemRecord) {
+        if self.gem_records.iter().any(|r| r.name == record.name) {
+            return;
+        }
+        self.gem_records.push(record);
+    }
+
     /// Lowers one file's top-level statement list, splicing require/load
     /// targets in place. `file_idx` is `Some` for a spliced (non-main)
     /// file: its index into `Hir::loaded_files`, which is also its
@@ -532,7 +549,7 @@ impl Loader {
                     path: display_path(&path),
                 },
             };
-            hir.record_gem(crate::gem_report::GemRecord { name: feature.to_string(), by });
+            self.record_gem(crate::gem_report::GemRecord { name: feature.to_string(), by });
         }
 
         let canonical = path
@@ -566,7 +583,7 @@ impl Loader {
     /// rewrites an explicit suffix to `DLEXT` before looking them up
     /// (`load.c:1129`, `template/extinit.c.tmpl`). That is what makes the
     /// loader idiom -- a Ruby half doing `require "strscan.so"` -- work.
-    fn activate_static_ext(&self, hir: &mut Hir, feature: &str) -> PResult<Vec<NodeId>> {
+    fn activate_static_ext(&mut self, hir: &mut Hir, feature: &str) -> PResult<Vec<NodeId>> {
         let bare = feature
             .strip_suffix(".so")
             .or_else(|| feature.strip_suffix(".bundle"))
@@ -587,7 +604,7 @@ impl Loader {
         // when its `.rb` spliced, and recording the `.so` would double-count.
         if !is_native_feature(feature) {
             let canonical = canonical_ext_feature(bare).to_string();
-            hir.record_gem(crate::gem_report::GemRecord {
+            self.record_gem(crate::gem_report::GemRecord {
                 name: canonical.clone(),
                 by: crate::gem_report::SatisfiedBy::BuiltinExt { feature: canonical },
             });

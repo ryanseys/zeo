@@ -20,7 +20,7 @@ pub mod constpath;
 pub mod gem_report;
 pub mod hir;
 
-pub use parse::{gem_compat, gem_compat_installed, GemCompatEntry, GemCompatOutcome};
+pub use parse::gem_compat::{gem_compat, gem_compat_installed, GemCompatEntry, GemCompatOutcome};
 pub mod parse;
 pub mod types;
 
@@ -82,7 +82,7 @@ pub fn compile_to_rust(source: &str) -> Result<String, String> {
 
 /// `compile_to_rust` plus the require-resolution context (Phase 14.1).
 pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<CompileOutput, String> {
-    let (hir, root) = parse::parse_and_lower_with(
+    let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
         &opts.load_roots,
@@ -94,10 +94,10 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
     // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
     // lands even if a later stage fails.
     if opts.gem_warnings {
-        gem_report::emit_warnings(&hir.gem_records, &opts.nowarn);
+        gem_report::emit_warnings(&gem_records, &opts.nowarn);
     }
     if let Some(path) = &opts.gem_report {
-        gem_report::write_report(&hir.gem_records, path)?;
+        gem_report::write_report(&gem_records, path)?;
     }
     // Computed from the arena BEFORE `analyze` consumes it: a whole-program
     // fact (does any eval site survive lowering?), so it belongs here rather
