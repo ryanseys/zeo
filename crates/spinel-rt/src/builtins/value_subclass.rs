@@ -240,14 +240,34 @@ pub fn value_super(
         )
     })?;
     let result = f(&payload, args, block)?;
-    Ok(rewrap_self_return(result, &payload, &obj))
+    Ok(rewrap_self_return(result, &payload, &obj, mname))
 }
+
+/// The identity CONVERSIONS, which CRuby specifies to return a plain
+/// base-class object when the receiver is a subclass -- unlike their
+/// near-twins `to_ary`/`to_hash`, which return self and keep the subclass
+/// (oracle-verified: `A.new.to_a` is an `Array` but `A.new.to_ary` is an `A`;
+/// likewise `to_h` vs `to_hash`). They return the same handle a self-returning
+/// mutator does, so the identity check below cannot tell them apart on its own.
+const DEMOTING_CONVERSIONS: &[&str] = &["to_s", "to_str", "to_a", "to_h"];
 
 /// Re-wrap a builtin method's return value back into the subclass when it
 /// returned the SAME payload handle (a self-returning mutator like `push`/`<<`/
 /// `concat`/`replace`) -- so `stack.push(1)` is a `Stack`, while `stack.map { }`
-/// (a NEW array) stays a plain `Array`, matching CRuby with no method allowlist.
-pub fn rewrap_self_return(result: RubyValue, payload: &RubyValue, recv: &RObj) -> RubyValue {
+/// (a NEW array) stays a plain `Array`, matching CRuby with almost no method
+/// allowlist: `DEMOTING_CONVERSIONS` is the one exception the handle identity
+/// genuinely can't distinguish. Rewrapping those was not merely a wrong class
+/// -- a subclass whose `<=>` read `o.to_s <=> to_s` never reached a plain
+/// String, so the user method re-dispatched until the stack overflowed.
+pub fn rewrap_self_return(
+    result: RubyValue,
+    payload: &RubyValue,
+    recv: &RObj,
+    mname: &str,
+) -> RubyValue {
+    if DEMOTING_CONVERSIONS.contains(&mname) {
+        return result;
+    }
     match (value_identity(&result), value_identity(payload)) {
         (Some(a), Some(b)) if a == b => RubyValue::Object(recv.clone()),
         _ => result,

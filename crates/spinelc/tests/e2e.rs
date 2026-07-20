@@ -860,6 +860,13 @@ fn needs_eval_vm_selects_the_runtime_variant() {
     assert!(needs(r#"eval("class Foo; end")"#));
     // A string-form `instance_eval` reaches the VM -> needs it.
     assert!(needs("o = Object.new\no.instance_eval(\"@x = 1\")\n"));
+    // A string-form `class_eval`/`module_eval` reaches it the same way -- the
+    // verdict already said so, but the runtime row used to ignore its argument
+    // and report "tried to create Proc object without a block" instead.
+    assert!(needs("class Foo; end\nFoo.class_eval(\"1 + 2\")\n"));
+    assert!(needs("module M; end\nM.module_eval(\"1 + 2\")\n"));
+    // The BLOCK form of either still runs a real block -> lean.
+    assert!(!needs("class Foo; end\nFoo.class_eval { 1 + 2 }\n"));
 }
 
 #[test]
@@ -21283,23 +21290,50 @@ fn subclassing_and_reopening_a_runtime_class() {
     );
 }
 
-/// A runtime-built class body runs as a block, so the constructs that only the
-/// static class path can emit have to be REJECTED by name -- reaching codegen
-/// with one used to abort the compiler with an "unexpected top-level-only node
-/// in expression position" panic. A local write is rejected for a different
-/// reason: the block body would see the enclosing scope's locals rather than
-/// opening its own, which would diverge silently instead of loudly.
+/// `class X < <expression>` builds the class at runtime, so its body runs as a
+/// block -- and a construct only the static class path can emit has no runtime
+/// spelling. Reaching codegen with one used to abort the compiler with an
+/// "unexpected top-level-only node in expression position" panic; a local write
+/// would silently assign the ENCLOSING scope's variable instead of opening its
+/// own. Both are rejected by name.
+///
+/// A REOPEN (`Foo = Class.new; class Foo ... end`) has a static fallback for
+/// exactly these bodies, so it takes that instead of rejecting -- see
+/// `reopening_a_runtime_class_falls_back_rather_than_failing_to_compile`.
 #[test]
 fn unsupported_constructs_in_a_runtime_class_body_are_rejected_not_panics() {
     for (body, want) in [
         ("include Greet", "`include` in the body of `class Foo`"),
         ("y = 1", "local variable assignment in the body of `class Foo`"),
     ] {
-        let src = format!("module Greet; end\ny = 99\nFoo = Class.new\nclass Foo\n  {body}\nend\n");
+        let src = format!(
+            "module Greet; end\ny = 99\nclass Foo < Struct.new(:a)\n  {body}\nend\n"
+        );
         let err = support::compile_project(&[("main.rb", src.as_str())], "main.rb", &[])
             .expect_err("expected a compile-time rejection");
         assert!(err.contains(want), "expected `{want}` for `{body}`, got: {err}");
     }
+}
+
+/// Reopening a constant that holds a runtime class normally lowers to a runtime
+/// reopen, but a body the block form can't express falls back to the STATIC
+/// path rather than erroring. The shape that forced this: a constant alias to a
+/// builtin (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`, the
+/// to_words gem's pattern) briefly stopped compiling at all -- a worse failure
+/// than the wrong answer it already had.
+#[test]
+fn reopening_a_runtime_class_falls_back_rather_than_failing_to_compile() {
+    let compiles = |src: &str| {
+        support::compile_project(&[("main.rb", src)], "main.rb", &[]).is_ok()
+    };
+    assert!(compiles("module M; end\nFoo = Class.new\nclass Foo\n  include M\nend\n"));
+    assert!(compiles("y = 99\nFoo = Class.new\nclass Foo\n  y = 1\nend\n"));
+    assert!(compiles("Foo = Class.new\nclass Foo\n  private\n  def h; 1; end\nend\n"));
+    // The runtime path is still taken when the body IS expressible -- a
+    // generated Data reader has to resolve in the reopened body.
+    let result = support::run_ruby("D = Data.define(:x)\nclass D\n  def double; x * 2; end\nend\np D.new(3).double\n");
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "6\n");
 }
 
 /// `case`/`when`, an `in` value/pin pattern, and `grep` all dispatch the
@@ -21342,5 +21376,45 @@ fn case_equality_dispatches_a_user_defined_triple_equals() {
         result.stdout,
         "when-obj\nwhen-missed\npin\n[2, 4]\n[2, 4]\nsingleton\n\
          builtin-class\nregexp\nrange\nlisted\nsplat\n"
+    );
+}
+
+/// A value subclass (`class S < String`) carries its payload behind a bridge
+/// that re-wraps a builtin's return value into the subclass when it hands back
+/// the SAME handle -- the no-allowlist heuristic for self-returning mutators
+/// (`push`/`concat`). The identity CONVERSIONS return that same handle too but
+/// must DEMOTE to the base class, and CRuby draws the line precisely: `to_s`/
+/// `to_str`/`to_a`/`to_h` demote, while `to_ary`/`to_hash` return self. Getting
+/// it wrong was not merely a wrong class -- a subclass whose `<=>` read
+/// `o.to_s <=> to_s` never reached a plain String, so the user method
+/// re-dispatched until the stack overflowed.
+#[test]
+fn value_subclass_conversions_demote_but_mutators_rewrap() {
+    let result = support::run_ruby(
+        r#"
+        class S < String; end
+        class A < Array; end
+        class H < Hash; end
+        s = S.new("x"); a = A.new([1]); h = H.new
+        puts s.to_s.class
+        puts s.to_str.class
+        puts a.to_a.class
+        puts h.to_h.class
+        puts a.to_ary.class
+        puts h.to_hash.class
+        puts a.dup.push(2).class
+        puts s.dup.concat("y").class
+        puts s.upcase.class
+        puts a.map { |v| v }.class
+        class Backwards < String
+          def <=>(o); o.to_s <=> to_s; end
+        end
+        p [Backwards.new("aaa"), Backwards.new("bbb")].sort.map(&:to_s)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "String\nString\nArray\nHash\nA\nH\nA\nS\nString\nArray\n[\"bbb\", \"aaa\"]\n"
     );
 }

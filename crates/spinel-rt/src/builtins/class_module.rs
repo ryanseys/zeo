@@ -345,12 +345,20 @@ builtin_methods! {
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         Ok(crate::runtime_define_method(recv_cid(recv), name, body))
     }
-    // `Module#class_eval`/`module_eval { ... }` -- run the block with `self`
-    // rebound to the module/class value, returning the block's value. A
+    // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
+    // to the module/class value, returning the block's value. A
     // `def`/`define_method` inside installs on the receiver via the dynamic-
-    // self path (self is a Class). The string form (`class_eval("code")`) is
-    // out of scope; only the block form is handled. `module_eval` is an alias.
+    // self path (self is a Class). `module_eval` is an alias.
     "class_eval" | "module_eval" => fn class_eval(recv, args, block) {
+        if let Some(arg) = args.first() {
+            // The string form, through the eval VM with `self` rebound to the
+            // class -- the same routing `instance_eval` already uses, and the
+            // compiler ALREADY links the eval runtime for it
+            // (`Hir::uses_runtime_eval`). Ignoring `args` here meant a string
+            // form fell through to the block path and reported the misleading
+            // "tried to create Proc object without a block".
+            return crate::eval_value(arg.clone(), recv.clone(), 0);
+        }
         let blk = crate::builtins::basic_object::block_proc(block, "class_eval")?;
         blk.call_with_self(recv, &[])
     }

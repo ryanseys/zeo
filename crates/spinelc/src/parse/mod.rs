@@ -681,6 +681,67 @@ fn const_is_assigned(hir: &Hir, name: &str) -> bool {
     })
 }
 
+/// Whether every statement in a class body can be expressed as the BLOCK the
+/// runtime-class forms lower to. The runtime form runs the body as a block, so
+/// a statement that only the static class path can emit (`include`, a
+/// visibility modifier, `alias`, a nested class) has no runtime spelling --
+/// see `lower_runtime_class_body`, which rejects the same set.
+///
+/// Only the reopen form consults this, and only to FALL BACK to the static
+/// path; `class X < <expression>` has no static fallback (that shape is why
+/// the runtime form exists) and reports the rejection instead. A prism-level
+/// scan rather than a lowered one so the fallback costs no orphan nodes in the
+/// arena -- a stray `ConstWrite` left behind would perturb `const_is_assigned`.
+fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool {
+    let stmts: Vec<Node<'_>> = match body {
+        None => return true,
+        Some(n) => match n.as_statements_node() {
+            Some(s) => s.body().iter().collect(),
+            None => vec![n],
+        },
+    };
+    stmts.iter().all(|stmt| {
+        if stmt.as_alias_method_node().is_some()
+            || stmt.as_undef_node().is_some()
+            || stmt.as_class_node().is_some()
+            || stmt.as_module_node().is_some()
+        {
+            return false;
+        }
+        // A local write too: a class body opens its OWN scope, while the block
+        // the runtime form becomes closes over the enclosing one. The static
+        // path gets that right, so falling back to it is strictly better than
+        // either diverging or refusing to compile.
+        if stmt.as_local_variable_write_node().is_some()
+            || stmt.as_local_variable_operator_write_node().is_some()
+            || stmt.as_local_variable_and_write_node().is_some()
+            || stmt.as_local_variable_or_write_node().is_some()
+            || stmt.as_multi_write_node().is_some()
+        {
+            return false;
+        }
+        // `include M` / `private` and friends are receiverless calls, not
+        // their own node kinds.
+        if let Some(call) = stmt.as_call_node() {
+            if call.receiver().is_none() {
+                let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+                return !matches!(
+                    name.as_str(),
+                    "include"
+                        | "extend"
+                        | "prepend"
+                        | "private"
+                        | "public"
+                        | "protected"
+                        | "module_function"
+                        | "alias_method"
+                );
+            }
+        }
+        true
+    })
+}
+
 /// Whether an already-lowered `class`/`module` DEFINES this name, making it a
 /// compile-time class even if some later statement also assigns the constant.
 fn const_is_class_def(hir: &Hir, name: &str) -> bool {
@@ -1864,12 +1925,22 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             if runtime_parent {
                 return lower_runtime_class(result, hir, &name, &sc, class.body());
             }
-        } else if const_is_assigned(hir, &name) && !const_is_class_def(hir, &name) {
+        } else if const_is_assigned(hir, &name)
+            && !const_is_class_def(hir, &name)
+            && runtime_class_body_is_expressible(class.body())
+        {
             // No superclass clause, and the name holds a runtime class value
             // (`D = Data.define(:x)`) -- this REOPENS that class rather than
             // defining a new one, so it lowers to a runtime reopen instead of
             // a `ClassDef` the static path would register as a fresh
             // (memberless) class.
+            //
+            // A body the runtime form can't express falls back to the STATIC
+            // path rather than erroring: a constant alias to a builtin
+            // (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`) is a
+            // real Ruby shape the static path at least compiles, and turning
+            // a program that ran into one that won't build is a worse
+            // failure than the one it already had.
             return lower_runtime_class_reopen(result, hir, &name, class.body());
         }
         let superclass = match class.superclass() {

@@ -2233,7 +2233,7 @@ pub fn send_in(
                                 let result = f(p, args, block)?;
                                 return Ok(
                                     crate::builtins::value_subclass::rewrap_self_return(
-                                        result, p, recv,
+                                        result, p, recv, n,
                                     ),
                                 );
                             }
