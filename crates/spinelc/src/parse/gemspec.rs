@@ -35,6 +35,7 @@
 //! benefit. A consumed attribute whose RHS is *not* a literal is a loud error
 //! naming the attribute, because that one spinel would otherwise get wrong.
 
+use crate::lower_error::LowerError;
 use super::PResult;
 use std::path::Path;
 
@@ -71,7 +72,7 @@ pub(super) fn parse_file(path: &Path) -> PResult<GemSpec> {
     if let Some(spec) = parse_stub_header(&text) {
         return Ok(spec);
     }
-    parse_body(&text).map_err(|e| format!("{}: {e}", path.display()))
+    parse_body(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
 /// `# stub: <name> <version> <platform> <require_paths NUL-joined>`, with an
@@ -115,7 +116,7 @@ fn parse_stub_header(text: &str) -> Option<GemSpec> {
 fn parse_body(text: &str) -> PResult<GemSpec> {
     let result = ruby_prism::parse(text.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(format!("parse error: {}", err.message()));
+        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
     }
     let node = result.node();
     let program = node
@@ -139,10 +140,10 @@ fn parse_body(text: &str) -> PResult<GemSpec> {
         }
     }
     if !saw_block {
-        return Err("no `Gem::Specification.new do |s| ... end` block".to_string());
+        return Err("no `Gem::Specification.new do |s| ... end` block".to_string().into());
     }
     if spec.name.is_empty() {
-        return Err("gemspec sets no `name`".to_string());
+        return Err("gemspec sets no `name`".to_string().into());
     }
     if spec.require_paths.is_empty() {
         spec.require_paths = vec!["lib".to_string()];
@@ -221,7 +222,7 @@ fn string_literal(node: &ruby_prism::Node<'_>) -> Option<String> {
 
 fn want_string(node: &ruby_prism::Node<'_>, attr: &str) -> PResult<String> {
     string_literal(node).ok_or_else(|| {
-        format!("`s.{attr}` must be a string literal (spinel parses gemspecs statically, without evaluating them)")
+        format!("`s.{attr}` must be a string literal (spinel parses gemspecs statically, without evaluating them)").into()
     })
 }
 
@@ -239,7 +240,7 @@ fn want_string_array(node: &ruby_prism::Node<'_>, attr: &str) -> PResult<Vec<Str
         .iter()
         .map(|e| {
             string_literal(&e).ok_or_else(|| {
-                format!("`s.{attr}` must contain only string literals (spinel parses gemspecs statically, without evaluating them)")
+                crate::lower_error::LowerError::unsupported(format!("`s.{attr}` must contain only string literals (spinel parses gemspecs statically, without evaluating them)"))
             })
         })
         .collect()
@@ -343,7 +344,7 @@ end
             "Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.require_paths = Dir[\"lib\"]\nend\n",
         )
         .unwrap_err();
-        assert!(err.contains("s.require_paths"), "unexpected: {err}");
+        assert!(err.message().contains("s.require_paths"), "unexpected: {err}");
 
         parse_body(
             "Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.files = Dir[\"**/*\"]\nend\n",
@@ -408,9 +409,10 @@ end
 
     #[test]
     fn a_gemspec_without_the_block_or_a_name_is_rejected() {
-        assert!(parse_body("1 + 1\n").unwrap_err().contains("Gem::Specification.new"));
+        assert!(parse_body("1 + 1\n").unwrap_err().message().contains("Gem::Specification.new"));
         assert!(parse_body("Gem::Specification.new do |s|\n  s.version = \"1\"\nend\n")
             .unwrap_err()
+            .message()
             .contains("name"));
     }
 }

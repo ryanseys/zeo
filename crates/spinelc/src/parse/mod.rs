@@ -19,9 +19,10 @@ use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, KeywordParam, KwArg, LastMatch, NodeId, Params,
     Pattern, PatternArm, RaiseCause, RegexpFlags, RescueClause, StrPart, Visibility,
 };
+use crate::lower_error::LowerError;
 use ruby_prism::{CallNode, Node, ParseResult};
 
-type PResult<T> = Result<T, String>;
+pub(crate) type PResult<T> = Result<T, crate::lower_error::LowerError>;
 
 /// The built-in exception hierarchy (Part 6's minimal "raise/exception
 /// foundation", extended to spinel's own ~20-class set in Phase 9) --
@@ -254,7 +255,7 @@ fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
             return Err(format!(
                 "unsupported source encoding in magic comment: '{name}' \
                  (supported: UTF-8, US-ASCII, ASCII-8BIT/BINARY, ISO-8859-1)"
-            ))
+            ).into())
         }
     })
 }
@@ -308,7 +309,7 @@ pub fn parse_and_lower_with(
 fn parse_and_lower_into(hir: &mut Hir, source: &str) -> PResult<Vec<NodeId>> {
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(format!("parse error: {}", err.message()));
+        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
     }
     let program = result
         .node()
@@ -369,7 +370,7 @@ fn lower_if_chain(
             } else if let Some(else_node) = n.as_else_node() {
                 lower_body(result, hir, else_node.statements().map(|s| s.as_node()))?
             } else {
-                return Err("expected `elsif` or `else` after `if` (spike scope)".to_string());
+                return Err("expected `elsif` or `else` after `if` (spike scope)".to_string().into());
             }
         }
     };
@@ -511,7 +512,7 @@ pub(super) fn lower_box_eval_body(
     call: &ruby_prism::CallNode<'_>,
 ) -> PResult<Vec<NodeId>> {
     if call.block().is_some() {
-        return Err("`Ruby::Box#eval` doesn't take a block".to_string());
+        return Err("`Ruby::Box#eval` doesn't take a block".to_string().into());
     }
     let args: Vec<_> = call
         .arguments()
@@ -520,16 +521,16 @@ pub(super) fn lower_box_eval_body(
     if args.len() != 1 {
         return Err(
             "`Ruby::Box#eval` is only supported with exactly one string-literal argument (spike scope)"
-                .to_string(),
+                .to_string().into(),
         );
     }
     let Some(src) = args[0].as_string_node().map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned()) else {
         return Err(
             "`Ruby::Box#eval` with a non-literal argument isn't supported (spike scope) -- the source must be a plain string literal, resolvable at compile time"
-                .to_string(),
+                .to_string().into(),
         );
     };
-    parse_and_lower_into(hir, &src).map_err(|e| format!("Ruby::Box#eval: {e}"))
+    parse_and_lower_into(hir, &src).map_err(|e| crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}")))
 }
 
 /// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver (#97 F3):
@@ -554,7 +555,7 @@ fn desugar_singleton_class_defs(
                 (name.clone(), params.clone(), body.clone())
             }
             _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string());
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string().into());
             }
         };
         let recv = lower_node(result, hir, &recv_node)?;
@@ -963,7 +964,7 @@ fn lower_params(
                 let default = lower_node(result, hir, &p.value())?;
                 Ok(KeywordParam::Optional(name, default))
             } else {
-                Err("unsupported keyword parameter form (spike scope)".to_string())
+                Err("unsupported keyword parameter form (spike scope)".into())
             }
         })
         .collect::<PResult<Vec<_>>>()?;
@@ -1420,7 +1421,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             other => {
                 return Err(format!(
                     "the `{other}` back-reference global isn't supported yet (spike scope)"
-                ))
+                ).into())
             }
         };
         return Ok(hir.push(HirNode::LastMatchRef(which)));
@@ -2388,17 +2389,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
                         .unwrap_or_default();
                     if key != "cause" {
-                        return Err(format!("`raise` doesn't accept the `{key}:` keyword"));
+                        return Err(format!("`raise` doesn't accept the `{key}:` keyword").into());
                     }
                     cause = RaiseCause::Explicit(lower_node(result, hir, &assoc.value())?);
                 }
             }
             if positional.len() > 2 {
-                return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string());
+                return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string().into());
             }
             if positional.is_empty() && matches!(cause, RaiseCause::Explicit(_)) {
                 return Err(
-                    "only cause is given with no arguments".to_string()
+                    "only cause is given with no arguments".to_string().into()
                 );
             }
             let args = positional
@@ -2457,7 +2458,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
             return Err(format!(
                 "`{name}` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
-            ));
+            ).into());
         }
         // `autoload :Const, "feature"` -- the loader's eager pre-pass
         // (`Loader::lower_file_statements`) has already SPLICED the feature
@@ -2482,7 +2483,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             if constant_path_name(&recv).is_ok_and(|n| n == "Ruby::Box") {
                 return Err(format!(
                     "`Ruby::Box.{name}` isn't supported here (spike scope) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement; `.current`/`.root`/`.main`/`.enabled?` have no compile-time meaning"
-                ));
+                ).into());
             }
             // Operations on a bound box handle outside their recognized
             // positions: `box.require`-family must be a TOP-LEVEL
@@ -2496,7 +2497,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         "require" | "require_relative" | "load" => {
                             return Err(format!(
                                 "`{lname}.{name}` is only supported as a top-level statement (same rule as the receiver-less `{name}`)"
-                            ));
+                            ).into());
                         }
                         "eval" => {
                             let body = lower_box_eval_body(hir, result, &call)?;
@@ -2655,7 +2656,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(re) = node.as_regular_expression_node() {
         if re.is_euc_jp() || re.is_windows_31j() {
             return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string(),
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string().into(),
             );
         }
         let content = String::from_utf8_lossy(re.unescaped()).into_owned();
@@ -2672,7 +2673,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(re) = node.as_interpolated_regular_expression_node() {
         if re.is_euc_jp() || re.is_windows_31j() {
             return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string(),
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string().into(),
             );
         }
         let parts = lower_string_parts(result, hir, re.parts().iter())?;
@@ -2693,7 +2694,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // string.
     if node.as_match_last_line_node().is_some() || node.as_interpolated_match_last_line_node().is_some() {
         return Err(
-            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (spike scope) -- write an explicit `=~`/`match?` against a real receiver instead".to_string(),
+            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (spike scope) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
         );
     }
 
@@ -2847,7 +2848,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     Err(format!(
         "unsupported syntax at {:?} (spike handles only what the 7 example programs need)",
         node.location()
-    ))
+    ).into())
 }
 
 /// One `elements()` entry of an `ArrayNode` -- either a plain value or a
@@ -3056,7 +3057,7 @@ fn lower_runtime_class_body(
             "local variable assignment in the body of `class {name}` is not supported \
              when {name} is built at runtime (the body would see the enclosing scope's \
              locals instead of its own)"
-        ));
+        ).into());
     }
     // The body runs as a block, so every statement in it has to be an
     // ordinary expression. These lower to nodes only the static class path can
@@ -3075,7 +3076,7 @@ fn lower_runtime_class_body(
         return Err(format!(
             "`{construct}` in the body of `class {name}` is not supported when {name} \
              is built at runtime"
-        ));
+        ).into());
     }
     Ok(hir.push(HirNode::Block { params: Params::default(), body }))
 }
@@ -3203,7 +3204,7 @@ fn lower_ffi_directive(
                 return Err(format!(
                     "typedef expects 2 arguments (existing_type, new_name), got {}",
                     args.len()
-                ));
+                ).into());
             }
             let existing = ffi_type_of(&ffi_symbol_str(&args[0])?, aliases)?;
             let new_name = ffi_symbol_str(&args[1])?;
@@ -3218,7 +3219,7 @@ fn lower_ffi_directive(
                 (Some(n), Some(l)) if n.as_symbol_node().is_some() => (ffi_symbol_str(n)?, l),
                 _ => {
                     return Err(
-                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)".to_string(),
+                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)".to_string().into(),
                     )
                 }
             };
@@ -3238,7 +3239,7 @@ fn lower_ffi_directive(
                 }
                 _ => {
                     return Err(
-                        "callback expects `:tag, [arg_types], return_type`".to_string()
+                        "callback expects `:tag, [arg_types], return_type`".to_string().into()
                     )
                 }
             };
@@ -3304,7 +3305,7 @@ fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::Ffi
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
     if args.is_empty() || args.len() % 2 != 0 {
-        return Err("FFI::Struct `layout` expects `:name, :type` pairs".to_string());
+        return Err("FFI::Struct `layout` expects `:name, :type` pairs".to_string().into());
     }
     // Struct field types are the base scalars/pointer -- no per-library aliases.
     let no_aliases = std::collections::HashMap::new();
@@ -3333,7 +3334,7 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
         other => {
             return Err(format!(
                 "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
-            ))
+            ).into())
         }
     })
 }
@@ -3427,7 +3428,7 @@ fn ffi_lib_name(node: &Node<'_>) -> PResult<String> {
     }
     match const_path_string(node).as_deref() {
         Some("FFI::Library::LIBC") => Ok("c".to_string()),
-        _ => Err("ffi_lib expects a string library name or FFI::Library::LIBC".to_string()),
+        _ => Err("ffi_lib expects a string library name or FFI::Library::LIBC".to_string().into()),
     }
 }
 
@@ -3458,7 +3459,7 @@ fn lower_attach_function(
         n => {
             return Err(format!(
                 "attach_function expects 3 or 4 arguments (name, [args], ret), got {n}"
-            ))
+            ).into())
         }
     };
     let arg_types = ffi_type_array(types_node, aliases)?;
@@ -3493,7 +3494,7 @@ fn lower_attach_function(
 fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
     node.as_symbol_node()
         .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
-        .ok_or_else(|| "expected a literal symbol in an FFI declaration".to_string())
+        .ok_or_else(|| "expected a literal symbol in an FFI declaration".into())
 }
 
 /// `[:int, :string]` -> `[Int(32), Str]`. The argument-type list of an
@@ -3541,7 +3542,7 @@ fn ffi_type_of(
             None => {
                 return Err(format!(
                     "unsupported FFI type `:{other}` (#204 scalar subset; pointer/struct/callback types are follow-ons)"
-                ))
+                ).into())
             }
         },
     })
@@ -3697,7 +3698,7 @@ fn lower_class_body_statement(
                 Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
                 Item::Reject => {
                     return Err(
-                        "unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string(),
+                        "unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
                     );
                 }
             }
@@ -3957,7 +3958,7 @@ fn single_index_argument(
 ) -> PResult<ruby_prism::ArgumentsNode<'_>> {
     let args = result_args.ok_or("`[]`-style compound assignment requires exactly one index argument (spike scope)")?;
     if args.arguments().iter().count() != 1 {
-        return Err("`[]`-style compound assignment only supports a single index argument (spike scope)".to_string());
+        return Err("`[]`-style compound assignment only supports a single index argument (spike scope)".to_string().into());
     }
     Ok(args)
 }
@@ -4148,7 +4149,7 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
         let receiver = lower_node(result, hir, &t.receiver())?;
         let arg_list: Vec<_> = t.arguments().map(|a| a.arguments().iter().collect()).unwrap_or_default();
         if arg_list.len() != 1 {
-            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (spike scope)".to_string());
+            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (spike scope)".to_string().into());
         }
         let index = lower_node(result, hir, &arg_list[0])?;
         let tmp_name = hir.gensym("__mval");
@@ -4170,7 +4171,7 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
         let group = lower_multi_target_group(result, hir, t.lefts(), t.rest(), t.rights())?;
         return Ok(MultiTarget::Nested(group));
     }
-    Err("unsupported multi-assignment/`for`-loop target shape (spike scope)".to_string())
+    Err("unsupported multi-assignment/`for`-loop target shape (spike scope)".to_string().into())
 }
 
 /// The `before`/`splat`/`after` shape shared by `MultiWriteNode` and a
@@ -4310,7 +4311,7 @@ fn lower_single_wrapped_pattern(
     if body.len() != 1 {
         return Err(format!(
             "expected exactly one pattern inside an `{guard_kind}`-guarded `in` clause (spike scope)"
-        ));
+        ).into());
     }
     lower_pattern(result, hir, &body[0])
 }
@@ -4337,7 +4338,7 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
         if parts.iter().any(pattern_may_bind) {
             return Err(
                 "a pattern can't bind a variable inside a `|` alternation (spike scope, matches real Ruby)"
-                    .to_string(),
+                    .to_string().into(),
             );
         }
         return Ok(Pattern::Or(parts));
@@ -4594,7 +4595,7 @@ fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
         if matches!(hir[id], HirNode::ClassDef { .. } | HirNode::DefMethod { .. }) {
             return Err(
                 "`eval` containing a top-level `class`/`def` isn't supported yet (spike scope)"
-                    .to_string(),
+                    .to_string().into(),
             );
         }
     }
@@ -4676,7 +4677,7 @@ pub(super) fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
         .unwrap_or_default();
     if args.len() != 2 {
         return Err(
-            "`autoload` takes exactly two arguments (`autoload :Const, \"feature\"`)".to_string(),
+            "`autoload` takes exactly two arguments (`autoload :Const, \"feature\"`)".to_string().into(),
         );
     }
     if let Some(lit) = args[1].as_string_node() {
@@ -4686,7 +4687,7 @@ pub(super) fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
         return Ok(feature);
     }
     Err(
-        "`autoload` with a non-literal feature isn't supported (spike scope) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string(),
+        "`autoload` with a non-literal feature isn't supported (spike scope) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string().into(),
     )
 }
 
@@ -4828,5 +4829,5 @@ fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PR
     if let Some(embedded) = node.as_embedded_variable_node() {
         return Ok(StrPart::Interp(lower_node(result, hir, &embedded.variable())?));
     }
-    Err("unsupported string interpolation part (spike scope)".to_string())
+    Err("unsupported string interpolation part (spike scope)".to_string().into())
 }

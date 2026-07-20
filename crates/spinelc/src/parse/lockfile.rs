@@ -98,7 +98,7 @@ impl GemSourceKind {
 pub(super) fn parse_file(path: &Path) -> PResult<Lockfile> {
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("reading {}: {e}", path.display()))?;
-    parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+    parse(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
 /// Parse lockfile text. `name (version)` at 4-space indent is a spec; a
@@ -127,7 +127,7 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
             let header = line.trim();
             let kind = KNOWN_SECTIONS.iter().find(|h| **h == header);
             let Some(&kind) = kind else {
-                return Err(format!("unknown lockfile section header: {header:?}"));
+                return Err(format!("unknown lockfile section header: {header:?}").into());
             };
             section = match kind {
                 "GEM" => Section::Specs(GemSourceKind::Gem),
@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn an_unknown_section_header_is_a_loud_error() {
         let err = parse("MYSTERY\n  stuff\n").unwrap_err();
-        assert!(err.contains("unknown lockfile section"), "{err}");
+        assert!(err.message().contains("unknown lockfile section"), "{err}");
     }
 
     /// The checked-in fixture -- a real `Gemfile.lock` generated offline with

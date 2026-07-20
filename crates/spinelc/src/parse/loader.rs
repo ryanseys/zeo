@@ -59,6 +59,7 @@
 //! per-file magic comments (`frozen_string_literal`) and `__END__`/`DATA`
 //! are pre-existing unsupported territory, unchanged by splicing.
 
+use crate::lower_error::LowerError;
 use super::{lower_node, rename, PResult};
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
 use std::cell::RefCell;
@@ -264,7 +265,7 @@ pub(super) fn lower_main_file(
     }
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(format!("parse error: {}", err.message()));
+        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
     }
     let program = result
         .node()
@@ -454,7 +455,7 @@ impl Loader {
         current_box: u32,
     ) -> PResult<Vec<NodeId>> {
         if call.block().is_some() {
-            return Err(format!("`{name}` doesn't take a block"));
+            return Err(format!("`{name}` doesn't take a block").into());
         }
         let arg_list: Vec<_> = call
             .arguments()
@@ -463,13 +464,13 @@ impl Loader {
         if name == "load" && arg_list.len() == 2 {
             return Err(
                 "`load` with a `wrap` argument isn't supported (spike scope) -- a wrap module needs load-time anonymous-module scoping, which doesn't exist yet"
-                    .to_string(),
+                    .to_string().into(),
             );
         }
         if arg_list.len() != 1 {
             return Err(format!(
                 "`{name}` is only supported with exactly one string-literal argument (spike scope)"
-            ));
+            ).into());
         }
         // Lower the argument through the ordinary path first (same trick as
         // `eval`'s recognizer): prism's adjacent-literal folding is picked
@@ -479,7 +480,7 @@ impl Loader {
         let Some(feature) = super::literal_string_text(hir, arg_id) else {
             return Err(format!(
                 "`{name}` with a non-literal argument isn't supported (spike scope) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
-            ));
+            ).into());
         };
         self.splice_feature(hir, &feature, name, dir, file_idx, current_box)
     }
@@ -593,9 +594,9 @@ impl Loader {
             // A gem the external store locked but spinel can't provide gets its
             // precise reason (which native layout, why), not the generic miss.
             if let Some(reason) = self.store_exclusions.get(bare) {
-                return Err(format!("cannot load such file -- {bare}: {reason}"));
+                return Err(format!("cannot load such file -- {bare}: {reason}").into());
             }
-            return Err(cannot_load(feature));
+            return Err(cannot_load(feature).into());
         }
         // Phase 2b disclosure: a DIRECT `require` of a statically-linked ext
         // (no Ruby half on disk, e.g. `require "base64"`). The `.so` loader
@@ -637,7 +638,7 @@ impl Loader {
             return Err(format!(
                 "`load` cycle detected: {} is already being loaded (real Ruby would recurse forever at runtime; this compiler rejects it at compile time instead)",
                 canonical.display()
-            ));
+            ).into());
         }
         let source = std::fs::read_to_string(canonical)
             .map_err(|e| format!("reading {}: {e}", canonical.display()))?;
@@ -650,11 +651,11 @@ impl Loader {
         });
         let result = ruby_prism::parse(source.as_bytes());
         if let Some(err) = result.errors().next() {
-            return Err(format!(
+            return Err(LowerError::syntax(format!(
                 "{}: parse error: {}",
                 canonical.display(),
                 err.message()
-            ));
+            )));
         }
         let program = result
             .node()
@@ -678,10 +679,10 @@ impl Loader {
                 box_id,
             )
             .map_err(|e| {
-                if e.starts_with(&canonical.display().to_string()) {
+                if e.message().starts_with(&canonical.display().to_string()) {
                     e // already prefixed by a nested splice
                 } else {
-                    format!("{}: {e}", canonical.display())
+                    format!("{}: {e}", canonical.display()).into()
                 }
             })?;
         self.splicing.pop();
@@ -707,7 +708,7 @@ impl Loader {
         if feature.starts_with("./") || feature.starts_with("../") || feature.starts_with('~') {
             return Err(format!(
                 "`require \"{feature}\"`: `./`/`../`/`~` paths resolve against the runtime working directory in real Ruby, which doesn't exist at compile time -- use `require_relative` instead"
-            ));
+            ).into());
         }
         // A `.so`/`.bundle` feature never has a file on disk here -- it names
         // a STATICALLY LINKED extension, so it belongs to the caller's
@@ -753,7 +754,7 @@ impl Loader {
                 Err(format!(
                     "`require \"{feature}\"` is ambiguous: found in multiple gems ({})",
                     names.join(", ")
-                ))
+                ).into())
             }
         }
     }
@@ -769,7 +770,7 @@ impl Loader {
             if p.is_file() {
                 return Ok(p.to_path_buf());
             }
-            return Err(cannot_load(arg));
+            return Err(cannot_load(arg).into());
         }
         if !(arg.starts_with("./") || arg.starts_with("../")) {
             for root in &self.roots {
@@ -785,7 +786,7 @@ impl Loader {
                 return Ok(cand);
             }
         }
-        Err(cannot_load(arg))
+        Err(cannot_load(arg).into())
     }
 }
 
@@ -797,12 +798,12 @@ fn resolve_require_relative(feature: &str, dir: Option<&Path>) -> PResult<PathBu
     let Some(dir) = dir else {
         // CRuby's exact error when the requiring context has no file
         // (eval/irb): here, a source compiled without an input path.
-        return Err("cannot infer basepath -- `require_relative` needs the requiring file's directory (compile from a file path)".to_string());
+        return Err("cannot infer basepath -- `require_relative` needs the requiring file's directory (compile from a file path)".to_string().into());
     };
     if is_native_feature(feature) {
         return Err(format!(
             "`require_relative \"{feature}\"`: native (.so/.bundle) features aren't supported (spike scope)"
-        ));
+        ).into());
     }
     // ORDER MATTERS, and CRuby's is the inverse of the obvious one.
     // `rb_require_relative_entrypoint` (load.c:1054) absolutizes against the
@@ -826,7 +827,7 @@ fn resolve_require_relative(feature: &str, dir: Option<&Path>) -> PResult<PathBu
     // /tmp/nope`. (Plain `require` is the one that echoes the feature as
     // written; the two differ because require_relative has already
     // absolutized by the time the search fails.)
-    Err(cannot_load(&base.display().to_string()))
+    Err(cannot_load(&base.display().to_string()).into())
 }
 
 /// Collapses `.` and `..` components without touching the filesystem.
@@ -929,7 +930,7 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
             "{}: gem name \"{}\" doesn't match its directory name \"{dir_name}\"",
             manifest_path.display(),
             spec.name
-        ));
+        ).into());
     }
     let roots = spec
         .require_paths
@@ -943,7 +944,8 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
                     "{}: require_paths entry \"{rp}\" doesn't exist under {}",
                     manifest_path.display(),
                     pkg_dir.display()
-                ))
+                )
+                .into())
             }
         })
         .collect::<PResult<Vec<PathBuf>>>()?;

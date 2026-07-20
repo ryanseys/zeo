@@ -19,6 +19,7 @@ pub mod compiler;
 pub mod constpath;
 pub mod gem_report;
 pub mod hir;
+pub mod lower_error;
 
 pub use parse::gem_compat::{gem_compat, gem_compat_installed, GemCompatEntry, GemCompatOutcome};
 pub mod parse;

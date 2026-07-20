@@ -159,7 +159,7 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
         }
     }
     if gems.is_empty() {
-        return Err(format!("no gemspecs found under {}", specs.display()));
+        return Err(format!("no gemspecs found under {}", specs.display()).into());
     }
     Ok(Lockfile { gems: gems.into_values().collect(), platforms: Vec::new(), bundler_version: None })
 }
