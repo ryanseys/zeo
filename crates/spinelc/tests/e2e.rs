@@ -21234,3 +21234,70 @@ fn enumerator_chain_product_and_lazy_size() {
          3\nnil\n2\nInfinity\n3\n"
     );
 }
+
+/// `class Point < Struct.new(:x, :y)` -- a superclass that only exists at RUN
+/// time (a `Struct`/`Data` class, a `Class.new`, a constant holding either).
+/// The subclass can't be one of the statically emitted Rust structs, so it is
+/// minted at runtime too; `super`, `superclass`, and a namespaced name all
+/// have to keep working through it. `class D ... end` reopening such a
+/// constant installs onto the existing class rather than registering a fresh
+/// (memberless) one, so a generated reader still resolves in the body.
+#[test]
+fn subclassing_and_reopening_a_runtime_class() {
+    let result = support::run_ruby(
+        r#"
+        class Point < Struct.new(:x, :y)
+          def dist2; x * x + y * y; end
+        end
+        p Point.new(3, 4).dist2
+        p Point.superclass.ancestors.include?(Struct)
+
+        Base = Class.new do
+          def greet; "base"; end
+        end
+        class Child < Base
+          def greet; "child+" + super; end
+        end
+        p Child.new.greet
+        p Child.superclass.equal?(Base)
+
+        D = Data.define(:v)
+        class D
+          def double; v * 2; end
+        end
+        p D.new(5).double
+
+        module NS; end
+        class NS::Item < Struct.new(:a)
+          def show; "a=#{a}"; end
+        end
+        p NS.constants
+        p NS::Item.name
+        p NS::Item.new(1).show
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "25\ntrue\n\"child+base\"\ntrue\n10\n[:Item]\n\"NS::Item\"\n\"a=1\"\n"
+    );
+}
+
+/// A runtime-built class body runs as a block, so the constructs that only the
+/// static class path can emit have to be REJECTED by name -- reaching codegen
+/// with one used to abort the compiler with an "unexpected top-level-only node
+/// in expression position" panic. A local write is rejected for a different
+/// reason: the block body would see the enclosing scope's locals rather than
+/// opening its own, which would diverge silently instead of loudly.
+#[test]
+fn unsupported_constructs_in_a_runtime_class_body_are_rejected_not_panics() {
+    for (body, want) in [
+        ("include Greet", "`include` in the body of `class Foo`"),
+        ("y = 1", "local variable assignment in the body of `class Foo`"),
+    ] {
+        let src = format!("module Greet; end\ny = 99\nFoo = Class.new\nclass Foo\n  {body}\nend\n");
+        let err = support::compile_project(&[("main.rb", src.as_str())], "main.rb", &[])
+            .expect_err("expected a compile-time rejection");
+        assert!(err.contains(want), "expected `{want}` for `{body}`, got: {err}");
+    }
+}

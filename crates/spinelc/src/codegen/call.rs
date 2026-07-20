@@ -660,9 +660,19 @@ pub fn emit_new(
             }
             None => quote! { None },
         };
+        // A namespaced runtime class (`class NS::Item < Struct.new(:a)`) lives
+        // as `Item` INSIDE `NS`, so the lookup needs that owner -- reading the
+        // joined spelling under `Object` finds nothing.
+        let (owner_id, base_name) = match class_name.rsplit_once("::") {
+            Some((scope, base)) => match cx.resolve_class(scope) {
+                Some(owner) => (owner.0, base.to_string()),
+                None => (0, class_name.to_string()),
+            },
+            None => (0, class_name.to_string()),
+        };
         return quote! {
             {
-                let __rtclass = spinel_rt::const_get(0, #class_name).ok_or_else(|| {
+                let __rtclass = spinel_rt::const_get(#owner_id, #base_name).ok_or_else(|| {
                     spinel_rt::raise_error("NameError", format!("uninitialized constant {}", #class_name))
                 })?;
                 spinel_rt::send_value(

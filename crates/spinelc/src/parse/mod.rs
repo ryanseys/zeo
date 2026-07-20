@@ -681,6 +681,14 @@ fn const_is_assigned(hir: &Hir, name: &str) -> bool {
     })
 }
 
+/// Whether an already-lowered `class`/`module` DEFINES this name, making it a
+/// compile-time class even if some later statement also assigns the constant.
+fn const_is_class_def(hir: &Hir, name: &str) -> bool {
+    hir.nodes()
+        .iter()
+        .any(|node| matches!(node, HirNode::ClassDef { name: n, .. } if n == name))
+}
+
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
@@ -1837,6 +1845,33 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
 
     if let Some(class) = node.as_class_node() {
         let name = constant_path_name(&class.constant_path())?;
+        // A superclass that isn't a constant path (`class Point <
+        // Struct.new(:x, :y)`) names a class that only comes into existence at
+        // RUN time, so the subclass can't be one of the statically emitted
+        // Rust structs -- it has to be minted at runtime too. See
+        // `lower_runtime_class`.
+        if let Some(sc) = class.superclass() {
+            let runtime_parent = match constant_path_name(&sc) {
+                // Not a constant path at all (`< Struct.new(:x)`).
+                Err(_) => true,
+                // A constant path that holds a runtime class VALUE (`Base =
+                // Class.new` earlier in the file) rather than naming a
+                // compile-time one -- the subclass has to be built at runtime
+                // for the same reason. A name that is also a `class`
+                // definition stays on the static path.
+                Ok(n) => const_is_assigned(hir, &n) && !const_is_class_def(hir, &n),
+            };
+            if runtime_parent {
+                return lower_runtime_class(result, hir, &name, &sc, class.body());
+            }
+        } else if const_is_assigned(hir, &name) && !const_is_class_def(hir, &name) {
+            // No superclass clause, and the name holds a runtime class value
+            // (`D = Data.define(:x)`) -- this REOPENS that class rather than
+            // defining a new one, so it lowers to a runtime reopen instead of
+            // a `ClassDef` the static path would register as a fresh
+            // (memberless) class.
+            return lower_runtime_class_reopen(result, hir, &name, class.body());
+        }
         let superclass = match class.superclass() {
             None => None,
             Some(sc) => Some(constant_path_name(&sc)?),
@@ -2955,6 +2990,112 @@ fn lower_array_elem_or_anon(
 /// `attr_writer`/`attr_accessor` each expand into MULTIPLE synthesized
 /// `DefMethod`s from one statement, and `private`/`public`/`protected` expand
 /// into NONE.
+/// `class Name < <expression>` -- a subclass of a class that does not exist
+/// until run time (`Struct.new(:x, :y)`, `Class.new`, a class held in a
+/// variable). `analyze::register_class` can only link a subclass to a parent
+/// it already knows statically, so this desugars to the runtime form spinel
+/// already supports end to end: `Name = Class.new(<expression>) { <body> }`.
+///
+/// The one place the desugar is NOT a faithful rewrite is local-variable
+/// scope: a class body opens a FRESH scope, while the block body it becomes
+/// closes over the enclosing one, so `y = 1` in the body would assign the
+/// caller's `y` instead of a new one. A `def` in the body is unaffected (its
+/// own body already resolves in a fresh scope -- verified against the
+/// oracle), so only a direct local write is rejected, rather than left to
+/// diverge silently.
+fn lower_runtime_class(
+    result: &ParseResult,
+    hir: &mut Hir,
+    name: &str,
+    superclass: &Node<'_>,
+    body: Option<Node<'_>>,
+) -> PResult<NodeId> {
+    let parent = lower_node(result, hir, superclass)?;
+    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let class_class = hir.push(HirNode::ClassRef("Class".to_string()));
+    let new_call = hir.push(HirNode::Call {
+        receiver: Some(class_class),
+        name: "new".to_string(),
+        args: vec![ArrayElem::Single(parent)],
+        kwargs: Vec::new(),
+        block: Some(block),
+        block_arg: None,
+        safe: false,
+    });
+    // `class NS::Item < ...` has to write `Item` INSIDE `NS`, not a flat
+    // constant that happens to be spelled `"NS::Item"` -- the latter reads
+    // back only through the identical spelling, and leaves `NS.constants`
+    // empty.
+    let (scope, base) = match name.rsplit_once("::") {
+        Some((s, b)) => (Some(s.to_string()), b.to_string()),
+        None => (None, name.to_string()),
+    };
+    Ok(hir.push(HirNode::ConstWrite { scope, name: base, value: new_call }))
+}
+
+/// `class D ... end` REOPENING a constant that holds a runtime class
+/// (`D = Data.define(:x)`) -- lowered to `D.class_eval { <body> }`, which
+/// installs onto the existing class. The static path would instead register a
+/// brand-new, memberless class `D`, so a generated `Data`/`Struct` reader
+/// could not resolve inside the reopened body.
+fn lower_runtime_class_reopen(
+    result: &ParseResult,
+    hir: &mut Hir,
+    name: &str,
+    body: Option<Node<'_>>,
+) -> PResult<NodeId> {
+    let block = lower_runtime_class_body(result, hir, name, body)?;
+    let target = hir.push(HirNode::ClassRef(name.to_string()));
+    Ok(hir.push(HirNode::Call {
+        receiver: Some(target),
+        name: "class_eval".to_string(),
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        block: Some(block),
+        block_arg: None,
+        safe: false,
+    }))
+}
+
+/// The shared body half of the two runtime-class desugars: lowers the class
+/// body and wraps it as the block those forms pass. See `lower_runtime_class`
+/// for why a local write in the body is rejected rather than diverging.
+fn lower_runtime_class_body(
+    result: &ParseResult,
+    hir: &mut Hir,
+    name: &str,
+    body: Option<Node<'_>>,
+) -> PResult<NodeId> {
+    let body = lower_class_body(result, hir, body, None)?;
+    if body.iter().any(|&n| matches!(hir[n], HirNode::LocalWrite(..))) {
+        return Err(format!(
+            "local variable assignment in the body of `class {name}` is not supported \
+             when {name} is built at runtime (the body would see the enclosing scope's \
+             locals instead of its own)"
+        ));
+    }
+    // The body runs as a block, so every statement in it has to be an
+    // ordinary expression. These lower to nodes only the static class path can
+    // emit -- reject them by name rather than reaching codegen's
+    // "top-level-only node in expression position" panic.
+    if let Some(construct) = body.iter().find_map(|&n| match hir[n] {
+        HirNode::Include(_) => Some("include"),
+        HirNode::Extend(_) => Some("extend"),
+        HirNode::Prepend(_) => Some("prepend"),
+        HirNode::Undef(_) => Some("undef"),
+        HirNode::AliasMethod { .. } => Some("alias"),
+        HirNode::MethodVisibility { .. } => Some("a visibility modifier"),
+        HirNode::ClassDef { .. } => Some("a nested class/module"),
+        _ => None,
+    }) {
+        return Err(format!(
+            "`{construct}` in the body of `class {name}` is not supported when {name} \
+             is built at runtime"
+        ));
+    }
+    Ok(hir.push(HirNode::Block { params: Params::default(), body }))
+}
+
 fn lower_class_body(
     result: &ParseResult,
     hir: &mut Hir,

@@ -58,8 +58,14 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
     // constant it's bound to becomes its name, matching CRuby -- so `Foo.name`
     // / `puts Foo` report `"Foo"` rather than `#<Class:...>`. A no-op for a
     // frozen class id or an already-named one.
+    // Bound inside a namespace (`NS::Item = Class.new`), the name CRuby gives
+    // it is the qualified path, not the bare constant.
     if let RubyValue::Class(cid) = &value {
-        crate::runtime_meta::name_runtime_class_if_anonymous(*cid, name);
+        let qualified = match crate::dispatch::class_name(crate::ClassId(owner_class_id)) {
+            Some(owner) if owner_class_id != 0 => format!("{owner}::{name}"),
+            _ => name.to_string(),
+        };
+        crate::runtime_meta::name_runtime_class_if_anonymous(*cid, &qualified);
     }
     CONSTANTS.lock().insert((owner_class_id, name.to_string()), value);
 }

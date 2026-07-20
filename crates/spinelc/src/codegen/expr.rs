@@ -684,7 +684,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 let id = cid.0;
                 quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) }
             }
-            None => emit_const_read(cx, None, name),
+            // Not a statically known class. A JOINED name (`NS::Item`, the
+            // form `constant_path_name` produces) has to read as `Item`
+            // inside `NS` -- a flat read of the whole spelling finds nothing,
+            // which is what a namespaced runtime class (`class NS::Item <
+            // Struct.new(:a)`) would otherwise hit.
+            None => match name.rsplit_once("::") {
+                Some((scope, base)) if !scope.is_empty() => {
+                    emit_const_read(cx, Some(scope), base)
+                }
+                _ => emit_const_read(cx, None, name),
+            },
         },
         HirNode::QualifiedConstRead(scope, name) if qualified_const_class(cx, scope, name).is_some() => {
             let id = qualified_const_class(cx, scope, name).expect("guarded above").0;
