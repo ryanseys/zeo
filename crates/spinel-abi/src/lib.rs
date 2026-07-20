@@ -135,8 +135,8 @@ pub const RATIONAL_CLASS: ClassId = ClassId(27);
 pub const COMPLEX_CLASS: ClassId = ClassId(28);
 /// The `Math` MODULE (module functions `Math.sqrt` etc. + `PI`/`E`).
 pub const MATH_CLASS: ClassId = ClassId(29);
-/// `Struct` -- superclass of every compile-time-synthesized
-/// `Name = Struct.new(...)` class; includes `Enumerable` (CRuby).
+/// `Struct` -- root of every runtime-minted `Struct.new(...)` class (Batch E,
+/// `spinel-rt`'s `rstruct`); includes `Enumerable` (CRuby).
 pub const STRUCT_CLASS: ClassId = ClassId(30);
 /// `Enumerator::Yielder` (Phase 17.2) -- the `y` in
 /// `Enumerator.new { |y| y << 1 }`. Registered under its FLAT
@@ -180,10 +180,10 @@ pub const FILE_STAT_CLASS: ClassId = ClassId(39);
 /// `Encoding` -- what `String#encoding` answers and `Encoding::UTF_8` names;
 /// wraps an `encoding::EncodingId` in the runtime.
 pub const ENCODING_CLASS: ClassId = ClassId(40);
-/// `Data` -- superclass of every compile-time-synthesized
-/// `Name = Data.define(...)` class. Unlike `Struct`, `Data` is
-/// immutable and NOT `Enumerable` (no `each`). The one other subclassable
-/// builtin besides `Struct`.
+/// `Data` -- root of every runtime-minted `Data.define(...)` class (Batch E,
+/// `spinel-rt`'s `rstruct`). Unlike `Struct`, `Data` is immutable and NOT
+/// `Enumerable` (no `each`). The one other subclassable builtin besides
+/// `Struct`.
 pub const DATA_CLASS: ClassId = ClassId(41);
 pub const SET_CLASS: ClassId = ClassId(42);
 pub const LAZY_CLASS: ClassId = ClassId(43);

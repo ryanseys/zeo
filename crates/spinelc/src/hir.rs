@@ -64,12 +64,6 @@ pub struct Hir {
     /// its interned, frozen twin. `false` (the default) keeps literals
     /// mutable.
     pub frozen_string_literal: bool,
-    /// Extra top-level `ClassDef`s synthesized mid-lowering that must be
-    /// registered as their own statements -- the hidden base classes a
-    /// `Struct`/`Data` with a custom `initialize` splits into. Spliced
-    /// in right after the exception prelude by `parse_and_lower_with`, so
-    /// each base is registered before the leaf that inherits it.
-    pub synth_classes: Vec<NodeId>,
     /// The Phase-2b disclosure record: one entry per library `require`d, how
     /// spinel satisfied it (see `gem_report`). Populated by the loader as each
     /// require resolves; written to `spinel-gems.json` by the driver. Deduped

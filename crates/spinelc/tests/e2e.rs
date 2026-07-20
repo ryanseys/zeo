@@ -13094,13 +13094,14 @@ fn a_user_defined_puts_wins_over_the_kernel_function() {
 // Phase 17.1-H -- Struct: compile-time class synthesis. Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------
 
-/// `Point = Struct.new(:x, :y)` synthesizes an ordinary `class Point <
-/// Struct` at lowering time: accessors, positional init (nil-filled),
-/// members/to_a/to_h/==/[]/[]=/each_pair/inspect, and Enumerable through
-/// the real ancestor chain. Plus keyword_init and the block-with-methods
-/// form.
+/// `Point = Struct.new(:x, :y)` mints a native struct class at runtime (Batch
+/// E) and the constant write names it: accessors, positional init (nil-filled),
+/// members/to_a/to_h/==/[]/[]=/each_pair/inspect, and Enumerable through the
+/// real ancestor chain. Plus keyword_init and the block-with-methods form. The
+/// constant form now takes the exact same runtime path as the anonymous one --
+/// no compile-time synthesis.
 #[test]
-fn struct_synthesis_matches_the_oracle() {
+fn const_struct_matches_the_oracle() {
     let result = support::run_ruby(
         r#"
         Point = Struct.new(:x, :y)
@@ -13148,10 +13149,9 @@ fn struct_synthesis_matches_the_oracle() {
     );
 }
 
-/// `Struct.new` OUTSIDE a constant assignment now mints a native anonymous
-/// struct class at runtime (Batch E) rather than being a lowering error --
-/// the constant form is still compile-time synthesized (for `super`/subclass
-/// support), but an anonymous local/inline struct is a runtime value.
+/// `Struct.new` in ANY position mints a native struct class at runtime (Batch
+/// E): an anonymous local/inline struct is a runtime value, exactly like the
+/// constant form -- there is no longer a compile-time-synthesized path.
 #[test]
 fn anonymous_struct_mints_a_native_class_at_runtime() {
     let result = run_ruby(
@@ -13275,13 +13275,15 @@ fn class_new_override_supers_into_a_runtime_parent() {
     assert_eq!(result.stdout, "\"hi x!\"\n");
 }
 
-/// The constant-position clean rejection still holds: a `Name = Struct.new(...)`
-/// with a string first argument is the compile-time-synthesized form, which
-/// requires literal symbol members.
+/// The Batch-E flip retired compile-time Struct synthesis, so the constant form
+/// is the SAME runtime mint as the anonymous form -- and the runtime
+/// `Struct.new("Name", :a)` accepts the legacy string-name argument instead of
+/// rejecting it at compile time. spinel names the class `Name`; CRuby's legacy
+/// behaviour namespaces it `Struct::Name` -- a known divergence shared with the
+/// anonymous path, not worth reintroducing a compile-time special case for.
 #[test]
-fn struct_new_string_name_at_const_is_a_clean_error() {
-    let err = spinelc::compile_to_rust("P = Struct.new(\"Name\", :a)\n").unwrap_err();
-    assert!(err.contains("must be literal symbols"), "{err}");
+fn struct_new_string_name_at_const_mints_at_runtime() {
+    assert!(spinelc::compile_to_rust("P = Struct.new(\"Name\", :a)\n").is_ok());
 }
 
 // -- Phase 17.2: the fiber-backed Enumerator (per CRuby's enumerator.c).

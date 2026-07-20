@@ -12,7 +12,6 @@ mod gemspec;
 mod loader;
 mod lockfile;
 mod rename;
-mod struct_def;
 
 /// How one lockfile gem fares against spinel, for `cargo xtask gem-compat`.
 #[derive(Debug, Clone, PartialEq)]
@@ -386,14 +385,6 @@ pub fn parse_and_lower_with(
         gem_path,
         lockfile,
     )?);
-    // Synthesized base classes (the Struct/Data super split) are spliced in
-    // right after the built-in exceptions -- before every main statement -- so
-    // each base is registered ahead of the leaf that inherits it.
-    let synth = std::mem::take(&mut hir.synth_classes);
-    if !synth.is_empty() {
-        let at = hir.builtin_exceptions_len;
-        statements.splice(at..at, synth);
-    }
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root))
 }
@@ -1473,15 +1464,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     }
     if let Some(cw) = node.as_constant_write_node() {
         let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
-        // `Name = Struct.new(:a, :b)` -- compile-time class synthesis
-        // (Phase 17.1-H): the whole statement becomes an ordinary
-        // ClassDef; no constant write remains (the class IS the constant).
-        if let Some(class_def) = struct_def::try_lower_struct_def(result, hir, &name, &cw.value()) {
-            return class_def;
-        }
-        if let Some(class_def) = struct_def::try_lower_data_def(result, hir, &name, &cw.value()) {
-            return class_def;
-        }
+        // `Name = Struct.new(:a, :b)` / `Name = Data.define(...)` is an ordinary
+        // constant write whose value is a runtime `Struct.new`/`Data.define`
+        // call (Batch E): the call MINTS a real class at runtime
+        // (`rstruct::struct_new`), the write binds it to the constant, and
+        // `const_set` names the freshly anonymous class (`RUBY`'s "assigning an
+        // anonymous class to a constant names it"). No compile-time synthesis.
         let value = lower_node(result, hir, &cw.value())?;
         return Ok(hir.push(HirNode::ConstWrite { scope: None, name, value }));
     }
@@ -2026,16 +2014,15 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         // the block IS the anonymous class's body; `HirNode::New`
                         // has no slot for it, so it falls through to the generic
                         // `Call` and the runtime `Class#new`.
-                        // A NON-CONSTANT `Struct.new(...)`/`Data.define` (an
-                        // anonymous struct assigned to a local, used inline, or
-                        // passed as an argument -- Batch E) MINTS A CLASS at
-                        // runtime (`rstruct::struct_new`); it must reach the
-                        // generic dynamic `new` dispatch rather than a static
-                        // `New`. Its block is the new class's body, kept the same
-                        // way `Class.new`'s is. (A CONSTANT `Name = Struct.new(...)`
-                        // is instead recognized at lowering time and compile-time
-                        // synthesized -- see `parse::struct_def` -- so the class
-                        // NAME is known for `super`/subclassing.)
+                        // `Struct.new(...)` (and `Data.define`, which uses
+                        // `.define` and never enters this `.new` path) MINTS A
+                        // CLASS at runtime (`rstruct::struct_new`) in EVERY
+                        // position -- Batch E: whether anonymous (a local/inline
+                        // value) or bound to a constant (`Name = Struct.new(...)`,
+                        // an ordinary constant write whose value is this call).
+                        // It must reach the generic dynamic `new` dispatch rather
+                        // than a static `New`; its block is the new class's body,
+                        // kept the same way `Class.new`'s is.
                         "Fiber" | "Thread" | "Mutex" | "Queue" | "SizedQueue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class" | "Struct"
                     )
                 {
