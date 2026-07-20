@@ -293,11 +293,18 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             format!("can't extend {}", immediate_kind(recv)),
         ));
     };
-    let names = crate::dispatch::instance_method_names(
+    let mut names = crate::dispatch::instance_method_names(
         *mid,
         crate::dispatch::VisFilter::NotPrivate,
         false,
     );
+    // A runtime module (`Module.new` + `define_method`) keeps its methods in the
+    // overlay, which the registry-based enumeration above can't see -- add them.
+    for n in overlay_own_method_names(*mid) {
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
     let key = obj_identity(o);
     {
         let mut w = maps().singletons.write().unwrap();
@@ -315,6 +322,19 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
 /// The `MethodImpl` a module id defines for `name` directly -- overlay delta
 /// first (a runtime `Module.new`/`define_method`), then the frozen registry (a
 /// compile-time `module M; def hi; end`).
+/// The overlay's own runtime-defined instance-method names for a class/module
+/// id (empty if it has no overlay entry) -- the names the registry-based
+/// `instance_method_names` can't see.
+fn overlay_own_method_names(id: ClassId) -> Vec<Symbol> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .map(|e| e.methods.keys().copied().collect())
+        .unwrap_or_default()
+}
+
 fn module_own_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
     overlay_own_method(mid, name)
         .or_else(|| crate::dispatch::registry_lookup_cloned(mid, name))
@@ -445,6 +465,37 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     }
     mark_live();
     Ok(RubyValue::Class(new_id))
+}
+
+/// `Module.new { body }` -- allocate a runtime MODULE id (ancestors = just
+/// itself, no superclass, no constructor -- `Module.new.new` is a NoMethodError)
+/// and run the optional body block with `self` bound to it. The result composes
+/// with `obj.extend`/`include`: its `define_method`-installed methods are
+/// retrievable by id from the overlay.
+pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let leaked: &'static [ClassId] = Box::leak(vec![new_id].into_boxed_slice());
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                name: RwLock::new(None),
+                is_module: true,
+                ancestors: leaked,
+                methods: HashMap::new(),
+                class_methods: HashMap::new(),
+                constructor: None,
+            },
+        );
+    }
+    mark_live();
+    let val = RubyValue::Class(new_id);
+    if let Some(b) = body {
+        b.call_with_self(&val, &[])?;
+    }
+    Ok(val)
 }
 
 /// `Class.new(superclass) { body }` -- allocate a runtime class id, register

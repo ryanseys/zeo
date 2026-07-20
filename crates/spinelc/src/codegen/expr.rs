@@ -957,8 +957,18 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // runtime (dynamic) self -- a block's -- since a class body / top-level
         // `def` is handled before ever reaching expression position.
         HirNode::DefMethod { name, params, body, is_class_method, .. } => {
-            let Some(self_val) = super::call::boxed_implicit_self(cx) else {
-                panic!("a `def` in expression position needs a runtime self (only supported inside a block, e.g. `Class.new {{ ... }}`)");
+            // A `def` in value position installs on: the block's DYNAMIC self
+            // when inside one (`Class.new { def g; end }`), otherwise the
+            // ENCLOSING class -- Object at top level, so `p(def foo; end)`
+            // defines foo as a private method of Object and returns :foo,
+            // matching CRuby (a plain object doesn't respond to define_method).
+            let self_val = if cx.self_is_dynamic {
+                super::call::boxed_implicit_self(cx).expect(
+                    "a dynamic-self `def` in expression position must have a boxed self",
+                )
+            } else {
+                let cid = cx.class_self.or(cx.current_class).unwrap_or(crate::compiler::OBJECT_CLASS).0;
+                quote! { spinel_rt::RubyValue::Class(spinel_rt::ClassId(#cid)) }
             };
             // The body becomes a method-body lambda: its `yield`/
             // `block_given?`/`&block` reach the block the installed method is

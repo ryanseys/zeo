@@ -533,6 +533,15 @@ builtin_methods! {
             };
             return crate::runtime_class_new(superclass, body);
         }
+        // `Module.new { body }` -- an anonymous module (no superclass, no
+        // constructor); the block populates it just like a class body.
+        if cid == spinel_abi::MODULE_CLASS {
+            let body = match &block {
+                Some(RubyValue::Proc(p)) => Some(p.clone()),
+                _ => None,
+            };
+            return crate::runtime_meta::runtime_module_new(body);
+        }
         // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
         // runtime allocator (Phase 17.2); parse deliberately skips the
         // static `New` node for it so the block arrives here.
