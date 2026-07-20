@@ -193,7 +193,7 @@ builtin_methods! {
     "each_line" => fn each_line(recv, args, block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = block else {
-            return Err(raise_error("LocalJumpError", "no block given (yield)".to_string()));
+            return Err(crate::dispatch::raise_no_block_yield());
         };
         loop {
             let line = gets(recv, &[], None)?;

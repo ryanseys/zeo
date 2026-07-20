@@ -466,10 +466,11 @@ fn byte_rfind(hay: &[u8], needle: &[u8], before: usize) -> Option<usize> {
 fn str_bang_replace(recv: &RubyValue, new_text: String) -> Result<RubyValue, Signal> {
     let s = recv_str!(recv);
     if s.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen String: {}", recv.inspect_string()),
-        ));
+        return Err(crate::dispatch::raise_error_details(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
+            ));
     }
     let unchanged = s.lock().to_utf8_lossy() == new_text;
     if unchanged {
@@ -688,10 +689,11 @@ fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Si
 fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let handle = recv_str!(recv);
     if handle.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen String: {}", recv.inspect_string()),
-        ));
+        return Err(crate::dispatch::raise_error_details(
+                "FrozenError",
+                format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
+            ));
     }
     let val = args.last().unwrap();
     let RubyValue::Str(repl) = val else {
@@ -948,10 +950,7 @@ builtin_methods! {
     "each_byte" => fn each_byte(recv, args, block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = &block else {
-            return Err(crate::dispatch::raise_error(
-                "LocalJumpError",
-                "no block given (yield)".to_string(),
-            ));
+            return Err(crate::dispatch::raise_no_block_yield());
         };
         let bytes: Vec<u8> = recv_str!(recv).lock().bytes().to_vec();
         for b in bytes {
@@ -1121,9 +1120,10 @@ builtin_methods! {
     "append_as_bytes" => fn append_as_bytes(recv, args, _block) {
         let handle = recv_str!(recv);
         if handle.is_frozen() {
-            return Err(crate::dispatch::raise_error(
+            return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
             ));
         }
         let mut extra: Vec<u8> = Vec::new();
@@ -1214,9 +1214,10 @@ builtin_methods! {
         let scrubbed = crate::dispatch::send_value(recv, crate::Symbol::intern("scrub"), args, None)?;
         let s = recv_str!(recv);
         if s.is_frozen() {
-            return Err(crate::dispatch::raise_error(
+            return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
             ));
         }
         if let RubyValue::Str(new) = &scrubbed {
@@ -1258,9 +1259,10 @@ builtin_methods! {
         // here covers them all -- including a `frozen_string_literal` literal.
         // CRuby checks modifiability before appending any argument.
         if s.is_frozen() {
-            return Err(crate::dispatch::raise_error(
+            return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
             ));
         }
         for arg in args {
@@ -1619,9 +1621,10 @@ builtin_methods! {
         arity!(args, 0);
         let s = recv_str!(recv);
         if s.is_frozen() {
-            return Err(crate::dispatch::raise_error(
+            return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
             ));
         }
         s.lock().replace_utf8(String::new());
@@ -1707,9 +1710,10 @@ builtin_methods! {
         arity!(args, 2..=3);
         let s = recv_str!(recv);
         if s.is_frozen() {
-            return Err(crate::dispatch::raise_error(
+            return Err(crate::dispatch::raise_error_details(
                 "FrozenError",
                 format!("can't modify frozen String: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
             ));
         }
         let total = s.lock().bytesize() as i64;

@@ -549,10 +549,7 @@ macro_rules! need_block {
         match &$block {
             Some(crate::RubyValue::Proc(p)) => p.clone(),
             _ => {
-                return Err(crate::dispatch::raise_error(
-                    "LocalJumpError",
-                    "no block given (yield)".to_string(),
-                ))
+                return Err(crate::dispatch::raise_no_block_yield())
             }
         }
     };

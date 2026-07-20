@@ -293,10 +293,7 @@ builtin_methods! {
         arity!(args, 1);
         let path = path_arg(&args[0], "each_child")?;
         let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_error(
-                "LocalJumpError",
-                "no block given (yield)".to_string(),
-            ));
+            return Err(crate::dispatch::raise_no_block_yield());
         };
         let mut names = read_names(&path)?;
         names.sort();

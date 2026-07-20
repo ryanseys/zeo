@@ -21,9 +21,10 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use spinel_abi::{
-    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, INTERRUPT_CLASS,
-    KEY_ERROR_CLASS, NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS,
-    STOP_ITERATION_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
+    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, FROZEN_ERROR_CLASS,
+    INTERRUPT_CLASS, KEY_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS,
+    NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, SYSTEM_EXIT_CLASS, STOP_ITERATION_CLASS,
+    UNCAUGHT_THROW_ERROR_CLASS,
 };
 
 use crate::dispatch::{
@@ -175,9 +176,10 @@ fn guard_frozen(recv: &RObj, e: &RubyException) -> Result<(), Signal> {
     if e.is_frozen() {
         let cls = class_name(e.class_id).unwrap_or_default();
         let inspected = RubyValue::Object(recv.clone()).inspect_string();
-        return Err(raise_error(
+        return Err(crate::dispatch::raise_error_details(
             "FrozenError",
             format!("can't modify frozen {cls}: {inspected}"),
+            &[("receiver", RubyValue::Object(recv.clone()))],
         ));
     }
     Ok(())
@@ -422,6 +424,78 @@ fn name_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue
     Ok(msg)
 }
 
+/// `KeyError.new(msg = nil, receiver:, key:)` -- the default message plus the
+/// `receiver:`/`key:` keywords the class accepts, which arrive as one trailing
+/// options Hash (the G2 convention). Registered over the shared `initialize` for
+/// `KeyError` and its subclasses.
+fn key_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    // The trailing keyword Hash, if present, is NOT the message.
+    let (msg, kw) = match args.last() {
+        Some(RubyValue::Hash(h)) => (args.first().filter(|_| args.len() > 1).cloned(), Some(h)),
+        _ => (args.first().cloned(), None),
+    };
+    let msg = msg.unwrap_or(RubyValue::Nil);
+    *e.mesg.lock() = msg.clone();
+    if let Some(h) = kw {
+        let get = |name: &str| crate::hash_get(h, &RubyValue::Symbol(Symbol::intern(name)));
+        let key = get("key");
+        if !matches!(key, RubyValue::Nil) {
+            e.set_detail("key", key);
+        }
+        let receiver = get("receiver");
+        if !matches!(receiver, RubyValue::Nil) {
+            e.set_detail("receiver", receiver);
+        }
+    }
+    Ok(msg)
+}
+
+/// `SystemExit.new(status = 0, message = "SystemExit")` -- `status` is an
+/// Integer, or `true`/`false` (0 / 1). Exposes `#status`/`#success?`.
+fn system_exit_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    let (status, msg) = match args.first() {
+        None => (0, None),
+        Some(RubyValue::Bool(b)) => (if *b { 0 } else { 1 }, args.get(1).cloned()),
+        Some(RubyValue::Int(n)) => (*n, args.get(1).cloned()),
+        // A non-status first argument is the message; status defaults to 0.
+        Some(other) => (0, Some(other.clone())),
+    };
+    let message = msg.unwrap_or_else(|| RubyValue::Str(string_new("SystemExit".to_string())));
+    *e.mesg.lock() = message.clone();
+    e.set_detail("status", RubyValue::Int(status));
+    Ok(message)
+}
+
+/// `SystemExit#status` -- the exit status (0 when unset).
+fn exc_status(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(match exc(recv).detail("status") {
+        RubyValue::Int(n) => RubyValue::Int(n),
+        _ => RubyValue::Int(0),
+    })
+}
+
+/// `SystemExit#success?` -- whether the status is 0.
+fn exc_success(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(matches!(exc(recv).detail("status"), RubyValue::Int(0) | RubyValue::Nil)))
+}
+
+/// `LocalJumpError#reason` -- the jump kind (`:noreason`/`:break`/`:return`/...);
+/// `#exit_value` the value carried by the jump.
+fn exc_reason(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(match exc(recv).detail("reason") {
+        RubyValue::Nil => RubyValue::Symbol(Symbol::intern("noreason")),
+        v => v,
+    })
+}
+
+fn exc_exit_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("exit_value"))
+}
+
 /// `Exception#detailed_message(highlight: false, **opts)` -- `"<message>
 /// (<ClassName>)"`. The optional `error_highlight` gem's source-snippet
 /// augmentation is a separate concern and not reproduced; the keyword options
@@ -631,6 +705,9 @@ pub fn register_exception_subclass(
     let is_uncaught_throw = ancestors.contains(&UNCAUGHT_THROW_ERROR_CLASS);
     let is_signal_exception = ancestors.contains(&SIGNAL_EXCEPTION_CLASS);
     let is_interrupt = ancestors.contains(&INTERRUPT_CLASS);
+    let is_local_jump = ancestors.contains(&LOCAL_JUMP_ERROR_CLASS);
+    let is_frozen_error = ancestors.contains(&FROZEN_ERROR_CLASS);
+    let is_system_exit = ancestors.contains(&SYSTEM_EXIT_CLASS);
     registry.register(
         id,
         name,
@@ -665,8 +742,21 @@ pub fn register_exception_subclass(
         registry.define_method(id, Symbol::intern("private_call?"), exc_private_call);
     }
     if is_key_error {
+        registry.define_method(id, Symbol::intern("initialize"), key_error_initialize);
         registry.define_method(id, Symbol::intern("key"), exc_key);
         registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    if is_frozen_error {
+        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    if is_local_jump {
+        registry.define_method(id, Symbol::intern("reason"), exc_reason);
+        registry.define_method(id, Symbol::intern("exit_value"), exc_exit_value);
+    }
+    if is_system_exit {
+        registry.define_method(id, Symbol::intern("initialize"), system_exit_initialize);
+        registry.define_method(id, Symbol::intern("status"), exc_status);
+        registry.define_method(id, Symbol::intern("success?"), exc_success);
     }
     if is_uncaught_throw {
         registry.define_method(id, Symbol::intern("tag"), exc_tag);

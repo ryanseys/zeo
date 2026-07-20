@@ -1670,6 +1670,17 @@ pub fn raise_error_details(
     }
 }
 
+/// The `LocalJumpError` a `yield` with no block raises, carrying `#reason`
+/// `:noreason` (CRuby's reason for a missing block). Shared by every
+/// no-block-yield site so the accessor is populated uniformly.
+pub fn raise_no_block_yield() -> Signal {
+    raise_error_details(
+        "LocalJumpError",
+        "no block given (yield)".to_string(),
+        &[("reason", RubyValue::Symbol(Symbol::intern("noreason")))],
+    )
+}
+
 /// Build (do not raise) a `NameError` VALUE carrying the typed `#name` (a
 /// Symbol) and `#receiver` an `uninitialized constant` reference exposes.
 /// Codegen emits this for a const miss so the boxed error the branch raises or

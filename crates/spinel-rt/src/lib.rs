@@ -61,7 +61,7 @@ pub use dispatch::{
     describe_receiver, downcast_robj, install_class_registry,
     instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, MissingReason,
-    make_name_error, method_name_symbol, raise_error, raise_error_details, raise_method_missing,
+    make_name_error, method_name_symbol, raise_no_block_yield, raise_error, raise_error_details, raise_method_missing,
     raise_stop_iteration, raise_with_cause,
     responds_to, responds_to_value,
     run_initialize,

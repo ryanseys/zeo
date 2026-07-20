@@ -895,10 +895,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let invoke = quote! {
                 match __blk.as_ref() {
                     Some(__b) => __b.as_proc_unchecked(),
-                    None => return Err(spinel_rt::raise_error(
-                        "LocalJumpError",
-                        "no block given (yield)".to_string(),
-                    )),
+                    None => return Err(spinel_rt::raise_no_block_yield()),
                 }
             };
             // No splat: the arguments are a fixed-length list, so they go

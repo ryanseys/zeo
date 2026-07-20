@@ -418,6 +418,15 @@ pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
 /// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
 pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(47);
 
+/// `LocalJumpError` -- exposes `#reason`/`#exit_value`.
+pub const LOCAL_JUMP_ERROR_CLASS: ClassId = exc_id(20);
+
+/// `FrozenError` -- exposes `#receiver` (the frozen object).
+pub const FROZEN_ERROR_CLASS: ClassId = exc_id(23);
+
+/// `SystemExit` -- carries an exit status via `#status`/`#success?`.
+pub const SYSTEM_EXIT_CLASS: ClassId = exc_id(48);
+
 /// `SignalException` -- resolves a signal name/number in `initialize` and
 /// exposes `#signo`/`#signm`.
 pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(49);

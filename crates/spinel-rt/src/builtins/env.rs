@@ -211,10 +211,7 @@ builtin_methods! {
     "each" | "each_pair" => fn env_each(recv, args, block) {
         crate::builtins::arity!(args, 0);
         let Some(RubyValue::Proc(p)) = block else {
-            return Err(crate::dispatch::raise_error(
-                "LocalJumpError",
-                "no block given (yield)".to_string(),
-            ));
+            return Err(crate::dispatch::raise_no_block_yield());
         };
         for (k, v) in pairs() {
             p.call(&[str_val(k), str_val(v)])?;
@@ -346,10 +343,7 @@ builtin_methods! {
 fn require_block(block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
     match block {
         Some(b @ RubyValue::Proc(_)) => Ok(b),
-        _ => Err(crate::dispatch::raise_error(
-            "LocalJumpError",
-            "no block given (yield)".to_string(),
-        )),
+        _ => Err(crate::dispatch::raise_no_block_yield()),
     }
 }
 

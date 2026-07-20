@@ -543,10 +543,7 @@ fn io_readlines(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) 
 
 fn io_each_line(recv: &RubyValue, _args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let Some(RubyValue::Proc(p)) = blk else {
-        return Err(raise_error(
-            "LocalJumpError",
-            "no block given (yield)".to_string(),
-        ));
+        return Err(crate::dispatch::raise_no_block_yield());
     };
     let text = io_read(recv, &[], None)?.to_display_string();
     for l in crate::builtins::string::split_lines(&text) {
