@@ -51,6 +51,28 @@ builtin-reopen mechanism (adding instance methods to a required builtin):
 | ARGF | (core) | ARGV-consuming stream over the IO core |
 | fcntl / etc / rbconfig | `fcntl`/`etc` | constant-only modules — need the module-constant exposure seam, not method tables |
 
+## FFI — the real `ffi` gem, AOT-compiled (#204)
+
+spinel implements the **real `ffi` gem API**, not a custom DSL, so a program
+using it runs identically under CRuby+ffi and spinel (the north star). `require
+"ffi"` is a native no-op; `extend FFI::Library` marks a module; `ffi_lib` and
+`attach_function` are recognized at **compile time** and emit a fn-local
+`extern "C"` declaration with `#[link(name = ..)]` plus a wrapper method that
+marshals `RubyValue`↔C — so the C function is called directly, no libffi and no
+`dlopen`. Both the plain `attach_function :name, [args], ret` and the 4-arg
+rename form `:ruby_name, :c_name, [args], ret` are supported.
+
+**Types (scalar slice):** `:void`, the integer family (`:char`/`:short`/`:int`/
+`:long` and the fixed-width `:int8`…`:int64`), their unsigned twins and
+`:size_t`, `:float`/`:double`, `:bool`, and `:string` (a `const char *` — a
+NUL-terminated copy in, a Ruby String out). A wrong argument type is a
+`TypeError`, exactly as the gem raises. Verified byte-for-byte against
+`ffi 1.17.4` — see `examples/ffi_libc.rb`.
+
+**Follow-ons:** `FFI::Pointer`/`FFI::MemoryPointer`, `FFI::Struct` + `layout`,
+`callback`, enums, `typedef`, and varargs. The native-gem list in `cargo xtask
+gem-compat` is the broader work-list this escape hatch serves.
+
 ## Out of scope (VM internals / tooling)
 
 `objspace`, `rubyvm`, `coverage`, `continuation`, `ripper` (we have ruby-prism),

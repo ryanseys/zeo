@@ -143,6 +143,9 @@ pub fn emit_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream
 /// `Call` arm's docs below).
 pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<String>) {
     match &compiler.hir[id] {
+        // An FFI wrapper body (#204) declares no hoistable locals (only param
+        // reads).
+        HirNode::Ffi(_) => {}
         // A lambda's own body is a fresh, independent local-variable scope
         // (like a non-`.times` escaping block) -- never hoisted into the
         // ENCLOSING scope's prelude.

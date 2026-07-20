@@ -780,6 +780,8 @@ fn register_method(
 /// `codegen::call::emit_proc_or_lambda_value`).
 fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
     match &hir[id] {
+        // An FFI wrapper body (#204) uses no block.
+        HirNode::Ffi(_) => false,
         HirNode::Yield(_) | HirNode::BlockGiven => true,
         HirNode::IvarWrite(_, value)
         | HirNode::LocalWrite(_, value)
@@ -1060,6 +1062,8 @@ pub(crate) fn scan_bare_block_use_body(hir: &Hir, body: &[NodeId]) -> bool {
 /// appear).
 pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
     match &hir[id] {
+        // An FFI wrapper body (#204) references no instance variables.
+        HirNode::Ffi(_) => {}
         HirNode::IvarRead(name) => {
             if !out.contains(name) {
                 out.push(name.clone());

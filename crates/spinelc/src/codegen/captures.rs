@@ -131,6 +131,8 @@ pub fn body_contains_escaping_block(compiler: &Compiler, body: &[NodeId]) -> boo
 
 fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
+        // An FFI wrapper body (#204) contains no block.
+        HirNode::Ffi(_) => false,
         // A lambda literal's own body is a fully self-contained closure
         // boundary (it ALWAYS catches its own `Signal::Return`/`Break`,
         // unconditionally, unlike an ordinary method -- see
@@ -327,6 +329,8 @@ pub fn body_contains_begin(compiler: &Compiler, body: &[NodeId]) -> bool {
 
 fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
+        // An FFI wrapper body (#204) contains no `begin`.
+        HirNode::Ffi(_) => false,
         HirNode::Begin { .. } => true,
         // Same reasoning as `node_contains_escaping_block`'s `Lambda` arm --
         // a lambda's own body is a fully self-contained closure boundary,
@@ -533,6 +537,9 @@ fn walk(
     self_class: Option<crate::compiler::ClassId>,
 ) {
     match &compiler.hir[id] {
+        // An FFI wrapper body (#204) has no escaping block, so nothing of the
+        // enclosing scope is captured through it.
+        HirNode::Ffi(_) => {}
         HirNode::LocalRead(name) => {
             if in_escaping && !param_exclusions.contains(name) {
                 caps.locals.insert(name.clone());

@@ -998,7 +998,9 @@ fn cannot_load(name: &str) -> String {
 fn is_known_native_gem(name: &str) -> bool {
     matches!(
         name,
-        "sqlite3" | "nokogiri" | "pg" | "mysql2" | "ffi" | "bcrypt" | "nio4r" | "puma"
+        // `ffi` is NOT here: spinel provides it (the compile-time FFI frontend,
+        // #204), so `require "ffi"` succeeds via `is_builtin_feature`.
+        "sqlite3" | "nokogiri" | "pg" | "mysql2" | "bcrypt" | "nio4r" | "puma"
             | "grpc" | "protobuf" | "oj" | "msgpack" | "eventmachine" | "sass" | "rmagick"
     )
 }
@@ -1047,7 +1049,12 @@ pub(super) fn is_builtin_feature(feature: &str) -> bool {
     // `io/console` names no gated constant either -- `IO` is core and its
     // `#winsize` is an unconditional row on the IO table, so the require is
     // pure ceremony. Same shape of divergence as `time` above.
-    matches!(feature, "tmpdir" | "set" | "time" | "io/console")
+    // `ffi` names no gated class either: `require "ffi"` is a native no-op that
+    // just activates the compile-time FFI frontend. `extend FFI::Library` /
+    // `attach_function` are recognized at lowering time (parse/mod's
+    // `lower_class_body` FFI pre-scan) and emit `extern "C"` + `#[link]` inline,
+    // so the `FFI` constant itself never has to resolve. See [[ffi-real-gem-api]].
+    matches!(feature, "tmpdir" | "set" | "time" | "io/console" | "ffi")
         || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
 }
 

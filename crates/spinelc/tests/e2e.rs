@@ -20301,3 +20301,58 @@ fn next_from_a_block_passed_to_a_singleton_method_is_its_yield_value() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "[10, 20]\n");
 }
+
+/// The real `ffi` gem API, AOT-compiled (#204): `require "ffi"` is a native
+/// no-op, `extend FFI::Library` marks the module, and `attach_function` (plain
+/// and the 4-arg rename form) emits a compile-time `extern "C"` + `#[link]` and
+/// a wrapper module method. Scalar marshaling (`:int`/`:string`/`:ulong`/
+/// `:double`) is byte-identical to CRuby+ffi -- the whole point of the
+/// CRuby-faithful surface. libc/libm are always present, so this runs anywhere.
+#[test]
+fn ffi_attach_function_calls_c_via_extern() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module LibC
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :abs, [:int], :int
+          attach_function :my_strlen, :strlen, [:string], :ulong
+        end
+        module LibM
+          extend FFI::Library
+          ffi_lib "m"
+          attach_function :pow, [:double, :double], :double
+        end
+        puts LibC.abs(-7)
+        puts LibC.my_strlen("hello world")
+        puts LibM.pow(2.0, 10.0)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n11\n1024.0\n");
+}
+
+/// An FFI integer argument given a non-Integer is a `TypeError`, exactly as the
+/// gem raises -- the marshaling is faithful, not a silent coercion.
+#[test]
+fn ffi_argument_type_mismatch_raises_typeerror() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :abs, [:int], :int
+        end
+        begin
+          L.abs("not an int")
+          puts "no error"
+        rescue TypeError
+          puts "TypeError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "TypeError\n");
+}

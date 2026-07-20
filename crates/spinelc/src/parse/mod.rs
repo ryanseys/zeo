@@ -2934,10 +2934,210 @@ fn lower_class_body(
     // see `lower_class_body_statement`'s docs.
     let mut visibility = Visibility::Public;
     let mut module_function = false;
+    // A module that `extend FFI::Library` (the real `ffi` gem, #204) turns its
+    // `ffi_lib`/`attach_function` directives into synthesized wrapper class
+    // methods over `extern "C"` symbols -- see `lower_ffi_directive`. A
+    // NON-FFI statement in such a module still lowers normally (a module may
+    // mix), so this only re-routes the recognized directives.
+    let is_ffi = stmts.iter().any(is_extend_ffi_library);
+    let mut ffi_lib: Option<String> = None;
     for stmt in &stmts {
+        if is_ffi {
+            if is_extend_ffi_library(stmt) {
+                continue; // `extend FFI::Library` is the marker, no output
+            }
+            if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut out)? {
+                continue;
+            }
+        }
         lower_class_body_statement(result, hir, stmt, &mut visibility, &mut module_function, &mut out)?;
     }
     Ok(out)
+}
+
+/// `extend FFI::Library` -- the marker that turns a module into an FFI library
+/// (the real `ffi` gem's idiom). Recognized syntactically so the `FFI::Library`
+/// constant never has to resolve at runtime.
+fn is_extend_ffi_library(node: &Node<'_>) -> bool {
+    let Some(call) = node.as_call_node() else { return false };
+    if call.receiver().is_some() || call.name().as_slice() != b"extend" {
+        return false;
+    }
+    let Some(args) = call.arguments() else { return false };
+    let mut it = args.arguments().iter();
+    match (it.next(), it.next()) {
+        (Some(arg), None) => const_path_string(&arg).as_deref() == Some("FFI::Library"),
+        _ => false,
+    }
+}
+
+/// Flatten a constant reference (`FFI`, `FFI::Library`, `FFI::Library::LIBC`) to
+/// its `::`-joined spelling, or `None` if it isn't a plain constant path.
+fn const_path_string(node: &Node<'_>) -> Option<String> {
+    if let Some(c) = node.as_constant_read_node() {
+        return Some(String::from_utf8_lossy(c.name().as_slice()).into_owned());
+    }
+    let path = node.as_constant_path_node()?;
+    let name = String::from_utf8_lossy(path.name()?.as_slice()).into_owned();
+    match path.parent() {
+        Some(parent) => Some(format!("{}::{name}", const_path_string(&parent)?)),
+        None => Some(name),
+    }
+}
+
+/// Lower one directive inside an FFI-library module. Returns `true` if it WAS an
+/// FFI directive (`ffi_lib` / `attach_function`), `false` to fall through to the
+/// ordinary class-body lowering.
+fn lower_ffi_directive(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+    ffi_lib: &mut Option<String>,
+    out: &mut Vec<NodeId>,
+) -> PResult<bool> {
+    let Some(call) = node.as_call_node() else { return Ok(false) };
+    if call.receiver().is_some() {
+        return Ok(false);
+    }
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    match call.name().as_slice() {
+        b"ffi_lib" => {
+            // `ffi_lib "m"` / `ffi_lib FFI::Library::LIBC`. The most-recently
+            // declared library links every subsequent `attach_function`.
+            if let Some(first) = args.first() {
+                *ffi_lib = Some(ffi_lib_name(first)?);
+            }
+            Ok(true)
+        }
+        b"attach_function" => {
+            out.push(lower_attach_function(result, hir, &args, ffi_lib.clone())?);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// The library name for `#[link(name = ..)]` from a `ffi_lib` argument. A string
+/// literal is taken verbatim; `FFI::Library::LIBC` maps to the platform C
+/// library (`c`, which resolves to libSystem on macOS). A `.so`/`.dylib` suffix
+/// and a `lib` prefix are stripped -- rustc wants the bare link name.
+fn ffi_lib_name(node: &Node<'_>) -> PResult<String> {
+    if let Some(s) = node.as_string_node() {
+        let raw = String::from_utf8_lossy(s.unescaped()).into_owned();
+        return Ok(strip_lib_name(&raw));
+    }
+    match const_path_string(node).as_deref() {
+        Some("FFI::Library::LIBC") => Ok("c".to_string()),
+        _ => Err("ffi_lib expects a string library name or FFI::Library::LIBC".to_string()),
+    }
+}
+
+/// `libm.so.6` / `libssl.dylib` / `m` -> the bare rustc link name (`m`/`ssl`).
+fn strip_lib_name(raw: &str) -> String {
+    let base = raw.rsplit('/').next().unwrap_or(raw);
+    let base = base.split(['.']).next().unwrap_or(base);
+    base.strip_prefix("lib").unwrap_or(base).to_string()
+}
+
+/// `attach_function :abs, [:int], :int` (plain) or `attach_function :my_len,
+/// :strlen, [:string], :ulong` (the 4-arg rename form) -> a synthesized class
+/// method whose body is a `HirNode::Ffi` over the C symbol.
+fn lower_attach_function(
+    result: &ParseResult,
+    hir: &mut Hir,
+    args: &[Node<'_>],
+    lib: Option<String>,
+) -> PResult<NodeId> {
+    let _ = result;
+    let (ruby_name, c_symbol, types_node, ret_node) = match args.len() {
+        3 => {
+            let name = ffi_symbol_str(&args[0])?;
+            (name.clone(), name, &args[1], &args[2])
+        }
+        4 => (ffi_symbol_str(&args[0])?, ffi_symbol_str(&args[1])?, &args[2], &args[3]),
+        n => {
+            return Err(format!(
+                "attach_function expects 3 or 4 arguments (name, [args], ret), got {n}"
+            ))
+        }
+    };
+    let arg_types = ffi_type_array(types_node)?;
+    let ret = ffi_type_of(&ffi_symbol_str(ret_node)?)?;
+
+    // The wrapper's params: one required positional per C argument, named so a
+    // `LocalRead` in the `Ffi` body reaches it.
+    let param_names: Vec<String> = (0..arg_types.len()).map(|i| format!("__ffi_a{i}")).collect();
+    let call_args: Vec<(NodeId, crate::hir::FfiType)> = param_names
+        .iter()
+        .zip(arg_types)
+        .map(|(name, ty)| (hir.push(HirNode::LocalRead(name.clone())), ty))
+        .collect();
+    let body = vec![hir.push(HirNode::Ffi(crate::hir::FfiCall {
+        symbol: c_symbol,
+        lib,
+        args: call_args,
+        ret,
+    }))];
+    let params = Params { required: param_names, ..Default::default() };
+    Ok(hir.push(HirNode::DefMethod {
+        name: ruby_name,
+        params,
+        body,
+        is_class_method: true,
+        visibility: Visibility::Public,
+    }))
+}
+
+/// A Symbol node's name (`:abs` -> `"abs"`). FFI names/types are always literal
+/// symbols; anything else is a clean rejection.
+fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
+    node.as_symbol_node()
+        .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+        .ok_or_else(|| "expected a literal symbol in an FFI declaration".to_string())
+}
+
+/// `[:int, :string]` -> `[Int(32), Str]`. The argument-type list of an
+/// `attach_function` (a literal array of type symbols).
+fn ffi_type_array(node: &Node<'_>) -> PResult<Vec<crate::hir::FfiType>> {
+    let array = node
+        .as_array_node()
+        .ok_or_else(|| "attach_function's argument list must be a literal array".to_string())?;
+    array
+        .elements()
+        .iter()
+        .map(|el| ffi_type_of(&ffi_symbol_str(&el)?))
+        .collect()
+}
+
+/// Map a real `ffi`-gem type keyword to our `FfiType`. Covers the scalar
+/// surface plus the gem's spellings (`:string`, `:pointer`, the fixed-width
+/// `:intN`/`:uintN`, `:size_t`). LP64 (`:long`/`:ulong` = 64), matching macOS
+/// and Linux. Unknown -> a clean, greppable error naming the type.
+fn ffi_type_of(sym: &str) -> PResult<crate::hir::FfiType> {
+    use crate::hir::FfiType::*;
+    Ok(match sym {
+        "void" => Void,
+        "char" | "int8" => Int(8),
+        "short" | "int16" => Int(16),
+        "int" | "int32" => Int(32),
+        "long" | "long_long" | "int64" | "ssize_t" => Int(64),
+        "uchar" | "uint8" => Uint(8),
+        "ushort" | "uint16" => Uint(16),
+        "uint" | "uint32" => Uint(32),
+        "ulong" | "ulong_long" | "uint64" | "size_t" => Uint(64),
+        "float" => Float(32),
+        "double" => Float(64),
+        "bool" => Bool,
+        "string" => Str,
+        other => {
+            return Err(format!(
+                "unsupported FFI type `:{other}` (#204 scalar subset; pointer/struct/callback types are follow-ons)"
+            ))
+        }
+    })
 }
 
 /// `attr_reader :a, :b` -> a `DefMethod` getter per name (`body: [IvarRead]`).

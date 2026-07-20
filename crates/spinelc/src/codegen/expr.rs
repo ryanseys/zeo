@@ -219,6 +219,7 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::New { .. }
         | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
+        | HirNode::Ffi(_)
         | HirNode::Eval(_)
         // A box-scoped splice classifies like the eval it rode in on; a
         // handle literal is an ordinary expression value.
@@ -831,6 +832,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let b = super::stmt::emit_body(cx, body, false);
             quote! { { #b } }
         }
+        // A synthesized `attach_function` wrapper body (#204): declare the C
+        // symbol `extern "C"` (fn-locally, `#[link]`ed), marshal each argument,
+        // call it, wrap the result. See `emit_ffi_call`.
+        HirNode::Ffi(call) => emit_ffi_call(cx, call),
         // The `Eval` emit shape with the box switched (Phase 18): the body
         // resolves classes/constants/globals against `box_id` -- the AOT
         // loading-box context.
@@ -1532,4 +1537,103 @@ pub(super) fn emit_const_write_stmt(cx: &Ctx, scope: Option<&str>, name: &str, v
         return quote! { return Err(spinel_rt::Signal::Raise(#err)); };
     };
     quote! { spinel_rt::const_set(#owner, #name, #value); }
+}
+
+// ---------------------------------------------------------------------------
+// FFI (#204): emit an `attach_function` wrapper body -- a self-contained block
+// that declares the C symbol `extern "C"` (fn-locally, `#[link(name = ..)]`ed,
+// so rustc links the library with no build-step change), marshals each Ruby
+// argument to its C type, calls the symbol, and wraps the C result back into a
+// `RubyValue`. The scalar type surface lives in `crate::hir::FfiType`.
+// ---------------------------------------------------------------------------
+
+fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
+    let sym = quote::format_ident!("{}", call.symbol);
+    let mut extern_params = Vec::new();
+    let mut bindings = Vec::new();
+    let mut call_idents = Vec::new();
+    for (i, (arg_id, ty)) in call.args.iter().enumerate() {
+        let pname = quote::format_ident!("__ffi_arg{}", i);
+        let cty = ffi_c_type(*ty);
+        extern_params.push(quote! { #pname: #cty });
+        let val = emit_expr(cx, *arg_id);
+        bindings.push(ffi_marshal_in(*ty, &pname, val));
+        call_idents.push(quote! { #pname });
+    }
+    let ret_cty = ffi_c_type(call.ret);
+    let link = match &call.lib {
+        Some(lib) => quote! { #[link(name = #lib)] },
+        None => quote! {},
+    };
+    let wrap = ffi_wrap_ret(call.ret);
+    quote! {
+        {
+            #link
+            extern "C" {
+                fn #sym(#(#extern_params),*) -> #ret_cty;
+            }
+            #(#bindings)*
+            let __ffi_ret = unsafe { #sym(#(#call_idents),*) };
+            #wrap
+        }
+    }
+}
+
+/// The Rust type mirroring one C ABI type (LP64: `i32`==C `int`, `i64`==C
+/// `long`, `u64`==`size_t`). `Void` is `()` -- only valid as a return.
+fn ffi_c_type(ty: crate::hir::FfiType) -> TokenStream {
+    use crate::hir::FfiType::*;
+    match ty {
+        Void => quote! { () },
+        Int(w) => {
+            let t = quote::format_ident!("i{}", w);
+            quote! { #t }
+        }
+        Uint(w) => {
+            let t = quote::format_ident!("u{}", w);
+            quote! { #t }
+        }
+        Float(w) => {
+            let t = quote::format_ident!("f{}", w);
+            quote! { #t }
+        }
+        Bool => quote! { bool },
+        Str => quote! { *const ::std::os::raw::c_char },
+    }
+}
+
+/// `let __ffi_argN: <cty> = <marshal the RubyValue `val`>;` -- a `:string` also
+/// binds a `CString` owner that outlives the call (kept in the block scope).
+fn ffi_marshal_in(
+    ty: crate::hir::FfiType,
+    pname: &proc_macro2::Ident,
+    val: TokenStream,
+) -> TokenStream {
+    use crate::hir::FfiType::*;
+    let cty = ffi_c_type(ty);
+    match ty {
+        Int(_) | Uint(_) => quote! { let #pname: #cty = spinel_rt::ffi::to_i64(&#val)? as #cty; },
+        Float(_) => quote! { let #pname: #cty = spinel_rt::ffi::to_f64(&#val)? as #cty; },
+        Bool => quote! { let #pname: bool = spinel_rt::ffi::to_bool(&#val); },
+        Str => {
+            let owner = quote::format_ident!("{}_owner", pname);
+            quote! {
+                let #owner = spinel_rt::ffi::to_cstring(&#val)?;
+                let #pname: #cty = #owner.as_ptr();
+            }
+        }
+        Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
+    }
+}
+
+/// Wrap the C return value `__ffi_ret` back into a `RubyValue`.
+fn ffi_wrap_ret(ty: crate::hir::FfiType) -> TokenStream {
+    use crate::hir::FfiType::*;
+    match ty {
+        Void => quote! { { let () = __ffi_ret; spinel_rt::RubyValue::Nil } },
+        Int(_) | Uint(_) => quote! { spinel_rt::ffi::from_i64(__ffi_ret as i64) },
+        Float(_) => quote! { spinel_rt::ffi::from_f64(__ffi_ret as f64) },
+        Bool => quote! { spinel_rt::ffi::from_bool(__ffi_ret) },
+        Str => quote! { unsafe { spinel_rt::ffi::from_cstr(__ffi_ret) } },
+    }
 }

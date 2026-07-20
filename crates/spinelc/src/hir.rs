@@ -883,6 +883,46 @@ pub struct RegexpFlags {
     pub multiline: bool,
 }
 
+/// A C ABI type for one FFI argument or return value (#204, the real `ffi`
+/// gem's type keywords). The scalar subset: enough for a faithful
+/// `attach_function` over libc/libm and most C entry points. Each maps to a C
+/// type codegen declares in the `extern "C"` block and to the RubyValue↔C
+/// marshaling it emits. Pointers/structs/callbacks are follow-on increments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiType {
+    Void,
+    /// `:char`/`:int8`, `:short`/`:int16`, `:int`/`:int32`, `:long`/`:int64`.
+    Int(u8), // width in BITS: 8/16/32/64
+    /// `:uchar`/`:uint8` … `:ulong`/`:uint64`, and `:size_t` (→ 64 here, LP64).
+    Uint(u8),
+    /// `:float` (32) / `:double` (64).
+    Float(u8),
+    /// `:bool` -- a C `bool`/`_Bool`.
+    Bool,
+    /// `:string` -- a C `const char *`. As an argument: a NUL-terminated copy
+    /// of the Ruby String, valid for the call. As a return: read the C string
+    /// back into a Ruby String (`nil` for a NULL pointer).
+    Str,
+}
+
+/// One C function a module `attach_function`'d (#204). The synthesized wrapper
+/// method's whole body IS this node -- see `codegen`'s `emit_ffi_call`, which
+/// declares the `extern "C"` symbol fn-locally (with `#[link(name = ..)]`, so no
+/// build-step change is needed), marshals each argument, calls it, and wraps the
+/// result back into a `RubyValue`.
+pub struct FfiCall {
+    /// The C symbol to declare and call (the `attach_function` C name, which may
+    /// differ from the Ruby method name in the 4-arg rename form).
+    pub symbol: String,
+    /// The library to `#[link(name = ..)]`; `None` relies on the always-linked
+    /// libc/libSystem.
+    pub lib: Option<String>,
+    /// Each argument: the wrapper param to read (`LocalRead`) and its C type.
+    pub args: Vec<(NodeId, FfiType)>,
+    /// The C return type -- governs the wrap back to a `RubyValue`.
+    pub ret: FfiType,
+}
+
 /// A small, real enum instead of spinel's ~115 string-typed `SP_NODE_KINDS`
 /// that every pass has to `sp_streq` against. Sized to exactly what the
 /// spike's 7 examples need; growing it is additive (new variants), matching
@@ -1267,6 +1307,9 @@ pub enum HirNode {
     /// see docs/EVAL_VM.md for the future embedded-interpreter design those
     /// would need.
     Eval(Vec<NodeId>),
+    /// The body of a synthesized `attach_function` wrapper (#204): marshal args,
+    /// call the C symbol, wrap the result. See `FfiCall`.
+    Ffi(FfiCall),
     /// A `Ruby::Box` context switch (Phase 18): the universal wrapper every
     /// box-scoped splice lowers into -- a `box.require`d file's statements,
     /// a `box.eval` body, and a `box::X` external-access expression all

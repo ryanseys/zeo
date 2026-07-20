@@ -17,6 +17,7 @@ pub mod encoding;
 // interpreter internals behind the `eval-vm` feature.
 mod eval_vm;
 mod ext;
+pub mod ffi;
 mod exec;
 mod fiber;
 mod globals;

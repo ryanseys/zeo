@@ -44,6 +44,9 @@ pub fn track_extra(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, 
 /// statements read it.
 fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, locals: &mut HashMap<String, TyKind>, id: NodeId) {
     match &compiler.hir[id] {
+        // An `attach_function` wrapper body (#204) assigns no locals -- it
+        // reads only its own params -- so there is nothing to track.
+        HirNode::Ffi(_) => {}
         // A lambda's own body is a fresh, independent scope for local-
         // variable TYPE tracking purposes -- same treatment a non-`.times`
         // escaping block already gets from this function's `Call` arm

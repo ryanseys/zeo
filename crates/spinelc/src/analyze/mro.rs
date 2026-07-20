@@ -546,6 +546,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
     use crate::hir::{ArrayElem, StrPart};
     let hir = &compiler.hir;
     match &hir[id] {
+        // An FFI wrapper body (#204) references no constants.
+        HirNode::Ffi(_) => {}
         HirNode::ClassRef(name) => {
             if compiler.resolve_class(name, cref, 0).is_none() && !out.contains(name) {
                 out.push(name.clone());
@@ -792,6 +794,8 @@ fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[Class
 fn collect_cvars(hir: &crate::hir::Hir, id: crate::hir::NodeId, out: &mut Vec<String>) {
     use crate::hir::{ArrayElem, StrPart};
     match &hir[id] {
+        // An FFI wrapper body (#204) references no class variables.
+        HirNode::Ffi(_) => {}
         HirNode::ClassVarRead(name) => {
             if !out.contains(name) {
                 out.push(name.clone());
