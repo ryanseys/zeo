@@ -1,37 +1,66 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1812/2160 passing (83.9%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `bdaa652`
+Suite `spinel` — **1924/2231 passing (86.2%)** — oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]` — spinel-rs `7d88da5`
 
 | verdict | count |
 |---|---|
-| PASS | 1812 |
-| FAIL_OUTPUT | 342 |
-| FAIL_COMPILE | 3 |
+| PASS | 1924 |
+| FAIL_OUTPUT | 275 |
+| FAIL_COMPILE | 1 |
 | FAIL_RUSTC | 1 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
 | TIMEOUT_RUN | 2 |
 | ORACLE_FAIL | 0 |
-| SKIP | 0 |
-| **TOTAL** | **2160** |
+| SKIP | 28 |
+| **TOTAL** | **2231** |
 
 ## Top failure categories
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 16 | missing-method:ffi_func | P | ffi_ptr_nil | uncaught exception: undefined method 'ffi_func' for module LibC |
-| 5 | arity-panic | g | issue_3093 | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| 5 | missing-method:ffi_lib | P | ffi_const_nested_module_path | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
-| 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
-| 4 | missing-method:key | P | issue_3027 | uncaught exception: undefined method 'key' for an instance of KeyError |
-| 4 | missing-method:new | P | issue_2968 | uncaught exception: undefined method 'new' for class Dir |
-| 3 | auto-no-block-given-yield-cac6 | ? | string_enum_inspect_source | uncaught exception: no block given (yield) |
-| 3 | missing-const:Signal | P | issue_3105 | uncaught exception: uninitialized constant Signal |
-| 3 | missing-method:+ | P | enumerator_ops | uncaught exception: undefined method '+' for an instance of Enumerator |
-| 3 | missing-method:define_method | P | value_position_misc | uncaught exception: undefined method 'define_method' for main |
+| 4 | arity-panic | g | bundle_tiny_string | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
+| 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
+| 3 | auto-uncaught-signal-escaped-the-top-level-break-00b3 | ? | issue_3024b | uncaught signal escaped the top level: Break(7) |
+| 2 | auto-can-convert-hash-into-an-exact-number-typeerror-6187 | ? | time_strftime_z_minimal | uncaught exception: can't convert Hash into an exact number (TypeError) |
+| 2 | auto-can-iterate-from-string-typeerror-987c | ? | bundle_tiny_num | uncaught exception: can't iterate from String (TypeError) |
+| 2 | auto-index-too-small-for-array-minimum-indexerror-4878 | ? | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
+| 2 | auto-no-block-given-yield-localjumperror-1be0 | ? | string_enum_inspect_source | uncaught exception: no block given (yield) (LocalJumpError) |
+| 2 | missing-const:TCPServer | P | socket_tcp_thread | uncaught exception: uninitialized constant TCPServer (NameError) |
+| 2 | missing-method:>= | P | gc_stat_string_heap | uncaught exception: undefined method '>=' for nil (NoMethodError) |
+| 2 | missing-method:[] | P | param_body_hash_inference | uncaught exception: undefined method '[]' for nil (NoMethodError) |
 
 ## Skipped tests
 
-(none)
+| test | reason |
+|---|---|
+| empty_array_push_ptr | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_array_specs_decl | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_binstr_recv | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_binstr_ws_frame | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_buffer_reader | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_callback | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_cflags_fold_forms | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_const | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_const_leaf_collision | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_const_nested_module_path | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_foreign_ptr_gc | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_int_arg_bigint | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_int_arg_poly_value | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_libc_libm_basic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_poly_int_array | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_ptr_array | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_ptr_int_literal | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_ptr_nil | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_str_arg_poly_value | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_struct | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_variadic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_void_return | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| ffi_write_roundtrip | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| i1011 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| i1017 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| sp_crypto_basic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| sp_crypto_sha1 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| sp_net_basic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
 
 Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.

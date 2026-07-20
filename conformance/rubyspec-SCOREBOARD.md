@@ -1,6 +1,6 @@
 # Conformance scoreboard
 
-Suite `rubyspec` — **6/67 passing (9.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]` — spinel-rs `bdaa652`
+Suite `rubyspec` — **6/67 passing (9.0%)** — oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]` — spinel-rs `7d88da5`
 
 | verdict | count |
 |---|---|
@@ -23,12 +23,12 @@ Suite `rubyspec` — **6/67 passing (9.0%)** — oracle `ruby 4.0.5 (2026-05-20 
 | 7 | missing-method:raise | P | retry_spec | ERROR: The retry statement raises a SyntaxError when used outside of a rescue statement: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
 | 2 | missing-const:ScratchPad | P | BEGIN_spec | ERROR: The BEGIN keyword returns the top-level script's filename for __FILE__: NameError: uninitialized constant ScratchPad |
 | 2 | toplevel-node-in-expr | ? | private_spec | internal error: unexpected top-level-only node in expression position |
-| 1 | auto-eval-unsupported-syntax-in-this-build-the-eval-fc82 | ? | encoding_spec | uncaught exception: eval: unsupported syntax in this build (the eval VM does not yet cover this node) |
+| 1 | auto-eval-unsupported-syntax-in-this-build-the-eval-dfcc | ? | encoding_spec | uncaught exception: eval: unsupported syntax in this build (the eval VM does not yet cover this node) (NotImplementedError) |
+| 1 | auto-fail-can-be-redefined-and-receive-frozen-string-9423 | ? | execution_spec | FAIL: %x can be redefined and receive a frozen string as argument: expected false == true |
 | 1 | auto-fail-the-until-modifier-with-begin-end-block-c646 | ? | until_spec | FAIL: The until modifier with begin .. end block restart the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
 | 1 | auto-fail-the-while-modifier-with-begin-end-block-6764 | ? | while_spec | FAIL: The while modifier with begin .. end block restarts the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
-| 1 | auto-it-behaves-like-b32f | ? | END_spec | uncaught exception: it_behaves_like |
+| 1 | auto-it-behaves-like-mspecliteunsupported-cd63 | ? | END_spec | uncaught exception: it_behaves_like (MSpecLiteUnsupported) |
 | 1 | auto-users-ryanseys-dev-spec-language-array-spec-rb-e598 | ? | array_spec | /Users/ryanseys/dev/spec/language/array_spec.rb: unsupported syntax at "\"foo\" => :bar, baz: 42" (spike handles only what the 7 example programs need) |
-| 1 | auto-users-ryanseys-dev-spec-language-assignments-spec-rb-6e8b | ? | assignments_spec | /Users/ryanseys/dev/spec/language/assignments_spec.rb: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 
 ## Skipped tests
 

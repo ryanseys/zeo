@@ -1,7 +1,7 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=bdaa652
+# suite=rubyspec corpus=67 ruby="ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]" spinel-rs=7d88da5
 # PASS=6 FAIL_OUTPUT=13 FAIL_COMPILE=44 FAIL_RUSTC=1 FAIL_RUN=3 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
-END_spec	FAIL_RUN	run	auto-it-behaves-like-b32f
+END_spec	FAIL_RUN	run	auto-it-behaves-like-mspecliteunsupported-cd63
 alias_spec	FAIL_COMPILE	compile	spike-misc
 and_spec	PASS	-	-
 array_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-array-spec-rb-e598
@@ -16,9 +16,9 @@ constants_spec	FAIL_COMPILE	compile	spike-misc
 def_spec	FAIL_COMPILE	compile	spike-misc
 defined_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-defined-spec-rb-b590
 delegation_spec	FAIL_OUTPUT	expect	missing-method:raise
-encoding_spec	FAIL_RUN	run	auto-eval-unsupported-syntax-in-this-build-the-eval-fc82
+encoding_spec	FAIL_RUN	run	auto-eval-unsupported-syntax-in-this-build-the-eval-dfcc
 ensure_spec	FAIL_COMPILE	compile	spike-misc
-execution_spec	FAIL_OUTPUT	expect	missing-method:singleton_class
+execution_spec	FAIL_OUTPUT	expect	auto-fail-can-be-redefined-and-receive-frozen-string-9423
 file_spec	FAIL_COMPILE	compile	spike-misc
 for_spec	FAIL_COMPILE	compile	splat
 hash_spec	FAIL_COMPILE	compile	spike-misc

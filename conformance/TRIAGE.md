@@ -2,116 +2,67 @@
 
 Failing tests grouped by normalized failure message, ranked by how many
 tests each gap blocks. Clusters refer to the implementation plan's gap
-families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]`.
+families. Oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]`.
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| P | missing-method:ffi_func | 16 | ffi_ptr_nil, sp_crypto_sha1, ffi_binstr_ws_frame | uncaught exception: undefined method 'ffi_func' for module LibC |
-| g | arity-panic | 5 | issue_3093, str_method_nil_arg_no_segv, string_enum_arg_forms | uncaught exception: wrong number of arguments (given 1, expected 0) |
-| P | missing-method:ffi_lib | 5 | ffi_const_nested_module_path, ffi_foreign_ptr_gc, ffi_int_arg_bigint | uncaught exception: undefined method 'ffi_lib' for module Outer::CMath |
-| P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder |
-| P | missing-method:key | 4 | issue_3027, issue_3028, empty_hash_key_context | uncaught exception: undefined method 'key' for an instance of KeyError |
-| P | missing-method:new | 4 | issue_2968, basicobject_new, dir_handle_objects | uncaught exception: undefined method 'new' for class Dir |
-| ? | auto-no-block-given-yield-cac6 | 3 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy, external_singleton_def | uncaught exception: no block given (yield) |
-| P | missing-const:Signal | 3 | issue_3105, signal_module_surface, issue_3076 | uncaught exception: uninitialized constant Signal |
-| P | missing-method:+ | 3 | enumerator_ops, instance_exec_dynamic_ivar, enumerable_chain_enumerator | uncaught exception: undefined method '+' for an instance of Enumerator |
-| P | missing-method:define_method | 3 | value_position_misc, analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for main |
-| P | missing-method:ffi_buffer | 3 | ffi_write_roundtrip, i1017, ffi_buffer_reader | uncaught exception: undefined method 'ffi_buffer' for module Buf |
-| P | missing-method:length | 3 | bundle_misc_c_36, param_lengthlike_body_widen, regexp_match_data | uncaught exception: undefined method 'length' for nil |
-| P | missing-method:name | 3 | issue_3034, exception_value_flow_match, exception_value_parity | uncaught exception: undefined method 'name' for an instance of NameError |
-| P | missing-method:signo | 3 | issue_3039, issue_3073, issue_3074 | uncaught exception: undefined method 'signo' for an instance of Interrupt |
-| ? | auto-can-convert-hash-into-an-exact-number-778a | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number |
-| ? | auto-index-too-small-for-array-minimum-90af | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 |
-| ? | auto-no-implicit-conversion-of-float-into-integer-32aa | 2 | issue_3092, pack_float_directives | uncaught exception: no implicit conversion of Float into Integer |
-| ? | auto-no-implicit-conversion-of-rational-into-integer-6e6a | 2 | time_fractional_seconds, issue_3091 | uncaught exception: no implicit conversion of Rational into Integer |
-| ? | auto-outside-method-88d5 | 2 | singleton_class_object, singleton_method_object | `super` outside a method |
-| P | missing-const:ARGF | 2 | argf_reads_args, argf_class_no_args | uncaught exception: uninitialized constant ARGF |
-| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil |
-| P | missing-method:[] | 2 | param_body_hash_inference, multi_write_call_rhs_as_expr | uncaught exception: undefined method '[]' for nil |
-| P | missing-method:binding | 2 | binding_lvget, unsupported_feature_diagnostics | uncaught exception: undefined method 'binding' for main |
-| P | missing-method:class_eval | 2 | class_eval_reopen, class_eval_value_form | uncaught exception: undefined method 'class_eval' for class Gadget |
-| P | missing-method:read | 2 | poly_keyed_hash_pipeline, io_class_methods_surface | uncaught exception: undefined method 'read' for class 'Class' |
-| P | missing-method:transfer | 2 | fiber_error_guards, fiber_transfer_root | uncaught exception: undefined method 'transfer' for an instance of Fiber |
-| P | missing-method:trap | 2 | bundle_io_sys, signal_trap_stub | uncaught exception: undefined method 'trap' for main |
-| ? | auto-bye-now-a11b | 1 | issue_3077 | bye now |
-| ? | auto-can-coerce-complex-into-float-4a45 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float |
-| ? | auto-can-convert-proc-into-integer-bd61 | 1 | enumerator_size | uncaught exception: can't convert Proc into Integer |
-| ? | auto-can-convert-time-into-an-exact-number-7699 | 1 | time_at_kinds_string_ctor | uncaught exception: can't convert Time into an exact number |
-| ? | auto-can-iterate-from-string-c4d1 | 1 | bundle_tiny_num | uncaught exception: can't iterate from String |
-| ? | auto-can-modify-frozen-string-plain-a903 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" |
-| ? | auto-error-unrecognized-escape-sequence-9804 | 1 | regexp_line_anchors | error: unrecognized escape sequence |
+| g | arity-panic | 4 | bundle_tiny_string, issue_3057, str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
+| P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
+| ? | auto-uncaught-signal-escaped-the-top-level-break-00b3 | 3 | issue_3024b, valued_break_proc, issue_3024 | uncaught signal escaped the top level: Break(7) |
+| ? | auto-can-convert-hash-into-an-exact-number-typeerror-6187 | 2 | time_strftime_z_minimal, time_at_in_offset | uncaught exception: can't convert Hash into an exact number (TypeError) |
+| ? | auto-can-iterate-from-string-typeerror-987c | 2 | bundle_tiny_num, issue_3064 | uncaught exception: can't iterate from String (TypeError) |
+| ? | auto-index-too-small-for-array-minimum-indexerror-4878 | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
+| ? | auto-no-block-given-yield-localjumperror-1be0 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) (LocalJumpError) |
+| P | missing-const:TCPServer | 2 | socket_tcp_thread, socket_tcp_basic | uncaught exception: uninitialized constant TCPServer (NameError) |
+| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil (NoMethodError) |
+| P | missing-method:[] | 2 | param_body_hash_inference, multi_write_call_rhs_as_expr | uncaught exception: undefined method '[]' for nil (NoMethodError) |
+| P | missing-method:define_method | 2 | analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
+| P | missing-method:length | 2 | param_lengthlike_body_widen, bundle_misc_c_36 | uncaught exception: undefined method 'length' for nil (NoMethodError) |
+| ? | auto-can-coerce-complex-into-float-typeerror-9cc0 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
+| ? | auto-can-convert-time-into-an-exact-number-typeerror-0b64 | 1 | time_at_kinds_string_ctor | uncaught exception: can't convert Time into an exact number (TypeError) |
+| ? | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
+| ? | auto-error-unrecognized-escape-sequence-regexperror-2794 | 1 | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-constant-name-or-path-or-5361 | 1 | struct_inherit | expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
-| ? | auto-hash-can-be-coerced-into-integer-8806 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer |
-| ? | auto-nan-22ee | 1 | float_round_truncate_ndigits | uncaught exception: NaN |
-| ? | auto-no-implicit-conversion-of-hash-into-integer-cef8 | 1 | issue_3047 | uncaught exception: no implicit conversion of Hash into Integer |
-| ? | auto-not-file-5c85 | 1 | stdin_io | uncaught exception: not a file |
-| ? | auto-parsing-error-at-position-invalid-back-reference-cd6e | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference |
-| ? | auto-parsing-error-at-position-invalid-character-class-e1f7 | 1 | regexp_encoding_introspection | uncaught exception: Parsing error at position 5: Invalid character class |
-| ? | auto-tried-to-create-proc-object-without-block-ab8d | 1 | constant_path | uncaught exception: tried to create Proc object without a block |
-| ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') |
-| ? | auto-uncaught-signal-escaped-the-top-level-break-00b3 | 1 | valued_break_proc | uncaught signal escaped the top level: Break(1) |
+| ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
+| ? | auto-infinity-floatdomainerror-feb3 | 1 | issue_3011 | uncaught exception: -Infinity (FloatDomainError) |
+| ? | auto-integer-can-be-coerced-into-integer-typeerror-b387 | 1 | issue_3006 | uncaught exception: Integer can't be coerced into Integer (TypeError) |
+| ? | auto-invalid-argument-argumenterror-cf9c | 1 | issue_3058 | uncaught exception: invalid argument - 1180591620717411303424 (ArgumentError) |
+| ? | auto-no-implicit-conversion-of-float-into-integer-typeerror-0627 | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer (TypeError) |
+| ? | auto-no-implicit-conversion-of-rational-into-integer-typeerror-8b67 | 1 | time_fractional_seconds | uncaught exception: no implicit conversion of Rational into Integer (TypeError) |
+| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_17133 (Errno::ENOENT) |
+| ? | auto-not-file-ioerror-6d84 | 1 | stdin_io | uncaught exception: not a file (IOError) |
+| ? | auto-parsing-error-at-position-invalid-back-reference-regexperror-60c6 | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference (RegexpError) |
+| ? | auto-parsing-error-at-position-invalid-character-class-regexperror-db37 | 1 | regexp_encoding_introspection | uncaught exception: Parsing error at position 5: Invalid character class (RegexpError) |
+| ? | auto-tried-to-create-proc-object-without-block-argumenterror-b133 | 1 | constant_path | uncaught exception: tried to create Proc object without a block (ArgumentError) |
+| ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
 | ? | auto-undefined-group-name-reference-nope-123c | 1 | matchdata_named_groups | undefined group name reference: nope |
-| ? | auto-wrong-argument-type-string-expected-regexp-87a8 | 1 | string_scan_literal | uncaught exception: wrong argument type String (expected Regexp) |
-| P | missing-const:File::FNM_DOTMATCH | 1 | dir_full_surface | uncaught exception: uninitialized constant File::FNM_DOTMATCH |
-| P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line |
-| P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL |
-| P | missing-const:Process::PRIO_PROCESS | 1 | issue_3046 | uncaught exception: uninitialized constant Process::PRIO_PROCESS |
-| P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers |
-| P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil |
-| P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil |
-| P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil |
-| P | missing-method:Integer | 1 | expr_retry_equal_curry_methodobj | uncaught exception: undefined method 'Integer' for class 'Object' |
-| P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber |
-| P | missing-method:args | 1 | issue_3042 | uncaught exception: undefined method 'args' for an instance of NoMethodError |
-| P | missing-method:attr | 1 | issue_2952 | uncaught exception: undefined method 'attr' for class C001 |
-| P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute |
-| P | missing-method:begin | 1 | i974 | uncaught exception: undefined method 'begin' for an instance of MatchData |
-| P | missing-method:birthtime | 1 | issue_2985 | uncaught exception: undefined method 'birthtime' for class File |
-| P | missing-method:block_given? | 1 | block_given_block_param | uncaught exception: undefined method 'block_given?' for main |
-| P | missing-method:bytebegin | 1 | matchdata_values_at_byteoffset | uncaught exception: undefined method 'bytebegin' for an instance of MatchData |
-| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for nil |
-| P | missing-method:callback | 1 | ffi_gem_compat | uncaught exception: undefined method 'callback' for module LibC |
-| P | missing-method:caller | 1 | kernel_caller_wired | uncaught exception: undefined method 'caller' for main |
-| P | missing-method:caller_locations | 1 | caller_locations | uncaught exception: undefined method 'caller_locations' for main |
-| P | missing-method:chmod | 1 | issue_3005 | uncaught exception: undefined method 'chmod' for class File |
-| P | missing-method:chown | 1 | issue_3104 | uncaught exception: undefined method 'chown' for an instance of File |
-| P | missing-method:class_exec | 1 | class_exec_def_body | uncaught exception: undefined method 'class_exec' for class C |
-| P | missing-method:clock_getres | 1 | issue_3045 | uncaught exception: undefined method 'clock_getres' for module Process |
-| P | missing-method:const_set | 1 | module_const_set | uncaught exception: undefined method 'const_set' for class Box |
-| P | missing-method:count | 1 | env_full_surface | uncaught exception: undefined method 'count' for an instance of Object |
-| P | missing-method:deconstruct_keys | 1 | issue_3015 | uncaught exception: undefined method 'deconstruct_keys' for an instance of MatchData |
-| P | missing-method:detailed_message | 1 | exception_detailed_message | uncaught exception: undefined method 'detailed_message' for an instance of RuntimeError |
-| P | missing-method:each_value | 1 | env_grep_lazy_followups | uncaught exception: undefined method 'each_value' for an instance of Object |
-| P | missing-method:ffi_callback | 1 | ffi_callback | uncaught exception: undefined method 'ffi_callback' for module L |
-| P | missing-method:ffi_cflags | 1 | i1011 | uncaught exception: undefined method 'ffi_cflags' for module Pathy |
-| P | missing-method:ffi_const | 1 | ffi_const | uncaught exception: undefined method 'ffi_const' for module Flags |
-| P | missing-method:ffi_struct | 1 | ffi_struct | uncaught exception: undefined method 'ffi_struct' for module M |
-| P | missing-method:foo | 1 | poly_keyed_hash_method_dedup | uncaught exception: undefined method 'foo' for class 'Class' |
-| P | missing-method:format | 1 | splat_print_builtins | uncaught exception: undefined method 'format' for main |
-| P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for main |
-| P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer |
-| P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for nil |
-| P | missing-method:kill | 1 | thread_kill_raise | uncaught exception: undefined method 'kill' for an instance of Thread |
-| P | missing-method:lineno | 1 | io_instance_read_surface | uncaught exception: undefined method 'lineno' for an instance of File |
-| P | missing-method:list | 1 | thread_list | uncaught exception: undefined method 'list' for class Thread |
-| P | missing-method:match | 1 | matchdata_methods | uncaught exception: undefined method 'match' for an instance of MatchData |
-| P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB |
-| P | missing-method:open | 1 | wave_followups_2833 | uncaught exception: undefined method 'open' for class Dir |
-| P | missing-method:pipe | 1 | io_pipe | uncaught exception: undefined method 'pipe' for class IO |
-| P | missing-method:pipe? | 1 | file_surface_extended | uncaught exception: undefined method 'pipe?' for class File |
-| P | missing-method:proc | 1 | proc_compose_curry_forward | uncaught exception: undefined method 'proc' for main |
-| P | missing-method:receiver | 1 | issue_3068 | uncaught exception: undefined method 'receiver' for an instance of NoMethodError |
-| P | missing-method:remove_instance_variable | 1 | issue_3020 | uncaught exception: undefined method 'remove_instance_variable' for an instance of Box |
-| P | missing-method:reset | 1 | set_conformance_batch2 | uncaught exception: undefined method 'reset' for an instance of Set |
-| P | missing-method:size | 1 | lazy_size | uncaught exception: undefined method 'size' for an instance of Enumerator::Lazy |
-| P | missing-method:stat | 1 | scoped_builtin_class_values | uncaught exception: undefined method 'stat' for class File |
-| P | missing-method:tag | 1 | issue_3087 | uncaught exception: undefined method 'tag' for an instance of UncaughtThrowError |
-| P | missing-method:uid | 1 | issue_3043 | uncaught exception: undefined method 'uid' for module Process |
-| P | missing-method:value? | 1 | env_mutation_surface | uncaught exception: undefined method 'value?' for an instance of Object |
-| P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer |
-| k | pattern-shapes | 1 | case_in_matchdata_deconstruct | uncaught exception: no matching pattern |
-| ! | rustc-failure | 1 | data_reopen_reader | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-7df811a683e4903d.rs) |
+| ? | auto-wrong-argument-type-string-expected-regexp-typeerror-4d95 | 1 | string_scan_literal | uncaught exception: wrong argument type String (expected Regexp) (TypeError) |
+| P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |
+| P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL (NameError) |
+| P | missing-const:Process::Tms | 1 | issue_3044 | uncaught exception: uninitialized constant Process::Tms (NameError) |
+| P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameError) |
+| P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil (NoMethodError) |
+| P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil (NoMethodError) |
+| P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil (NoMethodError) |
+| P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodError) |
+| P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError) |
+| P | missing-method:binmode | 1 | issue_3131 | uncaught exception: undefined method 'binmode' for an instance of File (NoMethodError) |
+| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for nil (NoMethodError) |
+| P | missing-method:foo | 1 | poly_keyed_hash_method_dedup | uncaught exception: undefined method 'foo' for class 'Class' (NameError) |
+| P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for main (NoMethodError) |
+| P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodError) |
+| P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for nil (NoMethodError) |
+| P | missing-method:kill | 1 | signal_module_surface | uncaught exception: undefined method 'kill' for module Process (NoMethodError) |
+| P | missing-method:lstat | 1 | issue_2986 | uncaught exception: undefined method 'lstat' for an instance of File (NoMethodError) |
+| P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB (NoMethodError) |
+| P | missing-method:new | 1 | basicobject_new | uncaught exception: undefined method 'new' for class BasicObject (NoMethodError) |
+| P | missing-method:read | 1 | poly_keyed_hash_pipeline | uncaught exception: undefined method 'read' for class 'Class' (NameError) |
+| P | missing-method:times | 1 | issue_3132 | uncaught exception: undefined method 'times' for module Process (NoMethodError) |
+| P | missing-method:ungetbyte | 1 | issue_3038 | uncaught exception: undefined method 'ungetbyte' for an instance of File (NoMethodError) |
+| P | missing-method:with_index | 1 | issue_2993 | uncaught exception: undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError) |
+| P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer (NoMethodError) |
+| ! | rustc-failure | 1 | data_reopen_reader | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-d29e35bedaa4f9e5.rs) |
 
 List one bucket's tests: `cargo run -p xtask -- conformance triage --bucket <name>`.
