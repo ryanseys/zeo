@@ -7,10 +7,10 @@ families. Oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
 | ? | spike-misc | 29 | file_spec, metaclass_spec, source_encoding_spec | /Users/ryanseys/dev/spec/language/file_spec.rb: /Users/ryanseys/dev/spec/fixtures/code_loading.rb: `require` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body |
-| P | missing-method:raise | 7 | retry_spec, delegation_spec, numbers_spec | ERROR: The retry statement raises a SyntaxError when used outside of a rescue statement: NoMethodError: undefined method 'raise' for an instance of MSpecShould |
+| P | missing-method:raise | 6 | or_spec, retry_spec, loop_spec | ERROR: The or operator has a lower precedence than 'return' in 'return true or false': NoMethodError: undefined method 'raise' for an instance of MSpecShould |
+| ? | auto-eval-unsupported-syntax-in-this-build-the-eval-dfcc | 2 | encoding_spec, delegation_spec | uncaught exception: eval: unsupported syntax in this build (the eval VM does not yet cover this node) (NotImplementedError) |
 | P | missing-const:ScratchPad | 2 | BEGIN_spec, symbol_spec | ERROR: The BEGIN keyword returns the top-level script's filename for __FILE__: NameError: uninitialized constant ScratchPad |
 | ? | toplevel-node-in-expr | 2 | private_spec, next_spec | internal error: unexpected top-level-only node in expression position |
-| ? | auto-eval-unsupported-syntax-in-this-build-the-eval-dfcc | 1 | encoding_spec | uncaught exception: eval: unsupported syntax in this build (the eval VM does not yet cover this node) (NotImplementedError) |
 | ? | auto-fail-can-be-redefined-and-receive-frozen-string-9423 | 1 | execution_spec | FAIL: %x can be redefined and receive a frozen string as argument: expected false == true |
 | ? | auto-fail-the-until-modifier-with-begin-end-block-c646 | 1 | until_spec | FAIL: The until modifier with begin .. end block restart the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
 | ? | auto-fail-the-while-modifier-with-begin-end-block-6764 | 1 | while_spec | FAIL: The while modifier with begin .. end block restarts the current iteration without reevaluating condition with redo: expected [1, 1, 1, 2] == [0, 0, 0, 1, 2] |
@@ -28,7 +28,7 @@ families. Oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-
 | P | missing-const:MSpecLite::RUBY_VERSION | 1 | numbered_parameters_spec | uncaught exception: uninitialized constant MSpecLite::RUBY_VERSION (NameError) |
 | P | missing-method:new | 1 | range_spec | ERROR: Literal Ranges creates beginless ranges: NoMethodError: undefined method 'new' for class Range |
 | k | pattern-shapes | 1 | pattern_matching_spec | /Users/ryanseys/dev/spec/language/pattern_matching_spec.rb: a pattern can't bind a variable inside a `\|` alternation (spike scope, matches real Ruby) |
-| ! | rustc-failure | 1 | yield_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-aec33c1de7bc641e.rs) |
+| ! | rustc-failure | 1 | yield_spec | rustc failed compiling the generated program (source at /var/folders/7r/0kdzlwm12_19f3qc1j8w5vjr0000gn/T/spinelc-gen-e5e48583a48083c0.rs) |
 | a | splat | 1 | for_spec | /Users/ryanseys/dev/spec/language/for_spec.rb: expected `*name` as a multi-assignment's splat target |
 | g | super-arity | 1 | super_spec | /Users/ryanseys/dev/spec/language/super_spec.rb: /Users/ryanseys/dev/spec/language/fixtures/super.rb: unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet |
 
