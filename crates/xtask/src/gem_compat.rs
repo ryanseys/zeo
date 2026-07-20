@@ -36,11 +36,6 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     }
 
-    let Some(lockfile) = lockfile else {
-        eprintln!("usage: cargo run -p xtask -- gem-compat <Gemfile.lock> [--gem-path <dir>]");
-        return ExitCode::FAILURE;
-    };
-
     // Default the store to the installed Ruby's own gem home, the way
     // stdlib-status defaults the lib dir to its rubylibdir.
     let store = match gem_path {
@@ -59,7 +54,17 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let entries = match spinelc::gem_compat(&store, &lockfile) {
+    // No lockfile -> classify the entire installed store (the broad sample);
+    // with one -> just its locked subset.
+    let source = match &lockfile {
+        Some(p) => p.display().to_string(),
+        None => "(entire installed store)".to_string(),
+    };
+    let result = match &lockfile {
+        Some(p) => spinelc::gem_compat(&store, p),
+        None => spinelc::gem_compat_installed(&store),
+    };
+    let entries = match result {
         Ok(e) => e,
         Err(e) => {
             eprintln!("gem-compat: {e}");
@@ -67,7 +72,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         }
     };
     if entries.is_empty() {
-        eprintln!("gem-compat: {} locked no gems", lockfile.display());
+        eprintln!("gem-compat: {source} has no gems to classify");
         return ExitCode::FAILURE;
     }
 
@@ -75,7 +80,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         eprintln!("{:>18}  {}  {}", tag(&entry.outcome), entry.name, detail(&entry.outcome));
     }
 
-    match write_artifacts(root, &lockfile, &store, &entries) {
+    match write_artifacts(root, &source, &store, &entries) {
         Ok((tsv, md)) => {
             print_summary(&entries);
             eprintln!("gem-compat: wrote {} and {}", tsv.display(), md.display());
@@ -91,7 +96,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 /// The short status tag for the per-gem line and the TSV column.
 fn tag(outcome: &GemCompatOutcome) -> &'static str {
     match outcome {
-        GemCompatOutcome::Compiled => "compiled",
+        GemCompatOutcome::Compiled => "pure-ruby",
         GemCompatOutcome::Builtin { diverges: true, .. } => "builtin (diverges)",
         GemCompatOutcome::Builtin { diverges: false, .. } => "builtin",
         GemCompatOutcome::NativeUnsupported { .. } => "native (unsupported)",
@@ -112,12 +117,15 @@ fn detail(outcome: &GemCompatOutcome) -> String {
 
 fn write_artifacts(
     root: &Path,
-    lockfile: &Path,
+    source: &str,
     store: &Path,
     entries: &[GemCompatEntry],
 ) -> Result<(PathBuf, PathBuf), String> {
     let dir = root.join("conformance");
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    // `root` is `CARGO_MANIFEST_DIR/../..`, so canonicalize before we build and
+    // report paths -- otherwise they read `crates/xtask/../../conformance/...`.
+    let dir = dir.canonicalize().unwrap_or(dir);
 
     let mut tsv = String::from("name\tversion\tstatus\tdetail\n");
     for e in entries {
@@ -129,16 +137,20 @@ fn write_artifacts(
     let counts = Counts::of(entries);
     let mut md = String::new();
     md.push_str("# Gem compatibility\n\n");
-    md.push_str(&format!("- Lockfile: `{}`\n", lockfile.display()));
+    md.push_str(&format!("- Source: `{source}`\n"));
     md.push_str(&format!("- Store: `{}`\n", store.display()));
     md.push_str(&format!(
-        "- Out of the box: **{}/{} store gems ({:.0}%)** compile or are satisfied by a built-in\n\n",
+        "- Out of the box: **{}/{} store gems ({:.0}%)** are pure Ruby or satisfied by a built-in\n",
         counts.usable(),
         counts.store_gems(),
         counts.usable_pct(),
     ));
+    md.push_str(
+        "- `pure-ruby` = spinel resolves the gem and would attempt to compile it; this is a \
+         static classification, NOT a verified compile.\n\n",
+    );
     md.push_str("| status | count |\n|---|---|\n");
-    md.push_str(&format!("| compiled (pure Ruby) | {} |\n", counts.compiled));
+    md.push_str(&format!("| pure-ruby (resolvable) | {} |\n", counts.compiled));
     md.push_str(&format!("| built-in (spinel provides) | {} |\n", counts.builtin));
     md.push_str(&format!("| native (unsupported) | {} |\n", counts.native));
     md.push_str(&format!("| external source (git/path) | {} |\n", counts.external));
@@ -205,7 +217,7 @@ impl Counts {
 fn print_summary(entries: &[GemCompatEntry]) {
     let c = Counts::of(entries);
     eprintln!(
-        "gem-compat: {}/{} store gems usable ({:.0}%) -- {} compiled, {} built-in, {} native unsupported ({} external, {} skipped)",
+        "gem-compat: {}/{} store gems resolvable ({:.0}%) -- {} pure-ruby, {} built-in, {} native unsupported ({} external, {} skipped)",
         c.usable(),
         c.store_gems(),
         c.usable_pct(),
@@ -214,6 +226,10 @@ fn print_summary(entries: &[GemCompatEntry]) {
         c.native,
         c.external,
         c.skipped,
+    );
+    eprintln!(
+        "gem-compat: note -- `pure-ruby` is a static classification (spinel would attempt to \
+         compile it), not a verified compile."
     );
 }
 

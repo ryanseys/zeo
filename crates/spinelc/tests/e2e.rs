@@ -740,6 +740,20 @@ fn gem_compat_classifies_each_locked_gem() {
         outcome("precompiled"),
         GemCompatOutcome::NativeUnsupported { ref kind, .. } if kind == "precompiled-platform-gem"
     ));
+
+    // The no-lockfile mode sweeps the store's specifications/ directly and
+    // classifies the same three gems (the broad out-of-the-box sample).
+    let swept = spinelc::gem_compat_installed(&store).unwrap();
+    let sweep_outcome = |n: &str| swept.iter().find(|e| e.name == n).map(|e| e.outcome.clone());
+    assert_eq!(sweep_outcome("purelib"), Some(GemCompatOutcome::Compiled));
+    assert!(matches!(
+        sweep_outcome("nativelib"),
+        Some(GemCompatOutcome::NativeUnsupported { .. })
+    ));
+    assert!(matches!(
+        sweep_outcome("precompiled"),
+        Some(GemCompatOutcome::NativeUnsupported { .. })
+    ));
 }
 
 #[test]

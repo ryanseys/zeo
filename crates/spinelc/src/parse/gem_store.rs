@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::gem_report::{GemRecord, SatisfiedBy};
-use crate::parse::lockfile::{GemSource, Lockfile};
+use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
 use crate::parse::PResult;
 
 /// What an installed store yields for a lockfile: the pure-Ruby gems spinel can
@@ -119,6 +119,49 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
     }
 
     Ok(StoreResolution { roots, disclosures })
+}
+
+/// A synthetic `Lockfile` naming every gem installed in the store, one per
+/// name (ruby-platform spec preferred) -- the input to the no-lockfile
+/// `gem-compat` mode, which classifies the whole installed store. A gemspec
+/// that fails the static parse is skipped rather than aborting the sweep.
+pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
+    use std::collections::BTreeMap;
+    let specs = store.join("specifications");
+    let mut gems: BTreeMap<String, LockedGem> = BTreeMap::new();
+    for dir in [specs.clone(), specs.join("default")] {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("gemspec") {
+                continue;
+            }
+            let Ok(spec) = super::gemspec::parse_file(&path) else {
+                continue; // an unparseable gemspec is skipped, not fatal
+            };
+            let platform = spec.platform.filter(|p| p != "ruby" && !p.is_empty());
+            let gem = LockedGem {
+                name: spec.name.clone(),
+                version: spec.version.unwrap_or_default(),
+                platform,
+                source: GemSource::Rubygems,
+            };
+            // One row per name; a ruby-platform (suffix-less) spec wins over a
+            // precompiled variant, matching the lockfile's own preference.
+            match gems.get(&spec.name) {
+                Some(existing) if existing.platform.is_none() && gem.platform.is_some() => {}
+                _ => {
+                    gems.insert(spec.name, gem);
+                }
+            }
+        }
+    }
+    if gems.is_empty() {
+        return Err(format!("no gemspecs found under {}", specs.display()));
+    }
+    Ok(Lockfile { gems: gems.into_values().collect(), platforms: Vec::new(), bundler_version: None })
 }
 
 /// The result of locating a locked gem's gemspec, forcing the ruby platform.

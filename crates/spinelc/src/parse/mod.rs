@@ -45,9 +45,27 @@ pub fn gem_compat(
     store: &std::path::Path,
     lockfile: &std::path::Path,
 ) -> Result<Vec<GemCompatEntry>, String> {
-    use lockfile::GemSource;
     let parsed = lockfile::parse_file(lockfile)?;
-    let resolution = gem_store::resolve(store, &parsed)?;
+    classify(store, &parsed)
+}
+
+/// Like [`gem_compat`], but over EVERY gem installed in the store rather than a
+/// lockfile's subset -- the broad out-of-the-box sample `cargo xtask
+/// gem-compat` runs when given no lockfile. Builds a synthetic gem set from the
+/// store's own `specifications/`.
+pub fn gem_compat_installed(
+    store: &std::path::Path,
+) -> Result<Vec<GemCompatEntry>, String> {
+    let parsed = gem_store::installed_as_lockfile(store)?;
+    classify(store, &parsed)
+}
+
+fn classify(
+    store: &std::path::Path,
+    parsed: &lockfile::Lockfile,
+) -> Result<Vec<GemCompatEntry>, String> {
+    use lockfile::GemSource;
+    let resolution = gem_store::resolve(store, parsed)?;
 
     let compiled: std::collections::HashSet<&str> =
         resolution.roots.iter().map(|(n, _)| n.as_str()).collect();

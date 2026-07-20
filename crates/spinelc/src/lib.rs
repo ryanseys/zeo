@@ -19,7 +19,7 @@ pub mod compiler;
 pub mod gem_report;
 pub mod hir;
 
-pub use parse::{gem_compat, GemCompatEntry, GemCompatOutcome};
+pub use parse::{gem_compat, gem_compat_installed, GemCompatEntry, GemCompatOutcome};
 pub mod parse;
 pub mod types;
 
