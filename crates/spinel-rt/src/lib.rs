@@ -85,8 +85,8 @@ pub use lastmatch::{
 };
 pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use fiber::{
-    fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_yield, FiberHandle,
-    FiberResume, FiberYield, RFiber,
+    fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
+    FiberHandle, FiberResume, FiberYield, RFiber,
 };
 pub use globals::{global_alias, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};

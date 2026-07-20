@@ -5,7 +5,7 @@
 //! error messages included.
 
 use crate::dispatch::raise_error;
-use crate::fiber::{self, fiber_alive, fiber_resume, FiberResume};
+use crate::fiber::{self, fiber_alive, fiber_resume, fiber_transfer, FiberResume};
 use crate::signal::Signal;
 use crate::value::RubyValue;
 use crate::Symbol;
@@ -32,7 +32,26 @@ fn f_resume(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Re
         )),
         FiberResume::DoubleResume => Err(raise_error(
             "FiberError",
-            "attempt to resume the current fiber (double resume)".to_string(),
+            "attempt to resume a resumed fiber (double resume)".to_string(),
+        )),
+        FiberResume::CrossThread => Err(raise_error(
+            "FiberError",
+            "fiber called across threads".to_string(),
+        )),
+    }
+}
+
+fn f_transfer(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match fiber_transfer(&recv.as_fiber_unchecked(), args.to_vec()) {
+        FiberResume::Value(v) => Ok(v),
+        FiberResume::RubyError(sig) => Err(sig),
+        FiberResume::Dead => Err(raise_error(
+            "FiberError",
+            "attempt to resume a terminated fiber".to_string(),
+        )),
+        FiberResume::DoubleResume => Err(raise_error(
+            "FiberError",
+            "attempt to resume a resumed fiber (double resume)".to_string(),
         )),
         FiberResume::CrossThread => Err(raise_error(
             "FiberError",
@@ -124,7 +143,7 @@ fn f_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Res
         )),
         FiberResume::DoubleResume => Err(raise_error(
             "FiberError",
-            "attempt to resume the current fiber (double resume)".to_string(),
+            "attempt to resume a resumed fiber (double resume)".to_string(),
         )),
         FiberResume::CrossThread => Err(raise_error(
             "FiberError",
@@ -142,6 +161,7 @@ fn f_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result
 pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "resume" => f_resume,
+        "transfer" => f_transfer,
         "alive?" => f_alive_p,
         "kill" => f_kill,
         "raise" => f_raise,
@@ -154,7 +174,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
-    &["resume", "alive?", "kill", "raise", "storage", "storage=", "==", "eql?", "equal?"]
+    &["resume", "transfer", "alive?", "kill", "raise", "storage", "storage=", "==", "eql?", "equal?"]
 }
 
 // --- Class methods (`Fiber.current`, `Fiber[]`, `Fiber.[]=`) ---------------

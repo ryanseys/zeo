@@ -8756,6 +8756,53 @@ fn file_stat_io_pipe_and_io_read_family() {
 }
 
 #[test]
+fn fiber_transfer_root_and_error_guards() {
+    // Batch 13: Fiber#transfer round-tripping through the root fiber (the case
+    // that used to segfault), Fiber#[]/#[]= storage, the FiberError guards
+    // (yield in a transfer-entered fiber, double resume), and Fiber#kill
+    // running ensure blocks.
+    let result = run_ruby(
+        r#"
+        main = Fiber.current
+        f = Fiber.new do
+          v = main.transfer(42)
+          main.transfer(v + 1)
+        end
+        p f.transfer
+        p f.transfer(7)
+
+        Fiber[:tag] = :outer
+        g = Fiber.new { Fiber[:tag] }
+        p g.resume
+
+        begin
+          ft = Fiber.new { |x| Fiber.yield x }
+          ft.transfer(1)
+        rescue FiberError => e
+          puts "transfer-yield: #{e.message}"
+        end
+
+        h = Fiber.new do
+          begin
+            Fiber.yield 1
+          ensure
+            puts "ensure ran"
+          end
+        end
+        h.resume
+        p h.kill.is_a?(Fiber)
+        p h.alive?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "42\n8\n:outer\ntransfer-yield: attempt to yield on a not resumed fiber\n\
+         ensure ran\ntrue\nfalse\n"
+    );
+}
+
+#[test]
 fn thread_registry_and_kill_raise() {
     // Batch 12: Thread.list (main plus live spawns, joined ones pruned) and
     // Thread.list.include? by identity; Thread#kill unwinding a blocked thread

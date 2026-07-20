@@ -3750,10 +3750,43 @@ fn dispatch(
                 })
                 .collect();
             let dead = emit_fiber_error(cx, "attempt to resume a terminated fiber");
-            let double = emit_fiber_error(cx, "attempt to resume the current fiber (double resume)");
+            let double = emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
             let cross = emit_fiber_error(cx, "fiber called across threads");
             return quote! {
                 match spinel_rt::fiber_resume(
+                    &(#recv_expr).as_fiber_unchecked(),
+                    vec![#(#arg_exprs),*],
+                ) {
+                    spinel_rt::FiberResume::Value(__v) => __v,
+                    spinel_rt::FiberResume::RubyError(__sig) => return Err(__sig),
+                    spinel_rt::FiberResume::Dead => {
+                        return Err(spinel_rt::Signal::Raise(#dead))
+                    }
+                    spinel_rt::FiberResume::DoubleResume => {
+                        return Err(spinel_rt::Signal::Raise(#double))
+                    }
+                    spinel_rt::FiberResume::CrossThread => {
+                        return Err(spinel_rt::Signal::Raise(#cross))
+                    }
+                }
+            };
+        }
+        if name == "transfer" {
+            // Symmetric transfer -- same outcome shape as `resume` (a transfer
+            // BACK to root yields the value here; the error variants are the
+            // same CRuby-verbatim FiberErrors).
+            let arg_exprs: Vec<TokenStream> = args
+                .iter()
+                .map(|&a| {
+                    let e = emit_expr(cx, a);
+                    super::expr::box_if_object_typed(cx, a, e)
+                })
+                .collect();
+            let dead = emit_fiber_error(cx, "attempt to resume a terminated fiber");
+            let double = emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
+            let cross = emit_fiber_error(cx, "fiber called across threads");
+            return quote! {
+                match spinel_rt::fiber_transfer(
                     &(#recv_expr).as_fiber_unchecked(),
                     vec![#(#arg_exprs),*],
                 ) {

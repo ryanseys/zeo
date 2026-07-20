@@ -71,6 +71,11 @@ pub struct FiberHandle {
     /// empty Hash (CRuby lazily allocates it). A new fiber COPIES its
     /// creator's storage at creation; writes are private thereafter.
     storage: parking_lot::Mutex<Option<HashMap<Symbol, RubyValue>>>,
+    /// Whether this fiber was last ENTERED via `#transfer` rather than
+    /// `#resume`. A transfer establishes no resumer, so `Fiber.yield` inside it
+    /// raises `FiberError` (CRuby's rule); `#resume` clears it, `#transfer`
+    /// sets it.
+    entered_by_transfer: AtomicBool,
 }
 
 pub type RFiber = Arc<FiberHandle>;
@@ -81,6 +86,9 @@ pub type RFiber = Arc<FiberHandle>;
 pub enum FiberInput {
     Resume(Vec<RubyValue>),
     Raise(RubyValue),
+    /// `#transfer(*args)` handed the fiber control -- same payload shape as
+    /// `Resume`, but the entry marks the fiber transfer-entered.
+    Transfer(Vec<RubyValue>),
 }
 
 type FiberCoro = Coroutine<FiberInput, RubyValue, Result<RubyValue, Signal>>;
@@ -108,6 +116,7 @@ fn root_fiber() -> RFiber {
                     finished: AtomicBool::new(false),
                     handling: parking_lot::Mutex::new(Vec::new()),
                     storage: parking_lot::Mutex::new(None),
+                    entered_by_transfer: AtomicBool::new(false),
                 })
             })
             .clone()
@@ -145,7 +154,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
     // The first input becomes the block's args -- or, if the very first thing
     // done to the fiber is `#raise`, the body raises before running at all.
     let coro = spinel_fiber::new_fiber(move |first: FiberInput| match first {
-        FiberInput::Resume(args) => body.call(&args),
+        FiberInput::Resume(args) | FiberInput::Transfer(args) => body.call(&args),
         FiberInput::Raise(exc) => Err(Signal::Raise(exc)),
     });
     FIBERS.with(|f| f.borrow_mut().insert(id, coro));
@@ -157,6 +166,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         finished: AtomicBool::new(false),
         handling: parking_lot::Mutex::new(Vec::new()),
         storage: parking_lot::Mutex::new(inherited),
+        entered_by_transfer: AtomicBool::new(false),
     }))
 }
 
@@ -171,7 +181,7 @@ pub enum FiberResume {
     RubyError(Signal),
     /// `FiberError: attempt to resume a terminated fiber`.
     Dead,
-    /// `FiberError: attempt to resume the current fiber (double resume)`
+    /// `FiberError: attempt to resume a resumed fiber (double resume)`
     /// -- its coroutine is checked out of the table but not finished, so it
     /// is somewhere below us on this very thread's resume chain.
     DoubleResume,
@@ -181,7 +191,39 @@ pub enum FiberResume {
 
 /// `Fiber#resume(*args)` -- feed values in and run to the next yield/return.
 pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
+    // Entering by resume establishes a resumer, so `Fiber.yield` is legal again.
+    handle.entered_by_transfer.store(false, Ordering::Relaxed);
     fiber_drive(handle, FiberInput::Resume(args))
+}
+
+/// `Fiber#transfer(*args)` -- symmetric control transfer. Transferring to the
+/// ROOT fiber suspends the current fiber and hands the value back to whoever is
+/// driving it (a yield through the root trampoline); transferring to any other
+/// fiber drives it forward, marking it transfer-entered (so its `Fiber.yield`
+/// raises, per CRuby). Sibling-to-sibling transfer between two non-root fibers
+/// is a documented gap (the corpus only transfers to and from root).
+pub fn fiber_transfer(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
+    if std::thread::current().id() != handle.owner {
+        return FiberResume::CrossThread;
+    }
+    // The root fiber (id 0) has no coroutine of its own; "transfer to root" is a
+    // suspend of the CURRENT fiber back to its driver.
+    if handle.id == 0 {
+        let payload = pack_values(args);
+        return match spinel_fiber::yield_current::<FiberInput, RubyValue>(payload) {
+            // Called from the root itself (nothing suspended) -- a no-op.
+            None => FiberResume::Value(RubyValue::Nil),
+            Some(FiberInput::Resume(vals)) | Some(FiberInput::Transfer(vals)) => {
+                FiberResume::Value(pack_values(vals))
+            }
+            Some(FiberInput::Raise(exc)) => FiberResume::RubyError(Signal::Raise(exc)),
+        };
+    }
+    if handle.finished.load(Ordering::Relaxed) {
+        return FiberResume::Dead;
+    }
+    handle.entered_by_transfer.store(true, Ordering::Relaxed);
+    fiber_drive(handle, FiberInput::Transfer(args))
 }
 
 /// `Fiber#raise(exc)` -- resume the fiber but make its suspended `Fiber.yield`
@@ -252,10 +294,17 @@ pub enum FiberYield {
 /// docs), suspends the innermost running fiber, and reports what the NEXT
 /// `resume`/`raise` fed in.
 pub fn fiber_yield(args: Vec<RubyValue>) -> FiberYield {
+    // A fiber entered by `#transfer` (like the root fiber) has no resumer to
+    // yield back to -- CRuby raises FiberError rather than suspending.
+    if current_handle().entered_by_transfer.load(Ordering::Relaxed) {
+        return FiberYield::Root;
+    }
     let payload = pack_values(args);
     match spinel_fiber::yield_current::<FiberInput, RubyValue>(payload) {
         None => FiberYield::Root,
-        Some(FiberInput::Resume(vals)) => FiberYield::Value(pack_values(vals)),
+        Some(FiberInput::Resume(vals)) | Some(FiberInput::Transfer(vals)) => {
+            FiberYield::Value(pack_values(vals))
+        }
         Some(FiberInput::Raise(exc)) => FiberYield::Raise(exc),
     }
 }
@@ -302,18 +351,40 @@ pub fn fiber_set_storage(handle: &RFiber, pairs: Vec<(Symbol, RubyValue)>) {
     *handle.storage.lock() = Some(pairs.into_iter().collect());
 }
 
-/// `Fiber#kill` -- terminate a suspended fiber: drop its coroutine (whose
-/// `Drop` force-unwinds the parked stack, running only Rust destructors) and
-/// mark it finished. A cross-thread kill is a no-op, mirroring resume's
-/// thread-pinning. Returns nil.
+/// `Fiber#kill` -- terminate a fiber, RUNNING its `ensure` blocks. The fiber is
+/// driven once more with a kill exception injected at its suspended
+/// `Fiber.yield` (or before its body runs, for an unstarted fiber): the
+/// exception is an `Exception` (NOT a `StandardError`), so a bare `rescue`
+/// can't swallow it, and whatever the fiber unwinds to is discarded -- the
+/// fiber is then dead regardless. Idempotent; a cross-thread kill is a no-op,
+/// mirroring resume's thread-pinning. Returns nil.
 pub fn fiber_kill(handle: &RFiber) -> RubyValue {
-    if std::thread::current().id() == handle.owner {
-        handle.finished.store(true, Ordering::Relaxed);
-        FIBERS.with(|f| {
-            f.borrow_mut().remove(&handle.id);
-        });
+    if std::thread::current().id() != handle.owner {
+        return RubyValue::Nil;
     }
+    if handle.finished.load(Ordering::Relaxed) {
+        return RubyValue::Nil;
+    }
+    // Only a fiber still holding a coroutine can run ensure; if its coro is
+    // absent (already running below us, or gone) just mark it dead.
+    let has_coro = FIBERS.with(|f| f.borrow().contains_key(&handle.id));
+    if has_coro {
+        let _ = fiber_drive(handle, FiberInput::Raise(kill_exception()));
+    }
+    handle.finished.store(true, Ordering::Relaxed);
+    FIBERS.with(|f| {
+        f.borrow_mut().remove(&handle.id);
+    });
     RubyValue::Nil
+}
+
+/// The `Exception` (deliberately NOT a `StandardError`) a `#kill` unwinds a
+/// fiber with -- a bare `rescue` skips it, so only `ensure` runs.
+fn kill_exception() -> RubyValue {
+    match crate::dispatch::raise_error("Exception", String::new()) {
+        Signal::Raise(exc) => exc,
+        _ => RubyValue::Nil,
+    }
 }
 
 /// CRuby's `make_passing_arg` (`cont.c:1978`): 0 -> nil, 1 -> the value,
