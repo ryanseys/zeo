@@ -2037,7 +2037,11 @@ pub fn send_value_in(
         // value itself. Only probed once something is defined at runtime.
         if crate::runtime_meta::is_live() {
             if let Some(p) = crate::runtime_meta::overlay_class_method(*cid, name) {
-                return p.call_with_self(recv, args);
+                // The caller's block must ride along: `def M.wrap; yield; end`
+                // desugars to a method-body lambda whose `yield` reads the
+                // block the METHOD was called with. Dropping it here made
+                // `M.wrap { "hi" }` raise LocalJumpError.
+                return p.call_with_self_and_block(recv, args, block);
             }
         }
         // A USER `def self.x` first -- ahead of the builtin table below, so

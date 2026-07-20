@@ -662,6 +662,25 @@ fn desugar_singleton_class_defs(
     Ok(out)
 }
 
+/// Whether the program ASSIGNS this constant a value anywhere already lowered
+/// (`B = Box.new`, `Foo = Class.new`) -- which makes it a value-holding
+/// constant rather than the name of a compile-time class. Scans the arena
+/// rather than threading a set through lowering: the assignment is lowered
+/// before any later statement that reads it, which is the same
+/// "defined earlier in the file" rule `Compiler::resolve_class` applies.
+///
+/// `scope` is folded in so a namespaced `M::D` is matched exactly, never by
+/// its leaf alone.
+fn const_is_assigned(hir: &Hir, name: &str) -> bool {
+    hir.nodes().iter().any(|node| match node {
+        HirNode::ConstWrite { scope, name: n, .. } => match scope {
+            Some(s) => format!("{s}::{n}") == name,
+            None => n == name,
+        },
+        _ => false,
+    })
+}
+
 /// `AliasMethodNode`'s `new_name`/`old_name` -- always a `SymbolNode` in
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
@@ -2160,7 +2179,21 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     let target = match &recv {
                         None => Some(None),
                         Some(r) if r.as_self_node().is_some() => Some(None),
-                        Some(r) => constant_path_name(r).ok().map(Some),
+                        // A constant receiver reopens that named class -- but
+                        // ONLY when the constant actually names one. A constant
+                        // the program ASSIGNS (`B = Box.new`, or even `Foo =
+                        // Class.new`) holds a value, not a compile-time class,
+                        // and reopening it here would mint a bogus empty class
+                        // named `B`: `B.class` then answered `Class` and the
+                        // installed method's `self` was that phantom class, so
+                        // its body couldn't reach the real object's methods.
+                        // Those fall through to the generic runtime
+                        // `define_singleton_method` call, which installs a
+                        // per-object singleton correctly.
+                        Some(r) => constant_path_name(r)
+                            .ok()
+                            .filter(|n| !const_is_assigned(hir, n))
+                            .map(Some),
                     };
                     if let Some(target) = target {
                         let method_name = String::from_utf8_lossy(sym.unescaped()).into_owned();

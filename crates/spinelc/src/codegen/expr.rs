@@ -446,7 +446,20 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::FloatLit(v) => quote! { spinel_rt::RubyValue::Float(#v) },
         HirNode::Lambda { params, body, method_body } => {
-            super::call::emit_lambda_value(cx, params, body, *method_body)
+            // A `method_body` lambda IS a runtime method body -- the two parse
+            // sites that build one are the `def obj.m` and `class << obj`
+            // desugars, both of which install through
+            // `define_singleton_method`. So a `super` inside it must resolve
+            // through the runtime method-frame stack, exactly as for a `def`
+            // in expression position: there is no compile-time singleton class
+            // to splice an ancestor chain against, and `emit_super_inline`
+            // would otherwise fall through to `defining_class` and panic with
+            // "`super` outside a method".
+            let mut body_cx = cx.clone();
+            if *method_body {
+                body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
+            }
+            super::call::emit_lambda_value(&body_cx, params, body, *method_body)
         }
         HirNode::SymbolLit(s) => {
             quote! { spinel_rt::RubyValue::Symbol(spinel_rt::Symbol::intern(#s)) }

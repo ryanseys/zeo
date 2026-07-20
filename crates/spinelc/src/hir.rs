@@ -130,6 +130,12 @@ impl Hir {
         NodeId((self.nodes.len() - 1) as u32)
     }
 
+    /// Every node lowered so far, for the rare pass that must ask a
+    /// whole-arena question mid-lowering (see `parse::const_is_assigned`).
+    pub fn nodes(&self) -> &[HirNode] {
+        &self.nodes
+    }
+
     /// Retroactively overrides an already-lowered `DefMethod`'s visibility --
     /// used by `parse::lower_class_body_statement` for `private`/`public`/
     /// `protected :name` (marking an already-lowered method by name) and the

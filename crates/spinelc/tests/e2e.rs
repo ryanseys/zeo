@@ -20994,6 +20994,53 @@ fn ivar_in_a_class_eval_nested_def_targets_the_instance_not_the_class() {
     );
 }
 
+/// Singleton methods on an ordinary object. Three things that were broken
+/// together: `super` inside a `class << obj` body (it panicked the compiler with
+/// "`super` outside a method", since a per-object singleton has no compile-time
+/// class to splice an ancestor chain against); a block passed to a runtime
+/// singleton method on a class/module (`M.wrap { }` -- dispatch dropped it and
+/// `yield` raised LocalJumpError); and `define_singleton_method` on a constant
+/// that holds an OBJECT rather than naming a class (it was desugared into a
+/// class reopen, minting a phantom class, so `B.class` answered `Class`).
+#[test]
+fn singleton_methods_on_objects_constants_and_modules() {
+    let result = run_ruby(
+        r#"
+        class Widget
+          def initialize(n); @n = n; end
+          def label; "w#{@n}"; end
+        end
+        W = Widget.new(1)
+        class << W
+          def label; "custom-#{super}"; end
+        end
+        p W.label
+        p W.class
+
+        module M; end
+        def M.wrap; "[" + yield + "]"; end
+        puts M.wrap { "hi" }
+
+        class Box
+          def v; 1; end
+        end
+        B = Box.new
+        B.define_singleton_method(:doubled) { v * 2 }
+        p B.class
+        p B.doubled
+
+        class Named; end
+        Named.define_singleton_method(:greet) { "hello" }
+        p Named.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"custom-w1\"\nWidget\n[hi]\nBox\n2\n\"hello\"\n"
+    );
+}
+
 /// FFI `callback :tag, [args], ret` declares a callback TYPE. A C callback is a
 /// function pointer, so the tag resolves to `:pointer` and is usable anywhere a
 /// pointer is -- here, a NULL passed straight back through. Passing a Ruby Proc
