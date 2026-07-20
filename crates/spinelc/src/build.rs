@@ -65,6 +65,21 @@ fn target_dir() -> PathBuf {
     }
 }
 
+/// The target ROOT a runtime variant's artifacts live under (before the profile
+/// subdir). The `Lean` (default, parser-free) runtime uses the ordinary
+/// `target/`, exactly where `cargo build -p spinel-rt` puts it. The `Eval`
+/// variant CANNOT share it: cargo writes every feature-combination to the same
+/// `libspinel_rt.rlib` path, so a lean build and an `--features eval-vm` build
+/// would clobber each other on every alternation. Giving `Eval` its own
+/// `target/spinel-rt-eval/` (a `--target-dir` cargo redirect) lets both coexist,
+/// still under `target/` so `cargo clean` reaps them. See `Runtime`.
+fn variant_target_dir(runtime: Runtime) -> PathBuf {
+    match runtime {
+        Runtime::Lean => target_dir(),
+        Runtime::Eval => target_dir().join("spinel-rt-eval"),
+    }
+}
+
 /// Ensure the `spinel-rt` runtime artifact `build_binary` links against exists.
 ///
 /// `build_binary` is pure -- it only LINKS an already-built runtime -- so an
@@ -77,39 +92,85 @@ fn target_dir() -> PathBuf {
 /// just does a cheap existence check, with none of the old
 /// env-var/per-crate-memoization machinery and none of the cargo build-lock
 /// contention that made a per-call `cargo build` cost the conformance suite ~153s.
-pub fn ensure_runtime_built(profile: Profile) -> Result<(), String> {
-    // Memoized PER PROFILE: a single process almost always uses one (the CLI's
-    // `-e` and the harness build `Debug`; only `spinelc foo.rb -o app` builds
-    // `Release`), but keying the once-cell by profile keeps it correct if both
-    // are ever exercised, and still collapses the e2e harness's many `#[test]`
-    // threads to one build.
-    static DEBUG: OnceLock<Result<(), String>> = OnceLock::new();
-    static RELEASE: OnceLock<Result<(), String>> = OnceLock::new();
-    let cell = match profile {
-        Profile::Debug => &DEBUG,
-        Profile::Release => &RELEASE,
+pub fn ensure_runtime_built(profile: Profile, runtime: Runtime) -> Result<(), String> {
+    // Memoized PER (PROFILE, VARIANT): a single process almost always touches
+    // one combination (the CLI's `-e` and the harness build `Debug`; only
+    // `spinelc foo.rb -o app` builds `Release`; and only a program that reaches
+    // eval asks for `Eval`), but keying the once-cells by both axes keeps it
+    // correct if several are exercised, and still collapses the e2e harness's
+    // many `#[test]` threads to one build per combination.
+    static DEBUG_LEAN: OnceLock<Result<(), String>> = OnceLock::new();
+    static DEBUG_EVAL: OnceLock<Result<(), String>> = OnceLock::new();
+    static RELEASE_LEAN: OnceLock<Result<(), String>> = OnceLock::new();
+    static RELEASE_EVAL: OnceLock<Result<(), String>> = OnceLock::new();
+    let cell = match (profile, runtime) {
+        (Profile::Debug, Runtime::Lean) => &DEBUG_LEAN,
+        (Profile::Debug, Runtime::Eval) => &DEBUG_EVAL,
+        (Profile::Release, Runtime::Lean) => &RELEASE_LEAN,
+        (Profile::Release, Runtime::Eval) => &RELEASE_EVAL,
     };
     cell.get_or_init(|| {
         // Already built -- the common case (harness prebuild, or a prior build
         // in this tree). `cargo build -p spinel-rt` co-produces the rlib and the
         // dylib, so the rlib's presence answers for both linkages.
-        if linkable_for("spinel-rt", Linkage::Static, profile).is_ok() {
+        //
+        // Existence, NOT freshness: this is the cheap fallback for entrypoints
+        // that can assume a prior `build_runtime` (a prebuild, a workspace build)
+        // already made the artifact current. A step that must handle STALE
+        // sources -- the conformance prebuild -- calls `build_runtime` directly
+        // instead, which always shells `cargo build` (cargo no-ops when fresh,
+        // rebuilds when stale).
+        if linkable_for("spinel-rt", Linkage::Static, profile, runtime).is_ok() {
             return Ok(());
         }
-        let mut cmd = std::process::Command::new("cargo");
-        cmd.arg("build").arg("--quiet");
-        if let Some(flag) = profile.cargo_flag() {
-            cmd.arg(flag);
-        }
-        cmd.args(["-p", "spinel-rt"]).current_dir(workspace_root());
-        let label = profile.cargo_flag().map(|f| format!("{f} ")).unwrap_or_default();
-        match cmd.status() {
-            Ok(status) if status.success() => Ok(()),
-            Ok(status) => Err(format!("`cargo build {label}-p spinel-rt` exited with {status}")),
-            Err(e) => Err(format!("running `cargo build {label}-p spinel-rt`: {e}")),
-        }
+        build_runtime(profile, runtime)
     })
     .clone()
+}
+
+/// Shell out to `cargo build` for one runtime variant, unconditionally (cargo
+/// itself no-ops when the artifact is fresh and rebuilds it when stale). This is
+/// the freshness-correct entry a prebuild step calls; `ensure_runtime_built`
+/// wraps it behind an existence check for the pure-link entrypoints that can
+/// assume a prior prebuild.
+///
+/// The `Eval` variant is `default + eval-vm` (so prism links in), built into its
+/// OWN target dir so it never clobbers the lean `libspinel_rt` -- see
+/// `variant_target_dir`.
+pub fn build_runtime(profile: Profile, runtime: Runtime) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("build").arg("--quiet");
+    if let Some(flag) = profile.cargo_flag() {
+        cmd.arg(flag);
+    }
+    cmd.args(["-p", "spinel-rt"]);
+    if runtime == Runtime::Eval {
+        cmd.arg("--features").arg("eval-vm");
+        cmd.arg("--target-dir").arg(variant_target_dir(runtime));
+    }
+    cmd.current_dir(workspace_root());
+    let label = build_label(profile, runtime);
+    match cmd.status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("`cargo build {label}` exited with {status}")),
+        Err(e) => Err(format!("running `cargo build {label}`: {e}")),
+    }
+}
+
+/// The human-readable `cargo build ...` invocation for an error message --
+/// reflects the profile flag and the `Eval` variant's extra args.
+fn build_label(profile: Profile, runtime: Runtime) -> String {
+    let mut label = String::new();
+    if let Some(flag) = profile.cargo_flag() {
+        label.push_str(flag);
+        label.push(' ');
+    }
+    label.push_str("-p spinel-rt");
+    if runtime == Runtime::Eval {
+        label.push_str(" --features eval-vm --target-dir ");
+        label.push_str(&variant_target_dir(runtime).display().to_string());
+    }
+    label
 }
 
 /// How a generated program links the runtime.
@@ -211,15 +272,59 @@ impl Profile {
     }
 }
 
+/// Which `spinel-rt` VARIANT a generated program links -- the third axis,
+/// orthogonal to `Linkage` and `Profile`.
+///
+/// `Lean` is the default runtime built by a plain `cargo build -p spinel-rt`:
+/// parser-free, no `ruby-prism`, so the vast majority of programs (which never
+/// reach a runtime `eval`) ship a small binary. `Eval` adds the `eval-vm`
+/// feature -- and with it prism, a C library pulled in via bindgen/cc -- for the
+/// programs `spinelc` detects can reach the runtime eval VM
+/// (`CompileOutput::needs_eval_vm`). The two are built into SEPARATE target dirs
+/// (see `variant_target_dir`) precisely because cargo cannot hold both feature
+/// sets in one `target/<profile>/` at once.
+///
+/// Passed explicitly, like `Linkage`/`Profile`: only the caller that compiled
+/// the program knows whether it reached an eval site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Runtime {
+    Lean,
+    Eval,
+}
+
+impl Runtime {
+    /// Map the compiler's `needs_eval_vm` verdict to a variant. The single
+    /// place the boolean becomes a runtime choice, so every caller agrees.
+    pub fn for_eval(needs_eval_vm: bool) -> Self {
+        if needs_eval_vm {
+            Runtime::Eval
+        } else {
+            Runtime::Lean
+        }
+    }
+
+    fn tag(self) -> &'static [u8] {
+        match self {
+            Runtime::Lean => b"lean;",
+            Runtime::Eval => b"eval;",
+        }
+    }
+}
+
 /// The built library a generated program should link against: the `dylib` when
 /// linking dynamically and the crate publishes one, else the `rlib`.
 ///
 /// A crate without a `dylib` (any `[native]` package that hasn't asked for one)
 /// falls back to its rlib and links statically even in dynamic mode, which is
 /// fine -- `-C prefer-dynamic` is a preference, not a requirement.
-fn linkable_for(crate_name: &str, linkage: Linkage, profile: Profile) -> Result<PathBuf, String> {
+fn linkable_for(
+    crate_name: &str,
+    linkage: Linkage,
+    profile: Profile,
+    runtime: Runtime,
+) -> Result<PathBuf, String> {
     let underscored = crate_name.replace('-', "_");
-    let dir = target_dir().join(profile.subdir());
+    let dir = variant_target_dir(runtime).join(profile.subdir());
     if linkage == Linkage::Dynamic {
         let dylib = dir.join(format!("lib{underscored}.dylib"));
         if dylib.exists() {
@@ -228,11 +333,11 @@ fn linkable_for(crate_name: &str, linkage: Linkage, profile: Profile) -> Result<
     }
     let rlib = dir.join(format!("lib{underscored}.rlib"));
     if !rlib.exists() {
-        let flag = profile.cargo_flag().map(|f| format!("{f} ")).unwrap_or_default();
         return Err(format!(
-            "{crate_name} is not built: expected {} -- run `cargo build {flag}-p {crate_name}` \
+            "{crate_name} is not built: expected {} -- run `cargo build {}` \
              (or call `ensure_runtime_built` first)",
-            rlib.display()
+            rlib.display(),
+            build_label(profile, runtime),
         ));
     }
     Ok(rlib)
@@ -243,15 +348,16 @@ pub fn build_binary(
     output: &Path,
     linkage: Linkage,
     profile: Profile,
+    runtime: Runtime,
 ) -> Result<(), String> {
     // Pure: only LINKS the already-built runtime, never runs cargo or mutates
     // the workspace. Callers that can't assume a prior build (`spinelc`'s own
     // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
     // prebuilds (the conformance harness) needs nothing here.
-    let runtime = linkable_for("spinel-rt", linkage, profile)?;
-    let deps_dir = target_dir().join(profile.subdir()).join("deps");
+    let runtime_lib = linkable_for("spinel-rt", linkage, profile, runtime)?;
+    let deps_dir = variant_target_dir(runtime).join(profile.subdir()).join("deps");
 
-    let cached = cache_path(rust_source, linkage, profile)?;
+    let cached = cache_path(rust_source, linkage, profile, runtime)?;
     // A failed link is treated as a miss rather than an error: a concurrent
     // process pruning a stale generation can unlink an entry between the check
     // and the link, and rebuilding is always a correct answer.
@@ -293,7 +399,7 @@ pub fn build_binary(
         .arg("-o")
         .arg(&staged)
         .arg("--extern")
-        .arg(format!("spinel_rt={}", runtime.display()))
+        .arg(format!("spinel_rt={}", runtime_lib.display()))
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
     if linkage == Linkage::Dynamic {
@@ -405,19 +511,27 @@ fn cache_dir() -> PathBuf {
 /// the 32MB rlib could not be amortized and would cost more than it saves.
 /// Cargo does not touch mtimes on a no-op rebuild, so this only
 /// over-invalidates when the runtime genuinely got rebuilt.
-fn cache_path(rust_source: &str, linkage: Linkage, profile: Profile) -> Result<PathBuf, String> {
-    // Linkage AND profile are part of the generation, not just details: the same
-    // source compiles to a 9.8MB self-contained binary or a 616K one that needs the
-    // dylib (linkage), and to a debug or a release-optimized binary (profile) --
-    // handing a caller the wrong kind would bloat their output, hand them something
-    // that dies in `dyld`, or serve a debug binary where a shipped release one was
-    // asked for. The profile's own rlib is also stat'd below, so its mtime already
-    // distinguishes the two; the tag makes the intent explicit and collision-proof.
+fn cache_path(
+    rust_source: &str,
+    linkage: Linkage,
+    profile: Profile,
+    runtime: Runtime,
+) -> Result<PathBuf, String> {
+    // Linkage, profile AND runtime variant are all part of the generation, not
+    // just details: the same source compiles to a 9.8MB self-contained binary or
+    // a 616K one that needs the dylib (linkage), to a debug or a release binary
+    // (profile), and to a lean or a prism-carrying binary (runtime) -- handing a
+    // caller the wrong kind would bloat their output, hand them something that
+    // dies in `dyld`, or link a runtime whose `eval` is a `NotImplementedError`
+    // stub. Each variant's own rlib is also stat'd below (they live in different
+    // target dirs), so their mtimes already distinguish them; the tags make the
+    // intent explicit and collision-proof.
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, linkage.tag());
     generation = fnv1a64_with(generation, profile.tag());
+    generation = fnv1a64_with(generation, runtime.tag());
     {
         let name = "spinel-rt";
-        let lib = linkable_for(name, linkage, profile)?;
+        let lib = linkable_for(name, linkage, profile, runtime)?;
         let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;
         let mtime = meta
             .modified()

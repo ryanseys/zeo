@@ -178,6 +178,37 @@ impl Hir {
     pub fn gensym(&self, prefix: &str) -> String {
         format!("{prefix}{}", self.nodes.len())
     }
+
+    /// Whether this program can reach the RUNTIME eval VM -- the signal
+    /// `build::Runtime` uses to decide whether the final binary must link the
+    /// prism-backed `eval-vm` runtime variant, or can stay lean (parser-free).
+    ///
+    /// Only two builtins funnel into `spinel_rt::eval_value`/`eval_string` (the
+    /// sole prism users): `Kernel#eval` and string-form `instance_eval`. A
+    /// LITERAL `eval("...")` never counts -- the recognizer already spliced it
+    /// into the arena as `HirNode::Eval` at lowering time (no runtime parser),
+    /// so any surviving `Call` named `eval` is the dynamic form. A block-form
+    /// `instance_eval { ... }` runs a real block (no VM), and carries its block
+    /// in `block`, not `args` -- so a POSITIONAL argument is what distinguishes
+    /// the string form that reaches the VM.
+    ///
+    /// A plain scan of the whole arena (every node, not a root traversal) so it
+    /// also catches eval sites inside spliced `require`d files and method
+    /// bodies. Over-approximation is safe: a false positive only links the
+    /// larger runtime; the honest failure mode of a miss (a reflective
+    /// `send(:eval, ...)`, which no static analysis can see) is the runtime's
+    /// own `NotImplementedError` naming `--features eval-vm`, not silent wrong
+    /// output.
+    pub fn uses_runtime_eval(&self) -> bool {
+        self.nodes.iter().any(|node| match node {
+            HirNode::Call { name, receiver, args, .. } => match name.as_str() {
+                "eval" => receiver.is_none(),
+                "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
+                _ => false,
+            },
+            _ => false,
+        })
+    }
 }
 
 /// One element of an `ArrayLit` -- a plain value, or a `*expr` splat whose

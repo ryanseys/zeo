@@ -201,7 +201,12 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    use spinelc::build::{build_binary, ensure_runtime_built, Linkage, Profile};
+    use spinelc::build::{build_binary, ensure_runtime_built, Linkage, Profile, Runtime};
+
+    // Which runtime variant this program's binary links: the lean, parser-free
+    // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime
+    // eval site. The single mapping point for both build paths below.
+    let runtime = Runtime::for_eval(compiled.needs_eval_vm);
 
     // `-e`: compile to a throwaway binary, run it, and exit with ITS status
     // (stdout/stderr stream straight through) -- the differential-harness path.
@@ -210,9 +215,9 @@ fn run() -> Result<(), String> {
     // `SPINELC_RUNTIME_PROFILE` for a ~12x faster per-program link.
     if matches!(args.source, Source::Eval(_)) {
         let profile = Profile::from_env_or(Profile::Debug);
-        ensure_runtime_built(profile)?;
+        ensure_runtime_built(profile, runtime)?;
         let bin = std::env::temp_dir().join(format!("spinelc-e-{}", std::process::id()));
-        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), profile)?;
+        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), profile, runtime)?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -234,8 +239,8 @@ fn run() -> Result<(), String> {
     // build --release -p spinel-rt` on first use. Overridable to `debug` via
     // `SPINELC_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
     let profile = Profile::from_env_or(Profile::Release);
-    ensure_runtime_built(profile)?;
-    build_binary(&compiled.rust_source, &output, Linkage::from_env(), profile)
+    ensure_runtime_built(profile, runtime)?;
+    build_binary(&compiled.rust_source, &output, Linkage::from_env(), profile, runtime)
 }
 
 fn main() -> ExitCode {

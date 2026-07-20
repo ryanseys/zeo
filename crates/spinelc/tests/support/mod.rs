@@ -49,13 +49,15 @@ pub fn run_ruby_packages(
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug)
+    let runtime = spinelc::build::Runtime::for_eval(compiled.needs_eval_vm);
+    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug, runtime)
         .expect("building spinel-rt for the e2e harness");
     spinelc::build::build_binary(
         rust_source,
         &bin,
         spinelc::build::Linkage::Dynamic,
         spinelc::build::Profile::Debug,
+        runtime,
     )
         .unwrap_or_else(|e| {
             panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
@@ -133,17 +135,22 @@ pub fn compile_packages(
 /// well-behaved program).
 #[allow(dead_code)] // each test binary compiles its own copy of this module
 pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) -> RunResult {
-    let rust_source = spinelc::compile_to_rust(source)
-        .unwrap_or_else(|e| panic!("compile_to_rust failed: {e}"));
+    // `compile_to_rust_with` (not the flag-less `compile_to_rust`) so the eval
+    // VM detection rides along -- a program that reaches runtime `eval` must
+    // link the `Eval` runtime variant, or its eval would hit the lean stub.
+    let compiled = spinelc::compile_to_rust_with(source, &Default::default())
+        .unwrap_or_else(|e| panic!("compile_to_rust_with failed: {e}"));
+    let rust_source = &compiled.rust_source;
 
     let bin = std::env::temp_dir().join(format!(
         "spinelc-test-bin-{}-{:?}",
         std::process::id(),
         std::thread::current().id()
     ));
-    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug)
+    let runtime = spinelc::build::Runtime::for_eval(compiled.needs_eval_vm);
+    spinelc::build::ensure_runtime_built(spinelc::build::Profile::Debug, runtime)
         .expect("building spinel-rt for the e2e harness");
-    spinelc::build::build_binary(&rust_source, &bin, spinelc::build::Linkage::Dynamic, spinelc::build::Profile::Debug).unwrap_or_else(|e| {
+    spinelc::build::build_binary(rust_source, &bin, spinelc::build::Linkage::Dynamic, spinelc::build::Profile::Debug, runtime).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 

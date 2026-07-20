@@ -444,20 +444,26 @@ fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> Test
 /// per-program link is ~12x faster against the optimized runtime), or debug when
 /// `--debug-runtime` asked for a symbolicated runtime.
 pub fn prebuild(workspace_root: &Path, release_runtime: bool) -> Result<(), String> {
-    let build = |args: &[&str]| -> Result<(), String> {
-        let status = Command::new("cargo")
-            .args(args)
-            .current_dir(workspace_root)
-            .status()
-            .map_err(|e| format!("running cargo build: {e}"))?;
-        status.success().then_some(()).ok_or_else(|| "cargo build failed".to_owned())
-    };
-    build(&["build", "--quiet", "-p", "spinelc"])?;
-    if release_runtime {
-        build(&["build", "--quiet", "--release", "-p", "spinel-rt"])
-    } else {
-        build(&["build", "--quiet", "-p", "spinel-rt"])
-    }
+    let status = Command::new("cargo")
+        .args(["build", "--quiet", "-p", "spinelc"])
+        .current_dir(workspace_root)
+        .status()
+        .map_err(|e| format!("running cargo build: {e}"))?;
+    status.success().then_some(()).ok_or_else(|| "cargo build -p spinelc failed".to_owned())?;
+
+    // Prebuild BOTH runtime variants -- the lean (parser-free) default AND the
+    // prism-backed `eval-vm` one -- so a sweep never stalls building prism
+    // mid-run when it first reaches an `eval` program. That keeps every
+    // per-program `ensure_runtime_built` in the spinelc subprocesses the cheap
+    // existence check this runner is built around (see the caller notes below).
+    // `build_runtime` (not `ensure_runtime_built`) so a STALE runtime is rebuilt:
+    // the existence-checked path would skip an out-of-date artifact. Routed
+    // through spinelc's own builder so the eval variant's separate target dir
+    // stays a single source of truth rather than a path duplicated here.
+    use spinelc::build::{build_runtime, Profile, Runtime};
+    let profile = if release_runtime { Profile::Release } else { Profile::Debug };
+    build_runtime(profile, Runtime::Lean)?;
+    build_runtime(profile, Runtime::Eval)
 }
 
 /// A compact duration for the inline ETA: `45s`, `3m12s`, `1h04m`.

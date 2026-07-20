@@ -64,6 +64,12 @@ pub struct CompileOptions {
 #[derive(Debug)]
 pub struct CompileOutput {
     pub rust_source: String,
+    /// Whether this program can reach the runtime eval VM (see
+    /// `Hir::uses_runtime_eval`). Selects which `build::Runtime` variant the
+    /// binary links: `true` -> the prism-backed `eval-vm` runtime, `false` ->
+    /// the lean, parser-free default. The build step maps it via
+    /// `build::Runtime::for_eval`.
+    pub needs_eval_vm: bool,
 }
 
 /// The full parse -> analyze -> codegen pipeline: Ruby source in, formatted
@@ -92,8 +98,13 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
     if let Some(path) = &opts.gem_report {
         gem_report::write_report(&hir.gem_records, path)?;
     }
+    // Computed from the arena BEFORE `analyze` consumes it: a whole-program
+    // fact (does any eval site survive lowering?), so it belongs here rather
+    // than downstream where the arena is already owned by `Analyzed`.
+    let needs_eval_vm = hir.uses_runtime_eval();
     let analyzed = analyze::analyze(hir, root)?;
     Ok(CompileOutput {
         rust_source: codegen::codegen_to_string(&analyzed)?,
+        needs_eval_vm,
     })
 }

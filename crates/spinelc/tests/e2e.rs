@@ -833,6 +833,35 @@ fn eval_of_a_class_definition_is_not_a_compile_error() {
     assert!(spinelc::compile_to_rust(r#"eval("class Foo; end")"#).is_ok());
 }
 
+/// The `needs_eval_vm` verdict drives `build::Runtime` selection: `true` links
+/// the prism-backed runtime, `false` keeps the binary lean. This asserts the
+/// decision itself (not just that programs run), because a false negative would
+/// ship a lean binary whose `eval` is a `NotImplementedError` stub, and a false
+/// positive needlessly drags prism into an eval-free binary.
+#[test]
+fn needs_eval_vm_selects_the_runtime_variant() {
+    let needs = |src: &str| {
+        spinelc::compile_to_rust_with(src, &Default::default())
+            .expect("compiles")
+            .needs_eval_vm
+    };
+
+    // No eval anywhere -> lean.
+    assert!(!needs("puts 1"));
+    // An ACCEPTED literal eval is spliced inline (`HirNode::Eval`) -> lean.
+    assert!(!needs(r#"puts eval("1 + 2")"#));
+    // A block-form `instance_eval` runs a real block, never the VM -> lean.
+    assert!(!needs("o = Object.new\no.instance_eval { 1 + 2 }\n"));
+
+    // A dynamic (non-literal) eval reaches the runtime VM -> needs it.
+    assert!(needs("s = \"1 + 2\"\neval(s)\n"));
+    // A literal the inline path can't express (top-level class) falls through
+    // to the runtime VM -> needs it.
+    assert!(needs(r#"eval("class Foo; end")"#));
+    // A string-form `instance_eval` reaches the VM -> needs it.
+    assert!(needs("o = Object.new\no.instance_eval(\"@x = 1\")\n"));
+}
+
 #[test]
 fn optional_params_use_the_default_only_when_omitted() {
     let result = run_ruby(

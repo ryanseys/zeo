@@ -427,24 +427,32 @@ different membership/fn-names / different logic (bound-ident forwarding vs
 arg-expression evaluation), so a unifying macro/function would add conditional
 complexity and read *worse* than the explicit code. Not every dedup is a win.
 
-## Open: parser out of the default runtime (the ~100× gap's biggest lever)
+## Done: parser out of the default runtime (matz's model)
 
-The single largest remaining size lever is dropping `ruby-prism` from the default
-runtime (matz's model). Findings:
+`ruby-prism` (a C library, via bindgen/cc) is no longer in the default runtime.
+The default (`cargo build -p spinel-rt`, `default = ["ext-all"]`) is now
+parser-free, and `spinelc` picks a runtime **variant** per program:
 
-- prism is used **only** in `eval_vm.rs`, already fully behind `#[cfg(feature =
-  "eval-vm")]`. `integer.rs`/`rational.rs` "prism" mentions are **doc comments
-  only** — no decoupling needed.
-- **Literal** `eval("...")` is parsed and inlined at compile time (`HirNode::Eval`)
-  and needs no runtime parser. Only **dynamic** `eval` (a runtime string) reaches
-  `spinel_rt::eval_string` (the sole prism user), and the compiler already
-  distinguishes the two at parse time.
+- The compiler statically decides whether a program can reach the runtime eval VM
+  (`Hir::uses_runtime_eval`, surfaced as `CompileOutput::needs_eval_vm`). Only two
+  builtins funnel into `spinel_rt::eval_value`/`eval_string` (the sole prism
+  users): dynamic `Kernel#eval` and string-form `instance_eval`. A **literal**
+  `eval("...")` the inline path accepts is already spliced as `HirNode::Eval`
+  (no runtime parser); a block-form `instance_eval { }` runs a real block. Both
+  stay lean.
+- `build::Runtime::{Lean, Eval}` is a third build axis beside `Linkage`/`Profile`.
+  `Eval` is `default + eval-vm`, built into its OWN `target/spinel-rt-eval/`
+  (a `--target-dir` redirect) so the two feature sets coexist instead of
+  clobbering each other in one `target/<profile>/` — the crux that had blocked
+  this. The conformance prebuild warms both variants so no sweep stalls building
+  prism mid-run.
 
-**The crux (discovered while building the `Profile` axis):** cargo builds all
-feature-combinations into the *same* `target/<profile>/`, so a "no-prism default"
-+ "with-prism for eval programs" split can't just toggle a cargo feature — the two
-runtimes would overwrite each other. It needs **separate build outputs** (distinct
-target dirs, or matz's prebuilt-archive approach) plus an analysis-driven
-selector, layered on the `Profile`/`Linkage` matrix. It is **all-or-nothing**
-(dropping `eval-vm` from the default without the selector breaks dynamic `eval`),
-so it belongs in its own focused change, not a tail-end pass. Tracked as task #194.
+**Measured (static + release, arm64, the shipped artifact):** dropping prism
+takes a `puts 1` from 5,790,224 → 5,372,144 bytes — **−418 KB (−7.2%)**, and
+prism symbols go 78 → 0. (The earlier "~100×" framing was wrong for a
+dead-stripped static binary: the linker already GC'd the *unreachable* prism, so
+the ~418 KB is only what the `eval-vm` code path had kept *alive*. The dylib delta
+is comparable, ~469 KB.) The larger, uncounted win is build time: the default
+runtime build no longer compiles prism's C sources at all. A program that uses
+`eval` opts its OWN binary back up to the eval-variant size (~+418 KB); every
+other binary stays lean. Was tracked as task #194.
