@@ -664,21 +664,21 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
 }
 
 #[test]
-fn ruby_engine_identifies_as_spinel() {
-    // spinel is its own Ruby engine (Phase 3): RUBY_ENGINE diverges from the
-    // oracle's "ruby" by design, RUBY_ENGINE_VERSION is spinel's own, and the
-    // banner takes TruffleRuby's `<engine> ... like ruby <ver>` shape so a tool
-    // that greps the engine name still finds the MRI-compat level.
+fn ruby_engine_identifies_as_ruby() {
+    // The north star is byte-for-byte MRI parity, so the engine-identity
+    // constants report CRuby's own: RUBY_ENGINE == "ruby", RUBY_ENGINE_VERSION
+    // == RUBY_VERSION, and RUBY_DESCRIPTION takes version.c's exact banner
+    // (`ruby <ver> (<date> revision <short-rev>) +PRISM [<platform>]`).
     let result = run_ruby(
         r#"
         puts RUBY_ENGINE
-        puts RUBY_ENGINE_VERSION.match?(/\A\d+\.\d+\.\d+/)
-        puts RUBY_DESCRIPTION.start_with?("spinel #{RUBY_ENGINE_VERSION} ")
-        puts RUBY_DESCRIPTION.include?("like ruby #{RUBY_VERSION}")
+        puts RUBY_ENGINE_VERSION == RUBY_VERSION
+        puts RUBY_DESCRIPTION.start_with?("ruby #{RUBY_VERSION} ")
+        puts RUBY_DESCRIPTION.include?("+PRISM")
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "spinel\ntrue\ntrue\ntrue\n");
+    assert_eq!(result.stdout, "ruby\ntrue\ntrue\ntrue\n");
 }
 
 #[test]

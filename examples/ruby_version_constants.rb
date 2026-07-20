@@ -5,10 +5,9 @@
 # hosts AND identical between spinel and the oracle.
 #
 # The ENGINE-IDENTITY constants (RUBY_ENGINE, RUBY_ENGINE_VERSION,
-# RUBY_DESCRIPTION) are spinel's own and DIVERGE from the oracle by design --
-# "spinel" is a distinct Ruby engine. Their exact values are asserted in a
-# spinel-specific e2e test (see `ruby_engine_is_spinel`), not this
-# oracle-matched golden, because the oracle would print "ruby" for them.
+# RUBY_DESCRIPTION) mirror CRuby's own ("ruby", RUBY_VERSION, version.c's
+# banner). Their exact values are asserted in `ruby_engine_identifies_as_ruby`;
+# this golden covers the shared version/build constants.
 puts RUBY_VERSION
 puts RUBY_PATCHLEVEL
 puts RUBY_RELEASE_DATE
