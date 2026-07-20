@@ -21301,3 +21301,46 @@ fn unsupported_constructs_in_a_runtime_class_body_are_rejected_not_panics() {
         assert!(err.contains(want), "expected `{want}` for `{body}`, got: {err}");
     }
 }
+
+/// `case`/`when`, an `in` value/pin pattern, and `grep` all dispatch the
+/// pattern's own `===`. The native ladder they used to share bottomed out in
+/// `==`, so a user class whose `===` differs from its `==` silently took the
+/// WRONG branch, a singleton `===` on a class was ignored, and `lazy.grep`
+/// disagreed with eager `grep` on the same pattern. An Object-typed pin was
+/// worse than wrong: it emitted a bare `Arc<Even>`, and the GENERATED program
+/// failed to compile. The builtin pattern shapes must keep their meaning.
+#[test]
+fn case_equality_dispatches_a_user_defined_triple_equals() {
+    let result = support::run_ruby(
+        r#"
+        class Even
+          def ===(n); n.even?; end
+        end
+        e = Even.new
+        puts(case 4 when e then "when-obj" else "when-missed" end)
+        puts(case 3 when e then "when-obj" else "when-missed" end)
+        r = case 4
+            in ^e then "pin"
+            else "pin-missed"
+            end
+        puts r
+        puts [1, 2, 3, 4].grep(e).inspect
+        puts (1..4).lazy.grep(e).to_a.inspect
+        class Trip; end
+        def Trip.===(n); n % 3 == 0; end
+        puts(case 9 when Trip then "singleton" else "singleton-missed" end)
+        puts(case 5 when Integer then "builtin-class" else "no" end)
+        puts(case "hi" when /h/ then "regexp" else "no" end)
+        puts(case 3 when 1..5 then "range" else "no" end)
+        puts(case 2 when 1, 2, 3 then "listed" else "no" end)
+        cands = [7, 8]
+        puts(case 8 when *cands then "splat" else "no" end)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "when-obj\nwhen-missed\npin\n[2, 4]\n[2, 4]\nsingleton\n\
+         builtin-class\nregexp\nrange\nlisted\nsplat\n"
+    );
+}

@@ -135,19 +135,19 @@ fn emit_pattern_match(cx: &Ctx, pattern: &Pattern, scrutinee_ty: TyKind, scrutin
             let write = super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
             quote! { { #write true } }
         }
-        // Value patterns are matched via `RubyValue::rb_case_eq` -- the same
-        // escape hatch `CaseWhen`'s value matching already uses (a strict
-        // superset of plain `rb_eq`, additionally giving `in /regex/` real
-        // `Regexp#===` matching -- see `RubyValue::rb_case_eq`'s docs), not
-        // real Ruby's fully general `#===` protocol (see `Pattern::Value`'s
-        // docs).
+        // Value and pin patterns match via `spinel_rt::case_eq`, real Ruby's
+        // `#===` protocol -- the same entry point `CaseWhen` uses, so `in`
+        // and `when` cannot drift apart. Boxing is required, not incidental:
+        // an Object-typed pin (`e = Even.new; case 4 in ^e`) emitted a bare
+        // `Arc<Even>`, which has no such method, and the GENERATED program
+        // failed to compile.
         Pattern::Value(node) => {
-            let value_expr = emit_expr(cx, *node);
-            quote! { (#value_expr).rb_case_eq(&(#scrutinee)) }
+            let value_expr = super::expr::box_if_object_typed(cx, *node, emit_expr(cx, *node));
+            quote! { spinel_rt::case_eq(&(#value_expr), &(#scrutinee))? }
         }
         Pattern::Pin(node) => {
-            let pin_expr = emit_expr(cx, *node);
-            quote! { (#pin_expr).rb_case_eq(&(#scrutinee)) }
+            let pin_expr = super::expr::box_if_object_typed(cx, *node, emit_expr(cx, *node));
+            quote! { spinel_rt::case_eq(&(#pin_expr), &(#scrutinee))? }
         }
         Pattern::ClassCheck(name) => emit_class_check(cx, name, scrutinee_ty, scrutinee),
         Pattern::Range { start, end, exclusive } => emit_range_pattern(cx, *start, *end, *exclusive, scrutinee),
@@ -196,7 +196,10 @@ fn emit_range_pattern(
     let start_b = bound(start);
     let end_b = bound(end);
     quote! {
-        spinel_rt::RubyValue::Range(#start_b, #end_b, #exclusive).rb_case_eq(&(#scrutinee))
+        spinel_rt::case_eq(
+            &spinel_rt::RubyValue::Range(#start_b, #end_b, #exclusive),
+            &(#scrutinee),
+        )?
     }
 }
 

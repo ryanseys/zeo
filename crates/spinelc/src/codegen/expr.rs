@@ -348,13 +348,12 @@ fn emit_case_when(
                 ArrayElem::Single(v) => {
                     let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
                     if has_subject {
-                        // `rb_case_eq`, not plain `rb_eq`: a strict superset
-                        // that additionally gives `when /regex/` real
-                        // `Regexp#===` matching against a `String` subject
-                        // (see `RubyValue::rb_case_eq`'s docs) -- every other
-                        // value shape this desugar already supported behaves
-                        // identically either way.
-                        quote! { (#v_expr).rb_case_eq(&__subject) }
+                        // `case_eq`, which DISPATCHES the candidate's `===`
+                        // (see its docs): a user class defining `===` is the
+                        // whole point of `case`, and the native ladder
+                        // silently took the wrong branch for one whose `===`
+                        // differs from its `==`.
+                        quote! { spinel_rt::case_eq(&#v_expr, &__subject)? }
                     } else {
                         quote! { (#v_expr).truthy() }
                     }
@@ -367,10 +366,7 @@ fn emit_case_when(
                 ArrayElem::Splat(v) => {
                     let v_expr = emit_expr(cx, *v);
                     if has_subject {
-                        quote! {
-                            (#v_expr).as_array_unchecked().lock().iter()
-                                .any(|__c| __c.rb_case_eq(&__subject))
-                        }
+                        quote! { spinel_rt::case_eq_any(&#v_expr, &__subject)? }
                     } else {
                         // A subject-less `case` tests truthiness, so a
                         // splatted candidate list is "is any of them

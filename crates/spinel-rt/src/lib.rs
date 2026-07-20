@@ -118,6 +118,7 @@ pub use thread::{
     RQueue, RThread, ThreadData,
 };
 pub use value::rb_eq_checked;
+pub use value::{case_eq, case_eq_any};
 pub use value::RubyValue;
 
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a

@@ -245,7 +245,10 @@ fn push(
             }
         }
         LazyOp::Grep(pat, invert, blk) => {
-            if pat.rb_case_eq(&val) != *invert {
+            // `case_eq`, matching EAGER `grep` (`enumerable.rs`, which sends
+            // `===`): the native ladder made `lazy.grep(user_pattern)` answer
+            // differently from `grep(user_pattern)` on the same pattern.
+            if crate::value::case_eq(pat, &val)? != *invert {
                 let v = match blk {
                     Some(p) => p.call(std::slice::from_ref(&val))?,
                     None => val,

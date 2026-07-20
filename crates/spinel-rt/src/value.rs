@@ -1223,6 +1223,47 @@ pub(crate) fn cmp_or_raise(a: &RubyValue, b: &RubyValue) -> Result<i64, crate::S
 /// `a == b` with a fallible channel: an infallible `rb_eq` stashes a raising
 /// user `==`/`<=>` (or a non-numeric `Comparable#==` result); this clears
 /// before comparing and turns any stash back into the `Signal` it was.
+/// `case`/`when`, an `in` value/pin pattern, and `grep`: the case-equality
+/// test, DISPATCHING the pattern's own `===`.
+///
+/// `rb_case_eq` answers this natively for the builtin patterns and stays the
+/// fast path for them, but it cannot be the whole story: `===` is the one
+/// operator `case` exists to let a user define, and a native ladder ending in
+/// `rb_eq` silently ignores it. A user class whose `===` differs from its `==`
+/// (`class Even; def ===(n) = n.even?; end`) took the WRONG branch with no
+/// error, and a singleton `===` on a class (`def Trip.===`) was ignored the
+/// same way -- so both an `Object` pattern and a `Class` one go through
+/// dispatch. A `Class` still resolves to `Module#===`'s ancestry check when
+/// nothing overrides it, so the common `when Integer` keeps its meaning.
+pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::Signal> {
+    match pattern {
+        RubyValue::Object(_) | RubyValue::Class(_) => {
+            let matched = crate::dispatch::send_value(
+                pattern,
+                crate::Symbol::intern("==="),
+                std::slice::from_ref(subject),
+                None,
+            )?;
+            Ok(matched.truthy())
+        }
+        _ => Ok(pattern.rb_case_eq(subject)),
+    }
+}
+
+/// `when *candidates` -- `case_eq` against each element, short-circuiting on
+/// the first hit exactly as the listed `when a, b, c` form's `||` chain does.
+/// A free function rather than an `.any(..)` closure at the call site because
+/// each test is now fallible.
+pub fn case_eq_any(candidates: &RubyValue, subject: &RubyValue) -> Result<bool, crate::Signal> {
+    let elems = candidates.as_array_unchecked().lock().clone();
+    for candidate in elems.iter() {
+        if case_eq(candidate, subject)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub fn rb_eq_checked(a: &RubyValue, b: &RubyValue) -> Result<bool, crate::Signal> {
     clear_cmp_signal();
     let eq = a.rb_eq(b);
