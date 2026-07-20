@@ -16,6 +16,7 @@ pub mod analyze;
 pub mod build;
 pub mod codegen;
 pub mod compiler;
+pub mod constpath;
 pub mod gem_report;
 pub mod hir;
 

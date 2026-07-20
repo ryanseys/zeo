@@ -351,19 +351,23 @@ fn register_class(
     cref: &[ClassId],
     box_id: u32,
 ) -> Result<(), String> {
-    let (lexical_parent, leaf, qualified_def) = match name.strip_prefix("::") {
-        Some(rest) if !rest.contains("::") => (None, rest.to_string(), true),
-        _ => match name.rsplit_once("::") {
-            Some((prefix, leaf)) => {
-                let parent = compiler.resolve_class(prefix, cref, box_id).ok_or_else(|| {
-                    format!(
-                        "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
-                    )
-                })?;
-                (Some(parent), leaf.to_string(), true)
-            }
-            None => (cref.last().copied(), name.clone(), false),
-        },
+    let path = crate::constpath::ConstPath::parse(&name);
+    let (lexical_parent, leaf, qualified_def) = match path.scope() {
+        // `A::B` / `::A::B` -- defined INSIDE a named scope, which must
+        // already exist.
+        Some(prefix) => {
+            let parent = compiler.resolve_class(prefix, cref, box_id).ok_or_else(|| {
+                format!(
+                    "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
+                )
+            })?;
+            (Some(parent), path.base().to_string(), true)
+        }
+        // `::Foo` -- anchored at the top level, so NOT nested in the enclosing
+        // lexical scope, but still an explicitly qualified definition.
+        None if path.is_top_anchored() => (None, path.base().to_string(), true),
+        // `Foo` -- an ordinary definition in the enclosing lexical scope.
+        None => (cref.last().copied(), name.clone(), false),
     };
     // Reopening a BUILTIN class (Phase 16.3): `class String ... end` at the
     // top level ATTACHES to the existing builtin `ClassInfo` -- its methods

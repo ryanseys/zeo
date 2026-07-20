@@ -304,13 +304,14 @@ impl Compiler {
             // is stored as its LEAF under a lexical parent, so a constant path
             // (`Digest::SHA256`) descends into it like any user-nested class.
             // The parent is an earlier BUILTINS row (already seeded).
-            let nested = b.name.rsplit_once("::").map(|(parent, leaf)| {
+            let path = crate::constpath::ConstPath::parse(b.name);
+            let nested = path.scope().map(|parent| {
                 let pid = compiler
                     .classes
                     .iter()
                     .position(|c| c.is_builtin && c.name == parent)
                     .map(|i| ClassId(i as u32));
-                (leaf.to_string(), pid)
+                (path.base().to_string(), pid)
             });
             let ci = &mut compiler.classes[id.0 as usize];
             ci.is_builtin = true;
@@ -356,11 +357,9 @@ impl Compiler {
     /// -- a class nested inside a SUPERCLASS referenced by bare name from a
     /// subclass misses here, loudly, rather than resolving wrong).
     pub fn resolve_class(&self, path: &str, cref: &[ClassId], box_id: u32) -> Option<ClassId> {
-        let (path, anchored) = match path.strip_prefix("::") {
-            Some(rest) => (rest, true),
-            None => (path, false),
-        };
-        let mut segments = path.split("::");
+        let parsed = crate::constpath::ConstPath::parse(path);
+        let anchored = parsed.is_top_anchored();
+        let mut segments = parsed.segments();
         let first = segments.next()?;
         let mut cur = self.resolve_unqualified(first, if anchored { &[] } else { cref }, box_id)?;
         for seg in segments {

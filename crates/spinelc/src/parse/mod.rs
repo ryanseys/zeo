@@ -1593,12 +1593,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // or-constant rule under the box); deeper paths as the qualified
         // read they'd be inside the box.
         if let Some((bx, path)) = box_rooted_path(node) {
-            let inner = match path.rsplit_once("::") {
-                Some((scope, leaf)) => hir.push(HirNode::QualifiedConstRead(
+            let parsed = crate::constpath::ConstPath::parse(&path);
+            let inner = match parsed.scope() {
+                Some(scope) => hir.push(HirNode::QualifiedConstRead(
                     scope.to_string(),
-                    leaf.to_string(),
+                    parsed.base().to_string(),
                 )),
-                None => hir.push(HirNode::ClassRef(path)),
+                None => hir.push(HirNode::ClassRef(path.clone())),
             };
             return Ok(hir.push(HirNode::BoxScope { box_id: bx, body: vec![inner] }));
         }
@@ -3097,11 +3098,12 @@ fn lower_runtime_class(
     // constant that happens to be spelled `"NS::Item"` -- the latter reads
     // back only through the identical spelling, and leaves `NS.constants`
     // empty.
-    let (scope, base) = match name.rsplit_once("::") {
-        Some((s, b)) => (Some(s.to_string()), b.to_string()),
-        None => (None, name.to_string()),
-    };
-    Ok(hir.push(HirNode::ConstWrite { scope, name: base, value: new_call }))
+    let path = crate::constpath::ConstPath::parse(name);
+    Ok(hir.push(HirNode::ConstWrite {
+        scope: path.scope().map(str::to_string),
+        name: path.base().to_string(),
+        value: new_call,
+    }))
 }
 
 /// `class D ... end` REOPENING a constant that holds a runtime class

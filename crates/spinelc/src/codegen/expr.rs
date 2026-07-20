@@ -685,12 +685,10 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // inside `NS` -- a flat read of the whole spelling finds nothing,
             // which is what a namespaced runtime class (`class NS::Item <
             // Struct.new(:a)`) would otherwise hit.
-            None => match name.rsplit_once("::") {
-                Some((scope, base)) if !scope.is_empty() => {
-                    emit_const_read(cx, Some(scope), base)
-                }
-                _ => emit_const_read(cx, None, name),
-            },
+            None => {
+                let path = crate::constpath::ConstPath::parse(name);
+                emit_const_read(cx, path.scope(), path.base())
+            }
         },
         HirNode::QualifiedConstRead(scope, name) if qualified_const_class(cx, scope, name).is_some() => {
             let id = qualified_const_class(cx, scope, name).expect("guarded above").0;
@@ -1256,7 +1254,7 @@ pub(super) fn uninitialized_constant_error(cx: &Ctx, name: &str) -> TokenStream 
     // lexical `cref`) isn't known at this generic site, so it reads back as
     // `nil`; where it IS known -- an explicit `Klass.const_get` -- the fold in
     // `call.rs` supplies it precisely.
-    let leaf = name.rsplit("::").next().unwrap_or(name);
+    let leaf = crate::constpath::ConstPath::parse(name).base();
     quote! {
         spinel_rt::make_name_error(
             format!("uninitialized constant {}", #name),
