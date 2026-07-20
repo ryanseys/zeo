@@ -59,6 +59,16 @@ builtin_methods! {
     "warn" => fn warn(_recv, args, _block) {
         kernel_warn(args)
     }
+    // Spawning a child. `system` inherits stdout/stderr and answers a
+    // true/false/nil verdict; the backtick captures stdout and answers it as a
+    // String. Both set `$?` (see `builtins::process`). Private Kernel methods,
+    // so `respond_to?`'s default hides them (see `is_hidden_builtin_private`).
+    "system" => fn system(recv, args, block) {
+        crate::builtins::process::system(recv, args, block)
+    }
+    "`" => fn backquote(recv, args, block) {
+        crate::builtins::process::backquote(recv, args, block)
+    }
     // `putc` -- writes one character to `$stdout` and returns its argument.
     // An Integer writes the low byte (`n & 0xff`); a String writes its first
     // character.

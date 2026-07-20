@@ -573,6 +573,97 @@ fn class_shift_self_at_top_level_defines_singleton_methods_on_main() {
 }
 
 #[test]
+fn backtick_captures_stdout_and_sets_child_status() {
+    // `` `cmd` `` lowers to a `Kernel#\`` fcall: it captures the child's
+    // stdout as a String and leaves the wait status in `$?`.
+    let result = run_ruby(
+        r#"
+        out = `echo hello`
+        print out
+        puts out.length
+        puts $?.exitstatus
+        puts $?.success?
+        puts $?.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello\n6\n0\ntrue\nProcess::Status\n");
+}
+
+#[test]
+fn system_returns_true_false_and_sets_status() {
+    // `system` inherits stdio and answers true (exit 0) / false (nonzero),
+    // setting `$?` either way. A nonzero exit does not raise.
+    let result = run_ruby(
+        r#"
+        p system("true")
+        puts $?.exitstatus
+        p system("false")
+        puts $?.success?
+        puts $?.exitstatus
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n0\nfalse\nfalse\n1\n");
+}
+
+#[test]
+fn backtick_interpolates_and_runs_a_shell_command() {
+    // Interpolation shares the normal dstr path; a `;` forces the `/bin/sh -c`
+    // path (shell metacharacter), while the bare word execs directly.
+    let result = run_ruby(
+        r#"
+        name = "world"
+        print `echo hi #{name}`
+        print `echo a; echo b`
+        puts $?.exited?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi world\na\nb\ntrue\n");
+}
+
+#[test]
+fn gem_disclosure_report_records_how_each_library_was_satisfied() {
+    // Phase 2b: the report is the honesty anchor for the compatibility claim,
+    // so it gets a test that fails when it lies. Runs on the DEFAULT (report-on)
+    // path -- the thing --no-report suppresses -- not the harness opt-out.
+    let report =
+        std::env::temp_dir().join(format!("spinel-gems-test-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&report);
+    let opts = spinelc::CompileOptions {
+        gem_report: Some(report.clone()),
+        ..Default::default()
+    };
+    spinelc::compile_to_rust_with(
+        "require \"json\"\nrequire \"optparse\"\nrequire \"base64\"\nputs 1\n",
+        &opts,
+    )
+    .expect("compiles");
+    let json = std::fs::read_to_string(&report).expect("report was written");
+    let _ = std::fs::remove_file(&report);
+
+    // A gem with a Ruby half, over a divergent native backing.
+    assert!(json.contains(r#""json": {"by": "bundled-gem""#), "{json}");
+    assert!(json.contains("serde_json-backed"), "{json}");
+    // A faithful pure-Ruby bundled gem: bundled-gem, NOT flagged divergent.
+    assert!(json.contains(r#""optparse": {"by": "bundled-gem""#), "{json}");
+    assert!(
+        !json[json.find("\"optparse\"").unwrap()..]
+            .lines()
+            .next()
+            .unwrap()
+            .contains("diverges"),
+        "optparse must not be marked divergent: {json}"
+    );
+    // A directly-required static ext: builtin-ext, divergent.
+    assert!(
+        json.contains(r#""base64": {"by": "builtin-ext", "feature": "base64", "diverges": true"#),
+        "{json}"
+    );
+}
+
+#[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
     let err = spinelc::compile_to_rust("def foo(\n").unwrap_err();
     assert!(

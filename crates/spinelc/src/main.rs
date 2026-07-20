@@ -13,6 +13,12 @@ struct Args {
     print_rust: bool,
     load_roots: Vec<PathBuf>,
     package_dirs: Vec<PathBuf>,
+    /// `--no-report`: suppress the Phase-2b `spinel-gems.json` disclosure
+    /// record. Default is ON for an artifact-producing compile; harnesses that
+    /// already know substitutions happen pass this.
+    no_report: bool,
+    /// `--nowarn=<slug>`: suppress a disclosure warning category (repeatable).
+    nowarn: std::collections::HashSet<String>,
 }
 
 enum Source {
@@ -30,6 +36,8 @@ fn parse_args() -> Result<Args, String> {
     let mut print_rust = false;
     let mut load_roots = Vec::new();
     let mut package_dirs = Vec::new();
+    let mut no_report = false;
+    let mut nowarn = std::collections::HashSet::new();
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -63,10 +71,19 @@ fn parse_args() -> Result<Args, String> {
                 ));
             }
             "-S" => print_rust = true,
+            // Suppress the Phase-2b disclosure record (see `gem_report`).
+            "--no-report" => no_report = true,
+            // `--nowarn <slug>` -- suppress a disclosure warning category.
+            "--nowarn" => {
+                nowarn.insert(iter.next().ok_or("--nowarn requires a slug")?);
+            }
             other => {
                 // Attached `-I<dir>` (ruby's own spelling, no space).
                 if let Some(dir) = other.strip_prefix("-I").filter(|d| !d.is_empty()) {
                     load_roots.push(PathBuf::from(dir));
+                } else if let Some(slug) = other.strip_prefix("--nowarn=") {
+                    // Attached `--nowarn=<slug>` spelling.
+                    nowarn.insert(slug.to_string());
                 } else if input.is_some() {
                     return Err(format!("unexpected argument `{other}`"));
                 } else {
@@ -80,7 +97,7 @@ fn parse_args() -> Result<Args, String> {
         (Some(code), None) => Source::Eval(code),
         (None, Some(path)) => Source::File(path),
         (None, None) => return Err(
-            "usage: spinelc (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [-o <output>] [-S]".to_string(),
+            "usage: spinelc (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [-o <output>] [-S] [--no-report] [--nowarn <slug>]...".to_string(),
         ),
     };
     Ok(Args {
@@ -89,6 +106,8 @@ fn parse_args() -> Result<Args, String> {
         print_rust,
         load_roots,
         package_dirs,
+        no_report,
+        nowarn,
     })
 }
 
@@ -124,10 +143,34 @@ fn run() -> Result<(), String> {
 
     let mut package_dirs = args.package_dirs.clone();
     package_dirs.extend(default_package_dirs(input_path.as_deref()));
+
+    // Phase 2b: an artifact-producing compile writes `spinel-gems.json` next to
+    // its output and warns about substitutions -- UNLESS `--no-report`. The
+    // `-e` path is a throwaway differential-harness run, so it stays silent
+    // (no file, no warnings) regardless.
+    let is_eval = matches!(args.source, Source::Eval(_));
+    let gem_report = if args.no_report || is_eval {
+        None
+    } else {
+        let artifact = args.output.clone().unwrap_or_else(|| {
+            let mut p = input_path.clone().expect("a file source always has a path");
+            p.set_extension("");
+            p
+        });
+        let dir = artifact.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        Some(dir.join("spinel-gems.json"))
+    };
     let opts = spinelc::CompileOptions {
         input_path: input_path.clone(),
         load_roots: args.load_roots.clone(),
         package_dirs,
+        // At the CLI the warnings ride with the report: `--no-report` (the
+        // harness "be quiet" flag) silences both, while `--nowarn <slug>`
+        // trims individual categories with the report still on. The library
+        // fields stay independent for callers that want a finer split.
+        gem_warnings: gem_report.is_some(),
+        gem_report,
+        nowarn: args.nowarn.clone(),
     };
     let compiled = spinelc::compile_to_rust_with(&source, &opts)?;
 

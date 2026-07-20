@@ -2467,6 +2467,39 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::StringLit(parts)));
     }
 
+    // `` `cmd` `` / `%x{cmd}` (and the interpolated form) -- CRuby compiles
+    // both to `putself` + an ordinary send of `` :` `` with the command
+    // String as its one argument (compile.c), so they are the exact
+    // string-literal shapes above wrapped in an implicit-self fcall to the
+    // overridable `Kernel#\``. Not a direct syscall: a user who reopens
+    // `Kernel#\`` (or defines `` def `(cmd) ``) wins, real Ruby's rule.
+    if let Some(xs) = node.as_x_string_node() {
+        let cmd = hir.push(HirNode::StringLit(vec![string_literal_part(xs.unescaped())]));
+        return Ok(hir.push(HirNode::Call {
+            receiver: None,
+            name: "`".to_string(),
+            args: vec![ArrayElem::Single(cmd)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        }));
+    }
+
+    if let Some(xs) = node.as_interpolated_x_string_node() {
+        let parts = lower_string_parts(result, hir, xs.parts().iter())?;
+        let cmd = hir.push(HirNode::StringLit(parts));
+        return Ok(hir.push(HirNode::Call {
+            receiver: None,
+            name: "`".to_string(),
+            args: vec![ArrayElem::Single(cmd)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        }));
+    }
+
     // `/pattern/flags` / `%r{pattern}flags` (`RegularExpressionNode` covers
     // BOTH delimiter spellings -- prism only distinguishes opening/closing
     // `Location`s, not a separate node kind). `e`/`s` (EUC-JP/Windows-31J)

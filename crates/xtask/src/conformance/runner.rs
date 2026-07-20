@@ -150,6 +150,10 @@ impl Runner {
         let bin_path = self.bin_dir.join(sanitize_id(&case.id));
         let mut cmd = Command::new(&self.spinelc);
         cmd.arg(&case.source).arg("-o").arg(&bin_path).env("RUST_BACKTRACE", "0");
+        // The conformance suite knows substitutions happen (it exercises them
+        // on purpose) -- suppress the Phase-2b disclosure record and its
+        // warnings so N thousand cases don't each drop a `spinel-gems.json`.
+        cmd.arg("--no-report");
         // Two runtime modes, trading cache disk for compile speed:
         //
         //  - DEFAULT (release, STATIC): the `-o` path's own defaults (Static +

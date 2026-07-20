@@ -88,6 +88,7 @@ pub use fiber::{
 };
 pub use globals::{global_alias, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
+pub use builtins::process::last_child_status;
 pub use ractor::{
     make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send, shareable,
     RRactor, RactorData,

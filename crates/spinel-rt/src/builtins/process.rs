@@ -8,8 +8,15 @@
 //! under the Process module (see `seed_process`), matching how a program
 //! writes them: `Process::CLOCK_MONOTONIC`.
 
+use std::cell::RefCell;
+use std::os::unix::process::ExitStatusExt;
+use std::process::Command;
+use std::sync::Arc;
+
 use crate::builtins::{arity, builtin_methods};
-use crate::RubyValue;
+use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::{RubyValue, Signal};
+use spinel_abi::{ClassId, PROCESS_STATUS_CLASS};
 
 builtin_methods! {
     pub(crate) fn lookup_class;
@@ -95,6 +102,298 @@ pub fn seed_process() {
     set("CLOCK_MONOTONIC", libc::CLOCK_MONOTONIC);
     set("CLOCK_PROCESS_CPUTIME_ID", libc::CLOCK_PROCESS_CPUTIME_ID);
     set("CLOCK_THREAD_CPUTIME_ID", libc::CLOCK_THREAD_CPUTIME_ID);
+}
+
+// ---------------------------------------------------------------------------
+// `Process::Status` -- the object `$?` holds after a `system` or a backtick.
+// ---------------------------------------------------------------------------
+
+/// A finished child's wait status. `raw` is the platform `wait()` status word
+/// (what `#to_i` answers, and what `ExitStatus` decodes); `pid` is the child
+/// that produced it.
+pub struct RProcessStatus {
+    pid: i64,
+    raw: i32,
+}
+
+impl RProcessStatus {
+    /// The normal-exit code (`nil` when terminated by a signal instead) --
+    /// `ExitStatus` owns the platform bit-layout so we don't re-derive it.
+    fn exitstatus(&self) -> Option<i32> {
+        std::process::ExitStatus::from_raw(self.raw).code()
+    }
+    /// The terminating signal number, when the child died from one.
+    fn termsig(&self) -> Option<i32> {
+        std::process::ExitStatus::from_raw(self.raw).signal()
+    }
+}
+
+impl RubyObject for RProcessStatus {
+    fn class_id(&self) -> ClassId {
+        PROCESS_STATUS_CLASS
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    // Immutable once built (a status word never changes), so `freeze` has
+    // nothing to guard.
+    fn is_frozen(&self) -> bool {
+        false
+    }
+    fn set_frozen(&self) {}
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        Vec::new()
+    }
+    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        Arc::new(RProcessStatus { pid: self.pid, raw: self.raw })
+    }
+}
+
+fn new_status(pid: i64, raw: i32) -> RubyValue {
+    RubyValue::Object(Arc::new(RProcessStatus { pid, raw }))
+}
+
+fn recv_status(recv: &RubyValue) -> &RProcessStatus {
+    match recv {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RProcessStatus>()
+            .expect("Process::Status table row dispatched on a non-Status receiver"),
+        _ => panic!("Process::Status table row dispatched on a non-Object receiver"),
+    }
+}
+
+/// The body of `#to_s` (and, wrapped, `#inspect`): CRuby renders a normal exit
+/// as `pid N exit C` and a signal death as `pid N signal S`.
+fn status_describe(s: &RProcessStatus) -> String {
+    if let Some(code) = s.exitstatus() {
+        format!("pid {} exit {}", s.pid, code)
+    } else if let Some(sig) = s.termsig() {
+        format!("pid {} signal {}", s.pid, sig)
+    } else {
+        format!("pid {}", s.pid)
+    }
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_status;
+
+    "exitstatus" => fn status_exitstatus(recv, args, _block) {
+        arity!(args, 0);
+        Ok(match recv_status(recv).exitstatus() {
+            Some(code) => RubyValue::Int(code as i64),
+            None => RubyValue::Nil,
+        })
+    }
+    // `nil` (not `false`) when the child was signalled rather than exiting --
+    // CRuby's own three-valued answer.
+    "success?" => fn status_success(recv, args, _block) {
+        arity!(args, 0);
+        Ok(match recv_status(recv).exitstatus() {
+            Some(code) => RubyValue::Bool(code == 0),
+            None => RubyValue::Nil,
+        })
+    }
+    "pid" => fn status_pid(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(recv_status(recv).pid))
+    }
+    "to_i" => fn status_to_i(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(recv_status(recv).raw as i64))
+    }
+    "exited?" => fn status_exited(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(recv_status(recv).exitstatus().is_some()))
+    }
+    "signaled?" => fn status_signaled(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Bool(recv_status(recv).termsig().is_some()))
+    }
+    "termsig" => fn status_termsig(recv, args, _block) {
+        arity!(args, 0);
+        Ok(match recv_status(recv).termsig() {
+            Some(sig) => RubyValue::Int(sig as i64),
+            None => RubyValue::Nil,
+        })
+    }
+    "stopped?" => fn status_stopped(recv, args, _block) {
+        arity!(args, 0);
+        // A reaped child is never in the stopped state (that needs WUNTRACED,
+        // which `wait()` doesn't set), so this is always false here.
+        let _ = recv_status(recv);
+        Ok(RubyValue::Bool(false))
+    }
+    // `$? == 0` (an Integer) and `$? == other_status` both compare the raw
+    // status word, CRuby's rule.
+    "==" => fn status_eq(recv, args, _block) {
+        arity!(args, 1);
+        let me = recv_status(recv).raw as i64;
+        Ok(RubyValue::Bool(match &args[0] {
+            RubyValue::Int(i) => *i == me,
+            RubyValue::Object(o) => o
+                .as_any()
+                .downcast_ref::<RProcessStatus>()
+                .is_some_and(|s| s.raw as i64 == me),
+            _ => false,
+        }))
+    }
+    "to_s" => fn status_to_s(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::string_new(status_describe(recv_status(recv)))))
+    }
+    "inspect" => fn status_inspect(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Str(crate::string_new(format!(
+            "#<Process::Status: {}>",
+            status_describe(recv_status(recv))
+        ))))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `$?` -- the last child status, thread-local like CRuby's own special global.
+// ---------------------------------------------------------------------------
+
+thread_local! {
+    static LAST_CHILD_STATUS: RefCell<RubyValue> = const { RefCell::new(RubyValue::Nil) };
+}
+
+/// `$?` -- the `Process::Status` of the last `system`/backtick child, or nil.
+pub fn last_child_status() -> RubyValue {
+    LAST_CHILD_STATUS.with(|c| c.borrow().clone())
+}
+
+fn set_last_child_status(v: RubyValue) {
+    LAST_CHILD_STATUS.with(|c| *c.borrow_mut() = v);
+}
+
+// ---------------------------------------------------------------------------
+// Running a command -- shared by `Kernel#system` and the backtick.
+// ---------------------------------------------------------------------------
+
+/// CRuby's shell-metacharacter set (`process.c`, `rb_proc_exec`): a
+/// single-string command containing any of these runs through `/bin/sh -c`;
+/// otherwise it is whitespace-split and exec'd directly. A plain space is NOT
+/// a metacharacter -- `system("echo hi")` execs `["echo","hi"]` directly.
+const SHELL_META: &[char] =
+    &['*', '?', '{', '}', '[', ']', '<', '>', '(', ')', '~', '&', '|', '\\', '$', ';', '\'', '"', '`', '\n'];
+
+fn needs_shell(cmd: &str) -> bool {
+    cmd.chars().any(|c| SHELL_META.contains(&c))
+}
+
+fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
+    match v {
+        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+        other => Err(raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// Build the `Command` for a `system`/backtick argument list. A single string
+/// picks the shell-or-direct path per `needs_shell`; multiple arguments always
+/// exec directly (`system("prog", "arg", ...)`). `Ok(None)` is an empty
+/// command (a blank single string), which the callers turn into their own
+/// "nothing ran" answer.
+fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
+    if args.is_empty() {
+        return Err(raise_error(
+            "ArgumentError",
+            "wrong number of arguments (given 0, expected 1+)".to_string(),
+        ));
+    }
+    if args.len() == 1 {
+        let s = cmd_str(&args[0])?;
+        if needs_shell(&s) {
+            let mut c = Command::new("/bin/sh");
+            c.arg("-c").arg(&s);
+            return Ok(Some(c));
+        }
+        let words: Vec<&str> = s.split_whitespace().collect();
+        let Some((prog, rest)) = words.split_first() else {
+            return Ok(None);
+        };
+        let mut c = Command::new(prog);
+        c.args(rest);
+        Ok(Some(c))
+    } else {
+        let prog = cmd_str(&args[0])?;
+        let mut c = Command::new(prog);
+        for a in &args[1..] {
+            c.arg(cmd_str(a)?);
+        }
+        Ok(Some(c))
+    }
+}
+
+/// `Kernel#system` -- runs the command with stdout/stderr inherited, sets `$?`,
+/// and answers `true` (exit 0) / `false` (any other exit or a signal) / `nil`
+/// (the command could not be executed). Does not raise on a nonzero exit.
+pub fn system(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    set_last_child_status(RubyValue::Nil);
+    let Some(mut cmd) = build_command(args)? else {
+        return Ok(RubyValue::Bool(false));
+    };
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        // Couldn't even start it (e.g. ENOENT on a direct exec) -> nil.
+        Err(_) => return Ok(RubyValue::Nil),
+    };
+    let pid = child.id() as i64;
+    let status = child
+        .wait()
+        .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
+    set_last_child_status(new_status(pid, status.into_raw()));
+    Ok(RubyValue::Bool(status.success()))
+}
+
+/// `Kernel#\`` -- runs the command, captures its stdout (stderr inherited),
+/// sets `$?`, and answers the captured output as a String. A nonzero exit does
+/// NOT raise; a command that cannot be started raises `Errno::ENOENT`, CRuby's
+/// own behaviour.
+pub fn backquote(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    arity!(args, 1);
+    set_last_child_status(RubyValue::Nil);
+    let raw_cmd = cmd_str(&args[0])?;
+    let Some(mut cmd) = build_command(args)? else {
+        return Err(raise_error(
+            "Errno::ENOENT",
+            "No such file or directory - ".to_string(),
+        ));
+    };
+    cmd.stdout(std::process::Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(raise_error(
+                "Errno::ENOENT",
+                format!("No such file or directory - {raw_cmd}"),
+            ))
+        }
+        Err(e) => return Err(raise_error("SystemCallError", e.to_string())),
+    };
+    let pid = child.id() as i64;
+    let mut out = Vec::new();
+    if let Some(mut so) = child.stdout.take() {
+        use std::io::Read;
+        so.read_to_end(&mut out)
+            .map_err(|e| raise_error("IOError", e.to_string()))?;
+    }
+    let status = child
+        .wait()
+        .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
+    set_last_child_status(new_status(pid, status.into_raw()));
+    // Tagged with the default external encoding, as CRuby's backtick output is.
+    Ok(RubyValue::Str(crate::string_from_bytes(out, crate::encoding::default_external())))
 }
 
 #[cfg(test)]

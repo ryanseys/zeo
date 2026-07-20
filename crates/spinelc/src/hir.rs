@@ -70,6 +70,11 @@ pub struct Hir {
     /// in right after the exception prelude by `parse_and_lower_with`, so
     /// each base is registered before the leaf that inherits it.
     pub synth_classes: Vec<NodeId>,
+    /// The Phase-2b disclosure record: one entry per library `require`d, how
+    /// spinel satisfied it (see `gem_report`). Populated by the loader as each
+    /// require resolves; written to `spinel-gems.json` by the driver. Deduped
+    /// by name, first-wins, via `record_gem`.
+    pub gem_records: Vec<crate::gem_report::GemRecord>,
 }
 
 /// One splice instance -- see `Hir::loaded_files`.
@@ -99,6 +104,16 @@ impl Hir {
     /// the gated builtin's constant program-wide (see `activated_features`).
     pub fn activate_feature(&mut self, feature: &str) {
         self.activated_features.insert(feature.to_string());
+    }
+
+    /// Records how one `require`d library was satisfied (Phase 2b), deduped by
+    /// name (first-wins): a bundled gem's user-facing `.rb` is recorded before
+    /// its internal `.so` require, so the entry point wins.
+    pub fn record_gem(&mut self, record: crate::gem_report::GemRecord) {
+        if self.gem_records.iter().any(|r| r.name == record.name) {
+            return;
+        }
+        self.gem_records.push(record);
     }
 }
 

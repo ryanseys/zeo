@@ -711,6 +711,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // any rescue, exactly as CRuby's own `$!`.
             quote! { spinel_rt::current_exception().unwrap_or(spinel_rt::RubyValue::Nil) }
         }
+        HirNode::GlobalRead(name) if name == "$?" => {
+            // `$?` reads a dedicated thread-local slot (like `$!`), the one
+            // `Kernel#system`/the backtick set from their child's wait status
+            // -- not the ordinary `$foo` box table, which is never written for
+            // it. `nil` until the first child runs, exactly as CRuby's own.
+            quote! { spinel_rt::last_child_status() }
+        }
         HirNode::GlobalRead(name) => {
             // Globals are per-box tables (Phase 18) -- the statement's own
             // defining box picks the table, no fallback layer (the CRuby

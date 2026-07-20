@@ -1211,7 +1211,7 @@ impl VisFilter {
 /// bearing case: `super` from any `initialize` must reach it, but
 /// `obj.initialize` must raise. Kernel's print family is the same shape.
 fn is_hidden_builtin_private(name: &str) -> bool {
-    matches!(name, "initialize" | "puts" | "print" | "p" | "pp" | "warn")
+    matches!(name, "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`")
 }
 
 /// The instance-method names of `class` and -- when `inherit` -- its

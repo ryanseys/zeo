@@ -89,6 +89,9 @@ fn test(root: &Path) -> ExitCode {
             .arg(&rb)
             .arg("-o")
             .arg(&bin_path)
+            // The example suite exercises substitutions on purpose; skip the
+            // Phase-2b disclosure record so it doesn't drop a per-example file.
+            .arg("--no-report")
             .output();
 
         let actual = match compile {

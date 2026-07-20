@@ -240,6 +240,11 @@ pub const MARSHAL_MODULE: ClassId = ClassId(65);
 /// the owning execution may re-enter it; see `ext::monitor`.
 pub const MONITOR_CLASS: ClassId = ClassId(66);
 
+/// `Process::Status` -- the wait-status object a `system`/backtick leaves in
+/// `$?`. A core class (always present, no feature gate); see
+/// `builtins::process`.
+pub const PROCESS_STATUS_CLASS: ClassId = ClassId(67);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -322,6 +327,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: SIZED_QUEUE_CLASS, name: "Thread::SizedQueue", is_module: false, superclass: Some(QUEUE_CLASS), includes: &[], feature: None },
     BuiltinClass { id: MARSHAL_MODULE, name: "Marshal", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: MONITOR_CLASS, name: "Monitor", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("monitor") },
+    BuiltinClass { id: PROCESS_STATUS_CLASS, name: "Process::Status", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

@@ -113,6 +113,10 @@ pub fn compile_packages(
         input_path: Some(entry_path),
         load_roots: roots.iter().map(|r| dir.join(r)).collect(),
         package_dirs: package_dirs.iter().map(|r| dir.join(r)).collect(),
+        // The disclosure report/warnings default OFF for the in-process test
+        // harness (the `--no-report` case) -- it already knows substitutions
+        // happen and must not litter the tree or dirty asserted stderr.
+        ..Default::default()
     };
     match spinelc::compile_to_rust_with(&entry_source, &opts) {
         Ok(rust) => Ok((rust, dir)),

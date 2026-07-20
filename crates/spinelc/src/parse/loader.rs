@@ -481,6 +481,23 @@ impl Loader {
             "require_relative" => (resolve_require_relative(feature, dir)?, inherited),
             _ => (self.resolve_load(feature, dir)?, inherited),
         };
+        // Phase 2b disclosure: a plain `require` of a real library (not the
+        // internal `.so` loader idiom, not `require_relative`/`load` of an
+        // owned file) records HOW it was satisfied -- out of a bundled gem's
+        // roots (`package: Some`) or off a `-I` stdlib root (`package: None`).
+        // Deduped by name in `record_gem`, so a re-require is a no-op.
+        if name == "require" && !is_native_feature(feature) {
+            let by = match &package {
+                Some(_) => crate::gem_report::SatisfiedBy::BundledGem {
+                    path: display_path(&path),
+                },
+                None => crate::gem_report::SatisfiedBy::StdlibRoot {
+                    path: display_path(&path),
+                },
+            };
+            hir.record_gem(crate::gem_report::GemRecord { name: feature.to_string(), by });
+        }
+
         let canonical = path
             .canonicalize()
             .map_err(|e| format!("resolving {}: {e}", path.display()))?;
@@ -520,6 +537,18 @@ impl Loader {
             .unwrap_or(feature);
         if !is_builtin_feature(bare) {
             return Err(cannot_load(feature));
+        }
+        // Phase 2b disclosure: a DIRECT `require` of a statically-linked ext
+        // (no Ruby half on disk, e.g. `require "base64"`). The `.so` loader
+        // idiom -- a bundled gem's Ruby half pulling its own native half in --
+        // is NOT recorded here: that gem's entry point was already recorded
+        // when its `.rb` spliced, and recording the `.so` would double-count.
+        if !is_native_feature(feature) {
+            let canonical = canonical_ext_feature(bare).to_string();
+            hir.record_gem(crate::gem_report::GemRecord {
+                name: canonical.clone(),
+                by: crate::gem_report::SatisfiedBy::BuiltinExt { feature: canonical },
+            });
         }
         // An in-tree `ext/` feature's `require` ACTIVATES its gated builtin
         // (`require "base64"` -> `Base64` resolves). Always-on core no-ops
@@ -888,8 +917,48 @@ fn gemspec_path(pkg_dir: &Path) -> Option<PathBuf> {
 }
 
 /// CRuby's exact missing-feature message (`load_failed` -> `rb_load_fail`).
+/// A path for the disclosure record, made relative to the current directory
+/// when it sits under it (so a bundled gem reads `gems/json/lib/json.rb`
+/// rather than an absolute machine path), else left absolute.
+fn display_path(path: &Path) -> String {
+    // Canonicalize first so a bundled path baked with `../..`
+    // (`CARGO_MANIFEST_DIR/../../gems/...`) collapses before the CWD strip,
+    // yielding a clean `gems/json/lib/json.rb` rather than `crates/spinelc/../..`.
+    let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| cwd.canonicalize().ok())
+        .and_then(|cwd| resolved.strip_prefix(&cwd).ok().map(Path::to_path_buf))
+        .unwrap_or(resolved)
+        .display()
+        .to_string()
+}
+
 fn cannot_load(name: &str) -> String {
+    // mruby's unclaimed win: when the name is a well-known gem with a NATIVE
+    // half spinel has no static ext for, say so -- otherwise it reads like an
+    // unsupported language feature rather than "this gem isn't linked in".
+    // FFI (#161/#204) is the future escape hatch this points at.
+    if is_known_native_gem(name) {
+        return format!(
+            "cannot load such file -- {name}: this gem has a native (C) extension \
+             spinel does not provide a built-in for. See docs/EXTENSIONS.md; the FFI \
+             path is the intended escape hatch."
+        );
+    }
     format!("cannot load such file -- {name}")
+}
+
+/// A small allowlist of popular gems whose real implementation is a C
+/// extension -- named so a failed `require` explains itself (see `cannot_load`).
+/// Not exhaustive and not load-bearing: an unrecognized native gem still fails,
+/// just with the plainer message.
+fn is_known_native_gem(name: &str) -> bool {
+    matches!(
+        name,
+        "sqlite3" | "nokogiri" | "pg" | "mysql2" | "ffi" | "bcrypt" | "nio4r" | "puma"
+            | "grpc" | "protobuf" | "oj" | "msgpack" | "eventmachine" | "sass" | "rmagick"
+    )
 }
 
 /// Whether `feature` names a stdlib feature the runtime compiles in, so

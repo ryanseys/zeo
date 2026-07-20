@@ -16,6 +16,7 @@ pub mod analyze;
 pub mod build;
 pub mod codegen;
 pub mod compiler;
+pub mod gem_report;
 pub mod hir;
 pub mod parse;
 pub mod types;
@@ -35,6 +36,17 @@ pub struct CompileOptions {
     /// nothing. The CLI defaults to the input file's sibling `packages/`
     /// then the compiler's own bundled `packages/` -- see `main.rs`.
     pub package_dirs: Vec<std::path::PathBuf>,
+    /// Where to write the Phase-2b gem disclosure record (`gem_report`).
+    /// `None` is the `--no-report` opt-out -- and the DEFAULT for the library
+    /// API, so in-process callers (the e2e/conformance harnesses) don't litter
+    /// the tree. The CLI defaults it to a path next to the output artifact.
+    pub gem_report: Option<std::path::PathBuf>,
+    /// Emit the once-per-library substitution warnings to stderr. Off by
+    /// default (keeps the harness path silent); the CLI turns it on.
+    pub gem_warnings: bool,
+    /// Warning slugs suppressed via `--nowarn=<slug>` -- a dial independent of
+    /// `gem_report`, so a caller can silence the noise but keep the file.
+    pub nowarn: std::collections::HashSet<String>,
 }
 
 /// A compiled program: the generated Rust source, ready for
@@ -59,6 +71,15 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
         &opts.load_roots,
         &opts.package_dirs,
     )?;
+    // Phase 2b: the disclosure record is fully known once lowering resolved
+    // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
+    // lands even if a later stage fails.
+    if opts.gem_warnings {
+        gem_report::emit_warnings(&hir.gem_records, &opts.nowarn);
+    }
+    if let Some(path) = &opts.gem_report {
+        gem_report::write_report(&hir.gem_records, path)?;
+    }
     let analyzed = analyze::analyze(hir, root)?;
     Ok(CompileOutput {
         rust_source: codegen::codegen_to_string(&analyzed)?,
