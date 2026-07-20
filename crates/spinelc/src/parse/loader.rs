@@ -1049,12 +1049,13 @@ pub(super) fn is_builtin_feature(feature: &str) -> bool {
     // `io/console` names no gated constant either -- `IO` is core and its
     // `#winsize` is an unconditional row on the IO table, so the require is
     // pure ceremony. Same shape of divergence as `time` above.
-    // `ffi` names no gated class either: `require "ffi"` is a native no-op that
-    // just activates the compile-time FFI frontend. `extend FFI::Library` /
-    // `attach_function` are recognized at lowering time (parse/mod's
-    // `lower_class_body` FFI pre-scan) and emit `extern "C"` + `#[link]` inline,
-    // so the `FFI` constant itself never has to resolve. See [[ffi-real-gem-api]].
-    matches!(feature, "tmpdir" | "set" | "time" | "io/console" | "ffi")
+    // `ffi` is now an `is_ext_feature` (the `FFI` module + `Pointer`/
+    // `MemoryPointer`/`Struct` rows carry `feature: Some("ffi")`), so
+    // `require "ffi"` activates that feature and those constants resolve. The
+    // compile-time frontend (`extend FFI::Library` / `attach_function`, the
+    // `lower_class_body` FFI pre-scan) is orthogonal -- it emits `extern "C"` +
+    // `#[link]` inline and never needs a constant. See [[ffi-real-gem-api]].
+    matches!(feature, "tmpdir" | "set" | "time" | "io/console")
         || spinel_abi::is_ext_feature(canonical_ext_feature(feature))
 }
 

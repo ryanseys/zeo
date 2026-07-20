@@ -108,6 +108,7 @@ ext-all = [
     "ext-psych",
     "ext-socket",
     "ext-openssl",
+    "ext-ffi",
 ]
 ext-base64 = []
 ext-monitor = []
@@ -121,3 +122,4 @@ ext-zlib = ["dep:flate2"]
 ext-psych = ["dep:yaml-rust2"]
 ext-socket = []
 ext-openssl = []
+ext-ffi = []

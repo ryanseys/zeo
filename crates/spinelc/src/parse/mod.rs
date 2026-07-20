@@ -635,7 +635,7 @@ fn desugar_singleton_class_defs(
     singleton: &ruby_prism::SingletonClassNode<'_>,
 ) -> PResult<Vec<NodeId>> {
     let recv_node = singleton.expression();
-    let inner = lower_class_body(result, hir, singleton.body())?;
+    let inner = lower_class_body(result, hir, singleton.body(), None)?;
     let mut out = Vec::with_capacity(inner.len());
     for &id in &inner {
         let (mname, params, body) = match &hir[id] {
@@ -1822,7 +1822,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(sc) => Some(constant_path_name(&sc)?),
         };
-        let body = lower_class_body(result, hir, class.body())?;
+        let body = lower_class_body(result, hir, class.body(), superclass.as_deref())?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass,
@@ -1838,7 +1838,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
         let name = constant_path_name(&module.constant_path())?;
-        let body = lower_class_body(result, hir, module.body())?;
+        let body = lower_class_body(result, hir, module.body(), None)?;
         return Ok(hir.push(HirNode::ClassDef {
             name,
             superclass: None,
@@ -2920,6 +2920,7 @@ fn lower_class_body(
     result: &ParseResult,
     hir: &mut Hir,
     body: Option<Node<'_>>,
+    superclass: Option<&str>,
 ) -> PResult<Vec<NodeId>> {
     let stmts: Vec<Node<'_>> = match body {
         None => return Ok(Vec::new()),
@@ -2928,6 +2929,10 @@ fn lower_class_body(
             None => vec![n],
         },
     };
+    // A `class T < FFI::Struct` (#204) turns its `layout` directive into
+    // synthesized `[]`/`[]=`/`size`/`offset_of`/`pointer` methods over an
+    // `FFI::MemoryPointer` ivar -- see `synthesize_ffi_struct`.
+    let is_ffi_struct = superclass == Some("FFI::Struct");
     let mut out = Vec::new();
     // The DEFAULT visibility for every subsequent `def` in this class body,
     // switched by a bare `private`/`public`/`protected` (no arguments) --
@@ -2941,12 +2946,25 @@ fn lower_class_body(
     // mix), so this only re-routes the recognized directives.
     let is_ffi = stmts.iter().any(is_extend_ffi_library);
     let mut ffi_lib: Option<String> = None;
+    // `typedef :existing, :alias` names accumulated in source order, so a later
+    // `attach_function` can name an alias the gem requires be declared first.
+    let mut ffi_aliases: std::collections::HashMap<String, crate::hir::FfiType> =
+        std::collections::HashMap::new();
     for stmt in &stmts {
         if is_ffi {
             if is_extend_ffi_library(stmt) {
                 continue; // `extend FFI::Library` is the marker, no output
             }
-            if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut out)? {
+            if lower_ffi_directive(result, hir, stmt, &mut ffi_lib, &mut ffi_aliases, &mut out)? {
+                continue;
+            }
+        }
+        if is_ffi_struct {
+            if let Some(fields) = as_ffi_layout(stmt)? {
+                // Replace `layout ...` in place with the synthesized accessors,
+                // so any user methods after it can still override them.
+                let source = synthesize_ffi_struct(&fields)?;
+                out.extend(parse_and_lower_into(hir, &source)?);
                 continue;
             }
         }
@@ -2993,6 +3011,7 @@ fn lower_ffi_directive(
     hir: &mut Hir,
     node: &Node<'_>,
     ffi_lib: &mut Option<String>,
+    aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
 ) -> PResult<bool> {
     let Some(call) = node.as_call_node() else { return Ok(false) };
@@ -3012,12 +3031,205 @@ fn lower_ffi_directive(
             }
             Ok(true)
         }
+        b"typedef" => {
+            // `typedef :existing, :alias` -- register a type alias resolvable by
+            // every subsequent `attach_function`. The gem requires the definition
+            // precede its use, which source-order iteration gives us for free.
+            if args.len() != 2 {
+                return Err(format!(
+                    "typedef expects 2 arguments (existing_type, new_name), got {}",
+                    args.len()
+                ));
+            }
+            let existing = ffi_type_of(&ffi_symbol_str(&args[0])?, aliases)?;
+            let new_name = ffi_symbol_str(&args[1])?;
+            aliases.insert(new_name, existing);
+            Ok(true)
+        }
+        b"enum" => {
+            // `enum :tag, [:sym, val, :sym, ...]` -- register `:tag` as an enum
+            // type usable in a later type list. (An anonymous `enum [...]`,
+            // whose bare symbols become module values, is a follow-on.)
+            let (tag, list) = match (args.first(), args.get(1)) {
+                (Some(n), Some(l)) if n.as_symbol_node().is_some() => (ffi_symbol_str(n)?, l),
+                _ => {
+                    return Err(
+                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)".to_string(),
+                    )
+                }
+            };
+            let members = parse_enum_members(list)?;
+            aliases.insert(tag, crate::hir::FfiType::Enum(members));
+            Ok(true)
+        }
         b"attach_function" => {
-            out.push(lower_attach_function(result, hir, &args, ffi_lib.clone())?);
+            out.push(lower_attach_function(result, hir, &args, ffi_lib.clone(), aliases)?);
             Ok(true)
         }
         _ => Ok(false),
     }
+}
+
+/// `[:ok, 0, :busy, 3, :error]` -> `[("ok",0),("busy",3),("error",4)]`. Members
+/// are symbols, each optionally followed by an explicit integer value; an
+/// omitted value auto-increments from the previous (starting at 0), exactly as
+/// the `ffi` gem's `enum` does.
+fn parse_enum_members(node: &Node<'_>) -> PResult<Vec<(String, i64)>> {
+    let array = node
+        .as_array_node()
+        .ok_or_else(|| "enum members must be a literal array".to_string())?;
+    let elems: Vec<Node<'_>> = array.elements().iter().collect();
+    let mut out: Vec<(String, i64)> = Vec::new();
+    let mut next = 0i64;
+    let mut i = 0;
+    while i < elems.len() {
+        let name = ffi_symbol_str(&elems[i])?;
+        i += 1;
+        let value = match elems.get(i).and_then(enum_int_literal) {
+            Some(v) => {
+                i += 1;
+                v
+            }
+            None => next,
+        };
+        out.push((name, value));
+        next = value + 1;
+    }
+    Ok(out)
+}
+
+/// An explicit integer enum member value (`0`, `100`), or `None` if the node is
+/// not an integer literal (i.e. the next member symbol, or the list's end).
+fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
+    let int = node.as_integer_node()?;
+    let value = int.value();
+    let (negative, digits) = value.to_u32_digits();
+    assemble_i64(negative, &digits)
+}
+
+/// Recognize an FFI `layout :name, :type, :name, :type, ...` directive inside a
+/// `class < FFI::Struct` body and return its `(field, type)` pairs, or `None`
+/// if `node` isn't a `layout` call.
+fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
+    let Some(call) = node.as_call_node() else { return Ok(None) };
+    if call.receiver().is_some() || call.name().as_slice() != b"layout" {
+        return Ok(None);
+    }
+    let args: Vec<Node<'_>> = call
+        .arguments()
+        .map(|a| a.arguments().iter().collect())
+        .unwrap_or_default();
+    if args.is_empty() || args.len() % 2 != 0 {
+        return Err("FFI::Struct `layout` expects `:name, :type` pairs".to_string());
+    }
+    // Struct field types are the base scalars/pointer -- no per-library aliases.
+    let no_aliases = std::collections::HashMap::new();
+    let mut fields = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let name = ffi_symbol_str(&args[i])?;
+        let ty = ffi_type_of(&ffi_symbol_str(&args[i + 1])?, &no_aliases)?;
+        fields.push((name, ty));
+        i += 2;
+    }
+    Ok(Some(fields))
+}
+
+/// The `FFI::MemoryPointer` accessor pair and C layout `(size, align)` for a
+/// struct field type. Structs hold scalar/pointer fields; a `:string`/`:bool`/
+/// nested-struct field is a clean, greppable rejection (follow-on).
+fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usize, usize)> {
+    use crate::hir::FfiType::*;
+    Ok(match ty {
+        Int(w) => (format!("get_int{w}"), format!("put_int{w}"), (*w / 8) as usize, (*w / 8) as usize),
+        Uint(w) => (format!("get_uint{w}"), format!("put_uint{w}"), (*w / 8) as usize, (*w / 8) as usize),
+        Float(32) => ("get_float32".into(), "put_float32".into(), 4, 4),
+        Float(64) => ("get_float64".into(), "put_float64".into(), 8, 8),
+        Pointer => ("get_pointer".into(), "put_pointer".into(), 8, 8),
+        other => {
+            return Err(format!(
+                "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
+            ))
+        }
+    })
+}
+
+/// Synthesize the Ruby methods for a `class < FFI::Struct` from its `layout`:
+/// `[]`/`[]=` read/write each field at its computed C offset over an owned
+/// `FFI::MemoryPointer` ivar, plus `pointer`/`to_ptr`, `size`, `offset_of`, and
+/// `members`. Offsets follow C alignment (each field aligned to its own size;
+/// total rounded to the max field alignment), matching `ffi 1.17.4` and the C
+/// ABI. Returned as source for `parse_and_lower_into`.
+fn synthesize_ffi_struct(fields: &[(String, crate::hir::FfiType)]) -> PResult<String> {
+    let round_up = |n: usize, a: usize| -> usize { (n + a - 1) / a * a };
+    let mut offset = 0usize;
+    let mut max_align = 1usize;
+    // (field, getter, putter, offset)
+    let mut placed: Vec<(String, String, String, usize)> = Vec::new();
+    for (name, ty) in fields {
+        let (getter, putter, size, align) = ffi_field_accessor(ty)?;
+        let off = round_up(offset, align);
+        placed.push((name.clone(), getter, putter, off));
+        offset = off + size;
+        max_align = max_align.max(align);
+    }
+    let total = round_up(offset, max_align);
+
+    let read_arms: String = placed
+        .iter()
+        .map(|(name, getter, _, off)| format!("        when :{name} then @__ffi_ptr.{getter}({off})\n"))
+        .collect();
+    let write_arms: String = placed
+        .iter()
+        .map(|(name, _, putter, off)| {
+            format!("        when :{name} then @__ffi_ptr.{putter}({off}, __ffi_value)\n")
+        })
+        .collect();
+    let offset_arms: String = placed
+        .iter()
+        .map(|(name, _, _, off)| format!("        when :{name} then {off}\n"))
+        .collect();
+    let members: String = placed
+        .iter()
+        .map(|(name, ..)| format!(":{name}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    Ok(format!(
+        r#"
+def initialize(__ffi_ptr = nil)
+  @__ffi_ptr = __ffi_ptr || FFI::MemoryPointer.new({total})
+end
+def [](__ffi_field)
+  case __ffi_field
+{read_arms}      else raise ArgumentError, "no such struct field #{{__ffi_field.inspect}}"
+  end
+end
+def []=(__ffi_field, __ffi_value)
+  case __ffi_field
+{write_arms}      else raise ArgumentError, "no such struct field #{{__ffi_field.inspect}}"
+  end
+  __ffi_value
+end
+def pointer
+  @__ffi_ptr
+end
+def to_ptr
+  @__ffi_ptr
+end
+def self.size
+  {total}
+end
+def self.offset_of(__ffi_field)
+  case __ffi_field
+{offset_arms}      else raise ArgumentError, "no such struct field #{{__ffi_field.inspect}}"
+  end
+end
+def self.members
+  [{members}]
+end
+"#
+    ))
 }
 
 /// The library name for `#[link(name = ..)]` from a `ffi_lib` argument. A string
@@ -3050,6 +3262,7 @@ fn lower_attach_function(
     hir: &mut Hir,
     args: &[Node<'_>],
     lib: Option<String>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
 ) -> PResult<NodeId> {
     let _ = result;
     let (ruby_name, c_symbol, types_node, ret_node) = match args.len() {
@@ -3064,8 +3277,8 @@ fn lower_attach_function(
             ))
         }
     };
-    let arg_types = ffi_type_array(types_node)?;
-    let ret = ffi_type_of(&ffi_symbol_str(ret_node)?)?;
+    let arg_types = ffi_type_array(types_node, aliases)?;
+    let ret = ffi_type_of(&ffi_symbol_str(ret_node)?, aliases)?;
 
     // The wrapper's params: one required positional per C argument, named so a
     // `LocalRead` in the `Ffi` body reaches it.
@@ -3101,14 +3314,17 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
 
 /// `[:int, :string]` -> `[Int(32), Str]`. The argument-type list of an
 /// `attach_function` (a literal array of type symbols).
-fn ffi_type_array(node: &Node<'_>) -> PResult<Vec<crate::hir::FfiType>> {
+fn ffi_type_array(
+    node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+) -> PResult<Vec<crate::hir::FfiType>> {
     let array = node
         .as_array_node()
         .ok_or_else(|| "attach_function's argument list must be a literal array".to_string())?;
     array
         .elements()
         .iter()
-        .map(|el| ffi_type_of(&ffi_symbol_str(&el)?))
+        .map(|el| ffi_type_of(&ffi_symbol_str(&el)?, aliases))
         .collect()
 }
 
@@ -3116,7 +3332,10 @@ fn ffi_type_array(node: &Node<'_>) -> PResult<Vec<crate::hir::FfiType>> {
 /// surface plus the gem's spellings (`:string`, `:pointer`, the fixed-width
 /// `:intN`/`:uintN`, `:size_t`). LP64 (`:long`/`:ulong` = 64), matching macOS
 /// and Linux. Unknown -> a clean, greppable error naming the type.
-fn ffi_type_of(sym: &str) -> PResult<crate::hir::FfiType> {
+fn ffi_type_of(
+    sym: &str,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+) -> PResult<crate::hir::FfiType> {
     use crate::hir::FfiType::*;
     Ok(match sym {
         "void" => Void,
@@ -3132,11 +3351,15 @@ fn ffi_type_of(sym: &str) -> PResult<crate::hir::FfiType> {
         "double" => Float(64),
         "bool" => Bool,
         "string" => Str,
-        other => {
-            return Err(format!(
-                "unsupported FFI type `:{other}` (#204 scalar subset; pointer/struct/callback types are follow-ons)"
-            ))
-        }
+        "pointer" | "buffer_in" | "buffer_out" | "buffer_inout" => Pointer,
+        other => match aliases.get(other) {
+            Some(t) => t.clone(),
+            None => {
+                return Err(format!(
+                    "unsupported FFI type `:{other}` (#204 scalar subset; pointer/struct/callback types are follow-ons)"
+                ))
+            }
+        },
     })
 }
 
@@ -3265,7 +3488,7 @@ fn lower_class_body_statement(
             out.extend(desugar_singleton_class_defs(result, hir, &singleton)?);
             return Ok(());
         }
-        let inner = lower_class_body(result, hir, singleton.body())?;
+        let inner = lower_class_body(result, hir, singleton.body(), None)?;
         for &id in &inner {
             // Classify without holding the `&hir[id]` borrow across the
             // mutations below (`include` re-pushes a fresh `Extend` node).

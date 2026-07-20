@@ -245,6 +245,24 @@ pub const MONITOR_CLASS: ClassId = ClassId(66);
 /// `builtins::process`.
 pub const PROCESS_STATUS_CLASS: ClassId = ClassId(67);
 
+/// The `FFI` module (`require "ffi"`, the real `ffi` gem, #204). Require-gated
+/// like the `ext/` classes but recognized as a first-class runtime namespace so
+/// its `Pointer`/`MemoryPointer`/`Struct` constants resolve. `FFI::Library` is
+/// NOT a row -- it's recognized syntactically (`extend FFI::Library`), never a
+/// runtime constant.
+pub const FFI_MODULE: ClassId = ClassId(68);
+/// `FFI::Pointer` -- a wrapped C address with typed read/write accessors. See
+/// `ext::ffi`.
+pub const FFI_POINTER_CLASS: ClassId = ClassId(69);
+/// `FFI::MemoryPointer < FFI::Pointer` -- a pointer that OWNS a heap buffer it
+/// allocated; inherits every read/write accessor from `Pointer` via the
+/// ancestor chain.
+pub const FFI_MEMORY_POINTER_CLASS: ClassId = ClassId(70);
+/// `FFI::Struct` -- root of every `class T < FFI::Struct; layout ...; end`. A
+/// native-backed subclassable builtin (like `Struct`); its `layout` is
+/// recognized at compile time.
+pub const FFI_STRUCT_CLASS: ClassId = ClassId(71);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -328,6 +346,13 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: MARSHAL_MODULE, name: "Marshal", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: MONITOR_CLASS, name: "Monitor", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("monitor") },
     BuiltinClass { id: PROCESS_STATUS_CLASS, name: "Process::Status", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: None },
+    // The real `ffi` gem (#204), require-gated on "ffi". The `FFI` module row
+    // MUST precede its nested classes (nested-constant resolution walks parent
+    // first). `MemoryPointer < Pointer` so it inherits Pointer's accessors.
+    BuiltinClass { id: FFI_MODULE, name: "FFI", is_module: true, superclass: None, includes: &[], feature: Some("ffi") },
+    BuiltinClass { id: FFI_POINTER_CLASS, name: "FFI::Pointer", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
+    BuiltinClass { id: FFI_MEMORY_POINTER_CLASS, name: "FFI::MemoryPointer", is_module: false, superclass: Some(FFI_POINTER_CLASS), includes: &[], feature: Some("ffi") },
+    BuiltinClass { id: FFI_STRUCT_CLASS, name: "FFI::Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

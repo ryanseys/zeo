@@ -888,7 +888,10 @@ pub struct RegexpFlags {
 /// `attach_function` over libc/libm and most C entry points. Each maps to a C
 /// type codegen declares in the `extern "C"` block and to the RubyValue↔C
 /// marshaling it emits. Pointers/structs/callbacks are follow-on increments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Clone`, not `Copy`: the `Enum` variant carries its member table (a `Vec`),
+/// resolved at parse time and embedded so codegen can emit an inline
+/// symbol↔int match with no runtime enum registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FfiType {
     Void,
     /// `:char`/`:int8`, `:short`/`:int16`, `:int`/`:int32`, `:long`/`:int64`.
@@ -903,6 +906,16 @@ pub enum FfiType {
     /// of the Ruby String, valid for the call. As a return: read the C string
     /// back into a Ruby String (`nil` for a NULL pointer).
     Str,
+    /// `:pointer` -- an opaque `void *`. As an argument: the raw address an
+    /// `FFI::Pointer`/`MemoryPointer` (or `nil` = NULL) carries. As a return:
+    /// wrap the address as an `FFI::Pointer`. See `ext::ffi`.
+    Pointer,
+    /// A named `enum :tag, [:sym, val, ...]`. The underlying C type is `int`.
+    /// As an argument: a Symbol maps to its int (an Integer passes through). As
+    /// a return: a mapped int becomes its Symbol (an unmapped int stays an
+    /// Integer), exactly as the gem's `Enum` data-converter does. The `Vec`
+    /// holds `(symbol_name, value)` members in declaration order.
+    Enum(Vec<(String, i64)>),
 }
 
 /// One C function a module `attach_function`'d (#204). The synthesized wrapper

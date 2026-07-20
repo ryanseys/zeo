@@ -20356,3 +20356,157 @@ fn ffi_argument_type_mismatch_raises_typeerror() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "TypeError\n");
 }
+
+/// FFI `typedef :existing, :alias` (#204 follow-on): a library-local type alias,
+/// declared before use as the gem requires, resolves in a later
+/// `attach_function`'s type list. Behaves identically to naming the underlying
+/// type -- a pure compile-time aliasing, matching the gem.
+#[test]
+fn ffi_typedef_aliases_a_scalar_type() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          typedef :int, :myint
+          typedef :myint, :myint2
+          attach_function :abs, [:myint2], :myint
+        end
+        puts L.abs(-5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n");
+}
+
+/// FFI `FFI::MemoryPointer` (#204 follow-on): an owned heap buffer with typed
+/// read/write accessors, pointer arithmetic, typed arrays, `from_string`, and
+/// an out-of-bounds `IndexError` -- byte-identical to `ffi 1.17.4`.
+#[test]
+fn ffi_memory_pointer_reads_writes_and_arithmetic() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        p = FFI::MemoryPointer.new(:int, 3)
+        p.put_int(0, 10); p.put_int(4, 20); p.put_int(8, 30)
+        puts p.get_int(0)
+        puts p.get_int(4)
+        puts (p + 8).read_int
+        puts p.size
+        p.write_array_of_int([7, 8, 9])
+        puts p.read_array_of_int(3).inspect
+        sp = FFI::MemoryPointer.from_string("hi there")
+        puts sp.read_string
+        puts sp.size
+        d = FFI::MemoryPointer.new(:double, 1)
+        d.write_double(3.5)
+        puts d.read_double
+        begin
+          FFI::MemoryPointer.new(:int, 1).get_int(4)
+          puts "no error"
+        rescue IndexError
+          puts "IndexError"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n20\n30\n12\n[7, 8, 9]\nhi there\n9\n3.5\nIndexError\n");
+}
+
+/// FFI `:pointer` marshaling (#204 follow-on): a `MemoryPointer` passed to a C
+/// function as its raw address, and a C `char *` return wrapped back as an
+/// `FFI::Pointer`. `strcpy(buf, "hello")` fills the buffer and returns it;
+/// `strlen(buf)` reads it back through the pointer. Matches CRuby+ffi.
+#[test]
+fn ffi_pointer_round_trips_through_c() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module C
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :strcpy, [:pointer, :string], :pointer
+          attach_function :strlen, [:pointer], :ulong
+        end
+        buf = FFI::MemoryPointer.new(:char, 32)
+        ret = C.strcpy(buf, "hello")
+        puts buf.read_string
+        puts C.strlen(buf)
+        puts ret.read_string
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hello\n5\nhello\n");
+}
+
+/// FFI `enum` (#204 follow-on): a named `enum :tag, [...]` used as an
+/// `attach_function` type. A Symbol argument marshals to its int; an int return
+/// maps back to its Symbol (an unmapped int stays an Integer). Auto-increment
+/// after an explicit value (`:next` = 101). Verified against `ffi 1.17.4` using
+/// `labs` as a pass-through: `labs(:hundred)` sends 100, `labs(-100)` returns
+/// 100 -> `:hundred`.
+#[test]
+fn ffi_enum_marshals_symbols_and_ints() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module C
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          enum :nums, [:zero, 0, :hundred, 100, :next]
+          attach_function :to_num, :labs, [:nums], :long
+          attach_function :from_num, :labs, [:long], :nums
+        end
+        puts C.to_num(:hundred)
+        puts C.from_num(-100).inspect
+        puts C.from_num(-101).inspect
+        puts C.from_num(-5).inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "100\n:hundred\n:next\n5\n");
+}
+
+/// FFI `FFI::Struct` + `layout` (#204 follow-on): a `class T < FFI::Struct`
+/// with a `layout` gets synthesized `[]`/`[]=`/`size`/`offset_of`/`members`
+/// over an owned `FFI::MemoryPointer`, with C field offsets/alignment. The
+/// struct is auto-converted to its pointer when passed to a C `:pointer`
+/// argument (`gettimeofday` fills `tv_sec`). Byte-identical to `ffi 1.17.4`.
+#[test]
+fn ffi_struct_layout_fields_and_c_call() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        class Timeval < FFI::Struct
+          layout :tv_sec, :long, :tv_usec, :int
+        end
+        puts Timeval.size
+        puts Timeval.offset_of(:tv_usec)
+        puts Timeval.members.inspect
+        t = Timeval.new
+        t[:tv_sec] = 123
+        t[:tv_usec] = 456
+        puts t[:tv_sec]
+        puts t[:tv_usec]
+
+        class Mixed < FFI::Struct
+          layout :a, :int8, :b, :long, :c, :int
+        end
+        puts Mixed.size
+        puts Mixed.offset_of(:b)
+        puts Mixed.offset_of(:c)
+
+        module C
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :gettimeofday, [:pointer, :pointer], :int
+        end
+        tv = Timeval.new
+        C.gettimeofday(tv, nil)
+        puts(tv[:tv_sec] > 1_000_000)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "16\n8\n[:tv_sec, :tv_usec]\n123\n456\n24\n8\n16\ntrue\n");
+}

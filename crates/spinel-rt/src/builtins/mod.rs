@@ -135,6 +135,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup,
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup,
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup,
         _ => return None,
     })
 }
@@ -213,6 +215,10 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
         #[cfg(feature = "ext-openssl")]
         spinel_abi::OPENSSL_MODULE => crate::ext::openssl::lookup_class,
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_POINTER_CLASS => crate::ext::ffi::lookup_class_pointer,
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_class_memory,
         _ => return None,
     })
 }
@@ -277,6 +283,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_names(),
         _ => &[],
     }
 }
@@ -322,6 +330,10 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         | spinel_abi::DIGEST_SHA1_CLASS
         | spinel_abi::DIGEST_SHA256_CLASS
         | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_class_names(),
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_POINTER_CLASS => crate::ext::ffi::lookup_class_pointer_names(),
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_class_memory_names(),
         _ => &[],
     }
 }

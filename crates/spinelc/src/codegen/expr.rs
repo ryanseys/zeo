@@ -1554,18 +1554,18 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
     let mut call_idents = Vec::new();
     for (i, (arg_id, ty)) in call.args.iter().enumerate() {
         let pname = quote::format_ident!("__ffi_arg{}", i);
-        let cty = ffi_c_type(*ty);
+        let cty = ffi_c_type(ty);
         extern_params.push(quote! { #pname: #cty });
         let val = emit_expr(cx, *arg_id);
-        bindings.push(ffi_marshal_in(*ty, &pname, val));
+        bindings.push(ffi_marshal_in(ty, &pname, val));
         call_idents.push(quote! { #pname });
     }
-    let ret_cty = ffi_c_type(call.ret);
+    let ret_cty = ffi_c_type(&call.ret);
     let link = match &call.lib {
         Some(lib) => quote! { #[link(name = #lib)] },
         None => quote! {},
     };
-    let wrap = ffi_wrap_ret(call.ret);
+    let wrap = ffi_wrap_ret(&call.ret);
     quote! {
         {
             #link
@@ -1581,7 +1581,7 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
 
 /// The Rust type mirroring one C ABI type (LP64: `i32`==C `int`, `i64`==C
 /// `long`, `u64`==`size_t`). `Void` is `()` -- only valid as a return.
-fn ffi_c_type(ty: crate::hir::FfiType) -> TokenStream {
+fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
     use crate::hir::FfiType::*;
     match ty {
         Void => quote! { () },
@@ -1599,13 +1599,26 @@ fn ffi_c_type(ty: crate::hir::FfiType) -> TokenStream {
         }
         Bool => quote! { bool },
         Str => quote! { *const ::std::os::raw::c_char },
+        Pointer => quote! { *mut ::std::os::raw::c_void },
+        // An enum's underlying C type is `int`, the gem's default.
+        Enum(_) => quote! { ::std::os::raw::c_int },
     }
+}
+
+/// The `&[(name, value)]` member table literal for an enum's inline marshaling.
+fn ffi_enum_members(members: &[(String, i64)]) -> TokenStream {
+    let pairs = members.iter().map(|(name, val)| {
+        let name = proc_macro2::Literal::string(name);
+        let val = proc_macro2::Literal::i64_suffixed(*val);
+        quote! { (#name, #val) }
+    });
+    quote! { &[ #(#pairs),* ] }
 }
 
 /// `let __ffi_argN: <cty> = <marshal the RubyValue `val`>;` -- a `:string` also
 /// binds a `CString` owner that outlives the call (kept in the block scope).
 fn ffi_marshal_in(
-    ty: crate::hir::FfiType,
+    ty: &crate::hir::FfiType,
     pname: &proc_macro2::Ident,
     val: TokenStream,
 ) -> TokenStream {
@@ -1622,12 +1635,17 @@ fn ffi_marshal_in(
                 let #pname: #cty = #owner.as_ptr();
             }
         }
+        Pointer => quote! { let #pname: #cty = spinel_rt::ffi::to_pointer(&#val)?; },
+        Enum(members) => {
+            let table = ffi_enum_members(members);
+            quote! { let #pname: #cty = spinel_rt::ffi::enum_to_int(&#val, #table)? as #cty; }
+        }
         Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
     }
 }
 
 /// Wrap the C return value `__ffi_ret` back into a `RubyValue`.
-fn ffi_wrap_ret(ty: crate::hir::FfiType) -> TokenStream {
+fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
     use crate::hir::FfiType::*;
     match ty {
         Void => quote! { { let () = __ffi_ret; spinel_rt::RubyValue::Nil } },
@@ -1635,5 +1653,10 @@ fn ffi_wrap_ret(ty: crate::hir::FfiType) -> TokenStream {
         Float(_) => quote! { spinel_rt::ffi::from_f64(__ffi_ret as f64) },
         Bool => quote! { spinel_rt::ffi::from_bool(__ffi_ret) },
         Str => quote! { unsafe { spinel_rt::ffi::from_cstr(__ffi_ret) } },
+        Pointer => quote! { spinel_rt::ffi::from_pointer(__ffi_ret) },
+        Enum(members) => {
+            let table = ffi_enum_members(members);
+            quote! { spinel_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
+        }
     }
 }

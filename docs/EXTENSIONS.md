@@ -62,16 +62,40 @@ marshals `RubyValue`↔C — so the C function is called directly, no libffi and
 `dlopen`. Both the plain `attach_function :name, [args], ret` and the 4-arg
 rename form `:ruby_name, :c_name, [args], ret` are supported.
 
-**Types (scalar slice):** `:void`, the integer family (`:char`/`:short`/`:int`/
-`:long` and the fixed-width `:int8`…`:int64`), their unsigned twins and
-`:size_t`, `:float`/`:double`, `:bool`, and `:string` (a `const char *` — a
-NUL-terminated copy in, a Ruby String out). A wrong argument type is a
+**Types:** `:void`, the integer family (`:char`/`:short`/`:int`/`:long` and the
+fixed-width `:int8`…`:int64`), their unsigned twins and `:size_t`,
+`:float`/`:double`, `:bool`, `:string` (a `const char *` — a NUL-terminated copy
+in, a Ruby String out), and `:pointer` (below). A wrong argument type is a
 `TypeError`, exactly as the gem raises. Verified byte-for-byte against
-`ffi 1.17.4` — see `examples/ffi_libc.rb`.
+`ffi 1.17.4` — see `examples/ffi_libc.rb`, `examples/ffi_memory.rb`,
+`examples/ffi_struct.rb`.
 
-**Follow-ons:** `FFI::Pointer`/`FFI::MemoryPointer`, `FFI::Struct` + `layout`,
-`callback`, enums, `typedef`, and varargs. The native-gem list in `cargo xtask
-gem-compat` is the broader work-list this escape hatch serves.
+**Memory — `FFI::Pointer` / `FFI::MemoryPointer`.** Real runtime classes over a
+native heap buffer. `MemoryPointer.new(:int, 3)` / `.new(bytes)` /
+`.from_string(s)` allocate; the full typed accessor surface is present —
+`read_/write_` (offset 0) and `get_/put_` (at an offset) for `int8`…`int64`,
+their unsigned twins, `float`/`double`, `pointer`, `string`, and raw `bytes`,
+plus `read_array_of_int`/`write_array_of_int` (& `long`/`double`), pointer
+arithmetic (`ptr + n`), `null?`, `address`, `size`. Bounds-checked (`IndexError`
+past an owned buffer). A `:pointer` argument passes the raw address; a `:pointer`
+return wraps back to an `FFI::Pointer`.
+
+**`typedef` / `enum`.** `typedef :existing, :alias` (compile-time type alias);
+`enum :tag, [:a, 0, :b, ...]` as an `attach_function` type — a Symbol marshals to
+its int, an int return maps back to its Symbol (unmapped → Integer), with
+auto-increment.
+
+**`FFI::Struct` + `layout`.** `class T < FFI::Struct; layout :f, :type, …; end`.
+The `layout` is recognized at compile time; `[]`/`[]=`/`size`/`offset_of`/
+`members` are synthesized over an owned `FFI::MemoryPointer` with C field offsets
+and alignment. A struct auto-converts to its pointer when passed to a C
+`:pointer` argument.
+
+**Deferred follow-ons:** `callback` and `varargs`. Both need a *runtime* C-call
+builder (libffi): a callback C stores and invokes asynchronously can't be a
+static trampoline, and a variadic call's arity/types are only known per runtime
+call. They are the one part of the gem that the pure compile-time-`extern` model
+can't reach without linking libffi — tracked, not silently degraded.
 
 ## Out of scope (VM internals / tooling)
 

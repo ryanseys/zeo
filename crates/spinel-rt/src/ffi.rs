@@ -9,7 +9,7 @@
 //! no interior NUL. A wrong type is a `TypeError`, exactly as the gem raises.
 
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 
 use crate::dispatch::{class_name, raise_error};
 use crate::signal::Signal;
@@ -56,6 +56,62 @@ pub fn to_cstring(v: &RubyValue) -> Result<CString, Signal> {
         }
         _ => Err(type_err("string", v)),
     }
+}
+
+/// A Ruby value bound to a `:pointer` argument -> the raw C address it carries.
+/// An `FFI::Pointer`/`MemoryPointer` yields its address; `nil` is a NULL
+/// pointer, exactly as the gem accepts. Anything else is a `TypeError`.
+#[cfg(feature = "ext-ffi")]
+pub fn to_pointer(v: &RubyValue) -> Result<*mut c_void, Signal> {
+    if let Some(addr) = crate::ext::ffi::address_of(v) {
+        return Ok(addr as *mut c_void);
+    }
+    // An `FFI::Struct` (or anything answering `to_ptr`) passes its own memory,
+    // exactly as the gem auto-converts a struct given for a `:pointer` argument.
+    if let RubyValue::Object(_) = v {
+        if let Ok(p) = crate::dispatch::send_value(v, crate::Symbol::intern("to_ptr"), &[], None) {
+            if let Some(addr) = crate::ext::ffi::address_of(&p) {
+                return Ok(addr as *mut c_void);
+            }
+        }
+    }
+    Err(type_err("pointer", v))
+}
+
+/// A `:pointer` C return value -> an `FFI::Pointer` wrapping the address (a NULL
+/// pointer wraps to an `FFI::Pointer` whose `#null?` is true, matching the gem).
+#[cfg(feature = "ext-ffi")]
+pub fn from_pointer(p: *const c_void) -> RubyValue {
+    crate::ext::ffi::wrap_address(p as usize)
+}
+
+/// A Ruby value bound to an `enum` argument -> the underlying `int`. A Symbol
+/// maps through the enum's member table; an Integer passes through unchanged
+/// (the gem accepts a raw value); an unknown Symbol is an `ArgumentError`, as
+/// the gem raises.
+pub fn enum_to_int(v: &RubyValue, members: &[(&str, i64)]) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Symbol(s) => {
+            let name = s.name();
+            members
+                .iter()
+                .find(|(n, _)| *n == name.as_str())
+                .map(|(_, i)| *i)
+                .ok_or_else(|| raise_error("ArgumentError", format!("invalid enum value, :{name}")))
+        }
+        RubyValue::Int(i) => Ok(*i),
+        _ => Err(type_err("enum", v)),
+    }
+}
+
+/// An `int` enum return -> its Symbol if the value is a named member, else the
+/// raw Integer (the gem's `Enum#from_native` behavior).
+pub fn int_to_enum(i: i64, members: &[(&str, i64)]) -> RubyValue {
+    members
+        .iter()
+        .find(|(_, v)| *v == i)
+        .map(|(n, _)| RubyValue::Symbol(crate::Symbol::intern(n)))
+        .unwrap_or(RubyValue::Int(i))
 }
 
 pub fn from_i64(i: i64) -> RubyValue {

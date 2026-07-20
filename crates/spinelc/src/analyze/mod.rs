@@ -509,9 +509,9 @@ fn register_class(
                         // Still rejected: `Range` (no runtime constructor) and
                         // `Class`/`Module` (no per-value dispatch).
                         use crate::compiler::{
-                            ARRAY_CLASS, BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS, FLOAT_CLASS,
-                            HASH_CLASS, INTEGER_CLASS, NIL_CLASS, NUMERIC_CLASS, STRING_CLASS,
-                            STRUCT_CLASS, SYMBOL_CLASS, TRUE_CLASS,
+                            ARRAY_CLASS, BASIC_OBJECT_CLASS, DATA_CLASS, FALSE_CLASS,
+                            FFI_STRUCT_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, NIL_CLASS,
+                            NUMERIC_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, TRUE_CLASS,
                         };
                         let subclassable = matches!(
                             cid,
@@ -526,6 +526,12 @@ fn register_class(
                             // is simply absent.
                             BASIC_OBJECT_CLASS
                                 | STRUCT_CLASS
+                                // `FFI::Struct` (#204): a subclass is a plain
+                                // ivar object (no native payload) whose `[]`/
+                                // `[]=`/`size`/`offset_of` are synthesized from
+                                // its `layout` over an `FFI::MemoryPointer` ivar
+                                // -- see `parse`'s `synthesize_ffi_struct`.
+                                | FFI_STRUCT_CLASS
                                 | DATA_CLASS
                                 | NUMERIC_CLASS
                                 | ARRAY_CLASS
