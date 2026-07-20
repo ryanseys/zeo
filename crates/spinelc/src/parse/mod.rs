@@ -2251,11 +2251,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             }
         }
 
-        // `block_given?` -- an ordinary zero-arg, no-receiver `Kernel`
-        // method call at the `ruby-prism` level (not a distinct node, unlike
-        // `yield` above), so this is a lowering-time call-shape desugar
-        // exactly like `loop`/`define_method`.
-        if name == "block_given?" && call.receiver().is_none() {
+        // `block_given?` -- an ordinary zero-arg `Kernel` method call at the
+        // `ruby-prism` level (not a distinct node, unlike `yield` above), so
+        // this is a lowering-time call-shape desugar exactly like
+        // `loop`/`define_method`. An explicit `self` receiver
+        // (`self.block_given?`) is the same query about the current method's
+        // block, so it desugars identically.
+        let bg_self_or_none = match call.receiver() {
+            None => true,
+            Some(r) => r.as_self_node().is_some(),
+        };
+        if name == "block_given?" && bg_self_or_none {
             let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args && call.block().is_none() {
                 return Ok(hir.push(HirNode::BlockGiven));

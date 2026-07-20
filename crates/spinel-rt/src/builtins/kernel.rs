@@ -1204,26 +1204,68 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Int(secs.round() as i64))
 }
 
-/// `Kernel#exit` / `Kernel#abort` -- direct process exit (CRuby raises
-/// SystemExit through at_exit handlers; both are documented scope-cuts).
-pub fn kernel_exit(args: &[RubyValue]) -> ! {
-    let code = match args.first() {
+/// `Kernel#exit(status = true)` -- raises a RESCUABLE `SystemExit` carrying the
+/// status, exactly as CRuby does: it unwinds through `ensure` blocks and can be
+/// caught by `rescue SystemExit`. Only if it reaches the top level uncaught does
+/// the process actually exit (see the generated `main`'s handler, which runs
+/// `at_exit` first).
+pub fn kernel_exit(args: &[RubyValue]) -> crate::Signal {
+    let status = match args.first() {
         None | Some(RubyValue::Bool(true)) => 0,
         Some(RubyValue::Bool(false)) => 1,
-        Some(RubyValue::Int(n)) => *n as i32,
+        Some(RubyValue::Int(n)) => *n,
         Some(_) => 0,
     };
-    // `at_exit` handlers run on an explicit `exit` too (CRuby's rule;
-    // `exit!` would skip them, but that maps to `abort`-family here).
-    crate::exec::run_at_exit();
+    crate::dispatch::raise_error_details(
+        "SystemExit",
+        "exit".to_string(),
+        &[("status", RubyValue::Int(status))],
+    )
+}
+
+/// `Kernel#abort(message = nil)` -- writes `message` to stderr IMMEDIATELY
+/// (CRuby's own order, so it appears even when the SystemExit is rescued), then
+/// raises `SystemExit` with status 1 and that message.
+pub fn kernel_abort(args: &[RubyValue]) -> crate::Signal {
+    let msg = match args.first() {
+        Some(v) => {
+            let s = v.to_display_string();
+            eprintln!("{s}");
+            s
+        }
+        None => "exit".to_string(),
+    };
+    crate::dispatch::raise_error_details("SystemExit", msg, &[("status", RubyValue::Int(1))])
+}
+
+/// `Kernel#exit!(status = false)` -- CRuby's uncatchable immediate exit: no
+/// `SystemExit`, no `ensure`, no `at_exit`.
+pub fn kernel_exit_bang(args: &[RubyValue]) -> ! {
+    let code = match args.first() {
+        None | Some(RubyValue::Bool(false)) => 1,
+        Some(RubyValue::Bool(true)) => 0,
+        Some(RubyValue::Int(n)) => *n as i32,
+        Some(_) => 1,
+    };
     std::process::exit(code)
 }
 
-pub fn kernel_abort(args: &[RubyValue]) -> ! {
-    if let Some(msg) = args.first() {
-        eprintln!("{}", msg.to_display_string());
+/// The exit status carried by `exc` when it IS a `SystemExit`, else `None` --
+/// what the generated top-level consults to exit quietly with that status
+/// instead of reporting an uncaught exception.
+pub fn system_exit_status(exc: &RubyValue) -> Option<i32> {
+    let RubyValue::Object(o) = exc else { return None };
+    if !crate::dispatch::is_a(o.class_id(), spinel_abi::SYSTEM_EXIT_CLASS) {
+        return None;
     }
-    std::process::exit(1)
+    // Read the status through its own `#status` row rather than a private
+    // detail accessor, so the two can't drift.
+    Some(
+        match crate::dispatch::send_value(exc, crate::Symbol::intern("status"), &[], None) {
+            Ok(RubyValue::Int(n)) => n as i32,
+            _ => 0,
+        },
+    )
 }
 
 #[cfg(test)]

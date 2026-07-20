@@ -930,15 +930,22 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             spinel_rt::run_at_exit();
             if let Err(__signal) = __result {
                 match __signal {
-                    // An uncaught `raise` gets a real, Ruby-flavored
-                    // message -- calling the exception's own `message`
-                    // dynamically (Path 2), exactly as real Ruby's default
-                    // top-level handler does, rather than the generic
-                    // catch-all below. No runtime class-name table exists
-                    // yet (a narrow, deliberate simplification -- real
-                    // Ruby's own `"msg (ClassName)"` form needs one), so
-                    // only the message is shown until that lands.
+                    // An uncaught `raise` gets a real, Ruby-flavored message --
+                    // calling the exception's own `message` dynamically
+                    // (Path 2), exactly as real Ruby's default top-level
+                    // handler does, suffixed with the class name in CRuby's
+                    // `"msg (ClassName)"` form. (The file:line prefix, the
+                    // backtrace, the source snippet and Did-you-mean are still
+                    // to come -- they need source spans threaded through HIR.)
+                    //
+                    // An uncaught `SystemExit` is not an error at all: it is
+                    // how `exit`/`abort` terminate, so the process just exits
+                    // with the carried status, silently (`at_exit` has already
+                    // run above).
                     spinel_rt::Signal::Raise(__exc) => {
+                        if let Some(__code) = spinel_rt::system_exit_status(&__exc) {
+                            std::process::exit(__code);
+                        }
                         let __msg = spinel_rt::send(
                             &__exc.as_object_unchecked(),
                             spinel_rt::Symbol::intern("message"),
@@ -947,7 +954,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         )
                         .map(|v| v.to_display_string())
                         .unwrap_or_default();
-                        eprintln!("uncaught exception: {}", __msg);
+                        let __cls = spinel_rt::class_name_of_value(&__exc);
+                        eprintln!("uncaught exception: {} ({})", __msg, __cls);
                         std::process::exit(1);
                     }
                     __other => {

@@ -2605,12 +2605,20 @@ pub fn emit_call(
             "sleep" => Some("kernel_sleep"),
             _ => None,
         };
-        let never_fn = match name {
+        // `exit`/`abort` RAISE a rescuable `SystemExit` (CRuby's semantics):
+        // they unwind through `ensure` and can be caught, so they emit a
+        // `return Err(..)` rather than diverging.
+        let raise_fn = match name {
             "exit" => Some("kernel_exit"),
             "abort" => Some("kernel_abort"),
             _ => None,
         };
-        if plain_fn.is_none() && fallible_fn.is_none() && never_fn.is_none() {
+        // `exit!` is CRuby's uncatchable immediate exit -- genuinely diverging.
+        let never_fn = match name {
+            "exit!" => Some("kernel_exit_bang"),
+            _ => None,
+        };
+        if plain_fn.is_none() && fallible_fn.is_none() && never_fn.is_none() && raise_fn.is_none() {
             return None;
         }
         let mut arg_exprs: Vec<TokenStream> = args
@@ -2640,7 +2648,11 @@ pub fn emit_call(
             let func = format_ident!("{f}");
             return Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*])? });
         }
-        let func = format_ident!("{}", never_fn.expect("one of the three sets matched"));
+        if let Some(f) = raise_fn {
+            let func = format_ident!("{f}");
+            return Some(quote! { return Err(spinel_rt::#func(&[#(#arg_exprs),*])) });
+        }
+        let func = format_ident!("{}", never_fn.expect("one of the four sets matched"));
         Some(quote! { spinel_rt::#func(&[#(#arg_exprs),*]) })
     }
 

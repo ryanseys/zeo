@@ -42,7 +42,8 @@ pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
 pub use builtins::kernel::{
-    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_float,
+    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_exit_bang,
+    system_exit_status, kernel_float,
     kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
     kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
     kernel_warn,
@@ -84,6 +85,13 @@ pub use lastmatch::{
     set_last_match,
 };
 pub use exec::{at_exit_register, run_at_exit, run_main};
+
+/// The Ruby class name of any value -- what the generated top level suffixes an
+/// uncaught exception's message with (`"msg (ClassName)"`, CRuby's own form).
+pub fn class_name_of_value(v: &RubyValue) -> String {
+    builtins::class_name_of(v)
+}
+
 pub use fiber::{
     fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
     FiberHandle, FiberResume, FiberYield, RFiber,

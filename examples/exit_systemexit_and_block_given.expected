@@ -1,0 +1,12 @@
+status=1
+msg=bye now
+continued
+exit-status=3
+exit-success=false
+ensure ran
+guarded-status=0
+"no"
+"yes"
+"no"
+"yes"
+done
