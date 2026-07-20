@@ -87,7 +87,7 @@ builtin_methods! {
 
 /// The block argument `instance_exec`/`instance_eval` require, or real
 /// Ruby's own no-block error.
-fn block_proc(
+pub(crate) fn block_proc(
     block: Option<RubyValue>,
     method: &str,
 ) -> Result<crate::RProc, crate::Signal> {

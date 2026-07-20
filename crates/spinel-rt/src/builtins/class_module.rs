@@ -345,6 +345,21 @@ builtin_methods! {
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         Ok(crate::runtime_define_method(recv_cid(recv), name, body))
     }
+    // `Module#class_eval`/`module_eval { ... }` -- run the block with `self`
+    // rebound to the module/class value, returning the block's value. A
+    // `def`/`define_method` inside installs on the receiver via the dynamic-
+    // self path (self is a Class). The string form (`class_eval("code")`) is
+    // out of scope; only the block form is handled. `module_eval` is an alias.
+    "class_eval" | "module_eval" => fn class_eval(recv, args, block) {
+        let blk = crate::builtins::basic_object::block_proc(block, "class_eval")?;
+        blk.call_with_self(recv, &[])
+    }
+    // `Module#class_exec`/`module_exec(*args) { |*a| ... }` -- like class_eval
+    // but forwards positional args to the block's params.
+    "class_exec" | "module_exec" => fn class_exec(recv, args, block) {
+        let blk = crate::builtins::basic_object::block_proc(block, "class_exec")?;
+        blk.call_with_self(recv, args)
+    }
     // `Module#class_variable_get/set/defined?` over the linearized ancestry
     // (a `@@x` is owned by the nearest ancestor that first assigned it --
     // see `cvars`' docs). `get` on a never-assigned name is a `NameError`,

@@ -3660,7 +3660,7 @@ fn lower_class_body_statement(
                     }
                 }
             }
-            if matches!(name.as_str(), "attr_reader" | "attr_writer" | "attr_accessor") {
+            if matches!(name.as_str(), "attr" | "attr_reader" | "attr_writer" | "attr_accessor") {
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
                     if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
@@ -3669,6 +3669,9 @@ fn lower_class_body_statement(
                                 n.as_symbol_node().expect("checked above").unescaped(),
                             )
                             .into_owned();
+                            // `attr :x` == `attr_reader :x` (the symbol form):
+                            // getter for everything but attr_writer, setter only
+                            // for attr_writer/attr_accessor.
                             if name != "attr_writer" {
                                 let read = hir.push(HirNode::IvarRead(ivar.clone()));
                                 out.push(hir.push(HirNode::DefMethod {
@@ -3679,7 +3682,7 @@ fn lower_class_body_statement(
                                     visibility: *visibility,
                                 }));
                             }
-                            if name != "attr_reader" {
+                            if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
                                 let param = "value".to_string();
                                 let read_param = hir.push(HirNode::LocalRead(param.clone()));
                                 let write = hir.push(HirNode::IvarWrite(ivar.clone(), read_param));

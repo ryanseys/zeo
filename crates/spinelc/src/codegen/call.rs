@@ -748,7 +748,11 @@ fn emit_ctor_struct(cx: &Ctx, cid: crate::compiler::ClassId) -> TokenStream {
     });
     // Every object starts unfrozen -- `.freeze`'s per-object flag (see
     // `ruby_class!`'s `__frozen` field docs).
-    let fields = quote! { __frozen: std::sync::atomic::AtomicBool::new(false), #(#fields)* };
+    let fields = quote! {
+        __frozen: std::sync::atomic::AtomicBool::new(false),
+        __overflow: spinel_rt::parking_lot::Mutex::new(std::collections::HashMap::new()),
+        #(#fields)*
+    };
     // Wrapped in `Arc` immediately, not just at `new_handle` time: a local
     // holding this needs to be `Arc::clone()`-able on every re-read
     // (`codegen::expr`'s `LocalRead` -- see `ruby_class!`'s `new_handle` docs

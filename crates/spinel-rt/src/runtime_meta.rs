@@ -571,9 +571,17 @@ pub fn resolve_dynamic(recv: &RObj, id: ClassId, name: Symbol) -> Option<MethodI
         // materialized methods on a frozen ancestor).
         walk_runtime_class(id, name)
     } else {
-        // 2b. Frozen class: a runtime override delta only.
+        // 2b. Frozen class: check this class AND every frozen ancestor for a
+        // runtime method delta, so a `class_eval`/`define_method`/`class_exec`
+        // that reopened a SUPERCLASS or an included MODULE is inherited (a
+        // subclass instance / an includer sees it). The frozen registry's own
+        // materialized methods are consulted separately by `send_in`'s MRO
+        // walk; here we only add the overlay deltas, self-first.
+        let chain = ancestors_of_value(id);
         let c = maps().classes.read().unwrap();
-        c.get(&id.0).and_then(|e| e.methods.get(&name).cloned())
+        chain
+            .iter()
+            .find_map(|anc| c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()))
     }
 }
 
