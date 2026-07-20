@@ -1,0 +1,15 @@
+2
+15
+KILL
+nil
+"INT"
+DEFAULT
+IGNORE
+ArgumentError
+2
+SIGINT
+SIGKILL
+ArgumentError
+2
+Interrupt
+stop

@@ -8558,6 +8558,139 @@ fn signal_module_and_signal_exception_surface() {
 }
 
 #[test]
+fn process_identity_and_scheduling_surface() {
+    // Process ids/scheduling against libc, plus the PRIO_* selector constants.
+    let result = run_ruby(
+        r#"
+        p [Process.uid.class, Process.gid.class, Process.euid.class, Process.egid.class]
+        p [Process.getpgrp.class, Process.getsid.class]
+        p Process.clock_getres(Process::CLOCK_MONOTONIC).class
+        p Process.clock_getres(Process::CLOCK_REALTIME, :nanosecond).class
+        p [Process::PRIO_PROCESS, Process::PRIO_PGRP, Process::PRIO_USER]
+        p Process.groups.all? { |g| g.is_a?(Integer) }
+        p Process.getpriority(Process::PRIO_PROCESS, 0).class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[Integer, Integer, Integer, Integer]\n[Integer, Integer]\nFloat\nInteger\n[0, 1, 2]\ntrue\nInteger\n"
+    );
+}
+
+#[test]
+fn env_enumerable_and_mutator_surface() {
+    // ENV's read-only surface (value?/each_value/min via the Hash snapshot) and
+    // the mutators (update/merge!/reject!/delete_if). Uses unique names/values
+    // so it never depends on the ambient environment.
+    let result = run_ruby(
+        r#"
+        ENV["ZZE_A"] = "uniqA"; ENV["ZZE_B"] = "uniqB"
+        p ENV.value?("uniqA")
+        p ENV.has_value?("nope_zzz_xyz")
+        p ENV.update("ZZE_A" => "uniq9")["ZZE_A"]
+        p ENV.merge!("ZZE_C" => "uniq3")["ZZE_C"]
+        p ENV.reject! { |k, v| false }
+        p [ENV.each_value.is_a?(Enumerator), ENV.count { |k, v| k.start_with?("ZZE_") } >= 3]
+        ENV.delete_if { |k, v| k.start_with?("ZZE_") }
+        p ENV.key?("ZZE_C")
+        p ENV.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\n\"uniq9\"\n\"uniq3\"\nnil\n[true, true]\nfalse\n\"ENV\"\n"
+    );
+}
+
+#[test]
+fn file_predicates_times_and_fnm_constants() {
+    // File-type/permission predicates, time accessors, and the FNM_* flag
+    // constants, exercised on a file the test writes.
+    let result = run_ruby(
+        r#"
+        p [File::FNM_DOTMATCH, File::FNM_PATHNAME, File::FNM_CASEFOLD, File::FNM_NOESCAPE, File::FNM_EXTGLOB]
+        path = "/tmp/sp_e2e_file_probe"
+        File.write(path, "hi"); File.chmod(0644, path)
+        p File.world_readable?(path)
+        p [File.pipe?(path), File.socket?(path), File.chardev?(path), File.blockdev?(path)]
+        p [File.owned?(path), File.setuid?(path), File.sticky?(path)]
+        p File.identical?(path, path)
+        p [File.birthtime(path).class, File.atime(path).class, File.ctime(path).class]
+        link = "/tmp/sp_e2e_file_link"
+        File.symlink(path, link)
+        p [File.symlink?(link), File.readlink(link) == path]
+        File.delete(link); File.delete(path)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[4, 2, 8, 1, 16]\n420\n[false, false, false, false]\n[true, false, false]\ntrue\n\
+         [Time, Time, Time]\n[true, true]\n"
+    );
+}
+
+#[test]
+fn matchdata_offsets_match_and_deconstruction() {
+    // MatchData begin/end, bytebegin/byteend, match, inspect, deconstruct, and
+    // deconstruct_keys with CRuby's key rules.
+    let result = run_ruby(
+        r#"
+        m = "hello world".match(/(\w+)(\s+)(\w+)/)
+        p [m.begin(1), m.end(1), m.begin(3)]
+        md = "a1b2".match(/(\d)(\w)/); p [md.bytebegin(1), md.byteend(1)]
+        m2 = "abc".match(/(a)(b)(c)/)
+        p m2.inspect
+        p m2.deconstruct
+        p m2.match(2)
+        n = "abc".match(/(?<x>b)(?<y>c)/)
+        p [n.deconstruct_keys([:x]), n.deconstruct_keys([:y, :x]), n.deconstruct_keys(nil), n.deconstruct_keys([:x, :y, :z])]
+        p n.named_captures(symbolize_names: true)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[0, 5, 6]\n[1, 2]\n\"#<MatchData \\\"abc\\\" 1:\\\"a\\\" 2:\\\"b\\\" 3:\\\"c\\\">\"\n\
+         [\"a\", \"b\", \"c\"]\n\"b\"\n[{x: \"b\"}, {y: \"c\", x: \"b\"}, {x: \"b\", y: \"c\"}, {}]\n\
+         {x: \"b\", y: \"c\"}\n"
+    );
+}
+
+#[test]
+fn set_thread_module_and_exception_keyword_accessors() {
+    // Set#reset, Thread.list, Module#const_set, and the exception accessors that
+    // take keyword/positional data: KeyError(key:/receiver:), SystemExit(status),
+    // LocalJumpError#reason, FrozenError#receiver.
+    let result = run_ruby(
+        r#"
+        require "set"
+        p Set[1, 2, 3].reset.to_a.sort
+        p Thread.list.all? { |t| t.is_a?(Thread) }
+        module Box; end
+        p Box.const_set(:X, 99)
+        p Box::X
+        ke = KeyError.new("m", key: :k, receiver: {1 => 2})
+        p [ke.key, ke.receiver, ke.message]
+        p [SystemExit.new(2).status, SystemExit.new(2).success?, SystemExit.new.success?, SystemExit.new(true, "bye").message]
+        s = "x".freeze
+        begin; s << "y"; rescue FrozenError => e; p e.receiver; end
+        def mm; yield; end
+        begin; mm; rescue LocalJumpError => e; p [e.reason, e.exit_value]; end
+        begin; {}.fetch(:z); rescue KeyError => e; p e.key; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3]\ntrue\n99\n99\n[:k, {1 => 2}, \"m\"]\n[2, false, true, \"bye\"]\n\"x\"\n\
+         [:noreason, nil]\n:z\n"
+    );
+}
+
+#[test]
 fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
     let result = run_ruby(
         r#"
