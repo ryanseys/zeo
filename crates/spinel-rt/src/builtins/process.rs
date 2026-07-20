@@ -33,42 +33,77 @@ builtin_methods! {
     }
     "clock_gettime" => fn clock_gettime(_recv, args, _block) {
         arity!(args, 1..=2);
-        let clock = match &args[0] {
-            RubyValue::Int(i) => *i,
-            other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(other)
-                    ),
-                ))
-            }
+        let clock = int_arg(&args[0])?;
+        clock_in_unit(clock_seconds(clock)?, args.get(1))
+    }
+    // `Process.clock_getres(clock_id [, unit])` -- the clock's resolution, in the
+    // same units `clock_gettime` accepts (default a Float of seconds).
+    "clock_getres" => fn clock_getres(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let clock = int_arg(&args[0])?;
+        clock_in_unit(clock_res_seconds(clock)?, args.get(1))
+    }
+    // Real/effective user and group ids (libc getuid/geteuid/getgid/getegid).
+    "uid" => fn uid(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { libc::getuid() } as i64))
+    }
+    "euid" => fn euid(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { libc::geteuid() } as i64))
+    }
+    "gid" => fn gid(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { libc::getgid() } as i64))
+    }
+    "egid" => fn egid(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { libc::getegid() } as i64))
+    }
+    // `Process.getpgrp` -- the current process group id.
+    "getpgrp" => fn getpgrp(_recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Int(unsafe { libc::getpgrp() } as i64))
+    }
+    // `Process.getsid([pid])` -- the session id of `pid` (0/none = this process).
+    "getsid" => fn getsid(_recv, args, _block) {
+        arity!(args, 0..=1);
+        let pid = match args.first() {
+            None | Some(RubyValue::Nil) => 0,
+            Some(v) => int_arg(v)? as libc::pid_t,
         };
-        let secs = clock_seconds(clock)?;
-        // The optional second argument is a unit Symbol. Only the default
-        // (:float_second) and the two common integer units are honored;
-        // anything else raises rather than silently answering seconds.
-        match args.get(1) {
-            None => Ok(RubyValue::Float(secs)),
-            Some(RubyValue::Symbol(s)) => match s.name().as_str() {
-                "float_second" => Ok(RubyValue::Float(secs)),
-                "float_millisecond" => Ok(RubyValue::Float(secs * 1e3)),
-                "float_microsecond" => Ok(RubyValue::Float(secs * 1e6)),
-                "second" => Ok(RubyValue::Int(secs as i64)),
-                "millisecond" => Ok(RubyValue::Int((secs * 1e3) as i64)),
-                "microsecond" => Ok(RubyValue::Int((secs * 1e6) as i64)),
-                "nanosecond" => Ok(RubyValue::Int((secs * 1e9) as i64)),
-                other => Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("unexpected unit: {other}"),
-                )),
-            },
-            Some(other) => Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("unexpected unit: {}", other.inspect_string()),
-            )),
+        let sid = unsafe { libc::getsid(pid) };
+        if sid < 0 {
+            return Err(raise_error("Errno::ESRCH", "No such process".to_string()));
         }
+        Ok(RubyValue::Int(sid as i64))
+    }
+    // `Process.getpriority(which, who)` -- the scheduling priority. `getpriority`
+    // returns -1 both for a real -1 priority and on error, so errno is cleared
+    // first and checked after (CRuby does the same).
+    "getpriority" => fn getpriority(_recv, args, _block) {
+        arity!(args, 2);
+        let which = int_arg(&args[0])? as libc::c_int;
+        let who = int_arg(&args[1])? as libc::id_t;
+        unsafe { *libc::__error() = 0 };
+        let prio = unsafe { libc::getpriority(which, who) };
+        if prio == -1 && unsafe { *libc::__error() } != 0 {
+            return Err(raise_error("Errno::ESRCH", "No such process".to_string()));
+        }
+        Ok(RubyValue::Int(prio as i64))
+    }
+    // `Process.groups` -- the supplementary group ids, as an Array of Integer.
+    "groups" => fn groups(_recv, args, _block) {
+        arity!(args, 0);
+        let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        let mut buf = vec![0 as libc::gid_t; count.max(0) as usize];
+        let n = unsafe { libc::getgroups(buf.len() as libc::c_int, buf.as_mut_ptr()) };
+        let list = buf
+            .iter()
+            .take(n.max(0) as usize)
+            .map(|g| RubyValue::Int(*g as i64))
+            .collect();
+        Ok(RubyValue::Array(crate::array_new(list)))
     }
 }
 
@@ -91,6 +126,57 @@ fn clock_seconds(clock: i64) -> Result<f64, crate::Signal> {
     Ok(ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9)
 }
 
+/// A single clock's RESOLUTION in seconds (`clock_getres`), the companion of
+/// [`clock_seconds`].
+fn clock_res_seconds(clock: i64) -> Result<f64, crate::Signal> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `ts` is a valid out-param; `clock_getres` writes it and nothing else.
+    let rc = unsafe { libc::clock_getres(clock as libc::clockid_t, &mut ts) };
+    if rc != 0 {
+        return Err(raise_error(
+            "Errno::EINVAL",
+            format!("Invalid argument - unknown clock id: {clock}"),
+        ));
+    }
+    Ok(ts.tv_sec as f64 + ts.tv_nsec as f64 / 1e9)
+}
+
+/// Render a clock value given in SECONDS as the unit the optional argument
+/// requests (default `:float_second`) -- shared by `clock_gettime`/`clock_getres`.
+fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate::Signal> {
+    match unit {
+        None => Ok(RubyValue::Float(secs)),
+        Some(RubyValue::Symbol(s)) => match s.name().as_str() {
+            "float_second" => Ok(RubyValue::Float(secs)),
+            "float_millisecond" => Ok(RubyValue::Float(secs * 1e3)),
+            "float_microsecond" => Ok(RubyValue::Float(secs * 1e6)),
+            "second" => Ok(RubyValue::Int(secs as i64)),
+            "millisecond" => Ok(RubyValue::Int((secs * 1e3) as i64)),
+            "microsecond" => Ok(RubyValue::Int((secs * 1e6) as i64)),
+            "nanosecond" => Ok(RubyValue::Int((secs * 1e9) as i64)),
+            other => Err(raise_error("ArgumentError", format!("unexpected unit: {other}"))),
+        },
+        Some(other) => Err(raise_error(
+            "ArgumentError",
+            format!("unexpected unit: {}", other.inspect_string()),
+        )),
+    }
+}
+
+/// Coerce an argument to an `i64`, raising CRuby's TypeError otherwise.
+fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
+    match v {
+        RubyValue::Int(i) => Ok(*i),
+        other => Err(raise_error(
+            "TypeError",
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
 /// Installs the `Process` clock constants -- called once from generated
 /// `main()`. Values are the OS's own ids (see `clock_seconds`).
 pub fn seed_process() {
@@ -102,6 +188,11 @@ pub fn seed_process() {
     set("CLOCK_MONOTONIC", libc::CLOCK_MONOTONIC);
     set("CLOCK_PROCESS_CPUTIME_ID", libc::CLOCK_PROCESS_CPUTIME_ID);
     set("CLOCK_THREAD_CPUTIME_ID", libc::CLOCK_THREAD_CPUTIME_ID);
+    // `Process.getpriority`/`setpriority`'s `which` selectors.
+    let seti = |name: &str, v: i64| crate::constants::const_set(cid, name, RubyValue::Int(v));
+    seti("PRIO_PROCESS", libc::PRIO_PROCESS as i64);
+    seti("PRIO_PGRP", libc::PRIO_PGRP as i64);
+    seti("PRIO_USER", libc::PRIO_USER as i64);
 }
 
 // ---------------------------------------------------------------------------
