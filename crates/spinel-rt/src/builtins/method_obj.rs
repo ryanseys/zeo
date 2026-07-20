@@ -199,6 +199,19 @@ fn m_original_name(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue
     Ok(RubyValue::Symbol(recv_method(recv).name))
 }
 
+/// `Method#source_location` -- `nil` for a method with no Ruby source location
+/// this AOT runtime tracks (builtins, and any method whose defining `.rb` span
+/// isn't recorded), matching CRuby's `nil` for C-defined methods.
+fn m_source_location(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Nil)
+}
+
+/// `Method#super_method` -- `nil` (this runtime tracks no super-method chain
+/// for a bound Method object).
+fn m_super_method(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Nil)
+}
+
 /// `meth >> other` -- a Proc running `meth` then piping its result into
 /// `other` (`other.call(meth.call(*args))`). `other` is any callable.
 fn m_compose_forward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -280,6 +293,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "unbind" => m_unbind,
         "owner" => m_owner,
         "original_name" => m_original_name,
+        "source_location" => m_source_location,
+        "super_method" => m_super_method,
         ">>" => m_compose_forward,
         "<<" => m_compose_backward,
         "==" | "eql?" => m_eq,
@@ -294,7 +309,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 pub fn lookup_names() -> &'static [&'static str] {
     &[
         "call", "()", "[]", "===", "name", "receiver", "to_proc", "arity",
-        "parameters", "unbind", "owner", "original_name", ">>", "<<", "==",
+        "parameters", "unbind", "owner", "original_name", "source_location",
+        "super_method", ">>", "<<", "==",
         "eql?", "hash", "curry", "inspect", "to_s",
     ]
 }

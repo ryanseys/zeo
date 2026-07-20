@@ -8691,6 +8691,31 @@ fn set_thread_module_and_exception_keyword_accessors() {
 }
 
 #[test]
+fn small_api_matchdata_size_set_join_complex_i_method_source_location() {
+    // Batch 3 small wins: MatchData#size/#length, Set#join, the Complex::I
+    // imaginary-unit constant (and that it multiplies to -1), and Method's
+    // source_location/super_method (nil for a builtin, matching CRuby's C-method).
+    let result = run_ruby(
+        r#"
+        require "set"
+        m = "2026-06".match(/(\d+)-(\d+)/)
+        p m.size
+        p m.length
+        p Set[1, 2, 3].join("-")
+        p Complex::I
+        p(Complex::I * Complex::I)
+        p 5.method(:+).source_location
+        p 5.method(:+).super_method
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3\n3\n\"1-2-3\"\n(0+1i)\n(-1+0i)\nnil\nnil\n"
+    );
+}
+
+#[test]
 fn module_metaprogramming_attr_class_eval_exec_and_invented_ivars() {
     // Batch 2: attr (== attr_reader), class_eval/module_exec block forms whose
     // added methods are inherited by subclasses and includers, and an

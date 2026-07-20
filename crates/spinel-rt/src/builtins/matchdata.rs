@@ -72,6 +72,17 @@ builtin_methods! {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
+    // `#size`/`#length` -- the number of elements (whole match + every group),
+    // i.e. `to_a.length`.
+    "size" | "length" => fn size(recv, args, _block) {
+        arity!(args, 0);
+        let arr = crate::regexp::matchdata_to_a(&recv_md(recv));
+        let n = match &arr {
+            RubyValue::Array(a) => a.lock().len(),
+            _ => unreachable!("matchdata_to_a always answers an Array"),
+        };
+        Ok(RubyValue::Int(n as i64))
+    }
     // `values_at(*indices)` -- the groups at those indices (`0` is the whole
     // match), each resolved the same way `[]` does, gathered into an Array.
     "values_at" => fn values_at(recv, args, _block) {

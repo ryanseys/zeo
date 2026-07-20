@@ -268,6 +268,12 @@ pub fn seed_numeric_constants() {
     const_set(float, "MAX_10_EXP", RubyValue::Int(308));
     const_set(float, "MIN_10_EXP", RubyValue::Int(-307));
     const_set(float, "RADIX", RubyValue::Int(2));
+    // `Complex::I` -- the imaginary unit, `Complex(0, 1)`.
+    const_set(
+        spinel_abi::COMPLEX_CLASS.0,
+        "I",
+        crate::builtins::complex::complex_from_literal(RubyValue::Int(1)),
+    );
     let math = spinel_abi::MATH_CLASS.0;
     const_set(math, "PI", RubyValue::Float(std::f64::consts::PI));
     const_set(math, "E", RubyValue::Float(std::f64::consts::E));

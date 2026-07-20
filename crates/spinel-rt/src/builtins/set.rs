@@ -442,6 +442,12 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(set_of(recv).elements())))
     }
+    // `Set#join(sep = "")` -- delegates to the element array's join.
+    "join" => fn join(recv, args, _block) {
+        arity!(args, 0..=1);
+        let arr = RubyValue::Array(crate::array_new(set_of(recv).elements()));
+        crate::dispatch::send_value(&arr, crate::Symbol::intern("join"), args, None)
+    }
     "to_set" => fn to_set(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
