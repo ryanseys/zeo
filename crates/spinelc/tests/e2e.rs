@@ -8488,6 +8488,45 @@ fn kernel_caller_and_conversion_functions_resolve_through_every_dispatch_path() 
 }
 
 #[test]
+fn signal_module_and_signal_exception_surface() {
+    // SignalException/Interrupt resolve a signal name<->number (#signo/#signm,
+    // arg-form validation) and the Signal module answers list/signame/trap
+    // (trap is a validated no-op that records the prior action). Byte-verified
+    // against ruby 4.0.5 on darwin.
+    let result = run_ruby(
+        r#"
+        p Interrupt.new.signo
+        p Interrupt.new.message
+        p Interrupt.new("stop").signm
+        e = SignalException.new(9, "custom"); p [e.signo, e.message, e.signm]
+        p SignalException.new(9).message
+        p SignalException.new("INT").signo
+        p SignalException.new(:TERM).message
+        p((SignalException.new("KILL", "x") rescue $!.class))
+        p((SignalException.new("NOPE") rescue $!.class))
+        begin; raise SignalException, "SIGINT"; rescue SignalException => x; p x.signo; end
+        p Signal.list["INT"]
+        p Signal.list.class
+        p Signal.signame(15)
+        p Signal.signame(2.9)
+        p Signal.signame(999)
+        p((Signal.signame(nil) rescue $!.class))
+        p Signal.trap("USR1", "IGNORE")
+        p Signal.trap("USR1", "DEFAULT")
+        p((Signal.trap("KILL", "IGNORE") rescue $!.class))
+        p Signal.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2\n\"Interrupt\"\n\"stop\"\n[9, \"custom\", \"custom\"]\n\"SIGKILL\"\n2\n\"SIGTERM\"\n\
+         ArgumentError\nArgumentError\n2\n2\nHash\n\"TERM\"\n\"INT\"\nnil\nTypeError\n\
+         \"DEFAULT\"\n\"IGNORE\"\nErrno::EINVAL\nModule\n"
+    );
+}
+
+#[test]
 fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
     let result = run_ruby(
         r#"

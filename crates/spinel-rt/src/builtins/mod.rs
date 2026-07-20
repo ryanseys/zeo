@@ -58,6 +58,7 @@ pub(crate) mod rational;
 pub(crate) mod random;
 pub(crate) mod condition_variable;
 pub(crate) mod set;
+pub(crate) mod signal;
 pub(crate) mod rstruct;
 pub(crate) mod regexp;
 pub(crate) mod fiber;
@@ -169,6 +170,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::DIR_CLASS => dir::lookup_class,
         spinel_abi::TIME_CLASS => time::lookup_class,
         spinel_abi::PROCESS_CLASS => process::lookup_class,
+        spinel_abi::SIGNAL_MODULE => signal::lookup_class,
         spinel_abi::GC_CLASS => gc::lookup_class,
         spinel_abi::ENCODING_CLASS => encoding::lookup_class,
         spinel_abi::SET_CLASS => set::lookup_class,
@@ -303,6 +305,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::DIR_CLASS => dir::lookup_class_names(),
         spinel_abi::TIME_CLASS => time::lookup_class_names(),
         spinel_abi::PROCESS_CLASS => process::lookup_class_names(),
+        spinel_abi::SIGNAL_MODULE => signal::lookup_class_names(),
         spinel_abi::GC_CLASS => gc::lookup_class_names(),
         spinel_abi::ENCODING_CLASS => encoding::lookup_class_names(),
         spinel_abi::SET_CLASS => set::lookup_class_names(),

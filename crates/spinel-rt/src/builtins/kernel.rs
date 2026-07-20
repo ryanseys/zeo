@@ -240,6 +240,11 @@ builtin_methods! {
     "Complex" => fn complex_m(_recv, args, _block) {
         kernel_complex(args)
     }
+    // Private `Kernel#trap` -- the receiverless spelling of `Signal.trap`, same
+    // validated no-op that records the action and returns the prior one.
+    "trap" => fn trap_m(_recv, args, block) {
+        crate::builtins::signal::trap_impl(args, block)
+    }
     // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
     // one at the ABI level). No block is CRuby's `ArgumentError`.
     "proc" => fn proc_m(_recv, args, block) {

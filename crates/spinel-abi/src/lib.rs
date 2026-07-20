@@ -263,6 +263,10 @@ pub const FFI_MEMORY_POINTER_CLASS: ClassId = ClassId(70);
 /// recognized at compile time.
 pub const FFI_STRUCT_CLASS: ClassId = ClassId(71);
 
+/// The `Signal` MODULE (`Signal.list`/`signame`/`trap`). Core and always-on
+/// (CRuby exposes it unconditionally), like `Process`/`Math`.
+pub const SIGNAL_MODULE: ClassId = ClassId(72);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -353,6 +357,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: FFI_POINTER_CLASS, name: "FFI::Pointer", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
     BuiltinClass { id: FFI_MEMORY_POINTER_CLASS, name: "FFI::MemoryPointer", is_module: false, superclass: Some(FFI_POINTER_CLASS), includes: &[], feature: Some("ffi") },
     BuiltinClass { id: FFI_STRUCT_CLASS, name: "FFI::Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
+    BuiltinClass { id: SIGNAL_MODULE, name: "Signal", is_module: true, superclass: None, includes: &[], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -412,6 +417,13 @@ pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
 
 /// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
 pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(47);
+
+/// `SignalException` -- resolves a signal name/number in `initialize` and
+/// exposes `#signo`/`#signm`.
+pub const SIGNAL_EXCEPTION_CLASS: ClassId = exc_id(49);
+
+/// `Interrupt` (a `SignalException`) -- fixed to `SIGINT` (signo 2).
+pub const INTERRUPT_CLASS: ClassId = exc_id(50);
 
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.

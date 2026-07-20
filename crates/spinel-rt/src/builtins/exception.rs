@@ -21,8 +21,9 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use spinel_abi::{
-    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, KEY_ERROR_CLASS,
-    NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, STOP_ITERATION_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
+    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, INTERRUPT_CLASS,
+    KEY_ERROR_CLASS, NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS,
+    STOP_ITERATION_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
 };
 
 use crate::dispatch::{
@@ -425,6 +426,86 @@ fn exc_detailed_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue
     Ok(RubyValue::Str(string_new(format!("{msg} ({name})"))))
 }
 
+/// `SignalException.new(signo)` / `.new(signo, message)` / `.new(name)` --
+/// resolve the signal and set the hidden `signo` slot plus the message. An
+/// Integer first argument is a signal number (an optional second argument is the
+/// message, else `"SIG<name>"`); a String/Symbol first argument is a signal
+/// NAME and must be the only one (a second argument is `ArgumentError`, as in
+/// CRuby). An unknown name/number is `ArgumentError`.
+fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    let (signo, message) = match args.first() {
+        Some(RubyValue::Int(i)) => {
+            let signo = *i as i32;
+            let msg = match args.get(1) {
+                Some(m) => m.clone(),
+                None => {
+                    let name = crate::builtins::signal::name_from_signo(signo).ok_or_else(|| {
+                        raise_error("ArgumentError", format!("invalid signal number ({signo})"))
+                    })?;
+                    RubyValue::Str(string_new(format!("SIG{name}")))
+                }
+            };
+            (*i, msg)
+        }
+        Some(name @ (RubyValue::Str(_) | RubyValue::Symbol(_))) => {
+            if args.len() > 1 {
+                return Err(raise_error(
+                    "ArgumentError",
+                    format!("wrong number of arguments (given {}, expected 1)", args.len()),
+                ));
+            }
+            let spelled = match name {
+                RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+                RubyValue::Symbol(s) => s.name(),
+                _ => unreachable!(),
+            };
+            let signo = crate::builtins::signal::signo_from_name(&spelled).ok_or_else(|| {
+                let bare = spelled.strip_prefix("SIG").unwrap_or(&spelled);
+                raise_error("ArgumentError", format!("unsupported signal `SIG{bare}'"))
+            })?;
+            let canonical = crate::builtins::signal::name_from_signo(signo).unwrap_or(&spelled);
+            (signo as i64, RubyValue::Str(string_new(format!("SIG{canonical}"))))
+        }
+        _ => {
+            return Err(raise_error(
+                "ArgumentError",
+                "wrong number of arguments (given 0, expected 1+)".to_string(),
+            ))
+        }
+    };
+    *e.mesg.lock() = message.clone();
+    e.set_detail("signo", RubyValue::Int(signo));
+    Ok(message)
+}
+
+/// `Interrupt.new(message = nil)` -- a `SignalException` pinned to `SIGINT`
+/// (signo 2), whose message defaults to `"Interrupt"` (its class name) rather
+/// than being derived from the signal, matching CRuby.
+fn interrupt_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    let msg = match args.first() {
+        Some(m) if m.truthy() => m.clone(),
+        _ => RubyValue::Str(string_new("Interrupt".to_string())),
+    };
+    *e.mesg.lock() = msg.clone();
+    e.set_detail("signo", RubyValue::Int(2));
+    Ok(msg)
+}
+
+/// `SignalException#signo` -- the signal number.
+fn exc_signo(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("signo"))
+}
+
+/// `SignalException#signm` -- an alias for `#message` (a DYNAMIC send, so a
+/// subclass override of `message`/`to_s` is honored).
+fn exc_signm(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    send(recv, Symbol::intern("message"), &[], None)
+}
+
 /// `def full_message; self.class.name + ": " + message; end`
 fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
@@ -541,6 +622,8 @@ pub fn register_exception_subclass(
     let is_no_method_error = ancestors.contains(&NO_METHOD_ERROR_CLASS);
     let is_key_error = ancestors.contains(&KEY_ERROR_CLASS);
     let is_uncaught_throw = ancestors.contains(&UNCAUGHT_THROW_ERROR_CLASS);
+    let is_signal_exception = ancestors.contains(&SIGNAL_EXCEPTION_CLASS);
+    let is_interrupt = ancestors.contains(&INTERRUPT_CLASS);
     registry.register(
         id,
         name,
@@ -580,6 +663,14 @@ pub fn register_exception_subclass(
     if is_uncaught_throw {
         registry.define_method(id, Symbol::intern("tag"), exc_tag);
         registry.define_method(id, Symbol::intern("value"), exc_value);
+    }
+    if is_signal_exception {
+        // `Interrupt` pins SIGINT and defaults its message to the class name, so
+        // it takes a distinct `initialize`; both expose `#signo`/`#signm`.
+        let ctor = if is_interrupt { interrupt_initialize } else { signal_exception_initialize };
+        registry.define_method(id, Symbol::intern("initialize"), ctor);
+        registry.define_method(id, Symbol::intern("signo"), exc_signo);
+        registry.define_method(id, Symbol::intern("signm"), exc_signm);
     }
     // Class methods, registered per-id (class-method lookup doesn't walk
     // ancestors -- see `dispatch`'s Class-value arm).
