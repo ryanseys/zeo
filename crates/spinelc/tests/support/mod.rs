@@ -96,12 +96,25 @@ pub fn compile_packages(
     roots: &[&str],
     package_dirs: &[&str],
 ) -> Result<(spinelc::CompileOutput, std::path::PathBuf), String> {
+    // Named from the project's own CONTENT, not the pid: `__FILE__`/`__dir__`
+    // bake this absolute path into the generated Rust as a string literal, and
+    // `build_binary`'s cache is keyed on that source -- so a pid-named
+    // directory changed the source every run and guaranteed a cache MISS,
+    // making a path-observing test the slowest in the suite by an order of
+    // magnitude while every other test hit the cache.
+    //
+    // A content hash also makes the directory self-consistent: the same hash
+    // always means the same files, so there is nothing stale to clear and no
+    // `remove_dir_all` racing a concurrent run of an identical project.
+    let mut hasher = std::hash::DefaultHasher::new();
+    for (rel, source) in files {
+        std::hash::Hash::hash(&(rel, source), &mut hasher);
+    }
+    std::hash::Hash::hash(&(entry, roots, package_dirs), &mut hasher);
     let dir = std::env::temp_dir().join(format!(
-        "spinelc-test-proj-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
+        "spinelc-test-proj-{:016x}",
+        std::hash::Hasher::finish(&hasher)
     ));
-    let _ = std::fs::remove_dir_all(&dir);
     for (rel, source) in files {
         let path = dir.join(rel);
         if let Some(parent) = path.parent() {
