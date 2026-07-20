@@ -965,3 +965,37 @@ fn find_ifnone_tally_hash_and_min_max_by_count() {
         "-1\n20\nnil\n{1 => 2, 2 => 1, 3 => 3}\n{1 => 2, 2 => 1, 3 => 3}\n{5 => 12, 6 => 1}\n[\"bbbb\", \"ccc\"]\n[\"a\", \"dd\"]\n[]\n\"negative size (-1)\"\n",
     );
 }
+
+/// `[]`-style compound assignment with MORE than one index. `[]`/`[]=` are
+/// ordinary methods, so `a[i, j] += rhs` is a two-argument `[]` paired with a
+/// three-argument `[]=` -- Array's `(start, length)` splice form. Each index
+/// binds to its own hidden local so a side-effecting index runs exactly once
+/// across the read and the write, the same guarantee the receiver already had.
+#[test]
+fn compound_assignment_through_a_multi_argument_index() {
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3, 4]
+        a[1, 2] += ["x"]
+        p a
+
+        b = [1, 2, 3]
+        b[0, 2] ||= 9
+        p b
+
+        $i = 0
+        $j = 0
+        def idx; $i += 1; 0; end
+        def len; $j += 1; 1; end
+        c = [1, 2, 3]
+        c[idx, len] = [9]
+        p c
+        p [$i, $j]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1, 2, 3, \"x\", 4]\n[1, 2, 3]\n[9, 2, 3]\n[1, 1]\n"
+    );
+}

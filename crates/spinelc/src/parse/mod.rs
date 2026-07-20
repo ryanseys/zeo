@@ -1581,10 +1581,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let recv = op
             .receiver()
             .ok_or("`+=` on an indexing expression with no receiver isn't supported (spike scope)")?;
-        let idx = single_index_argument(op.arguments())?;
+        let idx = index_arguments(op.arguments())?;
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
         let combined = hir.push(HirNode::Call {
             receiver: Some(read_call),
             name: op_name,
@@ -1594,7 +1594,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             block_arg: None,
             safe: false,
         });
-        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, combined);
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, combined);
         let mut stmts = binds;
         stmts.push(write_call);
         return Ok(hir.push(HirNode::Seq(stmts)));
@@ -1603,10 +1603,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let recv = op
             .receiver()
             .ok_or("`&&=` on an indexing expression with no receiver isn't supported (spike scope)")?;
-        let idx = single_index_argument(op.arguments())?;
+        let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
-        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, rhs);
+        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
         let and_node = hir.push(HirNode::And(read_call, write_call));
         let mut stmts = binds;
         stmts.push(and_node);
@@ -1616,10 +1616,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let recv = op
             .receiver()
             .ok_or("`||=` on an indexing expression with no receiver isn't supported (spike scope)")?;
-        let idx = single_index_argument(op.arguments())?;
+        let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmp) = bind_index_target_once(result, hir, &recv, &idx)?;
-        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmp, rhs);
+        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
         let or_node = hir.push(HirNode::Or(read_call, write_call));
         let mut stmts = binds;
         stmts.push(or_node);
@@ -3949,16 +3949,20 @@ fn lower_single_optional_argument(
     }
 }
 
-/// Exactly one index argument (`arr[i]`, not `arr[i, j]`) -- the same
-/// single-index restriction `codegen::call::try_collection_dispatch`'s
-/// `[]`/`[]=` fast path already enforces, extended to the operator-write
-/// forms.
-fn single_index_argument(
+/// At least one index argument. The COUNT is unrestricted: `[]`/`[]=` are
+/// ordinary methods, so `h[a, b] += 1` is just a two-argument `[]` paired with
+/// a three-argument `[]=`, and `Array#[]=` genuinely takes a `(start, length,
+/// value)` form. Only the empty case (`h[] += 1`) is rejected, since `[]` needs
+/// something to index by.
+fn index_arguments(
     result_args: Option<ruby_prism::ArgumentsNode<'_>>,
 ) -> PResult<ruby_prism::ArgumentsNode<'_>> {
-    let args = result_args.ok_or("`[]`-style compound assignment requires exactly one index argument (spike scope)")?;
-    if args.arguments().iter().count() != 1 {
-        return Err("`[]`-style compound assignment only supports a single index argument (spike scope)".to_string().into());
+    let args = result_args
+        .ok_or("`[]`-style compound assignment requires at least one index argument")?;
+    if args.arguments().iter().count() == 0 {
+        return Err("`[]`-style compound assignment requires at least one index argument"
+            .to_string()
+            .into());
     }
     Ok(args)
 }
@@ -4019,37 +4023,55 @@ fn bind_index_target_once(
     hir: &mut Hir,
     receiver: &Node<'_>,
     index_args: &ruby_prism::ArgumentsNode<'_>,
-) -> PResult<(Vec<NodeId>, NodeId, String, String)> {
-    let index_node = index_args.arguments().iter().next().expect("checked by single_index_argument");
+) -> PResult<(Vec<NodeId>, NodeId, String, Vec<String>)> {
     let recv_expr = lower_node(result, hir, receiver)?;
-    let idx_expr = lower_node(result, hir, &index_node)?;
     let recv_tmp = hir.gensym("__recv");
-    let bind_recv = hir.push(HirNode::LocalWrite(recv_tmp.clone(), recv_expr));
-    let idx_tmp = hir.gensym("__idx");
-    let bind_idx = hir.push(HirNode::LocalWrite(idx_tmp.clone(), idx_expr));
+    let mut binds = vec![hir.push(HirNode::LocalWrite(recv_tmp.clone(), recv_expr))];
+    // EVERY index gets its own binding, for the same reason the receiver does:
+    // `h[i(), j()] += 1` must call each index expression exactly once, not once
+    // per `[]`/`[]=` call.
+    let mut idx_tmps = Vec::new();
+    for index_node in index_args.arguments().iter() {
+        let idx_expr = lower_node(result, hir, &index_node)?;
+        let idx_tmp = hir.gensym("__idx");
+        binds.push(hir.push(HirNode::LocalWrite(idx_tmp.clone(), idx_expr)));
+        idx_tmps.push(idx_tmp);
+    }
     let read_recv = hir.push(HirNode::LocalRead(recv_tmp.clone()));
-    let read_idx = hir.push(HirNode::LocalRead(idx_tmp.clone()));
+    let args = idx_tmps
+        .iter()
+        .map(|t| ArrayElem::Single(hir.push(HirNode::LocalRead(t.clone()))))
+        .collect();
     let read_call = hir.push(HirNode::Call {
         receiver: Some(read_recv),
         name: "[]".to_string(),
-        args: vec![ArrayElem::Single(read_idx)],
+        args,
         kwargs: Vec::new(),
         block: None,
         block_arg: None,
         safe: false,
     });
-    Ok((vec![bind_recv, bind_idx], read_call, recv_tmp, idx_tmp))
+    Ok((binds, read_call, recv_tmp, idx_tmps))
 }
 
-/// The write half of `bind_index_target_once` -- `recv_tmp[idx_tmp] =
+/// The write half of `bind_index_target_once` -- `recv_tmp[idx_tmps...] =
 /// value`, reading the SAME hidden receiver/index bindings.
-fn build_index_target_write(hir: &mut Hir, recv_tmp: &str, idx_tmp: &str, value: NodeId) -> NodeId {
+fn build_index_target_write(
+    hir: &mut Hir,
+    recv_tmp: &str,
+    idx_tmps: &[String],
+    value: NodeId,
+) -> NodeId {
     let write_recv = hir.push(HirNode::LocalRead(recv_tmp.to_string()));
-    let write_idx = hir.push(HirNode::LocalRead(idx_tmp.to_string()));
+    let mut args: Vec<ArrayElem> = idx_tmps
+        .iter()
+        .map(|t| ArrayElem::Single(hir.push(HirNode::LocalRead(t.clone()))))
+        .collect();
+    args.push(ArrayElem::Single(value));
     hir.push(HirNode::Call {
         receiver: Some(write_recv),
         name: "[]=".to_string(),
-        args: vec![ArrayElem::Single(write_idx), ArrayElem::Single(value)],
+        args,
         kwargs: Vec::new(),
         block: None,
         block_arg: None,
