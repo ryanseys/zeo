@@ -435,6 +435,22 @@ fn emit_hash_binding(
             let #h_ident: spinel_rt::RHash =
                 (#scrutinee.clone()).deconstruct_keys(spinel_rt::RubyValue::Nil)?.as_hash_unchecked();
         }),
+        // A MatchData scrutinee (`"s".match(/re/)` is statically typed
+        // MatchData) deconstructs via `MatchData#deconstruct_keys` -- the
+        // regex's named captures become a symbol-keyed hash. A no-match `match`
+        // is nil at runtime, so guard: a non-MatchData value (nil) simply
+        // doesn't match the hash pattern (falls through to `in nil`), no raise.
+        TyKind::MatchData => Some(quote! {
+            let #h_ident: spinel_rt::RHash = match &(#scrutinee) {
+                spinel_rt::RubyValue::MatchData(_) => spinel_rt::send_value(
+                    &(#scrutinee),
+                    spinel_rt::Symbol::intern("deconstruct_keys"),
+                    &[spinel_rt::RubyValue::Nil],
+                    None,
+                )?.as_hash_unchecked(),
+                _ => break #label false,
+            };
+        }),
         // A Poly scrutinee that isn't a runtime Hash dispatches
         // `#deconstruct_keys` (real Ruby's hash-pattern protocol) when it
         // responds to it; anything else simply doesn't match (no raise).
