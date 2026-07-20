@@ -20944,6 +20944,30 @@ fn ffi_typedef_aliases_a_scalar_type() {
     assert_eq!(result.stdout, "5\n");
 }
 
+/// FFI `callback :tag, [args], ret` declares a callback TYPE. A C callback is a
+/// function pointer, so the tag resolves to `:pointer` and is usable anywhere a
+/// pointer is -- here, a NULL passed straight back through. Passing a Ruby Proc
+/// as a callback argument needs a runtime C-call builder and is still a gap.
+#[test]
+fn ffi_callback_declares_a_function_pointer_type() {
+    let result = support::run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          callback :cmp, [:pointer, :pointer], :int
+          attach_function :abs, [:int], :int
+          attach_function :my_len, :strlen, [:string], :ulong
+        end
+        p L.abs(-5)
+        p L.my_len("hello")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n5\n");
+}
+
 /// FFI `FFI::MemoryPointer` (#204 follow-on): an owned heap buffer with typed
 /// read/write accessors, pointer arithmetic, typed arrays, `from_string`, and
 /// an out-of-bounds `IndexError` -- byte-identical to `ffi 1.17.4`.

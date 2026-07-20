@@ -3068,6 +3068,26 @@ fn lower_ffi_directive(
             aliases.insert(tag, crate::hir::FfiType::Enum(members));
             Ok(true)
         }
+        b"callback" => {
+            // `callback :tag, [arg_types], ret_type` -- register `:tag` as a
+            // usable type name. A C callback IS a function pointer, so the tag
+            // resolves to `:pointer`; the signature is validated (so a typo in
+            // it is still an error) but not otherwise carried, since marshalling
+            // a Ruby Proc into a C function pointer is a follow-on.
+            let (tag, params) = match (args.first(), args.get(1), args.get(2)) {
+                (Some(t), Some(p), Some(_)) if t.as_symbol_node().is_some() => {
+                    (ffi_symbol_str(t)?, p)
+                }
+                _ => {
+                    return Err(
+                        "callback expects `:tag, [arg_types], return_type`".to_string()
+                    )
+                }
+            };
+            ffi_type_array(params, aliases)?;
+            aliases.insert(tag, crate::hir::FfiType::Pointer);
+            Ok(true)
+        }
         b"attach_function" => {
             out.push(lower_attach_function(result, hir, &args, ffi_lib.clone(), aliases)?);
             Ok(true)

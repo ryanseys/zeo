@@ -4,3 +4,43 @@
 #
 # Note: test/rbs* (RBS extraction, deferred by plan decision) is never
 # discovered by the spinel suite adapter, so it needs no entry here.
+# The C project's private FFI DSL: bare `ffi_func`/`ffi_buffer`/`ffi_const`/
+# `ffi_struct`/`ffi_callback`/`ffi_cflags` module-level directives, reachable
+# with no `require`. CRuby rejects every one of these programs
+# (`undefined method 'ffi_func' for module M (NoMethodError)`), so passing them
+# would mean spinel accepts source CRuby does not -- a divergence the
+# zero-divergence north star rules out. These goldens were only ever checked
+# against the old C implementation, never the ruby oracle.
+#
+# The REAL `ffi` gem API (`require "ffi"` + `extend FFI::Library` +
+# `attach_function`/`ffi_lib`/`typedef`/`enum`/`callback`) is implemented and
+# NOT skipped -- see ffi_gem_compat, which stays live. Porting these 28 onto
+# that API would make them oracle-truthful; until then they are visible debt.
+spinel	empty_array_push_ptr	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_array_specs_decl	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_binstr_recv	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_binstr_ws_frame	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_buffer_reader	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_callback	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_cflags_fold_forms	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_const	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_const_leaf_collision	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_const_nested_module_path	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_foreign_ptr_gc	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_int_arg_bigint	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_int_arg_poly_value	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_libc_libm_basic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_poly_int_array	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_ptr_array	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_ptr_int_literal	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_ptr_nil	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_str_arg_poly_value	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_struct	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_variadic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_void_return	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	ffi_write_roundtrip	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	i1011	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	i1017	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	sp_crypto_basic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	sp_crypto_sha1	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	sp_net_basic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
