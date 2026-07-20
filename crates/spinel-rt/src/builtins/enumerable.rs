@@ -1141,9 +1141,11 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
         panic!("Enumerable#take/drop takes one Integer argument");
     };
     if *n < 0 {
+        // CRuby names the actual method: `drop(-1)` says "drop", not "take".
+        let verb = if take { "take" } else { "drop" };
         return Err(crate::dispatch::raise_error(
             "ArgumentError",
-            "attempt to take negative size".to_string(),
+            format!("attempt to {verb} negative size"),
         ));
     }
     if take {

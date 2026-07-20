@@ -275,12 +275,22 @@ fn try_collection_dispatch(
             // here, not inside `spinel_rt::array_set` itself, since only
             // codegen has the class registry needed to build one (see
             // `emit_boxed_new`'s docs).
+            // `; minimum: -N` where N is the array's length -- CRuby's full
+            // message (`rb_ary_store`'s "index %ld too small for array;
+            // minimum: %ld"). The minimum is the NUMBER `-len`, not a literal
+            // `-` before the length: an empty array's minimum is `0`, and
+            // `-0` would be wrong. `__recv`/`__idx` are both in scope at the
+            // `None =>` arm this splices into.
             let index_error = super::expr::emit_boxed_new(
                 cx,
                 "IndexError",
                 vec![quote! {
                     spinel_rt::RubyValue::Str(spinel_rt::string_new(
-                        format!("index {__idx} too small for array")
+                        format!(
+                            "index {} too small for array; minimum: {}",
+                            __idx,
+                            -(spinel_rt::array_len(&__recv) as i64)
+                        )
                     ))
                 }],
             );
