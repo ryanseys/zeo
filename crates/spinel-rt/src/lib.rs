@@ -321,6 +321,18 @@ macro_rules! ruby_class {
                     _ => false,
                 }
             }
+            // `Kernel#remove_instance_variable` -- a declared field always
+            // physically exists, so removal replaces its value with `Nil` and
+            // returns the old value; an undeclared name answers `None` (the
+            // caller raises `NameError`). See the trait method's caveat about
+            // declared-but-unassigned fields.
+            fn ivar_remove_named(&self, name: &str) -> Option<$crate::RubyValue> {
+                match name {
+                    $( stringify!($ivar) => Some(::std::mem::replace(
+                        &mut *self.$ivar.lock(), $crate::RubyValue::Nil)), )*
+                    _ => None,
+                }
+            }
             // `Kernel#dup`/`#clone`'s shallow copy (see the trait method's
             // docs): fresh struct, each ivar's CURRENT value cloned (a
             // handle clone -- nested objects stay shared), frozen flag

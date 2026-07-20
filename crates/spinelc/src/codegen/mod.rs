@@ -858,6 +858,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
 
+    // User-module method bridges (see `emit_user_module_bridges`): their value-
+    // method registrations run LAST, after every module's own
+    // `__registry.register` above has created the entry they attach to.
+    let (um_containers, um_regs) = emit_user_module_bridges(compiler);
+    registrations.extend(um_regs);
+
     // The exception factory that generated `main()` used to install (one arm
     // per runtime-raisable exception class, each an `emit_boxed_new`) is gone:
     // `spinel-rt` now constructs exceptions by NAME from the registered classes
@@ -870,6 +876,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#classes)*
         #(#class_method_containers)*
         #(#builtin_reopens)*
+        #(#um_containers)*
         #(#exc_containers)*
 
         fn main() {
@@ -1127,6 +1134,63 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
 /// methods (the same `emit_class_method_fn` shape a module container gets).
 /// Both kinds share one module, so one name can't be both -- a clean panic
 /// rather than a confusing generated-`rustc` duplicate-definition error.
+/// User-module method bridges: for each `module Foo; def bar; end` the compiler
+/// otherwise ONLY materializes into includers (a module gets no dispatch struct
+/// and its methods aren't retrievable by id). To make `obj.extend(Foo)` work at
+/// runtime -- which needs Foo's method impls BY ID -- emit each user module's
+/// own methods into a dedicated `__um_<id>_<Name>` container of `RubyValue`-self
+/// free functions and register them as value methods on the module's id, the
+/// same shape builtin modules (`Comparable`) use. Include is untouched (it still
+/// materializes off `own_methods` at compile time). Returns (containers, regs);
+/// the regs run AFTER the module's own `__registry.register` (its entry must
+/// exist first -- `define_value_method` asserts it).
+fn emit_user_module_bridges(compiler: &Compiler) -> (Vec<TokenStream>, Vec<TokenStream>) {
+    let mut containers = Vec::new();
+    let mut regs = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if idx == 0 || class.is_builtin || class.is_bootstrap || !class.is_module {
+            continue;
+        }
+        if class.own_methods.is_empty() || !compiler.feature_active(ClassId(idx as u32)) {
+            continue;
+        }
+        let cid = ClassId(idx as u32);
+        let id = idx as u32;
+        let flat = class.name.replace("::", "_");
+        let container = format_ident!("__um_{}_{}", idx, flat);
+        let fns = class
+            .own_methods
+            .iter()
+            .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+        containers.push(quote! {
+            #[allow(non_snake_case)]
+            pub mod #container { #[allow(unused_imports)] use super::*; #(#fns)* }
+        });
+        for &sid in &class.own_methods {
+            let scope = compiler.scope(sid);
+            let method_ident = safe_ident(&scope.name);
+            let fn_path = quote! { #container::#method_ident };
+            let tramp = params::emit_value_trampoline(
+                &fn_path,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                params::RecvMode::Pass,
+            );
+            let key = &scope.name;
+            regs.push(quote! {
+                __registry.define_value_method(
+                    spinel_rt::ClassId(#id),
+                    0u32,
+                    spinel_rt::Symbol::intern(#key),
+                    #tramp,
+                );
+            });
+        }
+    }
+    (containers, regs)
+}
+
 fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     for &sid in &ci.methods {

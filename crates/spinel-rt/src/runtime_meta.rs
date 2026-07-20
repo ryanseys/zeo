@@ -86,6 +86,15 @@ struct OverlayMaps {
     /// address -- matching Ruby (`dup` drops singletons). `clone`'s
     /// singleton-carry is a documented fast-follow.
     singletons: RwLock<HashMap<usize, HashMap<Symbol, MethodImpl>>>,
+    /// `obj.singleton_class`'s cache: object identity -> the runtime class id
+    /// minted for its singleton class (so a second call answers the same id,
+    /// matching Ruby's identity).
+    singleton_classes: RwLock<HashMap<usize, ClassId>>,
+    /// The inverse plus the owner value: a singleton-class id -> the object (or
+    /// class) it belongs to. A `define_method` on that id installs a per-object
+    /// singleton (or, for a class owner, a class method) rather than an ordinary
+    /// instance method -- which is exactly what `class << obj` semantics mean.
+    singleton_owner: RwLock<HashMap<u32, RubyValue>>,
     next_id: AtomicU32,
 }
 
@@ -96,6 +105,8 @@ fn maps() -> &'static OverlayMaps {
     OVERLAY.get_or_init(|| OverlayMaps {
         classes: RwLock::new(HashMap::new()),
         singletons: RwLock::new(HashMap::new()),
+        singleton_classes: RwLock::new(HashMap::new()),
+        singleton_owner: RwLock::new(HashMap::new()),
         next_id: AtomicU32::new(RUNTIME_CLASS_ID_BASE),
     })
 }
@@ -204,6 +215,14 @@ pub fn send_super_dynamic(
 /// `some_class.define_method(name) { body }` -- install/override an instance
 /// method on the class with id `id` (frozen or runtime). Returns the name.
 pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> RubyValue {
+    // A method defined on an object's singleton class (`obj.singleton_class`)
+    // is a per-object singleton, not an instance method of a shared class --
+    // redirect to the owner. For a class owner it becomes a class method.
+    let owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
+    if let Some(owner) = owner {
+        let _ = runtime_define_singleton_method(&owner, name, body);
+        return RubyValue::Symbol(name);
+    }
     let m = dynamic_from_proc(id, name, body);
     {
         let mut w = maps().classes.write().unwrap();
@@ -249,6 +268,183 @@ pub fn runtime_define_singleton_method(
             format!("can't define singleton method for {}", immediate_kind(other)),
         )),
     }
+}
+
+/// `obj.extend(Mod)` -- mix a module's instance methods into the receiver's
+/// singleton, so they resolve on `obj` (and only `obj`). Implemented by
+/// copying the module's own public/protected methods into the identity-keyed
+/// singleton table `resolve_dynamic` already consults first -- no new dispatch
+/// path. An existing singleton method (`def obj.x`) is not clobbered.
+pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
+    let RubyValue::Class(mid) = module_val else {
+        return Err(raise_error(
+            "TypeError",
+            format!(
+                "wrong argument type {} (expected Module)",
+                crate::builtins::class_name_of(module_val)
+            ),
+        ));
+    };
+    let RubyValue::Object(o) = recv else {
+        // Immediates have no singleton storage in this runtime (same posture as
+        // `define_singleton_method`).
+        return Err(raise_error(
+            "TypeError",
+            format!("can't extend {}", immediate_kind(recv)),
+        ));
+    };
+    let names = crate::dispatch::instance_method_names(
+        *mid,
+        crate::dispatch::VisFilter::NotPrivate,
+        false,
+    );
+    let key = obj_identity(o);
+    {
+        let mut w = maps().singletons.write().unwrap();
+        let table = w.entry(key).or_default();
+        for name in names {
+            if let Some(m) = module_own_method_impl(*mid, name) {
+                table.insert(name, m);
+            }
+        }
+    }
+    mark_live();
+    Ok(recv.clone())
+}
+
+/// The `MethodImpl` a module id defines for `name` directly -- overlay delta
+/// first (a runtime `Module.new`/`define_method`), then the frozen registry (a
+/// compile-time `module M; def hi; end`).
+fn module_own_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
+    overlay_own_method(mid, name)
+        .or_else(|| crate::dispatch::registry_lookup_cloned(mid, name))
+        .or_else(|| crate::dispatch::registry_value_method_impl(mid, name))
+        .or_else(|| builtin_module_method_impl(mid, name))
+}
+
+/// The `MethodImpl` a BUILTIN module (`Comparable`/`Enumerable`/`Math`, or any
+/// module with a hardcoded `class_table`) defines for `name`. These don't live
+/// in the registry -- their bodies are the special `comparable_send`/
+/// `enumerable_send`/`math_call` dispatchers or a static method table -- so
+/// each is wrapped in a `Dynamic` closure that re-dispatches by name. This is
+/// what lets `obj.extend(Comparable)` install `clamp`/`between?` etc.
+fn builtin_module_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
+    use spinel_abi::{COMPARABLE_CLASS, ENUMERABLE_CLASS, MATH_CLASS};
+    let miss = move || {
+        raise_error(
+            "NoMethodError",
+            format!("undefined method '{}'", name.name()),
+        )
+    };
+    match mid {
+        COMPARABLE_CLASS if crate::builtins::comparable::NAMES.contains(&name.name().as_str()) => {
+            Some(MethodImpl::Dynamic(std::sync::Arc::new(
+                move |recv: &RObj, args: &[RubyValue], _b| {
+                    crate::builtins::comparable::comparable_send(
+                        &RubyValue::Object(recv.clone()),
+                        &name.name(),
+                        args,
+                    )
+                    .unwrap_or_else(|| Err(miss()))
+                },
+            )))
+        }
+        ENUMERABLE_CLASS if crate::builtins::enumerable::NAMES.contains(&name.name().as_str()) => {
+            Some(MethodImpl::Dynamic(std::sync::Arc::new(
+                move |recv: &RObj, args: &[RubyValue], b| {
+                    crate::builtins::enumerable::enumerable_send(
+                        &RubyValue::Object(recv.clone()),
+                        &name.name(),
+                        args,
+                        b,
+                    )
+                    .unwrap_or_else(|| Err(miss()))
+                },
+            )))
+        }
+        MATH_CLASS => Some(MethodImpl::Dynamic(std::sync::Arc::new(
+            move |_recv: &RObj, args: &[RubyValue], _b| {
+                crate::builtins::math::math_call(&name.name(), args).unwrap_or_else(|| Err(miss()))
+            },
+        ))),
+        _ => {
+            let f = crate::builtins::class_table(mid)?(&name.name())?;
+            Some(MethodImpl::Dynamic(std::sync::Arc::new(
+                move |recv: &RObj, args: &[RubyValue], b| {
+                    f(&RubyValue::Object(recv.clone()), args, b)
+                },
+            )))
+        }
+    }
+}
+
+/// `obj.singleton_class` -- the per-object singleton class as a real `Class`
+/// value (minted once per object identity, cached). Defining a method on it
+/// routes back to `obj`'s singleton table via the `singleton_owner` hook in
+/// `runtime_define_method`; its ancestry is `[singleton, *obj.class.ancestors]`.
+/// For a `Class` receiver the owner is the class itself, so defs become class
+/// methods (`class << Foo` semantics).
+pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
+    // An IMMEDIATE (Integer/Float/Symbol/nil/true/false and the numeric towers)
+    // has no singleton class -- CRuby raises `TypeError: can't define singleton`.
+    // Object/Class get a CACHED singleton class whose method defs redirect to the
+    // owner (`singleton_owner`); other heap values (String/Array/...) get a fresh
+    // singleton class good for `.class`/`.superclass`/reflection (defining on one
+    // isn't supported, matching this runtime's singleton-storage limits).
+    let cache_key: Option<usize> = match recv {
+        RubyValue::Object(o) => Some(obj_identity(o)),
+        RubyValue::Class(cid) => Some(cid.0 as usize | (1usize << 48)),
+        RubyValue::Nil
+        | RubyValue::Bool(_)
+        | RubyValue::Int(_)
+        | RubyValue::BigInt(_)
+        | RubyValue::Float(_)
+        | RubyValue::Rational(_)
+        | RubyValue::Complex(_)
+        | RubyValue::Symbol(_) => {
+            return Err(raise_error(
+                "TypeError",
+                "can't define singleton".to_string(),
+            ))
+        }
+        _ => None,
+    };
+    let real = recv.class_id();
+    let owner = recv.clone();
+    if let Some(k) = cache_key {
+        if let Some(&sid) = maps().singleton_classes.read().unwrap().get(&k) {
+            return Ok(RubyValue::Class(sid));
+        }
+    }
+    let id_num = maps().next_id.fetch_add(1, Ordering::Relaxed);
+    let new_id = ClassId(id_num);
+    let super_chain = ancestors_of_value(real);
+    let mut anc = Vec::with_capacity(super_chain.len() + 1);
+    anc.push(new_id);
+    anc.extend_from_slice(super_chain);
+    let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
+    let real_name =
+        crate::dispatch::class_name(real).unwrap_or_else(|| "Object".to_string());
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.insert(
+            id_num,
+            OverlayEntry {
+                name: RwLock::new(Some(format!("#<Class:{real_name}>"))),
+                is_module: false,
+                ancestors: leaked,
+                methods: HashMap::new(),
+                class_methods: HashMap::new(),
+                constructor: None,
+            },
+        );
+    }
+    if let Some(k) = cache_key {
+        maps().singleton_classes.write().unwrap().insert(k, new_id);
+        maps().singleton_owner.write().unwrap().insert(id_num, owner);
+    }
+    mark_live();
+    Ok(RubyValue::Class(new_id))
 }
 
 /// `Class.new(superclass) { body }` -- allocate a runtime class id, register
@@ -612,6 +808,10 @@ impl RubyObject for DynObject {
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
         self.ivars.lock().insert(name.to_string(), v);
         true
+    }
+    fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
+        // Name-keyed: a missing key is genuinely absent (CRuby's `NameError`).
+        self.ivars.lock().remove(name)
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
         let d = DynObject::new(self.class_id);

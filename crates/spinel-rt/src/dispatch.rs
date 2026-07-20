@@ -101,6 +101,18 @@ pub trait RubyObject: Any + Send + Sync {
         false
     }
 
+    /// Remove one ivar BY NAME (without the `@`) -- `Kernel#remove_instance_variable`'s
+    /// storage half. `Some(old)` is the removed value; `None` means the object
+    /// has no such ivar (the caller raises `NameError`). The default keeps the
+    /// trait total for the runtime's hand-written objects. See the caveat in
+    /// `ivar_get_named`'s TODO: a generated struct field always physically
+    /// exists, so a declared-but-never-assigned field answers `Some(Nil)` where
+    /// CRuby raises -- name-keyed objects (`Object`/`DynObject`) don't have this
+    /// gap because their map genuinely lacks absent keys.
+    fn ivar_remove_named(&self, _name: &str) -> Option<RubyValue> {
+        None
+    }
+
     /// `Kernel#dup`/`#clone`'s per-class shallow copy (Phase 15.2): a fresh
     /// instance of the same concrete struct with every ivar's CURRENT value
     /// cloned into it (a `RubyValue` clone is a handle clone, so nested
@@ -225,6 +237,11 @@ impl RubyObject for Object {
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
         self.ivars.lock().insert(name.to_string(), v);
         true
+    }
+    fn ivar_remove_named(&self, name: &str) -> Option<RubyValue> {
+        // Name-keyed: a missing key is genuinely absent, so `None` cleanly
+        // signals CRuby's `NameError` case.
+        self.ivars.lock().remove(name)
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         Arc::new(Object {
@@ -992,6 +1009,38 @@ pub fn instance_variable_set(
     Ok(v)
 }
 
+/// `Object#remove_instance_variable(:@x)` -- removes the named ivar and
+/// answers its former value, raising `NameError` if the object has no such
+/// ivar. A frozen object raises `FrozenError` first (CRuby's order).
+pub fn remove_instance_variable(
+    recv: &RubyValue,
+    name_arg: &RubyValue,
+) -> Result<RubyValue, Signal> {
+    let name = ivar_name_arg(name_arg)?;
+    match recv {
+        RubyValue::Object(o) => {
+            if o.is_frozen() {
+                let cls = crate::builtins::class_name_of(recv);
+                return Err(raise_error(
+                    "FrozenError",
+                    format!("can't modify frozen {cls}: {}", recv.inspect_string()),
+                ));
+            }
+            match o.ivar_remove_named(&name) {
+                Some(v) => Ok(v),
+                None => Err(raise_error(
+                    "NameError",
+                    format!("instance variable @{name} not defined"),
+                )),
+            }
+        }
+        _ => Err(raise_error(
+            "NameError",
+            format!("instance variable @{name} not defined"),
+        )),
+    }
+}
+
 /// `Object#instance_variables` -- the receiver's ivar names as `:@name`
 /// symbols in declaration order (empty for a builtin/immediate).
 pub fn instance_variables(recv: &RubyValue) -> RubyValue {
@@ -1442,6 +1491,19 @@ pub(crate) fn value_method(id: ClassId, box_id: u32, name: Symbol) -> Option<Val
 /// method.
 pub(crate) fn registry_lookup_cloned(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     REGISTRY.get()?.lookup(id, name).cloned()
+}
+
+/// A module/class's OWN value-method (the `ValueMethodFn` shape builtin modules
+/// -- `Comparable`/`Enumerable`/`Kernel` -- register their instance methods
+/// as), wrapped as a `MethodImpl` so `Object#extend` can copy it into an
+/// object's singleton table. `box_id` 0 (the unboxed method set).
+pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    let f: ValueMethodFn = REGISTRY.get()?.lookup_value_method(id, 0, name)?;
+    Some(MethodImpl::Dynamic(std::sync::Arc::new(
+        move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+            f(&RubyValue::Object(recv.clone()), args, block)
+        },
+    )))
 }
 
 /// The registered Ruby-visible (fully-qualified) name of `id` -- `None`

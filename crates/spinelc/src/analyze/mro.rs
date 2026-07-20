@@ -95,6 +95,9 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
     // emitter would find nothing. Surface its OWN reopen methods as `methods`
     // so they register as value methods on the module id, where the MRO walk
     // finds them for every includer (`Enumerable`/`Comparable`/`Kernel`/...).
+    // (A USER module's own methods reach the runtime by id through a separate,
+    // self-contained bridge -- see `codegen::emit_user_module_bridges` -- so
+    // they need no change here.)
     for &cid in &all_ids {
         let is_builtin_module = {
             let ci = compiler.class(cid);

@@ -76,6 +76,26 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
     Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
 }
 
+/// `Object#singleton_method(:name)` -- a `Method` bound to the receiver, but
+/// ONLY for a per-object singleton method (`def obj.name` /
+/// `define_singleton_method`). A name that resolves to an ordinary class
+/// method is a `NameError`, exactly like CRuby -- reflection here is limited
+/// to the object's own singletons.
+pub fn singleton_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
+    let name = resolve_method_name(name_arg)?;
+    if !crate::runtime_meta::object_has_singleton_method(recv, name) {
+        return Err(raise_error(
+            "NameError",
+            format!(
+                "undefined singleton method '{}' for '{}'",
+                name.name(),
+                recv.inspect_string()
+            ),
+        ));
+    }
+    Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
+}
+
 /// `Kernel#public_method(:name)` -- like `method`, but a PRIVATE (or
 /// protected) method raises `NameError` rather than binding: reflection here
 /// is restricted to the public surface.

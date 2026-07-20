@@ -108,6 +108,30 @@ builtin_methods! {
         arity!(args, 1);
         crate::builtins::method_obj::method_new(recv, &args[0])
     }
+    "singleton_method" => fn singleton_method(recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::method_obj::singleton_method_new(recv, &args[0])
+    }
+    // `obj.singleton_class` -- the per-object singleton class as a real Class
+    // value; defining a method on it installs a per-object singleton (see
+    // `runtime_meta::runtime_singleton_class`).
+    "singleton_class" => fn singleton_class(recv, args, _block) {
+        arity!(args, 0);
+        crate::runtime_meta::runtime_singleton_class(recv)
+    }
+    // `obj.extend(Mod, ...)` -- mix each module's instance methods into the
+    // receiver's singleton. The bare `extend Mod` STATEMENT form (no receiver)
+    // is a separate parse-level mixin; this row is the method-call form only.
+    "extend" => fn extend_obj(recv, args, _block) {
+        if args.is_empty() {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError", "wrong number of arguments (given 0, expected 1+)".to_string()));
+        }
+        for m in args {
+            crate::runtime_meta::runtime_extend(recv, m)?;
+        }
+        Ok(recv.clone())
+    }
     // `Object#define_singleton_method(name) { body }` (#97) -- a per-object
     // singleton on an ordinary receiver, or a class/singleton method when the
     // receiver is a `Class`. Universal (this Kernel row is reached by every
@@ -395,6 +419,10 @@ builtin_methods! {
     "instance_variable_set" => fn instance_variable_set_m(recv, args, _block) {
         arity!(args, 2);
         crate::dispatch::instance_variable_set(recv, &args[0], args[1].clone())
+    }
+    "remove_instance_variable" => fn remove_instance_variable_m(recv, args, _block) {
+        arity!(args, 1);
+        crate::dispatch::remove_instance_variable(recv, &args[0])
     }
     "instance_variable_defined?" => fn instance_variable_defined_m(recv, args, _block) {
         arity!(args, 1);
