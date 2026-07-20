@@ -1,4 +1,4 @@
-# suite=spinel corpus=2231 ruby="ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]" spinel-rs=ea08883
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=5bcfa6e
 # PASS=1926 FAIL_OUTPUT=275 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-

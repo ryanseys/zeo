@@ -2,7 +2,7 @@
 
 Failing tests grouped by normalized failure message, ranked by how many
 tests each gap blocks. Clusters refer to the implementation plan's gap
-families. Oracle `ruby 2.6.10p210 (2022-04-12 revision 67958) [universal.arm64e-darwin25]`.
+families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]`.
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
