@@ -58,6 +58,30 @@ at the FFI path (see `docs/EXTENSIONS.md`), spinel's intended escape hatch.
 Examples that trigger the named error today: `sqlite3`, `nokogiri`, `pg`,
 `mysql2`, `bcrypt`, `nio4r`, `grpc`, `msgpack`, and similar.
 
+## Compiling against an installed gem store
+
+`spinelc app.rb --gem-path "$(gem env gemdir)" --lockfile Gemfile.lock` resolves
+the gems your `Gemfile.lock` locked out of the installed RubyGems store. spinel
+consumes Bundler's resolution verbatim — it never resolves, fetches, or builds
+extensions — and applies TruffleRuby's `force_ruby_platform`: it uses the
+`ruby`-platform (source) gemspec, never a precompiled `.bundle`. Both flags are
+required together and are explicit opt-in (a compile that silently depended on
+`$GEM_HOME` would not be reproducible).
+
+Each locked gem lands in one of three buckets, all recorded in
+`spinel-gems.json`:
+
+| bucket | what happens |
+|---|---|
+| pure Ruby | compiled — added as a require-path root, the majority case |
+| name spinel provides natively (`json`, `psych`, …) | satisfied by spinel's built-in; the store copy is ignored and the divergence recorded |
+| native, unknown to spinel | **excluded** — recorded with a reason, and a `require` of it fails naming the layout (a locally-built extension, or a precompiled-platform-only install) and pointing at the FFI path |
+
+An excluded gem that the program never `require`s costs nothing but a
+disclosure line — an AOT compiler only compiles what a require actually
+reaches. `GIT`/`PATH`-source gems (a checkout or a local path in the lockfile)
+are not drawn from the store.
+
 ## The per-compile record
 
 `spinelc app.rb -o app` writes `spinel-gems.json` next to the artifact, one

@@ -19,6 +19,10 @@ struct Args {
     no_report: bool,
     /// `--nowarn=<slug>`: suppress a disclosure warning category (repeatable).
     nowarn: std::collections::HashSet<String>,
+    /// `--gem-path <dir>` + `--lockfile <Gemfile.lock>`: the external gem store
+    /// (Phase 3). Explicit opt-in, must be given together.
+    gem_path: Option<PathBuf>,
+    lockfile: Option<PathBuf>,
 }
 
 enum Source {
@@ -38,6 +42,8 @@ fn parse_args() -> Result<Args, String> {
     let mut package_dirs = Vec::new();
     let mut no_report = false;
     let mut nowarn = std::collections::HashSet::new();
+    let mut gem_path = None;
+    let mut lockfile = None;
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -77,6 +83,13 @@ fn parse_args() -> Result<Args, String> {
             "--nowarn" => {
                 nowarn.insert(iter.next().ok_or("--nowarn requires a slug")?);
             }
+            // The external gem store (Phase 3).
+            "--gem-path" => {
+                gem_path = Some(PathBuf::from(iter.next().ok_or("--gem-path requires a directory")?));
+            }
+            "--lockfile" => {
+                lockfile = Some(PathBuf::from(iter.next().ok_or("--lockfile requires a path")?));
+            }
             other => {
                 // Attached `-I<dir>` (ruby's own spelling, no space).
                 if let Some(dir) = other.strip_prefix("-I").filter(|d| !d.is_empty()) {
@@ -97,9 +110,14 @@ fn parse_args() -> Result<Args, String> {
         (Some(code), None) => Source::Eval(code),
         (None, Some(path)) => Source::File(path),
         (None, None) => return Err(
-            "usage: spinelc (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [-o <output>] [-S] [--no-report] [--nowarn <slug>]...".to_string(),
+            "usage: spinelc (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [--gem-path <dir> --lockfile <Gemfile.lock>] [-o <output>] [-S] [--no-report] [--nowarn <slug>]...".to_string(),
         ),
     };
+    // The gem store is an opt-in PAIR -- one without the other can't resolve.
+    if gem_path.is_some() != lockfile.is_some() {
+        return Err("--gem-path and --lockfile must be given together".to_string());
+    }
+
     Ok(Args {
         source,
         output,
@@ -108,6 +126,8 @@ fn parse_args() -> Result<Args, String> {
         package_dirs,
         no_report,
         nowarn,
+        gem_path,
+        lockfile,
     })
 }
 
@@ -171,6 +191,8 @@ fn run() -> Result<(), String> {
         gem_warnings: gem_report.is_some(),
         gem_report,
         nowarn: args.nowarn.clone(),
+        gem_path: args.gem_path.clone(),
+        lockfile: args.lockfile.clone(),
     };
     let compiled = spinelc::compile_to_rust_with(&source, &opts)?;
 

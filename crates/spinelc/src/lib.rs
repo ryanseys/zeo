@@ -47,6 +47,14 @@ pub struct CompileOptions {
     /// Warning slugs suppressed via `--nowarn=<slug>` -- a dial independent of
     /// `gem_report`, so a caller can silence the noise but keep the file.
     pub nowarn: std::collections::HashSet<String>,
+    /// `--gem-path <dir>`: an installed RubyGems store (`gem env gemdir`) to
+    /// resolve locked gems against. Explicit opt-in, paired with `lockfile`;
+    /// neither is ambient (a compile that silently depends on `$GEM_HOME` is
+    /// not reproducible).
+    pub gem_path: Option<std::path::PathBuf>,
+    /// `--lockfile <Gemfile.lock>`: the resolved gem set to draw from the
+    /// store. Only meaningful together with `gem_path`.
+    pub lockfile: Option<std::path::PathBuf>,
 }
 
 /// A compiled program: the generated Rust source, ready for
@@ -70,6 +78,8 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
         opts.input_path.as_deref(),
         &opts.load_roots,
         &opts.package_dirs,
+        opts.gem_path.as_deref(),
+        opts.lockfile.as_deref(),
     )?;
     // Phase 2b: the disclosure record is fully known once lowering resolved
     // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger

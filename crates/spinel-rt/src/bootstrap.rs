@@ -77,8 +77,14 @@ fn seed_ruby_constants() {
     use crate::const_set;
     let object = 0;
 
-    // Release identity of the pinned oracle (version-specific, not machine-specific).
+    // `RUBY_VERSION` stays the pinned oracle's -- spinel targets its language
+    // and library level. `RUBY_ENGINE`/`RUBY_ENGINE_VERSION` are spinel's OWN
+    // identity: spinel is a distinct Ruby engine (like TruffleRuby/JRuby), and
+    // `RUBY_ENGINE == "spinel"` is exactly what lets a gem branch to its
+    // non-MRI code path. The engine version is this build's own crate version.
     const VERSION: &str = "4.0.5";
+    const ENGINE: &str = "spinel";
+    const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
     const RELEASE_DATE: &str = "2026-05-20";
     const REVISION: &str = "64336ffd0ee9e1f4c05891695a3d7b49cb709721";
     // Build-target-derived, like CRuby's configure-time `RUBY_PLATFORM`.
@@ -86,19 +92,19 @@ fn seed_ruby_constants() {
 
     const_set(object, "RUBY_VERSION", rb_str(VERSION));
     const_set(object, "RUBY_PATCHLEVEL", RubyValue::Int(0));
-    const_set(object, "RUBY_ENGINE", rb_str("ruby"));
-    const_set(object, "RUBY_ENGINE_VERSION", rb_str(VERSION));
+    const_set(object, "RUBY_ENGINE", rb_str(ENGINE));
+    const_set(object, "RUBY_ENGINE_VERSION", rb_str(ENGINE_VERSION));
     const_set(object, "RUBY_PLATFORM", rb_str(PLATFORM));
     const_set(object, "RUBY_REVISION", rb_str(REVISION));
     const_set(object, "RUBY_RELEASE_DATE", rb_str(RELEASE_DATE));
 
-    // Composed exactly as CRuby's `version.c` `ruby_description` +
-    // `define_ruby_description`: `ruby <ver> (<date> revision <short>) +PRISM
-    // [<platform>]`, where `<short>` is the leading 10 chars of the full
-    // revision and `+PRISM` is this build's default parser (the pinned oracle's).
-    let short_rev = &REVISION[..10.min(REVISION.len())];
-    let description =
-        format!("ruby {VERSION} ({RELEASE_DATE} revision {short_rev}) +PRISM [{PLATFORM}]");
+    // TruffleRuby's banner shape -- `<engine> <engine_ver> (<date>) +PRISM
+    // [<platform>] like ruby <ruby_ver>` -- so a tool that greps the engine
+    // name still finds the MRI-compat level in the `like ruby` tail. `+PRISM`
+    // is this build's default parser (the pinned oracle's).
+    let description = format!(
+        "{ENGINE} {ENGINE_VERSION} ({RELEASE_DATE}) +PRISM [{PLATFORM}] like ruby {VERSION}"
+    );
     const_set(object, "RUBY_DESCRIPTION", rb_str(&description));
 
     let file = spinel_abi::FILE_CLASS.0;

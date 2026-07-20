@@ -1,0 +1,8 @@
+# Minimal fixture for the Phase-3 gem-store tests: one pure-Ruby gem (rake)
+# and one gem with a native C extension shipped precompiled for this platform
+# (nokogiri -- exercises the platform-suffix and native-layout traps). Locked
+# offline with `bundle lock --local` against the installed store.
+source "https://rubygems.org"
+
+gem "rake"
+gem "nokogiri"

@@ -664,6 +664,63 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
 }
 
 #[test]
+fn ruby_engine_identifies_as_spinel() {
+    // spinel is its own Ruby engine (Phase 3): RUBY_ENGINE diverges from the
+    // oracle's "ruby" by design, RUBY_ENGINE_VERSION is spinel's own, and the
+    // banner takes TruffleRuby's `<engine> ... like ruby <ver>` shape so a tool
+    // that greps the engine name still finds the MRI-compat level.
+    let result = run_ruby(
+        r#"
+        puts RUBY_ENGINE
+        puts RUBY_ENGINE_VERSION.match?(/\A\d+\.\d+\.\d+/)
+        puts RUBY_DESCRIPTION.start_with?("spinel #{RUBY_ENGINE_VERSION} ")
+        puts RUBY_DESCRIPTION.include?("like ruby #{RUBY_VERSION}")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "spinel\ntrue\ntrue\ntrue\n");
+}
+
+#[test]
+fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
+    // Phase 3: `--gem-path` + `--lockfile` against a self-contained fixture
+    // store (tests/fixtures/gem_store/store). Covers all three provider paths:
+    // a pure-Ruby gem resolves and compiles; a gem declaring a native
+    // extension and a precompiled-platform-only gem are both excluded, with a
+    // reason recorded in the disclosure report.
+    let store =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let report = std::env::temp_dir().join(format!("spinel-store-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&report);
+    let opts = spinelc::CompileOptions {
+        gem_path: Some(store.clone()),
+        lockfile: Some(store.join("Gemfile.lock")),
+        gem_report: Some(report.clone()),
+        ..Default::default()
+    };
+    spinelc::compile_to_rust_with("require \"purelib\"\nputs Purelib::VERSION\n", &opts)
+        .expect("a pure-Ruby store gem resolves and compiles");
+    let json = std::fs::read_to_string(&report).unwrap();
+    let _ = std::fs::remove_file(&report);
+    assert!(json.contains(r#""purelib": {"by": "bundled-gem""#), "{json}");
+    assert!(json.contains(r#""nativelib": {"by": null, "excluded": "native-extension""#), "{json}");
+    assert!(
+        json.contains(r#""precompiled": {"by": null, "excluded": "precompiled-platform-gem""#),
+        "{json}"
+    );
+
+    // Actually requiring an excluded gem fails with the store's precise reason,
+    // not the generic "cannot load such file".
+    let strict = spinelc::CompileOptions {
+        gem_path: Some(store.clone()),
+        lockfile: Some(store.join("Gemfile.lock")),
+        ..Default::default()
+    };
+    let err = spinelc::compile_to_rust_with("require \"nativelib\"\n", &strict).unwrap_err();
+    assert!(err.contains("native (C) extension"), "{err}");
+}
+
+#[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
     let err = spinelc::compile_to_rust("def foo(\n").unwrap_err();
     assert!(

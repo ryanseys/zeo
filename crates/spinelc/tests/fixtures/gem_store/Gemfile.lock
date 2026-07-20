@@ -1,0 +1,23 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    nokogiri (1.19.4-arm64-darwin)
+      racc (~> 1.4)
+    racc (1.8.1)
+    rake (13.4.2)
+
+PLATFORMS
+  arm64-darwin
+
+DEPENDENCIES
+  nokogiri
+  rake
+
+CHECKSUMS
+  bundler (4.0.15) sha256=a4ceb882fe94a0e0ac63cd0813932bbfd631a14e5ac0b7975189b19a4d28d9e7
+  nokogiri (1.19.4-arm64-darwin)
+  racc (1.8.1)
+  rake (13.4.2)
+
+BUNDLED WITH
+  4.0.15

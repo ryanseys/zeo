@@ -157,6 +157,14 @@ pub(super) struct Gem {
     roots: Vec<PathBuf>,
 }
 
+impl Gem {
+    /// Build a gem from already-resolved parts -- the external gem store
+    /// provider's path (`gem_store`), which has done its own existence checks.
+    pub(super) fn from_parts(name: String, roots: Vec<PathBuf>) -> Self {
+        Gem { name, roots }
+    }
+}
+
 pub(super) struct Loader {
     /// Ordered `-I` search roots (first hit wins, and they win over
     /// packages entirely -- CRuby's own "-I beats even default gems" rule).
@@ -173,6 +181,10 @@ pub(super) struct Loader {
     /// cycle is the one shape with no natural termination (require's dedup
     /// terminates require cycles), so it's detected here and rejected.
     splicing: Vec<PathBuf>,
+    /// External-store gems spinel can't provide, `name -> reason` (Phase 3):
+    /// a `require` of one fails with the store's precise reason (which native
+    /// layout, why) instead of the generic "cannot load such file".
+    store_exclusions: HashMap<String, String>,
 }
 
 /// Lowers the MAIN file's statements, resolving require/require_relative/
@@ -186,6 +198,8 @@ pub(super) fn lower_main_file(
     input_path: Option<&Path>,
     load_roots: &[PathBuf],
     package_dirs: &[PathBuf],
+    gem_path: Option<&Path>,
+    lockfile: Option<&Path>,
 ) -> PResult<Vec<NodeId>> {
     // The requiring-file directory for the main file's own require_relative
     // calls -- canonicalized so require_relative composes with the dedup
@@ -218,7 +232,30 @@ pub(super) fn lower_main_file(
         )?,
         required: HashSet::new(),
         splicing: Vec::new(),
+        store_exclusions: HashMap::new(),
     };
+    // The external gem store (Phase 3): a `--gem-path` + `--lockfile` pair adds
+    // the pure-Ruby gems spinel can compile as extra roots, and records a
+    // disclosure for every gem it satisfies natively or can't provide. Store
+    // gems are APPENDED, so a bundled spinel gem of the same name shadows them
+    // (first-name-wins), and never override the compiler's own libraries.
+    if let (Some(store), Some(lock)) = (gem_path, lockfile) {
+        let parsed = super::lockfile::parse_file(lock)?;
+        let resolution = super::gem_store::resolve(store, &parsed)?;
+        for (name, roots) in resolution.roots {
+            if !loader.packages.iter().any(|g| g.name == name) {
+                loader.packages.push(Gem::from_parts(name, roots));
+            }
+        }
+        for record in resolution.disclosures {
+            // An excluded gem's reason is kept so a `require` of it fails
+            // precisely; every record is also disclosed in the report.
+            if let crate::gem_report::SatisfiedBy::Excluded { reason, .. } = &record.by {
+                loader.store_exclusions.insert(record.name.clone(), reason.clone());
+            }
+            hir.record_gem(record);
+        }
+    }
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
         return Err(format!("parse error: {}", err.message()));
@@ -536,6 +573,11 @@ impl Loader {
             .or_else(|| feature.strip_suffix(".o"))
             .unwrap_or(feature);
         if !is_builtin_feature(bare) {
+            // A gem the external store locked but spinel can't provide gets its
+            // precise reason (which native layout, why), not the generic miss.
+            if let Some(reason) = self.store_exclusions.get(bare) {
+                return Err(format!("cannot load such file -- {bare}: {reason}"));
+            }
             return Err(cannot_load(feature));
         }
         // Phase 2b disclosure: a DIRECT `require` of a statically-linked ext

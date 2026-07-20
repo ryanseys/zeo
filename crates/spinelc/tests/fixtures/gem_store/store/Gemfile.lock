@@ -1,0 +1,17 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    nativelib (1.0.0)
+    precompiled (1.0.0-arm64-fake)
+    purelib (1.0.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  nativelib
+  precompiled
+  purelib
+
+BUNDLED WITH
+   2.5.6

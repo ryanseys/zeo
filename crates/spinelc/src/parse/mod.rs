@@ -7,8 +7,10 @@
 //! else is a clean `Err` (mirroring spinel's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
+mod gem_store;
 mod gemspec;
 mod loader;
+mod lockfile;
 mod rename;
 mod struct_def;
 
@@ -178,7 +180,7 @@ end
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
 pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
-    parse_and_lower_with(source, None, &[], &[])
+    parse_and_lower_with(source, None, &[], &[], None, None)
 }
 
 /// The `# encoding:`/`# coding:` magic comment's value, honored only on the
@@ -265,11 +267,14 @@ fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
 /// resolved files into this same arena); the exception prelude and `eval`
 /// bodies keep going through `parse_and_lower_into`, where those shapes are
 /// rejected by `lower_node` instead.
+#[allow(clippy::too_many_arguments)]
 pub fn parse_and_lower_with(
     source: &str,
     input_path: Option<&std::path::Path>,
     load_roots: &[std::path::PathBuf],
     package_dirs: &[std::path::PathBuf],
+    gem_path: Option<&std::path::Path>,
+    lockfile: Option<&std::path::Path>,
 ) -> PResult<(Hir, NodeId)> {
     let mut hir = Hir::default();
     if let Some(name) = magic_encoding_comment(source) {
@@ -285,6 +290,8 @@ pub fn parse_and_lower_with(
         input_path,
         load_roots,
         package_dirs,
+        gem_path,
+        lockfile,
     )?);
     // Synthesized base classes (the Struct/Data super split) are spliced in
     // right after the built-in exceptions -- before every main statement -- so
