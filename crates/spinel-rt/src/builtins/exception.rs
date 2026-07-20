@@ -20,7 +20,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use spinel_abi::{declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, STOP_ITERATION_CLASS};
+use spinel_abi::{
+    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, KEY_ERROR_CLASS,
+    NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS, STOP_ITERATION_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
+};
 
 use crate::dispatch::{
     class_name, downcast_robj, raise_error, run_initialize, send, ClassRegistry, ConstructorFn,
@@ -53,6 +56,13 @@ pub struct RubyException {
     /// handled at the moment this one was raised, threaded in at raise time
     /// (`attach_cause`). Invisible to `instance_variables`, like `mesg`/`res`.
     cause: Mutex<RubyValue>,
+    /// Typed introspection slots that specific subclasses expose as reader
+    /// methods -- `NameError#name`/`#receiver`, `NoMethodError#args`,
+    /// `KeyError#key`, `UncaughtThrowError#tag`/`#value`. Hidden like `mesg`,
+    /// invisible to `instance_variables`, and empty for the common exception.
+    /// A `&'static str` key keeps it a tiny fixed-shape map, not a full ivar
+    /// table.
+    details: Mutex<Vec<(&'static str, RubyValue)>>,
     ivars: Mutex<Vec<(String, RubyValue)>>,
 }
 
@@ -64,8 +74,30 @@ impl RubyException {
             mesg: Mutex::new(RubyValue::Nil),
             res: Mutex::new(RubyValue::Nil),
             cause: Mutex::new(RubyValue::Nil),
+            details: Mutex::new(Vec::new()),
             ivars: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Set one hidden detail slot (last write wins), used at raise time or by a
+    /// name-aware `initialize`.
+    fn set_detail(&self, key: &'static str, v: RubyValue) {
+        let mut d = self.details.lock();
+        match d.iter_mut().find(|(k, _)| *k == key) {
+            Some(slot) => slot.1 = v,
+            None => d.push((key, v)),
+        }
+    }
+
+    /// Read one hidden detail slot; `nil` when unset (CRuby's default for an
+    /// unpopulated `#name`/`#key`/`#args`/`#tag`/`#value`/`#receiver`).
+    fn detail(&self, key: &str) -> RubyValue {
+        self.details
+            .lock()
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.clone())
+            .unwrap_or(RubyValue::Nil)
     }
 
     fn store_ivar(&self, name: &str, v: RubyValue) {
@@ -121,6 +153,7 @@ impl RubyObject for RubyException {
             mesg: Mutex::new(self.mesg.lock().clone()),
             res: Mutex::new(self.res.lock().clone()),
             cause: Mutex::new(self.cause.lock().clone()),
+            details: Mutex::new(self.details.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
     }
@@ -315,6 +348,83 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
     Ok(())
 }
 
+/// Attach one typed introspection detail to a native exception at raise time --
+/// `KeyError#key`/`#receiver`, `NameError#name`/`#receiver`,
+/// `NoMethodError#args`, `UncaughtThrowError#tag`/`#value`. A no-op for a
+/// non-native exception value, so a raise site can call it unconditionally.
+pub fn set_exception_detail(exc_value: &RubyValue, key: &'static str, v: RubyValue) {
+    let RubyValue::Object(o) = exc_value else { return };
+    if let Some(e) = downcast_robj::<RubyException>(o) {
+        e.set_detail(key, v);
+    }
+}
+
+/// `NameError#name`/`NoMethodError#name` -- the missing name, `nil` if unset.
+fn exc_name(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("name"))
+}
+
+/// `NameError#receiver`/`KeyError#receiver` -- the object the failed lookup was
+/// against. CRuby raises `ArgumentError: no receiver is available` when unset,
+/// but every raise site here populates it, so returning the stored value (or
+/// `nil`) matches observed behavior without the rarely-hit error path.
+fn exc_receiver(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("receiver"))
+}
+
+/// `KeyError#key` -- the key that was not found.
+fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("key"))
+}
+
+/// `NoMethodError#args` -- the arguments of the failed call, `nil` if the
+/// exception was constructed without them.
+fn exc_args(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("args"))
+}
+
+/// `UncaughtThrowError#tag` -- the tag of the uncaught `throw`.
+fn exc_tag(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("tag"))
+}
+
+/// `UncaughtThrowError#value` -- the second `throw` argument, `nil` if omitted.
+fn exc_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(exc(recv).detail("value"))
+}
+
+/// `NameError.new(msg = nil, name = nil)` / `NoMethodError.new(msg, name, args)`:
+/// the default `initialize` plus the positional `name` (and `args`) that these
+/// classes accept and expose. Registered over the shared `initialize` for every
+/// class whose ancestry includes `NameError`, so a user `class E < NameError`
+/// stores its name the same way.
+fn name_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    let msg = args.first().cloned().unwrap_or(RubyValue::Nil);
+    *e.mesg.lock() = msg.clone();
+    if let Some(name) = args.get(1) {
+        e.set_detail("name", name.clone());
+    }
+    // The third positional (`args`) is a `NoMethodError`-only argument; storing
+    // it on any `NameError` is harmless since only `NoMethodError` exposes it.
+    if let Some(call_args) = args.get(2) {
+        e.set_detail("args", call_args.clone());
+    }
+    Ok(msg)
+}
+
+/// `Exception#detailed_message(highlight: false, **opts)` -- `"<message>
+/// (<ClassName>)"`. The optional `error_highlight` gem's source-snippet
+/// augmentation is a separate concern and not reproduced; the keyword options
+/// are accepted and ignored, as the core method does.
+fn exc_detailed_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    let name = class_name(e.class_id).unwrap_or_default();
+    let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
+    Ok(RubyValue::Str(string_new(format!("{msg} ({name})"))))
+}
+
 /// `def full_message; self.class.name + ": " + message; end`
 fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let e = exc(recv);
@@ -425,6 +535,12 @@ pub fn register_exception_subclass(
     ancestors: Vec<ClassId>,
 ) {
     let carries_result = ancestors.contains(&STOP_ITERATION_CLASS);
+    // Ancestry predicates for the typed-accessor sets, decided before `ancestors`
+    // is moved into `register` (same up-front shape as `carries_result`).
+    let is_name_error = ancestors.contains(&NAME_ERROR_CLASS);
+    let is_no_method_error = ancestors.contains(&NO_METHOD_ERROR_CLASS);
+    let is_key_error = ancestors.contains(&KEY_ERROR_CLASS);
+    let is_uncaught_throw = ancestors.contains(&UNCAUGHT_THROW_ERROR_CLASS);
     registry.register(
         id,
         name,
@@ -443,7 +559,28 @@ pub fn register_exception_subclass(
     registry.define_method(id, Symbol::intern("backtrace"), exc_backtrace);
     registry.define_method(id, Symbol::intern("cause"), exc_cause);
     registry.define_method(id, Symbol::intern("full_message"), exc_full_message);
+    registry.define_method(id, Symbol::intern("detailed_message"), exc_detailed_message);
     registry.define_method(id, Symbol::intern("inspect"), exc_inspect);
+    // Typed introspection accessors, installed by ancestry so a user subclass
+    // of the relevant error inherits them the same way the built-in tree does.
+    // `NoMethodError < NameError`, so it picks up `#name`/`#receiver` here and
+    // adds `#args` below.
+    if is_name_error {
+        registry.define_method(id, Symbol::intern("initialize"), name_error_initialize);
+        registry.define_method(id, Symbol::intern("name"), exc_name);
+        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    if is_no_method_error {
+        registry.define_method(id, Symbol::intern("args"), exc_args);
+    }
+    if is_key_error {
+        registry.define_method(id, Symbol::intern("key"), exc_key);
+        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+    }
+    if is_uncaught_throw {
+        registry.define_method(id, Symbol::intern("tag"), exc_tag);
+        registry.define_method(id, Symbol::intern("value"), exc_value);
+    }
     // Class methods, registered per-id (class-method lookup doesn't walk
     // ancestors -- see `dispatch`'s Class-value arm).
     registry.define_class_method(id, Symbol::intern("exception"), exc_class_exception);

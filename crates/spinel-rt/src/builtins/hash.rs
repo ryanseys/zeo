@@ -115,9 +115,10 @@ builtin_methods! {
         if let Some(RubyValue::Proc(p)) = &block {
             return p.call(std::slice::from_ref(&args[0]));
         }
-        Err(crate::dispatch::raise_error(
+        Err(crate::dispatch::raise_error_details(
             "KeyError",
             format!("key not found: {}", args[0].inspect_string()),
+            &[("key", args[0].clone()), ("receiver", recv.clone())],
         ))
     }
     "dig" => fn dig(recv, args, _block) {
@@ -197,9 +198,10 @@ builtin_methods! {
             } else if let Some(RubyValue::Proc(p)) = &block {
                 out.push(p.call(std::slice::from_ref(key))?);
             } else {
-                return Err(crate::dispatch::raise_error(
+                return Err(crate::dispatch::raise_error_details(
                     "KeyError",
                     format!("key not found: {}", key.inspect_string()),
+                    &[("key", key.clone()), ("receiver", recv.clone())],
                 ));
             }
         }

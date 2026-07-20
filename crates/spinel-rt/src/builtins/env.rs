@@ -135,9 +135,10 @@ builtin_methods! {
         if let Some(RubyValue::Proc(p)) = block {
             return p.call(&[args[0].clone()]);
         }
-        Err(crate::dispatch::raise_error(
+        Err(crate::dispatch::raise_error_details(
             "KeyError",
             format!("key not found: {}", args[0].inspect_string()),
+            &[("key", args[0].clone())],
         ))
     }
     "key?" | "has_key?" | "include?" | "member?" => fn env_key_p(_recv, args, _block) {

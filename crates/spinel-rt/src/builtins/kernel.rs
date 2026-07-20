@@ -195,6 +195,63 @@ builtin_methods! {
         arity!(args, 0);
         Ok(recv.clone())
     }
+    "caller" => fn caller_m(_recv, args, _block) {
+        // AOT builds keep no runtime call-stack frames, so `caller` is always an
+        // empty Array (never `nil`). The optional `(start, length)` / Range
+        // window is honored trivially -- every window over zero frames is empty.
+        // The arguments are still accepted (and were already evaluated for their
+        // side effects at the call site), matching CRuby's contract shape.
+        arity!(args, 0..=2);
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
+    "caller_locations" => fn caller_locations_m(_recv, args, _block) {
+        // Same no-frames reality as `caller`: an empty Array (not `nil`), so the
+        // `caller_locations(..)&.first` guard idiom and `.each`/`.map` iteration
+        // stay safe.
+        arity!(args, 0..=2);
+        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+    }
+    // The private `Kernel` conversion and formatting functions, as real methods
+    // so they resolve through EVERY dispatch path -- a splat call (`format(*a)`),
+    // `method(:Integer)`, `send`, a curry -- not only the codegen fast-path that
+    // intercepts a direct literal call. Each delegates to the same runtime
+    // routine that fast-path emits, so behavior is identical however it's reached.
+    "format" | "sprintf" => fn format_m(_recv, args, _block) {
+        kernel_format(args)
+    }
+    "Integer" => fn integer_m(_recv, args, _block) {
+        kernel_integer(args)
+    }
+    "Float" => fn float_m(_recv, args, _block) {
+        kernel_float(args)
+    }
+    "String" => fn string_conv_m(_recv, args, _block) {
+        kernel_string(args)
+    }
+    "Array" => fn array_conv_m(_recv, args, _block) {
+        kernel_array(args)
+    }
+    "Hash" => fn hash_conv_m(_recv, args, _block) {
+        kernel_hash(args)
+    }
+    "Rational" => fn rational_m(_recv, args, _block) {
+        kernel_rational(args)
+    }
+    "Complex" => fn complex_m(_recv, args, _block) {
+        kernel_complex(args)
+    }
+    // `proc(&b)` / `proc { }` -- answer the passed block as a Proc (it already IS
+    // one at the ABI level). No block is CRuby's `ArgumentError`.
+    "proc" => fn proc_m(_recv, args, block) {
+        arity!(args, 0);
+        match block {
+            Some(b @ RubyValue::Proc(_)) => Ok(b),
+            _ => Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                "tried to create Proc object without a block".to_string(),
+            )),
+        }
+    }
     "dup" => fn dup(recv, args, _block) {
         arity!(args, 0);
         Ok(match recv {
@@ -1069,9 +1126,13 @@ pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     if has_live_catch {
         Err(Signal::Throw(tag, args.get(1).cloned().unwrap_or(RubyValue::Nil)))
     } else {
-        Err(crate::dispatch::raise_error(
+        Err(crate::dispatch::raise_error_details(
             "UncaughtThrowError",
             format!("uncaught throw {}", tag.inspect_string()),
+            &[
+                ("tag", tag.clone()),
+                ("value", args.get(1).cloned().unwrap_or(RubyValue::Nil)),
+            ],
         ))
     }
 }

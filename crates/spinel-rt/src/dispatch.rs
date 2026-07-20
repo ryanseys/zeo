@@ -1406,7 +1406,7 @@ pub fn send_super_from(
             return f(recv, args, block);
         }
     }
-    Err(raise_method_missing(recv, &method_name, MissingReason::Super))
+    Err(raise_method_missing(recv, &method_name, args, MissingReason::Super))
 }
 
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:
@@ -1646,6 +1646,52 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
     }
 }
 
+/// [`raise_error`] plus typed introspection details stamped onto the freshly
+/// built exception -- `KeyError#key`/`#receiver`, `NameError#name`/`#receiver`,
+/// `NoMethodError#name`/`#args`/`#receiver`. The message is built the same way;
+/// each `(slot, value)` is attached before cause chaining so the reader methods
+/// see it.
+pub fn raise_error_details(
+    class_name: &str,
+    msg: String,
+    details: &[(&'static str, RubyValue)],
+) -> Signal {
+    let msg = arity_debug_context(msg);
+    match REGISTRY.get() {
+        Some(reg) => {
+            let exc = reg.construct_exception(class_name, msg);
+            for (slot, value) in details {
+                crate::builtins::exception::set_exception_detail(&exc, slot, value.clone());
+            }
+            crate::builtins::exception::attach_cause(&exc);
+            Signal::Raise(exc)
+        }
+        None => panic!("{class_name}: {msg}"),
+    }
+}
+
+/// Build (do not raise) a `NameError` VALUE carrying the typed `#name` (a
+/// Symbol) and `#receiver` an `uninitialized constant` reference exposes.
+/// Codegen emits this for a const miss so the boxed error the branch raises or
+/// stores answers `e.name`/`e.receiver`, matching CRuby. `receiver` is
+/// `RubyValue::Nil` where the lexical scope isn't statically known (a bare
+/// top-level reference), which reads back as `nil` -- the same as an unset slot.
+pub fn make_name_error(message: String, name: &str, receiver: RubyValue) -> RubyValue {
+    match REGISTRY.get() {
+        Some(reg) => {
+            let exc = reg.construct_exception("NameError", message);
+            crate::builtins::exception::set_exception_detail(
+                &exc,
+                "name",
+                RubyValue::Symbol(Symbol::intern(name)),
+            );
+            crate::builtins::exception::set_exception_detail(&exc, "receiver", receiver);
+            exc
+        }
+        None => panic!("NameError: {message}"),
+    }
+}
+
 /// Why a method lookup failed, mirroring CRuby's `method_missing_reason`
 /// (`internal/vm.h:32`). CRuby routes every one of these through a SINGLE
 /// raiser (`raise_method_missing`, `vm_eval.c:968`) that picks a format string
@@ -1732,12 +1778,32 @@ pub fn describe_receiver(recv: &RubyValue) -> String {
 /// Every failed lookup -- a plain miss, a visibility rejection, a bare
 /// identifier, a `super` with nothing above it -- ends here, so the five
 /// message shapes cannot drift apart.
-pub fn raise_method_missing(recv: &RubyValue, name: &str, reason: MissingReason) -> Signal {
+pub fn raise_method_missing(
+    recv: &RubyValue,
+    name: &str,
+    args: &[RubyValue],
+    reason: MissingReason,
+) -> Signal {
     let (class_name, template) = reason.format();
     let msg = template
         .replace("{name}", name)
         .replace("{recv}", &describe_receiver(recv));
-    raise_error(class_name, msg)
+    // Populate the raised error's introspection slots (`NameError#name`/
+    // `#receiver`, `NoMethodError#args`). A `VCall` (bare undefined identifier)
+    // is a `NameError` with no call arguments; every other reason is a
+    // `NoMethodError` whose `#args` is the failed call's argument list -- `[]`
+    // for a zero-arg call, matching CRuby.
+    let name_detail = ("name", RubyValue::Symbol(Symbol::intern(name)));
+    let receiver_detail = ("receiver", recv.clone());
+    match reason {
+        MissingReason::VCall => {
+            raise_error_details(class_name, msg, &[name_detail, receiver_detail])
+        }
+        _ => {
+            let args_detail = ("args", RubyValue::Array(crate::array_new(args.to_vec())));
+            raise_error_details(class_name, msg, &[name_detail, receiver_detail, args_detail])
+        }
+    }
 }
 
 /// Thread the currently-handled exception (`$!`) into `exc`'s `cause` slot
@@ -1867,7 +1933,7 @@ pub fn send_value_public_in(
         _ => None,
     };
     match reason {
-        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), reason)),
+        Some(reason) => Err(raise_method_missing(recv, &name.to_string(), args, reason)),
         None => send_value_in(box_id, recv, name, args, block),
     }
 }
@@ -1986,7 +2052,7 @@ pub fn send_value_in(
     // Every receiver shape -- class, module, immediate, object -- gets its
     // message from the one method-missing raiser, so the class/module form
     // ("for class Widget") and the instance form stay in step.
-    Err(raise_method_missing(recv, &name.to_string(), MissingReason::NoEntry))
+    Err(raise_method_missing(recv, &name.to_string(), args, MissingReason::NoEntry))
 }
 
 pub fn send(
@@ -2114,6 +2180,7 @@ pub fn send_in(
     Err(raise_method_missing(
         &RubyValue::Object(recv.clone()),
         &name.to_string(),
+        args,
         MissingReason::NoEntry,
     ))
 }

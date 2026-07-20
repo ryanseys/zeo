@@ -1215,13 +1215,20 @@ pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStr
 /// verbatim, so callers pass whatever text CRuby's message shows in their
 /// position (the missing head, or the full path).
 pub(super) fn uninitialized_constant_error(cx: &Ctx, name: &str) -> TokenStream {
-    emit_boxed_new(
-        cx,
-        "NameError",
-        vec![quote! {
-            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #name)))
-        }],
-    )
+    let _ = cx;
+    // `NameError#name` is the missing constant as a Symbol -- its leaf when a
+    // path was passed (`Foo::Bar` -> `:Bar`), matching CRuby. The receiver (the
+    // lexical `cref`) isn't known at this generic site, so it reads back as
+    // `nil`; where it IS known -- an explicit `Klass.const_get` -- the fold in
+    // `call.rs` supplies it precisely.
+    let leaf = name.rsplit("::").next().unwrap_or(name);
+    quote! {
+        spinel_rt::make_name_error(
+            format!("uninitialized constant {}", #name),
+            #leaf,
+            spinel_rt::RubyValue::Nil,
+        )
+    }
 }
 
 /// Wraps a raised exception VALUE so it fires in EXPRESSION (or boolean)
@@ -1508,17 +1515,17 @@ fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
         (None, Some(d)) => format!("{}::{name}", cx.compiler.fq_name(d)),
         (None, None) => name.to_string(),
     };
-    let err = emit_boxed_new(
-        cx,
-        "NameError",
-        vec![quote! {
-            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #qualified)))
-        }],
-    );
+    // The raised `NameError` carries `#name` (the missing leaf as a Symbol) and
+    // `#receiver` (the class the lookup ran against -- `Object` at top level, the
+    // enclosing module for a nested miss), matching CRuby.
     quote! {
         match spinel_rt::const_get(#owner, #name) {
             Some(__v) => __v,
-            None => return Err(spinel_rt::Signal::Raise(#err)),
+            None => return Err(spinel_rt::Signal::Raise(spinel_rt::make_name_error(
+                format!("uninitialized constant {}", #qualified),
+                #name,
+                spinel_rt::RubyValue::Class(spinel_rt::ClassId(#owner)),
+            ))),
         }
     }
 }

@@ -3096,17 +3096,18 @@ fn try_const_reflection(
     } else {
         format!("{}::{cname}", cx.compiler.fq_name(target))
     };
-    let err = super::expr::emit_boxed_new(
-        cx,
-        "NameError",
-        vec![quote! {
-            spinel_rt::RubyValue::Str(spinel_rt::string_new(format!("uninitialized constant {}", #qualified)))
-        }],
-    );
+    // The raised `NameError` carries `#name` (the missing leaf, `:Nope`) and
+    // `#receiver` (the class the lookup ran against, `Object` for a top-level
+    // `const_get`), which the caller can introspect.
+    let receiver_id = target.0;
     Some(quote! {
         match spinel_rt::const_get(#owner, #cname) {
             Some(__v) => __v,
-            None => return Err(spinel_rt::Signal::Raise(#err)),
+            None => return Err(spinel_rt::Signal::Raise(spinel_rt::make_name_error(
+                format!("uninitialized constant {}", #qualified),
+                #cname,
+                spinel_rt::RubyValue::Class(spinel_rt::ClassId(#receiver_id)),
+            ))),
         }
     })
 }

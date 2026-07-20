@@ -8427,6 +8427,67 @@ fn a_missing_method_via_send_raises_a_rescuable_no_method_error() {
 }
 
 #[test]
+fn exception_objects_expose_their_typed_introspection_accessors() {
+    // KeyError#key, NameError#name/#receiver, NoMethodError#name/#args/#receiver,
+    // UncaughtThrowError#tag/#value, and Exception#detailed_message -- populated
+    // both at the raise site (a failed fetch / missing method / const miss /
+    // uncaught throw) and from an explicit constructor. Byte-verified against
+    // ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        begin; {}.fetch(:sym); rescue KeyError => e; p e.key; end
+        begin; {}.fetch(42); rescue KeyError => e; p e.key; end
+        e = NoMethodError.new("msg", :meth, [1, 2]); p e.args; p e.name; p e.message
+        p NoMethodError.new("m2", :other).args
+        p NameError.new("nm", :sym).name
+        p NameError.new("nm").name
+        begin; "s".no_such; rescue NoMethodError => e; p e.receiver; p e.name; p e.args; end
+        begin; nil.foo(1); rescue NoMethodError => n; p n.name; end
+        begin; TypeError.new("m").name; rescue NoMethodError => e; puts e.class; end
+        begin; Object.const_get(:Nope); rescue NameError => e; p e.name; p e.receiver; end
+        begin; Nonexistent; rescue NameError => e; p e.name; end
+        v = begin; throw :y; rescue UncaughtThrowError => e; e.tag; end; p v
+        w = begin; throw :z, 7; rescue UncaughtThrowError => e; e.value; end; p w
+        begin; raise "boom"; rescue => e; p e.detailed_message; end
+        begin; raise RuntimeError; rescue => e; p e.detailed_message; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        ":sym\n42\n[1, 2]\n:meth\n\"msg\"\nnil\n:sym\nnil\n\"s\"\n:no_such\n[]\n:foo\n\
+         NoMethodError\n:Nope\nObject\n:Nonexistent\n:y\n7\n\"boom (RuntimeError)\"\n\
+         \"RuntimeError (RuntimeError)\"\n"
+    );
+}
+
+#[test]
+fn kernel_caller_and_conversion_functions_resolve_through_every_dispatch_path() {
+    // `caller`/`caller_locations` answer an empty Array (no runtime frames in an
+    // AOT build), and the private Kernel conversion/format helpers resolve as
+    // real methods -- so a splat call, `method(:Integer)`, or a forwarded block
+    // reach them, not only the codegen fast-path. Byte-verified against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        def frames; caller; end
+        p frames.is_a?(Array)
+        p caller_locations(1, 1).is_a?(Array)
+        args = ["%d-%s", 3, "x"]
+        puts format(*args)
+        p [1, 2, 3].map(&method(:Integer))
+        p ["1", "0xff"].map(&method(:Integer))
+        def wrap(&b); proc(&b); end
+        p wrap { |x| x + 100 }.call(1)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\n3-x\n[1, 2, 3]\n[1, 255]\n101\n"
+    );
+}
+
+#[test]
 fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
     let result = run_ruby(
         r#"

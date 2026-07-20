@@ -400,6 +400,19 @@ pub const EXCEPTION_CLASS: ClassId = exc_id(0);
 /// it never needs a manual bump. Keep the offset in sync with its row.
 pub const STOP_ITERATION_CLASS: ClassId = exc_id(15);
 
+/// `KeyError` -- named because it exposes the typed accessors `#key`/`#receiver`
+/// over an exception's hidden detail slots. Keep the offset in sync with its row.
+pub const KEY_ERROR_CLASS: ClassId = exc_id(14);
+
+/// `NameError` -- exposes `#name`/`#receiver` and a name-aware `initialize`.
+pub const NAME_ERROR_CLASS: ClassId = exc_id(16);
+
+/// `NoMethodError` (a `NameError`) -- additionally exposes `#args`.
+pub const NO_METHOD_ERROR_CLASS: ClassId = exc_id(17);
+
+/// `UncaughtThrowError` -- exposes `#tag`/`#value` from an uncaught `throw`.
+pub const UNCAUGHT_THROW_ERROR_CLASS: ClassId = exc_id(47);
+
 /// One row of the built-in exception hierarchy -- the shared source of truth
 /// for the ids both sides bake in.
 pub struct ExceptionClass {
