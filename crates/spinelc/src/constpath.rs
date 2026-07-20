@@ -88,7 +88,7 @@ mod tests {
     }
 
     #[test]
-    fn a_namespaced_name_splits_at_the_LAST_separator() {
+    fn a_namespaced_name_splits_at_the_last_separator() {
         let p = ConstPath::parse("A::B::C");
         assert_eq!(p.base(), "C");
         assert_eq!(p.scope(), Some("A::B"));
