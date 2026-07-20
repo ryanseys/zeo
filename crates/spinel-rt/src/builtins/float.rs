@@ -20,27 +20,17 @@ fn coerce_error(arg: &RubyValue) -> Signal {
     )
 }
 
-macro_rules! float_op_row {
-    ($args:ident, $recv:ident, $num_fn:ident, $op:literal) => {{
-        arity!($args, 1);
-        crate::builtins::numeric::num_coerce_bin(
-            $recv,
-            &$args[0],
-            crate::builtins::numeric::$num_fn($recv, &$args[0]),
-            $op,
-        )
-    }};
-}
+use crate::builtins::numeric::num_op_row;
 
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "+" => fn add(recv, args, _block) { float_op_row!(args, recv, num_add, "+") }
-    "-" => fn sub(recv, args, _block) { float_op_row!(args, recv, num_sub, "-") }
-    "*" => fn mul(recv, args, _block) { float_op_row!(args, recv, num_mul, "*") }
-    "/" => fn div(recv, args, _block) { float_op_row!(args, recv, num_div, "/") }
-    "%" | "modulo" => fn modulo(recv, args, _block) { float_op_row!(args, recv, num_mod, "%") }
-    "**" => fn pow(recv, args, _block) { float_op_row!(args, recv, num_pow, "**") }
+    "+" => fn add(recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
+    "-" => fn sub(recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
+    "*" => fn mul(recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
+    "/" => fn div(recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
+    "%" | "modulo" => fn modulo(recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
+    "**" => fn pow(recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
     "-@" => fn neg(recv, args, _block) {
         arity!(args, 0);
         match recv {
