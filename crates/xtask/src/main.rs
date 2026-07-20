@@ -17,6 +17,7 @@
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 
 mod conformance;
+mod gem_compat;
 mod stdlib_status;
 
 use std::path::{Path, PathBuf};
@@ -135,8 +136,9 @@ fn main() -> ExitCode {
         Some("regen") => regen(&root),
         Some("conformance") => conformance::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
+        Some("gem-compat") => gem_compat::main(&root, &args),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance|stdlib-status>");
+            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance|stdlib-status|gem-compat>");
             ExitCode::FAILURE
         }
     }

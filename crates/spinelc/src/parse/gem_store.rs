@@ -63,20 +63,26 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
         }
 
         // Force the ruby (source) platform: the suffix-less
-        // `<name>-<version>.gemspec`. A store that only has the precompiled
-        // `<name>-<version>-<platform>.gemspec` cannot be used -- its `.bundle`
-        // is unloadable -- so that is a recorded exclusion.
-        let Some(gemspec_path) = find_source_gemspec(&specs, &locked.name, &locked.version) else {
-            disclosures.push(excluded(
-                &name,
-                "precompiled-platform-gem",
-                format!(
-                    "only a precompiled binary of `{name}` is installed; spinel forces the ruby \
-                     platform and cannot load a `.bundle`. Reinstall with \
-                     `--platform ruby`, or see the FFI path in docs/EXTENSIONS.md."
-                ),
-            ));
-            continue;
+        // `<name>-<version>.gemspec`.
+        let gemspec_path = match locate_gemspec(&specs, &locked.name, &locked.version) {
+            Located::Source(path) => path,
+            // Only the precompiled `<name>-<version>-<platform>.gemspec` is
+            // installed -- its `.bundle` is unloadable, so it is excluded.
+            Located::PrecompiledOnly => {
+                disclosures.push(excluded(
+                    &name,
+                    "precompiled-platform-gem",
+                    format!(
+                        "only a precompiled binary of `{name}` is installed; spinel forces the \
+                         ruby platform and cannot load a `.bundle`. Reinstall with \
+                         `--platform ruby`, or see the FFI path in docs/EXTENSIONS.md."
+                    ),
+                ));
+                continue;
+            }
+            // Locked but no gemspec at all -- a store/`bundle install` state
+            // issue, not something spinel owns. Skipped without a disclosure.
+            Located::Absent => continue,
         };
 
         let spec = super::gemspec::parse_file(&gemspec_path)?;
@@ -115,18 +121,44 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
     Ok(StoreResolution { roots, disclosures })
 }
 
-/// The suffix-less `<name>-<version>.gemspec` under `specifications/` (regular
-/// gems) or `specifications/default/` (default gems). `None` when only a
-/// platform-suffixed variant exists.
-fn find_source_gemspec(specs: &Path, name: &str, version: &str) -> Option<PathBuf> {
-    let file = format!("{name}-{version}.gemspec");
+/// The result of locating a locked gem's gemspec, forcing the ruby platform.
+enum Located {
+    /// The suffix-less `<name>-<version>.gemspec` -- a source-platform gem.
+    Source(PathBuf),
+    /// Only a platform-suffixed `<name>-<version>-<platform>.gemspec` exists.
+    PrecompiledOnly,
+    /// No gemspec for this name+version at all (not installed).
+    Absent,
+}
+
+/// Locate `<name>-<version>.gemspec` under `specifications/` (regular gems) or
+/// `specifications/default/` (default gems), distinguishing "only a precompiled
+/// variant is installed" from "not installed at all".
+fn locate_gemspec(specs: &Path, name: &str, version: &str) -> Located {
+    let source = format!("{name}-{version}.gemspec");
+    let prefix = format!("{name}-{version}-");
+    let mut saw_precompiled = false;
     for dir in [specs.to_path_buf(), specs.join("default")] {
-        let p = dir.join(&file);
+        let p = dir.join(&source);
         if p.is_file() {
-            return Some(p);
+            return Located::Source(p);
+        }
+        // Any `<name>-<version>-<platform>.gemspec` -> a precompiled install.
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let fname = entry.file_name();
+                let fname = fname.to_string_lossy();
+                if fname.starts_with(&prefix) && fname.ends_with(".gemspec") {
+                    saw_precompiled = true;
+                }
+            }
         }
     }
-    None
+    if saw_precompiled {
+        Located::PrecompiledOnly
+    } else {
+        Located::Absent
+    }
 }
 
 /// Whether a resolved gemspec is native -- any of the three detectable

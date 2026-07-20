@@ -18,6 +18,8 @@ pub mod codegen;
 pub mod compiler;
 pub mod gem_report;
 pub mod hir;
+
+pub use parse::{gem_compat, GemCompatEntry, GemCompatOutcome};
 pub mod parse;
 pub mod types;
 

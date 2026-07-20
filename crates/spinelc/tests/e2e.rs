@@ -721,6 +721,28 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
 }
 
 #[test]
+fn gem_compat_classifies_each_locked_gem() {
+    // Phase 4: the classification behind `cargo xtask gem-compat`, over the
+    // self-contained fixture store -- pure Ruby compiles, a native-extension
+    // gem and a precompiled-only gem are both native-unsupported.
+    use spinelc::GemCompatOutcome;
+    let store =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
+    let entries = spinelc::gem_compat(&store, &store.join("Gemfile.lock")).unwrap();
+    let outcome = |n: &str| entries.iter().find(|e| e.name == n).unwrap().outcome.clone();
+
+    assert_eq!(outcome("purelib"), GemCompatOutcome::Compiled);
+    assert!(matches!(
+        outcome("nativelib"),
+        GemCompatOutcome::NativeUnsupported { ref kind, .. } if kind == "native-extension"
+    ));
+    assert!(matches!(
+        outcome("precompiled"),
+        GemCompatOutcome::NativeUnsupported { ref kind, .. } if kind == "precompiled-platform-gem"
+    ));
+}
+
+#[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
     let err = spinelc::compile_to_rust("def foo(\n").unwrap_err();
     assert!(

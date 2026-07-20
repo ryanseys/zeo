@@ -82,6 +82,13 @@ disclosure line — an AOT compiler only compiles what a require actually
 reaches. `GIT`/`PATH`-source gems (a checkout or a local path in the lockfile)
 are not drawn from the store.
 
+To measure a whole lockfile at once — the out-of-the-box number — run
+`cargo xtask gem-compat <Gemfile.lock> [--gem-path <dir>]` (the store defaults
+to `Gem.dir`). It prints a per-gem table and a headline like *"72/88 store gems
+usable (82%) — 66 compiled, 6 built-in, 16 native unsupported"*, and writes
+`conformance/gem-compat.{tsv,md}` with the native gems grouped by detected
+layout (the FFI work-list).
+
 ## The per-compile record
 
 `spinelc app.rb -o app` writes `spinel-gems.json` next to the artifact, one
