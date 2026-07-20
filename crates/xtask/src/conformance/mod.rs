@@ -252,6 +252,7 @@ fn open_session(
     let oracle = oracle::Oracle::new(
         root.join("target/conformance/oracle"),
         opts.run_timeout,
+        root,
     )?;
     let stamps = stamps::StampStore::new(work_dir.join("stamps"), root, &oracle.ruby_version)?;
     let runner = runner::Runner {

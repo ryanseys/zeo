@@ -1,0 +1,11 @@
+# The conformance oracle. `ruby` must resolve to exactly this version: the
+# suite diffs spinel's stdout+stderr against real CRuby, so the interpreter
+# version IS the definition of correct. A sweep run against a different ruby
+# produces a scoreboard that looks authoritative and is not.
+#
+# Pinning here (rather than only in the user's global mise config) is what
+# makes `mise which ruby` resolve correctly from a non-interactive shell --
+# without it, a shell that never activated mise falls through to macOS's
+# /usr/bin/ruby 2.6.10 and silently rewrites the scoreboard against it.
+[tools]
+ruby = "4.0.5"
