@@ -501,7 +501,7 @@ impl RubyValue {
             RubyValue::Regexp(_) => REGEXP_CLASS,
             RubyValue::MatchData(_) => MATCH_DATA_CLASS,
             RubyValue::Fiber(_) => FIBER_CLASS,
-            RubyValue::Enumerator(_) => crate::dispatch::ENUMERATOR_CLASS,
+            RubyValue::Enumerator(e) => crate::builtins::enumerator::enumerator_class_id(e),
             RubyValue::Yielder(_) => crate::dispatch::YIELDER_CLASS,
             RubyValue::Thread(_) => THREAD_CLASS,
             RubyValue::Mutex(_) => MUTEX_CLASS,

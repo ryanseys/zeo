@@ -278,6 +278,17 @@ pub const FILE_TEST_MODULE: ClassId = ClassId(73);
 /// `Enumerable` and is never user-instantiated.
 pub const ARGF_CLASS: ClassId = ClassId(74);
 
+/// `Enumerator::Chain` -- what `Enumerator#+` and `Enumerable#chain` answer.
+/// A chain IS an Enumerator (CRuby: `Enumerator::Chain.superclass ==
+/// Enumerator`), so the runtime carries it as a `RubyValue::Enumerator` over
+/// an `EnumSource::Chain` and reports this id from `class_of` instead of
+/// giving it a separate payload type.
+pub const ENUMERATOR_CHAIN_CLASS: ClassId = ClassId(75);
+
+/// `Enumerator::Product` -- what `Enumerator.product` answers. Carried the
+/// same way as [`ENUMERATOR_CHAIN_CLASS`].
+pub const ENUMERATOR_PRODUCT_CLASS: ClassId = ClassId(76);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -371,6 +382,8 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: SIGNAL_MODULE, name: "Signal", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: FILE_TEST_MODULE, name: "FileTest", is_module: true, superclass: None, includes: &[], feature: None },
     BuiltinClass { id: ARGF_CLASS, name: "ARGF.class", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
+    BuiltinClass { id: ENUMERATOR_CHAIN_CLASS, name: "Enumerator::Chain", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
+    BuiltinClass { id: ENUMERATOR_PRODUCT_CLASS, name: "Enumerator::Product", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

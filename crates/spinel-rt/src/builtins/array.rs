@@ -1249,20 +1249,14 @@ builtin_methods! {
             mine.iter().any(|e| theirs.iter().any(|x| e.rb_eq(x))),
         ))
     }
-    // `chain(*others)` -- an Enumerator over self followed by each argument
-    // in turn. spinel materializes it as a flat Array-backed Enumerator (the
-    // common `.chain(...).to_a`/`.each` uses); a lazy chain is a separate
-    // gap.
+    // `chain(*others)` -- an `Enumerator::Chain` over self followed by each
+    // argument in turn. The sources are held, not flattened, so each is
+    // iterated with its own `each` when the chain is driven.
     "chain" => fn chain(recv, args, _block) {
-        let mut all = recv_array!(recv).lock().clone();
-        for a in args {
-            match a {
-                RubyValue::Array(other) => all.extend(other.lock().iter().cloned()),
-                other => all.push(other.clone()),
-            }
-        }
-        let combined = RubyValue::Array(crate::array_new(all));
-        Ok(crate::builtins::enumerator::enumerator_for(&combined, "each", &[]))
+        let mut sources = Vec::with_capacity(args.len() + 1);
+        sources.push(recv.clone());
+        sources.extend(args.iter().cloned());
+        Ok(crate::builtins::enumerator::chain_of(sources))
     }
     // `compact!` drops nils in place, answering `nil` when there were none
     // (CRuby's destructive-form convention); `rotate!` rotates in place and

@@ -103,7 +103,9 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::TRUE_CLASS | spinel_abi::FALSE_CLASS => object::lookup_bool,
         spinel_abi::KERNEL_CLASS => kernel::lookup,
         spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
-        spinel_abi::ENUMERATOR_CLASS => enumerator::lookup,
+        spinel_abi::ENUMERATOR_CLASS
+        | spinel_abi::ENUMERATOR_CHAIN_CLASS
+        | spinel_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup,
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup,
         spinel_abi::FILE_STAT_CLASS => stat::lookup,
@@ -256,7 +258,9 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::TRUE_CLASS | spinel_abi::FALSE_CLASS => object::lookup_bool_names(),
         spinel_abi::KERNEL_CLASS => kernel::lookup_names(),
         spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup_names(),
-        spinel_abi::ENUMERATOR_CLASS => enumerator::lookup_names(),
+        spinel_abi::ENUMERATOR_CLASS
+        | spinel_abi::ENUMERATOR_CHAIN_CLASS
+        | spinel_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_names(),
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup_names(),
         spinel_abi::FILE_STAT_CLASS => stat::lookup_names(),

@@ -65,6 +65,13 @@ enum EnumSource {
     /// The first yielded value is `initial` (or, absent, `block.call(nil)`);
     /// each subsequent value is `block` applied to the previous one.
     Produce { initial: Option<RubyValue>, block: RProc },
+    /// `Enumerator#+` / `Enumerable#chain` -- the sources iterated back to
+    /// back. Carried as an ordinary Enumerator; `class_of` reports
+    /// `Enumerator::Chain` off this variant.
+    Chain { sources: Vec<RubyValue> },
+    /// `Enumerator.product(*enums)` -- the cartesian product, yielded as one
+    /// Array per combination, rightmost source varying fastest.
+    Product { sources: Vec<RubyValue> },
 }
 
 /// The mutable external-iteration half, all behind one short-held lock
@@ -148,6 +155,27 @@ pub(crate) fn enumerator_for(recv: &RubyValue, meth: &str, args: &[RubyValue]) -
     }))
 }
 
+/// `Enumerator::Chain` over `sources`, iterated back to back. The public
+/// constructor behind `Enumerator#+` and `Enumerable#chain`.
+pub(crate) fn chain_of(sources: Vec<RubyValue>) -> RubyValue {
+    RubyValue::Enumerator(Arc::new(EnumeratorData {
+        source: EnumSource::Chain { sources },
+        size_hint: None,
+        state: Mutex::new(ExternState::default()),
+    }))
+}
+
+/// The class an enumerator reports: the source variant picks
+/// `Enumerator::Chain`/`Enumerator::Product` over plain `Enumerator`
+/// (see `value.rs`).
+pub fn enumerator_class_id(e: &REnumerator) -> crate::ClassId {
+    match e.source {
+        EnumSource::Chain { .. } => spinel_abi::ENUMERATOR_CHAIN_CLASS,
+        EnumSource::Product { .. } => spinel_abi::ENUMERATOR_PRODUCT_CLASS,
+        _ => spinel_abi::ENUMERATOR_CLASS,
+    }
+}
+
 /// `Enumerator.new([size]) { |y| ... }` -- reached through the dynamic
 /// `Class#new` arm (`class_module::class_new` special-cases
 /// `ENUMERATOR_CLASS`); parse deliberately skips the static `New` node
@@ -206,6 +234,16 @@ builtin_methods! {
             state: Mutex::new(ExternState::default()),
         })))
     }
+
+    // `Enumerator.product(*enums)` -- every combination as an Array, rightmost
+    // source varying fastest (#2484). No args yields one empty combination.
+    "product" => fn product(_recv, args, _block) {
+        Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
+            source: EnumSource::Product { sources: args.to_vec() },
+            size_hint: None,
+            state: Mutex::new(ExternState::default()),
+        })))
+    }
 }
 
 fn recv_enum(recv: &RubyValue) -> &REnumerator {
@@ -246,7 +284,50 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
                 cur = generator.call(&[cur])?;
             }
         }
+        EnumSource::Chain { sources } => {
+            for src in sources {
+                send_value(src, Symbol::intern("each"), &[], Some(block.clone()))?;
+            }
+            Ok(RubyValue::Nil)
+        }
+        EnumSource::Product { sources } => {
+            let lists = product_lists(sources)?;
+            let each_block = block.as_proc_unchecked();
+            product_walk(&lists, &mut Vec::with_capacity(lists.len()), &each_block)?;
+            Ok(RubyValue::Nil)
+        }
     }
+}
+
+/// Materialize each product source once (CRuby snapshots them up front, then
+/// replays the inner ones for every outer element).
+fn product_lists(sources: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, Signal> {
+    sources
+        .iter()
+        .map(|s| match send_value(s, Symbol::intern("to_a"), &[], None)? {
+            RubyValue::Array(a) => Ok(a.lock().clone()),
+            _ => Ok(Vec::new()),
+        })
+        .collect()
+}
+
+/// Yield one Array per combination, rightmost source varying fastest.
+fn product_walk(
+    lists: &[Vec<RubyValue>],
+    prefix: &mut Vec<RubyValue>,
+    block: &RProc,
+) -> Result<(), Signal> {
+    let Some((head, rest)) = lists.split_first() else {
+        return block
+            .call(&[RubyValue::Array(array_new(prefix.clone()))])
+            .map(|_| ());
+    };
+    for v in head {
+        prefix.push(v.clone());
+        product_walk(rest, prefix, block)?;
+        prefix.pop();
+    }
+    Ok(())
 }
 
 /// Lazily creates the iteration fiber (CRuby's `next_init`) and returns
@@ -386,6 +467,11 @@ fn ary2sv(mut vals: Vec<RubyValue>) -> RubyValue {
     }
 }
 
+fn list(vals: &[RubyValue]) -> String {
+    let rendered: Vec<String> = vals.iter().map(|v| v.inspect_string()).collect();
+    format!("[{}]", rendered.join(", "))
+}
+
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source {
         // CRuby prints the generator with its address; addresses are
@@ -396,6 +482,11 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
         EnumSource::Produce { .. } => {
             "#<Enumerator: #<Enumerator::Producer>:each>".to_string()
         }
+        // A chain/product prints its sources verbatim (CRuby renders the
+        // held array, so `[1,2].chain([3])` shows the arrays themselves
+        // while `a.each + b.each` shows the two enumerators).
+        EnumSource::Chain { sources } => format!("#<Enumerator::Chain: {}>", list(sources)),
+        EnumSource::Product { sources } => format!("#<Enumerator::Product: {}>", list(sources)),
         EnumSource::Method { recv, meth, args } => {
             let mut s = format!("#<Enumerator: {}:{meth}", recv.inspect_string());
             if !args.is_empty() {
@@ -452,7 +543,30 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
             }
             _ => RubyValue::Nil,
         },
+        // A chain is as long as its parts summed; a product is their lengths
+        // multiplied. Either is nil if any part's size is unknown, and
+        // infinite if any part is (CRuby's rule).
+        EnumSource::Chain { sources } => fold_sizes(sources, 0, |acc, n| acc + n),
+        EnumSource::Product { sources } => fold_sizes(sources, 1, |acc, n| acc * n),
     }
+}
+
+/// Fold the sources' sizes with `f`, propagating nil (unknown) and
+/// Float::INFINITY (endless) rather than folding them numerically.
+fn fold_sizes(
+    sources: &[RubyValue],
+    identity: i64,
+    f: impl Fn(i64, i64) -> i64,
+) -> RubyValue {
+    let mut acc = identity;
+    for src in sources {
+        match receiver_size(src) {
+            RubyValue::Int(n) => acc = f(acc, n),
+            RubyValue::Float(x) if x.is_infinite() => return RubyValue::Float(x),
+            _ => return RubyValue::Nil,
+        }
+    }
+    RubyValue::Int(acc)
 }
 
 fn receiver_size(recv: &RubyValue) -> RubyValue {
@@ -546,6 +660,13 @@ builtin_methods! {
             // Blockless `each` returns SELF (`equal?`-identical, oracle).
             None => Ok(recv.clone()),
         }
+    }
+
+    // `e + other` -- an `Enumerator::Chain` over the two, in order. Chaining
+    // a chain nests rather than flattens, matching CRuby.
+    "+" => fn plus(recv, args, _block) {
+        arity!(args, 1);
+        Ok(chain_of(vec![recv.clone(), args[0].clone()]))
     }
 
     "next" => fn next(recv, args, _block) {

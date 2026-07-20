@@ -21074,3 +21074,42 @@ fn ffi_struct_layout_fields_and_c_call() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "16\n8\n[:tv_sec, :tv_usec]\n123\n456\n24\n8\n16\ntrue\n");
 }
+
+#[test]
+fn enumerator_chain_product_and_lazy_size() {
+    // Enumerator::Chain over held (not flattened) sources, Enumerator.product's
+    // rightmost-fastest ordering, and Lazy#size folding ops without iterating.
+    let result = run_ruby(
+        r#"
+        p(([1, 2].each + [3, 4].each).class)
+        p(([1, 2].each + [3, 4].each).to_a)
+        p([1, 2].chain([3], [4, 5]).to_a)
+        p([1, 2].chain([3]).size)
+
+        class Letters
+          include Enumerable
+          def initialize(*xs); @xs = xs; end
+          def each(&blk); @xs.each(&blk); end
+        end
+        p([9].chain(Letters.new(7, 8)).to_a)
+        p([1, 2].chain([3]).select { |x| x > 1 })
+
+        p(Enumerator.product([1, 2], [3, 4]).class)
+        p(Enumerator.product([1, 2], [3], [4, 5]).to_a)
+        p(Enumerator.product([1, 2], [3, 4]).size)
+
+        p([1, 2, 3].lazy.map { |x| x * 2 }.size)
+        p([1, 2, 3].lazy.select { |x| x > 1 }.size)
+        p([1, 2, 3, 4, 5].lazy.drop(1).take(2).size)
+        p((1..Float::INFINITY).lazy.size)
+        p((1..Float::INFINITY).lazy.take(3).size)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Enumerator::Chain\n[1, 2, 3, 4]\n[1, 2, 3, 4, 5]\n3\n[9, 7, 8]\n[2, 3]\n\
+         Enumerator::Product\n[[1, 3, 4], [1, 3, 5], [2, 3, 4], [2, 3, 5]]\n4\n\
+         3\nnil\n2\nInfinity\n3\n"
+    );
+}

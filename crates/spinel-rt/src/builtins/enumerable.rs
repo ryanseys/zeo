@@ -321,25 +321,10 @@ fn zip(
 /// `chain(*others)` -- an Enumerator over this collection's elements followed
 /// by each `other`'s (materialized eagerly; the enumerator drives `each`).
 fn chain(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let RubyValue::Array(base) = to_a(recv, &[])? else {
-        unreachable!("to_a always answers an Array")
-    };
-    let mut combined = base.lock().clone();
-    for other in args {
-        let arr = match other {
-            RubyValue::Array(a) => a.lock().clone(),
-            _ => match send_value(other, crate::Symbol::intern("to_a"), &[], None)? {
-                RubyValue::Array(a) => a.lock().clone(),
-                _ => Vec::new(),
-            },
-        };
-        combined.extend(arr);
-    }
-    Ok(crate::builtins::enumerator::enumerator_for(
-        &RubyValue::Array(array_new(combined)),
-        "each",
-        &[],
-    ))
+    let mut sources = Vec::with_capacity(args.len() + 1);
+    sources.push(recv.clone());
+    sources.extend(args.iter().cloned());
+    Ok(crate::builtins::enumerator::chain_of(sources))
 }
 
 /// `to_set` -- a `Set` of the receiver's elements (deduplicated on insert).

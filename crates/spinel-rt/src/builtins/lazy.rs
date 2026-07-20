@@ -87,6 +87,15 @@ impl RubyObject for RLazy {
     }
 }
 
+/// The lazy source's element count, routed through an `each` enumerator so
+/// every source kind answers by the one `Enumerator#size` rule (an endless
+/// Range gives Float::INFINITY; an unsized source gives nil).
+fn source_size(source: &RubyValue) -> RubyValue {
+    let e = enumerator_for(source, "each", &[]);
+    crate::dispatch::send_value(&e, crate::Symbol::intern("size"), &[], None)
+        .unwrap_or(RubyValue::Nil)
+}
+
 /// `Enumerable#lazy` -- the entry point every enumerable dispatches to.
 pub(crate) fn make_lazy(source: &RubyValue) -> RubyValue {
     RubyValue::Object(Arc::new(RLazy { source: source.clone(), ops: Vec::new() }))
@@ -354,6 +363,30 @@ fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal>
 
 builtin_methods! {
     pub(crate) fn lookup;
+
+    // `size` never iterates: it takes the source's size and folds the ops that
+    // have a knowable effect on it. A filtering op makes the result unknown
+    // (nil) -- CRuby's rule, since it can't be answered without running.
+    "size" => fn size(recv, args, _block) {
+        arity!(args, 0);
+        let lz = lazy_of(recv);
+        let mut size = source_size(&lz.source);
+        for op in &lz.ops {
+            size = match (op, size) {
+                (LazyOp::Map(_) | LazyOp::Compact, s) => s,
+                (LazyOp::Take(n), RubyValue::Int(s)) => RubyValue::Int(s.min(*n)),
+                // `take` bounds even an endless source.
+                (LazyOp::Take(n), RubyValue::Float(_)) => RubyValue::Int(*n),
+                (LazyOp::Drop(n), RubyValue::Int(s)) => RubyValue::Int((s - n).max(0)),
+                (LazyOp::Drop(_), s @ RubyValue::Float(_)) => s,
+                _ => RubyValue::Nil,
+            };
+            if matches!(size, RubyValue::Nil) {
+                break;
+            }
+        }
+        Ok(size)
+    }
 
     "map" | "collect" => fn map(recv, args, block) {
         arity!(args, 0);
