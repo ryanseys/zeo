@@ -8488,6 +8488,37 @@ fn kernel_caller_and_conversion_functions_resolve_through_every_dispatch_path() 
 }
 
 #[test]
+fn numeric_and_time_fractional_and_rounding_coercions() {
+    // Correctness fixes: Time.utc/local accept a fractional-microsecond 7th
+    // argument (Float/Rational) and keep the sub-microsecond nanoseconds;
+    // Rational#round honors the `half:` keyword (:up/:even/:down); Float
+    // round/truncate with an extreme ndigits stays finite instead of NaN; and
+    // Enumerator.new(callable).size invokes the callable lazily. Byte-verified
+    // against ruby 4.0.5.
+    let result = run_ruby(
+        r#"
+        p Time.utc(2001, 2, 3, 4, 5, 6, 500.5).nsec
+        p Time.utc(2020, 1, 1, 0, 0, 0, Rational(1, 2)).nsec
+        p Rational(5, 2).round(half: :even)
+        p Rational(5, 2).round(half: :down)
+        p Rational(5, 2).round(half: :up)
+        p Rational(-5, 2).round(half: :even)
+        p 1.23.round(400)
+        p 1.23.round(-400)
+        p 2.5.truncate(1000)
+        p Enumerator.new(lambda { 42 }) { |y| y << 1 }.size
+        p Enumerator.new(5) { |y| y << 1 }.size
+        p Enumerator.new { |y| y << 1 }.size
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "500500\n500\n2\n2\n3\n-2\n1.23\n0\n2.5\n42\n5\nnil\n"
+    );
+}
+
+#[test]
 fn signal_module_and_signal_exception_surface() {
     // SignalException/Interrupt resolve a signal name<->number (#signo/#signm,
     // arg-form validation) and the Signal module answers list/signame/trap

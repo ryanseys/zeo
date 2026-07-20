@@ -416,13 +416,26 @@ fn float_round_family(
         None => 0,
     };
     if ndigits > 0 {
-        let scale = 10f64.powi(ndigits as i32);
+        // A very large `ndigits` overflows the `10^n` scale to infinity; scaling
+        // then rounding then unscaling would be `op(Inf)/Inf == NaN`. But asking
+        // for more fractional digits than a Float carries leaves the value
+        // unchanged, so answer `f` directly rather than the NaN.
+        let scale = 10f64.powi(ndigits.min(1024) as i32);
+        if !scale.is_finite() || !(f * scale).is_finite() {
+            return Ok(RubyValue::Float(f));
+        }
         return Ok(RubyValue::Float(op(f * scale) / scale));
     }
     if ndigits == 0 {
         return float_to_integer(op(f));
     }
-    let scale = 10f64.powi((-ndigits) as i32);
+    // Negative `ndigits`: round to the `10^|n|` place. A very large `|n|`
+    // overflows the scale; the place then dwarfs the value, so the result is 0
+    // (the `0.0 * Inf == NaN` the naive path would produce is the bug).
+    let scale = 10f64.powi((-ndigits).min(1024) as i32);
+    if !scale.is_finite() {
+        return float_to_integer(0.0);
+    }
     float_to_integer(op(f / scale) * scale)
 }
 

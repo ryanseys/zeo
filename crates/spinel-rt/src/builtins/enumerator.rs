@@ -166,7 +166,10 @@ pub(crate) fn enumerator_new(
     };
     let size_hint = match args.first() {
         None | Some(RubyValue::Nil) => None,
-        Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_))) => {
+        // An Integer/Float is the size directly; a Proc/lambda is a size
+        // CALLABLE, invoked lazily by `#size` (never at construction), so it is
+        // stored as-is here.
+        Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Proc(_))) => {
             Some(v.clone())
         }
         Some(other) => {
@@ -414,7 +417,13 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
 /// `each_slice` over an infinite range -- return nil here, documented).
 fn enum_size(e: &EnumeratorData) -> RubyValue {
     match &e.source {
-        EnumSource::Generator { .. } => e.size_hint.clone().unwrap_or(RubyValue::Nil),
+        // A stored size CALLABLE is invoked lazily here (CRuby calls it from
+        // `#size`); a plain Integer/Float hint answers directly; none -> nil.
+        EnumSource::Generator { .. } => match &e.size_hint {
+            Some(RubyValue::Proc(p)) => p.call(&[]).unwrap_or(RubyValue::Nil),
+            Some(v) => v.clone(),
+            None => RubyValue::Nil,
+        },
         // A produced sequence is endless -> Float::INFINITY (CRuby's rule).
         EnumSource::Produce { .. } => RubyValue::Float(f64::INFINITY),
         EnumSource::Method { recv, meth, args } => match meth.as_str() {

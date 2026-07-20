@@ -511,17 +511,31 @@ fn parse_offset(s: &str) -> Result<i32, Signal> {
     check_offset(sign * (h * 3600 + m * 60 + sec))
 }
 
-/// A `Time.utc`/`Time.local` 7th argument: MICROSECONDS, which real Ruby
-/// range-checks (`Time.utc(2000,1,1,0,0,0,1000000)` is an ArgumentError, not
-/// a silent carry into the next second).
-fn usec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
+/// A `Time.utc`/`Time.local` 7th argument: sub-second time in MICROSECONDS,
+/// returned as whole NANOSECONDS so a fractional microsecond survives -- CRuby
+/// keeps it (`Time.utc(...,500.5).nsec` is 500500, `Rational(1,2)` -> 500 nsec).
+/// An Integer is range-checked to `[0, 1_000_000)`; a Float or Rational may be
+/// fractional. Real Ruby range-checks (`1_000_000` us is an ArgumentError, not a
+/// silent carry into the next second).
+fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
     match v {
         None => Ok(0),
-        Some(RubyValue::Int(u)) if (0..1_000_000).contains(u) => Ok(*u as u32),
+        Some(RubyValue::Int(u)) if (0..1_000_000).contains(u) => Ok(*u as u32 * 1000),
         Some(RubyValue::Int(_)) => Err(raise_error(
             "ArgumentError",
             "subsecx out of range".to_string(),
         )),
+        Some(v @ (RubyValue::Float(_) | RubyValue::Rational(_))) => {
+            let usec = match v {
+                RubyValue::Float(f) => *f,
+                RubyValue::Rational(r) => crate::builtins::rational::rat_to_f64(r),
+                _ => unreachable!(),
+            };
+            if !(0.0..1_000_000.0).contains(&usec) {
+                return Err(raise_error("ArgumentError", "subsecx out of range".to_string()));
+            }
+            Ok((usec * 1000.0) as u32)
+        }
         Some(other) => Err(raise_error(
             "TypeError",
             format!(
@@ -605,8 +619,8 @@ builtin_methods! {
     "utc" | "gm" => fn time_utc(_recv, args, _block) {
         arity!(args, 1..=7);
         let parts = int_parts(args, 6)?;
-        let usec = usec_arg(args.get(6))?;
-        Ok(time_value(civil_to_epoch_utc(&parts), usec * 1000, Some(0)))
+        let nsec = subsec_nsec_arg(args.get(6))?;
+        Ok(time_value(civil_to_epoch_utc(&parts), nsec, Some(0)))
     }
     // `Time.new(y, mo, d, h, mi, s, utc_offset)` -- the 7th argument is the
     // OFFSET, in seconds or as a `"+HH:MM"` String, unlike `Time.utc`'s
@@ -664,11 +678,11 @@ builtin_methods! {
     "local" | "mktime" => fn time_local(_recv, args, _block) {
         arity!(args, 1..=7);
         let parts = int_parts(args, 6)?;
-        let usec = usec_arg(args.get(6))?;
+        let nsec = subsec_nsec_arg(args.get(6))?;
         let as_utc = civil_to_epoch_utc(&parts);
         let probe = RTime { num: num_bigint::BigInt::from(as_utc), den: num_bigint::BigInt::from(1), offset: parking_lot::Mutex::new(None) };
         let off = civil(&probe).offset as i64;
-        Ok(time_value(as_utc - off, usec * 1000, None))
+        Ok(time_value(as_utc - off, nsec, None))
     }
 }
 

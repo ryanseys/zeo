@@ -252,6 +252,8 @@ enum RoundMode {
     Ceil,
     Trunc,
     HalfUp,
+    HalfEven,
+    HalfDown,
 }
 
 /// The optional `ndigits` precision argument (default 0).
@@ -269,6 +271,38 @@ fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
     }
 }
 
+/// Split a trailing `half:` options Hash off `round`'s argument list, returning
+/// the positional arguments and the tie-breaking mode it selects (`HalfUp` when
+/// no `half:` is given). `#round`/`#floor`/`#ceil` take at most a precision, so
+/// any trailing Hash is the keyword arguments.
+fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], RoundMode), Signal> {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return Ok((args, RoundMode::HalfUp));
+    };
+    let half = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("half")));
+    let mode = match &half {
+        RubyValue::Nil => RoundMode::HalfUp,
+        RubyValue::Symbol(s) => match s.name().as_str() {
+            "up" => RoundMode::HalfUp,
+            "even" => RoundMode::HalfEven,
+            "down" => RoundMode::HalfDown,
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    format!("invalid rounding mode: {other}"),
+                ))
+            }
+        },
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("invalid rounding mode: {}", other.inspect_string()),
+            ))
+        }
+    };
+    Ok((&args[..args.len() - 1], mode))
+}
+
 /// `num/den` reduced to an integer under `mode` (`den` is always positive here).
 fn round_int(num: &BigInt, den: &BigInt, mode: RoundMode) -> BigInt {
     match mode {
@@ -278,6 +312,27 @@ fn round_int(num: &BigInt, den: &BigInt, mode: RoundMode) -> BigInt {
         // Half away from zero: sign * ((2|num| + den) / (2 den)).
         RoundMode::HalfUp => {
             let m = (BigInt::from(2) * num.abs() + den) / (BigInt::from(2) * den);
+            if num.is_negative() { -m } else { m }
+        }
+        // Half toward zero: a tie truncates. sign * ((2|num| + den - 1) / (2 den)).
+        RoundMode::HalfDown => {
+            let m = (BigInt::from(2) * num.abs() + den - BigInt::from(1)) / (BigInt::from(2) * den);
+            if num.is_negative() { -m } else { m }
+        }
+        // Banker's rounding: a tie goes to the even neighbor.
+        RoundMode::HalfEven => {
+            use num_traits::Zero;
+            let two = BigInt::from(2);
+            let abs = num.abs();
+            let k = &abs / den; // floor magnitude
+            let rem2 = &two * (&abs - &k * den); // 2 * fractional * den
+            let m = match rem2.cmp(den) {
+                std::cmp::Ordering::Less => k,
+                std::cmp::Ordering::Greater => k + BigInt::from(1),
+                std::cmp::Ordering::Equal => {
+                    if (&k % &two).is_zero() { k } else { k + BigInt::from(1) }
+                }
+            };
             if num.is_negative() { -m } else { m }
         }
     }
@@ -372,8 +427,9 @@ builtin_methods! {
         round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::Trunc)
     }
     "round" => fn round(recv, args, _block) {
-        arity!(args, 0..=1);
-        round_with_precision(recv_rational(recv), precision_arg(args)?, RoundMode::HalfUp)
+        let (pos, mode) = split_half_kwarg(args)?;
+        arity!(pos, 0..=1);
+        round_with_precision(recv_rational(recv), precision_arg(pos)?, mode)
     }
     // A Rational is always a finite value.
     "finite?" => fn finite_p(recv, args, _block) {
