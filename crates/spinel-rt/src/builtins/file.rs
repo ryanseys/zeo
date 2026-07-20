@@ -175,6 +175,79 @@ fn kwarg_truthy(trailing: Option<&RubyValue>, name: &str) -> bool {
     crate::collections::hash_get(h, &key).truthy()
 }
 
+/// The String value of an option keyword in a trailing Hash (`mode: "w"`),
+/// or `None` when absent / not a String.
+fn kwarg_str(trailing: Option<&RubyValue>, name: &str) -> Option<String> {
+    let RubyValue::Hash(h) = trailing? else {
+        return None;
+    };
+    let key = RubyValue::Symbol(crate::Symbol::intern(name));
+    match crate::collections::hash_get(h, &key) {
+        RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// Split `bytes` into records terminated by `sep` (each keeps its terminator,
+/// like `IO#readlines`), stripping the terminator when `chomp`. An empty `sep`
+/// is paragraph mode, which the corpus doesn't use -- treated as "\n\n".
+fn split_records(bytes: &[u8], sep: &str, chomp: bool) -> Vec<RubyValue> {
+    let sep = if sep.is_empty() { "\n\n" } else { sep };
+    let sep = sep.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(sep) {
+            let end = i + sep.len();
+            let piece = if chomp { &bytes[start..i] } else { &bytes[start..end] };
+            out.push(str_val(String::from_utf8_lossy(piece).into_owned()));
+            i = end;
+            start = end;
+        } else {
+            i += 1;
+        }
+    }
+    if start < bytes.len() {
+        out.push(str_val(String::from_utf8_lossy(&bytes[start..]).into_owned()));
+    }
+    out
+}
+
+/// Glob-match `name` against a shell pattern (`*`, `?`, `[set]`) -- the subset
+/// of `File.fnmatch` the corpus exercises. `*` does NOT cross `/` only under
+/// `FNM_PATHNAME`, which the corpus doesn't use, so `*` here spans everything.
+fn fnmatch(pattern: &str, name: &str) -> bool {
+    fn rec(p: &[char], n: &[char]) -> bool {
+        match p.first() {
+            None => n.is_empty(),
+            Some('*') => {
+                // `*` matches zero or more chars: try consuming none, then one.
+                rec(&p[1..], n) || (!n.is_empty() && rec(p, &n[1..]))
+            }
+            Some('?') => !n.is_empty() && rec(&p[1..], &n[1..]),
+            Some('[') => {
+                let Some(close) = p.iter().position(|&c| c == ']') else {
+                    // A stray `[` is a literal.
+                    return n.first() == Some(&'[') && rec(&p[1..], &n[1..]);
+                };
+                let (set, negate) = {
+                    let inner = &p[1..close];
+                    match inner.first() {
+                        Some('!') | Some('^') => (&inner[1..], true),
+                        _ => (inner, false),
+                    }
+                };
+                let Some(&ch) = n.first() else { return false };
+                let hit = set.contains(&ch);
+                (hit != negate) && rec(&p[close + 1..], &n[1..])
+            }
+            Some(&c) => n.first() == Some(&c) && rec(&p[1..], &n[1..]),
+        }
+    }
+    rec(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
+}
+
 /// `File.basename(path)` / `File.basename(path, suffix)`. Pure string work:
 /// trailing slashes are stripped first (`File.basename("/a/b/")` is `"b"`),
 /// and a `".*"` suffix means "any extension".
@@ -355,6 +428,21 @@ pub fn seed_file() {
     set("FNM_EXTGLOB", 16);
     set("FNM_SHORTNAME", 0);
     set("FNM_SYSCASE", 0);
+    // `open(2)` flag bits, for the integer-mode `File.open` form. Darwin values
+    // come straight from `libc` so they match the host's headers exactly.
+    set("RDONLY", libc::O_RDONLY as i64);
+    set("WRONLY", libc::O_WRONLY as i64);
+    set("RDWR", libc::O_RDWR as i64);
+    set("APPEND", libc::O_APPEND as i64);
+    set("CREAT", libc::O_CREAT as i64);
+    set("TRUNC", libc::O_TRUNC as i64);
+    set("EXCL", libc::O_EXCL as i64);
+    set("NONBLOCK", libc::O_NONBLOCK as i64);
+    // `flock(2)` operations, for `IO#flock`.
+    set("LOCK_SH", libc::LOCK_SH as i64);
+    set("LOCK_EX", libc::LOCK_EX as i64);
+    set("LOCK_UN", libc::LOCK_UN as i64);
+    set("LOCK_NB", libc::LOCK_NB as i64);
 }
 
 /// `File.ftype`'s answer: the file type of `path` WITHOUT following a final
@@ -380,6 +468,37 @@ fn ftype_string(path: &str) -> Result<&'static str, Signal> {
     } else {
         "unknown"
     })
+}
+
+/// A `File.open` integer mode -- the `O_*` bitmask (`File::WRONLY |
+/// File::CREAT | File::TRUNC`). The access mode is the low two bits; the rest
+/// are creation/append flags.
+fn open_options_int(flags: i64) -> std::fs::OpenOptions {
+    let mut o = std::fs::OpenOptions::new();
+    match flags & libc::O_ACCMODE as i64 {
+        x if x == libc::O_WRONLY as i64 => {
+            o.write(true);
+        }
+        x if x == libc::O_RDWR as i64 => {
+            o.read(true).write(true);
+        }
+        _ => {
+            o.read(true);
+        }
+    }
+    if flags & libc::O_APPEND as i64 != 0 {
+        o.append(true);
+    }
+    if flags & libc::O_CREAT as i64 != 0 {
+        o.create(true);
+    }
+    if flags & libc::O_TRUNC as i64 != 0 {
+        o.truncate(true);
+    }
+    if flags & libc::O_EXCL as i64 != 0 {
+        o.create_new(true);
+    }
+    o
 }
 
 /// A `File.open` mode string (`"r"`, `"w"`, `"a"`, `"r+"`, ... with an
@@ -416,13 +535,18 @@ builtin_methods! {
     "open" | "new" => fn file_open(_recv, args, block) {
         arity!(args, 1..=3);
         let path = path_arg(&args[0], "open")?;
-        let mode = match args.get(1) {
-            None => "r".to_string(),
-            // A trailing options Hash is accepted and ignored (see readlines).
-            Some(RubyValue::Hash(_)) => "r".to_string(),
-            Some(v) => path_arg(v, "open")?,
+        // The mode is a String (`"w"`), an Integer O_* bitmask
+        // (`File::WRONLY | File::CREAT`), a `mode:` keyword in a trailing Hash,
+        // or absent (`"r"`).
+        let opts = match args.get(1) {
+            None => open_options("r")?,
+            Some(RubyValue::Int(flags)) => open_options_int(*flags),
+            Some(RubyValue::Hash(_)) => {
+                open_options(kwarg_str(args.get(1), "mode").as_deref().unwrap_or("r"))?
+            }
+            Some(v) => open_options(&path_arg(v, "open")?)?,
         };
-        let f = open_options(&mode)?
+        let f = opts
             .open(&path)
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let io = crate::builtins::io::file_value(f, path);
@@ -443,7 +567,16 @@ builtin_methods! {
     "read" => fn file_read(_recv, args, _block) {
         arity!(args, 1..=4);
         let path = path_arg(&args[0], "read")?;
-        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let mut bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        // `File.read(path, length, offset)`: drop `offset` leading bytes, then
+        // cap at `length` (an Integer positional; a trailing Hash is options).
+        if let Some(RubyValue::Int(off)) = args.get(2) {
+            let off = (*off).max(0) as usize;
+            bytes = bytes.split_off(off.min(bytes.len()));
+        }
+        if let Some(RubyValue::Int(len)) = args.get(1) {
+            bytes.truncate((*len).max(0) as usize);
+        }
         let (ext, int) = read_encodings(args.last())?;
         Ok(RubyValue::Str(build_read_string(bytes, ext, int)?))
     }
@@ -462,26 +595,17 @@ builtin_methods! {
         Ok(RubyValue::Int(data.len() as i64))
     }
     "readlines" => fn file_readlines(_recv, args, _block) {
-        arity!(args, 1..=2);
+        arity!(args, 1..=3);
         let path = path_arg(&args[0], "readlines")?;
         let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        // The same splitter `String#each_line`/`#lines` use -- one rule for
-        // what a line is.
-        let mut lines = crate::builtins::string::split_lines(&text);
-        // `chomp: true` strips the terminators (an `encoding:` keyword is
-        // accepted and ignored until the encoding engine lands). Keywords
-        // arrive as a trailing Hash -- the G2 convention.
-        if kwarg_truthy(args.get(1), "chomp") {
-            lines = lines
-                .into_iter()
-                .map(|l| {
-                    let s = l.to_display_string();
-                    str_val(s.trim_end_matches('\n').trim_end_matches('\r').to_string())
-                })
-                .collect();
-        }
-        Ok(RubyValue::Array(crate::collections::array_new(lines)))
+        // A String positional after the path is the record separator (default
+        // "\n"); `chomp: true` (trailing Hash) strips it.
+        let sep = match args.get(1) {
+            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+            _ => "\n".to_string(),
+        };
+        let chomp = kwarg_truthy(args.last(), "chomp");
+        Ok(RubyValue::Array(crate::collections::array_new(split_records(&bytes, &sep, chomp))))
     }
     // `File.foreach(path)` -- yield each line; without a block, an Enumerator.
     // `chomp: true` strips terminators, mirroring `readlines`.
@@ -510,14 +634,81 @@ builtin_methods! {
         let path = path_arg(&args[0], "ftype")?;
         Ok(str_val(ftype_string(&path)?.to_string()))
     }
+    // `File.stat(path)` follows a final symlink; `File.lstat(path)` does not.
+    "stat" => fn file_stat(_recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::stat::stat_from_path(&path_arg(&args[0], "stat")?, true)
+    }
+    "lstat" => fn file_lstat(_recv, args, _block) {
+        arity!(args, 1);
+        crate::builtins::stat::stat_from_path(&path_arg(&args[0], "lstat")?, false)
+    }
+    // `File.truncate(path, len)` -- resize to `len` bytes; answers 0.
+    "truncate" => fn file_truncate(_recv, args, _block) {
+        arity!(args, 2);
+        let path = path_arg(&args[0], "truncate")?;
+        let RubyValue::Int(len) = &args[1] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        let f = std::fs::OpenOptions::new().write(true).open(&path)
+            .map_err(|e| raise_errno(&e, "truncate", &path))?;
+        f.set_len((*len).max(0) as u64).map_err(|e| raise_errno(&e, "truncate", &path))?;
+        Ok(RubyValue::Int(0))
+    }
+    // `File.absolute_path(path [, base])` -- like `expand_path` but WITHOUT
+    // `~` expansion (a leading `~` stays literal).
+    "absolute_path" => fn file_absolute_path(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let p = path_arg(&args[0], "absolute_path")?;
+        let base = match args.get(1) {
+            None | Some(RubyValue::Nil) => None,
+            Some(v) => Some(path_arg(v, "absolute_path")?),
+        };
+        Ok(str_val(expand_path_of(&p, base.as_deref())?))
+    }
+    // `File.path(obj)` -- the path String of a String or `to_path`-able object.
+    "path" => fn file_path(_recv, args, _block) {
+        arity!(args, 1);
+        Ok(str_val(path_arg(&args[0], "path")?))
+    }
+    // `File.fnmatch(pattern, path [, flags])` / `fnmatch?` -- glob match.
+    "fnmatch" | "fnmatch?" => fn file_fnmatch(_recv, args, _block) {
+        arity!(args, 2..=3);
+        let pat = path_arg(&args[0], "fnmatch")?;
+        let name = path_arg(&args[1], "fnmatch")?;
+        Ok(RubyValue::Bool(fnmatch(&pat, &name)))
+    }
     "write" => fn file_write(_recv, args, _block) {
         arity!(args, 2..=3);
         let path = path_arg(&args[0], "write")?;
         // Bytes are written VERBATIM (a String emits its own bytes, so a
         // BINARY string round-trips unchanged).
         let data = write_bytes(&args[1]);
-        std::fs::write(&path, &data)
-            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        // The third argument is either an Integer offset (write in place,
+        // WITHOUT truncating) or an options Hash (`mode: "a"` to append).
+        match args.get(2) {
+            Some(RubyValue::Int(off)) => {
+                use std::io::{Seek, Write};
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .open(&path)
+                    .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+                f.seek(std::io::SeekFrom::Start((*off).max(0) as u64))
+                    .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+                f.write_all(&data).map_err(|e| raise_errno(&e, "write", &path))?;
+            }
+            Some(RubyValue::Hash(_)) if kwarg_str(args.get(2), "mode").as_deref() == Some("a") => {
+                use std::io::Write;
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(&path)
+                    .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+                f.write_all(&data).map_err(|e| raise_errno(&e, "write", &path))?;
+            }
+            _ => std::fs::write(&path, &data).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?,
+        }
         Ok(RubyValue::Int(data.len() as i64))
     }
     "exist?" | "exists?" => fn file_exist_p(_recv, args, _block) {
@@ -809,7 +1000,16 @@ builtin_methods! {
     }
     "dirname" => fn file_dirname(_recv, args, _block) {
         arity!(args, 1..=2);
-        Ok(str_val(dirname_of(&path_arg(&args[0], "dirname")?)))
+        let mut path = path_arg(&args[0], "dirname")?;
+        // `File.dirname(path, level)` strips `level` trailing components.
+        let level = match args.get(1) {
+            Some(RubyValue::Int(n)) => *n,
+            _ => 1,
+        };
+        for _ in 0..level {
+            path = dirname_of(&path);
+        }
+        Ok(str_val(path))
     }
     "extname" => fn file_extname(_recv, args, _block) {
         arity!(args, 1);

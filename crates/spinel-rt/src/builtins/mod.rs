@@ -59,6 +59,7 @@ pub(crate) mod random;
 pub(crate) mod condition_variable;
 pub(crate) mod set;
 pub(crate) mod signal;
+pub(crate) mod stat;
 pub(crate) mod rstruct;
 pub(crate) mod regexp;
 pub(crate) mod fiber;
@@ -104,6 +105,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup,
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder,
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup,
+        spinel_abi::FILE_STAT_CLASS => stat::lookup,
         spinel_abi::METHOD_CLASS => method_obj::lookup,
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         spinel_abi::FIBER_CLASS => fiber::lookup,
@@ -167,6 +169,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::PROC_CLASS => rproc::lookup_class,
         spinel_abi::REGEXP_CLASS => regexp::lookup_class,
         spinel_abi::FILE_CLASS => file::lookup_class,
+        spinel_abi::FILE_TEST_MODULE => file::lookup_class,
+        spinel_abi::IO_CLASS => io::lookup_class,
         spinel_abi::DIR_CLASS => dir::lookup_class,
         spinel_abi::TIME_CLASS => time::lookup_class,
         spinel_abi::PROCESS_CLASS => process::lookup_class,
@@ -252,6 +256,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::ENUMERATOR_CLASS => enumerator::lookup_names(),
         spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder_names(),
         spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup_names(),
+        spinel_abi::FILE_STAT_CLASS => stat::lookup_names(),
         spinel_abi::METHOD_CLASS => method_obj::lookup_names(),
         spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         spinel_abi::FIBER_CLASS => fiber::lookup_names(),
@@ -302,6 +307,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::PROC_CLASS => rproc::lookup_class_names(),
         spinel_abi::REGEXP_CLASS => regexp::lookup_class_names(),
         spinel_abi::FILE_CLASS => file::lookup_class_names(),
+        spinel_abi::FILE_TEST_MODULE => file::lookup_class_names(),
+        spinel_abi::IO_CLASS => io::lookup_class_names(),
         spinel_abi::DIR_CLASS => dir::lookup_class_names(),
         spinel_abi::TIME_CLASS => time::lookup_class_names(),
         spinel_abi::PROCESS_CLASS => process::lookup_class_names(),

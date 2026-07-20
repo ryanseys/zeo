@@ -53,6 +53,16 @@ builtin_methods! {
     "p" => fn p(_recv, args, _block) {
         kernel_p(args)
     }
+    // `Kernel#open(path, mode = "r")` -- opens a File (the `"|command"` pipe
+    // form is out of scope); delegates to `File.open` so the block-closes-file
+    // contract and mode handling are shared, never divergent.
+    "open" => fn kernel_open(_recv, args, block) {
+        crate::builtins::file::lookup_class("open").unwrap()(
+            &RubyValue::Class(spinel_abi::FILE_CLASS),
+            args,
+            block,
+        )
+    }
     "pp" => fn pp(_recv, args, _block) {
         kernel_pp(args)
     }

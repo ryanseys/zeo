@@ -27,6 +27,10 @@ pub enum IoBackend {
     /// one: every operation on it raises IOError, which is what real Ruby
     /// does and what a plain `Option::take` gives us for free.
     File(Option<std::fs::File>),
+    /// One end of an `IO.pipe`. Backed by a real fd (wrapped in a `File` for
+    /// its `Read`/`Write`), but reports `IO` rather than `File` for `#class`
+    /// and has no path -- a pipe is a plain IO, not a File.
+    Pipe(Option<std::fs::File>),
 }
 
 pub struct RIo {
@@ -37,6 +41,9 @@ pub struct RIo {
     /// The path this was opened from, for error messages and `#path`; empty
     /// for the std streams.
     path: String,
+    /// `#lineno` -- the count of lines read via `gets`/`readline`/`each_line`,
+    /// which CRuby tracks per-IO and lets a program set with `lineno=`.
+    lineno: std::sync::atomic::AtomicI64,
 }
 
 impl RubyObject for RIo {
@@ -45,7 +52,7 @@ impl RubyObject for RIo {
     fn class_id(&self) -> ClassId {
         match &*self.backend.lock() {
             IoBackend::File(_) => spinel_abi::FILE_CLASS,
-            IoBackend::Std(_) => IO_CLASS,
+            IoBackend::Std(_) | IoBackend::Pipe(_) => IO_CLASS,
         }
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -69,11 +76,12 @@ impl RubyObject for RIo {
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
         let stream = match &*self.backend.lock() {
             IoBackend::Std(s) => *s,
-            IoBackend::File(_) => StdStream::Stdout,
+            IoBackend::File(_) | IoBackend::Pipe(_) => StdStream::Stdout,
         };
         Arc::new(RIo {
             backend: parking_lot::Mutex::new(IoBackend::Std(stream)),
             path: self.path.clone(),
+            lineno: std::sync::atomic::AtomicI64::new(0),
         })
     }
 }
@@ -82,6 +90,7 @@ fn std_io(stream: StdStream) -> RubyValue {
     RubyValue::Object(Arc::new(RIo {
         backend: parking_lot::Mutex::new(IoBackend::Std(stream)),
         path: String::new(),
+        lineno: std::sync::atomic::AtomicI64::new(0),
     }))
 }
 
@@ -90,6 +99,16 @@ pub(crate) fn file_value(f: std::fs::File, path: String) -> RubyValue {
     RubyValue::Object(Arc::new(RIo {
         backend: parking_lot::Mutex::new(IoBackend::File(Some(f))),
         path,
+        lineno: std::sync::atomic::AtomicI64::new(0),
+    }))
+}
+
+/// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
+fn pipe_value(f: std::fs::File) -> RubyValue {
+    RubyValue::Object(Arc::new(RIo {
+        backend: parking_lot::Mutex::new(IoBackend::Pipe(Some(f))),
+        path: String::new(),
+        lineno: std::sync::atomic::AtomicI64::new(0),
     }))
 }
 
@@ -162,10 +181,10 @@ pub fn write_str(target: &RubyValue, s: &str) -> Result<(), Signal> {
                     "IOError",
                     "not opened for writing".to_string(),
                 )),
-                IoBackend::File(None) => {
+                IoBackend::File(None) | IoBackend::Pipe(None) => {
                     Err(raise_error("IOError", "closed stream".to_string()))
                 }
-                IoBackend::File(Some(f)) => f
+                IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => f
                     .write_all(s.as_bytes())
                     .map_err(|e| crate::builtins::file::raise_errno(&e, "write", &io.path)),
             };
@@ -279,7 +298,7 @@ pub(crate) fn as_rio(recv: &RubyValue) -> Option<&RIo> {
 fn stream_of(recv: &RubyValue) -> Option<StdStream> {
     match &*as_rio(recv)?.backend.lock() {
         IoBackend::Std(s) => Some(*s),
-        IoBackend::File(_) => None,
+        IoBackend::File(_) | IoBackend::Pipe(_) => None,
     }
 }
 
@@ -369,16 +388,40 @@ fn with_file<T>(
     };
     let path = io.path.clone();
     match &mut *io.backend.lock() {
-        IoBackend::File(Some(file)) => f(file, &path),
-        IoBackend::File(None) => Err(raise_error("IOError", "closed stream".to_string())),
+        IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(file, &path),
+        IoBackend::File(None) | IoBackend::Pipe(None) => {
+            Err(raise_error("IOError", "closed stream".to_string()))
+        }
         IoBackend::Std(_) => Err(raise_error("IOError", "not a file".to_string())),
     }
 }
 
-/// `read` / `read(n)` -- the whole rest, or exactly `n` bytes. At EOF, a
-/// LENGTHED read answers nil while a whole-rest read answers `""` (real
-/// Ruby's asymmetry, and the thing a read loop tests).
-fn io_read(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+/// `read` / `read(n)` / `read(n, buf)` -- the whole rest, or `n` bytes,
+/// optionally read INTO an existing String `buf` (returned in place of a fresh
+/// one). At EOF, a LENGTHED read answers nil while a whole-rest read answers
+/// `""` (real Ruby's asymmetry, and the thing a read loop tests).
+fn io_read(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let result = io_read_val(recv, args, blk)?;
+    // 2-arg `read(length, buffer)`: fill the caller's String and answer it (or
+    // nil at EOF, having emptied it).
+    if let Some(RubyValue::Str(buf)) = args.get(1) {
+        match &result {
+            RubyValue::Str(s) => {
+                let txt = s.lock().to_utf8_lossy().into_owned();
+                buf.lock().replace_utf8(txt);
+                return Ok(RubyValue::Str(buf.clone()));
+            }
+            RubyValue::Nil => {
+                buf.lock().replace_utf8(String::new());
+                return Ok(RubyValue::Nil);
+            }
+            _ => {}
+        }
+    }
+    Ok(result)
+}
+
+fn io_read_val(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     // A read from STDIN reads the real one; anything else needs a file.
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         let mut buf = String::new();
@@ -518,8 +561,11 @@ fn io_eof(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 /// DROPS the descriptor, so every later operation raises IOError.
 fn io_close(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     if let Some(io) = as_rio(recv) {
-        if let IoBackend::File(slot) = &mut *io.backend.lock() {
-            slot.take();
+        match &mut *io.backend.lock() {
+            IoBackend::File(slot) | IoBackend::Pipe(slot) => {
+                slot.take();
+            }
+            IoBackend::Std(_) => {}
         }
     }
     Ok(RubyValue::Nil)
@@ -527,35 +573,108 @@ fn io_close(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> R
 
 fn io_closed(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let closed = match as_rio(recv) {
-        Some(io) => matches!(&*io.backend.lock(), IoBackend::File(None)),
+        Some(io) => matches!(
+            &*io.backend.lock(),
+            IoBackend::File(None) | IoBackend::Pipe(None)
+        ),
         None => false,
     };
     Ok(RubyValue::Bool(closed))
 }
 
-/// `each_line`/`each` over a file's lines, and `readlines`/`gets` beside it.
-fn io_readlines(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    let text = io_read(recv, &[], None)?.to_display_string();
-    Ok(RubyValue::Array(crate::collections::array_new(
-        crate::builtins::string::split_lines(&text),
-    )))
+/// How `gets`/`readline`/`each_line`/`readlines` split their input: the line
+/// separator (`None` = slurp the whole rest, i.e. `gets(nil)`), an optional
+/// byte limit, and whether to strip the terminator (`chomp:`).
+struct LineOpts {
+    sep: Option<Vec<u8>>,
+    limit: Option<usize>,
+    chomp: bool,
 }
 
-fn io_each_line(recv: &RubyValue, _args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    let Some(RubyValue::Proc(p)) = blk else {
-        return Err(crate::dispatch::raise_no_block_yield());
-    };
-    let text = io_read(recv, &[], None)?.to_display_string();
-    for l in crate::builtins::string::split_lines(&text) {
-        p.call(&[l])?;
+/// Parse the shared `(sep = $/, limit = nil, chomp: false)` argument shape.
+/// A leading Integer is the limit (separator stays `"\n"`); a leading String
+/// is the separator, with an Integer that follows as the limit; a leading nil
+/// slurps. The trailing keyword Hash carries `chomp:`.
+fn line_opts(args: &[RubyValue]) -> LineOpts {
+    let mut sep: Option<Vec<u8>> = Some(b"\n".to_vec());
+    let mut limit = None;
+    let mut chomp = false;
+    let mut positional = args;
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        chomp = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("chomp")))
+            .truthy();
+        positional = &args[..args.len() - 1];
     }
-    Ok(recv.clone())
+    match positional.first() {
+        Some(RubyValue::Int(n)) => limit = Some((*n).max(0) as usize),
+        Some(RubyValue::Nil) => sep = None,
+        Some(RubyValue::Str(s)) => sep = Some(s.lock().bytes().to_vec()),
+        _ => {}
+    }
+    if let Some(RubyValue::Int(n)) = positional.get(1) {
+        limit = Some((*n).max(0) as usize);
+    }
+    LineOpts { sep, limit, chomp }
 }
 
-/// `gets` -- one line, or nil at EOF. Reads a byte at a time so the file
-/// position lands exactly after the newline (a buffered read would consume
-/// more than the line and desync `tell`).
-fn io_gets(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+/// Read the next line's bytes: up to and including the separator, or `limit`
+/// bytes, or EOF. An empty result means EOF. Byte-at-a-time so the position
+/// lands exactly after the line (a buffered read would desync `tell`).
+fn read_line_bytes(
+    f: &mut std::fs::File,
+    opts: &LineOpts,
+) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if let Some(lim) = opts.limit {
+            if out.len() >= lim {
+                break;
+            }
+        }
+        match f.read(&mut byte)? {
+            0 => break,
+            _ => {
+                out.push(byte[0]);
+                if let Some(s) = &opts.sep {
+                    if !s.is_empty() && out.ends_with(s) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Turn a line's bytes into the String `gets` answers, honoring `chomp:`.
+fn line_string(bytes: Vec<u8>, opts: &LineOpts) -> RubyValue {
+    let mut s = String::from_utf8_lossy(&bytes).into_owned();
+    if opts.chomp {
+        // `chomp` strips one trailing "\r\n"/"\n"/"\r" (or the custom sep).
+        if let Some(sep) = &opts.sep {
+            let sep = String::from_utf8_lossy(sep);
+            if s.ends_with(sep.as_ref()) {
+                s.truncate(s.len() - sep.len());
+            }
+        }
+        while s.ends_with('\n') || s.ends_with('\r') {
+            s.pop();
+        }
+    }
+    RubyValue::Str(crate::collections::string_new(s))
+}
+
+fn bump_lineno(recv: &RubyValue) {
+    if let Some(io) = as_rio(recv) {
+        io.lineno.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// `gets([sep][, limit][, chomp:])` -- one line, or nil at EOF; bumps `lineno`.
+fn io_gets(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let opts = line_opts(args);
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         let mut line = String::new();
         let n = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line)
@@ -563,37 +682,366 @@ fn io_gets(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
         if n == 0 {
             return Ok(RubyValue::Nil);
         }
-        return Ok(RubyValue::Str(crate::collections::string_new(line)));
+        bump_lineno(recv);
+        return Ok(line_string(line.into_bytes(), &opts));
     }
-    with_file(recv, |f, path| {
-        use std::io::Read;
-        let mut line = Vec::new();
-        let mut byte = [0u8; 1];
-        loop {
-            match f.read(&mut byte) {
-                Ok(0) => break,
-                Ok(_) => {
-                    line.push(byte[0]);
-                    if byte[0] == b'\n' {
-                        break;
-                    }
-                }
-                Err(e) => return Err(crate::builtins::file::raise_errno(&e, "gets", path)),
-            }
+    let line = with_file(recv, |f, path| {
+        read_line_bytes(f, &opts).map_err(|e| crate::builtins::file::raise_errno(&e, "gets", path))
+    })?;
+    if line.is_empty() {
+        return Ok(RubyValue::Nil);
+    }
+    bump_lineno(recv);
+    Ok(line_string(line, &opts))
+}
+
+/// `readline` -- `gets`, but raises `EOFError` instead of answering nil.
+fn io_readline(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match io_gets(recv, args, None)? {
+        RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
+        line => Ok(line),
+    }
+}
+
+fn io_lineno(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let n = as_rio(recv).map_or(0, |io| io.lineno.load(std::sync::atomic::Ordering::Relaxed));
+    Ok(RubyValue::Int(n))
+}
+
+fn io_lineno_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Int(n) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    if let Some(io) = as_rio(recv) {
+        io.lineno.store(n, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(RubyValue::Int(n))
+}
+
+/// Read the next whole UTF-8 char from `f` (1-4 bytes by the lead byte), or
+/// `None` at EOF.
+fn read_one_char(f: &mut std::fs::File) -> std::io::Result<Option<String>> {
+    use std::io::Read;
+    let mut first = [0u8; 1];
+    if f.read(&mut first)? == 0 {
+        return Ok(None);
+    }
+    let b0 = first[0];
+    let n = if b0 < 0x80 {
+        1
+    } else if b0 >> 5 == 0b110 {
+        2
+    } else if b0 >> 4 == 0b1110 {
+        3
+    } else if b0 >> 3 == 0b11110 {
+        4
+    } else {
+        1
+    };
+    let mut buf = vec![b0];
+    for _ in 1..n {
+        let mut b = [0u8; 1];
+        if f.read(&mut b)? == 0 {
+            break;
         }
-        if line.is_empty() {
-            return Ok(RubyValue::Nil);
-        }
-        Ok(RubyValue::Str(crate::collections::string_new(
-            String::from_utf8_lossy(&line).into_owned(),
-        )))
+        buf.push(b[0]);
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+}
+
+fn io_getc(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let ch = with_file(recv, |f, path| {
+        read_one_char(f).map_err(|e| crate::builtins::file::raise_errno(&e, "getc", path))
+    })?;
+    Ok(match ch {
+        Some(s) => RubyValue::Str(crate::collections::string_new(s)),
+        None => RubyValue::Nil,
     })
 }
 
-fn io_sync(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    // Our writes are unbuffered `write_all`s; reporting `sync == true` is
-    // the honest answer.
-    Ok(RubyValue::Bool(true))
+fn io_readchar(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match io_getc(recv, args, None)? {
+        RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
+        ch => Ok(ch),
+    }
+}
+
+fn io_getbyte(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let b = with_file(recv, |f, path| {
+        use std::io::Read;
+        let mut byte = [0u8; 1];
+        match f.read(&mut byte).map_err(|e| crate::builtins::file::raise_errno(&e, "getbyte", path))? {
+            0 => Ok(None),
+            _ => Ok(Some(byte[0])),
+        }
+    })?;
+    Ok(match b {
+        Some(byte) => RubyValue::Int(byte as i64),
+        None => RubyValue::Nil,
+    })
+}
+
+fn io_readbyte(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    match io_getbyte(recv, args, None)? {
+        RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
+        b => Ok(b),
+    }
+}
+
+/// `readlines([sep][, limit][, chomp:])` -- every remaining line as an Array.
+fn io_readlines(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let opts = line_opts(args);
+    let mut lines = Vec::new();
+    loop {
+        let bytes = with_file(recv, |f, path| {
+            read_line_bytes(f, &opts).map_err(|e| crate::builtins::file::raise_errno(&e, "readlines", path))
+        })?;
+        if bytes.is_empty() {
+            break;
+        }
+        lines.push(line_string(bytes, &opts));
+    }
+    Ok(RubyValue::Array(crate::collections::array_new(lines)))
+}
+
+/// `each_line`/`each([sep][, limit][, chomp:])` -- yield each line; bumps lineno.
+fn io_each_line(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = blk else {
+        return Err(crate::dispatch::raise_no_block_yield());
+    };
+    let opts = line_opts(args);
+    loop {
+        let bytes = with_file(recv, |f, path| {
+            read_line_bytes(f, &opts).map_err(|e| crate::builtins::file::raise_errno(&e, "each_line", path))
+        })?;
+        if bytes.is_empty() {
+            break;
+        }
+        bump_lineno(recv);
+        p.call(&[line_string(bytes, &opts)])?;
+    }
+    Ok(recv.clone())
+}
+
+/// `each_char` -- yield each UTF-8 char.
+fn io_each_char(recv: &RubyValue, _args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = blk else {
+        return Err(crate::dispatch::raise_no_block_yield());
+    };
+    loop {
+        let ch = with_file(recv, |f, path| {
+            read_one_char(f).map_err(|e| crate::builtins::file::raise_errno(&e, "each_char", path))
+        })?;
+        match ch {
+            Some(s) => p.call(&[RubyValue::Str(crate::collections::string_new(s))])?,
+            None => break,
+        };
+    }
+    Ok(recv.clone())
+}
+
+/// `each_byte` -- yield each byte as an Integer.
+fn io_each_byte(recv: &RubyValue, _args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = blk else {
+        return Err(crate::dispatch::raise_no_block_yield());
+    };
+    let text = io_read(recv, &[], None)?;
+    let RubyValue::Str(s) = &text else { return Ok(recv.clone()) };
+    let bytes = s.lock().bytes().to_vec();
+    for b in bytes {
+        p.call(&[RubyValue::Int(b as i64)])?;
+    }
+    Ok(recv.clone())
+}
+
+/// `printf(fmt, *args)` -- format and write, answering nil.
+fn io_printf(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(fmt) = args.first() else {
+        return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 1+)".to_string()));
+    };
+    let s = crate::builtins::format::sprintf(&fmt.to_display_string(), &args[1..])?;
+    write_str(recv_io(recv)?, &s)?;
+    Ok(RubyValue::Nil)
+}
+
+/// `putc(int | str)` -- write one character (an Integer's low byte, or a
+/// String's first character), answering the argument unchanged.
+fn io_putc(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(arg) = args.first() else {
+        return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 1)".to_string()));
+    };
+    let s = match arg {
+        RubyValue::Int(i) => ((*i as u8) as char).to_string(),
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().chars().next().map(|c| c.to_string()).unwrap_or_default(),
+        other => {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            ))
+        }
+    };
+    write_str(recv_io(recv)?, &s)?;
+    Ok(arg.clone())
+}
+
+/// `pos=` -- seek to an absolute byte offset.
+fn io_pos_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Int(n) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    with_file(recv, |f, path| {
+        use std::io::Seek;
+        f.seek(std::io::SeekFrom::Start(n.max(0) as u64))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "pos=", path))?;
+        Ok(RubyValue::Int(n))
+    })
+}
+
+/// `readpartial(maxlen)` / `sysread(maxlen)` -- read up to `maxlen` bytes,
+/// blocking for at least one; `EOFError` at EOF (unlike `read(n)`'s nil).
+fn io_readpartial(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Int(max) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("ArgumentError", "length must be an Integer".to_string()));
+    };
+    let bytes = with_file(recv, |f, path| {
+        use std::io::Read;
+        let mut buf = vec![0u8; max.max(0) as usize];
+        let got = f.read(&mut buf).map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
+        buf.truncate(got);
+        Ok(buf)
+    })?;
+    if bytes.is_empty() && max > 0 {
+        return Err(raise_error("EOFError", "end of file reached".to_string()));
+    }
+    Ok(RubyValue::Str(crate::collections::string_new(
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )))
+}
+
+/// `sysseek(offset, whence = SEEK_SET)` -- seek, answering the new absolute
+/// position (unlike `seek`, which answers 0).
+fn io_sysseek(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let off = match args.first() {
+        Some(RubyValue::Int(i)) => *i,
+        _ => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+    };
+    let whence = match args.get(1) {
+        None => 0,
+        Some(RubyValue::Int(w)) => *w,
+        Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+    };
+    with_file(recv, |f, path| {
+        use std::io::Seek;
+        let pos = match whence {
+            0 => std::io::SeekFrom::Start(off.max(0) as u64),
+            1 => std::io::SeekFrom::Current(off),
+            2 => std::io::SeekFrom::End(off),
+            _ => return Err(raise_error("ArgumentError", "invalid whence".to_string())),
+        };
+        let p = f.seek(pos).map_err(|e| crate::builtins::file::raise_errno(&e, "sysseek", path))?;
+        Ok(RubyValue::Int(p as i64))
+    })
+}
+
+/// `flock(op)` -- advisory whole-file lock via `flock(2)`; answers 0.
+fn io_flock(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::AsRawFd;
+    let RubyValue::Int(op) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    with_file(recv, |f, path| {
+        // SAFETY: `f` owns a valid fd for the call's duration.
+        if unsafe { libc::flock(f.as_raw_fd(), op as libc::c_int) } != 0 {
+            return Err(crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), "flock", path));
+        }
+        Ok(RubyValue::Int(0))
+    })
+}
+
+/// `#stat` -- an `fstat(2)` snapshot of the open descriptor as a `File::Stat`.
+fn io_stat(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::AsRawFd;
+    with_file(recv, |f, _path| crate::builtins::stat::stat_from_fd(f.as_raw_fd()))
+}
+
+/// `#chown(uid, gid)` -- `fchown(2)`; a nil arg leaves that id unchanged
+/// (`-1` to the syscall). Answers 0.
+fn io_chown(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::AsRawFd;
+    let id = |v: Option<&RubyValue>| -> libc::uid_t {
+        match v {
+            Some(RubyValue::Int(i)) => *i as libc::uid_t,
+            _ => u32::MAX, // -1: leave unchanged
+        }
+    };
+    let uid = id(args.first());
+    let gid = id(args.get(1));
+    with_file(recv, |f, path| {
+        // SAFETY: `f` owns a valid fd for the call's duration.
+        if unsafe { libc::fchown(f.as_raw_fd(), uid, gid) } != 0 {
+            return Err(crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), "chown", path));
+        }
+        Ok(RubyValue::Int(0))
+    })
+}
+
+/// `#truncate(len)` -- resize the open file to `len` bytes; answers 0.
+fn io_truncate(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let RubyValue::Int(len) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    with_file(recv, |f, path| {
+        f.set_len(len.max(0) as u64)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "truncate", path))?;
+        Ok(RubyValue::Int(0))
+    })
+}
+
+/// `#chmod(mode)` -- set the open file's permission bits; answers 0.
+fn io_chmod(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::AsRawFd;
+    let RubyValue::Int(mode) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    with_file(recv, |f, path| {
+        // SAFETY: `f` owns a valid fd for the call's duration.
+        if unsafe { libc::fchmod(f.as_raw_fd(), mode as libc::mode_t) } != 0 {
+            return Err(crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), "chmod", path));
+        }
+        Ok(RubyValue::Int(0))
+    })
+}
+
+/// `#mtime` -- the open file's modification time, via `fstat`.
+fn io_mtime(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let st = io_stat(recv, args, None)?;
+    crate::dispatch::send_value(&st, crate::Symbol::intern("mtime"), &[], None)
+}
+
+/// `#size` -- the open file's byte length, via `fstat`.
+fn io_size(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let st = io_stat(recv, args, None)?;
+    crate::dispatch::send_value(&st, crate::Symbol::intern("size"), &[], None)
+}
+
+/// `#pipe?` -- whether this IO is a pipe end.
+fn io_pipe_p(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let is_pipe = matches!(as_rio(recv).map(|io| matches!(&*io.backend.lock(), IoBackend::Pipe(_))), Some(true));
+    Ok(RubyValue::Bool(is_pipe))
+}
+
+/// `#fsync`/`#fdatasync` -- flush to disk; answers 0.
+fn io_fsync(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    with_file(recv, |f, path| {
+        f.sync_all().map_err(|e| crate::builtins::file::raise_errno(&e, "fsync", path))?;
+        Ok(RubyValue::Int(0))
+    })
+}
+
+fn io_sync(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    // CRuby: only STDERR is sync by default; STDOUT/STDIN and files are not
+    // (oracle-verified). `sync=` can flip it, but nothing here relies on that.
+    Ok(RubyValue::Bool(matches!(stream_of(recv), Some(StdStream::Stderr))))
 }
 
 fn io_sync_set(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -616,12 +1064,35 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "path" | "to_path" => io_path,
         "read" => io_read,
         "gets" => io_gets,
+        "readline" => io_readline,
+        "lineno" => io_lineno,
+        "lineno=" => io_lineno_set,
+        "getc" => io_getc,
+        "readchar" => io_readchar,
+        "getbyte" => io_getbyte,
+        "readbyte" => io_readbyte,
         "readlines" => io_readlines,
         "each_line" | "each" => io_each_line,
+        "each_char" | "chars" => io_each_char,
+        "each_byte" | "bytes" => io_each_byte,
+        "printf" => io_printf,
+        "putc" => io_putc,
+        "readpartial" | "sysread" => io_readpartial,
         "seek" => io_seek,
+        "sysseek" => io_sysseek,
+        "flock" => io_flock,
         "tell" | "pos" => io_tell,
+        "pos=" => io_pos_set,
         "rewind" => io_rewind,
         "eof?" | "eof" => io_eof,
+        "stat" => io_stat,
+        "chown" => io_chown,
+        "chmod" => io_chmod,
+        "truncate" => io_truncate,
+        "mtime" => io_mtime,
+        "size" => io_size,
+        "pipe?" => io_pipe_p,
+        "fsync" | "fdatasync" => io_fsync,
         "close" => io_close,
         "closed?" => io_closed,
         _ => return None,
@@ -632,9 +1103,99 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 pub fn lookup_names() -> &'static [&'static str] {
     &[
         "puts", "print", "write", "<<", "flush", "fileno", "to_i", "tty?", "isatty", "winsize",
-        "inspect", "to_s", "sync", "sync=", "path", "to_path", "read", "gets",
-        "readlines", "each_line", "each", "seek", "tell", "pos", "rewind", "eof?",
-        "eof", "close", "closed?",
+        "inspect", "to_s", "sync", "sync=", "path", "to_path", "read", "gets", "readline",
+        "lineno", "lineno=", "getc", "readchar", "getbyte", "readbyte",
+        "readlines", "each_line", "each", "each_char", "chars", "each_byte", "bytes",
+        "printf", "putc", "readpartial", "sysread", "seek", "sysseek", "flock",
+        "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "chown", "chmod", "truncate",
+        "mtime", "size", "pipe?", "fsync", "fdatasync", "close", "closed?",
+    ]
+}
+
+/// `IO.pipe` -- a `[reader, writer]` pair over a `pipe(2)`; each end is a plain
+/// `IO`. With a block, yields the pair and closes both ends afterward.
+fn io_class_pipe(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0..=2);
+    use std::os::fd::FromRawFd;
+    let mut fds = [0 as libc::c_int; 2];
+    // SAFETY: `fds` is a 2-element array `pipe(2)` fills with the read/write fds.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), "pipe", ""));
+    }
+    // SAFETY: `pipe(2)` just handed us these two fresh, owned fds.
+    let r = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[0]) });
+    let w = pipe_value(unsafe { std::fs::File::from_raw_fd(fds[1]) });
+    let pair = RubyValue::Array(crate::collections::array_new(vec![r.clone(), w.clone()]));
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(pair);
+    };
+    let out = p.call(&[pair]);
+    let _ = io_close(&r, &[], None);
+    let _ = io_close(&w, &[], None);
+    let _ = recv; // `IO.pipe`'s receiver is unused
+    out
+}
+
+/// `IO.copy_stream(src, dst)` -- copy the whole file `src` to `dst`, answering
+/// the byte count.
+fn io_class_copy_stream(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 2..=4);
+    let src = crate::builtins::file::path_arg(&args[0], "copy_stream")?;
+    let dst = crate::builtins::file::path_arg(&args[1], "copy_stream")?;
+    let bytes = std::fs::read(&src).map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?;
+    let n = bytes.len();
+    std::fs::write(&dst, &bytes).map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
+    Ok(RubyValue::Int(n as i64))
+}
+
+/// `IO.sysopen(path, mode = "r")` -- open and answer the raw fd Integer (the
+/// caller owns closing it).
+fn io_class_sysopen(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::IntoRawFd;
+    crate::builtins::arity!(args, 1..=3);
+    let path = crate::builtins::file::path_arg(&args[0], "sysopen")?;
+    let f = std::fs::File::open(&path).map_err(|e| crate::builtins::file::raise_errno(&e, "sysopen", &path))?;
+    Ok(RubyValue::Int(f.into_raw_fd() as i64))
+}
+
+/// `IO.new(fd)` / `IO.open(fd)` -- wrap an existing descriptor. `IO.for_fd` is
+/// the same. The fd is adopted (closing the IO closes it).
+fn io_class_new(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    use std::os::fd::FromRawFd;
+    crate::builtins::arity!(args, 1..=2);
+    let RubyValue::Int(fd) = &args[0] else {
+        return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+    };
+    // SAFETY: the caller vouches the fd is a valid open descriptor to adopt.
+    let io = pipe_value(unsafe { std::fs::File::from_raw_fd(*fd as libc::c_int) });
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(io);
+    };
+    let out = p.call(&[io.clone()]);
+    let _ = io_close(&io, &[], None);
+    out
+}
+
+pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
+    Some(match name {
+        "pipe" => io_class_pipe,
+        "copy_stream" => io_class_copy_stream,
+        "sysopen" => io_class_sysopen,
+        "new" | "open" | "for_fd" => io_class_new,
+        // The whole-file family is identical to `File`'s -- reuse those rows so
+        // the two class methods can never drift.
+        "read" | "write" | "binread" | "binwrite" | "readlines" | "foreach" => {
+            return crate::builtins::file::lookup_class(name)
+        }
+        _ => return None,
+    })
+}
+
+/// Reflection companion to `lookup_class`.
+pub fn lookup_class_names() -> &'static [&'static str] {
+    &[
+        "pipe", "copy_stream", "sysopen", "new", "open", "for_fd", "read", "write", "binread",
+        "binwrite", "readlines", "foreach",
     ]
 }
 

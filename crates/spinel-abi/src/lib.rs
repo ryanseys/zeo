@@ -267,6 +267,12 @@ pub const FFI_STRUCT_CLASS: ClassId = ClassId(71);
 /// (CRuby exposes it unconditionally), like `Process`/`Math`.
 pub const SIGNAL_MODULE: ClassId = ClassId(72);
 
+/// The `FileTest` MODULE -- CRuby's mixin of the pure `File` predicates
+/// (`exist?`/`file?`/`directory?`/...). Its module functions ARE `File`'s
+/// class methods (CRuby shares one C implementation), so the runtime reuses
+/// `file::lookup_class` for it rather than a parallel table.
+pub const FILE_TEST_MODULE: ClassId = ClassId(73);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -358,6 +364,7 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: FFI_MEMORY_POINTER_CLASS, name: "FFI::MemoryPointer", is_module: false, superclass: Some(FFI_POINTER_CLASS), includes: &[], feature: Some("ffi") },
     BuiltinClass { id: FFI_STRUCT_CLASS, name: "FFI::Struct", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[], feature: Some("ffi") },
     BuiltinClass { id: SIGNAL_MODULE, name: "Signal", is_module: true, superclass: None, includes: &[], feature: None },
+    BuiltinClass { id: FILE_TEST_MODULE, name: "FileTest", is_module: true, superclass: None, includes: &[], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
