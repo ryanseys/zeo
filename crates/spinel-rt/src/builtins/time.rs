@@ -477,6 +477,21 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
 /// A `utc_offset` in seconds, range-checked as real Ruby does: strictly
 /// within a day either way (`Time.new(.., 86400)` is an ArgumentError, and
 /// `86399` is fine) -- oracle-verified.
+/// Resolve an optional `utc_offset` argument (to `#getlocal`/`#localtime`):
+/// `None` -> system-local (`None`); an Integer -> seconds east of UTC; a String
+/// -> a `"+HH:MM"`-style offset. Anything else is an ArgumentError.
+fn offset_arg(v: Option<&RubyValue>) -> Result<Option<i32>, Signal> {
+    match v {
+        None | Some(RubyValue::Nil) => Ok(None),
+        Some(RubyValue::Int(o)) => Ok(Some(check_offset(*o)?)),
+        Some(RubyValue::Str(s)) => Ok(Some(parse_offset(&s.lock().to_utf8_lossy())?)),
+        Some(other) => Err(raise_error(
+            "ArgumentError",
+            format!("\"+HH:MM\" expected for utc_offset: {}", other.to_display_string()),
+        )),
+    }
+}
+
 fn check_offset(off: i64) -> Result<i32, Signal> {
     if !(-86400 < off && off < 86400) {
         return Err(raise_error(
@@ -861,7 +876,8 @@ builtin_methods! {
     }
     "localtime" => fn to_local_bang(recv, args, _block) {
         arity!(args, 0..=1);
-        *recv_time(recv).offset.lock() = None;
+        // No arg -> system-local (offset None); an Integer/String arg fixes it.
+        *recv_time(recv).offset.lock() = offset_arg(args.first())?;
         Ok(recv.clone())
     }
     // ...and their non-mutating counterparts, which answer a fresh Time.
@@ -871,9 +887,10 @@ builtin_methods! {
         Ok(time_value(t.sec(), t.nsec(), Some(0)))
     }
     "getlocal" => fn getlocal(recv, args, _block) {
-        arity!(args, 0);
+        arity!(args, 0..=1);
         let t = recv_time(recv);
-        Ok(time_value(t.sec(), t.nsec(), None))
+        // No arg -> system-local; an Integer/String arg fixes the utc_offset.
+        Ok(time_value(t.sec(), t.nsec(), offset_arg(args.first())?))
     }
     "to_s" => fn to_s(recv, args, _block) {
         arity!(args, 0);
