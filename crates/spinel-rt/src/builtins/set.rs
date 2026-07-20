@@ -427,6 +427,13 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(set_of(recv).len() as i64))
     }
+    // `Set#reset` rebuilds the internal index after elements have been mutated
+    // in place. This Set keys elements structurally, so there is nothing to
+    // re-index; it answers self, matching CRuby's return.
+    "reset" => fn reset(recv, args, _block) {
+        arity!(args, 0);
+        Ok(recv.clone())
+    }
     "empty?" => fn empty_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(set_of(recv).len() == 0))

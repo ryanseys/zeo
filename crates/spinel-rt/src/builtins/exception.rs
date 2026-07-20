@@ -384,6 +384,13 @@ fn exc_args(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result
     Ok(exc(recv).detail("args"))
 }
 
+/// `NoMethodError#private_call?` -- whether the missing method was invoked
+/// function-style (no explicit receiver). False for an ordinary `recv.meth`
+/// miss, which is every method_missing spinel raises today.
+fn exc_private_call(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(exc(recv).detail("private_call").truthy()))
+}
+
 /// `UncaughtThrowError#tag` -- the tag of the uncaught `throw`.
 fn exc_tag(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("tag"))
@@ -655,6 +662,7 @@ pub fn register_exception_subclass(
     }
     if is_no_method_error {
         registry.define_method(id, Symbol::intern("args"), exc_args);
+        registry.define_method(id, Symbol::intern("private_call?"), exc_private_call);
     }
     if is_key_error {
         registry.define_method(id, Symbol::intern("key"), exc_key);

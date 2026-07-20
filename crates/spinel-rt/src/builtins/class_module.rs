@@ -89,6 +89,24 @@ builtin_methods! {
     // Symbols, then -- unless `inherit` is false -- its ancestors' (except
     // `Object`'s, CRuby's rule), own group first. Order within one class is
     // unspecified (an id table in CRuby, a HashMap here).
+    // `Module#const_set(name, value)` -- define a constant on this module,
+    // answering the value (as CRuby does).
+    "const_set" => fn const_set_m(recv, args, _block) {
+        arity!(args, 2);
+        let cid = recv_cid(recv);
+        let name = match &args[0] {
+            RubyValue::Symbol(s) => s.name(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("{} is not a symbol nor a string", other.inspect_string()),
+                ))
+            }
+        };
+        crate::constants::const_set(cid.0, &name, args[1].clone());
+        Ok(args[1].clone())
+    }
     "constants" => fn constants(recv, args, _block) {
         arity!(args, 0..=1);
         let cid = recv_cid(recv);

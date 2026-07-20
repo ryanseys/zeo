@@ -179,6 +179,7 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "current" => c_current,
         "main" => c_main,
+        "list" => c_list,
         "pass" => c_pass,
         "report_on_exception" => c_report_on_exception,
         "report_on_exception=" => c_set_report_on_exception,
@@ -187,5 +188,12 @@ pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 }
 
 pub fn lookup_class_names() -> &'static [&'static str] {
-    &["current", "main", "pass", "report_on_exception", "report_on_exception="]
+    &["current", "main", "list", "pass", "report_on_exception", "report_on_exception="]
+}
+
+/// `Thread.list` -- the live threads. spinel keeps no live-thread registry, so
+/// it answers the main thread (a single-threaded program's whole list); a joined
+/// program reads this after its spawns finish anyway.
+fn c_list(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Array(crate::array_new(vec![thread::thread_main()])))
 }
