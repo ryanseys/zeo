@@ -46,6 +46,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::SystemTime;
+
+/// The workspace crates whose sources are inputs to the `spinel-rt` artifact --
+/// its own crate plus its workspace path-dependency closure. `ensure_runtime_built`
+/// stat-walks exactly these to decide whether a built runtime is stale, so this
+/// list MUST track `spinel-rt`'s `path = "..."` dependencies (see its
+/// `Cargo.toml`). Getting it wrong under-scopes the freshness check and lets a
+/// stale runtime be linked silently -- the very bug the check exists to prevent.
+const RUNTIME_CRATES: &[&str] = &["spinel-rt", "spinel-abi", "spinel-fiber"];
 
 /// The workspace root -- two levels up from `crates/spinelc` (this crate's
 /// own `CARGO_MANIFEST_DIR`), i.e. wherever the top-level `Cargo.toml`/
@@ -86,12 +95,15 @@ fn variant_target_dir(runtime: Runtime) -> PathBuf {
 /// entrypoint that can't assume a prior workspace build calls this first: the
 /// CLI on a fresh tree (so `spinelc foo.rb` just works), and the in-process e2e
 /// harness (`cargo test -p spinelc` doesn't build `spinel-rt`, since `spinelc`
-/// has no cargo dependency on it). It builds AT MOST ONCE per process, and ONLY
-/// when the artifact is actually missing -- so under a driver that already
-/// prebuilt the workspace (the conformance harness), every `spinelc` subprocess
-/// just does a cheap existence check, with none of the old
-/// env-var/per-crate-memoization machinery and none of the cargo build-lock
-/// contention that made a per-call `cargo build` cost the conformance suite ~153s.
+/// has no cargo dependency on it). It builds AT MOST ONCE per process, and only
+/// when the artifact is missing OR STALE -- a cheap stat-only freshness gate
+/// ([`runtime_artifact_is_stale`]) compares the runtime crates' sources against
+/// the built artifact, so an edited `spinel-rt` is rebuilt rather than silently
+/// linked stale (spinelc has no cargo dependency edge that would catch it). When
+/// the artifact is already current -- the common case under a driver that
+/// prebuilt the workspace (the conformance harness) -- the gate is a handful of
+/// `stat`s that skip the build, with none of the cargo build-lock contention that
+/// made an unconditional per-call `cargo build` cost the conformance suite ~153s.
 pub fn ensure_runtime_built(profile: Profile, runtime: Runtime) -> Result<(), String> {
     // Memoized PER (PROFILE, VARIANT): a single process almost always touches
     // one combination (the CLI's `-e` and the harness build `Debug`; only
@@ -110,22 +122,80 @@ pub fn ensure_runtime_built(profile: Profile, runtime: Runtime) -> Result<(), St
         (Profile::Release, Runtime::Eval) => &RELEASE_EVAL,
     };
     cell.get_or_init(|| {
-        // Already built -- the common case (harness prebuild, or a prior build
-        // in this tree). `cargo build -p spinel-rt` co-produces the rlib and the
-        // dylib, so the rlib's presence answers for both linkages.
+        // Fresh already -- the common case (harness prebuild, or a prior build in
+        // this tree). `cargo build -p spinel-rt` co-produces the rlib and the
+        // dylib, so the rlib answers for both linkages.
         //
-        // Existence, NOT freshness: this is the cheap fallback for entrypoints
-        // that can assume a prior `build_runtime` (a prebuild, a workspace build)
-        // already made the artifact current. A step that must handle STALE
-        // sources -- the conformance prebuild -- calls `build_runtime` directly
-        // instead, which always shells `cargo build` (cargo no-ops when fresh,
-        // rebuilds when stale).
-        if linkable_for("spinel-rt", Linkage::Static, profile, runtime).is_ok() {
+        // Freshness, not bare existence: an entrypoint here can't assume a prior
+        // `build_runtime`, and `spinelc` has no cargo dependency on `spinel-rt`,
+        // so nothing else would rebuild an edited runtime. The stat gate catches
+        // that. When it reports fresh, cargo is never invoked -- so a driver that
+        // prebuilt the workspace still gets the cheap path. When stale (or
+        // missing), `build_runtime` shells `cargo build`, which does the real
+        // incremental rebuild.
+        if !runtime_artifact_is_stale(profile, runtime) {
             return Ok(());
         }
         build_runtime(profile, runtime)
     })
     .clone()
+}
+
+/// Whether the built `spinel-rt` artifact is missing or older than any source
+/// cargo would treat as an input to it -- a `stat`-only gate so
+/// [`ensure_runtime_built`] rebuilds a STALE runtime instead of linking it,
+/// without paying a `cargo build` lock round-trip on the already-fresh path.
+///
+/// Scans exactly the runtime's workspace dependency closure ([`RUNTIME_CRATES`])
+/// plus the resolved lockfile (external-dep bumps), comparing the newest source
+/// mtime against the artifact's. Missing artifact -> stale (must build). This is
+/// an mtime heuristic, not cargo's full fingerprint, but it only ever
+/// over-reports staleness (a redundant `cargo build` that no-ops), never
+/// under-reports for an in-tree edit -- so it cannot reintroduce the silent-stale
+/// bug.
+fn runtime_artifact_is_stale(profile: Profile, runtime: Runtime) -> bool {
+    let Ok(artifact) = linkable_for("spinel-rt", Linkage::Static, profile, runtime) else {
+        return true; // not built yet
+    };
+    let Some(artifact_mtime) = file_mtime(&artifact) else {
+        return true;
+    };
+    let root = workspace_root();
+    let mut newest_source = SystemTime::UNIX_EPOCH;
+    for crate_name in RUNTIME_CRATES {
+        let crate_dir = root.join("crates").join(crate_name);
+        newest_source = newest_source.max(newest_mtime_under(&crate_dir.join("src")));
+        newest_source = newest_source.max(newest_mtime_under(&crate_dir.join("Cargo.toml")));
+    }
+    newest_source = newest_source.max(newest_mtime_under(&root.join("Cargo.lock")));
+    newest_source > artifact_mtime
+}
+
+/// The modification time of a single file, or `None` if it can't be stat'd.
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// The newest modification time of `path` (a file) or anything beneath it (a
+/// directory, walked recursively), `UNIX_EPOCH` if it doesn't exist. A `target`
+/// directory is skipped so build output never counts as a source input.
+fn newest_mtime_under(path: &Path) -> SystemTime {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return SystemTime::UNIX_EPOCH;
+    };
+    if meta.is_file() {
+        return meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+    }
+    if !meta.is_dir() || path.file_name().is_some_and(|n| n == "target") {
+        return SystemTime::UNIX_EPOCH;
+    }
+    let mut newest = SystemTime::UNIX_EPOCH;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            newest = newest.max(newest_mtime_under(&entry.path()));
+        }
+    }
+    newest
 }
 
 /// Shell out to `cargo build` for one runtime variant, unconditionally (cargo
