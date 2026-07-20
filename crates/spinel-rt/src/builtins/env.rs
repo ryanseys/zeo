@@ -93,6 +93,18 @@ fn pairs() -> Vec<(String, String)> {
     v
 }
 
+/// A fresh Hash snapshot of the current environment. ENV's read-only
+/// Hash/Enumerable surface (`count`, `min`, `value?`, `each_value`, `grep`,
+/// `lazy`, `tally`, `assoc`, ...) dispatches through this snapshot -- see the
+/// ENV arm in `dispatch::send_value_in` -- so those methods don't each need a
+/// hand-written passthrough. Mutators keep their own entries below since they
+/// must write the real environment, not a copy.
+pub fn snapshot() -> RubyValue {
+    RubyValue::Hash(crate::collections::hash_new(
+        pairs().into_iter().map(|(k, v)| (str_val(k), str_val(v))).collect(),
+    ))
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -217,16 +229,144 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "inspect" | "to_s" => fn env_inspect(_recv, args, _block) {
+    "inspect" => fn env_inspect(_recv, args, _block) {
         crate::builtins::arity!(args, 0);
-        // Real Ruby renders ENV like a Hash (`ENV.to_s` is `"ENV"` in some
-        // versions, but inspect is the Hash rendering) -- reuse the Hash
-        // inspect so the shape can't drift from it.
-        let h = RubyValue::Hash(crate::collections::hash_new(
-            pairs().into_iter().map(|(k, v)| (str_val(k), str_val(v))).collect(),
-        ));
-        Ok(str_val(h.inspect_string()))
+        // `inspect` renders ENV like a Hash -- reuse the Hash inspect so the
+        // shape can't drift from it.
+        Ok(str_val(snapshot().inspect_string()))
     }
+    // `ENV.to_s` is the literal `"ENV"` (NOT the Hash rendering `#inspect` gives).
+    "to_s" => fn env_to_s(_recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        Ok(str_val("ENV".to_string()))
+    }
+    // ENV is a process-global singleton, so it can be neither copied nor frozen;
+    // CRuby raises TypeError with these exact messages (overriding Kernel#dup/
+    // #clone and #freeze, which is why they need explicit entries here rather
+    // than falling through to the Hash snapshot).
+    "dup" => fn env_dup(_recv, _args, _block) {
+        Err(crate::dispatch::raise_error(
+            "TypeError",
+            "Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash".to_string(),
+        ))
+    }
+    "clone" => fn env_clone(_recv, _args, _block) {
+        Err(crate::dispatch::raise_error(
+            "TypeError",
+            "Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash".to_string(),
+        ))
+    }
+    "freeze" => fn env_freeze(_recv, _args, _block) {
+        Err(crate::dispatch::raise_error("TypeError", "cannot freeze ENV".to_string()))
+    }
+    // `ENV.update(hash, ...)` / `ENV.merge!(...)` -- set each name => value into
+    // the real environment; a block resolves a key already present, taking
+    // (key, old, new). Answers ENV.
+    "update" | "merge!" => fn env_update(recv, args, block) {
+        for a in args {
+            let RubyValue::Hash(h) = a else {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(a)),
+                ));
+            };
+            for (k, v) in crate::collections::hash_pairs(h) {
+                let ks = key(&k, "update")?;
+                let vs = match (&block, std::env::var(&ks)) {
+                    (Some(RubyValue::Proc(p)), Ok(old)) => {
+                        key(&p.call(&[str_val(ks.clone()), str_val(old), v.clone()])?, "update")?
+                    }
+                    _ => key(&v, "update")?,
+                };
+                unsafe { std::env::set_var(&ks, &vs) };
+            }
+        }
+        Ok(recv.clone())
+    }
+    // `ENV.delete_if { |k, v| }` -- remove every pair the block accepts; answers
+    // ENV. `reject!` is the same removal but answers nil when NOTHING changed
+    // (CRuby's bang-method convention).
+    "delete_if" => fn env_delete_if(recv, args, block) {
+        crate::builtins::arity!(args, 0);
+        env_remove_matching(&require_block(block)?, true)?;
+        Ok(recv.clone())
+    }
+    "reject!" => fn env_reject_bang(recv, args, block) {
+        crate::builtins::arity!(args, 0);
+        let changed = env_remove_matching(&require_block(block)?, true)?;
+        Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    }
+    // `ENV.keep_if { |k, v| }` -- remove every pair the block REJECTS; answers
+    // ENV. `select!`/`filter!` answer nil when nothing changed.
+    "keep_if" => fn env_keep_if(recv, args, block) {
+        crate::builtins::arity!(args, 0);
+        env_remove_matching(&require_block(block)?, false)?;
+        Ok(recv.clone())
+    }
+    "select!" | "filter!" => fn env_select_bang(recv, args, block) {
+        crate::builtins::arity!(args, 0);
+        let changed = env_remove_matching(&require_block(block)?, false)?;
+        Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    }
+    // `ENV.shift` -- remove and return the first `[name, value]` pair, nil if
+    // the environment is empty.
+    "shift" => fn env_shift(_recv, args, _block) {
+        crate::builtins::arity!(args, 0);
+        match pairs().into_iter().next() {
+            Some((k, v)) => {
+                unsafe { std::env::remove_var(&k) };
+                Ok(RubyValue::Array(crate::array_new(vec![str_val(k), str_val(v)])))
+            }
+            None => Ok(RubyValue::Nil),
+        }
+    }
+    // `ENV.replace(hash)` -- make the environment exactly `hash`.
+    "replace" => fn env_replace(recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let RubyValue::Hash(h) = &args[0] else {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(&args[0])),
+            ));
+        };
+        let next = crate::collections::hash_pairs(h);
+        for (k, _) in pairs() {
+            unsafe { std::env::remove_var(&k) };
+        }
+        for (k, v) in next {
+            let ks = key(&k, "replace")?;
+            let vs = key(&v, "replace")?;
+            unsafe { std::env::set_var(&ks, &vs) };
+        }
+        Ok(recv.clone())
+    }
+}
+
+/// The Proc a block-taking ENV mutator requires, or CRuby's LocalJumpError.
+fn require_block(block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
+    match block {
+        Some(b @ RubyValue::Proc(_)) => Ok(b),
+        _ => Err(crate::dispatch::raise_error(
+            "LocalJumpError",
+            "no block given (yield)".to_string(),
+        )),
+    }
+}
+
+/// Remove every environment pair for which `block(key, value)`'s truth equals
+/// `remove_when` (`true` for `delete_if`/`reject!`, `false` for `keep_if`/
+/// `select!`). Returns whether anything was removed, which the bang variants
+/// use to answer nil-on-no-change.
+fn env_remove_matching(block: &RubyValue, remove_when: bool) -> Result<bool, crate::Signal> {
+    let RubyValue::Proc(p) = block else { unreachable!("require_block returns a Proc") };
+    let mut changed = false;
+    for (k, v) in pairs() {
+        if p.call(&[str_val(k.clone()), str_val(v)])?.truthy() == remove_when {
+            unsafe { std::env::remove_var(&k) };
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]

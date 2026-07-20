@@ -2099,6 +2099,13 @@ pub fn send_in(
         if let Some(f) = crate::builtins::env::lookup(name.name().as_str()) {
             return f(&boxed, args, block);
         }
+        // ENV's read-only Hash/Enumerable surface (`count`, `min`, `value?`,
+        // `each_value`, `grep`, `lazy`, `tally`, ...) is served by dispatching
+        // to a fresh Hash snapshot. Mutators are in `env::lookup` above (they
+        // must write the real environment), so only non-mutating methods reach
+        // here -- a snapshot answers them faithfully without a per-method stub.
+        let snapshot = crate::builtins::env::snapshot();
+        return send_value(&snapshot, name, args, block);
     }
 
     // The SAME MRO walk `send_value` runs (Phase 17.1), over a boxed
