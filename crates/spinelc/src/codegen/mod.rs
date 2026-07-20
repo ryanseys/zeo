@@ -184,10 +184,14 @@ struct Ctx<'a> {
     /// stack (`spinel_rt::send_super_dynamic`) rather than the compile-time
     /// ancestor splice; the carried `Params` are the enclosing method's own,
     /// for a bare `super`'s argument forwarding. Propagates through `in_proc`
-    /// (a `super` inside a block still targets the enclosing method), and is
-    /// deliberately cleared alongside the class fields when a runtime method
-    /// body is nested inside a compile-time one (see `emit_expr`'s
-    /// `DefMethod`).
+    /// (a `super` inside a block still targets the enclosing method).
+    ///
+    /// The enclosing CLASS fields are deliberately NOT cleared when a runtime
+    /// method body is nested inside a compile-time one (see `emit_expr`'s
+    /// `DefMethod`), so lexical constant resolution in the body still sees the
+    /// surrounding module nesting. Sites where a runtime `self` must outrank
+    /// that lexical context check `self_is_dynamic` first instead -- see
+    /// `boxed_implicit_self` and `IvarRead`.
     runtime_super_params: Option<std::rc::Rc<crate::hir::Params>>,
 }
 

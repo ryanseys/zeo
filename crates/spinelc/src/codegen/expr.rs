@@ -558,23 +558,23 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::IvarRead(name) => {
             let ident = safe_ident(name);
-            // `self` is a CLASS object (a class-method body, or a class body
-            // itself): `@x` is that class object's own ivar, which lives in
-            // its own runtime table. Checked BEFORE `self_is_dynamic`
-            // because it is strictly more specific -- the class id is known
-            // statically here, so this emits a direct table hit rather than
-            // routing through `ivar_get_dyn`'s match.
-            if let Some(cid) = cx.class_self {
-                let id = cid.0;
-                let key = ident.to_string();
-                return quote! { spinel_rt::class_ivar_get(#id, #key) };
-            }
             // A dynamically-typed self (an escaping block's receiver, which
             // `instance_exec` may have rebound) has no statically-known
             // struct to take a field from -- resolve the ivar by name at
             // runtime. The key is the MANGLED ident, matching what
             // `ruby_class!` keys its own `ivar_get_named` arms on
             // (`stringify!($ivar)` over the same `safe_ident` output).
+            //
+            // Checked BEFORE `class_self`, matching `boxed_implicit_self`.
+            // `class_self` is a LEXICAL fact ("this code sits in class Foo's
+            // body"); `self_is_dynamic` says what `self` actually IS at
+            // runtime, and when they disagree the runtime one wins. A `def`
+            // nested in a `class_eval`/`Class.new` block inherits the
+            // enclosing `class_self` but runs under a dynamic self, so
+            // checking `class_self` first sent an INSTANCE's `@v` to the
+            // class's own ivar table (it read nil). Nothing is lost when
+            // `self` really is the class: `ivar_get_dyn`'s `Class` arm
+            // resolves to the very same `class_ivar_get` table.
             if cx.self_is_dynamic {
                 let slf = &cx.self_ident;
                 let key = ident.to_string();
@@ -584,6 +584,15 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 // closure. Borrowing covers the first and deref-coerces
                 // `&&RubyValue` back to `&RubyValue` for the second.
                 return quote! { spinel_rt::ivar_get_dyn(&#slf, #key) };
+            }
+            // `self` is a CLASS object (a class-method body, or a class body
+            // itself): `@x` is that class object's own ivar, which lives in
+            // its own runtime table. A direct table hit, no `ivar_get_dyn`
+            // match to walk.
+            if let Some(cid) = cx.class_self {
+                let id = cid.0;
+                let key = ident.to_string();
+                return quote! { spinel_rt::class_ivar_get(#id, #key) };
             }
             // The TOP LEVEL: `self` is `main` -- see the matching arm in
             // `emit_ivar_write_stmt`.
@@ -1344,6 +1353,20 @@ fn cvar_owner_id(cx: &Ctx, name: &str) -> u32 {
 pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let ident = safe_ident(name);
     let slf = &cx.self_ident;
+    // A dynamically-typed self: resolve by name at runtime (see `IvarRead`'s
+    // arm). `ivar_set_dyn` carries the frozen check the static path emits
+    // inline below -- it can compute the receiver's real class name for the
+    // message, which is exactly what a statically-unknown self couldn't.
+    //
+    // Checked BEFORE `class_self`, and it MUST stay paired with `IvarRead`'s
+    // matching order: when the two disagree, `@v += 1` in a `class_eval`-
+    // nested `def` reads the instance but writes the class table, so the
+    // increment silently evaporates.
+    if cx.self_is_dynamic {
+        let key = ident.to_string();
+        // Borrowed for the same reason as `IvarRead`'s arm above.
+        return quote! { spinel_rt::ivar_set_dyn(&#slf, #key, #value)?; };
+    }
     // `self` is a CLASS object -- see the matching arm in `IvarRead`. No
     // frozen guard: `Foo.freeze` has nowhere to record itself in this
     // runtime (there is no per-class-object frozen flag), so emitting a
@@ -1356,15 +1379,6 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         let id = cid.0;
         let key = ident.to_string();
         return quote! { spinel_rt::class_ivar_set(#id, #key, #value); };
-    }
-    // A dynamically-typed self: resolve by name at runtime (see `IvarRead`'s
-    // arm). `ivar_set_dyn` carries the frozen check the static path emits
-    // inline below -- it can compute the receiver's real class name for the
-    // message, which is exactly what a statically-unknown self couldn't.
-    if cx.self_is_dynamic {
-        let key = ident.to_string();
-        // Borrowed for the same reason as `IvarRead`'s arm above.
-        return quote! { spinel_rt::ivar_set_dyn(&#slf, #key, #value)?; };
     }
     // The TOP LEVEL: `self` is `main`, a runtime `Object` whose ivars are a
     // name-keyed map rather than struct fields (no compile-time class exists

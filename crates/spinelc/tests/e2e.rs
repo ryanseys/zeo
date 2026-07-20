@@ -20944,6 +20944,56 @@ fn ffi_typedef_aliases_a_scalar_type() {
     assert_eq!(result.stdout, "5\n");
 }
 
+/// Ivar codegen resolves a RUNTIME `self` ahead of the LEXICAL class context
+/// it inherited. A `def` nested in a `class_eval` block sits inside
+/// `Gadget`'s body (so `class_self` is set) but runs under a dynamic self, and
+/// its `@v` must reach the INSTANCE, not the class's own ivar table. Read and
+/// write must agree on this: when only the read was fixed, `@v += 1` read the
+/// instance and wrote the class table, so the increment vanished.
+///
+/// The `Counter`/`Mixed` halves pin the other direction -- a real class-method
+/// `self` still reaches the class's own table, and a class-level `@cls` stays
+/// distinct from an instance's same-named ivar.
+#[test]
+fn ivar_in_a_class_eval_nested_def_targets_the_instance_not_the_class() {
+    let result = run_ruby(
+        r#"
+        class Gadget
+          def initialize(v); @v = v; end
+          class_eval do
+            def doubled; @v * 2; end
+            def bump!; @v += 1; self; end
+          end
+        end
+        g = Gadget.new(10)
+        p g.doubled
+        p g.bump!.doubled
+
+        class Counter
+          def self.tick; @n = (@n || 0) + 1; end
+          def self.n; @n; end
+        end
+        Counter.tick; Counter.tick
+        p Counter.n
+
+        class Mixed
+          @cls = "class-level"
+          def self.cls; @cls; end
+          def initialize; @cls = "instance-level"; end
+          def inst; @cls; end
+        end
+        p Mixed.cls
+        p Mixed.new.inst
+        p Mixed.cls
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "20\n22\n2\n\"class-level\"\n\"instance-level\"\n\"class-level\"\n"
+    );
+}
+
 /// FFI `callback :tag, [args], ret` declares a callback TYPE. A C callback is a
 /// function pointer, so the tag resolves to `:pointer` and is usable anywhere a
 /// pointer is -- here, a NULL passed straight back through. Passing a Ruby Proc
