@@ -1,5 +1,5 @@
-# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=c8afc07
-# PASS=6 FAIL_OUTPUT=12 FAIL_COMPILE=45 FAIL_RUSTC=1 FAIL_RUN=3 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
+# suite=rubyspec corpus=67 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=bdaa652
+# PASS=6 FAIL_OUTPUT=13 FAIL_COMPILE=44 FAIL_RUSTC=1 FAIL_RUN=3 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=67
 BEGIN_spec	FAIL_OUTPUT	expect	missing-const:ScratchPad
 END_spec	FAIL_RUN	run	auto-it-behaves-like-b32f
 alias_spec	FAIL_COMPILE	compile	spike-misc
@@ -18,7 +18,7 @@ defined_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-defined-
 delegation_spec	FAIL_OUTPUT	expect	missing-method:raise
 encoding_spec	FAIL_RUN	run	auto-eval-unsupported-syntax-in-this-build-the-eval-fc82
 ensure_spec	FAIL_COMPILE	compile	spike-misc
-execution_spec	FAIL_COMPILE	compile	auto-users-ryanseys-dev-spec-language-execution-spec-rb-6faf
+execution_spec	FAIL_OUTPUT	expect	missing-method:singleton_class
 file_spec	FAIL_COMPILE	compile	spike-misc
 for_spec	FAIL_COMPILE	compile	splat
 hash_spec	FAIL_COMPILE	compile	spike-misc
