@@ -42,6 +42,11 @@ struct Opts {
     top: usize,
     bucket: Option<String>,
     test_id: Option<String>,
+    /// Link the compiled cases against the DEBUG runtime instead of the default
+    /// release one. The release runtime makes each per-program link ~12x faster
+    /// (the whole reason conformance defaults to it); flip this on only to
+    /// symbolicate a runtime panic while debugging.
+    debug_runtime: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -67,6 +72,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         top: 30,
         bucket: None,
         test_id: None,
+        debug_runtime: false,
     };
     let mut iter = args[1..].iter();
     while let Some(arg) = iter.next() {
@@ -91,6 +97,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
                 )
             }
             "--force" => opts.force = true,
+            "--debug-runtime" => opts.debug_runtime = true,
             "--fail-fast" => opts.fail_fast = true,
             "--update-scoreboard" => opts.update_scoreboard = true,
             "--force-skiplist" => opts.force_skiplist = true,
@@ -121,6 +128,9 @@ const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
   run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
                 [--timeout SECS] [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
+                [--debug-runtime]  (link cases against the debug runtime -- slower\n\
+                                    compiles, but symbolicated runtime panics;\n\
+                                    default links the release runtime)\n\
   triage        [--suite NAME] [--top N] [--bucket NAME]\n\
   show <id>     [--suite NAME]\n\
   oracle-verify [--suite NAME] [--dir PATH]\n\
@@ -233,7 +243,11 @@ fn open_session(
     let cases = suite.discover(corpus_dir, &work_dir)?;
 
     if prebuild {
-        runner::prebuild(root)?;
+        // Conformance links every case against the RELEASE runtime by default:
+        // the optimized runtime makes each per-program link ~12x faster, which
+        // dominates a multi-thousand-case run. `--debug-runtime` opts back to
+        // the debug runtime for symbolicating a panic.
+        runner::prebuild(root, !opts.debug_runtime)?;
     }
     let oracle = oracle::Oracle::new(
         root.join("target/conformance/oracle"),
@@ -249,6 +263,7 @@ fn open_session(
         // The rubyspec driver's `require_relative '../spec_helper'` (real mspec)
         // must collapse to a no-op -- the mspec_lite shim supplies the DSL.
         mspec_stubs: suite_name == "rubyspec",
+        debug_runtime: opts.debug_runtime,
     };
     let skiplist = skiplist::load(&root.join("conformance/skiplist.tsv"))?;
     Ok(Session {

@@ -29,6 +29,9 @@ pub struct Runner {
     /// Set `SPINELC_MSPEC_STUBS` when compiling (the rubyspec suite): spec files
     /// `require_relative '../spec_helper'`, which spinelc no-ops under this flag.
     pub mspec_stubs: bool,
+    /// Force the DEBUG runtime (`SPINELC_RUNTIME_PROFILE=debug`) instead of the
+    /// default release one -- see `prebuild` and the `--debug-runtime` flag.
+    pub debug_runtime: bool,
 }
 
 impl Runner {
@@ -146,16 +149,25 @@ impl Runner {
         // -- compile --------------------------------------------------------
         let bin_path = self.bin_dir.join(sanitize_id(&case.id));
         let mut cmd = Command::new(&self.spinelc);
-        cmd.arg(&case.source)
-            .arg("-o")
-            .arg(&bin_path)
-            .env("RUST_BACKTRACE", "0")
-            // Corpus programs are compiled, run once, and deleted, so they can
-            // link the runtime dynamically: 616K each instead of 9.8MB, which
-            // is what keeps the compiled-program cache near 1GB rather than the
-            // ~16GB this suite alone costs statically. `spinelc` defaults to
-            // static because a shipped binary has to stand on its own.
-            .env("SPINELC_LINK_DYNAMIC", "1");
+        cmd.arg(&case.source).arg("-o").arg(&bin_path).env("RUST_BACKTRACE", "0");
+        // Two runtime modes, trading cache disk for compile speed:
+        //
+        //  - DEFAULT (release, STATIC): the `-o` path's own defaults (Static +
+        //    Release). The optimized runtime makes each per-program link ~20x
+        //    faster (a cold case ~0.16s vs ~3.3s), which dominates a multi-thousand
+        //    case run. It MUST link statically: the optimized dylib dead-strips the
+        //    `may`/generator coroutine crate's asm symbols (`swap_registers`), so a
+        //    dynamic link fails for any Enumerator/Fiber/Thread program; static
+        //    linking resolves them from the rlib. Cost: ~5.5MB per binary, so the
+        //    compiled-program cache is ~11GB for the full suite (vs ~1.3GB dynamic)
+        //    -- reclaim between runs with `conformance clean-cache`.
+        //
+        //  - `--debug-runtime` (debug, DYNAMIC): the debug runtime links fine
+        //    dynamically (616K binaries, ~1.3GB cache) and keeps symbolicated
+        //    runtime panics, at the ~20x slower per-program link.
+        if self.debug_runtime {
+            cmd.env("SPINELC_LINK_DYNAMIC", "1").env("SPINELC_RUNTIME_PROFILE", "debug");
+        }
         if self.mspec_stubs {
             cmd.env("SPINELC_MSPEC_STUBS", "1");
         }
@@ -421,16 +433,27 @@ fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> Test
 /// One `cargo build` up front so N parallel `spinelc` invocations don't race
 /// each other into cargo (spinelc's own build.rs checks rlib freshness
 /// per-process anyway).
-pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
-    let status = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "spinelc", "-p", "spinel-rt"])
-        .current_dir(workspace_root)
-        .status()
-        .map_err(|e| format!("running cargo build: {e}"))?;
-    if !status.success() {
-        return Err("cargo build failed".to_owned());
+///
+/// `spinelc` itself is the compiler binary and is always built debug (fast to
+/// rebuild, never linked into a case). The RUNTIME is what every case links, so
+/// it is built in the profile the cases will link: release by default (each
+/// per-program link is ~12x faster against the optimized runtime), or debug when
+/// `--debug-runtime` asked for a symbolicated runtime.
+pub fn prebuild(workspace_root: &Path, release_runtime: bool) -> Result<(), String> {
+    let build = |args: &[&str]| -> Result<(), String> {
+        let status = Command::new("cargo")
+            .args(args)
+            .current_dir(workspace_root)
+            .status()
+            .map_err(|e| format!("running cargo build: {e}"))?;
+        status.success().then_some(()).ok_or_else(|| "cargo build failed".to_owned())
+    };
+    build(&["build", "--quiet", "-p", "spinelc"])?;
+    if release_runtime {
+        build(&["build", "--quiet", "--release", "-p", "spinel-rt"])
+    } else {
+        build(&["build", "--quiet", "-p", "spinel-rt"])
     }
-    Ok(())
 }
 
 /// A compact duration for the inline ETA: `45s`, `3m12s`, `1h04m`.

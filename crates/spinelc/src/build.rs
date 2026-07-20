@@ -173,6 +173,20 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// The caller's default, overridable by `SPINELC_RUNTIME_PROFILE`
+    /// (`debug`/`release`). Lets the conformance harness force the release
+    /// runtime for its `-o` compiles (12x faster per-program link against the
+    /// optimized runtime), and lets a developer force `debug` back on to get a
+    /// symbolicated runtime when chasing a panic. An unrecognized value keeps
+    /// the default.
+    pub fn from_env_or(default: Profile) -> Self {
+        match std::env::var_os("SPINELC_RUNTIME_PROFILE").as_deref().and_then(|s| s.to_str()) {
+            Some("release") => Profile::Release,
+            Some("debug") => Profile::Debug,
+            _ => default,
+        }
+    }
+
     /// The `target/` subdirectory cargo writes this profile's artifacts to.
     fn subdir(self) -> &'static str {
         match self {

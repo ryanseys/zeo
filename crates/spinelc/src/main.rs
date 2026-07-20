@@ -140,11 +140,14 @@ fn run() -> Result<(), String> {
 
     // `-e`: compile to a throwaway binary, run it, and exit with ITS status
     // (stdout/stderr stream straight through) -- the differential-harness path.
-    // Run-once, so it uses the fast `Debug` runtime (never an optimized build).
+    // Run-once, so it DEFAULTS to the fast-to-build `Debug` runtime; a harness
+    // that compiles thousands of programs can flip this to `Release` via
+    // `SPINELC_RUNTIME_PROFILE` for a ~12x faster per-program link.
     if matches!(args.source, Source::Eval(_)) {
-        ensure_runtime_built(Profile::Debug)?;
+        let profile = Profile::from_env_or(Profile::Debug);
+        ensure_runtime_built(profile)?;
         let bin = std::env::temp_dir().join(format!("spinelc-e-{}", std::process::id()));
-        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), Profile::Debug)?;
+        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), profile)?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -160,12 +163,14 @@ fn run() -> Result<(), String> {
         p.set_extension("");
         p
     });
-    // `spinelc foo.rb -o app` produces a SHIPPED binary: link the release-profiled
-    // runtime (optimized + stripped) so the artifact is small and fast, rather than
-    // embedding the unoptimized debug runtime. One-time `cargo build --release -p
-    // spinel-rt` on first use.
-    ensure_runtime_built(Profile::Release)?;
-    build_binary(&compiled.rust_source, &output, Linkage::from_env(), Profile::Release)
+    // `spinelc foo.rb -o app` produces a SHIPPED binary: DEFAULT to the
+    // release-profiled runtime (optimized + stripped) so the artifact is small and
+    // fast, rather than embedding the unoptimized debug runtime. One-time `cargo
+    // build --release -p spinel-rt` on first use. Overridable to `debug` via
+    // `SPINELC_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
+    let profile = Profile::from_env_or(Profile::Release);
+    ensure_runtime_built(profile)?;
+    build_binary(&compiled.rust_source, &output, Linkage::from_env(), profile)
 }
 
 fn main() -> ExitCode {
