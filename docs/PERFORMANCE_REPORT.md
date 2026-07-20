@@ -322,3 +322,129 @@ runner now prints:
   measure — the subset is representative and the full run is a warm-cache replay
   anyway once toolchain-stable.
 - Correctness gate: PASS/FAIL counts must not regress from the 1430-PASS baseline.
+
+---
+
+# Update (2026-07): build profiles, release-linked binaries, conformance on release
+
+A second pass, after the prelude work above landed. It **updates two statements
+above**: "No `[profile.*]` sections" (Contributing factors) and `default =
+["ext-all"]` (now `["ext-all", "eval-vm"]`) are both no longer true — see below.
+
+## Corrected root-cause: "compiles feel slow"
+
+The prelude work removed the CPU-bound codegen volume; what remained was measured
+fresh:
+
+- **"Compiles used to be sub-1s, now 3-5s" was the binary cache, not a
+  regression.** A cache *hit* is **0.036 s** (`build_binary` hard-links a prior
+  build). Any `spinel-rt`/`spinelc` rebuild invalidates the whole generation (see
+  "Why every development run is cold" above), so during active development every
+  program is a *cold* compile. A cold compile was always ~1.5 s on an idle
+  machine; the 3-5 s the developer saw was that **× 12-worker saturation**.
+- A single cold compile is now **link + rustc-reading-runtime-metadata bound**,
+  not codegen bound (`puts 1` is ~74 lines). The runtime it links is the lever.
+
+## The runtime is ~100× larger than matz's Spinel — why
+
+matz's C `~/dev/spinel` runtime is a **~590 KB** static archive; ours was a
+**24 MB dylib / 56 MB rlib**. Two structural reasons, both now partly addressed:
+
+1. **No build-profile tuning** (the now-corrected "No `[profile.*]`" line): the
+   artifacts were rustc dev defaults — no strip, no LTO, `codegen-units=16`,
+   full debuginfo.
+2. **`default = ["ext-all", "eval-vm"]`** bundles the full `ruby-prism` parser
+   (~1,600 symbols, only used by `eval_vm.rs`), two regex engines, `num-bigint`,
+   `may`, and json/yaml/zlib/digest into *every* program. matz keeps the parser
+   in the compiler only; a program links a parser only if it `eval`s.
+
+Symbol count, not code, dominates the 50k-symbol dylib's `__LINKEDIT` (9.5 MB);
+generic monomorphization is a non-factor (dispatch is already `fn`-pointer/`dyn`
+erased).
+
+## Shipped changes
+
+**Dev-runtime profile diet** (`Cargo.toml`). `[profile.dev.package.spinel-rt]
+debug = "line-tables-only"` + `[profile.dev.package."*"] opt-level = 1`. Shrank
+the debug **rlib 56 → 22 MB, dylib 24 → 17 MB**; `spinel-rt` rebuilds are faster;
+panic line numbers survive (only lldb step-through of the runtime is lost). It did
+**not** speed a single cold compile much — at no contention that cost is rustc's
+frontend, not the link — but it shrinks the link input under saturation and feeds
+the release path.
+
+**Conformance worker cap** (`conformance/mod.rs`). Default `jobs` went `ncpu →
+ncpu-2`: `ncpu` workers each spawn `rustc` + a multithreaded `lld`, so on `ncpu`
+cores they oversubscribe and inflate every per-compile wall-clock. `--jobs`
+overrides.
+
+**`lld` stays Dynamic-only.** Wiring it into the *static* path was tried and
+**reverted** — measured `static+lld 3.9 s` vs `static-default 1.75 s`: Apple's
+linker beats `ld64.lld` on a large static Mach-O link. (Confirms the original
+Dynamic-only scoping.)
+
+**Release-optimized runtime for shipped `-o` binaries** (`build.rs`, `main.rs`).
+New `[profile.release]` (`strip="symbols"`, `lto="thin"`, `codegen-units=1` — NOT
+`panic="abort"`, which `may`/fiber unwinding requires) and a new orthogonal
+`Profile` axis (`Debug`/`Release`) threaded through `build.rs`. Only *intent*
+selects it: `-e`/e2e-harness/conformance default `Debug`; `spinelc foo.rb -o app`
+defaults `Release`. Overridable per-invocation with `SPINELC_RUNTIME_PROFILE`.
+Result: **shipped binary 9.8 MB → 5.5 MB and optimized**; the stripped 12 MB
+release rlib also links far faster, so steady-state `-o` is **~0.2 s** (first
+`-o` pays a one-time ~32 s release build).
+
+## Conformance on the release runtime — STATIC only
+
+`cargo xtask conformance run` now links every case against the **release** runtime
+by default (prebuild builds `spinel-rt --release`), for **~20× faster cold
+compiles** (~0.16 s vs ~3.3 s). `--debug-runtime` opts back to the dynamic debug
+runtime (symbolicated panics, small cache).
+
+**It must link statically, and that is not a free choice — it's forced by a real
+blocker.** The optimized **dylib** dead-strips the `may`/generator coroutine
+crate's assembly symbols (`swap_registers`, `bootstrap_green_task`): every opt
+level drops them (independent of `lto`/`strip`), because the generated program
+instantiates a `generator::…::resume_gen` monomorphization *downstream* that
+references them, and nothing inside the optimized dylib keeps them exported. So a
+**dynamic** release link fails for any Enumerator/Fiber/Thread program. **Static**
+linking resolves the symbols from the rlib's asm object (this is also why the
+shipped `-o` static path always worked). Cost of static: ~5.5 MB per binary, so
+the compiled-program cache is **~11 GB** for the full suite vs ~1.3 GB dynamic —
+reclaim with `conformance clean-cache`. Validated: coroutine/Fiber/Thread/
+Enumerator slice compiles with **0 `FAIL_RUSTC`** across 109 cases.
+
+> A clean *dynamic*-release runtime (small cache + fast) would need the optimized
+> dylib to keep exporting those asm symbols — either preventing `-dead_strip` from
+> removing them, or stopping `spinel-rt` from leaking the `generator` generic
+> downstream. Left as an open follow-up.
+
+## DRY pass
+
+Unified the four **byte-identical** numeric `op_row!` macros
+(Float/Integer/Rational/Complex) into one `numeric::num_op_row!`. Deliberately
+**left alone**: the four dispatch tables (`builtins/mod.rs`) and the five
+super-binding emitters (`codegen/call.rs`) — they look parallel but have genuinely
+different membership/fn-names / different logic (bound-ident forwarding vs
+arg-expression evaluation), so a unifying macro/function would add conditional
+complexity and read *worse* than the explicit code. Not every dedup is a win.
+
+## Open: parser out of the default runtime (the ~100× gap's biggest lever)
+
+The single largest remaining size lever is dropping `ruby-prism` from the default
+runtime (matz's model). Findings:
+
+- prism is used **only** in `eval_vm.rs`, already fully behind `#[cfg(feature =
+  "eval-vm")]`. `integer.rs`/`rational.rs` "prism" mentions are **doc comments
+  only** — no decoupling needed.
+- **Literal** `eval("...")` is parsed and inlined at compile time (`HirNode::Eval`)
+  and needs no runtime parser. Only **dynamic** `eval` (a runtime string) reaches
+  `spinel_rt::eval_string` (the sole prism user), and the compiler already
+  distinguishes the two at parse time.
+
+**The crux (discovered while building the `Profile` axis):** cargo builds all
+feature-combinations into the *same* `target/<profile>/`, so a "no-prism default"
++ "with-prism for eval programs" split can't just toggle a cargo feature — the two
+runtimes would overwrite each other. It needs **separate build outputs** (distinct
+target dirs, or matz's prebuilt-archive approach) plus an analysis-driven
+selector, layered on the `Profile`/`Linkage` matrix. It is **all-or-nothing**
+(dropping `eval-vm` from the default without the selector breaks dynamic `eval`),
+so it belongs in its own focused change, not a tail-end pass. Tracked as task #194.
