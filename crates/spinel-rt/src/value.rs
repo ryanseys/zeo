@@ -122,8 +122,14 @@ fn float_to_display_string(f: f64) -> String {
     // `Float::EPSILON == "2.220446049250313e-16"`). Rust's positional `{}`
     // never does, so the threshold is applied here. Mantissas keep at least one
     // fractional digit and positive exponents an explicit `+`, both Ruby's shapes.
+    //
+    // Exception (Ruby #2593): a value in `[1e15, 1e16)` that has a fractional
+    // part -- a 16-digit integer part plus fraction, only possible below
+    // 2**52 -- prints in fixed notation (`4503599627370495.5`), while an
+    // integer-valued 16-digit double stays scientific (`1e15 -> "1.0e+15"`).
     let abs = f.abs();
-    if abs != 0.0 && !(1e-4..1e15).contains(&abs) {
+    let fixed_16digit_fraction = (1e15..1e16).contains(&abs) && f.fract() != 0.0;
+    if abs != 0.0 && !(1e-4..1e15).contains(&abs) && !fixed_16digit_fraction {
         let sci = format!("{f:e}");
         let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
         let mantissa = if mantissa.contains('.') {

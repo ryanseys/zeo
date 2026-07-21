@@ -736,3 +736,25 @@ fn format_binary_precision_and_twos_complement_negatives() {
          \"-101\"\n\"-0000101\"\n"
     );
 }
+
+#[test]
+fn float_to_s_uses_fixed_for_fractional_16_digit_values() {
+    // Ruby #2593: a 16-digit-integer-part float WITH a fraction prints fixed,
+    // while an integer-valued 16-digit double stays scientific.
+    let result = run_ruby(
+        r#"
+        puts 4503599627370495.5
+        puts 1234567890123456.7
+        puts(-4503599627370495.5)
+        puts 9007199254740992.0
+        puts 1e15
+        puts 1e16
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "4503599627370495.5\n1234567890123456.8\n-4503599627370495.5\n\
+         9.007199254740992e+15\n1.0e+15\n1.0e+16\n"
+    );
+}
