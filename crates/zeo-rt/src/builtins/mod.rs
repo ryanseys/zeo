@@ -29,6 +29,7 @@ pub(crate) mod class_module;
 pub(crate) mod comparable;
 pub(crate) mod complex;
 pub(crate) mod condition_variable;
+pub(crate) mod convert;
 pub(crate) mod dir;
 pub(crate) mod encoding;
 pub(crate) mod enumerable;
@@ -684,37 +685,27 @@ macro_rules! recv_hash {
 pub(crate) use recv_hash;
 
 /// Argument coercion guards -- CRuby's exact TypeError shape.
+/// Argument `$i` as an `i64` through the full implicit-conversion protocol
+/// (`convert::to_index`): `Int` fast path, `to_int` duck types accepted,
+/// CRuby's TypeError for the rest and RangeError for bignum-range answers.
 macro_rules! arg_int {
     ($args:expr_2021, $i:literal) => {
         match &$args[$i] {
             crate::RubyValue::Int(v) => *v,
-            other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)
-                    ),
-                ))
-            }
+            other => crate::builtins::convert::to_index(other)?,
         }
     };
 }
 pub(crate) use arg_int;
 
+/// Argument `$i` as a string handle through the protocol (`convert::to_rstr`):
+/// `Str` fast path (an `Arc` bump), `to_str` duck types accepted, CRuby's
+/// TypeError for the rest.
 macro_rules! arg_str {
     ($args:expr_2021, $i:literal) => {
         match &$args[$i] {
-            crate::RubyValue::Str(s) => s,
-            other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(other)
-                    ),
-                ))
-            }
+            crate::RubyValue::Str(s) => s.clone(),
+            other => crate::builtins::convert::to_rstr(other)?,
         }
     };
 }

@@ -10,3 +10,10 @@ bm_fib	0.629
 bm_gcbench	7.787
 bm_getivar	0.253
 bm_getivar_module	4.393
+bm_huffman	255.175
+bm_inline	4.455
+bm_io_wordcount	0.506
+bm_jekyll_lite	0.017
+bm_json_parse	1.474
+bm_keyword_args	0.203
+bm_life	63.080
