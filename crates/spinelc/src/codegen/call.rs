@@ -3694,7 +3694,13 @@ fn dispatch(
     // already a `RubyValue`, handled by its own universal
     // `freeze_value`/`is_frozen` methods (see their docs for the
     // always-frozen-immediates / flagless-`Proc` tiering).
-    if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() {
+    // The ENV singleton OVERRIDES `dup`/`clone`/`freeze` to raise (you must
+    // copy it via `ENV.to_h`), which only the runtime dispatch path -- its
+    // identity check in `send_in` -- honors. A direct `ENV.<m>` must therefore
+    // skip the universal value fast paths below and fall through to `send`.
+    let recv_is_env = matches!(&cx.compiler.hir[recv_id], crate::hir::HirNode::ClassRef(n) if n == "ENV");
+
+    if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() && !recv_is_env {
         // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --
@@ -3791,7 +3797,7 @@ fn dispatch(
     // `Arc<Concrete>`) or `RubyValue::dup_value` (builtins and Poly).
     // `clone(freeze: false)` keyword form: not supported (kwargs fall
     // through to the ordinary rejection paths).
-    if no_kwargs && (name == "dup" || name == "clone") && args.is_empty() {
+    if no_kwargs && (name == "dup" || name == "clone") && args.is_empty() && !recv_is_env {
         // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --

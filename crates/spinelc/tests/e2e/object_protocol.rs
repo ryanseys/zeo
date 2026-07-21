@@ -828,3 +828,30 @@ fn generic_object_freeze_clone_and_immutable_unfreeze() {
         "false\ntrue\ntrue\nfalse\ntrue\nfalse\nArgumentError\nArgumentError\n",
     );
 }
+
+#[test]
+fn env_dup_clone_freeze_raise_type_error() {
+    // ENV overrides Kernel#dup/#clone/#freeze to raise (copy it via ENV.to_h).
+    // These must route through dispatch, not the universal value fast paths,
+    // which would silently shallow-copy/freeze the singleton instead.
+    let result = run_ruby(
+        r#"
+        ENV['ZZ_E2E'] = '1'
+        p (ENV.dup rescue $!.message)
+        p (ENV.clone rescue $!.message)
+        p (ENV.freeze rescue $!.message)
+        p ENV['ZZ_E2E']
+        p ENV.store('ZZ_E2E2', '3')
+        p ENV.delete('ZZ_E2E2')
+        p ENV.to_s
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash\"\n\
+         \"Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash\"\n\
+         \"cannot freeze ENV\"\n\
+         \"1\"\n\"3\"\n\"3\"\n\"ENV\"\n"
+    );
+}

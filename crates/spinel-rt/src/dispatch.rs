@@ -2244,21 +2244,26 @@ pub fn send_in(
             return m.call(recv, args, block);
         }
     }
+    // ENV's methods are probed by IDENTITY, not by class: `ENV.class` is
+    // `Object` (real Ruby -- it is a lone singleton with Hash-shaped methods,
+    // not a Hash). Its OWN explicitly-defined methods must be checked BEFORE
+    // the registry, because several (`dup`/`clone`/`freeze`) OVERRIDE Kernel
+    // universals that ENV's `Object` identity would otherwise match first --
+    // `ENV.dup` must raise, not shallow-copy. The Hash-snapshot fallback for
+    // ENV's read-only Enumerable surface stays AFTER the registry walk, so ENV
+    // still inherits `object_id`/`equal?`/etc. from Object.
+    let boxed = RubyValue::Object(recv.clone());
+    let is_env = crate::builtins::env::is_env(&boxed);
+    if is_env {
+        if let Some(f) = crate::builtins::env::lookup(name.name().as_str()) {
+            return f(&boxed, args, block);
+        }
+    }
     if let Some(f) = registry().lookup(id, name) {
         return f.call(recv, args, block);
     }
 
-    let boxed = RubyValue::Object(recv.clone());
-    // ENV's methods are probed by IDENTITY, not by class: `ENV.class` is
-    // `Object` (real Ruby -- it is a lone singleton with Hash-shaped
-    // methods, not a Hash), so a class-keyed table would hand `[]`/`fetch`/
-    // `keys` to every plain Object in the program. Ahead of the walk for the
-    // same reason `Math` is: these are ENV's own methods, and the walk only
-    // describes what `Object`'s ancestors offer.
-    if crate::builtins::env::is_env(&boxed) {
-        if let Some(f) = crate::builtins::env::lookup(name.name().as_str()) {
-            return f(&boxed, args, block);
-        }
+    if is_env {
         // ENV's read-only Hash/Enumerable surface (`count`, `min`, `value?`,
         // `each_value`, `grep`, `lazy`, `tally`, ...) is served by dispatching
         // to a fresh Hash snapshot. Mutators are in `env::lookup` above (they
