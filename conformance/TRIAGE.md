@@ -19,6 +19,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
+| ? | auto-no-receiver-is-available-argumenterror-234c | 1 | issue_3119 | uncaught exception: no receiver is available (ArgumentError) |
 | ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |
 | P | missing-const:M::C | 1 | constant_path | uncaught exception: uninitialized constant M::C (NameError) |

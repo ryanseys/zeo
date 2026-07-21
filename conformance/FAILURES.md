@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **137 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `3a65efa`
+Suite `spinel` — **127 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `1ef8efd`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -2050,56 +2050,6 @@ uncaught exception: uninitialized constant OpenSSL (NameError)
 
 ---
 
-## `hash_conformance_batch7` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/hash_conformance_batch7.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_conformance_batch7.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 10
---- expected (16 lines)
-true
-true
-true
-false
-nil
-nil
-[nil, nil]
-{a: 1, b: 2}
-[]
-[0, 0]
-7
-9
-{}
-0
-5
-{a: 1, b: 2}
-
---- actual (16 lines)
-true
-true
-true
-false
-nil
-nil
-[nil, nil]
-{a: 1, b: 2}
-[]
-[nil, nil]
-7
-9
-{}
-0
-5
-{a: 1, b: 2}
-```
-
----
-
 ## `hash_dig` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/hash_dig.rb`
@@ -2110,7 +2060,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (100001279) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (100445318) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -2196,7 +2146,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (100001279) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (100445318) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -2870,7 +2820,7 @@ true
 
 --- actual (5 lines)
 C
--3820185918690117200
+5089653620613155510
 S
 P
 false
@@ -3074,64 +3024,6 @@ nil
 
 ---
 
-## `issue_3030` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3030.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3030.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-ArgumentError
-ArgumentError
-ArgumentError
-ArgumentError
-:k
-2
-:z
-{a: 1}
-
---- actual (8 lines)
-nil
-nil
-nil
-nil
-:k
-2
-:z
-{a: 1}
-```
-
----
-
-## `issue_3036` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3036.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3036.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-ArgumentError
-nil
-{a: 1}
-
---- actual (3 lines)
-nil
-nil
-{a: 1}
-```
-
----
-
 ## `issue_3037` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3037.rb`
@@ -3154,30 +3046,6 @@ caught NoMethodError
 undefined method 'undefined_bareword_thing' for main
 "fallback"
 42
-```
-
----
-
-## `issue_3042b` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3042b.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3042b.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (3 lines)
-[1, 2]
-true
-false
-
---- actual (3 lines)
-[1, 2]
-false
-false
 ```
 
 ---
@@ -3302,38 +3170,6 @@ true
 true
 true
 true
-```
-
----
-
-## `issue_3053` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3053.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3053.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 7
---- expected (7 lines)
--2
--2
--2
-"AB"
-9
-["X", "Y"]
-true
-
---- actual (7 lines)
--2
--2
--2
-"AB"
-9
-["X", "Y"]
-false
 ```
 
 ---
@@ -3514,7 +3350,12 @@ false
 - source: `/Users/ryanseys/dev/spinel/test/issue_3119.rb`
 - expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3119.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-receiver-is-available-argumenterror-234c` (cluster `?`)
+
+stderr:
+```
+uncaught exception: no receiver is available (ArgumentError)
+```
 
 diff:
 ```
@@ -3525,10 +3366,16 @@ first difference at line 3
 true
 true
 
---- actual (3 lines)
+--- actual (2 lines)
 {a: 1}
 true
-false
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: no receiver is available (ArgumentError)
 ```
 
 ---
@@ -3673,32 +3520,6 @@ I "0b101" 5
 I " -7 " -7
 I "1__0" "AE"
 I NUL "AE"
-```
-
----
-
-## `kernel_underscore_id` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/kernel_underscore_id.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/kernel_underscore_id.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (4 lines)
-true
-Integer
-4
-true
-
---- actual (4 lines)
-true
-Integer
-8
-true
 ```
 
 ---
@@ -3860,38 +3681,6 @@ true
 true
 false
 true
-```
-
----
-
-## `object_id_nil_true` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/object_id_nil_true.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/object_id_nil_true.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-4
-0
-20
-[4, 20]
-false
-false
-false
-
---- actual (7 lines)
-8
-0
-20
-[8, 20]
-false
-false
-false
 ```
 
 ---
@@ -4341,60 +4130,6 @@ nil
 
 ---
 
-## `range_and_array_range_args` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/range_and_array_range_args.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/range_and_array_range_args.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (18 lines)
-true
-Integer
-true
-Float
-true
-false
-true
-[1, 2, 3]
-[8, 9, 10]
-[7, 8, 9]
-[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-10
-9
-[20, 30, 40]
-[10, 30, 50]
-["b", "c"]
-[1, 2, 0, 0, 0]
-[1, 9, 9, 4, 5]
-
---- actual (18 lines)
-true
-Integer
-true
-Float
-false
-false
-true
-[1, 2, 3]
-[8, 9, 10]
-[7, 8, 9]
-[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-10
-9
-[20, 30, 40]
-[10, 30, 50]
-["b", "c"]
-[1, 2, 0, 0, 0]
-[1, 9, 9, 4, 5]
-```
-
----
-
 ## `range_bsearch_float` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/range_bsearch_float.rb`
@@ -4427,40 +4162,6 @@ nil
 
 ---
 
-## `range_case_eq_range` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/range_case_eq_range.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/range_case_eq_range.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (8 lines)
-false
-false
-true
-false
-true
-false
-false
-false
-
---- actual (8 lines)
-false
-false
-true
-false
-false
-false
-false
-false
-```
-
----
-
 ## `rational_complex_wave9` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/rational_complex_wave9.rb`
@@ -4471,7 +4172,7 @@ false
 stderr:
 ```
 
-thread '<unnamed>' (100014113) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (100510031) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4545,7 +4246,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (100014113) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (100510031) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5930,42 +5631,6 @@ true
 
 
 2
-```
-
----
-
-## `struct_value_equality` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/struct_value_equality.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/struct_value_equality.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (9 lines)
-true
-false
-true
-false
-true
-true
-false
-false
-[1, 2]
-
---- actual (9 lines)
-true
-false
-true
-true
-true
-true
-false
-false
-[1, 2]
 ```
 
 ---

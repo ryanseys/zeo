@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=3a65efa
-# PASS=2065 FAIL_OUTPUT=137 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=1ef8efd
+# PASS=2075 FAIL_OUTPUT=127 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -755,7 +755,7 @@ hash_block_methods_variants	PASS	-	-
 hash_blockless_enumerator	PASS	-	-
 hash_clear	PASS	-	-
 hash_compound_assign_more	PASS	-	-
-hash_conformance_batch7	FAIL_OUTPUT	expect	-
+hash_conformance_batch7	PASS	-	-
 hash_ctor_merge_clone_transform	PASS	-	-
 hash_default_array_fetch_concat_wave9	PASS	-	-
 hash_default_proc	PASS	-	-
@@ -1175,20 +1175,20 @@ issue_3024b	FAIL_OUTPUT	expect	-
 issue_3026	PASS	-	-
 issue_3027	PASS	-	-
 issue_3028	PASS	-	-
-issue_3030	FAIL_OUTPUT	expect	-
+issue_3030	PASS	-	-
 issue_3031	PASS	-	-
 issue_3032	PASS	-	-
 issue_3033	PASS	-	-
 issue_3034	PASS	-	-
 issue_3035	PASS	-	-
-issue_3036	FAIL_OUTPUT	expect	-
+issue_3036	PASS	-	-
 issue_3037	FAIL_OUTPUT	expect	-
 issue_3038	PASS	-	-
 issue_3039	PASS	-	-
 issue_3040	PASS	-	-
 issue_3041	PASS	-	-
 issue_3042	PASS	-	-
-issue_3042b	FAIL_OUTPUT	expect	-
+issue_3042b	PASS	-	-
 issue_3043	PASS	-	-
 issue_3044	PASS	-	-
 issue_3045	PASS	-	-
@@ -1200,7 +1200,7 @@ issue_3049	FAIL_OUTPUT	expect	-
 issue_3049b	FAIL_OUTPUT	expect	-
 issue_3050	PASS	-	-
 issue_3051	FAIL_OUTPUT	expect	-
-issue_3053	FAIL_OUTPUT	expect	-
+issue_3053	PASS	-	-
 issue_3054	PASS	-	-
 issue_3055	PASS	-	-
 issue_3056	PASS	-	-
@@ -1261,7 +1261,7 @@ issue_3114	PASS	-	-
 issue_3116	PASS	-	-
 issue_3117	PASS	-	-
 issue_3118	PASS	-	-
-issue_3119	FAIL_OUTPUT	expect	-
+issue_3119	FAIL_OUTPUT	expect	auto-no-receiver-is-available-argumenterror-234c
 issue_3120	PASS	-	-
 issue_3121	PASS	-	-
 issue_3124	PASS	-	-
@@ -1295,7 +1295,7 @@ kernel_integer_float_errors	PASS	-	-
 kernel_integer_float_strict_nil	PASS	-	-
 kernel_integer_with_base	PASS	-	-
 kernel_rational_string_zerodenom	PASS	-	-
-kernel_underscore_id	FAIL_OUTPUT	expect	-
+kernel_underscore_id	PASS	-	-
 kwarg_back_propagate_callee_type	PASS	-	-
 kwargs	PASS	-	-
 kwargs_double_splat	PASS	-	-
@@ -1507,7 +1507,7 @@ object_dup_initialize_copy	PASS	-	-
 object_freeze_flag	PASS	-	-
 object_freeze_module_isa	FAIL_OUTPUT	expect	-
 object_id_basic	PASS	-	-
-object_id_nil_true	FAIL_OUTPUT	expect	-
+object_id_nil_true	PASS	-	-
 object_identity_cluster	FAIL_OUTPUT	expect	-
 object_identity_eq	PASS	-	-
 object_identity_predicates	PASS	-	-
@@ -1756,11 +1756,11 @@ random_methods	PASS	-	-
 random_rand_argument	PASS	-	-
 random_seed_range_base64_pad	PASS	-	-
 range	PASS	-	-
-range_and_array_range_args	FAIL_OUTPUT	expect	-
+range_and_array_range_args	PASS	-	-
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
 range_bsearch	PASS	-	-
 range_bsearch_float	FAIL_OUTPUT	expect	-
-range_case_eq_range	FAIL_OUTPUT	expect	-
+range_case_eq_range	PASS	-	-
 range_case_eq_type_mismatch	PASS	-	-
 range_comparable_wave8	PASS	-	-
 range_conformance_batch2	PASS	-	-
@@ -2063,7 +2063,7 @@ struct_string_member_gc_root	PASS	-	-
 struct_to_a_values	PASS	-	-
 struct_to_h	PASS	-	-
 struct_to_h_block	FAIL_OUTPUT	expect	-
-struct_value_equality	FAIL_OUTPUT	expect	-
+struct_value_equality	PASS	-	-
 struct_valuesat_hash_set_init_wave10	PASS	-	-
 struct_yield_initialize	PASS	-	-
 subclass_inherits_module_parent	PASS	-	-
