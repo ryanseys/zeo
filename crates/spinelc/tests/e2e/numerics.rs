@@ -610,6 +610,51 @@ fn integer_digits_accepts_a_bignum_base() {
 }
 
 #[test]
+fn pack_integer_directive_coerces_a_float() {
+    // An integer pack directive truncates a Float toward zero (CRuby coerces
+    // through an exact Integer, so a value past the i64 range wraps modulo
+    // 2**64 rather than saturating); NaN/Infinity raise FloatDomainError.
+    let result = run_ruby(
+        r#"
+        p [1.5].pack("C*").bytes
+        p [-3.75, 200.9].pack("c2").unpack("c2")
+        p [2.0e19].pack("Q").unpack1("Q")
+        p [-2.0e19].pack("q").unpack1("q")
+        p [1.0e300].pack("Q").unpack1("Q")
+        begin; [Float::NAN].pack("C"); rescue FloatDomainError => e; puts "nan: #{e}"; end
+        begin; [-Float::INFINITY].pack("q"); rescue FloatDomainError => e; puts "inf: #{e}"; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[1]\n[-3, -56]\n1553255926290448384\n-1553255926290448384\n0\n\
+         nan: NaN\ninf: -Infinity\n"
+    );
+}
+
+#[test]
+fn unpack_offset_keyword_starts_mid_string() {
+    // `unpack`/`unpack1` accept `offset:`; `offset == bytesize` yields the
+    // empty tail (nil), past-the-end raises, negative raises.
+    let result = run_ruby(
+        r#"
+        pair = [1.5, 2.25].pack("G2")
+        p pair.unpack1("G", offset: 8)
+        p pair.unpack("G", offset: 8)
+        p "abc".unpack("C", offset: 3)
+        begin; "abc".unpack("C", offset: 5); rescue ArgumentError => e; puts e.message; end
+        begin; "abc".unpack("C", offset: -1); rescue ArgumentError => e; puts e.message; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2.25\n[2.25]\n[nil]\noffset outside of string\noffset can't be negative\n"
+    );
+}
+
+#[test]
 fn float_numerator_denominator_on_non_finite() {
     // Infinity/NaN have no rational form, so `numerator` returns the float
     // itself and `denominator` returns 1 -- CRuby never raises here.

@@ -105,8 +105,8 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
                 let size = int_size(d.kind, d.native);
                 let n = numeric_count(d.count, elems.len().saturating_sub(idx));
                 for _ in 0..n {
-                    let v = next_int(elems, &mut idx)?;
-                    emit_int(&mut out, v as u64, size, d.big_endian);
+                    let bits = next_int_bits(elems, &mut idx)?;
+                    emit_int(&mut out, bits, size, d.big_endian);
                 }
             }
             // IEEE-754 floats: `D d E G` are doubles, `F f e g` singles;
@@ -444,6 +444,37 @@ fn next_int(elems: &[RubyValue], idx: &mut usize) -> Result<i64, Signal> {
     }
 }
 
+/// The low 64 bits of the next element coerced to an exact integer, for the
+/// integer pack directives. A Float truncates toward zero and CRuby coerces it
+/// *through an exact Integer*, so a value beyond the i64 range wraps modulo
+/// 2**64 rather than saturating (a plain C cast would be undefined behaviour);
+/// NaN/Infinity raise FloatDomainError. `emit_int` then slices off the low
+/// `size` bytes.
+fn next_int_bits(elems: &[RubyValue], idx: &mut usize) -> Result<u64, Signal> {
+    let v = elems.get(*idx).ok_or_else(|| err("too few arguments"))?;
+    *idx += 1;
+    match v {
+        RubyValue::Int(n) => Ok(*n as u64),
+        RubyValue::BigInt(b) => Ok(low_u64(b)),
+        RubyValue::Float(f) => match crate::builtins::float::float_to_integer(*f)? {
+            RubyValue::Int(n) => Ok(n as u64),
+            RubyValue::BigInt(b) => Ok(low_u64(&b)),
+            _ => unreachable!("float_to_integer yields only Int/BigInt"),
+        },
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+        )),
+    }
+}
+
+/// A BigInt's low 64 bits, two's-complement (num-bigint's `BitAnd` uses Ruby's
+/// infinite-two's-complement semantics, so a negative value masks correctly).
+fn low_u64(b: &num_bigint::BigInt) -> u64 {
+    let mask = num_bigint::BigInt::from(u64::MAX);
+    num_traits::ToPrimitive::to_u64(&(b & &mask)).unwrap_or(0)
+}
+
 fn next_float(elems: &[RubyValue], idx: &mut usize) -> Result<f64, Signal> {
     let v = elems.get(*idx).ok_or_else(|| err("too few arguments"))?;
     *idx += 1;
@@ -771,6 +802,22 @@ mod tests {
         assert_eq!(pack(&floats(&[1.5]), "F").unwrap(), vec![0, 0, 192, 63]);
         assert_eq!(f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap(), "d").unwrap()), [3.5]);
         assert_eq!(f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap(), "E*").unwrap()), [2.0, 3.0]);
+    }
+
+    #[test]
+    fn integer_directive_truncates_and_wraps_a_float() {
+        // Truncate toward zero for the small case.
+        assert_eq!(pack(&floats(&[1.5]), "C*").unwrap(), vec![1]);
+        assert_eq!(pack(&floats(&[-3.75]), "c").unwrap(), vec![253]); // -3 as u8
+        // A value past i64 wraps modulo 2**64 (coerced through an exact Integer).
+        assert_eq!(
+            pack(&floats(&[2.0e19]), "Q").unwrap(),
+            1553255926290448384u64.to_le_bytes()
+        );
+        // 1e300 is a multiple of 2**64, so its low 64 bits are zero.
+        assert_eq!(pack(&floats(&[1.0e300]), "Q").unwrap(), vec![0; 8]);
+        // (NaN/Infinity raising FloatDomainError needs the runtime exception
+        // machinery, so that path is exercised by the e2e test, not here.)
     }
 
     #[test]

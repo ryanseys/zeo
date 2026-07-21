@@ -1178,17 +1178,21 @@ builtin_methods! {
     // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
     // first element (nil when empty).
     "unpack" => fn unpack(recv, args, _block) {
-        arity!(args, 1);
-        let template = unpack_template(&args[0])?;
+        let positional = kw_strip(args);
+        arity!(positional, 1);
+        let template = unpack_template(&positional[0])?;
         let bytes = recv_str!(recv).lock().bytes().to_vec();
-        let vals = crate::builtins::pack::unpack(&bytes, &template)?;
+        let start = kw_unpack_offset(args, bytes.len())?;
+        let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
     "unpack1" => fn unpack1(recv, args, _block) {
-        arity!(args, 1);
-        let template = unpack_template(&args[0])?;
+        let positional = kw_strip(args);
+        arity!(positional, 1);
+        let template = unpack_template(&positional[0])?;
         let bytes = recv_str!(recv).lock().bytes().to_vec();
-        let vals = crate::builtins::pack::unpack(&bytes, &template)?;
+        let start = kw_unpack_offset(args, bytes.len())?;
+        let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(vals.into_iter().next().unwrap_or(RubyValue::Nil))
     }
     "scrub" => fn scrub(recv, args, _block) {
@@ -2840,6 +2844,42 @@ fn kw_encoding(args: &[RubyValue]) -> Result<Option<crate::encoding::EncodingId>
         return Ok(None);
     }
     Ok(Some(crate::builtins::encoding::arg_encoding(&v)?))
+}
+
+/// The positional args of a call that may carry a trailing keyword Hash --
+/// strips that Hash so `arity!` counts only the real positionals.
+fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
+    match args.last() {
+        Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
+        _ => args,
+    }
+}
+
+/// `unpack`/`unpack1`'s `offset:` keyword: the byte index to start decoding
+/// from (default 0). CRuby allows `offset == bytesize` (an empty remainder ->
+/// nil), rejects a larger offset ("offset outside of string") and a negative
+/// one ("offset can't be negative").
+fn kw_unpack_offset(args: &[RubyValue], len: usize) -> Result<usize, Signal> {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return Ok(0);
+    };
+    let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("offset")));
+    let off = match v {
+        RubyValue::Nil => return Ok(0),
+        RubyValue::Int(n) => n,
+        other => return Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(&other)),
+        )),
+    };
+    if off < 0 {
+        return Err(crate::dispatch::raise_error("ArgumentError", "offset can't be negative".to_string()));
+    }
+    let off = off as usize;
+    if off > len {
+        return Err(crate::dispatch::raise_error("ArgumentError", "offset outside of string".to_string()));
+    }
+    Ok(off)
 }
 
 builtin_methods! {
