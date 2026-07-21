@@ -159,7 +159,7 @@ pub type RMatchData = Arc<MatchDataInner>;
 /// character class that isn't preceded by a backslash.
 fn translate_ruby_escapes(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
-    let mut chars = source.chars();
+    let mut chars = source.chars().peekable();
     while let Some(c) = chars.next() {
         if c != '\\' {
             out.push(c);
@@ -167,6 +167,23 @@ fn translate_ruby_escapes(source: &str) -> String {
         }
         match chars.next() {
             Some('e') => out.push_str("\\x1b"),
+            // A Ruby octal escape starts with `\0` -- a leading zero is never a
+            // backreference, so `\033` is ESC, not group 0. Read up to 3 octal
+            // digits total and emit `\xHH`, which both engines understand (and
+            // which keeps `needs_fancy` from mistaking the `\0` for a backref).
+            Some('0') => {
+                let mut val = 0u32;
+                for _ in 0..2 {
+                    match chars.peek() {
+                        Some(d @ '0'..='7') => {
+                            val = val * 8 + d.to_digit(8).unwrap();
+                            chars.next();
+                        }
+                        _ => break,
+                    }
+                }
+                out.push_str(&format!("\\x{val:02x}"));
+            }
             Some(next) => {
                 out.push('\\');
                 out.push(next);

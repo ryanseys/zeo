@@ -302,3 +302,18 @@ fn matchdata_unknown_named_group_raises_index_error() {
         "\"06\"\nIndexError: undefined group name reference: nope\n"
     );
 }
+
+#[test]
+fn regexp_octal_escape_is_not_a_backreference() {
+    // A Ruby octal escape `\033` is the ESC byte, not a group-0 backreference;
+    // it must compile and match rather than raising "Invalid back reference".
+    let result = run_ruby(
+        r#"
+        s = "a\e[31mred\e[0mb"
+        puts s.gsub(/\033\[[0-9;]*[A-Za-z]/, "")
+        puts ("x\033y" =~ /\033/).inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "aredb\n1\n");
+}
