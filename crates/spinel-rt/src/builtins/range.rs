@@ -322,10 +322,18 @@ builtin_methods! {
                 "TypeError",
                 "can't iterate from NilClass".to_string(),
             )),
-            Some(other) => return Err(crate::dispatch::raise_error(
+            // A numeric-but-non-Integer begin (Float, Rational, Complex, or a
+            // bignum this path doesn't yet count) can't be succ-iterated, so
+            // CRuby raises; a NON-numeric begin (String, Symbol, ...) simply
+            // has no numeric size, so `Range#size` is nil rather than an error.
+            Some(other @ (RubyValue::BigInt(_)
+                | RubyValue::Float(_)
+                | RubyValue::Rational(_)
+                | RubyValue::Complex(_))) => return Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!("can't iterate from {}", crate::builtins::class_name_of(other)),
             )),
+            Some(_) => return Ok(RubyValue::Nil),
         };
         // The last integer the range covers: an endless (or +Infinity) range is
         // infinite; a Float end floors (inclusive) or `ceil - 1` (exclusive).
