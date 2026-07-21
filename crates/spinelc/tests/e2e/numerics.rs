@@ -785,3 +785,32 @@ fn endless_and_beginless_range_max_min_raise_rather_than_hang() {
          1\n"
     );
 }
+
+#[test]
+fn complex_component_class_abs_and_division() {
+    // Complex#abs keeps the Integer class when a component is zero and both are
+    // integers (Complex(0,2).abs == 2), else Float. Dividing by a real scalar
+    // is componentwise: a Float 0.0 divisor yields Infinity, an Integer 0
+    // raises. Non-finite imaginary parts render with `*i`.
+    let result = run_ruby(
+        r#"
+        p Complex(0, 2).abs
+        p Complex(-3, 0).abs
+        p Complex(3, 4).abs
+        p Complex(2, 0.0).abs
+        p Complex(0, 2).polar[0]
+        p(Complex(20, 40) / 0.0)
+        p(Complex(21, 41) / 2.0)
+        p(Complex(20, 40) / 4)
+        r = (begin; Complex(20, 40) / 0; rescue ZeroDivisionError => e; e.message; end); p r
+        p((Complex(3, 0) / 0.0).to_s)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "2\n3\n5.0\n2.0\n2\n\
+         (Infinity+Infinity*i)\n(10.5+20.5i)\n(5+10i)\n\
+         \"divided by 0\"\n\"Infinity+NaN*i\"\n"
+    );
+}

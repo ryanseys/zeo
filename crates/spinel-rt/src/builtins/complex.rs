@@ -339,7 +339,15 @@ pub(crate) fn cpx_mul(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
 }
 
 pub(crate) fn cpx_div(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
-    let ((ar, ai), (br, bi)) = (as_components(a), as_components(b));
+    let (ar, ai) = as_components(a);
+    // Dividing by a REAL scalar divides each component directly (CRuby's
+    // componentwise rule): a Float `0.0` divisor yields Infinity, an Integer
+    // `0` raises ZeroDivisionError. The conjugate formula below would instead
+    // turn a zero divisor into `0/0 == NaN`.
+    if !matches!(b, RubyValue::Complex(_)) {
+        return complex_new(comp_quo(&ar, b)?, comp_quo(&ai, b)?);
+    }
+    let (br, bi) = as_components(b);
     // (a / b) = (a * conj(b)) / |b|^2, componentwise via quo.
     let denom = num_add_or_panic(&num_mul_or_panic(&br, &br)?, &num_mul_or_panic(&bi, &bi)?)?;
     let real_num = num_add_or_panic(&num_mul_or_panic(&ar, &br)?, &num_mul_or_panic(&ai, &bi)?)?;
@@ -417,7 +425,15 @@ pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> String {
         Some(rest) => ("-", rest.to_string()),
         None => ("+", imag),
     };
-    let star = if matches!(c.imag, RubyValue::Rational(_)) && inspect { "*" } else { "" };
+    // CRuby separates the imaginary unit with `*` when the coefficient isn't a
+    // bare number: a Rational (`3/4*i`, inspect), or a non-finite Float whose
+    // rendering is a word (`Infinity*i`, `NaN*i`) -- in BOTH to_s and inspect.
+    let imag_nonfinite = matches!(&c.imag, RubyValue::Float(f) if !f.is_finite());
+    let star = if (matches!(c.imag, RubyValue::Rational(_)) && inspect) || imag_nonfinite {
+        "*"
+    } else {
+        ""
+    };
     let body = format!("{real}{sign}{imag}{star}i");
     if inspect { format!("({body})") } else { body }
 }
@@ -508,6 +524,37 @@ fn abs_f64(c: &RComplexData) -> f64 {
         .hypot(crate::builtins::numeric::num_to_f64_unchecked(&c.imag))
 }
 
+/// `Complex#abs`, preserving CRuby's component-class rule: when one component
+/// is numerically zero the magnitude is `|other|` in that component's own
+/// class -- Integer only when BOTH components are Integer-classed (so
+/// `Complex(0, 2).abs` -> `2`, but `Complex(2, 0.0).abs` -> `2.0`). With both
+/// components non-zero it is the ordinary Float hypotenuse.
+fn complex_abs_value(c: &RComplexData) -> RubyValue {
+    use crate::builtins::numeric::num_to_f64_unchecked;
+    let re_zero = num_to_f64_unchecked(&c.real) == 0.0;
+    let im_zero = num_to_f64_unchecked(&c.imag) == 0.0;
+    if !re_zero && !im_zero {
+        return RubyValue::Float(abs_f64(c));
+    }
+    let both_int = matches!(c.real, RubyValue::Int(_) | RubyValue::BigInt(_))
+        && matches!(c.imag, RubyValue::Int(_) | RubyValue::BigInt(_));
+    // The magnitude is the non-zero component's absolute value (either, when
+    // both are zero -- `|0|` is `0`).
+    let other = if im_zero { &c.real } else { &c.imag };
+    if both_int {
+        return match other {
+            RubyValue::Int(i) => RubyValue::Int(i.abs()),
+            RubyValue::BigInt(b) => {
+                let val = (**b).clone();
+                let abs = if num_to_f64_unchecked(other) < 0.0 { -val } else { val };
+                RubyValue::BigInt(std::sync::Arc::new(abs))
+            }
+            _ => RubyValue::Float(num_to_f64_unchecked(other).abs()),
+        };
+    }
+    RubyValue::Float(num_to_f64_unchecked(other).abs())
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -543,7 +590,7 @@ builtin_methods! {
     }
     "abs"[0] | "magnitude"[0] => fn abs(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Float(abs_f64(recv_complex(recv))))
+        Ok(complex_abs_value(recv_complex(recv)))
     }
     "abs2"[0] => fn abs2(recv, args, _block) {
         arity!(args, 0);
@@ -565,7 +612,7 @@ builtin_methods! {
         arity!(args, 0);
         let c = recv_complex(recv);
         Ok(RubyValue::Array(crate::array_new(vec![
-            RubyValue::Float(abs_f64(c)),
+            complex_abs_value(c),
             RubyValue::Float(
                 crate::builtins::numeric::num_to_f64_unchecked(&c.imag)
                     .atan2(crate::builtins::numeric::num_to_f64_unchecked(&c.real)),
