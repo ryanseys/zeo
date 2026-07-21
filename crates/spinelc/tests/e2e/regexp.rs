@@ -463,3 +463,30 @@ fn posix_bracket_validation_and_regexp_error_messages() {
          true\n"
     );
 }
+
+#[test]
+fn matchdata_hash_is_value_based() {
+    // MatchData#hash/#eql? are value-based (subject + pattern + regions), so
+    // two matches produced by separate calls hash equal and work as the same
+    // Hash key -- while a different subject keys apart.
+    let result = run_ruby(
+        r#"
+        m1 = "abc".match(/b/)
+        m2 = "xbz".match(/b/)
+        m3 = "abc".match(/b/)
+        p(m1.hash == m2.hash)
+        p(m1.hash == m3.hash)
+        p(m1.hash.is_a?(Integer))
+        h = {}
+        h[m1] = 99
+        p h[m3]
+        p h[m2]
+        p m1.eql?(m3)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "false\ntrue\ntrue\n99\nnil\ntrue\n"
+    );
+}

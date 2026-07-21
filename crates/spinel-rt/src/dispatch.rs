@@ -1127,6 +1127,26 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     responds_to(recv.class_id(), name, include_all)
 }
 
+/// CRuby's `rb_obj_dig` (object.c): recurse `cur.dig(rest)` after a container's
+/// own first-level lookup. A nil short-circuits to nil; an intermediate that
+/// doesn't respond to `dig` raises TypeError -- which is why
+/// `[1,[2]].dig(1,0,3)` raises (the `2` Integer has no `#dig`) instead of
+/// silently indexing an Integer's bits through `[]`. Callers (`Array#dig`,
+/// `Hash#dig`) perform their own first index, then hand the remaining keys here.
+pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, Signal> {
+    if cur.is_nil() {
+        return Ok(RubyValue::Nil);
+    }
+    let dig = Symbol::intern("dig");
+    if !responds_to_value(&cur, dig, false) {
+        return Err(raise_error(
+            "TypeError",
+            format!("{} does not have #dig method", crate::class_name_of_value(&cur)),
+        ));
+    }
+    send_value(&cur, dig, rest, None)
+}
+
 /// Whether a class/module VALUE responds to `name` via a class-method source
 /// (runtime singleton overlay, registered `def self.x`/`module_function`/
 /// `class << self` methods, a builtin class-method table, or a native struct

@@ -1045,3 +1045,56 @@ fn symbol_to_proc_is_lambda_and_hash_values_at_uses_default() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\n[\"X\", \"Y\"]\n[0, 0]\n[1, nil]\n");
 }
+
+#[test]
+fn dig_raises_typeerror_through_non_diggable_intermediate() {
+    // Array/Hash#dig recurse through each intermediate's OWN #dig (CRuby's
+    // rb_obj_dig), so digging past a non-diggable (an Integer) raises
+    // TypeError rather than silently indexing its bits via Integer#[].
+    let result = run_ruby(
+        r#"
+        def cls; begin; yield; rescue => e; e.class; end; end
+        p(cls { [1, [2]].dig(1, 0, 3) })
+        p [1, [2]].dig(1, 0)
+        p [1, [2, [3]]].dig(1, 1, 0)
+        p [[nil]].dig(0, 0, 5)
+        p [{ a: 7 }].dig(0, :a)
+        p({ a: { b: 1 } }.dig(:a, :b))
+        p(cls { { a: 5 }.dig(:a, :b) })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "TypeError\n2\n3\nnil\n7\n1\nTypeError\n"
+    );
+}
+
+#[test]
+fn uniq_uses_eql_identity_for_user_class_defining_only_eq() {
+    // uniq (and Array#eql?) dedup by eql?/hash, not ==. A class that defines
+    // only == keeps every instance distinct (Object#eql? is identity), so
+    // two equal-by-== Points both survive uniq -- unlike include?/index,
+    // which do use ==.
+    let result = run_ruby(
+        r#"
+        class Point
+          attr_reader :x
+          def initialize(x) = @x = x
+          def ==(o) = o.is_a?(Point) && @x == o.x
+        end
+        pts = [Point.new(1), Point.new(2), Point.new(3)]
+        p pts.include?(Point.new(2))
+        p pts.index(Point.new(3))
+        p [Point.new(1), Point.new(1), Point.new(2)].uniq.map(&:x)
+        p [1.0, 1, 1, 2].uniq
+        p [1].eql?([1])
+        p [1].eql?([1.0])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\n2\n[1, 1, 2]\n[1.0, 1, 2]\ntrue\nfalse\n"
+    );
+}

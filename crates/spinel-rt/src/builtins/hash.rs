@@ -166,19 +166,13 @@ builtin_methods! {
                 "wrong number of arguments (given 0, expected 1+)".to_string(),
             ));
         }
-        let mut cur = crate::hash_get(recv_hash!(recv), &args[0]);
-        for key in &args[1..] {
-            if cur.is_nil() {
-                return Ok(RubyValue::Nil);
-            }
-            cur = crate::dispatch::send_value(
-                &cur,
-                crate::Symbol::intern("[]"),
-                std::slice::from_ref(key),
-                None,
-            )?;
+        let cur = crate::hash_get(recv_hash!(recv), &args[0]);
+        if args.len() == 1 {
+            return Ok(cur);
         }
-        Ok(cur)
+        // Remaining keys recurse through the intermediate's OWN `dig`; a
+        // non-diggable there raises TypeError, matching CRuby's `rb_obj_dig`.
+        crate::dispatch::obj_dig(cur, &args[1..])
     }
     // `merge` (fresh hash) with an optional conflict block;
     // `merge!`/`update` write into the receiver.

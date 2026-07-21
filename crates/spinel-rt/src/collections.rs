@@ -204,7 +204,26 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         // a user-overridable `#hash`/`#eql?` protocol yet (see `HashKey`'s
         // own docs on this documented, narrow scope-cut).
         RubyValue::Regexp(r) => HashKey::Identity(Arc::as_ptr(r) as *const () as usize),
-        RubyValue::MatchData(m) => HashKey::Identity(Arc::as_ptr(m) as *const () as usize),
+        // Value-based, like CRuby's `MatchData#eql?`/`#hash`: two matches with
+        // the same subject, pattern, and captured regions are one key even
+        // though they are distinct objects (so `"abc".match(/b/).hash` is
+        // stable across separate calls).
+        RubyValue::MatchData(m) => {
+            let mut parts = vec![
+                HashKey::Str(m.haystack.clone().into_bytes(), 0),
+                HashKey::Str(m.regexp.source.clone().into_bytes(), 0),
+                HashKey::Bool(m.regexp.ignore_case),
+                HashKey::Bool(m.regexp.multiline),
+                HashKey::Bool(m.regexp.extended),
+            ];
+            parts.extend(m.groups.iter().map(|g| match g {
+                Some((s, e)) => {
+                    HashKey::Array(vec![HashKey::Int(*s as i64), HashKey::Int(*e as i64)])
+                }
+                None => HashKey::Nil,
+            }));
+            HashKey::Array(parts)
+        }
         RubyValue::Fiber(f) => HashKey::Identity(Arc::as_ptr(f) as *const () as usize),
         RubyValue::Enumerator(e) => HashKey::Identity(Arc::as_ptr(e) as *const () as usize),
         RubyValue::Yielder(y) => HashKey::Identity(y.ptr_id()),

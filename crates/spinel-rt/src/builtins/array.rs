@@ -690,21 +690,14 @@ builtin_methods! {
                 "wrong number of arguments (given 0, expected 1+)".to_string(),
             ));
         }
-        let mut cur = index_only(recv, &args[0])?;
-        for key in &args[1..] {
-            if cur.is_nil() {
-                return Ok(RubyValue::Nil);
-            }
-            // Each level digs via its OWN class's [] (Hash keys, Array
-            // indices) -- one dynamic dispatch per level, real Ruby's rule.
-            cur = crate::dispatch::send_value(
-                &cur,
-                crate::Symbol::intern("[]"),
-                std::slice::from_ref(key),
-                None,
-            )?;
+        let cur = index_only(recv, &args[0])?;
+        if args.len() == 1 {
+            return Ok(cur);
         }
-        Ok(cur)
+        // After our own first index, remaining keys recurse through the
+        // intermediate's OWN `dig` (real Ruby's rule) -- a non-diggable there
+        // raises TypeError rather than being indexed via some unrelated `[]`.
+        crate::dispatch::obj_dig(cur, &args[1..])
     }
     "fetch" => fn fetch(recv, args, block) {
         arity!(args, 1..=2);
@@ -1488,17 +1481,13 @@ fn join_recursive(elems: &[RubyValue], sep: &str) -> String {
 /// and Float differ, whereas `==` coerces. Nested arrays compare element-wise
 /// (identity short-circuits a self-reference); other values require the same
 /// value kind plus `==`.
+/// CRuby's `eql?` (the `uniq`/`Array#eql?` predicate), NOT `==`. It projects
+/// through the same key `Hash` uses (`hash_key`), so `1.eql?(1.0)` is false
+/// and -- crucially -- a user object that defines only `==` (no `eql?`/`hash`)
+/// dedups by IDENTITY, so `[Point.new(1), Point.new(1)].uniq` keeps both. Using
+/// `rb_eq` here would dispatch the user `==` and wrongly merge them.
 fn values_eql(a: &RubyValue, b: &RubyValue) -> bool {
-    match (a, b) {
-        (RubyValue::Array(x), RubyValue::Array(y)) => {
-            if std::sync::Arc::ptr_eq(x, y) {
-                return true;
-            }
-            let (xs, ys) = (x.lock().clone(), y.lock().clone());
-            xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(p, q)| values_eql(p, q))
-        }
-        _ => std::mem::discriminant(a) == std::mem::discriminant(b) && a.rb_eq(b),
-    }
+    crate::collections::hash_key(a) == crate::collections::hash_key(b)
 }
 
 fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {
