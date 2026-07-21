@@ -1,0 +1,34 @@
+# cargo-deny configuration: license allowlist + RustSec advisories for the
+# whole dependency tree (including what ships inside every compiled program
+# via zeo-rt). Run locally with `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+# Permissive-only: zeo is MIT OR Apache-2.0 and must impose nothing more on
+# programs it compiles. Notably ABSENT: LGPL/GPL (e.g. malachite) -- adding a
+# copyleft dep should fail here loudly and be a deliberate decision.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
