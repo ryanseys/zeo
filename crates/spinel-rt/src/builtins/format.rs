@@ -24,11 +24,21 @@ struct Spec {
 struct Rendered {
     head: String,
     body: String,
+    /// The digit used when zero-padding to `width` (`'0'` normally; the
+    /// sign-extension digit `'1'`/`'7'`/`'f'` for a negative `..`-notation
+    /// radix body, where the pad continues the infinite leading sign digits).
+    fill: char,
+}
+
+impl Default for Rendered {
+    fn default() -> Rendered {
+        Rendered { head: String::new(), body: String::new(), fill: '0' }
+    }
 }
 
 impl Rendered {
     fn plain(body: String) -> Rendered {
-        Rendered { head: String::new(), body }
+        Rendered { body, ..Default::default() }
     }
 }
 
@@ -77,6 +87,7 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             return Ok(Rendered {
                 head: sign_prefix(spec, f.is_sign_negative() && !f.is_nan()),
                 body: if f.is_nan() { "NaN".to_string() } else { "Inf".to_string() },
+                ..Default::default()
             });
         }
     }
@@ -97,33 +108,20 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
                     body = "0".repeat(p - body.len()) + &body;
                 }
             }
-            Rendered { head: sign_prefix(spec, n.sign() == num_bigint::Sign::Minus), body }
-        }
-        'x' | 'X' | 'o' | 'b' | 'B' => {
-            let n = to_int_for_format(arg)?;
-            let (radix, prefix) = match spec.conv {
-                'x' => (16, "0x"),
-                'X' => (16, "0X"),
-                'o' => (8, "0"),
-                'b' => (2, "0b"),
-                _ => (2, "0B"),
-            };
-            let mut body = n.magnitude().to_str_radix(radix);
-            if spec.conv == 'X' {
-                body = body.to_uppercase();
+            Rendered {
+                head: sign_prefix(spec, n.sign() == num_bigint::Sign::Minus),
+                body,
+                ..Default::default()
             }
-            let mut head = sign_prefix(spec, n.sign() == num_bigint::Sign::Minus);
-            if spec.alt && n.sign() != num_bigint::Sign::NoSign {
-                head.push_str(prefix);
-            }
-            Rendered { head, body }
         }
+        'x' | 'X' | 'o' | 'b' | 'B' => render_radix(spec, to_int_for_format(arg)?),
         'f' => {
             let f = to_f64_for_format(arg)?;
             let prec = spec.precision.unwrap_or(6);
             Rendered {
                 head: sign_prefix(spec, f.is_sign_negative() && f != 0.0),
                 body: format!("{:.prec$}", f.abs()),
+                ..Default::default()
             }
         }
         'e' | 'E' => {
@@ -140,6 +138,7 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             Rendered {
                 head: sign_prefix(spec, f.is_sign_negative()),
                 body: format!("{mant}{e_char}{exp_sign}{:0>2}", exp_digits),
+                ..Default::default()
             }
         }
         'g' | 'G' => {
@@ -158,7 +157,7 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
                 let s = format!("{abs}");
                 s.trim_end_matches(".0").to_string()
             };
-            Rendered { head: sign_prefix(spec, f.is_sign_negative()), body }
+            Rendered { head: sign_prefix(spec, f.is_sign_negative()), body, ..Default::default() }
         }
         // C99 hexadecimal float (`%a`/`%A`): `0x1.5p+2`-style. Rare; a
         // straightforward mantissa/exponent decomposition of the IEEE bits.
@@ -217,7 +216,123 @@ fn render_hexfloat(spec: &Spec, f: f64) -> Rendered {
             out
         }
     };
-    Rendered { head, body }
+    Rendered { head, body, ..Default::default() }
+}
+
+/// A radix integer conversion (`%x`/`%o`/`%b`/`%B`/`%X`). Positive values are
+/// the base-`radix` magnitude, zero-padded to `precision` min-digits. A negative
+/// value with a sign flag (`%+b`) is signed-magnitude (`-101`); without one it
+/// uses CRuby's infinite-two's-complement `..` notation (`-5` -> `..1011`),
+/// where the leading `..` stands for the endless sign digit (`1`/`7`/`f`) and
+/// both precision and zero-pad-to-width extend the body with that sign digit.
+fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
+    use num_bigint::Sign;
+    let (radix, prefix, upper) = match spec.conv {
+        'x' => (16u32, "0x", false),
+        'X' => (16, "0X", true),
+        'o' => (8, "0", false),
+        'B' => (2, "0B", false),
+        _ => (2, "0b", false), // 'b'
+    };
+    let signed = spec.plus || spec.space;
+
+    if n.sign() != Sign::Minus {
+        // Non-negative: plain magnitude, precision as minimum digit count
+        // (precision 0 renders zero as the empty string).
+        let mut body = radix_digits(&n, radix, upper);
+        match spec.precision {
+            Some(0) if n.sign() == Sign::NoSign => body.clear(),
+            Some(p) if body.len() < p => body = "0".repeat(p - body.len()) + &body,
+            _ => {}
+        }
+        let mut head = sign_prefix(spec, false);
+        if spec.alt && n.sign() != Sign::NoSign {
+            head.push_str(prefix);
+        }
+        return Rendered { head, body, fill: '0' };
+    }
+
+    if signed {
+        // Signed magnitude: leading "-" (and "0b" after it under `#`).
+        let mut body = radix_digits(&(-&n), radix, upper);
+        if let Some(p) = spec.precision {
+            if body.len() < p {
+                body = "0".repeat(p - body.len()) + &body;
+            }
+        }
+        let mut head = "-".to_string();
+        if spec.alt {
+            head.push_str(prefix);
+        }
+        return Rendered { head, body, fill: '0' };
+    }
+
+    // Infinite two's-complement `..` notation. The `..` and any `#` prefix live
+    // in the head so width zero-padding continues the sign digit after them.
+    let sign_digit = digit_char(radix - 1, upper);
+    let mut body = twos_complement_digits(&n, radix, upper);
+    if let Some(p) = spec.precision {
+        // Precision counts the leading ".." (two chars): pad the digits with the
+        // sign digit so the whole `..`-body reaches `p`.
+        let target = p.saturating_sub(2);
+        if body.len() < target {
+            body = sign_digit.to_string().repeat(target - body.len()) + &body;
+        }
+    }
+    let mut head = String::new();
+    if spec.alt {
+        head.push_str(prefix);
+    }
+    head.push_str("..");
+    Rendered { head, body, fill: sign_digit }
+}
+
+/// The base-`radix` magnitude of a non-negative integer, uppercased for `%X`.
+fn radix_digits(n: &num_bigint::BigInt, radix: u32, upper: bool) -> String {
+    let s = n.to_str_radix(radix);
+    if upper {
+        s.to_uppercase()
+    } else {
+        s
+    }
+}
+
+/// A single digit value (0..=15 here) as its character, uppercased when `upper`.
+fn digit_char(d: u32, upper: bool) -> char {
+    let c = std::char::from_digit(d, 36).unwrap_or('0');
+    if upper {
+        c.to_ascii_uppercase()
+    } else {
+        c
+    }
+}
+
+/// The minimal infinite-two's-complement digit string for a negative integer:
+/// the low base-`radix` digits after which the value stabilizes to all sign
+/// digits (`-5` base 2 -> `1011`, `-1` base 16 -> `f`). The caller prefixes `..`.
+fn twos_complement_digits(n: &num_bigint::BigInt, radix: u32, upper: bool) -> String {
+    use num_bigint::{BigInt, Sign};
+    let b = BigInt::from(radix);
+    let half = radix / 2;
+    let neg_one = BigInt::from(-1);
+    let mut q = n.clone();
+    let mut digits = Vec::new(); // least-significant first
+    loop {
+        // Euclidean remainder in [0, radix).
+        let mut r = &q % &b;
+        if r.sign() == Sign::Minus {
+            r += &b;
+        }
+        let d = num_traits::ToPrimitive::to_u32(&r).unwrap_or(0);
+        q = (&q - &r) / &b; // floor division (exact: q - r divisible by b)
+        digits.push(d);
+        // Stop once the quotient has settled to -1 and the last digit is itself
+        // a sign digit, so extending with more sign digits is a no-op.
+        if q == neg_one && d >= half {
+            break;
+        }
+    }
+    digits.iter().rev().map(|&d| digit_char(d, upper)).collect()
 }
 
 fn sign_prefix(spec: &Spec, negative: bool) -> String {
@@ -377,16 +492,23 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
             next_arg += 1;
             a
         };
-        let Rendered { head, body } = render(&spec, &arg)?;
+        let Rendered { head, body, fill } = render(&spec, &arg)?;
         let visible = head.chars().count() + body.chars().count();
+        // An explicit precision disables the `0` flag for integer conversions
+        // (CRuby: `%05.3d` is space-padded), where it stays for floats.
+        let zero_pad = spec.zero
+            && !matches!(spec.conv, 's' | 'p' | 'c')
+            && !(spec.precision.is_some()
+                && matches!(spec.conv, 'd' | 'i' | 'u' | 'x' | 'X' | 'o' | 'b' | 'B'));
         let padded = match spec.width {
             Some(w) if visible < w => {
                 let pad = w - visible;
                 if spec.minus {
                     format!("{head}{body}{}", " ".repeat(pad))
-                } else if spec.zero && !matches!(spec.conv, 's' | 'p' | 'c') {
-                    // Zero-pad BETWEEN the head (sign/radix prefix) and body.
-                    format!("{head}{}{body}", "0".repeat(pad))
+                } else if zero_pad {
+                    // Pad BETWEEN the head (sign/radix/`..` prefix) and body with
+                    // the fill digit (`0`, or the sign digit for `..` notation).
+                    format!("{head}{}{body}", fill.to_string().repeat(pad))
                 } else {
                     format!("{}{head}{body}", " ".repeat(pad))
                 }

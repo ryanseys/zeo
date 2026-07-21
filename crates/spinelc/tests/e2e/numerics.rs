@@ -708,3 +708,31 @@ fn format_prints_nonfinite_floats_with_ruby_casing() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "Inf\n-Inf\nNaN\nInf\n");
 }
+
+#[test]
+fn format_binary_precision_and_twos_complement_negatives() {
+    // %b honors precision (min digits, disabling the 0-flag) and renders
+    // negatives in CRuby's infinite two's-complement ".." notation, switching
+    // to signed magnitude under a sign flag.
+    let result = run_ruby(
+        r#"
+        p("%08b" % 10)
+        p("%.8b" % 5)
+        p("%#010b" % 10)
+        p("%05.3b" % 0)
+        p("%b" % -5)
+        p("%.8b" % -5)
+        p("%010b" % -5)
+        p("%#010b" % -5)
+        p("%+b" % -5)
+        p("%+08b" % -5)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"00001010\"\n\"00000101\"\n\"0b00001010\"\n\"  000\"\n\
+         \"..1011\"\n\"..111011\"\n\"..11111011\"\n\"0b..111011\"\n\
+         \"-101\"\n\"-0000101\"\n"
+    );
+}
