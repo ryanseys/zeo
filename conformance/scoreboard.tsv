@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=9feb887
-# PASS=2056 FAIL_OUTPUT=146 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=3a65efa
+# PASS=2065 FAIL_OUTPUT=137 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -740,7 +740,7 @@ gc_stat_string_heap	FAIL_OUTPUT	expect	missing-method:>=
 gc_str_arg_rooted	PASS	-	-
 global_multi_assign	PASS	-	-
 global_var	PASS	-	-
-global_var_punct	FAIL_OUTPUT	expect	-
+global_var_punct	PASS	-	-
 grapheme_clusters_alias	PASS	-	-
 grep_v_runtime_recv	PASS	-	-
 gsub_sub_block	PASS	-	-
@@ -783,7 +783,7 @@ hash_fetch_block_key	PASS	-	-
 hash_fetch_block_key_type	PASS	-	-
 hash_fetch_keyerror	PASS	-	-
 hash_fetch_keyerror_message	PASS	-	-
-hash_fetch_values_delete_block_subset	FAIL_OUTPUT	expect	-
+hash_fetch_values_delete_block_subset	PASS	-	-
 hash_filter_bang_return	PASS	-	-
 hash_flatten_depth	FAIL_OUTPUT	expect	-
 hash_flatten_rassoc_compact	PASS	-	-
@@ -981,7 +981,7 @@ integer_bit_index_clamped	PASS	-	-
 integer_chr_encoding	FAIL_OUTPUT	expect	-
 integer_clamp_float_bound	PASS	-	-
 integer_digits_base	PASS	-	-
-integer_digits_invalid_radix	FAIL_OUTPUT	expect	-
+integer_digits_invalid_radix	PASS	-	-
 integer_div_by_zero	PASS	-	-
 integer_extra_methods	PASS	-	-
 integer_hash_range_batch9	PASS	-	-
@@ -1028,7 +1028,7 @@ issue_2863	PASS	-	-
 issue_2864	PASS	-	-
 issue_2865	PASS	-	-
 issue_2866	PASS	-	-
-issue_2868	FAIL_OUTPUT	expect	-
+issue_2868	PASS	-	-
 issue_2869	PASS	-	-
 issue_2870	PASS	-	-
 issue_2871	PASS	-	-
@@ -1103,7 +1103,7 @@ issue_2947	PASS	-	-
 issue_2949	PASS	-	-
 issue_2951	PASS	-	-
 issue_2952	PASS	-	-
-issue_2953	FAIL_OUTPUT	expect	-
+issue_2953	PASS	-	-
 issue_2956	PASS	-	-
 issue_2957	PASS	-	-
 issue_2958	PASS	-	-
@@ -1115,7 +1115,7 @@ issue_2963	PASS	-	-
 issue_2964	PASS	-	-
 issue_2965	PASS	-	-
 issue_2966	PASS	-	-
-issue_2967	FAIL_OUTPUT	expect	-
+issue_2967	PASS	-	-
 issue_2968	PASS	-	-
 issue_2969	PASS	-	-
 issue_2970	FAIL_OUTPUT	expect	-
@@ -1125,7 +1125,7 @@ issue_2973	PASS	-	-
 issue_2974	PASS	-	-
 issue_2975	FAIL_OUTPUT	expect	-
 issue_2976	PASS	-	-
-issue_2977	FAIL_OUTPUT	expect	-
+issue_2977	PASS	-	-
 issue_2978	PASS	-	-
 issue_2979	PASS	-	-
 issue_2980	PASS	-	-
@@ -1242,7 +1242,7 @@ issue_3093	PASS	-	-
 issue_3094	PASS	-	-
 issue_3095	PASS	-	-
 issue_3096	PASS	-	-
-issue_3097	FAIL_OUTPUT	expect	-
+issue_3097	PASS	-	-
 issue_3098	FAIL_OUTPUT	expect	-
 issue_3099	PASS	-	-
 issue_3100	PASS	-	-
@@ -1270,7 +1270,7 @@ issue_3126	FAIL_OUTPUT	expect	-
 issue_3127	PASS	-	-
 issue_3128	PASS	-	-
 issue_3129	PASS	-	-
-issue_3130	FAIL_OUTPUT	expect	-
+issue_3130	PASS	-	-
 issue_3131	PASS	-	-
 issue_3132	PASS	-	-
 iter_block_autosplat	PASS	-	-
