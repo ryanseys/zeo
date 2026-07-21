@@ -317,3 +317,49 @@ fn regexp_octal_escape_is_not_a_backreference() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "aredb\n1\n");
 }
+
+#[test]
+fn scan_with_a_block_yields_matches_and_returns_the_receiver() {
+    // The block form yields each match (a String, or an Array of groups) and
+    // returns the RECEIVER, not the array of matches.
+    let result = run_ruby(
+        r##"
+        out = []
+        r = "hello world".scan(/\w+/) { |w| out << w.upcase }
+        p out
+        p r
+        pairs = []
+        "a1b2".scan(/([a-z])(\d)/) { |l, d| pairs << [l, d] }
+        p pairs
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"HELLO\", \"WORLD\"]\n\"hello world\"\n[[\"a\", \"1\"], [\"b\", \"2\"]]\n"
+    );
+}
+
+#[test]
+fn regexp_introspection_linear_time_and_class_backrefs() {
+    // linear_time? is false only for a real (non-class) backreference. A
+    // `\1`/`\k` INSIDE a character class is octal/literal, not a backref, and
+    // must compile; a forward backref (`/[\]]\1(a)/`) constructs (never matches).
+    let result = run_ruby(
+        r##"
+        p Regexp.linear_time?(/abc/)
+        p Regexp.linear_time?(/(a)\1/)
+        p Regexp.linear_time?(/[\1]/)
+        p Regexp.linear_time?(/[a-z\k<x>]/)
+        p Regexp.linear_time?(/[\1](a)\1/)
+        p Regexp.linear_time?(/[\]]\1(a)/)
+        p(/[\1]/.match?("\x01"))
+        p(/[\]]\1(a)/.match("]a").nil?)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\n"
+    );
+}

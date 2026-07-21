@@ -49,10 +49,16 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Bool(re_of(recv).ignore_case))
     }
+    // A regexp is fixed-encoding when it is tied to a specific encoding rather
+    // than the ASCII-agnostic default -- here, when its source carries a
+    // non-ASCII (multibyte) character, so `computed_encoding_of` resolves to
+    // something other than US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` ->
+    // US-ASCII -> false). The flag-forced cases (`/u`, `/n`) are a documented
+    // gap: no encoding flag is threaded onto the compiled regexp yet.
     "fixed_encoding?" => fn fixed_encoding_p(recv, args, _block) {
         arity!(args, 0);
-        let _ = re_of(recv);
-        Ok(RubyValue::Bool(false))
+        let enc = crate::builtins::encoding::computed_encoding_of(&re_of(recv).source);
+        Ok(RubyValue::Bool(enc != crate::encoding::US_ASCII))
     }
     // `names` lists the named capture groups in order; `named_captures` maps
     // each name to its 1-based capture position(s).
@@ -113,18 +119,49 @@ builtin_methods! {
 fn has_backreference(source: &str) -> bool {
     let bytes = source.as_bytes();
     let mut i = 0;
+    // Inside a character class, `\1`/`\k` are octal/literal, NOT backreferences
+    // (`/[\1]/` is linear); only a real backref OUTSIDE any class counts. `]`
+    // closes the class unless it is the first member, and `\]` is an escaped
+    // literal that does not close it.
+    let mut in_class = false;
+    let mut class_start = false;
     while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            let c = bytes[i + 1];
-            if c.is_ascii_digit() && c != b'0' {
-                return true;
+        let c = bytes[i];
+        if !in_class {
+            match c {
+                b'[' => {
+                    in_class = true;
+                    class_start = true;
+                    i += 1;
+                }
+                b'\\' if i + 1 < bytes.len() => {
+                    let n = bytes[i + 1];
+                    if n.is_ascii_digit() && n != b'0' {
+                        return true;
+                    }
+                    if n == b'k' && matches!(bytes.get(i + 2), Some(b'<' | b'\'')) {
+                        return true;
+                    }
+                    i += 2;
+                }
+                _ => i += 1,
             }
-            if c == b'k' && matches!(bytes.get(i + 2), Some(b'<' | b'\'')) {
-                return true;
-            }
-            i += 2;
         } else {
-            i += 1;
+            match c {
+                b']' if !class_start => {
+                    in_class = false;
+                    i += 1;
+                }
+                b'^' if class_start => i += 1,
+                b'\\' if i + 1 < bytes.len() => {
+                    class_start = false;
+                    i += 2;
+                }
+                _ => {
+                    class_start = false;
+                    i += 1;
+                }
+            }
         }
     }
     false

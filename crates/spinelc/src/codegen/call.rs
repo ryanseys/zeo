@@ -522,6 +522,21 @@ fn try_regexp_dispatch(
                     });
                 }
                 ("scan", 1) => {
+                    // The block form yields each match and returns the RECEIVER
+                    // (not the array of matches). The haystack is materialized
+                    // to an owned String so the receiver's lock is released
+                    // before the user block runs (it may touch the receiver).
+                    if let Some(block_id) = block {
+                        let blk_expr = emit_proc_value(cx, block_id);
+                        return Some(quote! {
+                            {
+                                let __recv = (#recv_expr).as_str_unchecked();
+                                let __hs = { let __g = __recv.lock(); __g.to_utf8_lossy().into_owned() };
+                                spinel_rt::regexp_scan_block(&(#re_expr).as_regexp_unchecked(), &__hs, &(#blk_expr).as_proc_unchecked())?;
+                                spinel_rt::RubyValue::Str(__recv)
+                            }
+                        });
+                    }
                     return Some(quote! {
                         { #haystack_guard spinel_rt::regexp_scan(&(#re_expr).as_regexp_unchecked(), &__h) }
                     });

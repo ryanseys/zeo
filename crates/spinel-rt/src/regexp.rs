@@ -38,6 +38,14 @@ pub type RRegexp = Arc<RegexpData>;
 pub enum Engine {
     Fast(regex::Regex),
     Fancy(fancy_regex::Regex),
+    /// A pattern Onigmo (CRuby) accepts but neither Rust engine can compile --
+    /// specifically a FORWARD numbered backreference (`/[\]]\1(a)/`, where `\1`
+    /// precedes the group it names). It constructs so introspection
+    /// (`#source`/`#encoding`/`Regexp.linear_time?`) works, but never matches:
+    /// a narrow, documented divergence from Onigmo's match semantics for these
+    /// rare patterns. Only reached when the referenced group actually exists
+    /// (`regexp_new`); a genuine invalid backref number still raises RegexpError.
+    Unmatchable,
 }
 
 /// One match normalized to byte-offset group spans (index 0 = whole match;
@@ -69,6 +77,7 @@ impl Engine {
             // A runtime error (e.g. backtrack-limit) counts as "no match" --
             // rare, documented; CRuby would raise on catastrophic backtracking.
             Engine::Fancy(r) => r.is_match(haystack).unwrap_or(false),
+            Engine::Unmatchable => false,
         }
     }
 
@@ -81,6 +90,7 @@ impl Engine {
             Engine::Fancy(r) => r.captures(haystack).ok().flatten().map(|c| Caps {
                 spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
             }),
+            Engine::Unmatchable => None,
         }
     }
 
@@ -100,6 +110,7 @@ impl Engine {
                     spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
                 })
                 .collect(),
+            Engine::Unmatchable => Vec::new(),
         }
     }
 
@@ -107,6 +118,9 @@ impl Engine {
         match self {
             Engine::Fast(r) => r.captures_len(),
             Engine::Fancy(r) => r.captures_len(),
+            // Only the whole-match slot: an unmatchable regex never produces
+            // captures, so this is consulted only for shape decisions.
+            Engine::Unmatchable => 1,
         }
     }
 
@@ -114,6 +128,7 @@ impl Engine {
         let names: Vec<Option<String>> = match self {
             Engine::Fast(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
             Engine::Fancy(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
+            Engine::Unmatchable => Vec::new(),
         };
         names
             .into_iter()
@@ -160,38 +175,99 @@ pub type RMatchData = Arc<MatchDataInner>;
 fn translate_ruby_escapes(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut chars = source.chars().peekable();
+    // A character class changes escape meaning: `\1`..`\7` become OCTAL (not a
+    // backreference), and `\k`/`\g` are literal letters (Onigmo) -- both of
+    // which the linear `regex` crate rejects verbatim, so they are rewritten.
+    // `]` closes the class unless it is the first member (`[]` / `[^]`), and
+    // `\]` inside the class is an escaped literal.
+    let mut in_class = false;
+    let mut class_start = false;
     while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
+        if !in_class {
+            match c {
+                '[' => {
+                    in_class = true;
+                    class_start = true;
+                    out.push('[');
+                }
+                '\\' => translate_escape_outside(&mut out, &mut chars),
+                _ => out.push(c),
+            }
             continue;
         }
-        match chars.next() {
-            Some('e') => out.push_str("\\x1b"),
-            // A Ruby octal escape starts with `\0` -- a leading zero is never a
-            // backreference, so `\033` is ESC, not group 0. Read up to 3 octal
-            // digits total and emit `\xHH`, which both engines understand (and
-            // which keeps `needs_fancy` from mistaking the `\0` for a backref).
-            Some('0') => {
-                let mut val = 0u32;
-                for _ in 0..2 {
-                    match chars.peek() {
-                        Some(d @ '0'..='7') => {
-                            val = val * 8 + d.to_digit(8).unwrap();
-                            chars.next();
-                        }
-                        _ => break,
-                    }
-                }
-                out.push_str(&format!("\\x{val:02x}"));
+        match c {
+            ']' if !class_start => {
+                in_class = false;
+                out.push(']');
             }
-            Some(next) => {
-                out.push('\\');
-                out.push(next);
+            // A leading `^` keeps the "next `]` is literal" rule alive (`[^]`).
+            '^' if class_start => out.push('^'),
+            '\\' => {
+                class_start = false;
+                translate_escape_in_class(&mut out, &mut chars);
             }
-            None => out.push('\\'),
+            _ => {
+                class_start = false;
+                out.push(c);
+            }
         }
     }
     out
+}
+
+type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+/// Escape translation OUTSIDE a character class: `\e` -> ESC, `\0...` octal
+/// (a leading zero is never a backreference), everything else (`\1`..`\9`
+/// backrefs, `\k`, `\d`, ...) passes through for the engine to interpret.
+fn translate_escape_outside(out: &mut String, chars: &mut Chars) {
+    match chars.next() {
+        Some('e') => out.push_str("\\x1b"),
+        Some('0') => push_octal(out, 0, chars),
+        Some(next) => {
+            out.push('\\');
+            out.push(next);
+        }
+        None => out.push('\\'),
+    }
+}
+
+/// Escape translation INSIDE a character class: `\0`..`\7` are octal, `\k`/`\g`
+/// are literal letters (the `regex` crate rejects `\k` in a class), and valid
+/// class escapes (`\d` `\w` `\]` `\-` ...) pass through.
+fn translate_escape_in_class(out: &mut String, chars: &mut Chars) {
+    match chars.next() {
+        Some('e') => out.push_str("\\x1b"),
+        Some(d @ '0'..='7') => push_octal(out, d.to_digit(8).unwrap(), chars),
+        Some(c @ ('k' | 'g')) => out.push(c),
+        Some(next) => {
+            out.push('\\');
+            out.push(next);
+        }
+        None => out.push('\\'),
+    }
+}
+
+/// Reads up to two more octal digits after `first` (3 total, Ruby's max) and
+/// emits the code point as `\xHH` (or `\x{...}` past 0xff), which both engines
+/// understand -- and which keeps `needs_fancy` from mistaking a `\0`-style
+/// octal for a backreference.
+fn push_octal(out: &mut String, first: u32, chars: &mut Chars) {
+    let mut val = first;
+    for _ in 0..2 {
+        match chars.peek() {
+            Some(d @ '0'..='7') => {
+                val = val * 8 + d.to_digit(8).unwrap();
+                chars.next();
+            }
+            _ => break,
+        }
+    }
+    if val > 0xff {
+        out.push_str(&format!("\\x{{{val:x}}}"));
+    } else {
+        out.push_str(&format!("\\x{val:02x}"));
+    }
 }
 
 /// Whether `pattern` uses a construct the linear-time `regex` crate cannot
@@ -255,7 +331,19 @@ fn build_fancy(translated: &str, ignore_case: bool, extended: bool, multiline: b
 pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<RRegexp, String> {
     let translated = translate_ruby_escapes(source);
     let engine = if needs_fancy(&translated) {
-        Engine::Fancy(build_fancy(&translated, ignore_case, extended, multiline)?)
+        match build_fancy(&translated, ignore_case, extended, multiline) {
+            Ok(r) => Engine::Fancy(r),
+            // A forward numbered backreference (`/[\]]\1(a)/`) is valid in
+            // Onigmo but rejected by fancy-regex. If every backref names a
+            // group that actually exists, keep the regexp constructible (as
+            // Unmatchable) instead of raising -- a genuine invalid backref
+            // number still surfaces the error.
+            Err(e) if forward_backref_only(&translated) => {
+                let _ = e;
+                Engine::Unmatchable
+            }
+            Err(e) => return Err(e),
+        }
     } else {
         match regex::RegexBuilder::new(&translated)
             .case_insensitive(ignore_case)
@@ -280,6 +368,127 @@ pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bo
         extended,
         multiline,
     }))
+}
+
+/// Whether `pattern` (already escape-translated) fails to compile ONLY because
+/// of a forward numbered backreference: there is at least one `\N` backref, and
+/// every one names a capture group that exists somewhere in the pattern (`N <=`
+/// the capture-group count). A backref past the group count is a genuine
+/// invalid-backref error and returns false, so `regexp_new` still raises. Named
+/// backrefs (`\k<...>`) are treated conservatively as NOT forward-only (they
+/// compile in fancy-regex when the name is defined, so a failure is a real
+/// error). Character-class contents are octal after translation and are skipped.
+fn forward_backref_only(pattern: &str) -> bool {
+    let groups = count_capture_groups(pattern);
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    let mut saw_backref = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_class {
+            match c {
+                b']' if !class_start => in_class = false,
+                b'^' if class_start => {}
+                b'\\' if i + 1 < bytes.len() => {
+                    class_start = false;
+                    i += 2;
+                    continue;
+                }
+                _ => class_start = false,
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'[' => {
+                in_class = true;
+                class_start = true;
+                i += 1;
+            }
+            b'\\' if i + 1 < bytes.len() => {
+                let n = bytes[i + 1];
+                if n == b'k' {
+                    return false; // a named backref failing is a real error
+                }
+                if n.is_ascii_digit() && n != b'0' {
+                    let mut j = i + 1;
+                    let mut num = 0usize;
+                    while j < bytes.len() && bytes[j].is_ascii_digit() {
+                        num = num * 10 + (bytes[j] - b'0') as usize;
+                        j += 1;
+                    }
+                    if num > groups {
+                        return false; // references a group that doesn't exist
+                    }
+                    saw_backref = true;
+                    i = j;
+                    continue;
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    saw_backref
+}
+
+/// Counts capture groups in `pattern`: an unescaped `(` that is not a
+/// non-capturing/assertion group (`(?:`/`(?=`/`(?!`/`(?<=`/`(?<!`/`(?>`/`(?#`/
+/// `(?flags)`). A named group (`(?<name>`/`(?'name'`/`(?P<name>`) DOES count.
+/// Skips character classes and escaped parens.
+fn count_capture_groups(pattern: &str) -> usize {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    let mut count = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_class {
+            match c {
+                b']' if !class_start => in_class = false,
+                b'^' if class_start => {}
+                b'\\' if i + 1 < bytes.len() => {
+                    class_start = false;
+                    i += 2;
+                    continue;
+                }
+                _ => class_start = false,
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'[' => {
+                in_class = true;
+                class_start = true;
+            }
+            b'\\' if i + 1 < bytes.len() => {
+                i += 2;
+                continue;
+            }
+            b'(' => {
+                let capturing = if bytes.get(i + 1) == Some(&b'?') {
+                    // `(?<name>` / `(?'name'` / `(?P<name>` capture; the rest
+                    // (`(?:`, `(?=`, `(?<=`, flags, ...) do not.
+                    matches!(bytes.get(i + 2), Some(b'\''))
+                        || (bytes.get(i + 2) == Some(&b'<')
+                            && !matches!(bytes.get(i + 3), Some(b'=') | Some(b'!')))
+                        || (bytes.get(i + 2) == Some(&b'P') && bytes.get(i + 3) == Some(&b'<'))
+                } else {
+                    true
+                };
+                if capturing {
+                    count += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    count
 }
 
 fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
@@ -550,6 +759,31 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
         }
     }
     RubyValue::Array(array_new(results))
+}
+
+/// `String#scan(regexp) { |match| ... }` -- the block form: yields each match
+/// (a String when the pattern has no capture groups, else an Array of the
+/// groups, exactly like the array `scan` returns) and answers nothing here;
+/// the caller returns the receiver (CRuby's `str_scan`). A user `break` in the
+/// block propagates untouched.
+pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<(), Signal> {
+    let has_groups = re.engine.captures_len() > 1;
+    for caps in re.engine.captures_all(haystack) {
+        let yielded = if has_groups {
+            let group_vals: Vec<RubyValue> = (1..caps.len())
+                .map(|i| match caps.str(i, haystack) {
+                    Some(s) => RubyValue::Str(string_new(s.to_string())),
+                    None => RubyValue::Nil,
+                })
+                .collect();
+            RubyValue::Array(array_new(group_vals))
+        } else {
+            let whole = caps.str(0, haystack).expect("group 0 is always the whole match");
+            RubyValue::Str(string_new(whole.to_string()))
+        };
+        blk.call(&[yielded])?;
+    }
+    Ok(())
 }
 
 /// `String#split(regexp[, limit])` -- a capture group inside the pattern
