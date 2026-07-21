@@ -16,6 +16,51 @@ edition = "2024"
 rust-version = "1.87"
 license = "MIT OR Apache-2.0"
 
+# Every third-party version is declared ONCE here; members inherit with
+# `dep = { workspace = true }` (adding `optional = true` locally where a
+# cargo feature gates the dep). Feature selections and default-features
+# choices live HERE, at the declaration, per cargo's inheritance rules.
+[workspace.dependencies]
+# Path deps between workspace crates, so members spell them uniformly.
+zeo = { path = "crates/zeo" }
+zeo-abi = { path = "crates/zeo-abi" }
+zeo-fiber = { path = "crates/zeo-fiber" }
+# The parser: prism, CRuby's own default parser since 3.4.
+ruby-prism = "1.9.0"
+# Codegen: Rust emitted as TokenStreams, formatted for humans.
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "parsing"] }
+prettyplease = "0.2"
+# Runtime foundations.
+parking_lot = "0.12"
+indexmap = "2"
+libc = "0.2"
+paste = "1"
+getrandom = "0.3"
+corosensei = "0.3"
+may = "0.3"
+# Regex engines (regexp.rs docs cover the split; onig vendors its C library).
+regex = "1"
+fancy-regex = "0.14"
+onig = { version = "6.5", default-features = false }
+# Numeric tower.
+num-bigint = "0.5"
+num-integer = "0.1"
+num-traits = "0.2"
+# Time zones and Unicode surfaces.
+jiff = "0.2"
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+# ext/ backends (feature-gated in zeo-rt).
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+digest = "0.10"
+flate2 = "1"
+serde_json = "1"
+yaml-rust2 = "0.10"
+
 # The workspace-wide lint gate (each member opts in with `[lints] workspace =
 # true`). Warnings are errors in CI (`cargo clippy -- -D warnings`); the lint
 # LEVELS here stay `warn` so local iteration isn't interrupted mid-edit.
