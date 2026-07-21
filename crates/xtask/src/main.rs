@@ -10,12 +10,15 @@
 //! - `xtask regen`: re-runs real `ruby` over every `examples/*.rb` and
 //!   overwrites the matching `.expected` file (mirrors
 //!   `zeo-regen-expected-from-ruby`).
+//! - `xtask bench [--filter <substr>] [--runs N] [--update-baseline]`: the
+//!   golden-output performance suite under `bench/` (see `bench.rs`).
 //! - `xtask conformance <run|triage|show|oracle-verify>`: the external-corpus
 //!   conformance harness (see `conformance/mod.rs`).
 //! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
 //!   (dropped in via `-I`, no bespoke flag) and records which files `zeo`
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 
+mod bench;
 mod conformance;
 mod gem_compat;
 mod stdlib_status;
@@ -133,12 +136,15 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(2).collect();
     match std::env::args().nth(1).as_deref() {
         Some("test") => test(&root),
+        Some("bench") => bench::main(&root, &args),
         Some("regen") => regen(&root),
         Some("conformance") => conformance::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
         _ => {
-            eprintln!("usage: cargo run -p xtask -- <test|regen|conformance|stdlib-status|gem-compat>");
+            eprintln!(
+                "usage: cargo run -p xtask -- <test|regen|bench|conformance|stdlib-status|gem-compat>"
+            );
             ExitCode::FAILURE
         }
     }
