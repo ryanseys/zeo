@@ -653,25 +653,47 @@ pub fn regexp_match_index(re: &RRegexp, haystack: &str) -> RubyValue {
 /// whose start is at or before `before` (a char index; `None` searches the
 /// whole string), or `nil`. Records `$~` like the leftward probes.
 pub fn regexp_rindex(re: &RRegexp, haystack: &str, before: Option<usize>) -> RubyValue {
-    let mut last = None;
-    for caps in re.engine.captures_all(haystack) {
-        let start_char = char_index(haystack, caps.get(0).expect("group 0 exists").0);
-        if before.is_some_and(|lim| start_char as usize > lim) {
-            break;
-        }
-        last = Some(caps);
-    }
-    match last {
-        Some(caps) => {
-            let start = caps.get(0).expect("group 0 exists").0;
-            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
-            RubyValue::Int(char_index(haystack, start))
+    // CRuby's `rindex(regexp)` is the LARGEST start position (char index, at or
+    // before `before`) where the pattern matches ANCHORED -- it tries every
+    // start from the end, so /\d+/ on "hello123world" answers 7 ("3"), not the
+    // greedy left-most non-overlapping match at 5. `regexp_byterindex` already
+    // implements that scan; this just maps the char limit in and the byte offset
+    // (plus `$~`) back out.
+    let clen = haystack.chars().count();
+    let char_limit = before.unwrap_or(clen).min(clen);
+    let byte_limit = haystack
+        .char_indices()
+        .nth(char_limit)
+        .map_or(haystack.len(), |(b, _)| b);
+    match regexp_byterindex(re, haystack, byte_limit) {
+        Some(byte_start) => {
+            if let Some(caps) = anchored_caps_at(re, haystack, byte_start) {
+                crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
+            }
+            RubyValue::Int(char_index(haystack, byte_start))
         }
         None => {
             crate::lastmatch::set_last_match(None);
             RubyValue::Nil
         }
     }
+}
+
+/// The capture spans of the match ANCHORED at `byte_start`, expressed as
+/// full-haystack byte offsets (so `$~`/`MatchData` slice correctly). `None` if
+/// nothing matches exactly there.
+fn anchored_caps_at(re: &RRegexp, haystack: &str, byte_start: usize) -> Option<Caps> {
+    let caps = re.engine.captures_first(&haystack[byte_start..])?;
+    if caps.get(0)?.0 != 0 {
+        return None; // not anchored at byte_start
+    }
+    Some(Caps {
+        spans: caps
+            .spans
+            .iter()
+            .map(|s| s.map(|(a, b)| (a + byte_start, b + byte_start)))
+            .collect(),
+    })
 }
 
 /// `String#byterindex(regexp[, pos])` -- the BYTE offset of the LAST (highest)
@@ -798,10 +820,16 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
     let mut last_end = 0usize;
     let mut fields = 0i64;
     for caps in re.engine.captures_all(haystack) {
+        let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+        // A zero-width match at the current segment boundary produces no field
+        // (CRuby's rb_str_split_m advances instead) -- this is what stops
+        // `"abc".split(//)` from leading with an empty "".
+        if m_start == m_end && m_start == last_end {
+            continue;
+        }
         if limit > 0 && fields + 1 >= limit {
             break;
         }
-        let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         segments.push(haystack[last_end..m_start].to_string());
         fields += 1;
         for i in 1..caps.len() {
@@ -830,7 +858,7 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
 /// supported despite the pattern-matching engine itself having no
 /// backreference support -- a replacement string's `\1` just indexes into
 /// the ALREADY-COMPUTED `Captures`, no re-matching involved.
-fn expand_replacement(template: &str, caps: &Caps, haystack: &str, match_start: usize, match_end: usize) -> String {
+fn expand_replacement(template: &str, caps: &Caps, names: &[(String, usize)], haystack: &str, match_start: usize, match_end: usize) -> Result<String, Signal> {
     let mut out = String::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -849,6 +877,33 @@ fn expand_replacement(template: &str, caps: &Caps, haystack: &str, match_start: 
             Some('`') => out.push_str(&haystack[..match_start]),
             Some('\'') => out.push_str(&haystack[match_end..]),
             Some('\\') => out.push('\\'),
+            // `\k<name>` -- a named backreference into the match. Only the
+            // angle-bracket spelling is a replacement backref (CRuby leaves
+            // `\k'name'` literal here); an UNKNOWN group name is an IndexError,
+            // while a known-but-unmatched group inserts nothing.
+            Some('k') if chars.clone().next() == Some('<') => {
+                chars.next(); // consume '<'
+                let mut name = String::new();
+                for nc in chars.by_ref() {
+                    if nc == '>' {
+                        break;
+                    }
+                    name.push(nc);
+                }
+                match names.iter().find(|(n, _)| *n == name) {
+                    Some((_, idx)) => {
+                        if let Some(g) = caps.str(*idx, haystack) {
+                            out.push_str(g);
+                        }
+                    }
+                    None => {
+                        return Err(crate::dispatch::raise_error(
+                            "IndexError",
+                            format!("undefined group name reference: {name}"),
+                        ))
+                    }
+                }
+            }
             Some(other) => {
                 out.push('\\');
                 out.push(other);
@@ -856,35 +911,37 @@ fn expand_replacement(template: &str, caps: &Caps, haystack: &str, match_start: 
             None => out.push('\\'),
         }
     }
-    out
+    Ok(out)
 }
 
 /// `String#gsub(regexp, replacement)` -- every match replaced.
-pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue {
+pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<RubyValue, Signal> {
+    let names = re.engine.capture_names();
     let mut out = String::new();
     let mut last_end = 0usize;
     for caps in re.engine.captures_all(haystack) {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m_start]);
-        out.push_str(&expand_replacement(replacement, &caps, haystack, m_start, m_end));
+        out.push_str(&expand_replacement(replacement, &caps, &names, haystack, m_start, m_end)?);
         last_end = m_end;
     }
     out.push_str(&haystack[last_end..]);
-    RubyValue::Str(string_new(out))
+    Ok(RubyValue::Str(string_new(out)))
 }
 
 /// `String#sub(regexp, replacement)` -- only the FIRST match replaced.
-pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> RubyValue {
+pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<RubyValue, Signal> {
+    let names = re.engine.capture_names();
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
             let mut out = String::new();
             out.push_str(&haystack[..m_start]);
-            out.push_str(&expand_replacement(replacement, &caps, haystack, m_start, m_end));
+            out.push_str(&expand_replacement(replacement, &caps, &names, haystack, m_start, m_end)?);
             out.push_str(&haystack[m_end..]);
-            RubyValue::Str(string_new(out))
+            Ok(RubyValue::Str(string_new(out)))
         }
-        None => RubyValue::Str(string_new(haystack.to_string())),
+        None => Ok(RubyValue::Str(string_new(haystack.to_string()))),
     }
 }
 
@@ -1108,7 +1165,7 @@ mod tests {
         assert!(matches!(plain.engine, Engine::Fast(_)));
 
         let look = regexp_new(r"(?<=\$)\d+", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&look, "$100 and $5", "N") else {
+        let RubyValue::Str(s) = regexp_gsub(&look, "$100 and $5", "N").unwrap() else {
             panic!("expected a Str")
         };
         assert_eq!(s.lock().to_utf8_lossy(), "$N and $N");
@@ -1132,19 +1189,19 @@ mod tests {
     #[test]
     fn gsub_and_sub_expand_numbered_and_whole_match_backreferences() {
         let word_pair = regexp_new(r"(\w+) (\w+)", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&word_pair, "John Smith", r"\2 \1") else {
+        let RubyValue::Str(s) = regexp_gsub(&word_pair, "John Smith", r"\2 \1").unwrap() else {
             panic!("expected a Str")
         };
         assert_eq!(&*s.lock().to_utf8_lossy(), "Smith John");
 
         let o = regexp_new("o", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&o, "hello world", "0") else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_gsub(&o, "hello world", "0").unwrap() else { panic!("expected a Str") };
         assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 w0rld");
-        let RubyValue::Str(s) = regexp_sub(&o, "hello world", "0") else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_sub(&o, "hello world", "0").unwrap() else { panic!("expected a Str") };
         assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 world");
 
         let l = regexp_new("l", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&l, "hello", r"[\&]") else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_gsub(&l, "hello", r"[\&]").unwrap() else { panic!("expected a Str") };
         assert_eq!(&*s.lock().to_utf8_lossy(), "he[l][l]o");
     }
 

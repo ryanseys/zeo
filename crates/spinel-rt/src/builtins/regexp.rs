@@ -31,7 +31,12 @@ builtin_methods! {
     "match?" => fn match_p(recv, args, _block) {
         arity!(args, 1..=2);
         let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Bool(false)) };
-        Ok(RubyValue::Bool(crate::regexp_is_match(re_of(recv), &h)))
+        // An optional start position (char offset, end-relative when negative)
+        // anchors the search; a position past the end is simply no match.
+        let Some(sub) = crate::builtins::string::match_haystack(&h, args.get(1))? else {
+            return Ok(RubyValue::Bool(false));
+        };
+        Ok(RubyValue::Bool(crate::regexp_is_match(re_of(recv), &sub)))
     }
     "match" => fn match_m(recv, args, _block) {
         arity!(args, 1..=2);

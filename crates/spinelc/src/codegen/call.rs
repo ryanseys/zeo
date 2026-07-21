@@ -550,14 +550,14 @@ fn try_regexp_dispatch(
                     let repl_expr = emit_expr(cx, args[1]);
                     return Some(quote! {
                         { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock(); let __r = __r.to_utf8_lossy();
-                          spinel_rt::regexp_sub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
+                          spinel_rt::regexp_sub(&(#re_expr).as_regexp_unchecked(), &__h, &__r)? }
                     });
                 }
                 ("gsub", 2) if infer(cx, args[1]) == TyKind::Str => {
                     let repl_expr = emit_expr(cx, args[1]);
                     return Some(quote! {
                         { #haystack_guard let __r = (#repl_expr).as_str_unchecked(); let __r = __r.lock(); let __r = __r.to_utf8_lossy();
-                          spinel_rt::regexp_gsub(&(#re_expr).as_regexp_unchecked(), &__h, &__r) }
+                          spinel_rt::regexp_gsub(&(#re_expr).as_regexp_unchecked(), &__h, &__r)? }
                     });
                 }
                 ("sub", 1) => {

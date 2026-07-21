@@ -379,3 +379,34 @@ fn class_of_a_failed_match_is_nilclass_not_matchdata() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "MatchData\nNilClass\nNilClass\n");
 }
+
+#[test]
+fn split_named_backref_rindex_and_match_position() {
+    // Empty-pattern split drops the leading zero-width field; \k<name> expands
+    // in a replacement (unknown name -> IndexError); rindex/rpartition find the
+    // rightmost anchored match start; match? honors a start position.
+    let result = run_ruby(
+        r#"
+        p "abc".split(//)
+        p "abc".split(//, -1)
+        puts "foobar".gsub(/(?<x>o+)/, "[\\k<x>]")
+        r = (begin; "x".gsub(/(?<a>x)/, "\\k<y>"); rescue => e; e.class; end)
+        p r
+        p "hello123world".rindex(/\d+/)
+        p "hello123world".rpartition(/\d+/)
+        p(/hello/.match?("hello world", 6))
+        p(/world/.match?("hello world", 6))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"a\", \"b\", \"c\"]\n\
+         [\"a\", \"b\", \"c\", \"\"]\n\
+         f[oo]bar\n\
+         IndexError\n\
+         7\n\
+         [\"hello12\", \"3\", \"world\"]\n\
+         false\ntrue\n",
+    );
+}

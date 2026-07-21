@@ -2627,7 +2627,7 @@ fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
 /// start position (char offset, end-relative when negative). `None` means
 /// the position lands outside the string -- the caller reports "no match"
 /// without running the engine.
-fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Option<String>, Signal> {
+pub(crate) fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Option<String>, Signal> {
     let Some(v) = pos else {
         return Ok(Some(text.to_string()));
     };
@@ -2810,11 +2810,11 @@ fn sub_gsub(
         (RubyValue::Regexp(re), None) => match &args[1] {
             RubyValue::Str(replacement) => {
                 let replacement = replacement.lock().to_utf8_lossy().into_owned();
-                Ok(if global {
+                if global {
                     crate::regexp_gsub(re, &text, &replacement)
                 } else {
                     crate::regexp_sub(re, &text, &replacement)
-                })
+                }
             }
             // A Hash replacement maps each matched substring to `hash[match]`
             // (a missing key stringifies to ""), exactly a block that looks the
