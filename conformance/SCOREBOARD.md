@@ -1,16 +1,16 @@
 # Conformance scoreboard
 
-Suite `spinel` — **1995/2231 passing (89.4%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `7529b9e`
+Suite `spinel` — **2036/2231 passing (91.3%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `42a9a75`
 
 | verdict | count |
 |---|---|
-| PASS | 1995 |
-| FAIL_OUTPUT | 206 |
+| PASS | 2036 |
+| FAIL_OUTPUT | 167 |
 | FAIL_COMPILE | 0 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
-| TIMEOUT_RUN | 2 |
+| TIMEOUT_RUN | 0 |
 | ORACLE_FAIL | 0 |
 | SKIP | 28 |
 | **TOTAL** | **2231** |
@@ -25,10 +25,10 @@ Suite `spinel` — **1995/2231 passing (89.4%)** — oracle `ruby 4.0.5 (2026-05
 | 2 | auto-no-block-given-yield-localjumperror-1be0 | ? | string_enum_inspect_source | uncaught exception: no block given (yield) (LocalJumpError) |
 | 2 | missing-const:TCPServer | P | socket_tcp_thread | uncaught exception: uninitialized constant TCPServer (NameError) |
 | 2 | missing-method:>= | P | gc_stat_string_heap | uncaught exception: undefined method '>=' for nil (NoMethodError) |
-| 2 | missing-method:[] | P | param_body_hash_inference | uncaught exception: undefined method '[]' for nil (NoMethodError) |
 | 2 | missing-method:define_method | P | analyze_fail/instance_exec_def_in_block | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
 | 2 | missing-method:length | P | param_lengthlike_body_widen | uncaught exception: undefined method 'length' for nil (NoMethodError) |
 | 1 | auto-can-coerce-complex-into-float-typeerror-9cc0 | ? | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
+| 1 | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | ? | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
 
 ## Skipped tests
 

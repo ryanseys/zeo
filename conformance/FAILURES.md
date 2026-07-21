@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **208 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `7529b9e`
+Suite `spinel` — **167 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `42a9a75`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -245,48 +245,6 @@ yes
 yes
 ["high", "low", "high", "low"]
 3
-```
-
----
-
-## `bool_nil_immediate_edges` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/bool_nil_immediate_edges.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bool_nil_immediate_edges.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 9
---- expected (12 lines)
-0
-0
-nil
-0
-NoMethodError
-"undefined method 'new' for class TrueClass"
-NoMethodError
-"undefined method 'new' for class NilClass"
-"can't unfreeze TrueClass"
-"can't unfreeze Integer"
-"can't unfreeze Symbol"
-false
-
---- actual (12 lines)
-0
-0
-nil
-0
-NoMethodError
-"undefined method 'new' for class TrueClass"
-NoMethodError
-"undefined method 'new' for class NilClass"
-true
-5
-:a
-false
 ```
 
 ---
@@ -1380,7 +1338,7 @@ false
 "hello"
 "hello"
 "hello"
-"hello\n\n"
+"hello"
 [104, 101, 108, 108, 111]
 [12354]
 []
@@ -2127,9 +2085,9 @@ true
 1
 "missing:ZZ_NOPE"
 "ENV"
-#<Object:0x0000000b0142c030>
-#<Object:0x0000000b0142c020>
-#<Object:0x0000000100f68d80>
+#<Object:0x0000000b12884330>
+#<Object:0x0000000b12884340>
+#<Object:0x00000001035f8a90>
 "wrong number of arguments (given 0, expected 1..2)"
 "wrong number of arguments (given 3, expected 1..2)"
 "wrong number of arguments (given 2, expected 1)"
@@ -2275,38 +2233,6 @@ true
 
 ---
 
-## `float_divmod_zerodiv` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/float_divmod_zerodiv.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/float_divmod_zerodiv.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 6
---- expected (7 lines)
-2
-1.0
-caught int divisor: divided by 0
-caught float divisor: divided by 0
-bare-rescue: divided by 0
-caught nan divisor: NaN
-caught nan dividend: NaN
-
---- actual (7 lines)
-2
-1.0
-caught int divisor: divided by 0
-caught float divisor: divided by 0
-bare-rescue: divided by 0
-no raise nan divisor
-no raise nan dividend
-```
-
----
-
 ## `float_pow_negative_fractional` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/float_pow_negative_fractional.rb`
@@ -2329,88 +2255,6 @@ NaN
 1.4142135623730951
 4.0
 NaN
-```
-
----
-
-## `frozen_hash_opassign_guard` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/frozen_hash_opassign_guard.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/frozen_hash_opassign_guard.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-"FrozenError"
-6
-
---- actual (2 lines)
-6
-6
-```
-
----
-
-## `frozen_mutation_arg_eval_order` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/frozen_mutation_arg_eval_order.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/frozen_mutation_arg_eval_order.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (8 lines)
-arg:!
-concat raised
-arg:>
-prepend raised
-arg:9
-hash raised
-arg:!
-go!
-
---- actual (7 lines)
-arg:!
-concat raised
-arg:>
-arg:9
-hash raised
-arg:!
-go!
-```
-
----
-
-## `frozen_string_append_guard` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/frozen_string_append_guard.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/frozen_string_append_guard.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (5 lines)
-can't modify frozen String: "abc"
-can't modify frozen String: "hi"
-can't modify frozen String: "yo"
-can't modify frozen String: "abc"
-go!
-
---- actual (4 lines)
-can't modify frozen String: "abc"
-can't modify frozen String: "hi"
-can't modify frozen String: "abc"
-go!
 ```
 
 ---
@@ -2632,7 +2476,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (96988378) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (98463633) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -2718,7 +2562,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (96988378) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (98463633) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3045,43 +2889,6 @@ false
 
 ---
 
-## `i972` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/i972.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/i972.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (11 lines)
-true
-<<: raised
-insert: raised
-prepend: raised
-replace: raised
-hello
-false
-hello world
-false
-true
-post-freeze: raised
-
---- actual (8 lines)
-true
-<<: raised
-X
-false
-hello world
-false
-true
-post-freeze: raised
-```
-
----
-
 ## `include_chain_module_nested_const` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/include_chain_module_nested_const.rb`
@@ -3269,7 +3076,7 @@ done
 diff:
 ```
 === stdout diff ===
-first difference at line 16
+first difference at line 19
 --- expected (36 lines)
 42
 0
@@ -3324,7 +3131,7 @@ stress ok: 100
 0
 -1
 -1
-7
+-1
 -1
 9223372036854775807
 -9223372036854775808
@@ -3479,34 +3286,6 @@ nil
 
 ---
 
-## `issue_2910` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_2910.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2910.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (5 lines)
-"Ab Cd"
-"Hello World"
-"a2b4c6"
-"  [x]  "
-"Xaa"
-
---- actual (5 lines)
-"Ab Cd"
-"Hello World"
-"a0b0c0"
-"  [x]  "
-"Xaa"
-```
-
----
-
 ## `issue_2953` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_2953.rb`
@@ -3613,7 +3392,7 @@ true
 
 --- actual (5 lines)
 C
--2069880911477851101
+7041339465024271931
 S
 P
 false
@@ -3786,38 +3565,6 @@ TypeError
 
 ---
 
-## `issue_3001` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3001.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3001.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-FrozenError
-{a: 1, b: 2}
-FrozenError
-FrozenError
-FrozenError
-1
-{}
-
---- actual (7 lines)
-1
-{b: 2}
-{}
-{c: 3}
-{z: 9}
-1
-{}
-```
-
----
-
 ## `issue_3002` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3002.rb`
@@ -3844,77 +3591,6 @@ FrozenError
 
 ---
 
-## `issue_3003` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3003.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3003.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (10 lines)
-FrozenError
-"abc"
-FrozenError
-FrozenError
-FrozenError
-FrozenError
-FrozenError
-"ABC"
-"ABC"
-"h"
-
---- actual (10 lines)
-FrozenError
-"abc"
-FrozenError
-"a"
-"ab"
-"xabc"
-"z"
-"ABC"
-"ABC"
-"h"
-```
-
----
-
-## `issue_3008` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3008.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3008.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (6 lines)
-Infinity
--Infinity
-NaN
-[3, 1.5]
-[3, 0.0]
-[-4, 0.5]
-
---- actual (9 lines)
-Infinity
-NaN
--Infinity
-NaN
-NaN
-NaN
-[3, 1.5]
-[3, 0.0]
-[-4, 0.5]
-```
-
----
-
 ## `issue_3014` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3014.rb`
@@ -3935,32 +3611,6 @@ true
 false
 false
 true
-```
-
----
-
-## `issue_3021` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3021.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3021.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-ArgumentError
-:err
-ArgumentError
-NoMethodError
-
---- actual (4 lines)
-nil
-nil
-ArgumentError
-NoMethodError
 ```
 
 ---
@@ -4041,62 +3691,6 @@ nil
 2
 :z
 {a: 1}
-```
-
----
-
-## `issue_3033` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3033.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3033.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-ArgumentError
-nil
-nil
-"hi"
-false
-true
-
---- actual (6 lines)
-nil
-nil
-nil
-"hi"
-false
-false
-```
-
----
-
-## `issue_3035` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3035.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3035.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (4 lines)
-Object
-NameError
-uninitialized constant MissingXYZ
-Object
-
---- actual (4 lines)
-Object
-NoMethodError
-undefined method 'const_get' for class Object
-Object
 ```
 
 ---
@@ -4345,29 +3939,6 @@ Infinity
 
 ---
 
-## `issue_3050` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3050.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3050.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (4 lines)
-0
-ArgumentError
-negative string size (or size too big)
-class ok
-
---- actual (1 lines)
-0
-```
-
----
-
 ## `issue_3051` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3051.rb`
@@ -4501,15 +4072,6 @@ a/b
 
 ---
 
-## `issue_3065` — TIMEOUT_RUN
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3065.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3065.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: TIMEOUT_RUN (stage `run`) · bucket `-` (cluster `-`)
-
----
-
 ## `issue_3069` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3069.rb`
@@ -4532,64 +4094,6 @@ false
 false
 true
 false
-```
-
----
-
-## `issue_3071` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3071.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3071.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-ArgumentError
-[1, 2]
-[]
-[2, 4, 6]
-
---- actual (4 lines)
-NoMethodError
-[1, 2]
-[]
-[2, 4, 6]
-```
-
----
-
-## `issue_3072` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3072.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3072.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-ArgumentError
-ArgumentError
-ArgumentError
-ArgumentError
-ArgumentError
-[2]
-[1, 2, 3]
-
---- actual (7 lines)
-NoMethodError
-NoMethodError
-NoMethodError
-NoMethodError
-NoMethodError
-[2]
-[1, 2, 3]
 ```
 
 ---
@@ -4674,44 +4178,6 @@ false
 
 ---
 
-## `issue_3099` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3099.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3099.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (10 lines)
-ArgumentError
-ArgumentError
-3
-ArgumentError
-2021
-ArgumentError
-29
-10
-ArgumentError
-ArgumentError
-
---- actual (10 lines)
-2021-01-01 00:00:00 UTC
-2020-02-01 00:00:00 UTC
-3
-2020-01-02 01:00:00 UTC
-2021
-2019-12-01 00:00:00 -0800
-29
-10
-2020-01-02 00:00:00 UTC
-2020-01-02 00:00:01 UTC
-```
-
----
-
 ## `issue_3101` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3101.rb`
@@ -4751,7 +4217,7 @@ true
 
 stderr:
 ```
-uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_24154 (Errno::ENOENT)
+uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_14065 (Errno::ENOENT)
 ```
 
 diff:
@@ -4773,7 +4239,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_24154 (Errno::ENOENT)
+uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_14065 (Errno::ENOENT)
 ```
 
 ---
@@ -4788,15 +4254,15 @@ uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_241
 diff:
 ```
 === stdout diff ===
-first difference at line 1
+first difference at line 3
 --- expected (3 lines)
 {a: 1}
 true
 true
 
 --- actual (3 lines)
-2
-1
+{a: 1}
+true
 false
 ```
 
@@ -5035,42 +4501,6 @@ I NUL "AE"
 
 ---
 
-## `kernel_integer_float_errors` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/kernel_integer_float_errors.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/kernel_integer_float_errors.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (9 lines)
-TypeError
-TypeError
-ArgumentError
-5
-5
-42
-3.5
-3
-7.0
-
---- actual (9 lines)
-TypeError
-TypeError
-5
-5
-5
-42
-3.5
-3
-7.0
-```
-
----
-
 ## `kernel_underscore_id` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/kernel_underscore_id.rb`
@@ -5093,224 +4523,6 @@ true
 Integer
 8
 true
-```
-
----
-
-## `matchdata_gsub_named_backref` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/matchdata_gsub_named_backref.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/matchdata_gsub_named_backref.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (9 lines)
-f[oo]bar
-bacd
-a-ab
-"[y]z"
-"[]z"
-f[oo]bar
-\k'g'
-IndexError: undefined group name reference: y
-IndexError: undefined group name reference: 
-
---- actual (7 lines)
-f[\k<x>]bar
-\k<b>\k<a>cd
-\k<a>-ab
-"[\\k<b>]z"
-"[\\k<b>]z"
-f[\k<x>]bar
-\k'g'
-```
-
----
-
-## `method_arity` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/method_arity.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/method_arity.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (18 lines)
-0
-1
-2
--2
--3
--1
--2
--3
--2
-2
-2
--2
-2
--1
-1
-1
-2
-2
-
---- actual (18 lines)
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
--1
-2
-```
-
----
-
-## `method_arity_builtin` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/method_arity_builtin.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/method_arity_builtin.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (9 lines)
--1
-1
-0
--1
-0
--1
-"HELLO"
-2
--2
-
---- actual (9 lines)
--1
--1
--1
--1
--1
--1
-"HELLO"
-2
--2
-```
-
----
-
-## `method_defined` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/method_defined.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/method_defined.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 13
---- expected (17 lines)
-true
-true
-true
-false
-false
-true
-true
-true
-false
-true
-false
-true
-false
-false
-false
-true
-false
-
---- actual (17 lines)
-true
-true
-true
-false
-false
-true
-true
-true
-false
-true
-false
-true
-true
-true
-true
-true
-false
-```
-
----
-
-## `method_object_accessor` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/method_object_accessor.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/method_object_accessor.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 10
---- expected (12 lines)
-7
-"hi"
-9
-:x
-0
-1
-3
-true
-false
-0
-1
-42
-
---- actual (12 lines)
-7
-"hi"
-9
-:x
-0
-1
-3
-true
-false
--1
--1
-42
 ```
 
 ---
@@ -5343,49 +4555,6 @@ deep body ran
 before module
 after module
 hi
-```
-
----
-
-## `multi_write_call_rhs_as_expr` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/multi_write_call_rhs_as_expr.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/multi_write_call_rhs_as_expr.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:[]` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method '[]' for nil (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (10 lines)
-10
-20
-[10, 20]
-7
-8
-9
-7
-3
-4
-true
-
---- actual (3 lines)
-10
-20
-nil
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method '[]' for nil (NoMethodError)
 ```
 
 ---
@@ -5984,41 +5153,6 @@ done
 
 ---
 
-## `proc_block_param_call` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/proc_block_param_call.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/proc_block_param_call.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:call` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'call' for nil (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-10
-"none"
-100
-15
-53
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'call' for nil (NoMethodError)
-```
-
----
-
 ## `proc_capture_enclosing_lambda` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/proc_capture_enclosing_lambda.rb`
@@ -6083,100 +5217,6 @@ nil
 nil
 6
 3
-```
-
----
-
-## `proc_method_wave10` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/proc_method_wave10.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/proc_method_wave10.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 8
---- expected (18 lines)
-[[:opt, :a], [:opt, :b], [:rest, :c], [:keyreq, :d], [:key, :e], [:keyrest, :f], [:block, :g]]
-[[:req, :a], [:opt, :b]]
-10
-3
-21
-"id:3"
-"hello matz"
-1
-true
-[[:rest, :*]]
-[[:keyrest, :**]]
-[[:req, :a], [:rest, :*], [:block, :blk]]
-[[:opt, :_1], [:opt, :_2]]
-[[:req, :a], [:rest, :m], [:req, :z]]
-8
-15
-1
-"abab"
-
---- actual (18 lines)
-[[:opt, :a], [:opt, :b], [:rest, :c], [:keyreq, :d], [:key, :e], [:keyrest, :f], [:block, :g]]
-[[:req, :a], [:opt, :b]]
-10
-3
-21
-"id:3"
-"hello matz"
--1
-true
-[[:rest, :*]]
-[[:keyrest, :**]]
-[[:req, :a], [:rest, :*], [:block, :blk]]
-[[:opt, :_1], [:opt, :_2]]
-[[:req, :a], [:rest, :m], [:req, :z]]
-8
-15
--1
-"abab"
-```
-
----
-
-## `proc_parameters_lambda_kw` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/proc_parameters_lambda_kw.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/proc_parameters_lambda_kw.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (11 lines)
-[[:opt, :x], [:opt, :y]]
-[[:req, :x], [:req, :y]]
-[[:req, :x], [:req, :y]]
-[[:opt, :x], [:opt, :y]]
-[[:req, :x], [:opt, :y]]
-[[:opt, :x], [:opt, :y]]
-[[:req, :a], [:rest, :r], [:key, :k], [:block, :b]]
-[[:opt, :x]]
-[[:req, :x], [:req, :y]]
-[[:req, :_1]]
-[[:req, :_1], [:req, :_2]]
-
---- actual (11 lines)
-[[:opt, :x], [:opt, :y]]
-[[:opt, :x], [:opt, :y]]
-[[:req, :x], [:req, :y]]
-[[:req, :x], [:req, :y]]
-[[:opt, :x], [:opt, :y]]
-[[:req, :x], [:opt, :y]]
-[[:opt, :a], [:rest, :r], [:key, :k], [:block, :b]]
-[[:opt, :x]]
-[[:opt, :x], [:opt, :y]]
-[[:req, :_1]]
-[[:opt, :_1], [:opt, :_2]]
 ```
 
 ---
@@ -6311,7 +5351,7 @@ false
 stderr:
 ```
 
-thread '<unnamed>' (97014370) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (98488181) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -6385,7 +5425,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (97014370) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (98488181) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -6654,7 +5694,7 @@ first difference at line 7
 "\\+."
 "xy"
 "<\\+> <\\+>. <\\+>"
-"a0b0"
+"a2b4"
 "abc"
 "5.0 16.5"
 ["a", "b", "c"]
@@ -6876,32 +5916,6 @@ error: unrecognized escape sequence (RegexpError)
 
 ---
 
-## `regexp_match_p_position` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_match_p_position.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_match_p_position.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (4 lines)
-true
-false
-true
-true
-
---- actual (4 lines)
-true
-true
-true
-true
-```
-
----
-
 ## `regexp_names_meta` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/regexp_names_meta.rb`
@@ -6972,56 +5986,6 @@ true
 
 ---
 
-## `regexp_split_compat` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_split_compat.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_split_compat.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (16 lines)
-["a", "b", "c"]
-["a", "b", "c", ""]
-["a", "bc"]
-["h", "é", "l", "l", "o"]
-["he", "", "o"]
-["a", "1", "b", "2", "c", "3"]
-["a", "1", "b", "2", "c", "3", ""]
-["a", "b"]
-["a", "b", "", ""]
-["a", "1", "b2c3"]
-["1", "2-3"]
-[]
-[]
-["abc"]
-["", "1", "a", "2", "b"]
-["a", "b"]
-
---- actual (16 lines)
-["", "a", "b", "c"]
-["", "a", "b", "c", ""]
-["", "abc"]
-["", "h", "é", "l", "l", "o"]
-["he", "", "o"]
-["a", "1", "b", "2", "c", "3"]
-["a", "1", "b", "2", "c", "3", ""]
-["a", "b"]
-["a", "b", "", ""]
-["a", "1", "b2c3"]
-["1", "2-3"]
-[]
-[]
-["abc"]
-["", "1", "a", "2", "b"]
-["", "a", "b"]
-```
-
----
-
 ## `regexp_sub_gsub_realloc` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/regexp_sub_gsub_realloc.rb`
@@ -7048,38 +6012,6 @@ true
 200
 100
 false
-```
-
----
-
-## `rindex_regexp_polypoly_merge` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/rindex_regexp_polypoly_merge.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/rindex_regexp_polypoly_merge.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-3
-2
-3
-nil
-3
-{1 => "a", b: 2, "c" => 3.5}
-{1 => "a", b: 2, "c" => 3.5, d: 4, 5 => "e"}
-
---- actual (7 lines)
-2
-0
-2
-nil
-3
-{1 => "a", b: 2, "c" => 3.5}
-{1 => "a", b: 2, "c" => 3.5, d: 4, 5 => "e"}
 ```
 
 ---
@@ -7457,42 +6389,6 @@ uncaught exception: not a file (IOError)
 
 ---
 
-## `str_chomp_paragraph_mode` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/str_chomp_paragraph_mode.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_chomp_paragraph_mode.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 6
---- expected (9 lines)
-"hello"
-"hello"
-"hello"
-"hello\r\n"
-"hello"
-"hello"
-"hello"
-"hello\r"
-"hello"
-
---- actual (9 lines)
-"hello"
-"hello"
-"hello"
-"hello\r\n"
-"hello"
-"hello\r\n"
-"hello\n"
-"hello\r"
-"hello\r\n\r\n"
-```
-
----
-
 ## `str_method_nil_arg_no_segv` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/str_method_nil_arg_no_segv.rb`
@@ -7526,102 +6422,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uncaught exception: wrong number of arguments (given 0, expected 1+) (ArgumentError)
-```
-
----
-
-## `str_split_space_dynamic_limit` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/str_split_space_dynamic_limit.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_split_space_dynamic_limit.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (10 lines)
-["one", "two", "three"]
-["one", "two", "three"]
-[" one two  three "]
-["one", "two  three "]
-["one", "two", "three", ""]
-[]
-[""]
-[""]
-["trail", ""]
-["a", "b c "]
-
---- actual (10 lines)
-["one", "two", "three"]
-["one", "two", "three"]
-["one two  three "]
-["one", "two  three "]
-["one", "two", "three"]
-[]
-[]
-[]
-["trail"]
-[]
-```
-
----
-
-## `str_squeeze_arg` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/str_squeeze_arg.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_squeeze_arg.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (7 lines)
-"abc"
-"abbbccc"
-"abccc"
-"abc"
-"aaabc"
-"abc"
-"aaa^bbb"
-
---- actual (7 lines)
-"abc"
-"abbbccc"
-"abccc"
-"abc"
-"abbbccc"
-"abc"
-"aaa^bbb"
-```
-
----
-
-## `str_tr_negation` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/str_tr_negation.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_tr_negation.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-"axx"
-".e..o"
-"hippo"
-".e.o"
-
---- actual (4 lines)
-"xbc"
-"h.ll."
-"hippo"
-"h.ll."
 ```
 
 ---
@@ -7894,56 +6694,6 @@ false
 
 ---
 
-## `string_frozen_mutation_raises` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_frozen_mutation_raises.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_frozen_mutation_raises.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-insert: can't modify frozen String: "hello"
-prepend: can't modify frozen String: "hello"
-<<: can't modify frozen String: "hello"
-hi!
-
---- actual (4 lines)
-BUG: insert no raise
-BUG: prepend no raise
-<<: can't modify frozen String: "XXhello"
-hi!
-```
-
----
-
-## `string_match_block` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_match_block.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_match_block.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-"OO"
-nil
-84
-
---- actual (3 lines)
-#<MatchData "oo" 1:"oo">
-nil
-#<MatchData "42" 1:"42">
-```
-
----
-
 ## `string_oct_parse` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/string_oct_parse.rb`
@@ -8031,34 +6781,6 @@ uncaught exception: undefined method '>' for nil (NoMethodError)
 
 ---
 
-## `string_rpartition_regex` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_rpartition_regex.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_rpartition_regex.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-["hello12", "3", "world"]
-["foo1bar", "2", "baz"]
-["", "", "no digits here"]
-["a.b", ".", "c"]
-["", "", "abc"]
-
---- actual (5 lines)
-["hello", "123", "world"]
-["foo1bar", "2", "baz"]
-["", "", "no digits here"]
-["a.b", ".", "c"]
-["", "", "abc"]
-```
-
----
-
 ## `string_scrub` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/string_scrub.rb`
@@ -8081,90 +6803,6 @@ valid
 a?b
 valid
 [63]
-```
-
----
-
-## `string_slice_casecmp_succ` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_slice_casecmp_succ.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_slice_casecmp_succ.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 29
---- expected (33 lines)
-"ell"
-""
-nil
-"el"
-"h"
-nil
-nil
-""
-"lo"
-nil
-nil
-""
-nil
-"ll"
--1
-0
-true
-false
-nil
-nil
-nil
-"2.0"
-"2.00"
-"aa.a"
-"b0"
-"2a"
-"aa0"
-"AAa0"
-"a-10"
-"1.aa"
-".10"
-"**+"
-"<<koalb>>"
-
---- actual (33 lines)
-"ell"
-""
-nil
-"el"
-"h"
-nil
-nil
-""
-"lo"
-nil
-nil
-""
-nil
-"ll"
--1
-0
-true
-false
-nil
-nil
-nil
-"2.0"
-"2.00"
-"aa.a"
-"b0"
-"2a"
-"aa0"
-"AAa0"
-"b-0"
-"2.a"
-".10"
-"**+"
-"<<koalb>>"
 ```
 
 ---
@@ -8213,36 +6851,6 @@ first difference at line 1
 [nil, "12ab34"]
 [nil, nil]
 "v1.2.3"
-```
-
----
-
-## `string_split_block` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_split_block.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_split_block.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-["a", "b", "c"]
-["FOO", "BAR"]
-["a", "b,c,d"]
-6
-"badc"
-0
-
---- actual (6 lines)
-[]
-[]
-[]
-0
-""
-0
 ```
 
 ---
@@ -8471,15 +7079,6 @@ first difference at line 1
 --- actual (1 lines)
 uncaught exception: uninitialized constant Line (NameError)
 ```
-
----
-
-## `struct_methods` — TIMEOUT_RUN
-
-- source: `/Users/ryanseys/dev/spinel/test/struct_methods.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/struct_methods.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: TIMEOUT_RUN (stage `run`) · bucket `-` (cluster `-`)
 
 ---
 

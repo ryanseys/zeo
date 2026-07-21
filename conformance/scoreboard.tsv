@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=7529b9e
-# PASS=1995 FAIL_OUTPUT=206 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=42a9a75
+# PASS=2036 FAIL_OUTPUT=167 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -192,7 +192,7 @@ bm_instance_eval	PASS	-	-
 bool_case_equality	PASS	-	-
 bool_is_a_true_false	PASS	-	-
 bool_logical_operators	PASS	-	-
-bool_nil_immediate_edges	FAIL_OUTPUT	expect	-
+bool_nil_immediate_edges	PASS	-	-
 bound_method_gc	PASS	-	-
 bound_method_obj_recv	PASS	-	-
 bound_method_single_eval	PASS	-	-
@@ -684,7 +684,7 @@ flat_map_poly_receiver	PASS	-	-
 flat_map_poly_return	PASS	-	-
 float_array_first_last_nil	PASS	-	-
 float_clamp	PASS	-	-
-float_divmod_zerodiv	FAIL_OUTPUT	expect	-
+float_divmod_zerodiv	PASS	-	-
 float_hex_encoding_isa_bool_wave10	PASS	-	-
 float_limit_constants	PASS	-	-
 float_modulo	PASS	-	-
@@ -718,11 +718,11 @@ forward_args_block	PASS	-	-
 forward_call_param_type_inference	PASS	-	-
 forwarded_nil_guarded_block	PASS	-	-
 freeze_user_object	PASS	-	-
-frozen_hash_opassign_guard	FAIL_OUTPUT	expect	-
+frozen_hash_opassign_guard	PASS	-	-
 frozen_literal_hash_key	PASS	-	-
-frozen_mutation_arg_eval_order	FAIL_OUTPUT	expect	-
+frozen_mutation_arg_eval_order	PASS	-	-
 frozen_nul_literal_cache	PASS	-	-
-frozen_string_append_guard	FAIL_OUTPUT	expect	-
+frozen_string_append_guard	PASS	-	-
 frozen_string_global_survives_gc	PASS	-	-
 frozen_string_literal_gc_root	PASS	-	-
 frozen_string_literal_per_file	FAIL_OUTPUT	expect	-
@@ -867,7 +867,7 @@ i918	FAIL_OUTPUT	expect	-
 i919	PASS	-	-
 i920	PASS	-	-
 i960	PASS	-	-
-i972	FAIL_OUTPUT	expect	-
+i972	PASS	-	-
 i974	PASS	-	-
 i994	PASS	-	-
 i997	PASS	-	-
@@ -1065,7 +1065,7 @@ issue_2904	PASS	-	-
 issue_2905	PASS	-	-
 issue_2906	PASS	-	-
 issue_2909	PASS	-	-
-issue_2910	FAIL_OUTPUT	expect	-
+issue_2910	PASS	-	-
 issue_2911	PASS	-	-
 issue_2912	PASS	-	-
 issue_2913	PASS	-	-
@@ -1147,14 +1147,14 @@ issue_2996	PASS	-	-
 issue_2997	PASS	-	-
 issue_2998	PASS	-	-
 issue_3000	FAIL_OUTPUT	expect	-
-issue_3001	FAIL_OUTPUT	expect	-
+issue_3001	PASS	-	-
 issue_3002	FAIL_OUTPUT	expect	-
-issue_3003	FAIL_OUTPUT	expect	-
+issue_3003	PASS	-	-
 issue_3004	PASS	-	-
 issue_3005	PASS	-	-
 issue_3006	PASS	-	-
 issue_3007	PASS	-	-
-issue_3008	FAIL_OUTPUT	expect	-
+issue_3008	PASS	-	-
 issue_3009	PASS	-	-
 issue_3010	PASS	-	-
 issue_3011	PASS	-	-
@@ -1167,7 +1167,7 @@ issue_3017	PASS	-	-
 issue_3018	PASS	-	-
 issue_3019	PASS	-	-
 issue_3020	PASS	-	-
-issue_3021	FAIL_OUTPUT	expect	-
+issue_3021	PASS	-	-
 issue_3022	PASS	-	-
 issue_3023	PASS	-	-
 issue_3024	FAIL_OUTPUT	expect	-
@@ -1178,9 +1178,9 @@ issue_3028	PASS	-	-
 issue_3030	FAIL_OUTPUT	expect	-
 issue_3031	PASS	-	-
 issue_3032	PASS	-	-
-issue_3033	FAIL_OUTPUT	expect	-
+issue_3033	PASS	-	-
 issue_3034	PASS	-	-
-issue_3035	FAIL_OUTPUT	expect	-
+issue_3035	PASS	-	-
 issue_3036	FAIL_OUTPUT	expect	-
 issue_3037	FAIL_OUTPUT	expect	-
 issue_3038	FAIL_OUTPUT	expect	missing-method:ungetbyte
@@ -1198,7 +1198,7 @@ issue_3047b	PASS	-	-
 issue_3048	FAIL_OUTPUT	expect	-
 issue_3049	FAIL_OUTPUT	expect	-
 issue_3049b	FAIL_OUTPUT	expect	-
-issue_3050	FAIL_OUTPUT	expect	-
+issue_3050	PASS	-	-
 issue_3051	FAIL_OUTPUT	expect	-
 issue_3053	FAIL_OUTPUT	expect	-
 issue_3054	PASS	-	-
@@ -1212,14 +1212,14 @@ issue_3061	FAIL_OUTPUT	expect	-
 issue_3062	PASS	-	-
 issue_3063	PASS	-	-
 issue_3064	PASS	-	-
-issue_3065	TIMEOUT_RUN	run	-
+issue_3065	PASS	-	-
 issue_3066	PASS	-	-
 issue_3067	PASS	-	-
 issue_3068	PASS	-	-
 issue_3069	FAIL_OUTPUT	expect	-
 issue_3070	PASS	-	-
-issue_3071	FAIL_OUTPUT	expect	-
-issue_3072	FAIL_OUTPUT	expect	-
+issue_3071	PASS	-	-
+issue_3072	PASS	-	-
 issue_3073	PASS	-	-
 issue_3074	PASS	-	-
 issue_3076	PASS	-	-
@@ -1244,7 +1244,7 @@ issue_3095	PASS	-	-
 issue_3096	PASS	-	-
 issue_3097	FAIL_OUTPUT	expect	-
 issue_3098	FAIL_OUTPUT	expect	-
-issue_3099	FAIL_OUTPUT	expect	-
+issue_3099	PASS	-	-
 issue_3100	PASS	-	-
 issue_3101	FAIL_OUTPUT	expect	-
 issue_3102	PASS	-	-
@@ -1291,7 +1291,7 @@ kernel_dir	PASS	-	-
 kernel_fail_alias	PASS	-	-
 kernel_float_integer_strict	FAIL_OUTPUT	expect	-
 kernel_float_strict	PASS	-	-
-kernel_integer_float_errors	FAIL_OUTPUT	expect	-
+kernel_integer_float_errors	PASS	-	-
 kernel_integer_float_strict_nil	PASS	-	-
 kernel_integer_with_base	PASS	-	-
 kernel_rational_string_zerodenom	PASS	-	-
@@ -1353,7 +1353,7 @@ massign_proc_cell_nil	PASS	-	-
 massign_splat_rhs	PASS	-	-
 massign_underfill_nil	PASS	-	-
 match_tilde_pre_post	PASS	-	-
-matchdata_gsub_named_backref	FAIL_OUTPUT	expect	-
+matchdata_gsub_named_backref	PASS	-	-
 matchdata_index_eq	PASS	-	-
 matchdata_methods	PASS	-	-
 matchdata_named_groups	PASS	-	-
@@ -1367,17 +1367,17 @@ math_fn_nil_typeerror	PASS	-	-
 math_poly_arg_unbox	PASS	-	-
 mega	PASS	-	-
 method	PASS	-	-
-method_arity	FAIL_OUTPUT	expect	-
-method_arity_builtin	FAIL_OUTPUT	expect	-
+method_arity	PASS	-	-
+method_arity_builtin	PASS	-	-
 method_at_toplevel	PASS	-	-
-method_defined	FAIL_OUTPUT	expect	-
+method_defined	PASS	-	-
 method_dispatch_poly_array	PASS	-	-
 method_introspection	PASS	-	-
 method_level_rescue_return	PASS	-	-
 method_level_rescue_return_string	PASS	-	-
 method_missing_explicit	PASS	-	-
 method_name_symbol	PASS	-	-
-method_object_accessor	FAIL_OUTPUT	expect	-
+method_object_accessor	PASS	-	-
 method_owner_receiver	PASS	-	-
 method_param_destructure	PASS	-	-
 method_return_mixed_int_string	PASS	-	-
@@ -1436,7 +1436,7 @@ multi_assign_ivar_type	PASS	-	-
 multi_assign_poly_rhs	PASS	-	-
 multi_return	PASS	-	-
 multi_return_bare	PASS	-	-
-multi_write_call_rhs_as_expr	FAIL_OUTPUT	expect	missing-method:[]
+multi_write_call_rhs_as_expr	PASS	-	-
 multi_write_ivar_const_from_array_rhs	PASS	-	-
 multi_write_scalar_rhs	PASS	-	-
 mutable_str_alias_uaf	PASS	-	-
@@ -1679,7 +1679,7 @@ proc_anonymous_rest	PASS	-	-
 proc_arg_object	PASS	-	-
 proc_arity_nil	PASS	-	-
 proc_arity_opt_rest	PASS	-	-
-proc_block_param_call	FAIL_OUTPUT	expect	missing-method:call
+proc_block_param_call	PASS	-	-
 proc_call_array_autosplat	PASS	-	-
 proc_call_blk_gc_root	PASS	-	-
 proc_call_kw_and_lead_splat	PASS	-	-
@@ -1704,12 +1704,12 @@ proc_forward_arity	PASS	-	-
 proc_introspection	PASS	-	-
 proc_keyword_param	PASS	-	-
 proc_lambda_array_of_param	PASS	-	-
-proc_method_wave10	FAIL_OUTPUT	expect	-
+proc_method_wave10	PASS	-	-
 proc_nonlocal_return	PASS	-	-
 proc_numbered_params	PASS	-	-
 proc_optional_params	PASS	-	-
 proc_param_container_input	PASS	-	-
-proc_parameters_lambda_kw	FAIL_OUTPUT	expect	-
+proc_parameters_lambda_kw	PASS	-	-
 proc_poly_call_boxed_result	PASS	-	-
 proc_poly_param	PASS	-	-
 proc_poly_value_return	PASS	-	-
@@ -1828,7 +1828,7 @@ regexp_last_match_capture	PASS	-	-
 regexp_line_anchors	FAIL_OUTPUT	expect	auto-error-unrecognized-escape-sequence-regexperror-2794
 regexp_local_if_else_union	PASS	-	-
 regexp_match_data	PASS	-	-
-regexp_match_p_position	FAIL_OUTPUT	expect	-
+regexp_match_p_position	PASS	-	-
 regexp_named_backref	PASS	-	-
 regexp_named_capture_match	PASS	-	-
 regexp_names_meta	FAIL_OUTPUT	expect	-
@@ -1839,7 +1839,7 @@ regexp_reflection	PASS	-	-
 regexp_render_source_variable	PASS	-	-
 regexp_repeated_group_capture	PASS	-	-
 regexp_source_options	PASS	-	-
-regexp_split_compat	FAIL_OUTPUT	expect	-
+regexp_split_compat	PASS	-	-
 regexp_string_interpolation	PASS	-	-
 regexp_sub_gsub_length	PASS	-	-
 regexp_sub_gsub_realloc	FAIL_OUTPUT	expect	-
@@ -1876,7 +1876,7 @@ return_unify_isa_early_return	PASS	-	-
 return_void_and_nullable_object	PASS	-	-
 rightward_assign	PASS	-	-
 rightward_assign_destructure	PASS	-	-
-rindex_regexp_polypoly_merge	FAIL_OUTPUT	expect	-
+rindex_regexp_polypoly_merge	PASS	-	-
 safe_nav_typed_receiver	PASS	-	-
 safe_navigation_returns_nil	PASS	-	-
 same_named_attr_no_widen	PASS	-	-
@@ -1940,7 +1940,7 @@ str_array_max_min_by	PASS	-	-
 str_array_min_max	PASS	-	-
 str_array_sort_by	PASS	-	-
 str_array_uniq	PASS	-	-
-str_chomp_paragraph_mode	FAIL_OUTPUT	expect	-
+str_chomp_paragraph_mode	PASS	-	-
 str_concat_raise_operand	PASS	-	-
 str_count_multi_arg	PASS	-	-
 str_delete_count_negation	PASS	-	-
@@ -1953,13 +1953,13 @@ str_ord_empty	PASS	-	-
 str_poly_hash_dup_widen	PASS	-	-
 str_poly_hash_dup_widen_from_int	PASS	-	-
 str_rindex_position	PASS	-	-
-str_split_space_dynamic_limit	FAIL_OUTPUT	expect	-
+str_split_space_dynamic_limit	PASS	-	-
 str_split_space_whitespace	PASS	-	-
 str_split_trailing_empty	PASS	-	-
-str_squeeze_arg	FAIL_OUTPUT	expect	-
+str_squeeze_arg	PASS	-	-
 str_str_hash_nullable_bracket_assign	PASS	-	-
 str_to_i_overflow	PASS	-	-
-str_tr_negation	FAIL_OUTPUT	expect	-
+str_tr_negation	PASS	-	-
 str_unpack_gc_root	FAIL_OUTPUT	expect	-
 strbuf_shovel_chain_value	PASS	-	-
 string_append_as_bytes_int	PASS	-	-
@@ -1994,14 +1994,14 @@ string_format_poly_array_rhs	PASS	-	-
 string_format_polyarr	PASS	-	-
 string_format_scalar_operands	PASS	-	-
 string_freeze_identity	PASS	-	-
-string_frozen_mutation_raises	FAIL_OUTPUT	expect	-
+string_frozen_mutation_raises	PASS	-	-
 string_gsub_block	PASS	-	-
 string_identity_tap_then	PASS	-	-
 string_index_assign_forms	PASS	-	-
 string_index_nil_typeerror	PASS	-	-
 string_index_regex	PASS	-	-
 string_lshift_int_codepoint	PASS	-	-
-string_match_block	FAIL_OUTPUT	expect	-
+string_match_block	PASS	-	-
 string_multiply_overflow	PASS	-	-
 string_mutation_plus	PASS	-	-
 string_new_capacity	PASS	-	-
@@ -2018,7 +2018,7 @@ string_range_accessors	PASS	-	-
 string_range_each_inspect	PASS	-	-
 string_range_to_a	PASS	-	-
 string_replace_prepend_insert_clear	PASS	-	-
-string_rpartition_regex	FAIL_OUTPUT	expect	-
+string_rpartition_regex	PASS	-	-
 string_scan_literal	PASS	-	-
 string_scrub	FAIL_OUTPUT	expect	-
 string_search_binary	PASS	-	-
@@ -2026,10 +2026,10 @@ string_search_slice	PASS	-	-
 string_shift_chain	PASS	-	-
 string_shl_identity	PASS	-	-
 string_slice_bang_value	PASS	-	-
-string_slice_casecmp_succ	FAIL_OUTPUT	expect	-
+string_slice_casecmp_succ	PASS	-	-
 string_slice_range	PASS	-	-
 string_splice_family	FAIL_OUTPUT	expect	-
-string_split_block	FAIL_OUTPUT	expect	-
+string_split_block	PASS	-	-
 string_split_capture	PASS	-	-
 string_split_inline_arg_gc_root	FAIL_OUTPUT	expect	missing-method:<=
 string_squeeze_no_trailing_nul	PASS	-	-
@@ -2058,7 +2058,7 @@ struct_kw	PASS	-	-
 struct_member_name_no_global_merge	PASS	-	-
 struct_member_shadows_enumerable	PASS	-	-
 struct_member_size_reader	PASS	-	-
-struct_methods	TIMEOUT_RUN	run	-
+struct_methods	PASS	-	-
 struct_string_member_gc_root	PASS	-	-
 struct_to_a_values	PASS	-	-
 struct_to_h	PASS	-	-

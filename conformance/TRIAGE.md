@@ -12,7 +12,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-no-block-given-yield-localjumperror-1be0 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) (LocalJumpError) |
 | P | missing-const:TCPServer | 2 | socket_tcp_thread, socket_tcp_basic | uncaught exception: uninitialized constant TCPServer (NameError) |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil (NoMethodError) |
-| P | missing-method:[] | 2 | param_body_hash_inference, multi_write_call_rhs_as_expr | uncaught exception: undefined method '[]' for nil (NoMethodError) |
 | P | missing-method:define_method | 2 | analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
 | P | missing-method:length | 2 | param_lengthlike_body_widen, bundle_misc_c_36 | uncaught exception: undefined method 'length' for nil (NoMethodError) |
 | ? | auto-can-coerce-complex-into-float-typeerror-9cc0 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
@@ -21,7 +20,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
-| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_24154 (Errno::ENOENT) |
+| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_14065 (Errno::ENOENT) |
 | ? | auto-not-file-ioerror-6d84 | 1 | stdin_io | uncaught exception: not a file (IOError) |
 | ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |
@@ -32,10 +31,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil (NoMethodError) |
 | P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil (NoMethodError) |
 | P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil (NoMethodError) |
+| P | missing-method:[] | 1 | param_body_hash_inference | uncaught exception: undefined method '[]' for nil (NoMethodError) |
 | P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodError) |
 | P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError) |
 | P | missing-method:binmode | 1 | issue_3131 | uncaught exception: undefined method 'binmode' for an instance of File (NoMethodError) |
-| P | missing-method:call | 1 | proc_block_param_call | uncaught exception: undefined method 'call' for nil (NoMethodError) |
 | P | missing-method:foo | 1 | poly_keyed_hash_method_dedup | uncaught exception: undefined method 'foo' for class 'Class' (NameError) |
 | P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for main (NoMethodError) |
 | P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodError) |
