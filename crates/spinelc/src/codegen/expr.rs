@@ -178,6 +178,20 @@ pub fn emit_symbol_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// fully faithful needs real per-instance/per-callsite tracking this spike
 /// doesn't have yet.
 fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
+    // `defined?(yield)` is decided at RUNTIME: it answers `"yield"` only when
+    // the enclosing method actually received a block, else `nil` -- the same
+    // `__blk.is_some()` test that backs `block_given?`. (The Yield node's
+    // presence here also flags this body as a bare-block user, so `__blk` is
+    // in scope.)
+    if matches!(&cx.compiler.hir[id], HirNode::Yield(_)) {
+        return quote! {
+            if __blk.is_some() {
+                spinel_rt::RubyValue::Str(spinel_rt::string_new("yield".to_string()))
+            } else {
+                spinel_rt::RubyValue::Nil
+            }
+        };
+    }
     let classification: Option<&str> = match &cx.compiler.hir[id] {
         HirNode::LocalRead(name) => {
             if cx.local_types.contains_key(name) {

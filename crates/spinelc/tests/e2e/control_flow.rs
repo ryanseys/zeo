@@ -800,3 +800,24 @@ fn case_equality_dispatches_a_user_defined_triple_equals() {
          builtin-class\nregexp\nrange\nlisted\nsplat\n"
     );
 }
+
+#[test]
+fn defined_yield_reflects_block_presence_at_runtime() {
+    // defined?(yield) is nil without a block, "yield" with one.
+    let result = run_ruby(
+        r#"
+        def f
+          defined?(yield)
+        end
+        p f
+        p f { 1 }
+        def g(&blk)
+          defined?(yield)
+        end
+        p g
+        p g { 42 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\n\"yield\"\nnil\n\"yield\"\n");
+}
