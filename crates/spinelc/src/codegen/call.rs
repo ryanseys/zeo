@@ -470,7 +470,7 @@ fn try_regexp_dispatch(
                     { #guard spinel_rt::RubyValue::Bool(!spinel_rt::regexp_is_match(&(#recv_expr).as_regexp_unchecked(), &__h)) }
                 });
             }
-            ("match", 1) => {
+            ("match", 1) if block.is_none() => {
                 let guard = str_guard(args[0], "__h")?;
                 return Some(quote! {
                     { #guard spinel_rt::regexp_match(&(#recv_expr).as_regexp_unchecked(), &__h) }
@@ -511,7 +511,7 @@ fn try_regexp_dispatch(
                         { #haystack_guard spinel_rt::RubyValue::Bool(!spinel_rt::regexp_is_match(&(#re_expr).as_regexp_unchecked(), &__h)) }
                     });
                 }
-                ("match", 1) => {
+                ("match", 1) if block.is_none() => {
                     return Some(quote! {
                         { #haystack_guard spinel_rt::regexp_match(&(#re_expr).as_regexp_unchecked(), &__h) }
                     });

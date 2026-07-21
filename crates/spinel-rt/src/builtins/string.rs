@@ -48,39 +48,64 @@ pub(crate) fn succ_str(s: &str) -> String {
         return String::new();
     }
     let mut chars: Vec<char> = s.chars().collect();
-    let alnum_positions: Vec<usize> = (0..chars.len())
-        .filter(|&i| chars[i].is_ascii_alphanumeric())
-        .collect();
-    if alnum_positions.is_empty() {
-        let last = chars.len() - 1;
-        chars[last] = char::from_u32(chars[last] as u32 + 1).unwrap_or(chars[last]);
-        return chars.into_iter().collect();
-    }
-    let mut carry = true;
-    let mut leftmost = *alnum_positions.first().expect("non-empty");
-    for &i in alnum_positions.iter().rev() {
-        if !carry {
-            break;
+    let n = chars.len();
+    // CRuby's `str_succ`: walk right-to-left incrementing the rightmost
+    // alphanumeric with carry. The carry skips non-alnums, but STOPS (inserting
+    // a fresh char) when it crosses a non-alnum into an alnum of the OTHER kind
+    // -- so "1.9" carries across the dot to "2.0", while "a-9" (letter then
+    // digit) inserts to "a-10". No alnum at all -> plain byte increment.
+    let mut found_alnum = false;
+    let mut done = false;
+    let mut prev_was_nonchar = false;
+    let mut last_wrapped: Option<char> = None; // the char after the most recent wrap
+    let mut carry_pos = 0usize; // where a leftover carry inserts its char
+    let mut carry_char = '1';
+    for i in (0..n).rev() {
+        let c = chars[i];
+        if prev_was_nonchar {
+            if let Some(w) = last_wrapped {
+                let flip = (w.is_ascii_alphabetic() && c.is_ascii_digit())
+                    || (w.is_ascii_digit() && c.is_ascii_alphabetic());
+                if flip {
+                    break;
+                }
+            }
         }
-        leftmost = i;
-        let (next, wrapped) = match chars[i] {
-            'z' => ('a', true),
-            'Z' => ('A', true),
-            '9' => ('0', true),
-            c => (char::from_u32(c as u32 + 1).expect("ascii alnum"), false),
-        };
-        chars[i] = next;
-        carry = wrapped;
-    }
-    if carry {
-        // Full wrap: prepend a new digit of the leftmost run's kind
-        // ("zz" -> "aaa", "99" -> "100").
-        let seed = match chars[leftmost] {
+        if !c.is_ascii_alphanumeric() {
+            prev_was_nonchar = true;
+            continue;
+        }
+        prev_was_nonchar = false;
+        found_alnum = true;
+        carry_pos = i;
+        carry_char = match c {
             'a'..='z' => 'a',
             'A'..='Z' => 'A',
             _ => '1',
         };
-        chars.insert(leftmost, seed);
+        let (next, wrapped) = match c {
+            'z' => ('a', true),
+            'Z' => ('A', true),
+            '9' => ('0', true),
+            _ => (char::from_u32(c as u32 + 1).expect("ascii alnum"), false),
+        };
+        chars[i] = next;
+        if !wrapped {
+            done = true;
+            break;
+        }
+        last_wrapped = Some(next);
+    }
+    if !found_alnum {
+        let last = n - 1;
+        chars[last] = char::from_u32(chars[last] as u32 + 1).unwrap_or(chars[last]);
+        return chars.into_iter().collect();
+    }
+    if !done {
+        // The carry overflowed the leftmost alnum (or broke at a kind flip):
+        // insert a fresh char of that alnum's kind ("zz" -> "aaa", "a-9" ->
+        // "a-10").
+        chars.insert(carry_pos, carry_char);
     }
     chars.into_iter().collect()
 }
@@ -2379,13 +2404,21 @@ builtin_methods! {
     // Both accept an optional start position (char offset, end-relative when
     // negative); a position outside the string means "no match" without even
     // running the engine.
-    "match" => fn match_m(recv, args, _block) {
+    "match" => fn match_m(recv, args, block) {
         arity!(args, 1..=2);
         let re = to_regexp(&args[0])?;
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        match match_haystack(&text, args.get(1))? {
-            Some(h) => Ok(crate::regexp_match(&re, &h)),
-            None => Ok(RubyValue::Nil),
+        let md = match match_haystack(&text, args.get(1))? {
+            Some(h) => crate::regexp_match(&re, &h),
+            None => RubyValue::Nil,
+        };
+        // The block form runs on a match, answering the block's value; a miss
+        // answers nil without yielding (CRuby's rb_str_match_m).
+        match (&block, &md) {
+            (Some(blk), md) if !md.is_nil() => {
+                crate::dispatch::send_value(blk, crate::Symbol::intern("call"), std::slice::from_ref(md), None)
+            }
+            _ => Ok(md),
         }
     }
     "match?" => fn match_p(recv, args, _block) {
