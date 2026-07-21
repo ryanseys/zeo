@@ -13,23 +13,30 @@ builtin_methods! {
 
     "[]" | "slice" => fn index(recv, args, _block) {
         arity!(args, 1..=2);
-        let items = recv_array!(recv).lock().clone();
-        let n = items.len() as i64;
+        // NO up-front whole-Vec snapshot: a plain `arr[i]` in a loop must be
+        // O(1), not O(n) (bm_huffman spent 250s cloning arrays here). The
+        // two slice shapes copy only the requested span, under the lock; any
+        // dispatch-capable conversion (`to_int` ducks) runs BEFORE locking,
+        // so user code can never re-enter this array while it is held.
         // `arr[start, len]`.
         if args.len() == 2 {
             let (start, len) = (arg_int!(args, 0), arg_int!(args, 1));
+            let guard = recv_array!(recv).lock();
+            let n = guard.len() as i64;
             let start = if start < 0 { start + n } else { start };
             if start < 0 || start > n || len < 0 {
                 return Ok(RubyValue::Nil);
             }
             let end = (start + len).min(n);
             return Ok(RubyValue::Array(crate::array_new(
-                items[start as usize..end as usize].to_vec(),
+                guard[start as usize..end as usize].to_vec(),
             )));
         }
         match &args[0] {
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(start, end, exclusive) => {
+                let guard = recv_array!(recv).lock();
+                let n = guard.len() as i64;
                 let s = match start.as_deref() {
                     Some(RubyValue::Int(v)) => {
                         if *v < 0 { v + n } else { *v }
@@ -52,7 +59,7 @@ builtin_methods! {
                 Ok(RubyValue::Array(crate::array_new(if e < s {
                     Vec::new()
                 } else {
-                    items[s as usize..=e as usize].to_vec()
+                    guard[s as usize..=e as usize].to_vec()
                 })))
             }
             other => {

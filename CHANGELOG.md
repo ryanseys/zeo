@@ -11,5 +11,9 @@ push. Highlights so far: dual MIT/Apache-2.0 licensing, edition 2024
 workspace with enforced lints, OS-CSPRNG SecureRandom, vendored
 conformance corpus + benchmark suite with self-contained CI, typed
 error-constructor macros, the rb_convert_type implicit-conversion
-protocol (duck-typed arguments, oracle-exact messages), Enumerable/
-Comparable on real method tables, and ten vendored pure-Ruby stdlib gems.
+protocol (duck-typed arguments, oracle-exact messages) now consumed by
+~120 formerly open-coded builtin argument sites (to_int/to_str/to_ary/
+to_hash ducks, NUM2LONG Float truncation, and oracle-corrected error
+shapes across Array/String/Hash/IO/Time/File and the ext modules),
+Enumerable/Comparable on real method tables, and ten vendored pure-Ruby
+stdlib gems.

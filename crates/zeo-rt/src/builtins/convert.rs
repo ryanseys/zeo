@@ -19,11 +19,6 @@
 //! existed. NOTE the numeric tower's `X can't be coerced into Y` operator
 //! errors are a DIFFERENT protocol (`coerce`, `numeric.rs`) and stay there.
 
-// The full rb_convert_type surface is declared up front; the per-builtin
-// migration of the ~160 open-coded conversion sites consumes it
-// incrementally. Retire this allow when that migration lands.
-#![allow(dead_code)]
-
 use super::{convert_name_of, type_error};
 use crate::dispatch::{responds_to_value, send_value};
 use crate::{RubyValue, Signal, Symbol};
@@ -117,6 +112,9 @@ pub fn to_hash(v: &RubyValue) -> Result<RubyValue, Signal> {
     convert(v, "Hash", "to_hash")
 }
 
+// The one probe form without a caller yet -- kept so the protocol surface
+// stays complete alongside its three siblings.
+#[allow(dead_code)]
 pub fn check_to_hash(v: &RubyValue) -> Result<Option<RubyValue>, Signal> {
     check_convert(v, "Hash", "to_hash")
 }
