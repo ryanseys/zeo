@@ -33,6 +33,19 @@ pub enum IoBackend {
     Pipe(Option<std::fs::File>),
 }
 
+impl IoBackend {
+    /// Drop the underlying descriptor (a no-op for the std streams), leaving a
+    /// closed handle -- what `#close`/`#close_read`/`#close_write` need.
+    fn close_file(&mut self) {
+        match self {
+            IoBackend::File(slot) | IoBackend::Pipe(slot) => {
+                slot.take();
+            }
+            IoBackend::Std(_) => {}
+        }
+    }
+}
+
 pub struct RIo {
     /// `Mutex` because reading MOVES the file position -- an IO is mutable
     /// shared state even behind an `Arc`, unlike the stateless std-stream
@@ -44,6 +57,16 @@ pub struct RIo {
     /// `#lineno` -- the count of lines read via `gets`/`readline`/`each_line`,
     /// which CRuby tracks per-IO and lets a program set with `lineno=`.
     lineno: std::sync::atomic::AtomicI64,
+    /// `#binmode?` -- on Unix binary vs text mode has no behavioural effect
+    /// (no CRLF translation), so this only records what `#binmode` was told,
+    /// exactly what `#binmode?` reports.
+    binmode: std::sync::atomic::AtomicBool,
+    /// `#autoclose?` -- whether closing this IO closes its fd. Defaults to
+    /// true; a program may clear it (`autoclose = false`) to keep the fd open.
+    autoclose: std::sync::atomic::AtomicBool,
+    /// Bytes pushed back by `#ungetbyte`/`#ungetc`, read out (LIFO) before the
+    /// stream itself. The next byte read drains this first.
+    unget: parking_lot::Mutex<Vec<u8>>,
 }
 
 impl RubyObject for RIo {
@@ -78,38 +101,38 @@ impl RubyObject for RIo {
             IoBackend::Std(s) => *s,
             IoBackend::File(_) | IoBackend::Pipe(_) => StdStream::Stdout,
         };
-        Arc::new(RIo {
-            backend: parking_lot::Mutex::new(IoBackend::Std(stream)),
-            path: self.path.clone(),
+        Arc::new(RIo::new(IoBackend::Std(stream), self.path.clone()))
+    }
+}
+
+impl RIo {
+    /// The one place RIo's default per-handle state (unset binmode, autoclose
+    /// on, no pushed-back bytes, lineno 0) is established, so every constructor
+    /// agrees.
+    fn new(backend: IoBackend, path: String) -> RIo {
+        RIo {
+            backend: parking_lot::Mutex::new(backend),
+            path,
             lineno: std::sync::atomic::AtomicI64::new(0),
-        })
+            binmode: std::sync::atomic::AtomicBool::new(false),
+            autoclose: std::sync::atomic::AtomicBool::new(true),
+            unget: parking_lot::Mutex::new(Vec::new()),
+        }
     }
 }
 
 fn std_io(stream: StdStream) -> RubyValue {
-    RubyValue::Object(Arc::new(RIo {
-        backend: parking_lot::Mutex::new(IoBackend::Std(stream)),
-        path: String::new(),
-        lineno: std::sync::atomic::AtomicI64::new(0),
-    }))
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::Std(stream), String::new())))
 }
 
 /// Wrap an already-open file as a Ruby `File` value.
 pub(crate) fn file_value(f: std::fs::File, path: String) -> RubyValue {
-    RubyValue::Object(Arc::new(RIo {
-        backend: parking_lot::Mutex::new(IoBackend::File(Some(f))),
-        path,
-        lineno: std::sync::atomic::AtomicI64::new(0),
-    }))
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::File(Some(f)), path)))
 }
 
 /// Wrap one end of an `IO.pipe` (from an owned fd) as a Ruby `IO` value.
 fn pipe_value(f: std::fs::File) -> RubyValue {
-    RubyValue::Object(Arc::new(RIo {
-        backend: parking_lot::Mutex::new(IoBackend::Pipe(Some(f))),
-        path: String::new(),
-        lineno: std::sync::atomic::AtomicI64::new(0),
-    }))
+    RubyValue::Object(Arc::new(RIo::new(IoBackend::Pipe(Some(f)), String::new())))
 }
 
 pub fn stdout_value() -> RubyValue {
@@ -542,6 +565,13 @@ fn io_rewind(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
 }
 
 fn io_eof(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    // stdin can't seek; peek the shared buffered reader instead. `fill_buf`
+    // is non-destructive -- an empty buffer means end-of-input.
+    if matches!(stream_of(recv), Some(StdStream::Stdin)) {
+        use std::io::BufRead;
+        let empty = std::io::stdin().lock().fill_buf().map(|b| b.is_empty()).unwrap_or(true);
+        return Ok(RubyValue::Bool(empty));
+    }
     with_file(recv, |f, path| {
         use std::io::Seek;
         let pos = f
@@ -767,6 +797,12 @@ fn io_readchar(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) ->
 }
 
 fn io_getbyte(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    // A byte pushed back with `#ungetbyte` is returned before the stream.
+    if let Some(io) = as_rio(recv) {
+        if let Some(byte) = io.unget.lock().pop() {
+            return Ok(RubyValue::Int(byte as i64));
+        }
+    }
     let b = with_file(recv, |f, path| {
         use std::io::Read;
         let mut byte = [0u8; 1];
@@ -786,6 +822,235 @@ fn io_readbyte(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) ->
         RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
         b => Ok(b),
     }
+}
+
+use std::sync::atomic::Ordering::Relaxed;
+
+/// An integer argument (for `pread`/`pwrite` counts and offsets).
+fn int_of(v: &RubyValue, what: &str) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Int(i) => Ok(*i),
+        other => Err(raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into Integer ({what})", crate::builtins::convert_name_of(other)),
+        )),
+    }
+}
+
+/// `#binmode` -- record binary mode (a no-op on Unix behaviourally); answers self.
+fn io_binmode(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    if let Some(io) = as_rio(recv) {
+        io.binmode.store(true, Relaxed);
+    }
+    Ok(recv.clone())
+}
+
+fn io_binmode_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    Ok(RubyValue::Bool(as_rio(recv).is_some_and(|io| io.binmode.load(Relaxed))))
+}
+
+/// `#autoclose = flag` -- answers the assigned value (Ruby setter convention).
+fn io_autoclose_set(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    if let Some(io) = as_rio(recv) {
+        io.autoclose.store(args[0].truthy(), Relaxed);
+    }
+    Ok(args[0].clone())
+}
+
+fn io_autoclose_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    Ok(RubyValue::Bool(as_rio(recv).is_none_or(|io| io.autoclose.load(Relaxed))))
+}
+
+/// `#to_io` -- an IO answers itself.
+fn io_to_io(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    Ok(recv.clone())
+}
+
+/// `#close_on_exec?` -- CRuby marks a newly-opened fd close-on-exec by default
+/// (since Ruby 2.0), so this reports true; `#close_on_exec=` records the wish
+/// and answers it (the flag has no observable effect without an exec here).
+fn io_close_on_exec_p(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    let _ = recv;
+    Ok(RubyValue::Bool(true))
+}
+
+fn io_close_on_exec_set(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    Ok(args[0].clone())
+}
+
+/// `#advise(kind[, offset, len])` -- a hint to the kernel about access
+/// patterns. Validated against the known symbols, then a no-op answering nil
+/// (`posix_fadvise` is best-effort and unobservable from Ruby).
+fn io_advise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1..=3);
+    let kind = match &args[0] {
+        RubyValue::Symbol(s) => s.name().to_string(),
+        other => {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Symbol", crate::builtins::convert_name_of(other)),
+            ))
+        }
+    };
+    if !matches!(kind.as_str(), "normal" | "sequential" | "random" | "willneed" | "dontneed" | "noreuse") {
+        return Err(raise_error("NotImplementedError", format!("unsupported advice: {kind}")));
+    }
+    let _ = recv;
+    Ok(RubyValue::Nil)
+}
+
+/// `#ungetbyte(int_or_str)` -- push bytes back so the next read returns them
+/// first. Recorded on the IO's unget stack (see `io_getbyte`).
+fn io_ungetbyte(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    let Some(io) = as_rio(recv) else {
+        return Err(raise_error("IOError", "not a file".to_string()));
+    };
+    let mut ug = io.unget.lock();
+    match &args[0] {
+        RubyValue::Int(i) => ug.push((*i & 0xff) as u8),
+        // Push in reverse so the string's bytes read back in order (the stack
+        // is LIFO).
+        RubyValue::Str(s) => {
+            for b in s.lock().to_utf8_lossy().into_owned().into_bytes().into_iter().rev() {
+                ug.push(b);
+            }
+        }
+        RubyValue::Nil => {}
+        other => {
+            return Err(raise_error(
+                "TypeError",
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
+            ))
+        }
+    }
+    Ok(RubyValue::Nil)
+}
+
+/// `#pread(maxlen, offset[, buffer])` -- read at a fixed offset WITHOUT moving
+/// the position (`pread(2)`). Answers a new String, or fills `buffer` when
+/// given and answers it. EOFError when nothing is available at `offset`.
+fn io_pread(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 2..=3);
+    let count = int_of(&args[0], "pread")?.max(0) as usize;
+    let offset = int_of(&args[1], "pread")?.max(0) as u64;
+    let data = with_file(recv, |f, path| {
+        use std::os::unix::fs::FileExt;
+        let mut buf = vec![0u8; count];
+        let n = f.read_at(&mut buf, offset).map_err(|e| crate::builtins::file::raise_errno(&e, "pread", path))?;
+        if n == 0 && count > 0 {
+            return Err(raise_error("EOFError", "end of file reached".to_string()));
+        }
+        buf.truncate(n);
+        Ok(buf)
+    })?;
+    let text = String::from_utf8_lossy(&data).into_owned();
+    match args.get(2) {
+        Some(RubyValue::Str(buf)) => {
+            buf.lock().replace_utf8(text);
+            Ok(RubyValue::Str(buf.clone()))
+        }
+        _ => Ok(RubyValue::Str(crate::collections::string_new(text))),
+    }
+}
+
+/// `#pwrite(string, offset)` -- write at a fixed offset WITHOUT moving the
+/// position; answers the number of bytes written.
+fn io_pwrite(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 2);
+    let bytes = match &args[0] {
+        RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned().into_bytes(),
+        other => other.to_display_string().into_bytes(),
+    };
+    let offset = int_of(&args[1], "pwrite")?.max(0) as u64;
+    with_file(recv, |f, path| {
+        use std::os::unix::fs::FileExt;
+        let n = f.write_at(&bytes, offset).map_err(|e| crate::builtins::file::raise_errno(&e, "pwrite", path))?;
+        Ok(RubyValue::Int(n as i64))
+    })
+}
+
+/// `#reopen(other_io_or_path[, mode])` -- rebind this IO to another stream.
+/// Reopens the source's path fresh (position 0), which is what a program that
+/// reads after `reopen` observes; answers self.
+fn io_reopen(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1..=2);
+    let path = match as_rio(&args[0]) {
+        Some(other) => other.path.clone(),
+        None => crate::builtins::file::path_arg(&args[0], "reopen")?,
+    };
+    let f = std::fs::File::open(&path).map_err(|e| crate::builtins::file::raise_errno(&e, "reopen", &path))?;
+    if let Some(io) = as_rio(recv) {
+        *io.backend.lock() = IoBackend::File(Some(f));
+        io.unget.lock().clear();
+    }
+    Ok(recv.clone())
+}
+
+/// `#each_codepoint { |cp| ... }` -- yield each remaining character's codepoint;
+/// answers self.
+fn io_each_codepoint(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    let RubyValue::Proc(p) = blk.unwrap_or(RubyValue::Nil) else {
+        return Err(raise_error("LocalJumpError", "no block given (yield)".to_string()));
+    };
+    let content = with_file(recv, |f, path| {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).map_err(|e| crate::builtins::file::raise_errno(&e, "each_codepoint", path))?;
+        Ok(buf)
+    })?;
+    for ch in String::from_utf8_lossy(&content).chars() {
+        p.call(&[RubyValue::Int(ch as i64)])?;
+    }
+    Ok(recv.clone())
+}
+
+/// Whether this IO's fd was opened for writing (`close_write` needs it) or
+/// reading (`close_read`). `fcntl(F_GETFL) & O_ACCMODE` is the fd's own truth,
+/// so no per-IO mode field is needed.
+fn fd_access_mode(recv: &RubyValue) -> Option<libc::c_int> {
+    use std::os::fd::AsRawFd;
+    let io = as_rio(recv)?;
+    match &*io.backend.lock() {
+        IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => {
+            let flags = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETFL) };
+            (flags >= 0).then_some(flags & libc::O_ACCMODE)
+        }
+        _ => None,
+    }
+}
+
+/// `#close_write` -- close the writable half. On a read-only stream there is
+/// none, so CRuby raises IOError; otherwise the stream is closed. Answers nil.
+fn io_close_write(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    if fd_access_mode(recv) == Some(libc::O_RDONLY) {
+        return Err(raise_error("IOError", "not opened for writing".to_string()));
+    }
+    if let Some(io) = as_rio(recv) {
+        io.backend.lock().close_file();
+    }
+    Ok(RubyValue::Nil)
+}
+
+/// `#close_read` -- close the readable half. On a write-only stream CRuby
+/// raises IOError; otherwise the stream is closed. Answers nil.
+fn io_close_read(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 0);
+    if fd_access_mode(recv) == Some(libc::O_WRONLY) {
+        return Err(raise_error("IOError", "not opened for reading".to_string()));
+    }
+    if let Some(io) = as_rio(recv) {
+        io.backend.lock().close_file();
+    }
+    Ok(RubyValue::Nil)
 }
 
 /// `readlines([sep][, limit][, chomp:])` -- every remaining line as an Array.
@@ -1109,7 +1374,22 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "pipe?" => io_pipe_p,
         "fsync" | "fdatasync" => io_fsync,
         "close" => io_close,
+        "close_read" => io_close_read,
+        "close_write" => io_close_write,
         "closed?" => io_closed,
+        "binmode" => io_binmode,
+        "binmode?" => io_binmode_p,
+        "autoclose=" => io_autoclose_set,
+        "autoclose?" => io_autoclose_p,
+        "to_io" => io_to_io,
+        "close_on_exec?" => io_close_on_exec_p,
+        "close_on_exec=" => io_close_on_exec_set,
+        "advise" => io_advise,
+        "ungetbyte" | "ungetc" => io_ungetbyte,
+        "pread" => io_pread,
+        "pwrite" => io_pwrite,
+        "reopen" => io_reopen,
+        "each_codepoint" | "codepoints" => io_each_codepoint,
         _ => return None,
     })
 }
@@ -1123,7 +1403,9 @@ pub fn lookup_names() -> &'static [&'static str] {
         "readlines", "each_line", "each", "each_char", "chars", "each_byte", "bytes",
         "printf", "putc", "readpartial", "sysread", "seek", "sysseek", "flock",
         "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "lstat", "chown", "chmod", "truncate",
-        "mtime", "size", "pipe?", "fsync", "fdatasync", "close", "closed?",
+        "mtime", "size", "pipe?", "fsync", "fdatasync", "close", "close_read", "close_write", "closed?",
+        "binmode", "binmode?", "autoclose=", "autoclose?", "to_io", "close_on_exec?", "close_on_exec=",
+        "advise", "ungetbyte", "ungetc", "pread", "pwrite", "reopen", "each_codepoint", "codepoints",
     ]
 }
 
