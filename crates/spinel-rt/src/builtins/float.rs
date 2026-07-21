@@ -128,14 +128,25 @@ builtin_methods! {
     }
     "numerator" => fn numerator(recv, args, _block) {
         arity!(args, 0);
-        match float_to_rational(recv_f64(recv))? {
+        let f = recv_f64(recv);
+        // Infinity/NaN have no rational form, so CRuby skips the conversion
+        // and returns the float itself (its denominator is 1) rather than
+        // raising FloatDomainError.
+        if !f.is_finite() {
+            return Ok(RubyValue::Float(f));
+        }
+        match float_to_rational(f)? {
             RubyValue::Rational(r) => Ok(crate::builtins::integer::int_value(r.num.clone())),
             other => Ok(other),
         }
     }
     "denominator" => fn denominator(recv, args, _block) {
         arity!(args, 0);
-        match float_to_rational(recv_f64(recv))? {
+        let f = recv_f64(recv);
+        if !f.is_finite() {
+            return Ok(RubyValue::Int(1));
+        }
+        match float_to_rational(f)? {
             RubyValue::Rational(r) => Ok(crate::builtins::integer::int_value(r.den.clone())),
             _ => Ok(RubyValue::Int(1)),
         }

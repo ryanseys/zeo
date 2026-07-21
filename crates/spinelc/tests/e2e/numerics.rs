@@ -593,3 +593,35 @@ fn non_finite_float_literals_compile() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "Infinity\n-Infinity\n1\ntrue\nInfinity\n");
 }
+
+#[test]
+fn integer_digits_accepts_a_bignum_base() {
+    // A bignum base is valid (the value simply fits in one digit when it is
+    // smaller than the base); only radix < 2 is an ArgumentError.
+    let result = run_ruby(
+        r#"
+        b = 2 ** 70
+        p 255.digits(b)
+        p 255.digits(b).class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[255]\nArray\n");
+}
+
+#[test]
+fn float_numerator_denominator_on_non_finite() {
+    // Infinity/NaN have no rational form, so `numerator` returns the float
+    // itself and `denominator` returns 1 -- CRuby never raises here.
+    let result = run_ruby(
+        r#"
+        p Float::INFINITY.numerator
+        p Float::INFINITY.denominator
+        p Float::NAN.numerator
+        p((-Float::INFINITY).numerator)
+        p 0.5.numerator, 0.5.denominator
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Infinity\n1\nNaN\n-Infinity\n1\n2\n");
+}

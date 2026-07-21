@@ -2324,18 +2324,55 @@ builtin_methods! {
             None => false,
         }))
     }
-    "scan" => fn scan(recv, args, _block) {
+    "scan" => fn scan(recv, args, block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        match &args[0] {
-            RubyValue::Regexp(re) => Ok(crate::regexp_scan(re, &text)),
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other)
-                ),
-            )),
+        // The matched substrings, in order. A Regexp defers to the engine; a
+        // String pattern matches LITERALLY (its characters are never
+        // metacharacters), non-overlapping and left to right -- and an empty
+        // pattern matches at every character boundary, both ends included.
+        let matches: Vec<RubyValue> = match &args[0] {
+            RubyValue::Regexp(re) => match crate::regexp_scan(re, &text) {
+                RubyValue::Array(a) => a.lock().iter().cloned().collect(),
+                _ => Vec::new(),
+            },
+            RubyValue::Str(pat) => {
+                let pat = pat.lock().to_utf8_lossy().into_owned();
+                let mut out = Vec::new();
+                if pat.is_empty() {
+                    for _ in 0..=text.chars().count() {
+                        out.push(str_value(String::new()));
+                    }
+                } else {
+                    let mut start = 0;
+                    while let Some(pos) = text[start..].find(&pat) {
+                        out.push(str_value(pat.clone()));
+                        start += pos + pat.len();
+                    }
+                }
+                out
+            }
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!(
+                        "wrong argument type {} (expected Regexp)",
+                        crate::builtins::class_name_of(other)
+                    ),
+                ));
+            }
+        };
+        // With a block, yield each match and return the receiver; without one,
+        // return the array of matches (never an Enumerator -- CRuby's `scan`
+        // has no block-less lazy form).
+        match &block {
+            Some(RubyValue::Proc(p)) => {
+                for m in matches {
+                    p.call(&[m])?;
+                }
+                Ok(recv.clone())
+            }
+            _ => Ok(RubyValue::Array(crate::array_new(matches))),
         }
     }
 }

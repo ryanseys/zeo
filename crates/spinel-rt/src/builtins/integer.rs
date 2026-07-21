@@ -739,12 +739,17 @@ builtin_methods! {
     "digits" => fn digits(recv, args, _block) {
         arity!(args, 0..=1);
         let base = match args.first() {
-            Some(RubyValue::Int(b)) if *b >= 2 => BigInt::from(*b),
-            Some(RubyValue::Int(b)) => {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("invalid radix {b}"),
-                ))
+            // Any Integer base is valid (a bignum base too, e.g. `255.digits(2**70)`);
+            // only radix < 2 is rejected, and the error echoes the raw value.
+            Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_))) => {
+                let b = to_bigint(v);
+                if b < BigInt::from(2) {
+                    return Err(crate::dispatch::raise_error(
+                        "ArgumentError",
+                        format!("invalid radix {b}"),
+                    ));
+                }
+                b
             }
             Some(other) => return Err(coerce_error(other, "Integer")),
             None => BigInt::from(10),

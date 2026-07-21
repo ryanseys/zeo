@@ -277,6 +277,30 @@ fn scan_without_and_with_capture_groups() {
 }
 
 #[test]
+fn scan_with_a_string_pattern_matches_literally() {
+    // A String pattern is a literal (no metacharacters), matches
+    // non-overlapping, and an empty pattern matches at every character
+    // boundary. The block form yields each match and returns the receiver.
+    let result = run_ruby(
+        r#"
+        p "MixedCase".scan("e")
+        p "aaaa".scan("aa")
+        p "abc".scan("z")
+        p "café".scan("")
+        matches = []
+        returned = "banana".scan("an") { |m| matches << m.upcase }
+        p matches
+        p returned == "banana"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"e\", \"e\"]\n[\"aa\", \"aa\"]\n[]\n[\"\", \"\", \"\", \"\", \"\"]\n[\"AN\", \"AN\"]\ntrue\n"
+    );
+}
+
+#[test]
 fn gsub_and_sub_block_forms() {
     // The block body is a literal replacement (not `m.upcase`) since a
     // block parameter's static type is always `Poly` (this codebase's own
