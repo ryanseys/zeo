@@ -30,7 +30,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-invalid-argument-argumenterror-cf9c | 1 | issue_3058 | uncaught exception: invalid argument - 1180591620717411303424 (ArgumentError) |
 | ? | auto-no-implicit-conversion-of-float-into-integer-typeerror-0627 | 1 | pack_float_directives | uncaught exception: no implicit conversion of Float into Integer (TypeError) |
 | ? | auto-no-implicit-conversion-of-rational-into-integer-typeerror-8b67 | 1 | time_fractional_seconds | uncaught exception: no implicit conversion of Rational into Integer (TypeError) |
-| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_39402 (Errno::ENOENT) |
+| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_4818 (Errno::ENOENT) |
 | ? | auto-not-file-ioerror-6d84 | 1 | stdin_io | uncaught exception: not a file (IOError) |
 | ? | auto-parsing-error-at-position-invalid-back-reference-regexperror-60c6 | 1 | i1009 | uncaught exception: Parsing error at position 5: Invalid back reference (RegexpError) |
 | ? | auto-parsing-error-at-position-invalid-character-class-regexperror-db37 | 1 | regexp_encoding_introspection | uncaught exception: Parsing error at position 5: Invalid character class (RegexpError) |

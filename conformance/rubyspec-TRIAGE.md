@@ -22,9 +22,9 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-users-ryanseys-dev-spec-language-if-spec-rb-779d | 1 | if_spec | /Users/ryanseys/dev/spec/language/if_spec.rb: unsupported syntax at "(i == 4)..(i == 4)" (spike handles only what the 7 example programs need) |
 | ? | auto-users-ryanseys-dev-spec-language-method-spec-rb-6bff | 1 | method_spec | /Users/ryanseys/dev/spec/language/method_spec.rb: unsupported syntax at "..." (spike handles only what the 7 example programs need) |
 | ? | auto-users-ryanseys-dev-spec-language-module-spec-rb-658f | 1 | module_spec | /Users/ryanseys/dev/spec/language/module_spec.rb: expected a constant name or path (e.g. `Foo` or `Foo::Bar`) |
+| ? | auto-users-ryanseys-dev-spec-language-optional-assignments-spec-538a | 1 | optional_assignments_spec | /Users/ryanseys/dev/spec/language/optional_assignments_spec.rb: unsupported syntax at "*[:m]" (spike handles only what the 7 example programs need) |
 | ? | auto-users-ryanseys-dev-spec-language-precedence-spec-rb-7615 | 1 | precedence_spec | /Users/ryanseys/dev/spec/language/precedence_spec.rb: unsupported syntax at "from..to" (spike handles only what the 7 example programs need) |
 | ? | auto-users-ryanseys-dev-spec-language-undef-spec-rb-64ee | 1 | undef_spec | /Users/ryanseys/dev/spec/language/undef_spec.rb: unsupported syntax at "undef meth" (spike handles only what the 7 example programs need) |
-| c | compound-assign | 1 | optional_assignments_spec | /Users/ryanseys/dev/spec/language/optional_assignments_spec.rb: `[]`-style compound assignment only supports a single index argument (spike scope) |
 | P | missing-const:MSpecLite::RUBY_VERSION | 1 | numbered_parameters_spec | uncaught exception: uninitialized constant MSpecLite::RUBY_VERSION (NameError) |
 | P | missing-method:new | 1 | range_spec | ERROR: Literal Ranges creates beginless ranges: NoMethodError: undefined method 'new' for class Range |
 | k | pattern-shapes | 1 | pattern_matching_spec | /Users/ryanseys/dev/spec/language/pattern_matching_spec.rb: a pattern can't bind a variable inside a `\|` alternation (spike scope, matches real Ruby) |

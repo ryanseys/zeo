@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=5bcfa6e
-# PASS=1926 FAIL_OUTPUT=275 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=cc13e39
+# PASS=1942 FAIL_OUTPUT=259 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -73,8 +73,8 @@ array_map_bang	PASS	-	-
 array_member_empty_var	PASS	-	-
 array_minmax_block	PASS	-	-
 array_mul_negative_raises	PASS	-	-
-array_negative_index_too_small	FAIL_OUTPUT	expect	-
-array_negative_size_validation	FAIL_OUTPUT	expect	-
+array_negative_index_too_small	PASS	-	-
+array_negative_size_validation	PASS	-	-
 array_new_container_default	PASS	-	-
 array_new_poly_size	PASS	-	-
 array_object_id	PASS	-	-
@@ -133,7 +133,7 @@ basicobject_dup_rescued	PASS	-	-
 basicobject_new	FAIL_OUTPUT	expect	missing-method:new
 basicobject_send_missing	PASS	-	-
 begin_rescue_as_expression	PASS	-	-
-begin_rescue_else_clause	FAIL_OUTPUT	expect	-
+begin_rescue_else_clause	PASS	-	-
 bigint_div_by_zero	PASS	-	-
 bigint_literal	PASS	-	-
 bigint_literal_pow	PASS	-	-
@@ -151,7 +151,7 @@ bignum_rational_arith	PASS	-	-
 bignum_rational_basic	PASS	-	-
 bignum_receiver_bitwise	PASS	-	-
 bignum_receiver_methods	PASS	-	-
-bignum_recv_int_ord_float_toi	FAIL_OUTPUT	expect	-
+bignum_recv_int_ord_float_toi	PASS	-	-
 bignum_to_f	PASS	-	-
 binary_string_length_bytes	PASS	-	-
 binding_lvget	PASS	-	-
@@ -284,7 +284,7 @@ bundle_poly	PASS	-	-
 bundle_poly_b1	PASS	-	-
 bundle_string_a	PASS	-	-
 bundle_string_b	PASS	-	-
-bundle_string_c	FAIL_OUTPUT	expect	-
+bundle_string_c	PASS	-	-
 bundle_sym	PASS	-	-
 bundle_tiny_array	PASS	-	-
 bundle_tiny_misc	PASS	-	-
@@ -439,9 +439,9 @@ const_init_block_param_scan	PASS	-	-
 const_int_rows_destructure	PASS	-	-
 const_path_compound_assign	PASS	-	-
 const_path_deep_nesting	PASS	-	-
-const_path_unresolved_require	FAIL_OUTPUT	expect	-
+const_path_unresolved_require	PASS	-	-
 const_recv_yield_inline	PASS	-	-
-const_self_ref_raises_name_error	FAIL_OUTPUT	expect	-
+const_self_ref_raises_name_error	PASS	-	-
 constant_path	FAIL_OUTPUT	expect	missing-const:M::C
 constant_path_write	PASS	-	-
 constant_path_write_undeclared	PASS	-	-
@@ -747,7 +747,7 @@ gsub_sub_block	PASS	-	-
 gsub_with_hash_replacement	PASS	-	-
 gvar	PASS	-	-
 gvar_opassign_value	PASS	-	-
-hangs_548	FAIL_OUTPUT	expect	-
+hangs_548	PASS	-	-
 harness_batch_2453_2456	FAIL_OUTPUT	expect	missing-const:OpenSSL
 hash_all_pattern	PASS	-	-
 hash_array_string_batch8	PASS	-	-
@@ -969,10 +969,10 @@ int_int_hash_literal	PASS	-	-
 int_int_hash_missing_key_nil	PASS	-	-
 int_keyed_hash_lookup_as_array	PASS	-	-
 int_opt_p_inspect	PASS	-	-
-int_overflow_op_assign	FAIL_OUTPUT	expect	-
+int_overflow_op_assign	PASS	-	-
 int_overflow_promote	PASS	-	-
-int_overflow_raises	FAIL_OUTPUT	expect	-
-int_round_large_precision	FAIL_OUTPUT	expect	-
+int_overflow_raises	PASS	-	-
+int_round_large_precision	PASS	-	-
 int_sentinel_class_nilclass	PASS	-	-
 int_to_enum_times	PASS	-	-
 integer_argument_error	FAIL_OUTPUT	expect	-
@@ -1387,7 +1387,7 @@ method_visibility_attr	PASS	-	-
 method_visibility_inherit	PASS	-	-
 middle_splat_param	PASS	-	-
 min_by_string_key	PASS	-	-
-minmax_by_count	FAIL_OUTPUT	expect	-
+minmax_by_count	PASS	-	-
 misc	PASS	-	-
 missing_positional_arg_warns	PASS	-	-
 mixin	PASS	-	-
@@ -1827,7 +1827,7 @@ regexp_inline_options	FAIL_OUTPUT	expect	-
 regexp_last_match_capture	PASS	-	-
 regexp_line_anchors	FAIL_OUTPUT	expect	auto-error-unrecognized-escape-sequence-regexperror-2794
 regexp_local_if_else_union	PASS	-	-
-regexp_match_data	FAIL_OUTPUT	expect	-
+regexp_match_data	PASS	-	-
 regexp_match_p_position	FAIL_OUTPUT	expect	-
 regexp_named_backref	PASS	-	-
 regexp_named_capture_match	PASS	-	-
@@ -1958,7 +1958,7 @@ str_split_space_whitespace	PASS	-	-
 str_split_trailing_empty	PASS	-	-
 str_squeeze_arg	FAIL_OUTPUT	expect	-
 str_str_hash_nullable_bracket_assign	PASS	-	-
-str_to_i_overflow	FAIL_OUTPUT	expect	-
+str_to_i_overflow	PASS	-	-
 str_tr_negation	FAIL_OUTPUT	expect	-
 str_unpack_gc_root	FAIL_OUTPUT	expect	-
 strbuf_shovel_chain_value	PASS	-	-
@@ -1985,7 +1985,7 @@ string_each_line_enum	PASS	-	-
 string_each_line_expr	PASS	-	-
 string_each_line_keeps_newline	PASS	-	-
 string_embedded_nul_core	PASS	-	-
-string_encoding	FAIL_OUTPUT	expect	-
+string_encoding	PASS	-	-
 string_enum_arg_forms	FAIL_OUTPUT	expect	arity-panic
 string_enum_block_returns_self	FAIL_OUTPUT	expect	-
 string_enum_inspect_source	FAIL_OUTPUT	expect	auto-no-block-given-yield-localjumperror-1be0
@@ -2038,7 +2038,7 @@ string_succ_scan_slice_tilde_wave10	FAIL_OUTPUT	expect	-
 string_sum_bits	PASS	-	-
 string_to_i_base	PASS	-	-
 string_to_i_base_zero	PASS	-	-
-string_to_i_overflow_raises	FAIL_OUTPUT	expect	-
+string_to_i_overflow_raises	PASS	-	-
 string_undump	PASS	-	-
 string_upto	PASS	-	-
 string_with_embedded_nul	FAIL_OUTPUT	expect	-
