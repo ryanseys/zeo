@@ -524,3 +524,18 @@ fn break_with_a_value_makes_the_iterator_call_return_it() {
         "99\n:s\n7\n100\n5\n-1\n1\nnil\n[2, 3, 4]\n"
     );
 }
+
+#[test]
+fn each_slice_and_frozen_hash_filter_error_messages() {
+    // each_slice(0) says "invalid slice size", each_cons(0) just "invalid
+    // size"; an in-place Hash filter on a frozen receiver raises FrozenError.
+    let result = run_ruby(
+        r#"
+        begin; [1, 2, 3].each_slice(0).to_a; rescue ArgumentError => e; puts e.message; end
+        begin; [1, 2, 3].each_cons(0).to_a; rescue ArgumentError => e; puts e.message; end
+        begin; {a: 1}.freeze.reject! { |k, v| true }; rescue => e; puts e.class; end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "invalid slice size\ninvalid size\nFrozenError\n");
+}

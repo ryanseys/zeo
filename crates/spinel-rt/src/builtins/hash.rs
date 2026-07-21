@@ -621,6 +621,15 @@ fn hash_filter_bang(
     let RubyValue::Hash(h) = recv else {
         unreachable!("Hash table row dispatched on a non-Hash receiver");
     };
+    // A frozen receiver raises before any block runs -- CRuby's
+    // `rb_hash_modify_check` at the top of every in-place filter, whether or
+    // not an entry would actually be removed.
+    if h.is_frozen() {
+        return Err(crate::dispatch::raise_error(
+            "FrozenError",
+            format!("can't modify frozen Hash: {}", recv.inspect_string()),
+        ));
+    }
     let pairs: Vec<(RubyValue, RubyValue)> =
         h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut removed = 0;

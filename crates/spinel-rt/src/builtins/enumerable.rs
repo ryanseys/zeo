@@ -1154,10 +1154,10 @@ fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
         panic!("Enumerable#{method} takes one Integer argument");
     };
     if *n < 1 {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "invalid size".to_string(),
-        ));
+        // CRuby names it differently per method: `each_slice` says "invalid
+        // slice size", `each_cons` (and the rest) just "invalid size".
+        let msg = if method == "each_slice" { "invalid slice size" } else { "invalid size" };
+        return Err(crate::dispatch::raise_error("ArgumentError", msg.to_string()));
     }
     Ok(*n as usize)
 }
