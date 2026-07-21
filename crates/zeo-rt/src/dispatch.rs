@@ -2,7 +2,7 @@
 //! dispatch" section for the full design rationale: two dispatch paths
 //! (static direct/match-on-class_id calls, generated entirely by `zeo`;
 //! and this module's runtime `ClassRegistry`/`send`, reached only when
-//! `zeo` cannot resolve a call statically). Spinel itself never needs
+//! `zeo` cannot resolve a call statically). Zeo itself never needs
 //! this module at all -- it's the one deliberate architectural addition.
 
 use crate::{RubyValue, Signal, Symbol};

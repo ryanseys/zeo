@@ -1,6 +1,6 @@
 # Extensions (`ext/`)
 
-zeo-rs mirrors CRuby's `ext/` model: an extension is an in-tree module that a
+zeo mirrors CRuby's `ext/` model: an extension is an in-tree module that a
 `require` activates. Each one is behind **two independent gates**:
 
 1. **Ruby require gate** — its constant is invisible until its `require` fires

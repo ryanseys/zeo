@@ -1452,7 +1452,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(lower_and_write(hir, Storage::Const { scope: None, name }, rhs));
     }
     // A `# shareable_constant_value:` magic comment makes prism wrap the
-    // constant write in a `ShareableConstantNode`. Spinel enforces no Ractor
+    // constant write in a `ShareableConstantNode`. Zeo enforces no Ractor
     // sharing, so unwrap to the inner write and lower it verbatim.
     if let Some(sc) = node.as_shareable_constant_node() {
         return lower_node(result, hir, &sc.write());

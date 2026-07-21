@@ -1,4 +1,4 @@
-//! `GC` (CRuby gc.c) -- honest no-ops. zeo-rs is `Arc`-refcounted with no
+//! `GC` (CRuby gc.c) -- honest no-ops. zeo is `Arc`-refcounted with no
 //! collector to drive, so there is nothing for `GC.start` to start. The
 //! methods exist because real programs call them incidentally (a benchmark
 //! harness, a test's `GC.start` between cases) and raising NoMethodError

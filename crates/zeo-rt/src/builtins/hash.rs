@@ -585,7 +585,7 @@ builtin_methods! {
         );
         Ok(RubyValue::Proc(p))
     }
-    // `rehash` recomputes key digests after in-place key mutation. Spinel
+    // `rehash` recomputes key digests after in-place key mutation. Zeo
     // hashes digest each key on lookup, so nothing is cached to rebuild --
     // it is a self-returning no-op here.
     "rehash"[0] => fn rehash(recv, args, _block) {

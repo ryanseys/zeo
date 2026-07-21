@@ -37,8 +37,8 @@ pub fn write_all(
 ) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     // Each suite gets its own committed artifacts so they don't clobber each
-    // other; the original `zeo` suite keeps the historical unprefixed names.
-    let prefix = if meta.suite == "zeo" { String::new() } else { format!("{}-", meta.suite) };
+    // other; the original `spinel` suite keeps the historical unprefixed names.
+    let prefix = if meta.suite == "spinel" { String::new() } else { format!("{}-", meta.suite) };
     write(dir.join(format!("{prefix}scoreboard.tsv")), tsv(meta, results))?;
     write(dir.join(format!("{prefix}SCOREBOARD.md")), summary_md(meta, results))?;
     write(dir.join(format!("{prefix}TRIAGE.md")), triage_md(meta, results))?;
@@ -51,7 +51,7 @@ pub fn write_all(
 
 fn tsv(meta: &RunMeta, results: &[TestResult]) -> String {
     let mut out = format!(
-        "# suite={} corpus={} ruby={:?} zeo-rs={}\n",
+        "# suite={} corpus={} ruby={:?} zeo={}\n",
         meta.suite, meta.corpus, meta.ruby_version, meta.git_sha
     );
     out.push_str("# ");
@@ -89,7 +89,7 @@ fn summary_md(meta: &RunMeta, results: &[TestResult]) -> String {
     };
     let mut out = format!(
         "# Conformance scoreboard\n\n\
-         Suite `{}` — **{passed}/{total} passing ({pct:.1}%)** — oracle `{}` — zeo-rs `{}`\n\n\
+         Suite `{}` — **{passed}/{total} passing ({pct:.1}%)** — oracle `{}` — zeo `{}`\n\n\
          | verdict | count |\n|---|---|\n",
         meta.suite, meta.ruby_version, meta.git_sha
     );
@@ -186,7 +186,7 @@ fn failures_md(
 
     let mut out = format!(
         "# Conformance failures — full detail\n\n\
-         Suite `{}` — **{} failing test(s)** — oracle `{}` — zeo-rs `{}`\n\n\
+         Suite `{}` — **{} failing test(s)** — oracle `{}` — zeo `{}`\n\n\
          Every non-passing test with its source path, the reference it is diffed\n\
          against, verdict/bucket, captured stderr, and the full expected-vs-actual\n\
          diff — enough to understand each failure without re-running the harness.\n\
@@ -418,7 +418,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("t1.diff"), "=== stdout diff ===\nexpected X, got Y\n").unwrap();
 
-        let meta = RunMeta { suite: "zeo", corpus: 2, ruby_version: "ruby 4.0.5", git_sha: "abc123" };
+        let meta = RunMeta { suite: "spinel", corpus: 2, ruby_version: "ruby 4.0.5", git_sha: "abc123" };
         let results = vec![result("t1", Verdict::FailOutput, "boom"), result("p1", Verdict::Pass, "")];
         let mut case_meta = BTreeMap::new();
         case_meta.insert(

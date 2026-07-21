@@ -192,8 +192,8 @@ impl Runner {
         }
 
         // A `CompileFail` case passes when zeo rejects it -- but if
-        // zeo-rs's wider dynamic-dispatch scope legitimately compiles a
-        // program C-zeo's analyzer rejects, run it against the live
+        // zeo's wider dynamic-dispatch scope legitimately compiles a
+        // program C-spinel's analyzer rejects, run it against the live
         // oracle instead of failing: matching real ruby is strictly better
         // than rejecting.
         if matches!(case.expectation, Expectation::CompileFail) && !compile.success() {

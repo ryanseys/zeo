@@ -4,7 +4,7 @@
 # off the end, its return value is carried as StopIteration#result.
 #
 # Note: for a materialized enumerator (arr.each) CRuby's StopIteration#result is
-# the receiver; Spinel reports nil there. Only the fiber-backed generator, whose
+# the receiver; Zeo reports nil there. Only the fiber-backed generator, whose
 # body value is well-defined, carries a result -- that is what is asserted here.
 
 # --- #feed: y.yield returns the fed value ---

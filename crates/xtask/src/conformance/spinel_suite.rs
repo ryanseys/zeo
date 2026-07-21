@@ -1,5 +1,5 @@
-//! Adapter for the C zeo project's golden corpus (`~/dev/zeo/test`),
-//! encoding the conventions of its Makefile's `RUN_ONE_TEST` recipe:
+//! Adapter for the C spinel project's golden corpus, encoding the conventions
+//! of its Makefile's `RUN_ONE_TEST` recipe:
 //!
 //! - `test/*.rb` (top level only) are the tests; subdirectories other than
 //!   `analyze_fail/` hold fixtures reached via relative `require`.
@@ -12,9 +12,9 @@
 //! - `test/rbs*` (RBS extraction) is out of scope and not discovered; a
 //!   standing skiplist entry documents the decision.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use super::suite::{home, Expectation, Suite, TestCase};
+use super::suite::{Expectation, Suite, TestCase};
 
 pub struct SpinelSuite;
 
@@ -27,15 +27,11 @@ impl Suite for SpinelSuite {
         "SPINEL_TEST_DIR"
     }
 
-    fn default_root(&self) -> Option<PathBuf> {
-        home().map(|h| h.join("dev/spinel/test"))
-    }
-
     fn discover(&self, root: &Path, _work_dir: &Path) -> Result<Vec<TestCase>, String> {
         if !root.join("analyze_fail").is_dir() {
             return Err(format!(
                 "{} doesn't look like the spinel test corpus (no analyze_fail/ subdir); \
-                 point --dir or $SPINEL_TEST_DIR at ~/dev/spinel/test",
+                 point --dir or $SPINEL_TEST_DIR at the spinel test corpus",
                 root.display()
             ));
         }

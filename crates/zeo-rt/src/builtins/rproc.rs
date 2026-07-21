@@ -53,7 +53,7 @@ builtin_methods! {
         crate::builtins::arity!(args, 0);
         Ok(RubyValue::Bool(recv_proc(recv).is_lambda()))
     }
-    // `source_location` -> `[file, line]`. zeo-rs is whole-program AOT and
+    // `source_location` -> `[file, line]`. zeo is whole-program AOT and
     // the conformance harness disables the line map, so a proc's exact
     // origin isn't tracked; the pair's SHAPE and element types match CRuby
     // (`[String, Integer]`), which is what proc introspection relies on.

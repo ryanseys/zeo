@@ -34,7 +34,7 @@ once per such library (slug `zeo-builtin-substitute`; silence with
 
 ## Satisfied faithfully (zeo-bundled gems)
 
-Spinel ships its own copy under `gems/<name>/`, intended to match upstream
+Zeo ships its own copy under `gems/<name>/`, intended to match upstream
 behaviour. Recorded `by: bundled-gem` with no divergence flag. These are
 subsets where noted, not substitutions with a foreign backing.
 

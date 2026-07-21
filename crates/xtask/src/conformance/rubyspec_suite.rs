@@ -21,10 +21,10 @@
 
 use std::path::{Path, PathBuf};
 
-use super::suite::{home, Expectation, Suite, TestCase};
+use super::suite::{Expectation, Suite, TestCase};
 
 pub struct RubySpecSuite {
-    /// The zeo-rs repo root, so the driver can `require_relative` the shim.
+    /// The zeo repo root, so the driver can `require_relative` the shim.
     pub repo_root: PathBuf,
 }
 
@@ -35,10 +35,6 @@ impl Suite for RubySpecSuite {
 
     fn root_env_var(&self) -> &'static str {
         "RUBYSPEC_DIR"
-    }
-
-    fn default_root(&self) -> Option<PathBuf> {
-        home().map(|h| h.join("dev/spec/language"))
     }
 
     fn discover(&self, root: &Path, work_dir: &Path) -> Result<Vec<TestCase>, String> {
@@ -86,8 +82,8 @@ impl Suite for RubySpecSuite {
 fn list_specs(dir: &Path) -> Result<Vec<PathBuf>, String> {
     if !dir.is_dir() {
         return Err(format!(
-            "{} is not a directory; point --dir or $RUBYSPEC_DIR at a ruby/spec subdir \
-             (e.g. ~/dev/spec/language)",
+            "{} is not a directory; point --dir or $RUBYSPEC_DIR at a ruby/spec \
+             subdir (e.g. its language/ dir)",
             dir.display()
         ));
     }

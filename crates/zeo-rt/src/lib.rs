@@ -1,6 +1,6 @@
 //! zeo-rt: the runtime library every zeo-generated program links
 //! against. Mirrors zeo's `lib/` (the C runtime), scoped to exactly what
-//! the spike's 7 examples need. See `~/dev/zeo-rs/docs/PORTING_ANALYSIS.md`
+//! the spike's 7 examples need. See `docs/PORTING_ANALYSIS.md`
 //! for the full design writeup.
 
 mod arith;

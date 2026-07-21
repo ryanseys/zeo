@@ -347,7 +347,7 @@ fresh:
 
 ## The runtime is ~100× larger than matz's Spinel — why
 
-matz's C `~/dev/zeo` runtime is a **~590 KB** static archive; ours was a
+matz's C spinel runtime is a **~590 KB** static archive; ours was a
 **24 MB dylib / 56 MB rlib**. Two structural reasons, both now partly addressed:
 
 1. **No build-profile tuning** (the now-corrected "No `[profile.*]`" line): the

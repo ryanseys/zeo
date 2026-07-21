@@ -884,58 +884,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeo-abi"
-version = "0.1.0"
-
-[[package]]
-name = "zeo-fiber"
-version = "0.1.0"
-dependencies = [
- "corosensei",
-]
-
-[[package]]
-name = "zeo-rt"
-version = "0.1.0"
-dependencies = [
- "digest",
- "fancy-regex",
- "flate2",
- "indexmap",
- "jiff",
- "libc",
- "may",
- "md-5",
- "num-bigint",
- "num-integer",
- "num-traits",
- "parking_lot",
- "paste",
- "regex",
- "ruby-prism",
- "serde_json",
- "sha1",
- "sha2",
- "zeo-abi",
- "zeo-fiber",
- "unicode-normalization",
- "unicode-segmentation",
- "yaml-rust2",
-]
-
-[[package]]
-name = "zeo"
-version = "0.1.0"
-dependencies = [
- "prettyplease",
- "proc-macro2",
- "quote",
- "ruby-prism",
- "zeo-abi",
- "syn 2.0.118",
-]
-
-[[package]]
 name = "syn"
 version = "2.0.118"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1160,6 +1108,58 @@ dependencies = [
  "arraydeque",
  "encoding_rs",
  "hashlink",
+]
+
+[[package]]
+name = "zeo"
+version = "0.1.0"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "ruby-prism",
+ "syn 2.0.118",
+ "zeo-abi",
+]
+
+[[package]]
+name = "zeo-abi"
+version = "0.1.0"
+
+[[package]]
+name = "zeo-fiber"
+version = "0.1.0"
+dependencies = [
+ "corosensei",
+]
+
+[[package]]
+name = "zeo-rt"
+version = "0.1.0"
+dependencies = [
+ "digest",
+ "fancy-regex",
+ "flate2",
+ "indexmap",
+ "jiff",
+ "libc",
+ "may",
+ "md-5",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "parking_lot",
+ "paste",
+ "regex",
+ "ruby-prism",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "unicode-normalization",
+ "unicode-segmentation",
+ "yaml-rust2",
+ "zeo-abi",
+ "zeo-fiber",
 ]
 
 [[package]]

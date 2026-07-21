@@ -145,7 +145,7 @@ pub const STRUCT_CLASS: ClassId = ClassId(30);
 /// NameError -- documented, since yielders are only ever OBTAINED, never
 /// named.
 pub const YIELDER_CLASS: ClassId = ClassId(31);
-/// The `GC` MODULE (G0) -- zeo-rs uses `Arc` refcounting, so
+/// The `GC` MODULE (G0) -- zeo uses `Arc` refcounting, so
 /// `GC.start`/`stat`/`enable`/`disable`/`compact` are honest no-ops (see
 /// `zeo_rt::dispatch`'s GC probe); the id exists so `GC` resolves as a
 /// constant and `GC.start` dispatches cleanly instead of NameError-ing.

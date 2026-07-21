@@ -47,7 +47,7 @@ sh = {n: 1}
 eh = rt([sh, sh])
 eh[0][:m] = 5
 p eh[1][:m]
-# Complex and Rational (CRuby `U` user-marshal form). Spinel's Complex is
+# Complex and Rational (CRuby `U` user-marshal form). Zeo's Complex is
 # float-only, so its components round-trip as Floats.
 p rt(Rational(3, 4))
 p rt(Rational(-1, 2))

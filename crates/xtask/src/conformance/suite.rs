@@ -33,7 +33,7 @@ pub enum Expectation {
         stderr: Option<PathBuf>,
     },
     /// `analyze_fail/`: zeo must reject the program (nonzero exit). The
-    /// C corpus's `.stderr.expected` wording is C-zeo's, not ours, so it
+    /// C corpus's `.stderr.expected` wording is C-spinel's, not ours, so it
     /// is not diffed.
     CompileFail,
     /// The program reports its own pass/fail on stdout (the rubyspec suite's
@@ -50,20 +50,10 @@ pub trait Suite {
     /// `target/conformance/<name>` scratch area) is where a suite that
     /// synthesizes driver files writes them; most suites ignore it.
     fn discover(&self, root: &Path, work_dir: &Path) -> Result<Vec<TestCase>, String>;
-    /// Environment variable consulted when `--dir` isn't given.
+    /// Environment variable consulted when `--dir` isn't given. A suite whose
+    /// corpus resolves through neither `--dir` nor this var is skipped (in a
+    /// multi-suite run) rather than aborting the whole run.
     fn root_env_var(&self) -> &'static str;
-    /// Conventional corpus location, tried when neither `--dir` nor the env var
-    /// resolves. Lets a bare `conformance run` exercise every suite whose corpus
-    /// sits at its usual `~/dev/...` path; a suite whose corpus is absent is
-    /// skipped (in a multi-suite run) rather than aborting the whole run.
-    fn default_root(&self) -> Option<PathBuf> {
-        None
-    }
-}
-
-/// The user's home directory, for resolving conventional `~/dev/...` corpora.
-pub fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
 }
 
 /// Outcome of one test, in scoreboard vocabulary.
@@ -84,7 +74,7 @@ pub enum Verdict {
     TimeoutRun,
     Skip,
     /// The oracle `ruby` itself failed or timed out -- neither a pass nor a
-    /// zeo-rs failure; surfaced separately.
+    /// zeo failure; surfaced separately.
     OracleFail,
 }
 

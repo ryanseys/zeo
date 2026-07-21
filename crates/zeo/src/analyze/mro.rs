@@ -26,11 +26,11 @@ use std::collections::HashSet;
 /// `ancestors = expand(Pk)..expand(P1) ++ [self] ++ expand(Mn)..expand(M1)
 /// ++ ancestors(parent)`, recursively expanding each module's own
 /// prepends/includes the same way, deduped keeping the FIRST occurrence.
-/// This is the one place zeo-rs deliberately does NOT copy zeo's own
-/// shortcut -- zeo's separately generated `.ancestors` reflection only
+/// This is the one place zeo deliberately does NOT copy spinel's own
+/// shortcut -- spinel's separately generated `.ancestors` reflection only
 /// expands a class's own DIRECT includes, which is measurably wrong for a
 /// module-including-module diamond (confirmed by running a repro against
-/// zeo's own binary -- see the plan). Consulting this SAME list for
+/// spinel's own binary -- see the plan). Consulting this SAME list for
 /// dispatch, reflection, AND class-variable ownership avoids that class of
 /// bug entirely.
 pub fn compute_ancestors(compiler: &Compiler, class_id: ClassId) -> Vec<ClassId> {

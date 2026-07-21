@@ -1343,7 +1343,7 @@ fn top_level_class_variable_is_stored_on_object() {
     // to Object, so a later top-level read sees the same value. NOTE a
     // divergence: Ruby 4.0.5 itself now RAISES `RuntimeError: class variable
     // access from toplevel` for both the write and the read here (it was a
-    // warning in older rubies). Spinel keeps the older permissive behavior to
+    // warning in older rubies). Zeo keeps the older permissive behavior to
     // match the committed `test/module_cvars.rb` snapshot the conformance
     // suite scores against; this test pins that intentional choice.
     let result = run_ruby(
