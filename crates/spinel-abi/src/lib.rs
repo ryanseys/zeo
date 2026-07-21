@@ -291,10 +291,19 @@ pub const ENUMERATOR_PRODUCT_CLASS: ClassId = ClassId(76);
 
 /// `Process::Tms` -- the CPU-times struct `Process.times` answers, with
 /// Float members `utime`/`stime`/`cutime`/`cstime`. Carried as a plain
-/// `RubyValue::Object` over `builtins::process::RTms`. MUST stay the LAST
-/// [`BUILTINS`] row so its id equals the array length and the exception block
-/// (`FIRST_EXCEPTION_ID`) sits immediately after it.
+/// `RubyValue::Object` over `builtins::process::RTms`.
 pub const PROCESS_TMS_CLASS: ClassId = ClassId(77);
+
+/// `TCPSocket` (`require "socket"`) -- a connected TCP stream. Backed by an
+/// `RIo` over the socket fd, so it inherits IO's read/write/gets surface
+/// (`TCPSocket < IO`). Feature-gated on `socket`.
+pub const TCPSOCKET_CLASS: ClassId = ClassId(78);
+
+/// `TCPServer` (`require "socket"`) -- a listening TCP socket. `TCPServer <
+/// TCPSocket` (CRuby's hierarchy); adds `accept`/`addr`. Any new [`BUILTINS`]
+/// row must be APPENDED after this so ids stay contiguous and the exception
+/// block (`FIRST_EXCEPTION_ID`) follows the last builtin.
+pub const TCPSERVER_CLASS: ClassId = ClassId(79);
 
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
@@ -391,9 +400,12 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: ARGF_CLASS, name: "ARGF.class", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
     BuiltinClass { id: ENUMERATOR_CHAIN_CLASS, name: "Enumerator::Chain", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
     BuiltinClass { id: ENUMERATOR_PRODUCT_CLASS, name: "Enumerator::Product", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
-    // KEEP LAST: its id must equal BUILTINS.len(), so FIRST_EXCEPTION_ID lands
-    // immediately after it (see PROCESS_TMS_CLASS).
     BuiltinClass { id: PROCESS_TMS_CLASS, name: "Process::Tms", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
+    // `require "socket"`. TCPSocket < IO (inherits read/write/gets); TCPServer <
+    // TCPSocket (adds accept/addr). KEEP THESE LAST: FIRST_EXCEPTION_ID must
+    // follow the final builtin row.
+    BuiltinClass { id: TCPSOCKET_CLASS, name: "TCPSocket", is_module: false, superclass: Some(IO_CLASS), includes: &[], feature: Some("socket") },
+    BuiltinClass { id: TCPSERVER_CLASS, name: "TCPServer", is_module: false, superclass: Some(TCPSOCKET_CLASS), includes: &[], feature: Some("socket") },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the

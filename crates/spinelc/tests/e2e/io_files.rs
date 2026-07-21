@@ -1812,3 +1812,36 @@ fn io_instance_method_surface() {
         "104\n104\nfalse\ntrue\ntrue\ntrue\n\"hi\"\nnil\nfalse\nfalse\nIOError\n1\n\"Xi\\n\"\n\"other\"\n[88, 105, 10]\n"
     );
 }
+
+#[test]
+fn tcp_server_and_socket_round_trip() {
+    // require "socket" activates TCPServer/TCPSocket. A single-threaded round
+    // trip: connect first (queues in the listen backlog), accept, then exchange
+    // bytes via the inherited IO surface (write/gets/read on TCPSocket < IO).
+    let result = run_ruby(
+        r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        p server.addr[1] > 0
+        p server.class
+        c = TCPSocket.new("127.0.0.1", server.addr[1])
+        s = server.accept
+        p s.class
+        s.write "hello\n"
+        p c.gets
+        c.write "back\n"
+        p s.gets
+        s.print "tail"
+        s.close
+        p c.read
+        c.close
+        server.close
+        p server.closed?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nTCPServer\nTCPSocket\n\"hello\\n\"\n\"back\\n\"\n\"tail\"\ntrue\n"
+    );
+}

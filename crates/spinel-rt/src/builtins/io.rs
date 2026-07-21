@@ -67,12 +67,19 @@ pub struct RIo {
     /// Bytes pushed back by `#ungetbyte`/`#ungetc`, read out (LIFO) before the
     /// stream itself. The next byte read drains this first.
     unget: parking_lot::Mutex<Vec<u8>>,
+    /// A socket reports `TCPSocket`/`TCPServer` (not `IO`) for `#class`, while
+    /// still using a `Pipe`-shaped fd for read/write. `None` for ordinary
+    /// files, pipes, and std streams (their class comes from the backend).
+    class_override: Option<ClassId>,
 }
 
 impl RubyObject for RIo {
     // A File instance carries FILE_CLASS so its own MRO (`File < IO`) finds
     // File's rows before IO's; the std streams are plain IOs.
     fn class_id(&self) -> ClassId {
+        if let Some(c) = self.class_override {
+            return c;
+        }
         match &*self.backend.lock() {
             IoBackend::File(_) => spinel_abi::FILE_CLASS,
             IoBackend::Std(_) | IoBackend::Pipe(_) => IO_CLASS,
@@ -117,8 +124,18 @@ impl RIo {
             binmode: std::sync::atomic::AtomicBool::new(false),
             autoclose: std::sync::atomic::AtomicBool::new(true),
             unget: parking_lot::Mutex::new(Vec::new()),
+            class_override: None,
         }
     }
+}
+
+/// Wrap a connected socket fd (from a `TcpStream`/`TcpListener::accept`) as a
+/// value that reports `class_id` for `#class` but reads/writes like a `Pipe`.
+/// Shared by `TCPSocket.new` and `TCPServer#accept` (see `builtins::socket`).
+pub(crate) fn socket_value(f: std::fs::File, class_id: ClassId) -> RubyValue {
+    let mut io = RIo::new(IoBackend::Pipe(Some(f)), String::new());
+    io.class_override = Some(class_id);
+    RubyValue::Object(Arc::new(io))
 }
 
 fn std_io(stream: StdStream) -> RubyValue {

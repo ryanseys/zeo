@@ -144,6 +144,9 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup,
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup,
+        // TCPSocket has no own instance table -- it inherits IO's read/write via
+        // the MRO (`TCPSocket < IO`). TCPServer adds accept/addr/listen/close.
+        spinel_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver,
         #[cfg(feature = "ext-ffi")]
         spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup,
         _ => return None,
@@ -218,6 +221,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_arity,
+        spinel_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_arity,
         #[cfg(feature = "ext-ffi")]
         spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_arity,
         _ => return None,
@@ -299,6 +303,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         spinel_abi::PSYCH_MODULE | spinel_abi::YAML_MODULE => crate::ext::psych::lookup_class,
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_class,
+        spinel_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_class,
+        spinel_abi::TCPSOCKET_CLASS => crate::ext::socket::lookup_tcpsocket_class,
         #[cfg(feature = "ext-openssl")]
         spinel_abi::OPENSSL_MODULE => crate::ext::openssl::lookup_class,
         #[cfg(feature = "ext-ffi")]
@@ -375,6 +381,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_names(),
         #[cfg(feature = "ext-socket")]
         spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
+        spinel_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_names(),
         #[cfg(feature = "ext-ffi")]
         spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_names(),
         _ => &[],
