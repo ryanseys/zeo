@@ -1,4 +1,4 @@
-//! `cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume]`
+//! `cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume] [--ruby]`
 //!
 //! The performance governor for the structural work: compiles every
 //! `bench/bm_*.rb` with `zeo -o` (so generated programs link the RELEASE
@@ -19,6 +19,19 @@
 //! everything it finished; `--resume` then skips the benchmarks already in
 //! the file and fills in the rest. Progress lines are flushed per line so
 //! a piped/backgrounded run streams instead of block-buffering.
+//!
+//! Three data files under `bench/`:
+//! - `baseline.tsv` -- the committed regression reference (`name\tsecs`);
+//!   updated only by `--update-baseline`, its diff is the reviewable record
+//!   of every accepted shift.
+//! - `history.tsv` -- the LAST 5 timings per benchmark (`name\tunix_ts\tsecs`
+//!   rows, oldest pruned on write), appended by EVERY run; the report's
+//!   `med5` column is the median over them, showing drift across runs
+//!   without touching the baseline.
+//! - `ruby.tsv` -- the real `ruby` interpreter's time per benchmark
+//!   (`name\tsecs`), recorded only when `--ruby` is passed (the oracle
+//!   doesn't change between zeo runs, so it isn't re-timed every time);
+//!   every report reuses the stored numbers for its `vs ruby` column.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -31,11 +44,20 @@ struct BenchResult {
     secs: f64,
 }
 
+/// Repeat budget: every benchmark gets its first (correctness-gated) run;
+/// repeats happen only while total time spent on THAT benchmark is under
+/// the budget. Fast benches keep full best-of-N noise rejection; a
+/// minutes-long bench times once instead of tripling the suite's wall
+/// time (its longer runtime already averages out scheduler noise). Shared
+/// by the zeo and `--ruby` oracle timers.
+const REPEAT_BUDGET_SECS: f64 = 30.0;
+
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut filter: Option<String> = None;
     let mut runs: usize = 3;
     let mut update_baseline = false;
     let mut resume = false;
+    let mut time_ruby = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -48,6 +70,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             }
             "--update-baseline" => update_baseline = true,
             "--resume" => resume = true,
+            "--ruby" => time_ruby = true,
             other => usage(&format!("unknown flag {other}")),
         }
     }
@@ -74,6 +97,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 
     let baseline_path = root.join("bench/baseline.tsv");
     let baseline = read_baseline(&baseline_path);
+    let history_path = root.join("bench/history.tsv");
+    let mut history = read_history(&history_path);
+    let ruby_path = root.join("bench/ruby.tsv");
+    let mut ruby_times = read_baseline(&ruby_path);
 
     // With --resume, rows already recorded are carried forward verbatim and
     // their benchmarks skipped; a fresh --update-baseline starts empty.
@@ -109,7 +136,41 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     .find(|(n, _)| *n == name)
                     .map(|(_, base)| format!("{:+6.1}% vs {base:.3}s", (secs / base - 1.0) * 100.0))
                     .unwrap_or_else(|| "(no baseline)".to_string());
-                progress(&format!("{name:<28} {secs:>8.3}s  {delta}"));
+                // Rolling window: this run joins the last 4, oldest pruned.
+                let window = history.entry(name.clone()).or_default();
+                window.push((now_ts(), secs));
+                if window.len() > 5 {
+                    let drop = window.len() - 5;
+                    window.drain(..drop);
+                }
+                let med5 = median(window.iter().map(|(_, s)| *s));
+                write_history(&history_path, &history);
+                // `--ruby` re-times the oracle; otherwise reuse ruby.tsv.
+                if time_ruby {
+                    match time_ruby_once(&rb, runs) {
+                        Ok(rsecs) => {
+                            ruby_times.retain(|(n, _)| *n != name);
+                            ruby_times.push((name.clone(), rsecs));
+                            ruby_times.sort_by(|a, b| a.0.cmp(&b.0));
+                            write_ruby(&ruby_path, &ruby_times);
+                        }
+                        Err(msg) => progress(&format!("{name:<28} (ruby timing failed: {msg})")),
+                    }
+                }
+                let vs_ruby = ruby_times
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, r)| {
+                        if *r >= secs {
+                            format!("ruby {r:.3}s ({:.1}x faster)", r / secs)
+                        } else {
+                            format!("ruby {r:.3}s ({:.1}x SLOWER)", secs / r)
+                        }
+                    })
+                    .unwrap_or_else(|| "(no ruby ref; record with --ruby)".to_string());
+                progress(&format!(
+                    "{name:<28} {secs:>8.3}s  med5 {med5:>7.3}s  {delta:<24} {vs_ruby}"
+                ));
                 results.push(BenchResult {
                     name: name.clone(),
                     secs,
@@ -214,12 +275,6 @@ fn run_one(zeo_bin: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
         ));
     }
 
-    // Repeat budget: every benchmark gets its first (correctness-gated) run;
-    // repeats happen only while total time spent on THIS benchmark is under
-    // the budget. Fast benches keep full best-of-N noise rejection; a
-    // minutes-long bench times once instead of tripling the suite's wall
-    // time (its longer runtime already averages out scheduler noise).
-    const REPEAT_BUDGET_SECS: f64 = 30.0;
     let mut spent = 0.0f64;
     let mut best: Option<f64> = None;
     for i in 0..runs {
@@ -259,6 +314,97 @@ fn bench_programs(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// The rolling per-benchmark window: `name\tunix_ts\tsecs` rows, oldest
+/// first within a name; capped at 5 per name on write.
+fn read_history(path: &Path) -> std::collections::BTreeMap<String, Vec<(u64, f64)>> {
+    let mut map: std::collections::BTreeMap<String, Vec<(u64, f64)>> = Default::default();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return map;
+    };
+    for l in text.lines() {
+        if l.starts_with('#') || l.trim().is_empty() {
+            continue;
+        }
+        let mut parts = l.split('\t');
+        let (Some(name), Some(ts), Some(secs)) = (parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        if let (Ok(ts), Ok(secs)) = (ts.parse(), secs.parse()) {
+            map.entry(name.to_string()).or_default().push((ts, secs));
+        }
+    }
+    map
+}
+
+fn write_history(path: &Path, history: &std::collections::BTreeMap<String, Vec<(u64, f64)>>) {
+    let mut out =
+        String::from("# bench/history.tsv -- last 5 timings per benchmark (name, unix_ts, secs)\n");
+    for (name, window) in history {
+        for (ts, secs) in window {
+            out.push_str(&format!("{name}\t{ts}\t{secs:.3}\n"));
+        }
+    }
+    std::fs::write(path, out).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+}
+
+fn write_ruby(path: &Path, rows: &[(String, f64)]) {
+    let mut out =
+        String::from("# bench/ruby.tsv -- oracle `ruby` wall time; refresh with --ruby\n");
+    for (name, secs) in rows {
+        out.push_str(&format!("{name}\t{secs:.3}\n"));
+    }
+    std::fs::write(path, out).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
+}
+
+fn median(values: impl Iterator<Item = f64>) -> f64 {
+    let mut v: Vec<f64> = values.collect();
+    v.sort_by(|a, b| a.total_cmp(b));
+    match v.len() {
+        0 => f64::NAN,
+        n if n % 2 == 1 => v[n / 2],
+        n => (v[n / 2 - 1] + v[n / 2]) / 2.0,
+    }
+}
+
+fn now_ts() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Time the real `ruby` on this benchmark, same discipline as zeo's runs:
+/// output verified against `.expected` on the first run (an oracle mismatch
+/// means the snapshot is stale -- fail loudly), best-of-`runs` under the
+/// same repeat budget.
+fn time_ruby_once(rb: &Path, runs: usize) -> Result<f64, String> {
+    let expected_path = PathBuf::from(format!("{}.expected", rb.display()));
+    let expected = std::fs::read(&expected_path)
+        .map_err(|e| format!("reading {}: {e}", expected_path.display()))?;
+    let mut spent = 0.0f64;
+    let mut best: Option<f64> = None;
+    for i in 0..runs {
+        if i > 0 && spent >= REPEAT_BUDGET_SECS {
+            break;
+        }
+        let started = Instant::now();
+        let run = Command::new("ruby")
+            .arg(rb)
+            .output()
+            .map_err(|e| format!("invoking ruby: {e}"))?;
+        let secs = started.elapsed().as_secs_f64();
+        spent += secs;
+        if !run.status.success() {
+            return Err(format!("ruby exited {:?}", run.status.code()));
+        }
+        if i == 0 && run.stdout != expected {
+            return Err("ruby output mismatch vs .expected (stale snapshot?)".to_string());
+        }
+        best = Some(best.map_or(secs, |b: f64| b.min(secs)));
+    }
+    Ok(best.expect("runs >= 1"))
+}
+
 /// `name\tseconds` rows; `#`-prefixed lines are comments. Missing file =
 /// empty baseline (every bench reports "(no baseline)").
 fn read_baseline(path: &Path) -> Vec<(String, f64)> {
@@ -277,7 +423,7 @@ fn read_baseline(path: &Path) -> Vec<(String, f64)> {
 fn usage(msg: &str) -> ! {
     eprintln!("xtask bench: {msg}");
     eprintln!(
-        "usage: cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume]"
+        "usage: cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume] [--ruby]"
     );
     std::process::exit(2);
 }
