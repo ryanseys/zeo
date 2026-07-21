@@ -1,0 +1,16 @@
+"constant"
+"constant"
+IndexError
+ScriptError
+SignalException
+Exception
+NoMatchingPatternError
+StopIteration
+ArgumentError
+IOError
+StandardError
+"FiberError"
+Exception
+StandardError
+StandardError
+StandardError

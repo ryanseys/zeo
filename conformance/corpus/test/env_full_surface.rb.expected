@@ -1,0 +1,20 @@
+true
+1
+"missing:ZZ_NOPE"
+"ENV"
+"Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash"
+"Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash"
+"cannot freeze ENV"
+"wrong number of arguments (given 0, expected 1..2)"
+"wrong number of arguments (given 3, expected 1..2)"
+"wrong number of arguments (given 2, expected 1)"
+TypeError
+TypeError
+"9"
+"7"
+"7"
+"3"
+"3"
+nil
+String
+Integer

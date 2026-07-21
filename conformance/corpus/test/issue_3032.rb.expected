@@ -1,0 +1,4 @@
+ok: Interrupt
+ok: ArgumentError
+ok: StandardError caught ArgumentError
+ok: RuntimeError caught RuntimeError

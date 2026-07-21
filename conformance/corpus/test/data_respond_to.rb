@@ -1,0 +1,6 @@
+P = Data.define(:x, :y)
+a = P.new(1, 2)
+p(a.respond_to?(:with))
+p(a.respond_to?(:members))
+p(a.respond_to?(:deconstruct))
+p(a.respond_to?(:deconstruct_keys))

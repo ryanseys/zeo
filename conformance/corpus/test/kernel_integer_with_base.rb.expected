@@ -1,0 +1,6 @@
+255
+10
+511
+35
+caught: invalid value for Integer(): "zz"
+caught: invalid value for Integer(): "xyz"

@@ -1,0 +1,23 @@
+"zz"
+{"a" => 1}
+:x
+:k
+{1 => 2}
+"m"
+nil
+false
+:noreason
+nil
+:b
+7
+"x"
+NoMethodError
+SystemExit
+"SystemExit"
+2
+false
+true
+"bye"
+Exception
+"caught"
+3

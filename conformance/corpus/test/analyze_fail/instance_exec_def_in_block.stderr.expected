@@ -1,0 +1,1 @@
+Spinel: instance_exec: block contains a 'def', defining a method at runtime; Spinel does not support runtime method definition; define the method statically on the receiver's class

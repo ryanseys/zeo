@@ -1,0 +1,7 @@
+a/b
+/a\/b/
+(?-mix:a\/b)
+/foo\/bar/
+/a\/b\/c/mi
+(?mi-x:a\/b\/c)
+/x/

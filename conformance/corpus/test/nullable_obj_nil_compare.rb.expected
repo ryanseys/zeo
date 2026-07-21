@@ -1,0 +1,8 @@
+c=nil
+ne-nil: skipped
+tr: skipped
+not-nilq: skipped
+d=non-nil
+d-ne-nil: ENTERED
+n=0
+e-ne-nil: ENTERED

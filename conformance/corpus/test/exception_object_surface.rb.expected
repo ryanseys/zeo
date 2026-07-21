@@ -1,0 +1,23 @@
+true
+false
+false
+false
+true
+false
+false
+false
+"m"
+false
+true
+"n"
+false
+"z"
+RuntimeError
+"42"
+"sym"
+"[1, 2]"
+true
+TypeError
+TypeError
+"42"
+[1, 2]

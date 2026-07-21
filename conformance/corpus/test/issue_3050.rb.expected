@@ -1,0 +1,4 @@
+0
+ArgumentError
+negative string size (or size too big)
+class ok

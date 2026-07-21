@@ -1,0 +1,12 @@
+0
+0
+nil
+0
+NoMethodError
+"undefined method 'new' for class TrueClass"
+NoMethodError
+"undefined method 'new' for class NilClass"
+"can't unfreeze TrueClass"
+"can't unfreeze Integer"
+"can't unfreeze Symbol"
+false

@@ -1,0 +1,6 @@
+len=5
+[65, 0, 0, 0, 90]
+[68, 0, 66, 67]
+IndexError: index 5 out of string
+200
+[65, 200, 0, 0, 90]

@@ -1,0 +1,6 @@
+p((0.0..10.0).bsearch { |x| x * x - 4 >= 0 ? x * x - 4 : nil })
+p((0.0..10.0).bsearch { |x| 4 - x*x })
+p((0.0..10.0).bsearch { |x| x*x - 4 })
+p((0.0..10.0).bsearch { |x| x >= 3.0 })
+p((0.0..10.0).bsearch { |x| x >= 3.0 ? true : nil })
+p((1.0..9.0).bsearch { |x| nil })

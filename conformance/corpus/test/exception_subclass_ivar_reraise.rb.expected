@@ -1,0 +1,5 @@
+plain
+data fail
+7
+reraised: data fail
+bad arg

@@ -1,0 +1,6 @@
+Point = Data.define(:x, :y)
+a = Point.new(1, 2)
+p a.with(**{x: 10})
+p a.with(**{x: 10, y: 20})
+p a.with(y: 5, **{x: 9})
+p a.with(**{})

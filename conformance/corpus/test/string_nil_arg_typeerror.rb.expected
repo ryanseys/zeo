@@ -1,0 +1,5 @@
+rindex: no implicit conversion of nil into String
+include?: no implicit conversion of nil into String
+start_with?: no implicit conversion of nil into String
+end_with?: no implicit conversion of nil into String
+count: no implicit conversion of nil into String

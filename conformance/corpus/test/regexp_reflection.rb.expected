@@ -1,0 +1,21 @@
+true
+false
+1
+2
+4
+0
+1
+4
+#<MatchData "b">
+"b"
+/x/
+nil
+0
+nil
+nil
+"ab"
+true
+/(?-mix:foo)|(?-mix:bar)/
+true
+6
+nil

@@ -1,0 +1,15 @@
+len=7
+slice_full=7
+slice_after_nul=3
+slice_around_nul=3
+b0=97
+b3=0
+b4=100
+b6=102
+bytes_len=7
+3
+a-ok
+c-ok
+3
+z-ok
+4

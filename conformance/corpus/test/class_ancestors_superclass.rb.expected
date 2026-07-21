@@ -1,0 +1,15 @@
+[Dog, Animal, Object, Kernel, BasicObject]
+[Animal, Object, Kernel, BasicObject]
+Animal
+Numeric
+Numeric
+[Integer, Numeric, Comparable, Object, Kernel, BasicObject]
+[String, Comparable, Object, Kernel, BasicObject]
+Dog
+Integer
+[Dog, Animal, Integer]
+Object
+Object
+true
+true
+true

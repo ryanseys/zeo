@@ -1,0 +1,3 @@
+caught bigint div: divided by 0
+caught bigint mod: divided by 0
+bare-rescue: divided by 0

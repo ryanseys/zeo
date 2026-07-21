@@ -1,0 +1,7 @@
+2
+1.0
+caught int divisor: divided by 0
+caught float divisor: divided by 0
+bare-rescue: divided by 0
+caught nan divisor: NaN
+caught nan dividend: NaN

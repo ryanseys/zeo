@@ -1,0 +1,4 @@
+app -> /a.js
+lib -> /b.js
+app,lib
+true

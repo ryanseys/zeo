@@ -1,0 +1,6 @@
+abc: invalid value for Float(): "abc"
+empty: invalid value for Float(): ""
+3.14
+42.5
+7.0
+2.5

@@ -1,0 +1,10 @@
+Dir
+"/tmp/sp_dirh"
+[".", "..", "x", "y"]
+String
+Dir
+["x", "y"]
+Errno::ENOENT
+["x", "y"]
+[".", "..", "x", "y"]
+done

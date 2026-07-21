@@ -1,0 +1,104 @@
+1
+2
+2
+alpha
+beta
+2
+one
+two
+2
+10
+20
+2
+ada
+scientist
+2
+2
+3
+one
+two
+three
+3
+found
+2
+["a", "c"]
+[1, 3]
+2
+[:a, :c]
+[1, 3]
+[:b, :c]
+[:a, :b]
+3
+5
+7
+a
+b
+c
+x
+y
+z
+60
+FizzBuzz
+2
+1
+2
+10
+20
+false
+true
+100
+200
+0
+3
+{a: 10, b: 20}
+{x: 105, y: 110, z: 115}
+9
+5
+{a: 1, b: 2}
+{a: 100, b: 200}
+alpha
+beta
+HELLO
+WORLD
+a!
+b!
+c!
+3
+true
+true
+2
+Fizz
+Buzz
+Bazz
+
+true
+false
+3
+3
+3
+Fizz
+3
+5
+7
+3:Fizz
+5:Buzz
+7:Bazz
+FizzBuzz
+4
+Fizz
+none
+1
+2
+Fizz
+4
+Buzz
+Fizz
+7
+8
+Fizz
+Buzz
+11
+Fizz
+13
+14
+FizzBuzz

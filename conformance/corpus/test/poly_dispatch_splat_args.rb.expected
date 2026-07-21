@@ -1,0 +1,8 @@
+Rel[id != ?]([])
+Rel[id != ?]([5])
+Rel[a = ? AND b = ?]([1, "two"])
+Rel[mixed]([:sym, 3.5, nil])
+Scope[id != ?]([])
+Scope[id != ?]([5])
+Scope[a = ? AND b = ?]([1, "two"])
+Scope[mixed]([:sym, 3.5, nil])

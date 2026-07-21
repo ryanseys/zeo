@@ -1,0 +1,10 @@
+caught div: divided by 0
+caught mod: divided by 0
+caught divmod: divided by 0
+caught ceildiv: divided by 0
+caught powmod: divided by 0
+caught /=: divided by 0
+caught %=: divided by 0
+bare-rescue: divided by 0
+1
+true

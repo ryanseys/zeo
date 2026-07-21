@@ -1,0 +1,5 @@
+p({ "a" => 85 }.transform_values { |v| v / 10.0 })
+p({ "a" => 1, "b" => 2 }.transform_values { |v| v.to_s })
+p({ "a" => 1 }.transform_values { |v| v * 2 })
+p({ "a" => 1 }.transform_values { |v| [v, v] })
+p({ 1 => 5 }.transform_values { |v| v / 2.0 })

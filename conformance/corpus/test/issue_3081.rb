@@ -1,0 +1,6 @@
+p(:abc <=> "abc")
+p(:abc <=> "abd")
+a = :abd; b = "abc"; p(a <=> b)
+p(:abc <=> :abd)
+p(:abc <=> 1)
+p([:b, :a].sort)

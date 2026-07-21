@@ -1,0 +1,4 @@
+branch: nil
+branch: not-nil (foo)
+no-int
+int=42

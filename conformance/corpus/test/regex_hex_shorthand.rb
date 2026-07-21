@@ -1,0 +1,13 @@
+# Regex hex-digit shorthands \h ([0-9a-fA-F]) and \H (its negation).
+p("deadbeef" =~ /\A\h+\z/)
+p("ab"       =~ /\H/)
+p("xyz"      =~ /\h/)
+p("12ab"     =~ /\H/)
+p("g"        =~ /\h/)
+p("g"        =~ /\H/)
+p("a1F"      =~ /\h+/)
+p("z" =~ /[\h]/)
+p("a" =~ /[\h]/)
+p("a" =~ /[\H]/)
+p("z" =~ /[\H]/)
+p("X9k" =~ /[^\h]/)

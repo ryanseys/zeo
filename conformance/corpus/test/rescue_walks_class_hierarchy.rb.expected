@@ -1,0 +1,7 @@
+caught B: boom
+is_a A? yes
+is_a B? yes
+is_a C? yes
+is_a StandardError? yes
+is_a String? no
+caught StandardError via ArgumentError: bad

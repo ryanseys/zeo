@@ -1,0 +1,59 @@
+b
+c
+b
+/
+:
+a/b
+10
+20
+-1
+42
+done
+[1, 3, 5, 7, 9]
+[3, 6, 9, 12]
+[1, 3, 5, 7, 9]
+[1, 2, 3]
+[10, 12, 14]
+[7, 14, 21]
+6
+1
+2
+10
+20
+a=1 b=nil
+a=1 b=2
+x=10 y= z=
+x=10 y=20 z=
+x=10 y=20 z=30
+["a", "b", "c"]
+["A", "B", "C", "D"]
+["aa", "ab", "ac"]
+["az", "ba", "bb"]
+[1, 2, 3]
+Float
+Integer
+true
+42
+""
+true
+hi
+sym
+3.14
+0
+0.0
+[]
+{}
+0
+true
+true
+true
+true
+true
+:b
+true
+false
+true
+hello
+3
+true
+Float

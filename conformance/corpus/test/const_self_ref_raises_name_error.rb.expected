@@ -1,0 +1,3 @@
+direct: uninitialized constant App::APP
+indirect: uninitialized constant App::APP
+after: APP class = App

@@ -1,0 +1,11 @@
+pin int match
+no pin y
+pin str match
+no pin t
+pin expr 21
+pin call 14
+pin sym match
+no sym bar
+pin mode hit
+ivar match
+no match

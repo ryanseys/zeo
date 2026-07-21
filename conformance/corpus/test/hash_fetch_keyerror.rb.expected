@@ -1,0 +1,4 @@
+default
+1
+caught KeyError
+str-hash caught

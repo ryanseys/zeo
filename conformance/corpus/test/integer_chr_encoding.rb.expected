@@ -1,0 +1,15 @@
+"A"
+"あ"
+[194, 128]
+[223, 191]
+[239, 191, 191]
+[244, 143, 191, 191]
+"A"
+"A"
+[200]
+-1.chr: RangeError: -1 out of char range
+256.chr: RangeError: 256 out of char range
+12354.chr: RangeError: 12354 out of char range
+-1.chr(UTF_8): RangeError: -1 out of char range
+55296.chr(UTF_8): RangeError: invalid codepoint 0xD800 in UTF-8
+1114112.chr(UTF_8): RangeError: 1114112 out of char range

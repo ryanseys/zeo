@@ -1,0 +1,5 @@
+not found - kind `company`, id `123`
+not found - kind `user`, id `42`
+plain message
+oops: fallback
+oops: custom

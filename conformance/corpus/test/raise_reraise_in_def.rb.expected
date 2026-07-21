@@ -1,0 +1,3 @@
+outer: StandardError: inner
+caught: from thrower
+got: RuntimeError: plain message

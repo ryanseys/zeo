@@ -1,0 +1,5 @@
+ab head=[:x, :y] tail=[:z]
+ab head=[] tail=[]
+stop x=q pre=[:p] post=[:r]
+none
+none

@@ -1,0 +1,20 @@
+caught: wrong number of arguments (given 1, expected 2)
+caught: missing keyword: :b
+[1, 2]
+"no match ok"
+1
+{b: 2, c: 3}
+"nil rest rejects extras"
+"HELLO"
+6
+5
+Method
+"HI"
+[{x: 1}]
+[1, {x: 1}]
+[[], {x: 1}]
+[["a", "b"], ["c", "d"], ["e"]]
+[["a", "b"], ["b", "c"], ["c", "d"], ["d", "e"]]
+["aa", "bb", "cc"]
+"123"
+"x---"

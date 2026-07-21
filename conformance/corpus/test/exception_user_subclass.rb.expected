@@ -1,0 +1,10 @@
+hello
+MyError
+default msg
+MyError
+true
+true
+false
+caught: raised
+parent caught: via parent
+parent caught cls: MyError

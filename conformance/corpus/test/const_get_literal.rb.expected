@@ -1,0 +1,7 @@
+7
+spinel
+7
+NameError: uninitialized constant M::Missing
+NameError: wrong constant name lower
+NameError: uninitialized constant Nope
+NameError: uninitialized constant M::N::Missing

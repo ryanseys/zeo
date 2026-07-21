@@ -1,0 +1,15 @@
+"FontName"
+"Times"
+["a", "b", "c"]
+["a", "b", "c"]
+[["foo", "1"], ["bar", "2"]]
+["Name", "Lang", "Year"]
+"Ada"
+"Ruby"
+"1995"
+true
+false
+false
+false
+true
+true

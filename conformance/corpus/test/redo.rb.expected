@@ -1,0 +1,71 @@
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+x=10 attempt=1
+x=20 attempt=5
+x=30 attempt=6
+total=6
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+x=10 attempt=1
+x=20 attempt=5
+x=30 attempt=6
+total=6
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+i=0 attempt=1
+i=1 attempt=5
+i=2 attempt=6
+total=6
+i=2 attempt=1
+i=1 attempt=5
+i=0 attempt=6
+total=6
+i=0 attempt=1
+i=2 attempt=5
+i=4 attempt=6
+total=6
+x=a i=0 attempt=1
+x=b i=1 attempt=5
+x=c i=2 attempt=6
+total=6
+pair=[1, 2] attempt=1
+pair=[2, 3] attempt=5
+pair=[3, 4] attempt=6
+total=6
+chunk=[1, 2] attempt=1
+chunk=[3, 4] attempt=5
+chunk=[5] attempt=6
+total=6
+[10, 20, 30]
+total=6
+a=1 b=10 attempt=1
+a=2 b=20 attempt=5
+a=3 b=30 attempt=6
+total=6
+x=1 attempt=3
+x=2 attempt=4
+x=1 attempt=5
+x=2 attempt=6
+total=6
+i=0 j=0 attempt=1
+i=0 j=1 attempt=4
+i=0 j=2 attempt=5
+i=1 j=0 attempt=6
+i=1 j=1 attempt=7
+i=1 j=2 attempt=8
+outer_done=2
+inner_attempts=8

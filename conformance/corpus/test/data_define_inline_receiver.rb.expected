@@ -1,0 +1,9 @@
+#<data x=1, y=2>
+1
+2
+Class
+[:x, :y]
+3
+4
+[:m, :n]
+#<data Pt lat=10, lng=20>

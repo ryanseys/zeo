@@ -1,0 +1,23 @@
+"hello"
+"hel"
+"hello"
+EOFError
+1
+"h"
+"h"
+104
+"hello"
+"\nwo"
+"rld\n"
+["one\n", "two\n", "three\n"]
+"007-x"
+65
+"Ab"
+"llo"
+"hel"
+0
+["h", "e", "l", "l", "o"]
+[104, 101, 108, 108, 111]
+3
+"abc"
+2

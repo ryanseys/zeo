@@ -1,0 +1,15 @@
+msg: boom
+cls: RuntimeError
+cls2: ArgumentError
+msg2: bad
+tos: wrong
+ins: #<TypeError: wrong>
+re-raised cls: ArgumentError
+re-raised msg: inner
+compat-msg
+caught propagated: ArgumentError
+msg: propagate
+backtrace is empty: true
+full: ArgumentError: fm
+second clause: TypeError multi
+done

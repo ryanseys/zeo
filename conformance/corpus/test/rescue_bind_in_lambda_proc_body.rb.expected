@@ -1,0 +1,4 @@
+got a
+p boom (RuntimeError)
+f: late
+no raise

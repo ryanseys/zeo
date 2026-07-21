@@ -1,0 +1,5 @@
+#<data Point x=1, y=2>
+ArgumentError
+ArgumentError
+[1, 2]
+[1, nil]

@@ -1,0 +1,3 @@
+"HTTP/1.0 200 OK\r\n"
+true
+"GET / HTTP/1.0\r\n"

@@ -1,0 +1,5 @@
+{value: ["x"]}
+{value: {x: "x"}}
+{a: 1, b: [2, 3]}
+{name: "n", tags: [:a, :b]}
+{}

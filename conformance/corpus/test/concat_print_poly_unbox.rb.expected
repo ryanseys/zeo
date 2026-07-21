@@ -1,0 +1,9 @@
+[ hello ]
+[ hello ]
+[  ]
+[  ]
+sym=hello
+int=42
+OPEN hello CLOSE
+OPEN  CLOSE
+<open hello close>

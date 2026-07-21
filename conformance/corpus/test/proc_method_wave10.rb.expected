@@ -1,0 +1,18 @@
+[[:opt, :a], [:opt, :b], [:rest, :c], [:keyreq, :d], [:key, :e], [:keyrest, :f], [:block, :g]]
+[[:req, :a], [:opt, :b]]
+10
+3
+21
+"id:3"
+"hello matz"
+1
+true
+[[:rest, :*]]
+[[:keyrest, :**]]
+[[:req, :a], [:rest, :*], [:block, :blk]]
+[[:opt, :_1], [:opt, :_2]]
+[[:req, :a], [:rest, :m], [:req, :z]]
+8
+15
+1
+"abab"

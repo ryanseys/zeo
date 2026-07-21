@@ -1,0 +1,11 @@
+true
+<<: raised
+insert: raised
+prepend: raised
+replace: raised
+hello
+false
+hello world
+false
+true
+post-freeze: raised

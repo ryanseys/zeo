@@ -1,0 +1,8 @@
+empty int pop: nil
+empty int shift: nil
+empty int min: nil
+empty int max: nil
+3
+1
+1
+3

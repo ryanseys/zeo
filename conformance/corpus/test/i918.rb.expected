@@ -1,0 +1,13 @@
+true
+array << raised
+array []= raised
+array push raised
+[1, 2, 3]
+false
+[9, 2, 3, 4]
+str_array << raised
+["x", "y"]
+true
+hash []= raised
+false
+2

@@ -1,0 +1,6 @@
+1: wrong number of arguments (given 3, expected 2)
+2: unknown keyword: :zzz
+3: missing keyword: :height
+12
+2
+4

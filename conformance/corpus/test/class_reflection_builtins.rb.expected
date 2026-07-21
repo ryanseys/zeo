@@ -1,0 +1,12 @@
+"Enumerator"
+[Enumerator, Enumerable, Object, Kernel, BasicObject]
+"Pt"
+[Pt, Struct, Enumerable, Object, Kernel, BasicObject]
+Struct
+"Rational"
+"Regexp"
+[Complex, Numeric, Comparable, Object, Kernel, BasicObject]
+[Range, Enumerable, Object, Kernel, BasicObject]
+Numeric
+[Integer, Numeric, Comparable, Object, Kernel, BasicObject]
+[Symbol, Comparable, Object, Kernel, BasicObject]

@@ -1,0 +1,4 @@
+caught NameError
+undefined local variable or method 'undefined_bareword_thing' for main
+"fallback"
+42

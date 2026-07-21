@@ -1,0 +1,8 @@
+ints: [1, 2, 3]
+strs: ["a", "b", "c"]
+syms: [:x, :y, :z]
+floats: [1.5, 2.5, 3.5]
+mix: [1, "two", :three, nil]
+empty ints: []
+nested: [[1, 2], [3, 4]]
+n: ''

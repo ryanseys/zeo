@@ -1,0 +1,78 @@
+true
+true
+true
+true
+"a"
+"b"
+"c"
+---
+"a\n"
+"b\n"
+"c"
+---
+"x"
+"y"
+["a", "b", "c"]
+["a\n", "b\n", "c"]
+["a", "b", "c"]
+"bc"
+"def"
+"ccc"
+true
+false
+true
+true
+false
+"hello"
+"hello"
+"hello"
+"hello"
+"hello"
+[104, 101, 108, 108, 111]
+[12354]
+[]
+"hello"
+"heo"
+"hello"
+"ho"
+"heo"
+"ll"
+xhxexlxlxox
+-a-b-c-
+["a", "b", "c", "d", "e"]
+["a", "b", "c"]
+["x", "y", "z", "!"]
+[" ", "!", "\"", "#", "$", "%", "&"]
+[["hello"], ["world"]]
+[["a", "1"], ["b", "22"]]
+["hello", "world"]
+["ab", "ac"]
+-1
+1
+0
+-1
+"aaabbbccc"
+"abbbccc"
+"abc"
+"abc"
+"abc"
+"abc"
+"abc"
+"x"
+""
+"no change"
+hello
+:foo
+hero
+xbbbccc
+herro
+xy
+true
+true
+true
+false
+false
+11
+11
+5
+3

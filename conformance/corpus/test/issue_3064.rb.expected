@@ -1,0 +1,24 @@
+Range
+"a..e"
+"\"a\"..\"e\""
+"a"
+"e"
+"a"
+"e"
+false
+["a", "b", "c", "d", "e"]
+nil
+true
+false
+true
+false
+["A", "B", "C", "D", "E"]
+["a", "b"]
+2
+["a", "b"]
+true
+false
+["a", "b", "c"]
+"\"a\"...\"d\""
+"a..e"
+["a", "b", "c"]

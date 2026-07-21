@@ -1,0 +1,5 @@
+["hello12", "3", "world"]
+["foo1bar", "2", "baz"]
+["", "", "no digits here"]
+["a.b", ".", "c"]
+["", "", "abc"]

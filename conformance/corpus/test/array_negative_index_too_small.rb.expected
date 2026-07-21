@@ -1,0 +1,5 @@
+int: index -999 too small for array; minimum: -3
+[1, 2, 3]
+str: index -50 too small for array; minimum: -3
+["a", "b", "c"]
+[1, 2, 33]

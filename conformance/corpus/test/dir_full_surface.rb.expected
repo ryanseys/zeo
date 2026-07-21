@@ -1,0 +1,17 @@
+[".", "..", "x"]
+["x"]
+false
+true
+Errno::ENOENT
+false
+["a1", "a2"]
+["a1", "a2"]
+42
+String
+2
+0
+false
+true
+String
+["sub/deep.txt", "top.txt"]
+[".", "sub", "top.txt"]

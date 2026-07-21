@@ -1,0 +1,13 @@
+nil
+Enumerator
+["hello\n", "world\n"]
+["x"]
+false
+true
+false
+NameError
+[1, 2]
+"undefined method 'foo' for nil"
+[]
+[9]
+1

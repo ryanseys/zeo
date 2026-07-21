@@ -1,0 +1,10 @@
+3
+before pop: [[1, 2]]
+after  pop: []
+after push: [[3, 4]]
+["real", "data"]
+1
+2
+odd
+positive
+1.5

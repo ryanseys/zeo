@@ -1,0 +1,15 @@
+"one\ntwo\n"
+["one\n", "two\n"]
+"abc"
+"abc"
+Array
+"ping"
+5
+"hello"
+Integer
+"hello"
+"hello"
+"1\n2\n3\n"
+["fo", "o", "\nbar\n"]
+["fo", "o", "\nbar\n"]
+["foo", "bar"]
