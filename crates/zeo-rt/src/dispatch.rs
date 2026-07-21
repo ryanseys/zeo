@@ -254,6 +254,15 @@ impl RubyObject for Object {
     }
 }
 
+/// [`bind_dynamic_kwargs`]'s result: `(positional, required_values,
+/// optional_values, rest_pairs)`.
+pub type BoundKwargs<'a> = (
+    &'a [RubyValue],
+    Vec<RubyValue>,
+    Vec<Option<RubyValue>>,
+    Vec<(Symbol, RubyValue)>,
+);
+
 /// Binds a DYNAMIC call's keyword arguments for a keyword-declaring callee
 /// (the G2 trailing-kwargs-hash convention): when the last argument is a
 /// Hash, it's the keyword set; otherwise there are no keywords. Returns
@@ -271,15 +280,7 @@ pub fn bind_dynamic_kwargs<'a>(
     required: &[&str],
     optional: &[&str],
     has_kwrest: bool,
-) -> Result<
-    (
-        &'a [RubyValue],
-        Vec<RubyValue>,
-        Vec<Option<RubyValue>>,
-        Vec<(Symbol, RubyValue)>,
-    ),
-    Signal,
-> {
+) -> Result<BoundKwargs<'a>, Signal> {
     let (positional, kw_hash) = match args.split_last() {
         Some((RubyValue::Hash(h), rest)) => (rest, Some(h.clone())),
         _ => (args, None),
@@ -443,24 +444,25 @@ pub fn downcast_robj<T: RubyObject>(recv: &RObj) -> Option<Arc<T>> {
 /// docs for how a block crosses the Path 2 boundary.
 pub type MethodFn = fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
-/// A registered instance method's implementation. Today every entry is
-/// `Static` -- a bare `fn` pointer, exactly as before -- so the hot path is a
-/// direct indirect call with one folded discriminant branch, no allocation.
-/// The `Dynamic` arm is the seam the eval VM (the dynamic-`eval`/`define_method`
-/// phase) fills: an interpreted method body captured as an `Arc<dyn Fn>` that a
-/// bare `fn` pointer cannot represent. Nothing constructs `Dynamic` yet; it
-/// exists so the registry's method table and every dispatch site already speak
-/// the widened shape when that phase lands, with no further dispatch rewrite.
+/// A method body no bare `fn` pointer can represent: a closure carrying
+/// captured state (a runtime `define_method` block today; interpreted eval-VM
+/// bodies when that phase lands).
+pub type DynMethodFn =
+    Arc<dyn Fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync>;
+
+/// A registered instance method's implementation. Statically-registered
+/// methods are `Static` -- a bare `fn` pointer -- so the hot path is a direct
+/// indirect call with one folded discriminant branch, no allocation.
 #[derive(Clone)]
 pub enum MethodImpl {
     Static(MethodFn),
     // The runtime-metaprogramming seam (#97): a compiled block captured as an
-    // `Arc<dyn Fn>` that a bare `fn` pointer cannot represent, built by
-    // `runtime_meta::dynamic_from_proc` for a runtime `define_method`. `Clone`
-    // is cheap on both arms (a `fn` copy / an `Arc` bump) -- the overlay
-    // resolvers clone an entry out and drop their lock BEFORE dispatching, so a
-    // runtime method that itself defines another method can't deadlock.
-    Dynamic(Arc<dyn Fn(&RObj, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync>),
+    // `Arc<dyn Fn>`, built by `runtime_meta::dynamic_from_proc` for a runtime
+    // `define_method`. `Clone` is cheap on both arms (a `fn` copy / an `Arc`
+    // bump) -- the overlay resolvers clone an entry out and drop their lock
+    // BEFORE dispatching, so a runtime method that itself defines another
+    // method can't deadlock.
+    Dynamic(DynMethodFn),
 }
 
 impl MethodImpl {
@@ -1069,11 +1071,11 @@ pub fn ivar_defined(recv: &RubyValue, bare_name: &str) -> bool {
     let RubyValue::Array(vars) = instance_variables(recv) else {
         return false;
     };
-    let found = vars
+    
+    vars
         .lock()
         .iter()
-        .any(|v| matches!(v, RubyValue::Symbol(s) if *s == want));
-    found
+        .any(|v| matches!(v, RubyValue::Symbol(s) if *s == want))
 }
 
 pub fn instance_variables(recv: &RubyValue) -> RubyValue {

@@ -46,7 +46,8 @@ pub struct ValueSubclass {
 }
 
 impl ValueSubclass {
-    fn new(class_id: ClassId, root: ClassId, payload: RubyValue) -> RObj {
+    /// Allocates directly as the trait-object handle every caller stores.
+    fn alloc(class_id: ClassId, root: ClassId, payload: RubyValue) -> RObj {
         Arc::new(ValueSubclass {
             class_id,
             root,
@@ -199,12 +200,12 @@ pub fn value_subclass_construct(
     let root = value_root_of(class_id)
         .unwrap_or_else(|| panic!("no value payload root in ancestry of class id {}", class_id.0));
     if has_instance_method(class_id, Symbol::intern("initialize")) {
-        let handle = ValueSubclass::new(class_id, root, empty_payload(root));
+        let handle = ValueSubclass::alloc(class_id, root, empty_payload(root));
         run_initialize(class_id, &handle, args, block)?;
         Ok(RubyValue::Object(handle))
     } else {
         let payload = construct_root_payload(root, args, block)?;
-        Ok(RubyValue::Object(ValueSubclass::new(class_id, root, payload)))
+        Ok(RubyValue::Object(ValueSubclass::alloc(class_id, root, payload)))
     }
 }
 

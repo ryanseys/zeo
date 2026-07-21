@@ -145,7 +145,7 @@ pub fn thread_list() -> Vec<RubyValue> {
     guard
         .iter()
         .filter_map(|w| w.upgrade())
-        .filter(|t| thread_alive(t))
+        .filter(thread_alive)
         .map(RubyValue::Thread)
         .collect()
 }

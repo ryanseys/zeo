@@ -556,7 +556,7 @@ builtin_methods! {
         // The close must happen on EVERY exit path, which is what makes this
         // the idiom it is -- hence running the block, stashing its outcome,
         // closing, and only then propagating.
-        let out = p.call(&[io.clone()]);
+        let out = p.call(std::slice::from_ref(&io));
         let _ = crate::dispatch::send_value(&io, crate::Symbol::intern("close"), &[], None);
         out
     }
@@ -689,9 +689,13 @@ builtin_methods! {
         match args.get(2) {
             Some(RubyValue::Int(off)) => {
                 use std::io::{Seek, Write};
+                // No truncate: a positional write patches bytes at `off`,
+                // leaving the rest of an existing file intact (CRuby's
+                // File.write with an offset opens without O_TRUNC).
                 let mut f = std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
+                    .truncate(false)
                     .open(&path)
                     .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
                 f.seek(std::io::SeekFrom::Start((*off).max(0) as u64))

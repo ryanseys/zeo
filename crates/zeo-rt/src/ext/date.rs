@@ -421,7 +421,7 @@ mod tests {
         let plus10 = plus(&a, &[RubyValue::Int(10)], None).unwrap();
         assert_eq!(s(&to_s(&plus10, &[], None).unwrap()), "2024-01-11");
         // date - date -> Rational difference.
-        let diff = minus(&plus10, &[a.clone()], None).unwrap();
+        let diff = minus(&plus10, std::slice::from_ref(&a), None).unwrap();
         assert!(matches!(diff, RubyValue::Rational(_)));
     }
 

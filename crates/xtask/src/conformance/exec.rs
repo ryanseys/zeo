@@ -26,7 +26,7 @@ impl Execution {
         #[cfg(unix)]
         {
             use std::os::unix::process::ExitStatusExt;
-            return self.status.is_some_and(|s| s.signal().is_some());
+            self.status.is_some_and(|s| s.signal().is_some())
         }
         #[cfg(not(unix))]
         false

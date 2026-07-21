@@ -1304,6 +1304,7 @@ mod tests {
 
     /// Builds a `Params` from a compact spec: `req`, `opt`, `post` counts,
     /// plus rest/kwrest flags and keyword kinds.
+    #[derive(Default)]
     struct Spec {
         req: usize,
         opt: usize,
@@ -1315,20 +1316,7 @@ mod tests {
         block: bool,
     }
 
-    impl Default for Spec {
-        fn default() -> Self {
-            Spec {
-                req: 0,
-                opt: 0,
-                post: 0,
-                rest: false,
-                kw_required: 0,
-                kw_optional: 0,
-                kwrest: false,
-                block: false,
-            }
-        }
-    }
+    
 
     fn params(hir: &mut Hir, spec: Spec) -> Params {
         let mut p = Params::default();

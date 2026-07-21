@@ -496,7 +496,7 @@ builtin_methods! {
     "allbits?"[1] => fn allbits(recv, args, _block) {
         arity!(args, 1);
         let mask = int_mask_arg(&args[0])?;
-        Ok(RubyValue::Bool(&(to_bigint(recv) & &mask) == &mask))
+        Ok(RubyValue::Bool((to_bigint(recv) & &mask) == mask))
     }
     "anybits?"[1] => fn anybits(recv, args, _block) {
         arity!(args, 1);

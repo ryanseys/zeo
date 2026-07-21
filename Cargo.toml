@@ -10,9 +10,20 @@ members = [
 
 [workspace.package]
 edition = "2024"
-# MSRV floor: edition 2024 needs >=1.85. Checked in CI; bump deliberately.
-rust-version = "1.85"
+# MSRV floor: edition 2024 needs >=1.85; the runtime uses std APIs stabilized
+# through 1.87 (f64::next_up, u{n}::is_multiple_of). Checked in CI; bump
+# deliberately.
+rust-version = "1.87"
 license = "MIT OR Apache-2.0"
+
+# The workspace-wide lint gate (each member opts in with `[lints] workspace =
+# true`). Warnings are errors in CI (`cargo clippy -- -D warnings`); the lint
+# LEVELS here stay `warn` so local iteration isn't interrupted mid-edit.
+[workspace.lints.rust]
+unused = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
 
 # Faster generated-program compiles + faster zeo-rt rebuilds. Every compiled
 # program links the runtime; it is a large, rarely-step-debugged artifact, so trim

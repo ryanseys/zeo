@@ -480,7 +480,7 @@ mod tests {
             let RubyValue::Hash(h) = env_to_h(&e, &[], None).unwrap() else {
                 panic!("expected a Hash")
             };
-            assert!(h.lock().len() >= 1);
+            assert!(!h.lock().is_empty());
 
             let RubyValue::Array(ks) = env_keys(&e, &[], None).unwrap() else {
                 panic!("expected an Array")

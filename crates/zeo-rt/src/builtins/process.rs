@@ -623,7 +623,7 @@ mod tests {
     #[test]
     fn the_monotonic_clock_advances() {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
-        let RubyValue::Float(a) = clock_gettime(&process_module(), &[m.clone()], None).unwrap()
+        let RubyValue::Float(a) = clock_gettime(&process_module(), std::slice::from_ref(&m), None).unwrap()
         else {
             panic!("expected a Float")
         };

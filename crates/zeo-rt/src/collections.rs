@@ -570,11 +570,14 @@ pub fn string_new(s: String) -> RStr {
     Arc::new(Freezable::new(crate::encoding::StrBuf::from_utf8(s)))
 }
 
+/// The key of the frozen-string pool: a string's exact identity is its bytes
+/// PLUS their encoding (`"a".b` and `"a"` are different frozen strings).
+type FrozenKey = (Vec<u8>, crate::encoding::EncodingId);
+
 /// The process-lifetime pool of immortal frozen strings (CRuby's fstring
 /// table), keyed by `(bytes, encoding)` -- see [`intern_frozen`].
-static FROZEN_STRINGS: std::sync::LazyLock<
-    Mutex<std::collections::HashMap<(Vec<u8>, crate::encoding::EncodingId), RStr>>,
-> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+static FROZEN_STRINGS: std::sync::LazyLock<Mutex<std::collections::HashMap<FrozenKey, RStr>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
 
 /// Intern a string by CONTENT: two strings with equal `(bytes, encoding)`
 /// return the SAME immortal frozen `RStr`, so `"x".dedup.equal?("x".dedup)`

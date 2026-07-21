@@ -683,11 +683,11 @@ fn write_atomically(path: &Path, contents: &str) -> Result<(), String> {
         thread_unique_suffix()
     ));
     std::fs::write(&tmp, contents).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
-    let renamed = std::fs::rename(&tmp, path).map_err(|e| {
+    
+    std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("renaming into {}: {e}", path.display())
-    });
-    renamed
+    })
 }
 
 /// FNV-1a. Small, stable across processes and toolchain versions -- unlike

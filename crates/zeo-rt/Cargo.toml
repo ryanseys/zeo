@@ -131,3 +131,6 @@ ext-psych = ["dep:yaml-rust2"]
 ext-socket = []
 ext-openssl = []
 ext-ffi = []
+
+[lints]
+workspace = true

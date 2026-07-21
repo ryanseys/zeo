@@ -122,13 +122,13 @@ builtin_methods! {
 
     "size" => fn st_size(recv, args, _blk) {
         arity!(args, 0);
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_size as i64))
+        Ok(RubyValue::Int(recv_stat(recv)?.st.st_size))
     }
     // `size?` is nil for an empty file (the "is there content" predicate).
     "size?" => fn st_size_p(recv, args, _blk) {
         arity!(args, 0);
         let n = recv_stat(recv)?.st.st_size;
-        Ok(if n > 0 { RubyValue::Int(n as i64) } else { RubyValue::Nil })
+        Ok(if n > 0 { RubyValue::Int(n) } else { RubyValue::Nil })
     }
     "zero?" => fn st_zero_p(recv, args, _blk) {
         arity!(args, 0);
@@ -188,7 +188,7 @@ builtin_methods! {
     }
     "blocks" => fn st_blocks(recv, args, _blk) {
         arity!(args, 0);
-        Ok(RubyValue::Int(recv_stat(recv)?.st.st_blocks as i64))
+        Ok(RubyValue::Int(recv_stat(recv)?.st.st_blocks))
     }
     "ftype" => fn st_ftype(recv, args, _blk) {
         arity!(args, 0);

@@ -387,10 +387,9 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
 fn read_int(bytes: &[u8], big: bool, signed: bool) -> i64 {
     let size = bytes.len();
     let mut val: u64 = 0;
-    for i in 0..size {
-        let b = bytes[i] as u64;
+    for (i, &byte) in bytes.iter().enumerate() {
         let shift = if big { (size - 1 - i) * 8 } else { i * 8 };
-        val |= b << shift;
+        val |= (byte as u64) << shift;
     }
     if signed && size < 8 {
         let sign_bit = 1u64 << (size * 8 - 1);

@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 zeo = { path = "../zeo" }
+
+[lints]
+workspace = true

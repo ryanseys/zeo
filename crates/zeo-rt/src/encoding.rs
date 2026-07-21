@@ -741,6 +741,11 @@ fn replacement(opts: &TranscodeOptions, to: EncodingId) -> Vec<u8> {
     }
 }
 
+/// A `:fallback` handler: given an undefined character's UTF-8 text, answers
+/// replacement text, or `None` to fall through to the error/replace path.
+/// `&mut dyn FnMut` because the handler may invoke arbitrary Ruby (a Proc).
+pub type TranscodeFallback<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
+
 /// Transcodes `bytes` from `from` to `to`, applying `opts`. `fallback` (if
 /// any) is consulted for otherwise-undefined characters BEFORE the error/
 /// replace path -- it returns replacement text or `None` to fall through.
@@ -749,7 +754,7 @@ pub fn transcode(
     from: EncodingId,
     to: EncodingId,
     opts: &TranscodeOptions,
-    fallback: Option<&mut dyn FnMut(&str) -> Option<String>>,
+    fallback: Option<TranscodeFallback<'_>>,
 ) -> Result<Vec<u8>, TranscodeError> {
     let mut fallback = fallback;
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -767,10 +772,10 @@ pub fn transcode(
                 }
             }
             Unit::Char(c) => {
-                if let Some(mut bytes) = encode_char(c, to) {
+                if let Some(bytes) = encode_char(c, to) {
                     apply_xml(&mut out, c, &bytes, opts, to);
                     if opts.xml.is_none() {
-                        maybe_newline(&mut out, c, &mut bytes, opts);
+                        maybe_newline(&mut out, c, &bytes, opts);
                     }
                     continue;
                 }
@@ -828,7 +833,7 @@ fn push_xml_ref(out: &mut Vec<u8>, c: char, _mode: XmlMode) {
 }
 
 /// Rewrites a just-emitted `\n` per the newline option.
-fn maybe_newline(out: &mut Vec<u8>, c: char, bytes: &mut Vec<u8>, opts: &TranscodeOptions) {
+fn maybe_newline(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions) {
     if c != '\n' {
         return;
     }

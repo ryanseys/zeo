@@ -258,7 +258,7 @@ fn m_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result
     if !same_method {
         return Ok(RubyValue::Bool(false));
     }
-    let recv_eq = crate::dispatch::send_value(&m.recv, Symbol::intern("=="), &[other.recv.clone()], None)?;
+    let recv_eq = crate::dispatch::send_value(&m.recv, Symbol::intern("=="), std::slice::from_ref(&other.recv), None)?;
     Ok(RubyValue::Bool(recv_eq.truthy()))
 }
 

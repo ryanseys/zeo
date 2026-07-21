@@ -1331,7 +1331,7 @@ builtin_methods! {
         let mut remaining = count.unwrap_or(1);
         while remaining > 0 {
             for e in &items {
-                p.call(&[e.clone()])?;
+                p.call(std::slice::from_ref(e))?;
             }
             if count.is_some() {
                 remaining -= 1;
@@ -1392,7 +1392,7 @@ builtin_methods! {
         // CRuby's does, rather than once per comparison.
         let mut keyed: Vec<(RubyValue, RubyValue)> = Vec::with_capacity(items.len());
         for e in items {
-            keyed.push((p.call(&[e.clone()])?, e));
+            keyed.push((p.call(std::slice::from_ref(&e))?, e));
         }
         keyed.sort_by(|a, b| match a.0.rb_cmp(&b.0) {
             Some(o) => o.cmp(&0),
@@ -1955,8 +1955,8 @@ mod tests {
 
     fn items_of(v: &RubyValue) -> Vec<String> {
         let RubyValue::Array(inner) = v else { panic!("expected an Array") };
-        let out = inner.lock().iter().map(|e| e.inspect_string()).collect();
-        out
+        
+        inner.lock().iter().map(|e| e.inspect_string()).collect()
     }
 
     /// `a[start, len] = v` replaces the SPAN with `v`'s elements -- not the

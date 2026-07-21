@@ -487,7 +487,7 @@ fn run_one_suite(
     let ranked = scoreboard::ranked_buckets(&results);
     if !ranked.is_empty() {
         println!("\ntop {} failure categories:", ranked.len().min(10));
-        println!("{:>8}  {:<28} {}", "blocked", "bucket", "sample");
+        println!("{:>8}  {:<28} sample", "blocked", "bucket");
         for b in ranked.iter().take(10) {
             println!("{:>8}  {:<28} {}", b.count, b.bucket, b.sample_id);
         }
@@ -503,7 +503,7 @@ fn run_one_suite(
     let slowest = by_time.len().min(15);
     if slowest > 0 && by_time[0].compile_ms + by_time[0].run_ms > 0 {
         println!("\ntop {slowest} slowest tests (ms):");
-        println!("{:>10} {:>10} {:>10}  {}", "total", "compile", "run", "test");
+        println!("{:>10} {:>10} {:>10}  test", "total", "compile", "run");
         for r in by_time.iter().take(slowest) {
             println!(
                 "{:>10} {:>10} {:>10}  {}",

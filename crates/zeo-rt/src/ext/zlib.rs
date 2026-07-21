@@ -179,7 +179,7 @@ mod tests {
     fn deflate_inflate_and_gzip_gunzip_round_trip() {
         let text = "compress me ".repeat(20);
         let msg = s(&text);
-        let comp = deflate(&RubyValue::Nil, &[msg.clone()], None).unwrap();
+        let comp = deflate(&RubyValue::Nil, std::slice::from_ref(&msg), None).unwrap();
         assert_eq!(bytes(inflate(&RubyValue::Nil, &[comp], None)), text.as_bytes());
         let gz = gzip(&RubyValue::Nil, &[msg], None).unwrap();
         assert_eq!(bytes(gunzip(&RubyValue::Nil, &[gz], None)), text.as_bytes());

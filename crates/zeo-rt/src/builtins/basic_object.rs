@@ -132,6 +132,36 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
     }
 }
 
+/// The shared `send`/`__send__` body: coerce the first argument to a method
+/// name and dispatch the rest to it.
+///
+/// Lives here because `__send__` is BasicObject's, but Kernel's `send` is the
+/// same operation on a receiver that also has the Object surface -- CRuby
+/// likewise gives both the one `rb_f_send` implementation (vm_eval.c:2960).
+pub(crate) fn dynamic_send(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some((name_arg, rest)) = args.split_first() else {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "no method name given".to_string(),
+        ));
+    };
+    let sym = match name_arg {
+        RubyValue::Symbol(s) => *s,
+        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!("{} is not a symbol nor a string", other.inspect_string()),
+            ))
+        }
+    };
+    crate::dispatch::send_value(recv, sym, rest, block)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,34 +196,4 @@ mod tests {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eq(&RubyValue::Int(1), &[], None)));
         assert!(r.is_err());
     }
-}
-
-/// The shared `send`/`__send__` body: coerce the first argument to a method
-/// name and dispatch the rest to it.
-///
-/// Lives here because `__send__` is BasicObject's, but Kernel's `send` is the
-/// same operation on a receiver that also has the Object surface -- CRuby
-/// likewise gives both the one `rb_f_send` implementation (vm_eval.c:2960).
-pub(crate) fn dynamic_send(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    block: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    let Some((name_arg, rest)) = args.split_first() else {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "no method name given".to_string(),
-        ));
-    };
-    let sym = match name_arg {
-        RubyValue::Symbol(s) => *s,
-        RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
-        other => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", other.inspect_string()),
-            ))
-        }
-    };
-    crate::dispatch::send_value(recv, sym, rest, block)
 }

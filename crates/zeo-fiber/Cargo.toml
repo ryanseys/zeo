@@ -11,3 +11,6 @@ license.workspace = true
 # slot on the coroutine's own stack) that is structural in 0.3.x but not a
 # documented API guarantee -- re-verify before any major-version bump.
 corosensei = "0.3"
+
+[lints]
+workspace = true

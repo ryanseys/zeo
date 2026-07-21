@@ -274,7 +274,7 @@ mod tests {
         RubyValue::Str(string_new(text.to_string()))
     }
     fn dumped(v: &RubyValue) -> String {
-        match dump_m(&RubyValue::Nil, &[v.clone()], None).unwrap() {
+        match dump_m(&RubyValue::Nil, std::slice::from_ref(v), None).unwrap() {
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => panic!("expected Str, got {other:?}"),
         }

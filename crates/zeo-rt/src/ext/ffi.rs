@@ -156,7 +156,7 @@ impl RPointer {
     unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) { unsafe {
         let p = self.base.add(off);
         match bytes {
-            1 => (p as *mut u8).write_unaligned(v as u8),
+            1 => p.write_unaligned(v as u8),
             2 => (p as *mut u16).write_unaligned(v as u16),
             4 => (p as *mut u32).write_unaligned(v as u32),
             8 => (p as *mut u64).write_unaligned(v as u64),

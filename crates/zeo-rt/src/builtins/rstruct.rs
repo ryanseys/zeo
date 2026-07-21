@@ -645,12 +645,13 @@ pub fn struct_construct(
 // Class creation: `Struct.new(...)` / `Data.define(...)`.
 // ---------------------------------------------------------------------------
 
+/// [`parse_members`]'s result: the optional leading class-name string, the
+/// member symbols, and the `keyword_init:` flag if one was given.
+type ParsedMembers = (Option<String>, Vec<Symbol>, Option<bool>);
+
 /// Parse the member symbols (and, for `Struct`, an optional leading string
 /// name and a trailing `keyword_init:` hash) from the class-creation args.
-fn parse_members(
-    args: &[RubyValue],
-    is_data: bool,
-) -> Result<(Option<String>, Vec<Symbol>, Option<bool>), Signal> {
+fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Signal> {
     let mut rest = args;
     let mut name = None;
     let mut keyword_init = None;

@@ -1506,7 +1506,7 @@ fn io_class_new(_recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>)
     let Some(RubyValue::Proc(p)) = block else {
         return Ok(io);
     };
-    let out = p.call(&[io.clone()]);
+    let out = p.call(std::slice::from_ref(&io));
     let _ = io_close(&io, &[], None);
     out
 }

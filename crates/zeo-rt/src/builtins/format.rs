@@ -586,8 +586,8 @@ mod tests {
     #[test]
     fn named_references_angle_and_brace() {
         let h = named(&[("x", RubyValue::Int(42)), ("y", s("hi"))]);
-        assert_eq!(sprintf("%<x>d and %<y>s", &[h.clone()]).unwrap(), "42 and hi");
-        assert_eq!(sprintf("%{y}!", &[h.clone()]).unwrap(), "hi!");
+        assert_eq!(sprintf("%<x>d and %<y>s", std::slice::from_ref(&h)).unwrap(), "42 and hi");
+        assert_eq!(sprintf("%{y}!", std::slice::from_ref(&h)).unwrap(), "hi!");
         // Named references carry flags/width/precision.
         assert_eq!(sprintf("%<x>05d", &[h]).unwrap(), "00042");
     }
@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(sprintf("%-*d|", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(), "42   |");
         assert_eq!(sprintf("%2$s %1$s", &[s("a"), s("b")]).unwrap(), "b a");
         assert_eq!(sprintf("%.3d", &[RubyValue::Int(7)]).unwrap(), "007");
-        assert_eq!(sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(3.14159)]).unwrap(), "3.14");
+        assert_eq!(sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(8.7654)]).unwrap(), "8.77");
     }
 
     #[test]

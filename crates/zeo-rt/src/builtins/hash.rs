@@ -821,7 +821,7 @@ builtin_methods! {
                 _ => {}
             }
         }
-        if args.len() % 2 != 0 {
+        if !args.len().is_multiple_of(2) {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
                 "odd number of arguments for Hash".to_string(),

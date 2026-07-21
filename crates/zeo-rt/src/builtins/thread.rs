@@ -134,7 +134,7 @@ fn t_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Res
         [one] => crate::dispatch::coerce_raise_arg(one.clone()),
         [class, msg, ..] => {
             // `Class.exception(message)` -- the CRuby two-arg form.
-            crate::dispatch::send_value(class, crate::Symbol::intern("exception"), &[msg.clone()], None)?
+            crate::dispatch::send_value(class, crate::Symbol::intern("exception"), std::slice::from_ref(msg), None)?
         }
     };
     thread_raise(&recv.as_thread_unchecked(), exc);

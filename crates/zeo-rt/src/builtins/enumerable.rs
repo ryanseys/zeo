@@ -1527,14 +1527,15 @@ fn slice_before_after(
     let mut out: Vec<RubyValue> = Vec::new();
     let mut cur: Vec<RubyValue> = Vec::new();
     // Exactly one of a pattern argument or a block, real Ruby's own rule.
-    let test: Box<dyn Fn(&RubyValue) -> Result<bool, Signal>> = match (args.len(), &block) {
+    type SliceTest = Box<dyn Fn(&RubyValue) -> Result<bool, Signal>>;
+    let test: SliceTest = match (args.len(), &block) {
         (1, None) => {
             let pattern = args[0].clone();
             Box::new(move |e: &RubyValue| case_eq(&pattern, e))
         }
         (0, Some(b)) => {
             let b = b.clone();
-            Box::new(move |e: &RubyValue| Ok(b.as_proc_unchecked().call(&[e.clone()])?.truthy()))
+            Box::new(move |e: &RubyValue| Ok(b.as_proc_unchecked().call(std::slice::from_ref(e))?.truthy()))
         }
         _ => panic!("Enumerable#{name} takes exactly one pattern argument OR a block"),
     };
@@ -1584,7 +1585,7 @@ fn minmax_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
     let mut lo: Option<(RubyValue, RubyValue)> = None;
     let mut hi: Option<(RubyValue, RubyValue)> = None;
     for e in collect_packed(recv)? {
-        let k = blk.call(&[e.clone()])?;
+        let k = blk.call(std::slice::from_ref(&e))?;
         if lo.as_ref().is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o < 0)) {
             lo = Some((k.clone(), e.clone()));
         }

@@ -2634,12 +2634,6 @@ pub fn emit_call(
         None
     }
 
-    /// The implicit `self` as a boxed `RubyValue` expression, in every
-    /// context that has one: an ordinary instance method (handle-boxed), a
-    /// value-backed (builtin-reopen / Object) method (`__self` as-is), a
-    /// class-method body (the class value), or the top level (the `main`
-    /// object).
-
     /// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
     /// conversions, rand/srand, throw, sleep, exit/abort -- consulted after
     /// sibling method resolution (a user `def puts`/`def Integer` wins,

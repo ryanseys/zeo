@@ -3289,7 +3289,7 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
     let int = node.as_integer_node()?;
     let value = int.value();
     let (negative, digits) = value.to_u32_digits();
-    assemble_i64(negative, &digits)
+    assemble_i64(negative, digits)
 }
 
 /// Recognize an FFI `layout :name, :type, :name, :type, ...` directive inside a
@@ -3304,7 +3304,7 @@ fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::Ffi
         .arguments()
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
-    if args.is_empty() || args.len() % 2 != 0 {
+    if args.is_empty() || !args.len().is_multiple_of(2) {
         return Err("FFI::Struct `layout` expects `:name, :type` pairs".to_string().into());
     }
     // Struct field types are the base scalars/pointer -- no per-library aliases.
@@ -3346,7 +3346,7 @@ fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usiz
 /// total rounded to the max field alignment), matching `ffi 1.17.4` and the C
 /// ABI. Returned as source for `parse_and_lower_into`.
 fn synthesize_ffi_struct(fields: &[(String, crate::hir::FfiType)]) -> PResult<String> {
-    let round_up = |n: usize, a: usize| -> usize { (n + a - 1) / a * a };
+    let round_up = |n: usize, a: usize| -> usize { n.div_ceil(a) * a };
     let mut offset = 0usize;
     let mut max_align = 1usize;
     // (field, getter, putter, offset)
@@ -4782,16 +4782,6 @@ fn line_of(result: &ParseResult, offset: usize) -> i64 {
         .count() as i64
 }
 
-/// One `parts()` entry of an `InterpolatedStringNode`:
-///
-///   - a literal chunk (`StringNode`);
-///   - an `#{ }` (`EmbeddedStatementsNode`) -- several statements answer the
-///     LAST, via the same `Seq` a parenthesized `(a; b)` lowers to, and an
-///     EMPTY `#{}` interpolates the empty string (real Ruby: `"x#{}y"` is
-///     `"xy"`);
-///   - a brace-less `#@ivar`/`#@@cvar`/`#$global` (`EmbeddedVariableNode`),
-///     whose `variable()` is an ordinary read node and so needs no special
-///     handling beyond unwrapping it.
 /// A literal string segment's bytes as a `StrPart`: readable UTF-8 text when
 /// the bytes form valid UTF-8 (the overwhelmingly common case), else the raw
 /// bytes preserved for the encoding engine (a `"\xNN"` escape that isn't a
@@ -4827,6 +4817,16 @@ fn lower_string_parts<'a>(
     Ok(out)
 }
 
+/// One `parts()` entry of an `InterpolatedStringNode`:
+///
+/// - a literal chunk (`StringNode`);
+/// - an `#{ }` (`EmbeddedStatementsNode`) -- several statements answer the
+///   LAST, via the same `Seq` a parenthesized `(a; b)` lowers to, and an
+///   EMPTY `#{}` interpolates the empty string (real Ruby: `"x#{}y"` is
+///   `"xy"`);
+/// - a brace-less `#@ivar`/`#@@cvar`/`#$global` (`EmbeddedVariableNode`),
+///   whose `variable()` is an ordinary read node and so needs no special
+///   handling beyond unwrapping it.
 fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<StrPart> {
     if let Some(s) = node.as_string_node() {
         return Ok(string_literal_part(s.unescaped()));

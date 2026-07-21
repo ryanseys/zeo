@@ -661,7 +661,7 @@ fn build_civil_time(
 fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
     use num_bigint::BigInt;
     let cant = || raise_error("ArgumentError", format!("can't parse: {input:?}"));
-    let mut tokens = input.trim().split_whitespace();
+    let mut tokens = input.split_whitespace();
     let mut date = tokens.next().ok_or_else(cant)?.split('-');
     let year: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
     let mon: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
@@ -1394,7 +1394,7 @@ mod tests {
     #[test]
     fn utc_civil_fields_match_the_oracle() {
         let t = utc_at(EPOCH);
-        let f = |g: fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>| {
+        let f = |g: crate::builtins::BuiltinMethodFn| {
             let RubyValue::Int(i) = g(&t, &[], None).unwrap() else {
                 panic!()
             };
@@ -1617,13 +1617,13 @@ mod tests {
     fn comparison_is_by_instant_not_by_offset() {
         let a = utc_at(EPOCH);
         let b = utc_at(EPOCH + 1);
-        assert!(matches!(cmp(&a, &[b.clone()], None).unwrap(), RubyValue::Int(-1)));
-        assert!(matches!(cmp(&b, &[a.clone()], None).unwrap(), RubyValue::Int(1)));
-        assert!(matches!(cmp(&a, &[a.clone()], None).unwrap(), RubyValue::Int(0)));
+        assert!(matches!(cmp(&a, std::slice::from_ref(&b), None).unwrap(), RubyValue::Int(-1)));
+        assert!(matches!(cmp(&b, std::slice::from_ref(&a), None).unwrap(), RubyValue::Int(1)));
+        assert!(matches!(cmp(&a, std::slice::from_ref(&a), None).unwrap(), RubyValue::Int(0)));
 
         let same_instant_other_offset = time_value(EPOCH, 0, Some(-5 * 3600));
         assert!(matches!(
-            eq(&a, &[same_instant_other_offset.clone()], None).unwrap(),
+            eq(&a, std::slice::from_ref(&same_instant_other_offset), None).unwrap(),
             RubyValue::Bool(true)
         ));
         // Equal Times hash equally.

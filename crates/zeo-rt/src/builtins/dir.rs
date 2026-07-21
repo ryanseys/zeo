@@ -440,7 +440,7 @@ builtin_methods! {
         let Some(RubyValue::Proc(p)) = block else {
             return Ok(dir);
         };
-        let out = p.call(&[dir.clone()]);
+        let out = p.call(std::slice::from_ref(&dir));
         let _ = dir_h_close(&dir, &[], None);
         out
     }

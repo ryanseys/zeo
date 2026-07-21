@@ -80,6 +80,11 @@ impl Caps {
     pub fn len(&self) -> usize {
         self.spans.len()
     }
+    /// Never true for a real match (group 0, the whole match, always exists);
+    /// present so `len` has its idiomatic partner.
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
     /// The matched substring of group `i` (empty for an absent group).
     fn str<'h>(&self, i: usize, haystack: &'h str) -> Option<&'h str> {
         self.get(i).map(|(s, e)| &haystack[s..e])
@@ -690,7 +695,7 @@ pub fn matchdata_offset(
     let (lo, hi) = if byte_mode {
         (lo as i64, hi as i64)
     } else {
-        (char_index(&md.haystack, lo) as i64, char_index(&md.haystack, hi) as i64)
+        (char_index(&md.haystack, lo), char_index(&md.haystack, hi))
     };
     Ok(offset_pair(RubyValue::Int(lo), RubyValue::Int(hi)))
 }

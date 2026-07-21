@@ -504,8 +504,8 @@ mod tests {
                 let theirs = match &other {
                     RubyValue::Object(o) => {
                         let t = downcast_robj::<Temp>(o).expect("Temp <=> Temp only in tests");
-                        let deg = t.deg.lock().clone();
-                        deg
+                        
+                        t.deg.lock().clone()
                     }
                     _ => return Ok(RubyValue::Nil),
                 };

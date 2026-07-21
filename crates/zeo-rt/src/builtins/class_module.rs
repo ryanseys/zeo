@@ -288,7 +288,7 @@ builtin_methods! {
         // lookup to the receiver's own methods (no ancestor walk).
         arity!(args, 1..=2);
         let name = name_arg(&args[0])?;
-        let inherit = args.get(1).map_or(true, RubyValue::truthy);
+        let inherit = args.get(1).is_none_or(RubyValue::truthy);
         Ok(RubyValue::Bool(crate::dispatch::method_defined_inherit(
             recv_cid(recv),
             crate::Symbol::intern(&name),

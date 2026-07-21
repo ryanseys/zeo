@@ -102,25 +102,25 @@ fn entry_body(r: &GemRecord) -> String {
     let mut fields: Vec<String> = Vec::new();
     match &r.by {
         SatisfiedBy::BuiltinExt { feature } => {
-            fields.push(format!("\"by\": \"builtin-ext\""));
+            fields.push("\"by\": \"builtin-ext\"".to_string());
             fields.push(format!("\"feature\": {}", json_str(feature)));
         }
         SatisfiedBy::BundledGem { path } => {
-            fields.push(format!("\"by\": \"bundled-gem\""));
+            fields.push("\"by\": \"bundled-gem\"".to_string());
             fields.push(format!("\"path\": {}", json_str(path)));
         }
         SatisfiedBy::StdlibRoot { path } => {
-            fields.push(format!("\"by\": \"stdlib-root\""));
+            fields.push("\"by\": \"stdlib-root\"".to_string());
             fields.push(format!("\"path\": {}", json_str(path)));
         }
         SatisfiedBy::Excluded { kind, reason } => {
-            fields.push(format!("\"by\": null"));
+            fields.push("\"by\": null".to_string());
             fields.push(format!("\"excluded\": {}", json_str(kind)));
             fields.push(format!("\"reason\": {}", json_str(reason)));
         }
     }
     if let Some(note) = substitution_note(&r.name) {
-        fields.push(format!("\"diverges\": true"));
+        fields.push("\"diverges\": true".to_string());
         fields.push(format!("\"note\": {}", json_str(note)));
     }
     fields.join(", ")

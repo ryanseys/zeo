@@ -8,3 +8,6 @@ license.workspace = true
 [dependencies]
 # Deliberately empty: this crate is the zero-dependency leaf both `zeo`
 # (the compiler) and `zeo-rt` (the runtime) share -- see src/lib.rs.
+
+[lints]
+workspace = true

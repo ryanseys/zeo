@@ -22,6 +22,12 @@
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
+/// The boxed body of a `Proc`: `(self, args, call-site block) -> result`.
+/// See [`ProcData::f`] for why `self` and the block are parameters.
+type ProcFn = Box<
+    dyn Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync,
+>;
+
 /// The closure a `Proc` value wraps, plus the two facts about its
 /// PARAMETERS that a Rust closure can't answer for itself but Ruby exposes:
 /// `Proc#arity` and `Proc#lambda?` (and `#curry`, which needs the arity).
@@ -46,11 +52,7 @@ pub struct ProcData {
     /// (`vm.c:1843`). Collapsing them would make a `define_method` body's
     /// `yield` see the block that was passed to `define_method` rather than
     /// the one passed to the resulting method.
-    f: Box<
-        dyn Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>
-            + Send
-            + Sync,
-    >,
+    f: ProcFn,
     /// The block's LEXICAL self -- the receiver `#call` runs under, i.e.
     /// what `self` meant where the block was written. `instance_exec`
     /// bypasses it; everything else uses it.

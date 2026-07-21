@@ -3080,7 +3080,7 @@ mod tests {
     #[test]
     fn index_with_regexp_and_group() {
         let re = RubyValue::Regexp(crate::regexp_new("(\\w+) (\\w+)", false, false, false).unwrap());
-        assert_eq!(show(index_op(&s("hello world foo"), &[re.clone()], None)), "\"hello world\"");
+        assert_eq!(show(index_op(&s("hello world foo"), std::slice::from_ref(&re), None)), "\"hello world\"");
         assert_eq!(show(index_op(&s("hello world"), &[re, RubyValue::Int(2)], None)), "\"world\"");
     }
 
