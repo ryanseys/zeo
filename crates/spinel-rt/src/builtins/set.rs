@@ -115,6 +115,15 @@ fn arg_elements(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
         RubyValue::Object(o) if o.class_id() == SET_CLASS => Ok(set_of(v).elements()),
         RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
         other => {
+            // CRuby's `do_with_enum` requires the source to respond to `each`;
+            // a non-enumerable (an Integer, ...) is an ArgumentError, not the
+            // NoMethodError a bare `to_a` send would surface.
+            if !crate::dispatch::responds_to_value(other, crate::Symbol::intern("each"), false) {
+                return Err(raise_error(
+                    "ArgumentError",
+                    "value must be enumerable".to_string(),
+                ));
+            }
             let arr = crate::dispatch::send_value(other, crate::Symbol::intern("to_a"), &[], None)?;
             match arr {
                 RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),

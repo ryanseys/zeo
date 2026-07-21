@@ -458,6 +458,21 @@ fn byte_rfind(hay: &[u8], needle: &[u8], before: usize) -> Option<usize> {
     (0..=last_start).rev().find(|&i| hay[i..].starts_with(needle))
 }
 
+/// CRuby's `rb_str_modify` guard: a frozen receiver can't be mutated in place.
+/// Shared by the mutators that don't route through `str_bang_replace`
+/// (`insert`/`prepend`/`replace`), so a `frozen_string_literal` literal raises
+/// on every one.
+fn guard_str_frozen(recv: &RubyValue) -> Result<(), Signal> {
+    if recv_str!(recv).is_frozen() {
+        return Err(crate::dispatch::raise_error_details(
+            "FrozenError",
+            format!("can't modify frozen String: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
+        ));
+    }
+    Ok(())
+}
+
 /// The shared body of the in-place `!` mutators (`chomp!`/`chop!`/
 /// `delete_prefix!`/`delete_suffix!`): a frozen receiver is a FrozenError
 /// (CRuby raises on ANY bang method, modification or not), then `new_text`
@@ -1942,6 +1957,7 @@ builtin_methods! {
     // nothing matched).
     "slice!" => fn slice_bang(recv, args, _block) {
         arity!(args, 1..=2);
+        guard_str_frozen(recv)?;
         slice_bang_impl(recv, args)
     }
     // `sub`/`gsub`: String or Regexp pattern; String replacement or block.
@@ -2216,6 +2232,7 @@ builtin_methods! {
     }
     "insert"[2] => fn insert(recv, args, _block) {
         arity!(args, 2);
+        guard_str_frozen(recv)?;
         let at = arg_int!(args, 0);
         let addition = arg_str!(args, 1).lock().to_utf8_lossy().into_owned();
         let handle = recv_str!(recv);
@@ -2240,6 +2257,7 @@ builtin_methods! {
     }
     // `prepend(*strs)` -- insert every argument, in order, at the front.
     "prepend" => fn prepend(recv, args, _block) {
+        guard_str_frozen(recv)?;
         let mut prefix = String::new();
         for a in args {
             match a {
@@ -2265,6 +2283,7 @@ builtin_methods! {
     }
     "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
+        guard_str_frozen(recv)?;
         let new_text = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         recv_str!(recv).lock().replace_utf8(new_text);
         Ok(recv.clone())

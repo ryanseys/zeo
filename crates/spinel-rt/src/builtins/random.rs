@@ -271,7 +271,10 @@ crate::builtins::builtin_methods! {
             return Err(raise_error("TypeError", format!(
                 "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
         };
-        Ok(random_bytes(&as_random(recv).state, (*n).max(0) as usize))
+        if *n < 0 {
+            return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
+        }
+        Ok(random_bytes(&as_random(recv).state, *n as usize))
     }
     "seed" => fn seed(recv, args, _block) {
         crate::builtins::arity!(args, 0);
@@ -332,7 +335,10 @@ crate::builtins::builtin_methods! {
             return Err(raise_error("TypeError", format!(
                 "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
         };
-        Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
+        if *n < 0 {
+            return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
+        }
+        Ok(random_bytes(&default_state().state, *n as usize))
     }
     // `Random.urandom(n)` -- n bytes from a persistent advancing stream (the
     // process default generator). Real CRuby draws from OS entropy; the tests

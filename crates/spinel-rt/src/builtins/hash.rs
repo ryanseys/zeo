@@ -4,6 +4,19 @@
 use crate::builtins::{arity, block_or_enum, builtin_methods, recv_hash};
 use crate::RubyValue;
 
+/// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place
+/// mutation. Shared by every mutator so a frozen receiver can't slip through.
+fn guard_hash_frozen(recv: &RubyValue) -> Result<(), crate::Signal> {
+    if recv_hash!(recv).is_frozen() {
+        return Err(crate::dispatch::raise_error_details(
+            "FrozenError",
+            format!("can't modify frozen Hash: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
+        ));
+    }
+    Ok(())
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -74,11 +87,29 @@ builtin_methods! {
     }
     "[]="[2] | "store"[2] => fn index_set(recv, args, _block) {
         arity!(args, 2);
-        Ok(crate::hash_set(recv_hash!(recv), args[0].clone(), args[1].clone()))
+        let h = recv_hash!(recv);
+        // CRuby's `rb_hash_aset` checks modifiability first, so `h[k] = v` (and
+        // the `h[k] += v` opassign desugaring) on a frozen Hash raises.
+        if h.is_frozen() {
+            return Err(crate::dispatch::raise_error_details(
+                "FrozenError",
+                format!("can't modify frozen Hash: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
+            ));
+        }
+        Ok(crate::hash_set(h, args[0].clone(), args[1].clone()))
     }
     "delete"[1] => fn delete(recv, args, _block) {
         arity!(args, 1);
-        Ok(crate::hash_delete(recv_hash!(recv), &args[0]))
+        let h = recv_hash!(recv);
+        if h.is_frozen() {
+            return Err(crate::dispatch::raise_error_details(
+                "FrozenError",
+                format!("can't modify frozen Hash: {}", recv.inspect_string()),
+                &[("receiver", recv.clone())],
+            ));
+        }
+        Ok(crate::hash_delete(h, &args[0]))
     }
     "key?"[1] | "has_key?"[1] | "include?"[1] | "member?"[1] => fn key_p(recv, args, _block) {
         arity!(args, 1);
@@ -152,6 +183,7 @@ builtin_methods! {
         Ok(out)
     }
     "merge!" | "update" => fn merge_bang(recv, args, block) {
+        guard_hash_frozen(recv)?;
         merge_into(recv, args, &block)?;
         Ok(recv.clone())
     }
@@ -318,6 +350,7 @@ builtin_methods! {
     // `replace(other)`: swaps this hash's contents for `other`'s, answering
     // the receiver.
     "replace"[1] => fn replace(recv, args, _block) {
+        guard_hash_frozen(recv)?;
         arity!(args, 1);
         let RubyValue::Hash(other) = &args[0] else {
             return Err(crate::dispatch::raise_error(
@@ -359,18 +392,22 @@ builtin_methods! {
     // answer nil when nothing changed; `keep_if`/`delete_if` always answer
     // the receiver.
     "select!"[0] | "filter!"[0] => fn select_bang(recv, args, block) {
+        guard_hash_frozen(recv)?;
         arity!(args, 0);
         hash_filter_bang(recv, args, block, true, true)
     }
     "keep_if"[0] => fn keep_if(recv, args, block) {
+        guard_hash_frozen(recv)?;
         arity!(args, 0);
         hash_filter_bang(recv, args, block, true, false)
     }
     "reject!"[0] => fn reject_bang(recv, args, block) {
+        guard_hash_frozen(recv)?;
         arity!(args, 0);
         hash_filter_bang(recv, args, block, false, true)
     }
     "delete_if"[0] => fn delete_if(recv, args, block) {
+        guard_hash_frozen(recv)?;
         arity!(args, 0);
         hash_filter_bang(recv, args, block, false, false)
     }
@@ -551,6 +588,7 @@ builtin_methods! {
     }
     "clear"[0] => fn clear(recv, args, _block) {
         arity!(args, 0);
+        guard_hash_frozen(recv)?;
         recv_hash!(recv).lock().clear();
         Ok(recv.clone())
     }

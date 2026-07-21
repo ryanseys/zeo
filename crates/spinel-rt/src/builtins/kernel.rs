@@ -582,6 +582,14 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         }
         None => None,
     };
+    // A base only makes sense for a String argument -- CRuby raises rather than
+    // silently ignoring it for an Integer/Float/etc. (#2515).
+    if base.is_some() && !matches!(args[0], RubyValue::Str(_)) {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "base specified for non string value".to_string(),
+        ));
+    }
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(args[0].clone()),
         RubyValue::Float(f) => {
@@ -650,6 +658,12 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
         return None;
     }
     let clean: String = digits.chars().filter(|c| *c != '_').collect();
+    // Only one sign is allowed, and it was already consumed above -- a residual
+    // `+`/`-` (`"++7"`, `"+-7"`) is invalid, though `parse_bytes` would accept
+    // a leading `+`.
+    if clean.starts_with(['+', '-']) {
+        return None;
+    }
     let parsed = num_bigint::BigInt::parse_bytes(clean.as_bytes(), radix)?;
     Some(crate::builtins::integer::int_value(if negative {
         -parsed

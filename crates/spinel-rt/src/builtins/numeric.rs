@@ -388,6 +388,19 @@ builtin_methods! {
                     num_bigint::BigInt::from_f64(f.floor()).expect("finite float"),
                 )
             }
+            // A non-finite quotient (NaN/Infinity dividend or divisor) can't
+            // floor to an Integer -- CRuby's flo_divmod raises FloatDomainError
+            // named for the offending value, before the (mrb_int)floor cast.
+            RubyValue::Float(f) => {
+                let msg = if f.is_nan() {
+                    "NaN"
+                } else if f > 0.0 {
+                    "Infinity"
+                } else {
+                    "-Infinity"
+                };
+                return Err(crate::dispatch::raise_error("FloatDomainError", msg.to_string()));
+            }
             other => other,
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
