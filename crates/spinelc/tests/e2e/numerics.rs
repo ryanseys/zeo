@@ -634,6 +634,29 @@ fn pack_integer_directive_coerces_a_float() {
 }
 
 #[test]
+fn pack_base64_count_controls_wrapping() {
+    // `m0` is one unbroken run with no trailing newline (RFC 4648); a bare `m`
+    // wraps at 45 input bytes / 60 columns with a trailing newline; empty
+    // input yields "" for both.
+    let result = run_ruby(
+        r#"
+        p ["hello world"].pack("m0")
+        p [""].pack("m0")
+        p ["a\x00b".dup].pack("m0")
+        p ["hi"].pack("m")
+        p [""].pack("m")
+        p [("A" * 50)].pack("m")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"aGVsbG8gd29ybGQ=\"\n\"\"\n\"YQBi\"\n\"aGk=\\n\"\n\"\"\n\
+         \"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFB\\nQUFBQUE=\\n\"\n"
+    );
+}
+
+#[test]
 fn unpack_offset_keyword_starts_mid_string() {
     // `unpack`/`unpack1` accept `offset:`; `offset == bytesize` yields the
     // empty tail (nil), past-the-end raises, negative raises.

@@ -133,9 +133,18 @@ pub fn pack(elems: &[RubyValue], template: &str) -> Result<Vec<u8>, Signal> {
                 let s = next_str(elems, &mut idx)?;
                 pack_hex(&mut out, &s, d.kind == 'H', d.count);
             }
+            // `m` -- base64. The count is the input bytes per wrapped line
+            // (rounded down to a multiple of 3); `m0` is RFC 4648: one
+            // unbroken string with no trailing newline. A bare `m` (or `m1`/
+            // `m2`) defaults to 45 bytes/line (the classic 60-column MIME).
             'm' => {
                 let s = next_str(elems, &mut idx)?;
-                out.extend_from_slice(base64_encode(&s).as_bytes());
+                let line = match d.count {
+                    Count::Fixed(0) => 0,
+                    Count::Fixed(n) if n > 2 => n / 3 * 3,
+                    _ => 45,
+                };
+                base64_encode(&mut out, &s, line);
             }
             // `M` -- quoted-printable, `len` chars per line (default 72).
             'M' => {
@@ -519,26 +528,35 @@ fn next_str(elems: &[RubyValue], idx: &mut usize) -> Result<Vec<u8>, Signal> {
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::new();
+/// Base64-encode `data` into `out`. `line` is the number of INPUT bytes per
+/// wrapped line, each terminated with `\n` (CRuby chunks the *input*, so the
+/// only padding is on the final chunk); `line == 0` is `m0` -- one unbroken
+/// string with no trailing newline. Empty input yields nothing either way.
+fn base64_encode(out: &mut Vec<u8>, data: &[u8], line: usize) {
+    if line == 0 {
+        base64_chunk(out, data);
+        return;
+    }
+    let mut p = 0;
+    while p < data.len() {
+        let todo = (data.len() - p).min(line);
+        base64_chunk(out, &data[p..p + todo]);
+        out.push(b'\n');
+        p += todo;
+    }
+}
+
+/// One base64 run: encode every 3-byte group to 4 chars, `=`-padding a short
+/// final group. No line breaks -- the caller wraps.
+fn base64_chunk(out: &mut Vec<u8>, data: &[u8]) {
     for chunk in data.chunks(3) {
         let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
-        out.push(B64[(n >> 18) as usize & 63] as char);
-        out.push(B64[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+        out.push(B64[(n >> 18) as usize & 63]);
+        out.push(B64[(n >> 12) as usize & 63]);
+        out.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] } else { b'=' });
+        out.push(if chunk.len() > 2 { B64[n as usize & 63] } else { b'=' });
     }
-    // CRuby's `m` (default) breaks lines at 60 chars and ends with a newline.
-    let mut wrapped = String::new();
-    for line in out.as_bytes().chunks(60) {
-        wrapped.push_str(std::str::from_utf8(line).unwrap());
-        wrapped.push('\n');
-    }
-    if wrapped.is_empty() {
-        wrapped.push('\n');
-    }
-    wrapped
 }
 
 fn base64_decode(data: &[u8]) -> Vec<u8> {
@@ -802,6 +820,18 @@ mod tests {
         assert_eq!(pack(&floats(&[1.5]), "F").unwrap(), vec![0, 0, 192, 63]);
         assert_eq!(f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap(), "d").unwrap()), [3.5]);
         assert_eq!(f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap(), "E*").unwrap()), [2.0, 3.0]);
+    }
+
+    #[test]
+    fn base64_m0_has_no_wrapping_or_trailing_newline() {
+        // `m0` (RFC 4648): one unbroken run, `=` padding, no newline.
+        assert_eq!(pack(&[str_val("hi")], "m0").unwrap(), b"aGk=");
+        assert_eq!(pack(&[str_val("")], "m0").unwrap(), b"");
+        // Bare `m`: 45 bytes/line, each ending in `\n`; empty stays empty.
+        assert_eq!(pack(&[str_val("hi")], "m").unwrap(), b"aGk=\n");
+        assert_eq!(pack(&[str_val("")], "m").unwrap(), b"");
+        // A NUL byte survives (byte length, not C strlen).
+        assert_eq!(pack(&[str_val("a\0b")], "m0").unwrap(), b"YQBi");
     }
 
     #[test]
