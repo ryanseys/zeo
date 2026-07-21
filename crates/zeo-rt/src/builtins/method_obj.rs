@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use crate::builtins::{arg_error, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -54,9 +55,9 @@ fn resolve_method_name(name_arg: &RubyValue) -> Result<Symbol, Signal> {
     match name_arg {
         RubyValue::Symbol(s) => Ok(*s),
         RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        other => Err(raise_error(
-            "TypeError",
-            format!("{} is not a symbol nor a string", other.inspect_string()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
         )),
     }
 }
@@ -66,14 +67,10 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
     if !crate::dispatch::responds_to(recv.class_id(), name, true) {
         // CRuby's phrasing names the receiver's CLASS, not the receiver
         // ("undefined method 'nope' for class 'String'").
-        return Err(raise_error(
-            "NameError",
-            format!(
-                "undefined method '{}' for class '{}'",
-                name.name(),
-                crate::dispatch::class_name(recv.class_id())
-                    .unwrap_or_else(|| "Object".to_string())
-            ),
+        return Err(name_error!(
+            "undefined method '{}' for class '{}'",
+            name.name(),
+            crate::dispatch::class_name(recv.class_id()).unwrap_or_else(|| "Object".to_string())
         ));
     }
     Ok(RubyValue::Object(Arc::new(RMethod {
@@ -90,13 +87,10 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
 pub fn singleton_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = resolve_method_name(name_arg)?;
     if !crate::runtime_meta::object_has_singleton_method(recv, name) {
-        return Err(raise_error(
-            "NameError",
-            format!(
-                "undefined singleton method '{}' for '{}'",
-                name.name(),
-                recv.inspect_string()
-            ),
+        return Err(name_error!(
+            "undefined singleton method '{}' for '{}'",
+            name.name(),
+            recv.inspect_string()
         ));
     }
     Ok(RubyValue::Object(Arc::new(RMethod {
@@ -296,12 +290,9 @@ fn m_compose_backward(
 /// Proc, or any object answering `call` composes uniformly.
 fn compose(recv: &RubyValue, args: &[RubyValue], forward: bool) -> Result<RubyValue, Signal> {
     if args.len() != 1 {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 1)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1)",
+            args.len()
         ));
     }
     let this = recv.clone();
@@ -477,13 +468,10 @@ impl RubyObject for RUnboundMethod {
 pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValue, Signal> {
     let name = resolve_method_name(name_arg)?;
     if !crate::dispatch::responds_to(cid, name, true) {
-        return Err(raise_error(
-            "NameError",
-            format!(
-                "undefined method '{}' for class '{}'",
-                name.name(),
-                crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string())
-            ),
+        return Err(name_error!(
+            "undefined method '{}' for class '{}'",
+            name.name(),
+            crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string())
         ));
     }
     Ok(RubyValue::Object(Arc::new(RUnboundMethod {
@@ -505,12 +493,9 @@ fn recv_unbound(recv: &RubyValue) -> &RUnboundMethod {
 /// owning class (or a descendant).
 fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal> {
     if !crate::dispatch::is_a(obj.class_id(), um.class_id) {
-        return Err(raise_error(
-            "TypeError",
-            format!(
-                "bind argument must be an instance of {}",
-                crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
-            ),
+        return Err(type_error!(
+            "bind argument must be an instance of {}",
+            crate::dispatch::class_name(um.class_id).unwrap_or_else(|| "Object".to_string())
         ));
     }
     Ok(RubyValue::Object(Arc::new(RMethod {
@@ -598,12 +583,9 @@ fn u_bind(
     _b: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     if args.len() != 1 {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 1)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1)",
+            args.len()
         ));
     }
     bind_target(recv_unbound(recv), &args[0])
@@ -615,9 +597,8 @@ fn u_bind_call(
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     if args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            "wrong number of arguments (given 0, expected 1+)".to_string(),
+        return Err(arg_error!(
+            "wrong number of arguments (given 0, expected 1+)"
         ));
     }
     let um = recv_unbound(recv);

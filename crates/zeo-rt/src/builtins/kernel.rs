@@ -11,7 +11,10 @@
 //! numeric operator rows move into `integer.rs`/`float.rs` (stage C) -- it
 //! would shadow the post-walk numeric `<=>` today.
 
-use crate::builtins::{arity, block_or_enum, builtin_methods, need_block};
+use crate::builtins::{
+    arg_error, arity, block_or_enum, builtin_methods, local_jump_error, need_block, not_impl_error,
+    type_error,
+};
 use crate::{RubyValue, Signal, Symbol};
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
@@ -99,10 +102,7 @@ builtin_methods! {
                 }
             }
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-                ))
+                return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))
             }
         }
         Ok(args[0].clone())
@@ -136,8 +136,7 @@ builtin_methods! {
     // is a separate parse-level mixin; this row is the method-call form only.
     "extend" => fn extend_obj(recv, args, _block) {
         if args.is_empty() {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError", "wrong number of arguments (given 0, expected 1+)".to_string()));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
         for m in args {
             crate::runtime_meta::runtime_extend(recv, m)?;
@@ -167,10 +166,7 @@ builtin_methods! {
         arity!(args, 1..=4);
         if let Some(binding) = args.get(1) {
             if !binding.is_nil() {
-                return Err(crate::dispatch::raise_error(
-                    "NotImplementedError",
-                    "eval with an explicit binding is not supported yet".to_string(),
-                ));
+                return Err(not_impl_error!("eval with an explicit binding is not supported yet"));
             }
         }
         crate::eval_value(args[0].clone(), recv.clone(), 0)
@@ -187,7 +183,7 @@ builtin_methods! {
             .cloned()
             .unwrap_or_else(|| RubyValue::Array(crate::array_new(Vec::new())));
         let blk = block.ok_or_else(|| {
-            crate::dispatch::raise_error("LocalJumpError", "no block given (yield)".to_string())
+            local_jump_error!("no block given (yield)")
         })?;
         crate::kernel_catch(tag, blk)
     }
@@ -288,10 +284,7 @@ builtin_methods! {
         arity!(args, 0);
         match block {
             Some(b @ RubyValue::Proc(_)) => Ok(b),
-            _ => Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "tried to create Proc object without a block".to_string(),
-            )),
+            _ => Err(arg_error!("tried to create Proc object without a block")),
         }
     }
     "dup" => fn dup(recv, args, _block) {
@@ -329,10 +322,7 @@ builtin_methods! {
                     | RubyValue::Symbol(_)
             )
         {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("can't unfreeze {}", crate::builtins::class_name_of(recv)),
-            ));
+            return Err(arg_error!("can't unfreeze {}", crate::builtins::class_name_of(recv)));
         }
         let copy_frozen = freeze != Some(false);
         let copy = match recv {
@@ -394,20 +384,14 @@ builtin_methods! {
     "is_a?" | "kind_of?" => fn is_a_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "class or module required".to_string(),
-            ));
+            return Err(type_error!("class or module required"));
         };
         Ok(RubyValue::Bool(crate::dispatch::is_a(recv.class_id(), *target)))
     }
     "instance_of?" => fn instance_of_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Class(target) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "class or module required".to_string(),
-            ));
+            return Err(type_error!("class or module required"));
         };
         Ok(RubyValue::Bool(recv.class_id() == *target))
     }
@@ -419,10 +403,7 @@ builtin_methods! {
             RubyValue::Symbol(s) => *s,
             RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("{} is not a symbol nor a string", other.inspect_string()),
-                ))
+                return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
         let include_all = args.get(1).is_some_and(|v| v.truthy());
@@ -556,10 +537,7 @@ builtin_methods! {
             Some(RubyValue::Symbol(s)) => s.name().as_str().to_string(),
             Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             Some(other) => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("{} is not a symbol nor a string", other.inspect_string()),
-                ))
+                return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
         let rest = if args.is_empty() { &[] } else { &args[1..] };
@@ -593,12 +571,9 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let base = match args.get(1) {
         Some(RubyValue::Int(b)) => Some(*b as u32),
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
             ));
         }
         None => None,
@@ -606,10 +581,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // A base only makes sense for a String argument -- CRuby raises rather than
     // silently ignoring it for an Integer/Float/etc. (#2515).
     if base.is_some() && !matches!(args[0], RubyValue::Str(_)) {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "base specified for non string value".to_string(),
-        ));
+        return Err(arg_error!("base specified for non string value"));
     }
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(args[0].clone()),
@@ -628,19 +600,12 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         RubyValue::Rational(r) => Ok(crate::builtins::integer::int_value(&r.num / &r.den)),
         RubyValue::Str(s) => {
             let text = s.lock().to_utf8_lossy().into_owned();
-            parse_integer_strict(&text, base).ok_or_else(|| {
-                crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("invalid value for Integer(): {:?}", text),
-                )
-            })
+            parse_integer_strict(&text, base)
+                .ok_or_else(|| arg_error!("invalid value for Integer(): {:?}", text))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -717,19 +682,11 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 // C99 hex-float (`"0x1p4"` = 16.0), which `str::parse` rejects.
                 .or_else(|| parse_hex_float(&clean))
                 .map(RubyValue::Float)
-                .ok_or_else(|| {
-                    crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!("invalid value for Float(): {:?}", text),
-                    )
-                })
+                .ok_or_else(|| arg_error!("invalid value for Float(): {:?}", text))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Float",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Float",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -782,12 +739,9 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             // `"2.5"`, `"6"`) -- its DECIMAL value, not its Float value, so
             // `"2.5"` is exactly `5/2`.
             RubyValue::Str(s) => parse_rational_string(&s.lock().to_utf8_lossy()),
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into Rational",
-                    crate::builtins::convert_name_of(other)
-                ),
+            other => Err(type_error!(
+                "can't convert {} into Rational",
+                crate::builtins::convert_name_of(other)
             )),
         }
     };
@@ -815,10 +769,7 @@ pub fn kernel_complex(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// The `ArgumentError` CRuby's numeric-string converters raise on an
 /// unparseable value: `invalid value for convert(): "<original>"`.
 fn convert_error(original: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("invalid value for convert(): {original:?}"),
-    )
+    arg_error!("invalid value for convert(): {original:?}")
 }
 
 /// Parse a rational literal string to its `(numerator, denominator)` DECIMAL
@@ -938,12 +889,9 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             Ok(RubyValue::Hash(crate::hash_new(Vec::new())))
         }
         RubyValue::Hash(_) => Ok(args[0].clone()),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Hash",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Hash",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -1037,10 +985,7 @@ pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// `Kernel#format`/`sprintf`.
 pub fn kernel_format(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let Some((RubyValue::Str(template), rest)) = args.split_first() else {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            "no format string given".to_string(),
-        ));
+        return Err(type_error!("no format string given"));
     };
     let template = template.lock().to_utf8_lossy().into_owned();
     Ok(RubyValue::Str(crate::string_new(
@@ -1130,9 +1075,9 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             return kernel_rand_range(r, lo.as_deref(), hi.as_deref(), *exclusive);
         }
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("invalid argument - {}", other.to_display_string()),
+            return Err(arg_error!(
+                "invalid argument - {}",
+                other.to_display_string()
             ));
         }
     })
@@ -1164,10 +1109,7 @@ fn kernel_rand_range(
         }
         _ => {
             let (Some(a), Some(b)) = (num_to_f64(lo), num_to_f64(hi)) else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    "no implicit conversion into Float".to_string(),
-                ));
+                return Err(type_error!("no implicit conversion into Float"));
             };
             if b < a || (b == a && exclusive) {
                 return Ok(RubyValue::Nil);
@@ -1260,12 +1202,9 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             panic!("Kernel#sleep without a duration (sleep forever) isn't supported (spike scope)")
         }
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into time interval",
-                    crate::builtins::class_name_of(other)
-                ),
+            return Err(type_error!(
+                "can't convert {} into time interval",
+                crate::builtins::class_name_of(other)
             ));
         }
     };

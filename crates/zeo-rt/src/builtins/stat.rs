@@ -11,8 +11,8 @@
 use std::sync::Arc;
 
 use crate::Signal;
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ClassId, FILE_STAT_CLASS};
 
@@ -53,8 +53,7 @@ fn stat_value(st: libc::stat) -> RubyValue {
 
 /// `File.stat(path)` (follows a final symlink) / `File.lstat(path)` (doesn't).
 pub fn stat_from_path(path: &str, follow: bool) -> Result<RubyValue, Signal> {
-    let c = std::ffi::CString::new(path)
-        .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))?;
+    let c = std::ffi::CString::new(path).map_err(|_| arg_error!("string contains null byte"))?;
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     // SAFETY: `c` is a valid NUL-terminated path; `st` is a live `stat` buffer.
     let rc = unsafe {
@@ -95,8 +94,8 @@ fn recv_stat(recv: &RubyValue) -> Result<&RStat, Signal> {
         RubyValue::Object(o) => o
             .as_any()
             .downcast_ref::<RStat>()
-            .ok_or_else(|| raise_error("TypeError", "not a File::Stat".to_string())),
-        _ => Err(raise_error("TypeError", "not a File::Stat".to_string())),
+            .ok_or_else(|| type_error!("not a File::Stat")),
+        _ => Err(type_error!("not a File::Stat")),
     }
 }
 

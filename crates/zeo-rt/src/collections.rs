@@ -17,6 +17,7 @@
 //! not hand-implemented here.
 
 use crate::RubyValue;
+use crate::builtins::type_error;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -373,14 +374,11 @@ pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) -> Result<(
                     // A `to_a` that doesn't answer an Array is CRuby's
                     // "can't convert X to Array" TypeError.
                     bad => {
-                        return Err(crate::dispatch::raise_error(
-                            "TypeError",
-                            format!(
-                                "can't convert {} to Array ({}#to_a gives {})",
-                                crate::builtins::class_name_of(other),
-                                crate::builtins::class_name_of(other),
-                                crate::builtins::class_name_of(&bad)
-                            ),
+                        return Err(type_error!(
+                            "can't convert {} to Array ({}#to_a gives {})",
+                            crate::builtins::class_name_of(other),
+                            crate::builtins::class_name_of(other),
+                            crate::builtins::class_name_of(&bad)
                         ));
                     }
                 }

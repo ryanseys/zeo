@@ -4,7 +4,7 @@
 //! bytes and the constant-time comparison helpers. The `Cipher`/`PKey`/`SSL`
 //! surface still needs an FFI or rustls backend (see docs/EXTENSIONS.md).
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 
@@ -12,12 +12,9 @@ use crate::{RubyValue, Signal};
 fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -51,10 +48,10 @@ builtin_methods! {
     "random_bytes" => fn random_bytes(_recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         if *n < 0 {
-            return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
+            return Err(arg_error!("negative string size (or size too big)"));
         }
         let mut buf = vec![0u8; *n as usize];
         fill_random(&mut buf)?;
@@ -66,7 +63,7 @@ builtin_methods! {
         arity!(args, 2);
         let (a, b) = (str_bytes(&args[0])?, str_bytes(&args[1])?);
         if a.len() != b.len() {
-            return Err(raise_error("ArgumentError", "inputs must be of equal length".to_string()));
+            return Err(arg_error!("inputs must be of equal length"));
         }
         Ok(RubyValue::Bool(constant_time_eq(&a, &b)))
     }

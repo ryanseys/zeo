@@ -36,7 +36,10 @@ use std::sync::{Arc, LazyLock, RwLock};
 use parking_lot::Mutex;
 use zeo_abi::{ClassId, DATA_CLASS, STRUCT_CLASS};
 
-use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::builtins::{
+    arg_error, arity, block_or_enum, builtin_methods, frozen_error, index_error, name_error,
+    type_error,
+};
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -217,27 +220,21 @@ fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
         RubyValue::Int(i) => {
             let idx = if *i < 0 { *i + n as i64 } else { *i };
             if idx < 0 || idx as usize >= n {
-                return Err(raise_error(
-                    "IndexError",
-                    format!("offset {i} too large for struct(size:{n})"),
-                ));
+                return Err(index_error!("offset {i} too large for struct(size:{n})"));
             }
             Ok(idx as usize)
         }
         RubyValue::Symbol(s) => meta
             .index_of(*s)
-            .ok_or_else(|| raise_error("NameError", format!("no member '{}' in struct", s.name()))),
+            .ok_or_else(|| name_error!("no member '{}' in struct", s.name())),
         RubyValue::Str(s) => {
             let name = s.lock().to_utf8_lossy().into_owned();
             meta.index_of(Symbol::intern(&name))
-                .ok_or_else(|| raise_error("NameError", format!("no member '{name}' in struct")))
+                .ok_or_else(|| name_error!("no member '{name}' in struct"))
         }
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                class_name(other.class_id()).unwrap_or_default()
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            class_name(other.class_id()).unwrap_or_default()
         )),
     }
 }
@@ -408,10 +405,7 @@ builtin_methods! {
 
     "dig" => fn dig(recv, args, _block) {
         if args.is_empty() {
-            return Err(raise_error(
-                "ArgumentError",
-                "wrong number of arguments (given 0, expected 1+)".to_string(),
-            ));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
         let value = {
             let i = member_index(recv, &args[0])?;
@@ -492,15 +486,12 @@ builtin_methods! {
         if let Some(RubyValue::Hash(h)) = args.last() {
             for (k, v) in h.lock().values() {
                 let RubyValue::Symbol(s) = k else {
-                    return Err(raise_error("ArgumentError", "unknown keyword".to_string()));
+                    return Err(arg_error!("unknown keyword"));
                 };
                 match meta.index_of(*s) {
                     Some(i) => slots[i] = v.clone(),
                     None => {
-                        return Err(raise_error(
-                            "ArgumentError",
-                            format!("unknown keyword: :{}", s.name()),
-                        ))
+                        return Err(arg_error!("unknown keyword: :{}", s.name()))
                     }
                 }
             }
@@ -532,7 +523,7 @@ builtin_methods! {
 
 fn frozen_error(recv: &RubyValue) -> Signal {
     let name = class_name(recv.class_id()).unwrap_or_else(|| "Struct".to_string());
-    raise_error("FrozenError", format!("can't modify frozen {name}"))
+    frozen_error!("can't modify frozen {name}")
 }
 
 /// The default member-setter shared by `Struct#initialize`/`Data#initialize`:
@@ -559,10 +550,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
         let mut seen = vec![false; n];
         for (k, v) in h.lock().values() {
             let RubyValue::Symbol(s) = k else {
-                return Err(raise_error(
-                    "ArgumentError",
-                    "keyword must be a symbol".to_string(),
-                ));
+                return Err(arg_error!("keyword must be a symbol"));
             };
             match meta.index_of(*s) {
                 Some(i) => {
@@ -570,10 +558,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
                     seen[i] = true;
                 }
                 None => {
-                    return Err(raise_error(
-                        "ArgumentError",
-                        format!("unknown keyword: :{}", s.name()),
-                    ));
+                    return Err(arg_error!("unknown keyword: :{}", s.name()));
                 }
             }
         }
@@ -591,10 +576,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
                 } else {
                     "keywords"
                 };
-                return Err(raise_error(
-                    "ArgumentError",
-                    format!("missing {word}: {}", missing.join(", ")),
-                ));
+                return Err(arg_error!("missing {word}: {}", missing.join(", ")));
             }
         }
         return Ok(());
@@ -603,12 +585,9 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
     // Positional. A plain Struct nil-fills a short arg list; keyword_init and
     // Data require exact arity.
     if meta.keyword_init == Some(true) && !args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 0)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 0)",
+            args.len()
         ));
     }
     if args.len() > n || (is_data && args.len() != n && !args.is_empty()) {
@@ -636,10 +615,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
         } else {
             "keywords"
         };
-        return Err(raise_error(
-            "ArgumentError",
-            format!("missing {word}: {}", missing.join(", ")),
-        ));
+        return Err(arg_error!("missing {word}: {}", missing.join(", ")));
     }
     let mut slots = inst.slots.lock();
     for (i, a) in args.iter().enumerate() {
@@ -699,7 +675,7 @@ fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Sig
                         continue;
                     }
                 }
-                return Err(raise_error("ArgumentError", "unknown keyword".to_string()));
+                return Err(arg_error!("unknown keyword"));
             }
             rest = &rest[..rest.len() - 1];
         }
@@ -711,17 +687,14 @@ fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Sig
             RubyValue::Symbol(s) => *s,
             RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
             other => {
-                return Err(raise_error(
-                    "TypeError",
-                    format!("{} is not a symbol nor a string", other.inspect_string()),
+                return Err(type_error!(
+                    "{} is not a symbol nor a string",
+                    other.inspect_string()
                 ));
             }
         };
         if members.contains(&sym) {
-            return Err(raise_error(
-                "ArgumentError",
-                format!("duplicate member: {}", sym.name()),
-            ));
+            return Err(arg_error!("duplicate member: {}", sym.name()));
         }
         members.push(sym);
     }

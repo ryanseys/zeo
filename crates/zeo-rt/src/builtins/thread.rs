@@ -5,7 +5,7 @@
 //! so both paths agree on join/value semantics. The reflection/state rows
 //! (name/status/`[]`/thread-variables) live only here.
 
-use crate::dispatch::raise_error;
+use crate::builtins::type_error;
 use crate::thread::{
     self, thread_alive, thread_kill, thread_list, thread_outcome, thread_raise, thread_status,
 };
@@ -17,9 +17,9 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
     match v {
         RubyValue::Symbol(s) => Ok(*s),
         RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        other => Err(raise_error(
-            "TypeError",
-            format!("{} is not a symbol nor a string", other.inspect_string()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
         )),
     }
 }
@@ -94,12 +94,9 @@ fn t_set_name(
         RubyValue::Nil => None,
         RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
         other => {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };

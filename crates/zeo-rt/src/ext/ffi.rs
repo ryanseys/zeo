@@ -20,8 +20,8 @@
 //! marshaling has). (2) `#address`/`#inspect` expose a real heap address for an
 //! owned buffer, so they are non-deterministic and never golden-tested.
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, builtin_methods, index_error, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, Symbol};
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::os::raw::c_char;
@@ -129,9 +129,8 @@ impl RPointer {
     fn check_bounds(&self, off: usize, len: usize) -> Result<(), Signal> {
         if let Some(size) = self.size {
             if off + len > size {
-                return Err(raise_error(
-                    "IndexError",
-                    format!("Memory access offset={off} size={len} out of bounds (total {size})"),
+                return Err(index_error!(
+                    "Memory access offset={off} size={len} out of bounds (total {size})"
                 ));
             }
         }
@@ -359,12 +358,9 @@ fn write_float_m(
 fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -440,10 +436,7 @@ builtin_methods! {
     "write_pointer" | "put_pointer" => fn write_pointer(recv, args, _b) {
         arity!(args, 1..=2);
         let (off, target) = if args.len() == 2 { (off_arg(args, 0)?, &args[1]) } else { (0, &args[0]) };
-        let addr = address_of(target).ok_or_else(|| raise_error(
-            "TypeError",
-            "wrong argument type (expected a pointer)".to_string(),
-        ))?;
+        let addr = address_of(target).ok_or_else(|| type_error!("wrong argument type (expected a pointer)"))?;
         let p = ptr_of(recv);
         p.check_bounds(off, 8)?;
         unsafe { p.write_int(off, 8, addr as i64) };
@@ -648,12 +641,9 @@ fn write_float_array(
 fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
     match v {
         RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Array",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Array",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -715,14 +705,12 @@ builtin_methods! {
 fn memptr_elem_size(v: &RubyValue) -> Result<usize, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n as usize),
-        RubyValue::Symbol(s) => type_size(&s.name())
-            .ok_or_else(|| raise_error("ArgumentError", format!("unknown FFI type {}", s.name()))),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "cannot derive a size from {}",
-                crate::builtins::class_name_of(other)
-            ),
+        RubyValue::Symbol(s) => {
+            type_size(&s.name()).ok_or_else(|| arg_error!("unknown FFI type {}", s.name()))
+        }
+        other => Err(type_error!(
+            "cannot derive a size from {}",
+            crate::builtins::class_name_of(other)
         )),
     }
 }

@@ -22,6 +22,15 @@
 //! increment; a local ASSIGNED inside an eval is visible to later statements
 //! of the SAME eval, held in `Env::locals`.
 
+use crate::builtins::type_error;
+// Feature-split imports: the interpreter (`mod imp`, eval-vm on) raises
+// NameError for unresolved constants; the feature-off stub raises
+// NotImplementedError. Each import exists only where its arm compiles, or
+// the other build flags it unused.
+#[cfg(feature = "eval-vm")]
+use crate::builtins::name_error;
+#[cfg(not(feature = "eval-vm"))]
+use crate::builtins::not_impl_error;
 use crate::{RubyValue, Signal};
 
 /// Evaluate `src` as a standalone chunk of Ruby with `self` bound to
@@ -40,9 +49,8 @@ pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyVa
     #[cfg(not(feature = "eval-vm"))]
     {
         let _ = (src, self_val, box_id);
-        Err(crate::dispatch::raise_error(
-            "NotImplementedError",
-            "string eval requires the eval VM (build zeo-rt with --features eval-vm)".to_string(),
+        Err(not_impl_error!(
+            "string eval requires the eval VM (build zeo-rt with --features eval-vm)"
         ))
     }
 }
@@ -58,12 +66,9 @@ pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<Ru
             let code = s.lock().to_utf8_lossy().into_owned();
             eval_string(&code, self_val, box_id)
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -230,9 +235,9 @@ mod imp {
                 Some(parent) => match eval_node(&parent, env)? {
                     RubyValue::Class(cid) => cid.0,
                     other => {
-                        return Err(crate::dispatch::raise_error(
-                            "TypeError",
-                            format!("{} is not a class/module", other.inspect_string()),
+                        return Err(type_error!(
+                            "{} is not a class/module",
+                            other.inspect_string()
                         ));
                     }
                 },
@@ -452,10 +457,7 @@ mod imp {
                 return Ok(RubyValue::Class(cid));
             }
         }
-        Err(crate::dispatch::raise_error(
-            "NameError",
-            format!("uninitialized constant {name}"),
-        ))
+        Err(name_error!("uninitialized constant {name}"))
     }
 
     fn truthy(v: &RubyValue) -> bool {

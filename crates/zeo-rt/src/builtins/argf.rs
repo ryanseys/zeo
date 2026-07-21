@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
 use crate::Signal;
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arity, builtin_methods, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::value::RubyValue;
 use zeo_abi::{ARGF_CLASS, ClassId};
 
@@ -71,8 +71,8 @@ fn recv_argf(recv: &RubyValue) -> Result<&RArgf, Signal> {
         RubyValue::Object(o) => o
             .as_any()
             .downcast_ref::<RArgf>()
-            .ok_or_else(|| raise_error("TypeError", "not ARGF".to_string())),
-        _ => Err(raise_error("TypeError", "not ARGF".to_string())),
+            .ok_or_else(|| type_error!("not ARGF")),
+        _ => Err(type_error!("not ARGF")),
     }
 }
 

@@ -6,6 +6,7 @@
 
 use crate::RubyValue;
 use crate::builtins::builtin_methods;
+use crate::builtins::{arg_error, type_error};
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
@@ -111,13 +112,8 @@ builtin_methods! {
         let p = recv_proc(recv).clone();
         let n = match args.first() {
             Some(RubyValue::Int(n)) => *n,
-            Some(other) => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
-            )),
+            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer",
+                    crate::builtins::convert_name_of(other))),
             // A negative (optional/rest) arity has no fixed slot count to
             // curry toward -- CRuby uses `-arity - 1`, the required count.
             None => {
@@ -168,10 +164,7 @@ builtin_methods! {
     "new" => fn new_m(_recv, _args, block) {
         match block {
             Some(p @ RubyValue::Proc(_)) => Ok(p),
-            _ => Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "tried to create Proc object without a block".to_string(),
-            )),
+            _ => Err(arg_error!("tried to create Proc object without a block")),
         }
     }
 }

@@ -9,7 +9,7 @@
 //! (plan E1+), paths become a real encoding concern; today they round-trip
 //! through `String` and non-UTF-8 paths are out of reach.
 
-use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, type_error};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 
@@ -52,12 +52,9 @@ pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
                     return Ok(s.lock().to_utf8_lossy().into_owned());
                 }
             }
-            Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String (in `{method}')",
-                    crate::builtins::convert_name_of(other)
-                ),
+            Err(type_error!(
+                "no implicit conversion of {} into String (in `{method}')",
+                crate::builtins::convert_name_of(other)
             ))
         }
     }
@@ -115,8 +112,7 @@ fn read_encodings(
         crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern(name)))
     };
     let resolve = |name: &str| {
-        crate::encoding::find(name)
-            .ok_or_else(|| raise_error("ArgumentError", format!("unknown encoding name - {name}")))
+        crate::encoding::find(name).ok_or_else(|| arg_error!("unknown encoding name - {name}"))
     };
     if let RubyValue::Str(m) = get("mode") {
         if m.lock().to_utf8_lossy().contains('b') {
@@ -338,9 +334,9 @@ fn expand_path_of(path: &str, base: Option<&str>) -> Result<String, Signal> {
         if rest.is_empty() || rest.starts_with('/') {
             std::env::var("HOME").unwrap_or_default()
         } else {
-            return Err(raise_error(
-                "ArgumentError",
-                format!("can't find user {}", rest.split('/').next().unwrap_or("")),
+            return Err(arg_error!(
+                "can't find user {}",
+                rest.split('/').next().unwrap_or("")
             ));
         }
     } else {
@@ -419,12 +415,9 @@ fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
         other => {
             match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
                 RubyValue::Int(i) => Ok(i as libc::time_t),
-                _ => Err(raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)
-                    ),
+                _ => Err(type_error!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::convert_name_of(other)
                 )),
             }
         }
@@ -542,10 +535,7 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
         // `x` requires the file NOT to exist.
         "wx" | "w+x" => o.write(true).create_new(true),
         _ => {
-            return Err(raise_error(
-                "ArgumentError",
-                format!("invalid access mode {mode}"),
-            ));
+            return Err(arg_error!("invalid access mode {mode}"));
         }
     };
     Ok(o)
@@ -674,7 +664,7 @@ builtin_methods! {
         arity!(args, 2);
         let path = path_arg(&args[0], "truncate")?;
         let RubyValue::Int(len) = &args[1] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         let f = std::fs::OpenOptions::new().write(true).open(&path)
             .map_err(|e| raise_errno(&e, "truncate", &path))?;
@@ -932,19 +922,16 @@ builtin_methods! {
     // (`libc::mkfifo`, the process umask applies to `mode` as usual).
     "mkfifo" => fn file_mkfifo(_recv, args, _block) {
         if args.is_empty() || args.len() > 2 {
-            return Err(raise_error(
-                "ArgumentError",
-                format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
-            ));
+            return Err(arg_error!("wrong number of arguments (given {}, expected 1..2)", args.len()));
         }
         let path = path_arg(&args[0], "mkfifo")?;
         let mode: libc::mode_t = match args.get(1) {
             Some(RubyValue::Int(m)) => *m as libc::mode_t,
-            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+            Some(_) => return Err(type_error!("no implicit conversion into Integer")),
             None => 0o666,
         };
         let c = std::ffi::CString::new(path.clone())
-            .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))?;
+            .map_err(|_| arg_error!("string contains null byte"))?;
         // SAFETY: `c` is a valid NUL-terminated path.
         if unsafe { libc::mkfifo(c.as_ptr(), mode) } != 0 {
             return Err(raise_errno(&std::io::Error::last_os_error(), "mkfifo", &path));
@@ -962,7 +949,7 @@ builtin_methods! {
     // modification times; answers the number of files touched.
     "utime" => fn file_utime(_recv, args, _block) {
         if args.len() < 2 {
-            return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 2+)".to_string()));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 2+)"));
         }
         let atime = time_secs(&args[0])?;
         let mtime = time_secs(&args[1])?;
@@ -973,7 +960,7 @@ builtin_methods! {
         for p in &args[2..] {
             let path = path_arg(p, "utime")?;
             let c = std::ffi::CString::new(path.clone())
-                .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))?;
+                .map_err(|_| arg_error!("string contains null byte"))?;
             // SAFETY: `c` is a valid NUL-terminated path, `tv` a 2-element array.
             if unsafe { libc::utimes(c.as_ptr(), tv.as_ptr()) } != 0 {
                 return Err(raise_errno(&std::io::Error::last_os_error(), "utime", &path));
@@ -989,8 +976,7 @@ builtin_methods! {
             Some(v) => {
                 let new = match v {
                     RubyValue::Int(m) => *m as libc::mode_t,
-                    other => return Err(raise_error("TypeError",
-                        format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))),
+                    other => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
                 };
                 Ok(RubyValue::Int(unsafe { libc::umask(new) } as i64))
             }
@@ -1007,13 +993,10 @@ builtin_methods! {
     "chmod" => fn file_chmod(_recv, args, _block) {
         use std::os::unix::fs::PermissionsExt;
         if args.is_empty() {
-            return Err(raise_error("ArgumentError", "wrong number of arguments (given 0, expected 1+)".to_string()));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
         let RubyValue::Int(mode) = &args[0] else {
-            return Err(raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])),
-            ));
+            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
         };
         for p in &args[1..] {
             let path = path_arg(p, "chmod")?;

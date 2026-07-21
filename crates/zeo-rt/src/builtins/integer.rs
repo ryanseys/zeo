@@ -10,7 +10,7 @@
 //! result that fits back into `Int`, so a big payload never aliases a
 //! fixnum value (equality/hashing/matching stay canonical).
 
-use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -290,9 +290,8 @@ fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal
         (to_bigint(&args[0]), Some(to_bigint(&args[1])))
     } else if let RubyValue::Range(begin, end, exclusive) = &args[0] {
         let Some(b) = begin else {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "The beginless range for Integer#[] results in infinity".to_string(),
+            return Err(arg_error!(
+                "The beginless range for Integer#[] results in infinity"
             ));
         };
         let start = to_bigint(b);
@@ -351,10 +350,7 @@ pub fn int_shl(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
         return int_shr(a, &int_value(-amount));
     }
     let Some(amount) = amount.to_u32() else {
-        return Err(crate::dispatch::raise_error(
-            "RangeError",
-            "shift width too big".to_string(),
-        ));
+        return Err(range_error!("shift width too big"));
     };
     if let RubyValue::Int(x) = a {
         if let Some(r) = x.checked_shl(amount) {
@@ -416,12 +412,9 @@ pub fn int_cmp(a: &RubyValue, b: &RubyValue) -> i64 {
 /// operand -- CRuby's exact shape (`5 + "x"` -> `String can't be coerced
 /// into Integer`).
 fn coerce_error(arg: &RubyValue, into: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "{} can't be coerced into {into}",
-            crate::builtins::class_name_of(arg)
-        ),
+    type_error!(
+        "{} can't be coerced into {into}",
+        crate::builtins::class_name_of(arg)
     )
 }
 
@@ -565,10 +558,7 @@ builtin_methods! {
             ],
             RubyValue::Int(_) | RubyValue::BigInt(_) => vec![args[0].clone(), recv.clone()],
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("can't coerce {} into Integer", crate::builtins::class_name_of(other)),
-                ))
+                return Err(type_error!("can't coerce {} into Integer", crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Array(crate::array_new(pair)))
@@ -615,10 +605,7 @@ builtin_methods! {
                     other => Ok(other),
                 }
             }
-            other => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("{} can't be coerced into Integer", crate::builtins::class_name_of(other)),
-            )),
+            other => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(other))),
         }
     }
     "fdiv"[1] => fn fdiv(recv, args, _block) {
@@ -633,10 +620,7 @@ builtin_methods! {
         };
         match (to_f(recv), to_f(&args[0])) {
             (Some(a), Some(b)) => Ok(RubyValue::Float(a / b)),
-            _ => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("{} can't be coerced into Integer", crate::builtins::class_name_of(&args[0])),
-            )),
+            _ => Err(type_error!("{} can't be coerced into Integer", crate::builtins::class_name_of(&args[0]))),
         }
     }
     "abs"[0] | "magnitude"[0] => fn abs(recv, args, _block) {
@@ -675,14 +659,11 @@ builtin_methods! {
     "chr" => fn chr(recv, args, _block) {
         arity!(args, 0..=1);
         let RubyValue::Int(i) = recv else {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                format!("{} out of char range", recv.to_display_string()),
-            ));
+            return Err(range_error!("{} out of char range", recv.to_display_string()));
         };
         let i = *i;
         let range_err = || {
-            crate::dispatch::raise_error("RangeError", format!("{i} out of char range"))
+            range_error!("{i} out of char range")
         };
         let (bytes, enc) = match args.first() {
             None => {
@@ -731,10 +712,7 @@ builtin_methods! {
         let base = match args.first() {
             Some(RubyValue::Int(b)) if (2..=36).contains(b) => *b as u32,
             Some(RubyValue::Int(b)) => {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("invalid radix {b}"),
-                ))
+                return Err(arg_error!("invalid radix {b}"))
             }
             Some(other) => {
                 return Err(coerce_error(other, "Integer"));
@@ -755,13 +733,10 @@ builtin_methods! {
                 // CRuby distinguishes a NEGATIVE base ("negative radix") from
                 // a 0/1 base ("invalid radix N").
                 if b.is_negative() {
-                    return Err(crate::dispatch::raise_error("ArgumentError", "negative radix".to_string()));
+                    return Err(arg_error!("negative radix"));
                 }
                 if b < BigInt::from(2) {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!("invalid radix {b}"),
-                    ));
+                    return Err(arg_error!("invalid radix {b}"));
                 }
                 b
             }
@@ -846,17 +821,11 @@ builtin_methods! {
                 let (RubyValue::Int(_) | RubyValue::BigInt(_), RubyValue::Int(_) | RubyValue::BigInt(_)) =
                     (&args[0], &args[1])
                 else {
-                    return Err(crate::dispatch::raise_error(
-                        "TypeError",
-                        "Integer#pow() 2nd argument not allowed unless all arguments are integers".to_string(),
-                    ));
+                    return Err(type_error!("Integer#pow() 2nd argument not allowed unless all arguments are integers"));
                 };
                 let e = to_bigint(&args[0]);
                 if e.is_negative() {
-                    return Err(crate::dispatch::raise_error(
-                        "RangeError",
-                        "Integer#pow() 1st argument cannot be negative when 2nd argument specified".to_string(),
-                    ));
+                    return Err(range_error!("Integer#pow() 1st argument cannot be negative when 2nd argument specified"));
                 }
                 let m = to_bigint(&args[1]);
                 if m.is_zero() {
@@ -1009,13 +978,8 @@ builtin_methods! {
                 num_bigint::BigInt::from_f64(f.trunc()).unwrap_or_default()
             }
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)
-                    ),
-                ))
+                return Err(type_error!("no implicit conversion of {} into Integer",
+                        crate::builtins::convert_name_of(other)))
             }
         };
         if n.is_negative() {

@@ -11,16 +11,14 @@
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 
-use crate::dispatch::{class_name, raise_error};
+use crate::builtins::{arg_error, type_error};
+use crate::dispatch::class_name;
 use crate::signal::Signal;
 use crate::value::RubyValue;
 
 fn type_err(what: &str, v: &RubyValue) -> Signal {
     let got = class_name(v.class_id()).unwrap_or_else(|| "?".to_string());
-    raise_error(
-        "TypeError",
-        format!("cannot convert {got} into an FFI {what}"),
-    )
+    type_error!("cannot convert {got} into an FFI {what}")
 }
 
 /// A Ruby value bound to a C integer argument (`:int`/`:long`/`:uintN`/…). The
@@ -54,8 +52,7 @@ pub fn to_cstring(v: &RubyValue) -> Result<CString, Signal> {
     match v {
         RubyValue::Str(s) => {
             let bytes = s.lock().bytes().to_vec();
-            CString::new(bytes)
-                .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))
+            CString::new(bytes).map_err(|_| arg_error!("string contains null byte"))
         }
         _ => Err(type_err("string", v)),
     }
@@ -100,7 +97,7 @@ pub fn enum_to_int(v: &RubyValue, members: &[(&str, i64)]) -> Result<i64, Signal
                 .iter()
                 .find(|(n, _)| *n == name.as_str())
                 .map(|(_, i)| *i)
-                .ok_or_else(|| raise_error("ArgumentError", format!("invalid enum value, :{name}")))
+                .ok_or_else(|| arg_error!("invalid enum value, :{name}"))
         }
         RubyValue::Int(i) => Ok(*i),
         _ => Err(type_err("enum", v)),

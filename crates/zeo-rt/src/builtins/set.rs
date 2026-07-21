@@ -6,8 +6,8 @@
 //! iteration method (`map`/`select`/`count`/...) drives the `each` row below;
 //! only the set-specific surface lives here.
 
-use crate::builtins::{arity, block_or_enum, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, frozen_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -128,18 +128,12 @@ fn arg_elements(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
             // a non-enumerable (an Integer, ...) is an ArgumentError, not the
             // NoMethodError a bare `to_a` send would surface.
             if !crate::dispatch::responds_to_value(other, crate::Symbol::intern("each"), false) {
-                return Err(raise_error(
-                    "ArgumentError",
-                    "value must be enumerable".to_string(),
-                ));
+                return Err(arg_error!("value must be enumerable"));
             }
             let arr = crate::dispatch::send_value(other, crate::Symbol::intern("to_a"), &[], None)?;
             match arr {
                 RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
-                _ => Err(raise_error(
-                    "ArgumentError",
-                    "value must be enumerable".to_string(),
-                )),
+                _ => Err(arg_error!("value must be enumerable")),
             }
         }
     }
@@ -149,10 +143,7 @@ fn arg_elements(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
 /// mutating row runs first (CRuby's `rb_check_frozen`).
 fn check_frozen(recv: &RubyValue) -> Result<(), Signal> {
     if set_of(recv).is_frozen() {
-        return Err(raise_error(
-            "FrozenError",
-            "can't modify frozen Set".to_string(),
-        ));
+        return Err(frozen_error!("can't modify frozen Set"));
     }
     Ok(())
 }
@@ -597,10 +588,7 @@ builtin_methods! {
 fn coerce_set(v: &RubyValue) -> Result<RubyValue, Signal> {
     match v {
         RubyValue::Object(o) if o.class_id() == SET_CLASS => Ok(v.clone()),
-        _ => Err(raise_error(
-            "ArgumentError",
-            "value must be a set".to_string(),
-        )),
+        _ => Err(arg_error!("value must be a set")),
     }
 }
 

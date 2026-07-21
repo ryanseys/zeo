@@ -7,7 +7,7 @@
 //! oracle-verified); only Complex's internal component arithmetic demotes
 //! (see `complex.rs`).
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_integer::Integer as _;
@@ -299,12 +299,9 @@ fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
     match args.first() {
         None => Ok(0),
         Some(RubyValue::Int(n)) => Ok(*n),
-        Some(other) => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -325,16 +322,13 @@ fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], RoundMode), Sig
             "even" => RoundMode::HalfEven,
             "down" => RoundMode::HalfDown,
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("invalid rounding mode: {other}"),
-                ));
+                return Err(arg_error!("invalid rounding mode: {other}"));
             }
         },
         other => {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("invalid rounding mode: {}", other.inspect_string()),
+            return Err(arg_error!(
+                "invalid rounding mode: {}",
+                other.inspect_string()
             ));
         }
     };
@@ -499,13 +493,8 @@ builtin_methods! {
             ],
             RubyValue::Rational(_) => vec![args[0].clone(), recv.clone()],
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "{} can't be coerced into Rational",
-                        crate::builtins::class_name_of(other)
-                    ),
-                ))
+                return Err(type_error!("{} can't be coerced into Rational",
+                        crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Array(crate::array_new(pair)))
@@ -514,13 +503,8 @@ builtin_methods! {
     "div"[1] => fn int_div(recv, args, _block) {
         arity!(args, 1);
         let q = crate::builtins::numeric::num_div(recv, &args[0])
-            .ok_or_else(|| crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "{} can't be coerced into Rational",
-                    crate::builtins::class_name_of(&args[0])
-                ),
-            ))??;
+            .ok_or_else(|| type_error!("{} can't be coerced into Rational",
+                    crate::builtins::class_name_of(&args[0])))??;
         match q {
             RubyValue::Rational(r) => {
                 Ok(crate::builtins::integer::int_value(r.num.div_floor(&r.den)))

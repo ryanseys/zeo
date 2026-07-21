@@ -15,8 +15,8 @@
 //! makes `take`/`first`/`take_while` terminate an infinite source).
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -151,26 +151,17 @@ fn extend(recv: &RubyValue, op: LazyOp) -> RubyValue {
 fn need_block(block: Option<RubyValue>, meth: &str) -> Result<RProc, Signal> {
     match block {
         Some(RubyValue::Proc(p)) => Ok(p),
-        _ => Err(raise_error(
-            "ArgumentError",
-            format!("tried to call lazy {meth} without a block"),
-        )),
+        _ => Err(arg_error!("tried to call lazy {meth} without a block")),
     }
 }
 
 fn count_arg(v: &RubyValue, meth: &str) -> Result<i64, Signal> {
     match v {
         RubyValue::Int(n) if *n >= 0 => Ok(*n),
-        RubyValue::Int(_) => Err(raise_error(
-            "ArgumentError",
-            format!("attempt to {meth} negative size"),
-        )),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        RubyValue::Int(_) => Err(arg_error!("attempt to {meth} negative size")),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

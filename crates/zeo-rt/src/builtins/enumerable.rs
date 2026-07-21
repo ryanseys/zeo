@@ -47,6 +47,7 @@
 //! numeric tower doesn't exist here.
 
 use crate::builtins::block_or_enum;
+use crate::builtins::{arg_error, type_error};
 use crate::collections::array_new;
 use crate::dispatch::send_value;
 use crate::signal::Signal;
@@ -455,12 +456,9 @@ fn cycle(
         None | Some(RubyValue::Nil) => None,
         Some(RubyValue::Int(n)) => Some(*n),
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };
@@ -713,10 +711,7 @@ fn first(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 // Generic Enumerable#first(n<0) -- an Enumerator (`cycle.first`),
                 // Set, etc. Array and Range override with their own messages
                 // before routing here.
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "attempt to take negative size".to_string(),
-                ));
+                return Err(arg_error!("attempt to take negative size"));
             }
             if n == 0 {
                 return Ok(RubyValue::Array(array_new(Vec::new())));
@@ -968,19 +963,13 @@ fn min_max(
     // corpus's enumerable sizes.
     if let Some(n_arg) = args.first() {
         let RubyValue::Int(n) = n_arg else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(n_arg)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(n_arg)
             ));
         };
         if *n < 0 {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("negative size ({n})"),
-            ));
+            return Err(arg_error!("negative size ({n})"));
         }
         let items: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
         let items2 = items.clone();
@@ -1099,10 +1088,7 @@ fn sort_by(
         }
     });
     if failure {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "comparison failed".to_string(),
-        ));
+        return Err(arg_error!("comparison failed"));
     }
     Ok(RubyValue::Array(array_new(
         decorated.into_iter().map(|(_, e)| e).collect(),
@@ -1123,20 +1109,14 @@ fn min_max_by(
         None | Some(RubyValue::Nil) => None,
         Some(RubyValue::Int(n)) => {
             if *n < 0 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("negative size ({n})"),
-                ));
+                return Err(arg_error!("negative size ({n})"));
             }
             Some(*n as usize)
         }
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };
@@ -1351,10 +1331,7 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
     if *n < 0 {
         // CRuby names the actual method: `drop(-1)` says "drop", not "take".
         let verb = if take { "take" } else { "drop" };
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!("attempt to {verb} negative size"),
-        ));
+        return Err(arg_error!("attempt to {verb} negative size"));
     }
     if take {
         // Early termination once n elements are in (CRuby's take_i breaks
@@ -1423,12 +1400,9 @@ fn tally(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
         None => crate::hash_new(Vec::new()),
         Some(RubyValue::Hash(h)) => h.clone(),
         Some(other) => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Hash",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Hash",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };
@@ -1484,19 +1458,16 @@ pub(crate) fn to_h_pairs<'a>(
             _ => packed.clone(),
         };
         let RubyValue::Array(pair) = &e else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong element type {} at {i} (expected array)",
-                    crate::builtins::class_name_of(&e)
-                ),
+            return Err(type_error!(
+                "wrong element type {} at {i} (expected array)",
+                crate::builtins::class_name_of(&e)
             ));
         };
         let pair = pair.lock().clone();
         if pair.len() != 2 {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!("wrong array length at {i} (expected 2, was {})", pair.len()),
+            return Err(arg_error!(
+                "wrong array length at {i} (expected 2, was {})",
+                pair.len()
             ));
         }
         pairs.push((pair[0].clone(), pair[1].clone()));

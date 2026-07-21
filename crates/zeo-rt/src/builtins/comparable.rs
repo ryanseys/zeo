@@ -10,6 +10,7 @@
 //! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
+use crate::builtins::{arg_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
 
 /// The receiver's own `<=>`, reduced to a sign -- `Ok(None)` is Ruby's
@@ -66,9 +67,8 @@ pub(crate) fn comparable_send(
         ("clamp", 2) => (|| {
             let (lo, hi) = (&args[0], &args[1]);
             if !lo.is_nil() && !hi.is_nil() && cmp_or_fail(lo, hi)? > 0 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "min argument must be less than or equal to max argument".to_string(),
+                return Err(arg_error!(
+                    "min argument must be less than or equal to max argument"
                 ));
             }
             if !lo.is_nil() && cmp_or_fail(recv, lo)? < 0 {
@@ -83,25 +83,18 @@ pub(crate) fn comparable_send(
         // an exclusive range is CRuby's ArgumentError.
         ("clamp", 1) => (|| {
             let RubyValue::Range(lo, hi, exclusive) = &args[0] else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "wrong argument type {} (expected Range)",
-                        crate::builtins::class_name_of(&args[0])
-                    ),
+                return Err(type_error!(
+                    "wrong argument type {} (expected Range)",
+                    crate::builtins::class_name_of(&args[0])
                 ));
             };
             if *exclusive && hi.is_some() {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "cannot clamp with an exclusive range".to_string(),
-                ));
+                return Err(arg_error!("cannot clamp with an exclusive range"));
             }
             if let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) {
                 if cmp_or_fail(lo, hi)? > 0 {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        "min argument must be less than or equal to max argument".to_string(),
+                    return Err(arg_error!(
+                        "min argument must be less than or equal to max argument"
                     ));
                 }
             }

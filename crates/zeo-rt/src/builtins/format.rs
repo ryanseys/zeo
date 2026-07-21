@@ -3,6 +3,7 @@
 //! %b %e %g %c %%`, flags `- + 0 space`, width, precision. `%<name>s`-style
 //! hash references and `%*d` star-widths are Tier B.
 
+use crate::builtins::type_error;
 use crate::{RubyValue, Signal};
 
 #[derive(Default)]
@@ -58,12 +59,9 @@ fn to_int_for_format(v: &RubyValue) -> Result<num_bigint::BigInt, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(crate::builtins::integer::to_bigint(v)),
         RubyValue::Float(f) => Ok(num_bigint::BigInt::from(f.trunc() as i128)),
         RubyValue::Rational(r) => Ok(&r.num / &r.den),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -73,12 +71,9 @@ fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
             Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Float",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Float",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

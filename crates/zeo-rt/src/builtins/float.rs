@@ -5,18 +5,15 @@
 //! `[Float, Numeric, Comparable, ...]`. The Tier A breadth
 //! (`nan?`/`round(n)`/`to_r`/...) lands with stage C's generics pass.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::{RubyValue, Signal};
 
 /// CRuby's coercion TypeError shape (`1.0 + "x"` -> `String can't be
 /// coerced into Float`).
 fn coerce_error(arg: &RubyValue) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "{} can't be coerced into Float",
-            crate::builtins::class_name_of(arg)
-        ),
+    type_error!(
+        "{} can't be coerced into Float",
+        crate::builtins::class_name_of(arg)
     )
 }
 
@@ -185,12 +182,9 @@ fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
             Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "{verb} {} into Float",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(type_error!(
+            "{verb} {} into Float",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -310,12 +304,9 @@ fn exact_abs_rational(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::
         RubyValue::Float(f) => float_exact_parts(f.abs()),
         RubyValue::Rational(r) => (r.num.abs(), r.den.clone()),
         other => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into Float",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "can't convert {} into Float",
+                crate::builtins::convert_name_of(other)
             ));
         }
     })
@@ -424,16 +415,13 @@ fn split_round_half(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Sign
                 "down" => HalfMode::Down,
                 "even" => HalfMode::Even,
                 other => {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        format!("invalid rounding mode: {other}"),
-                    ));
+                    return Err(arg_error!("invalid rounding mode: {other}"));
                 }
             },
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!("invalid rounding mode: {}", other.to_display_string()),
+                return Err(arg_error!(
+                    "invalid rounding mode: {}",
+                    other.to_display_string()
                 ));
             }
         };

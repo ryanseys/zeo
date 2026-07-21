@@ -14,7 +14,7 @@
 //! degraded to `RuntimeError`. Documented divergence: `to_json` on arbitrary
 //! objects (the require-time monkeypatch) is not added -- use `JSON.generate`.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, type_error};
 use crate::collections::{array_new, hash_new};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
@@ -157,12 +157,9 @@ fn emit_seq(
 fn parse_text(v: &RubyValue) -> Result<String, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

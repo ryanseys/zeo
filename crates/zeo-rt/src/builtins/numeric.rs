@@ -19,7 +19,7 @@ use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
-use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, type_error};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
 
@@ -481,10 +481,7 @@ builtin_methods! {
         // `==` there (`rb_equal`), so `0.0` and `Rational(0, 1)` are rejected
         // too -- hence `num_cmp` rather than a native `== 0` test.
         if matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(0))) {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "step can't be 0".to_string(),
-            ));
+            return Err(arg_error!("step can't be 0"));
         }
         let descending = matches!(num_cmp(&step, &RubyValue::Int(0)), Some(Some(-1)));
         // CRuby's rule: a Float limit OR step moves the WHOLE iteration
@@ -544,10 +541,7 @@ pub(crate) fn num_coerce_bin(
             }
         }
         // `coerce` must answer a 2-element Array (CRuby's exact TypeError).
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            "coerce must return [x, y]".to_string(),
-        ));
+        return Err(type_error!("coerce must return [x, y]"));
     }
     Err(coercion_error(recv, arg))
 }
@@ -555,13 +549,10 @@ pub(crate) fn num_coerce_bin(
 /// The coercion TypeError a generic Numeric row raises (named by the
 /// RECEIVER's class, CRuby's shape).
 fn coercion_error(recv: &RubyValue, arg: &RubyValue) -> Signal {
-    crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "{} can't be coerced into {}",
-            crate::builtins::class_name_of(arg),
-            crate::builtins::class_name_of(recv)
-        ),
+    type_error!(
+        "{} can't be coerced into {}",
+        crate::builtins::class_name_of(arg),
+        crate::builtins::class_name_of(recv)
     )
 }
 

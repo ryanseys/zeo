@@ -13,7 +13,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
@@ -175,15 +175,9 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
             "millisecond" => Ok(RubyValue::Int((secs * 1e3) as i64)),
             "microsecond" => Ok(RubyValue::Int((secs * 1e6) as i64)),
             "nanosecond" => Ok(RubyValue::Int((secs * 1e9) as i64)),
-            other => Err(raise_error(
-                "ArgumentError",
-                format!("unexpected unit: {other}"),
-            )),
+            other => Err(arg_error!("unexpected unit: {other}")),
         },
-        Some(other) => Err(raise_error(
-            "ArgumentError",
-            format!("unexpected unit: {}", other.inspect_string()),
-        )),
+        Some(other) => Err(arg_error!("unexpected unit: {}", other.inspect_string())),
     }
 }
 
@@ -191,12 +185,9 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
 fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
     match v {
         RubyValue::Int(i) => Ok(*i),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -510,12 +501,9 @@ fn needs_shell(cmd: &str) -> bool {
 fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -527,9 +515,8 @@ fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
 /// "nothing ran" answer.
 fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
     if args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            "wrong number of arguments (given 0, expected 1+)".to_string(),
+        return Err(arg_error!(
+            "wrong number of arguments (given 0, expected 1+)"
         ));
     }
     if args.len() == 1 {

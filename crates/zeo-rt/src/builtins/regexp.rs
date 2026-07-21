@@ -4,7 +4,7 @@
 //! String's, sharing `crate::regexp`'s helpers with the static paths.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, regexp_error, type_error};
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -211,12 +211,9 @@ fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
     match v {
         RubyValue::Str(s) => Ok(Some(s.lock().to_utf8_lossy().into_owned())),
         RubyValue::Nil => Ok(None),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -276,10 +273,7 @@ builtin_methods! {
         match args.first() {
             None => Ok(crate::lastmatch::last_match()),
             Some(RubyValue::Int(n)) => Ok(crate::lastmatch::last_match_group((*n).max(0) as usize)),
-            Some(other) => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-            )),
+            Some(other) => Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
         }
     }
 
@@ -287,10 +281,7 @@ builtin_methods! {
     "escape" | "quote" => fn escape_m(_recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(s) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])),
-            ));
+            return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])));
         };
         let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
         Ok(RubyValue::Str(crate::string_new(escaped)))
@@ -308,16 +299,11 @@ builtin_methods! {
         if let RubyValue::Regexp(re) = &args[0] {
             return crate::regexp_new(&re.source, re.ignore_case, re.extended, re.multiline)
                 .map(RubyValue::Regexp)
-                .map_err(|e| crate::dispatch::raise_error("RegexpError", e));
+                .map_err(|e| regexp_error!("{e}"));
         }
         let RubyValue::Str(s) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(&args[0])
-                ),
-            ));
+            return Err(type_error!("no implicit conversion of {} into String",
+                    crate::builtins::convert_name_of(&args[0])));
         };
         let source = s.lock().to_utf8_lossy().into_owned();
         let (ignore_case, extended, multiline) = match args.get(1) {
@@ -330,7 +316,7 @@ builtin_methods! {
         };
         crate::regexp_new(&source, ignore_case, extended, multiline)
             .map(RubyValue::Regexp)
-            .map_err(|e| crate::dispatch::raise_error("RegexpError", e))
+            .map_err(|e| regexp_error!("{e}"))
     }
 
     // `Regexp.union(pat, ...)` / `Regexp.union([pat, ...])`: an alternation of
@@ -352,10 +338,7 @@ builtin_methods! {
                         parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
                     }
                     other => {
-                        return Err(crate::dispatch::raise_error(
-                            "TypeError",
-                            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
-                        ))
+                        return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
                     }
                 }
             }
@@ -363,7 +346,7 @@ builtin_methods! {
         };
         crate::regexp_new(&source, false, false, false)
             .map(RubyValue::Regexp)
-            .map_err(|e| crate::dispatch::raise_error("RegexpError", e))
+            .map_err(|e| regexp_error!("{e}"))
     }
 
     // `Regexp.try_convert(obj)` -- `obj` if it is already a Regexp, else `nil`
@@ -383,10 +366,7 @@ builtin_methods! {
             RubyValue::Regexp(re) => re.source.clone(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
-                ))
+                return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
             }
         };
         Ok(RubyValue::Bool(!has_backreference(&source)))

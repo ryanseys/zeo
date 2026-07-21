@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::builtins::{arity, builtin_methods, class_name_of};
+use crate::builtins::{arg_error, arity, builtin_methods, class_name_of, type_error};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
 
@@ -91,25 +91,19 @@ fn resolve_signal_arg(arg: &RubyValue) -> Result<i32, Signal> {
             if name_from_signo(no).is_some() {
                 Ok(no)
             } else {
-                Err(raise_error(
-                    "ArgumentError",
-                    format!("invalid signal number ({no})"),
-                ))
+                Err(arg_error!("invalid signal number ({no})"))
             }
         }
         RubyValue::Str(s) => resolve_signal_name(&s.lock().to_utf8_lossy()),
         RubyValue::Symbol(sym) => resolve_signal_name(&sym.name()),
-        other => Err(raise_error(
-            "ArgumentError",
-            format!("bad signal type {}", class_name_of(other)),
-        )),
+        other => Err(arg_error!("bad signal type {}", class_name_of(other))),
     }
 }
 
 fn resolve_signal_name(name: &str) -> Result<i32, Signal> {
     signo_from_name(name).ok_or_else(|| {
         let bare = name.strip_prefix("SIG").unwrap_or(name);
-        raise_error("ArgumentError", format!("unsupported signal `SIG{bare}'"))
+        arg_error!("unsupported signal `SIG{bare}'")
     })
 }
 
@@ -135,10 +129,7 @@ builtin_methods! {
             RubyValue::Int(i) => *i as i32,
             RubyValue::Float(f) => *f as i32,
             other => {
-                return Err(raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-                ))
+                return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))
             }
         };
         match name_from_signo(no) {

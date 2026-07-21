@@ -12,8 +12,8 @@
 //! (a documented partial: the calendar half is complete, sub-day fields are
 //! not modelled here).
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -247,7 +247,7 @@ builtin_methods! {
     "strftime" => fn strftime(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(fmt) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into String".to_string()));
+            return Err(type_error!("no implicit conversion into String"));
         };
         let fmt = fmt.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(string_new(date_strftime(date_of(recv).jdn, &fmt))))
@@ -257,10 +257,7 @@ builtin_methods! {
         let d = date_of(recv);
         let n = match args.first() {
             None => 1,
-            Some(v) => day_count(v).ok_or_else(|| raise_error(
-                "TypeError",
-                "expected numeric".to_string(),
-            ))?,
+            Some(v) => day_count(v).ok_or_else(|| type_error!("expected numeric"))?,
         };
         Ok(RubyValue::Object(RDate::new(d.jdn + n, d.class_id)))
     }
@@ -283,10 +280,7 @@ builtin_methods! {
                 );
             }
         }
-        let n = day_count(&args[0]).ok_or_else(|| raise_error(
-            "TypeError",
-            "expected numeric or date".to_string(),
-        ))?;
+        let n = day_count(&args[0]).ok_or_else(|| type_error!("expected numeric or date"))?;
         Ok(RubyValue::Object(RDate::new(d.jdn - n, d.class_id)))
     }
     "next" | "succ" => fn succ(recv, args, _block) {
@@ -322,10 +316,7 @@ fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
         match args.get(i) {
             None => Ok(default),
             Some(RubyValue::Int(v)) => Ok(*v),
-            Some(_) => Err(raise_error(
-                "TypeError",
-                "no implicit conversion into Integer".to_string(),
-            )),
+            Some(_) => Err(type_error!("no implicit conversion into Integer")),
         }
     };
     Ok((int_at(0, -4712)?, int_at(1, 1)?, int_at(2, 1)?))
@@ -344,7 +335,7 @@ builtin_methods! {
         let jdn = match args.first() {
             None => 0,
             Some(RubyValue::Int(n)) => *n,
-            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+            Some(_) => return Err(type_error!("no implicit conversion into Integer")),
         };
         Ok(RubyValue::Object(RDate::new(jdn, class_of(recv))))
     }
@@ -362,7 +353,7 @@ builtin_methods! {
     "parse" => fn parse(recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Str(s) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into String".to_string()));
+            return Err(type_error!("no implicit conversion into String"));
         };
         let text = s.lock().to_utf8_lossy().into_owned();
         let (y, m, d) = parse_date(&text)?;
@@ -378,7 +369,7 @@ builtin_methods! {
     "leap?" => fn leap_c(_recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(y) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         Ok(RubyValue::Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)))
     }
@@ -406,10 +397,7 @@ fn parse_date(text: &str) -> Result<(i64, i64, i64), Signal> {
             return Ok((y, m, d));
         }
     }
-    Err(raise_error(
-        "ArgumentError",
-        format!("invalid date: {text:?}"),
-    ))
+    Err(arg_error!("invalid date: {text:?}"))
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@
 //! bytes), matching this runtime's default `Str` -- CRuby's StringIO preserves
 //! arbitrary bytes with an encoding.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, eof_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, string_new};
 use parking_lot::Mutex;
@@ -136,10 +136,7 @@ builtin_methods! {
                 s.pos = end;
                 Ok(bytes_to_str(&out))
             }
-            Some(other) => Err(raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-            )),
+            Some(other) => Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
         }
     }
     "write" => fn write(recv, args, _block) {
@@ -225,7 +222,7 @@ builtin_methods! {
     "pos=" => fn set_pos(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         io_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
@@ -249,12 +246,12 @@ builtin_methods! {
     "seek" => fn seek(recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Int(off) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         let whence = match args.get(1) {
             None => 0,
             Some(RubyValue::Int(w)) => *w,
-            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+            Some(_) => return Err(type_error!("no implicit conversion into Integer")),
         };
         let mut s = io_of(recv).state.lock();
         let base = match whence {
@@ -286,7 +283,7 @@ builtin_methods! {
     "readline" => fn readline(recv, args, _block) {
         arity!(args, 0..=1);
         match gets(recv, args, None)? {
-            RubyValue::Nil => Err(raise_error("EOFError", "end of file reached".to_string())),
+            RubyValue::Nil => Err(eof_error!("end of file reached")),
             line => Ok(line),
         }
     }
@@ -307,7 +304,7 @@ builtin_methods! {
     "truncate" => fn truncate(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(len) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         if *len < 0 {
             return Err(raise_error("Errno::EINVAL", "Invalid argument".to_string()));
@@ -362,10 +359,7 @@ builtin_methods! {
         let bytes = match args.first() {
             None | Some(RubyValue::Nil) => Vec::new(),
             Some(RubyValue::Str(s)) => s.lock().bytes().to_vec(),
-            Some(other) => return Err(raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
-            )),
+            Some(other) => return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other))),
         };
         Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes))))
     }

@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TIME_CLASS};
@@ -541,12 +541,9 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
             ));
         }
         other => {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into an exact number",
-                    crate::builtins::class_name_of(other)
-                ),
+            return Err(type_error!(
+                "can't convert {} into an exact number",
+                crate::builtins::class_name_of(other)
             ));
         }
     };
@@ -576,12 +573,9 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             let t = o.as_any().downcast_ref::<RTime>().unwrap();
             Ok((t.num.clone(), t.den.clone()))
         }
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into an exact number",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into an exact number",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -605,16 +599,12 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
             // "2020", "3")`), matching CRuby's forced-decimal reading.
             RubyValue::Str(s) => {
                 let t = s.lock().to_utf8_lossy().trim().to_string();
-                t.parse::<i64>().map_err(|_| {
-                    raise_error("ArgumentError", format!("argument out of range: {t:?}"))
-                })
+                t.parse::<i64>()
+                    .map_err(|_| arg_error!("argument out of range: {t:?}"))
             }
-            other => Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            other => Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
             )),
         })
         .collect()
@@ -636,10 +626,7 @@ fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
     for (i, lo, hi) in ranges {
         if let Some(&v) = parts.get(i) {
             if v < lo || v > hi {
-                return Err(raise_error(
-                    "ArgumentError",
-                    "argument out of range".to_string(),
-                ));
+                return Err(arg_error!("argument out of range"));
             }
         }
     }
@@ -722,7 +709,7 @@ fn build_civil_time(
 /// `can't parse: "..."` -- both CRuby's messages.
 fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
     use num_bigint::BigInt;
-    let cant = || raise_error("ArgumentError", format!("can't parse: {input:?}"));
+    let cant = || arg_error!("can't parse: {input:?}");
     let mut tokens = input.split_whitespace();
     let mut date = tokens.next().ok_or_else(cant)?.split('-');
     let year: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
@@ -732,10 +719,7 @@ fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
         return Err(cant());
     }
     let Some(time) = tokens.next() else {
-        return Err(raise_error(
-            "ArgumentError",
-            "no time information".to_string(),
-        ));
+        return Err(arg_error!("no time information"));
     };
     let (hms, frac_str) = match time.split_once('.') {
         Some((h, f)) => (h, Some(f)),
@@ -779,22 +763,16 @@ fn offset_arg(v: Option<&RubyValue>) -> Result<Option<i32>, Signal> {
         None | Some(RubyValue::Nil) => Ok(None),
         Some(RubyValue::Int(o)) => Ok(Some(check_offset(*o)?)),
         Some(RubyValue::Str(s)) => Ok(Some(parse_offset(&s.lock().to_utf8_lossy())?)),
-        Some(other) => Err(raise_error(
-            "ArgumentError",
-            format!(
-                "\"+HH:MM\" expected for utc_offset: {}",
-                other.to_display_string()
-            ),
+        Some(other) => Err(arg_error!(
+            "\"+HH:MM\" expected for utc_offset: {}",
+            other.to_display_string()
         )),
     }
 }
 
 fn check_offset(off: i64) -> Result<i32, Signal> {
     if !(-86400 < off && off < 86400) {
-        return Err(raise_error(
-            "ArgumentError",
-            "utc_offset out of range".to_string(),
-        ));
+        return Err(arg_error!("utc_offset out of range"));
     }
     Ok(off as i32)
 }
@@ -803,11 +781,8 @@ fn check_offset(off: i64) -> Result<i32, Signal> {
 /// east of UTC -- `Time.new`'s 7th argument may be spelled this way.
 fn parse_offset(s: &str) -> Result<i32, Signal> {
     let bad = || {
-        raise_error(
-            "ArgumentError",
-            format!(
-                "\"+HH:MM\", \"-HH:MM\", \"UTC\" or \"A\"..\"I\",\"K\"..\"Z\" expected for utc_offset: {s}"
-            ),
+        arg_error!(
+            "\"+HH:MM\", \"-HH:MM\", \"UTC\" or \"A\"..\"I\",\"K\"..\"Z\" expected for utc_offset: {s}"
         )
     };
     if s == "UTC" || s == "Z" {
@@ -835,10 +810,7 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
     match v {
         None => Ok(0),
         Some(RubyValue::Int(u)) if (0..1_000_000).contains(u) => Ok(*u as u32 * 1000),
-        Some(RubyValue::Int(_)) => Err(raise_error(
-            "ArgumentError",
-            "subsecx out of range".to_string(),
-        )),
+        Some(RubyValue::Int(_)) => Err(arg_error!("subsecx out of range")),
         Some(v @ (RubyValue::Float(_) | RubyValue::Rational(_))) => {
             let usec = match v {
                 RubyValue::Float(f) => *f,
@@ -846,19 +818,13 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
                 _ => unreachable!(),
             };
             if !(0.0..1_000_000.0).contains(&usec) {
-                return Err(raise_error(
-                    "ArgumentError",
-                    "subsecx out of range".to_string(),
-                ));
+                return Err(arg_error!("subsecx out of range"));
             }
             Ok((usec * 1000.0) as u32)
         }
-        Some(other) => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -911,13 +877,8 @@ builtin_methods! {
             None => None,
             Some(RubyValue::Int(off)) => Some(check_offset(*off)?),
             Some(RubyValue::Str(s)) => Some(parse_offset(&s.lock().to_utf8_lossy())?),
-            Some(other) => return Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer (utc_offset)",
-                    crate::builtins::convert_name_of(other)
-                ),
-            )),
+            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer (utc_offset)",
+                    crate::builtins::convert_name_of(other))),
         };
         let (base_num, base_den) = exact_seconds(&args[0])?;
         let (num, den) = match args.get(1) {
@@ -929,15 +890,9 @@ builtin_methods! {
                         "millisecond" => 1_000,
                         "microsecond" | "usec" => 1_000_000,
                         "nanosecond" | "nsec" => 1_000_000_000,
-                        other => return Err(raise_error(
-                            "ArgumentError",
-                            format!("unexpected unit: {other}"),
-                        )),
+                        other => return Err(arg_error!("unexpected unit: {other}")),
                     },
-                    Some(other) => return Err(raise_error(
-                        "ArgumentError",
-                        format!("unexpected unit: {}", crate::builtins::class_name_of(other)),
-                    )),
+                    Some(other) => return Err(arg_error!("unexpected unit: {}", crate::builtins::class_name_of(other))),
                 };
                 let (cnum, cden) = exact_seconds(frac)?;
                 let frac_den = &cden * BigInt::from(scale);
@@ -1012,13 +967,8 @@ builtin_methods! {
                 let off = parse_offset(&s.lock().to_utf8_lossy())?;
                 Ok(time_value(as_utc - off as i64, 0, Some(off)))
             }
-            Some(other) => Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer (utc_offset)",
-                    crate::builtins::convert_name_of(other)
-                ),
-            )),
+            Some(other) => Err(type_error!("no implicit conversion of {} into Integer (utc_offset)",
+                    crate::builtins::convert_name_of(other))),
         }
     }
     // `Time.local`/`Time.mktime` -- the same civil fields read as LOCAL
@@ -1067,12 +1017,9 @@ fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
     match args.first() {
         None => Ok(0),
         Some(RubyValue::Int(n)) => Ok((*n).max(0) as u32),
-        Some(other) => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -1256,13 +1203,8 @@ builtin_methods! {
     "strftime"[1] => fn strftime_row(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(f) = &args[0] else {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(&args[0])
-                ),
-            ));
+            return Err(type_error!("no implicit conversion of {} into String",
+                    crate::builtins::convert_name_of(&args[0])));
         };
         let fmt = f.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))
@@ -1433,13 +1375,8 @@ builtin_methods! {
                 out
             }
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "wrong argument type {} (expected Array or nil)",
-                        crate::builtins::class_name_of(other)
-                    ),
-                ))
+                return Err(type_error!("wrong argument type {} (expected Array or nil)",
+                        crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Hash(crate::hash_new(pairs)))

@@ -24,6 +24,7 @@
 //! method therefore takes the write lock without deadlocking against a read
 //! lock held across its own execution.
 
+use crate::builtins::{arg_error, runtime_error, type_error};
 use crate::dispatch::{
     ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
     registry_lookup_cloned, send_super_from,
@@ -201,10 +202,7 @@ pub fn send_super_dynamic(
 ) -> Result<RubyValue, Signal> {
     match METHOD_FRAMES.with(|f| f.borrow().last().copied()) {
         Some((defining, name)) => send_super_from(recv, defining, name, args, block),
-        None => Err(raise_error(
-            "RuntimeError",
-            "super called outside of method".to_string(),
-        )),
+        None => Err(runtime_error!("super called outside of method")),
     }
 }
 
@@ -266,12 +264,9 @@ pub fn runtime_define_singleton_method(
             mark_live();
             Ok(RubyValue::Symbol(name))
         }
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "can't define singleton method for {}",
-                immediate_kind(other)
-            ),
+        other => Err(type_error!(
+            "can't define singleton method for {}",
+            immediate_kind(other)
         )),
     }
 }
@@ -283,21 +278,15 @@ pub fn runtime_define_singleton_method(
 /// path. An existing singleton method (`def obj.x`) is not clobbered.
 pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
     let RubyValue::Class(mid) = module_val else {
-        return Err(raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected Module)",
-                crate::builtins::class_name_of(module_val)
-            ),
+        return Err(type_error!(
+            "wrong argument type {} (expected Module)",
+            crate::builtins::class_name_of(module_val)
         ));
     };
     let RubyValue::Object(o) = recv else {
         // Immediates have no singleton storage in this runtime (same posture as
         // `define_singleton_method`).
-        return Err(raise_error(
-            "TypeError",
-            format!("can't extend {}", immediate_kind(recv)),
-        ));
+        return Err(type_error!("can't extend {}", immediate_kind(recv)));
     };
     let mut names =
         crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::NotPrivate, false);
@@ -425,10 +414,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
         | RubyValue::Rational(_)
         | RubyValue::Complex(_)
         | RubyValue::Symbol(_) => {
-            return Err(raise_error(
-                "TypeError",
-                "can't define singleton".to_string(),
-            ));
+            return Err(type_error!("can't define singleton"));
         }
         _ => None,
     };
@@ -516,10 +502,7 @@ pub fn runtime_class_new(
         None => ClassId(0), // default super is Object
         Some(RubyValue::Class(cid)) => *cid,
         Some(_) => {
-            return Err(raise_error(
-                "TypeError",
-                "superclass must be a Class".to_string(),
-            ));
+            return Err(type_error!("superclass must be a Class"));
         }
     };
 
@@ -763,9 +746,8 @@ pub(crate) fn coerce_method_name(arg: Option<&RubyValue>) -> Result<Symbol, Sign
     match arg {
         Some(RubyValue::Symbol(s)) => Ok(*s),
         Some(RubyValue::Str(s)) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        _ => Err(raise_error(
-            "TypeError",
-            "expected a Symbol or String for the method name".to_string(),
+        _ => Err(type_error!(
+            "expected a Symbol or String for the method name"
         )),
     }
 }
@@ -783,10 +765,7 @@ pub(crate) fn coerce_method_body(
     if let Some(RubyValue::Proc(p)) = args.get(1) {
         return Ok(p.clone());
     }
-    Err(raise_error(
-        "ArgumentError",
-        "tried to create Proc object without a block".to_string(),
-    ))
+    Err(arg_error!("tried to create Proc object without a block"))
 }
 
 fn immediate_kind(v: &RubyValue) -> &'static str {
@@ -819,12 +798,9 @@ fn dyn_object_construct(
     if walk_runtime_class(id, init).is_some() {
         crate::dispatch::send_in(0, &obj, init, args, block)?;
     } else if !args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 0)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 0)",
+            args.len()
         ));
     }
     Ok(RubyValue::Object(obj))

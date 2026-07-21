@@ -11,6 +11,7 @@
 //! big-endian, `V v` little-endian; the rest are native unless `<`/`>` says
 //! otherwise.
 
+use crate::builtins::type_error;
 use crate::{RubyValue, Signal};
 
 /// One parsed template directive.
@@ -497,12 +498,9 @@ fn next_int(elems: &[RubyValue], idx: &mut usize) -> Result<i64, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n),
         RubyValue::BigInt(b) => Ok(num_traits::ToPrimitive::to_i64(&**b).unwrap_or(0)),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -524,12 +522,9 @@ fn next_int_bits(elems: &[RubyValue], idx: &mut usize) -> Result<u64, Signal> {
             RubyValue::BigInt(b) => Ok(low_u64(&b)),
             _ => unreachable!("float_to_integer yields only Int/BigInt"),
         },
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -549,12 +544,9 @@ fn next_float(elems: &[RubyValue], idx: &mut usize) -> Result<f64, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
             Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion to float from {}",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion to float from {}",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -579,12 +571,9 @@ fn next_str(elems: &[RubyValue], idx: &mut usize) -> Result<Vec<u8>, Signal> {
     *idx += 1;
     match v {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

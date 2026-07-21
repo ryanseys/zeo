@@ -565,6 +565,62 @@ macro_rules! builtin_methods {
 }
 pub(crate) use builtin_methods;
 
+/// The typed error constructors: `type_error!("no implicit conversion...")`
+/// over `raise_error("TypeError", format!(...))`, so the class name is spelled
+/// once here (never typo-able per site) and call sites read as what they
+/// raise. Each takes `format!` arguments and yields a `Signal` -- wrap in
+/// `Err(...)` exactly as with `raise_error`. Classes raised from only one
+/// site (Errno::*, ext-specific classes) stay on `raise_error` directly.
+/// (Written flat rather than macro-generated: `$$` meta-variable escaping is
+/// still unstable.)
+macro_rules! type_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("TypeError", format!($($fmt)*)) };
+}
+macro_rules! arg_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("ArgumentError", format!($($fmt)*)) };
+}
+macro_rules! name_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("NameError", format!($($fmt)*)) };
+}
+macro_rules! index_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("IndexError", format!($($fmt)*)) };
+}
+macro_rules! range_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("RangeError", format!($($fmt)*)) };
+}
+macro_rules! runtime_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("RuntimeError", format!($($fmt)*)) };
+}
+macro_rules! frozen_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("FrozenError", format!($($fmt)*)) };
+}
+macro_rules! io_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("IOError", format!($($fmt)*)) };
+}
+macro_rules! eof_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("EOFError", format!($($fmt)*)) };
+}
+macro_rules! thread_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("ThreadError", format!($($fmt)*)) };
+}
+macro_rules! regexp_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("RegexpError", format!($($fmt)*)) };
+}
+macro_rules! local_jump_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("LocalJumpError", format!($($fmt)*)) };
+}
+macro_rules! float_domain_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("FloatDomainError", format!($($fmt)*)) };
+}
+macro_rules! not_impl_error {
+    ($($fmt:tt)*) => { crate::dispatch::raise_error("NotImplementedError", format!($($fmt)*)) };
+}
+pub(crate) use {
+    arg_error, eof_error, float_domain_error, frozen_error, index_error, io_error,
+    local_jump_error, name_error, not_impl_error, range_error, regexp_error, runtime_error,
+    thread_error, type_error,
+};
+
 /// CRuby's exact ArgumentError shapes for a fixed or ranged arity.
 macro_rules! arity {
     ($args:expr_2021, $n:literal) => {

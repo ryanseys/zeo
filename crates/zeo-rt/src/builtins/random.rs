@@ -13,6 +13,7 @@ use num_traits::cast::FromPrimitive;
 use parking_lot::Mutex;
 
 use crate::builtins::integer::int_value;
+use crate::builtins::{arg_error, float_domain_error, type_error};
 use crate::dispatch::{RObj, RubyObject, downcast_robj, raise_error};
 use crate::encoding::ASCII_8BIT;
 use crate::value::RubyValue;
@@ -109,16 +110,13 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
         Some(RubyValue::Int(n)) => Ok((scramble(*n as u64), RubyValue::Int(*n))),
         Some(RubyValue::BigInt(b)) => Ok((scramble_bigint(b), RubyValue::BigInt(b.clone()))),
         Some(RubyValue::Float(x)) => {
-            let truncated = BigInt::from_f64(x.trunc())
-                .ok_or_else(|| raise_error("FloatDomainError", format!("{x}")))?;
+            let truncated =
+                BigInt::from_f64(x.trunc()).ok_or_else(|| float_domain_error!("{x}"))?;
             Ok((scramble_bigint(&truncated), int_value(truncated)))
         }
-        Some(other) => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -128,12 +126,7 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
 /// Range -> a value within it. A non-positive Integer/Float bound is an
 /// ArgumentError (CRuby: `invalid argument - <n>`), NOT a silent 0.
 fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
-    let invalid = |v: &RubyValue| {
-        raise_error(
-            "ArgumentError",
-            format!("invalid argument - {}", v.to_display_string()),
-        )
-    };
+    let invalid = |v: &RubyValue| arg_error!("invalid argument - {}", v.to_display_string());
     match bound {
         None | Some(RubyValue::Nil) => Ok(RubyValue::Float(to_unit_float(next_u64(state)))),
         Some(RubyValue::Int(n)) => {
@@ -194,13 +187,10 @@ fn rand_range(
     };
     let invalid = || {
         let sep = if exclusive { "..." } else { ".." };
-        raise_error(
-            "ArgumentError",
-            format!(
-                "invalid argument - {}{sep}{}",
-                lo.to_display_string(),
-                hi.to_display_string()
-            ),
+        arg_error!(
+            "invalid argument - {}{sep}{}",
+            lo.to_display_string(),
+            hi.to_display_string()
         )
     };
     match (lo, hi) {
@@ -228,12 +218,9 @@ fn to_f64(v: &RubyValue) -> Result<f64, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n as f64),
         RubyValue::Float(x) => Ok(*x),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Float",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Float",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -272,11 +259,10 @@ crate::builtins::builtin_methods! {
     "bytes" => fn bytes(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
+            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
         };
         if *n < 0 {
-            return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
+            return Err(arg_error!("negative string size (or size too big)"));
         }
         Ok(random_bytes(&as_random(recv).state, *n as usize))
     }
@@ -336,11 +322,10 @@ crate::builtins::builtin_methods! {
     "bytes" => fn bytes_c(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
+            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
         };
         if *n < 0 {
-            return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
+            return Err(arg_error!("negative string size (or size too big)"));
         }
         Ok(random_bytes(&default_state().state, *n as usize))
     }
@@ -351,8 +336,7 @@ crate::builtins::builtin_methods! {
     "urandom" => fn urandom_c(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
+            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
         };
         Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
     }

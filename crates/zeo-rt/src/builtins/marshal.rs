@@ -5,11 +5,10 @@
 //! CRuby exactly; the user-object (`o`), user-marshal (`U`: Rational/Complex),
 //! and bignum (`l`) forms are self-consistent (dump/load are the only readers).
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::collections::{
     array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set,
 };
-use crate::dispatch::raise_error;
 use crate::signal::Signal;
 use crate::value::RubyValue;
 use num_bigint::{BigInt, Sign};
@@ -37,12 +36,12 @@ builtin_methods! {
     "load" => fn load(_recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Str(s) = &args[0] else {
-            return Err(raise_error("TypeError", "instance of IO needed".to_string()));
+            return Err(type_error!("instance of IO needed"));
         };
         let bytes = s.lock().bytes().to_vec();
         let mut r = Reader { bytes: &bytes, pos: 0, symbols: Vec::new(), objects: Vec::new() };
         if r.byte()? != MAJOR || r.byte()? != MINOR {
-            return Err(raise_error("TypeError", "incompatible marshal file format".to_string()));
+            return Err(type_error!("incompatible marshal file format"));
         }
         r.read()
     }
@@ -146,12 +145,9 @@ impl Writer {
                 }
             }
             other => {
-                return Err(raise_error(
-                    "TypeError",
-                    format!(
-                        "no _dump_data is defined for class {}",
-                        crate::builtins::class_name_of(other)
-                    ),
+                return Err(type_error!(
+                    "no _dump_data is defined for class {}",
+                    crate::builtins::class_name_of(other)
                 ));
             }
         }
@@ -268,7 +264,7 @@ impl Reader<'_> {
         let b = *self
             .bytes
             .get(self.pos)
-            .ok_or_else(|| raise_error("ArgumentError", "marshal data too short".to_string()))?;
+            .ok_or_else(|| arg_error!("marshal data too short"))?;
         self.pos += 1;
         Ok(b)
     }
@@ -282,10 +278,11 @@ impl Reader<'_> {
             b':' => self.read_symbol_new(),
             b';' => {
                 let idx = self.read_long()? as usize;
-                let name =
-                    self.symbols.get(idx).cloned().ok_or_else(|| {
-                        raise_error("ArgumentError", "bad symbol link".to_string())
-                    })?;
+                let name = self
+                    .symbols
+                    .get(idx)
+                    .cloned()
+                    .ok_or_else(|| arg_error!("bad symbol link"))?;
                 Ok(RubyValue::Symbol(crate::Symbol::intern(&name)))
             }
             b'@' => {
@@ -293,7 +290,7 @@ impl Reader<'_> {
                 self.objects
                     .get(idx)
                     .cloned()
-                    .ok_or_else(|| raise_error("ArgumentError", "bad object link".to_string()))
+                    .ok_or_else(|| arg_error!("bad object link"))
             }
             b'f' => {
                 let bytes = self.read_bytes()?;
@@ -335,10 +332,7 @@ impl Reader<'_> {
             b'l' => self.read_bignum(),
             b'U' => self.read_user_marshal(),
             b'o' => self.read_object(),
-            other => Err(raise_error(
-                "ArgumentError",
-                format!("dump format error (0x{other:x})"),
-            )),
+            other => Err(arg_error!("dump format error (0x{other:x})")),
         }
     }
 
@@ -364,12 +358,9 @@ impl Reader<'_> {
                 self.symbols
                     .get(idx)
                     .cloned()
-                    .ok_or_else(|| raise_error("ArgumentError", "bad symbol link".to_string()))
+                    .ok_or_else(|| arg_error!("bad symbol link"))
             }
-            other => Err(raise_error(
-                "ArgumentError",
-                format!("expected a symbol (0x{other:x})"),
-            )),
+            other => Err(arg_error!("expected a symbol (0x{other:x})")),
         }
     }
 
@@ -379,10 +370,7 @@ impl Reader<'_> {
         let cls = self.read_symbol_name()?;
         let inner = self.read()?;
         let RubyValue::Array(a) = &inner else {
-            return Err(raise_error(
-                "ArgumentError",
-                "malformed user marshal".to_string(),
-            ));
+            return Err(arg_error!("malformed user marshal"));
         };
         let get = |i| array_get(a, i);
         let v = match cls.as_str() {
@@ -391,10 +379,7 @@ impl Reader<'_> {
             }
             "Complex" => crate::builtins::complex::complex_new(get(0), get(1))?,
             other => {
-                return Err(raise_error(
-                    "ArgumentError",
-                    format!("undefined class/module {other}"),
-                ));
+                return Err(arg_error!("undefined class/module {other}"));
             }
         };
         self.objects[idx] = v.clone();
@@ -406,9 +391,9 @@ impl Reader<'_> {
         self.objects.push(RubyValue::Nil);
         let cls = self.read_symbol_name()?;
         let cid = crate::dispatch::class_id_by_name(&cls)
-            .ok_or_else(|| raise_error("ArgumentError", format!("undefined class/module {cls}")))?;
+            .ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
         let obj = crate::dispatch::allocate_of(cid)
-            .ok_or_else(|| raise_error("TypeError", format!("allocator undefined for {cls}")))?;
+            .ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
         self.objects[idx] = obj.clone();
         let count = self.read_long()?;
         if let RubyValue::Object(o) = &obj {
@@ -444,10 +429,7 @@ impl Reader<'_> {
         let len = self.read_long()? as usize;
         let end = self.pos + len;
         if end > self.bytes.len() {
-            return Err(raise_error(
-                "ArgumentError",
-                "marshal data too short".to_string(),
-            ));
+            return Err(arg_error!("marshal data too short"));
         }
         let out = self.bytes[self.pos..end].to_vec();
         self.pos = end;
@@ -518,12 +500,9 @@ fn to_bigint(v: &RubyValue) -> Result<BigInt, Signal> {
     match v {
         RubyValue::Int(n) => Ok(BigInt::from(*n)),
         RubyValue::BigInt(b) => Ok((**b).clone()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

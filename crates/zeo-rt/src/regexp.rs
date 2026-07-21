@@ -16,6 +16,7 @@
 //! the same cheap-clone-shared-identity value semantics every other
 //! `RubyValue` payload uses, with no interior mutability to guard.
 
+use crate::builtins::{index_error, type_error};
 use crate::collections::{array_new, hash_new, string_new};
 use crate::{RProc, RubyValue, Signal};
 use std::sync::Arc;
@@ -692,21 +693,16 @@ pub fn matchdata_offset(
         RubyValue::Symbol(s) => name_group_index(md, &s.name())?,
         RubyValue::Str(s) => name_group_index(md, &s.lock().to_utf8_lossy())?,
         other => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };
     let span = md
         .groups
         .get(usize::try_from(idx).unwrap_or(usize::MAX))
-        .ok_or_else(|| {
-            crate::dispatch::raise_error("IndexError", format!("index {idx} out of matches"))
-        })?;
+        .ok_or_else(|| index_error!("index {idx} out of matches"))?;
     let (lo, hi) = match span {
         Some((lo, hi)) => (*lo, *hi),
         None => return Ok(offset_pair(RubyValue::Nil, RubyValue::Nil)),
@@ -728,12 +724,7 @@ fn name_group_index(md: &RMatchData, name: &str) -> Result<i64, crate::Signal> {
         .iter()
         .find(|(n, _)| n.as_str() == name)
         .map(|(_, i)| *i as i64)
-        .ok_or_else(|| {
-            crate::dispatch::raise_error(
-                "IndexError",
-                format!("undefined group name reference: {name}"),
-            )
-        })
+        .ok_or_else(|| index_error!("undefined group name reference: {name}"))
 }
 
 /// `MatchData#names` -- the named capture groups, in group order.
@@ -1103,10 +1094,7 @@ fn expand_replacement(
                         }
                     }
                     None => {
-                        return Err(crate::dispatch::raise_error(
-                            "IndexError",
-                            format!("undefined group name reference: {name}"),
-                        ));
+                        return Err(index_error!("undefined group name reference: {name}"));
                     }
                 }
             }
@@ -1230,10 +1218,7 @@ pub fn matchdata_group(m: &RMatchData, index: i64) -> RubyValue {
 pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> Result<RubyValue, Signal> {
     match m.names.iter().find(|(n, _)| n == name) {
         Some((_, idx)) => Ok(matchdata_group(m, *idx as i64)),
-        None => Err(crate::dispatch::raise_error(
-            "IndexError",
-            format!("undefined group name reference: {name}"),
-        )),
+        None => Err(index_error!("undefined group name reference: {name}")),
     }
 }
 
@@ -1260,12 +1245,9 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signa
             )
             .unwrap_or(RubyValue::Nil))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into Integer",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }

@@ -10,7 +10,7 @@
 
 use std::sync::{Arc, LazyLock};
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::encoding::{self, EncodingId};
 use crate::{RubyValue, Signal};
@@ -90,12 +90,9 @@ pub fn arg_encoding(v: &RubyValue) -> Result<EncodingId, Signal> {
             resolve_name(&name)
         }
         RubyValue::Symbol(s) => resolve_name(&s.name()),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -110,17 +107,12 @@ fn resolve_name(name: &str) -> Result<EncodingId, Signal> {
                 // Ruby returns nil for a nil default_internal via find, but
                 // `Encoding.find("internal")` specifically returns nil -- the
                 // caller handles that; here an unset one is "not found".
-                crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "unknown encoding name - internal".into(),
-                )
+                arg_error!("unknown encoding name - internal")
             });
         }
         _ => {}
     }
-    encoding::find(name).ok_or_else(|| {
-        crate::dispatch::raise_error("ArgumentError", format!("unknown encoding name - {name}"))
-    })
+    encoding::find(name).ok_or_else(|| arg_error!("unknown encoding name - {name}"))
 }
 
 builtin_methods! {

@@ -39,9 +39,9 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::collections::array_new;
-use crate::dispatch::{raise_error, raise_stop_iteration, send_value};
+use crate::dispatch::{raise_stop_iteration, send_value};
 use crate::signal::Signal;
 use crate::value::RubyValue;
 use crate::{RProc, Symbol};
@@ -200,10 +200,7 @@ pub(crate) fn enumerator_new(
 ) -> Result<RubyValue, Signal> {
     arity!(args, 0..=1);
     let Some(RubyValue::Proc(generator)) = block else {
-        return Err(raise_error(
-            "ArgumentError",
-            "tried to create Enumerator without a block".to_string(),
-        ));
+        return Err(arg_error!("tried to create Enumerator without a block"));
     };
     let size_hint = match args.first() {
         None | Some(RubyValue::Nil) => None,
@@ -217,12 +214,9 @@ pub(crate) fn enumerator_new(
             | RubyValue::Proc(_)),
         ) => Some(v.clone()),
         Some(other) => {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "can't convert {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "can't convert {} into Integer",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };
@@ -242,10 +236,7 @@ builtin_methods! {
     "produce" => fn produce(_recv, args, block) {
         arity!(args, 0..=1);
         let Some(RubyValue::Proc(generator)) = block else {
-            return Err(raise_error(
-                "ArgumentError",
-                "tried to create Producer without a block".to_string(),
-            ));
+            return Err(arg_error!("tried to create Producer without a block"));
         };
         Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
             source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
@@ -710,7 +701,7 @@ builtin_methods! {
         arity!(args, 1);
         let mut st = recv_enum(recv).state.lock();
         if st.feed.is_some() {
-            return Err(raise_error("TypeError", "feed value already set".to_string()));
+            return Err(type_error!("feed value already set"));
         }
         st.feed = Some(args[0].clone());
         Ok(RubyValue::Nil)
@@ -758,13 +749,8 @@ builtin_methods! {
             None => 0,
             Some(RubyValue::Int(n)) => *n,
             Some(other) => {
-                return Err(raise_error(
-                    "TypeError",
-                    format!(
-                        "no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)
-                    ),
-                ))
+                return Err(type_error!("no implicit conversion of {} into Integer",
+                        crate::builtins::convert_name_of(other)))
             }
         };
         match block {

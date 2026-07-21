@@ -11,8 +11,8 @@
 //! On wake (or timeout) the Ruby mutex is re-acquired before returning.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arity, builtin_methods, thread_error, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -90,20 +90,14 @@ builtin_methods! {
     "wait" => fn wait(recv, args, _block) {
         arity!(args, 1..=2);
         let RubyValue::Mutex(rm) = &args[0] else {
-            return Err(raise_error(
-                "TypeError",
-                "no implicit conversion into Mutex".to_string(),
-            ));
+            return Err(type_error!("no implicit conversion into Mutex"));
         };
         let timeout = match args.get(1) {
             None | Some(RubyValue::Nil) => None,
             Some(RubyValue::Int(i)) => Some(Duration::from_secs_f64(*i as f64)),
             Some(RubyValue::Float(f)) => Some(Duration::from_secs_f64(*f)),
             Some(other) => {
-                return Err(raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)),
-                ));
+                return Err(type_error!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)));
             }
         };
         let cv = cv_of(recv);
@@ -111,7 +105,7 @@ builtin_methods! {
         // race a wakeup in before we park.
         let guard = cv.lock.lock().unwrap_or_else(|e| e.into_inner());
         if let Err(msg) = crate::thread::mutex_unlock(rm) {
-            return Err(raise_error("ThreadError", msg.to_string()));
+            return Err(thread_error!("{msg}"));
         }
         match timeout {
             None => {
@@ -125,7 +119,7 @@ builtin_methods! {
             }
         }
         if let Err(msg) = crate::thread::mutex_lock(rm) {
-            return Err(raise_error("ThreadError", msg.to_string()));
+            return Err(thread_error!("{msg}"));
         }
         Ok(recv.clone())
     }

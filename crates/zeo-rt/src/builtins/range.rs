@@ -4,7 +4,7 @@
 //! The remaining Tier A rows land in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{arity, block_or_enum, builtin_methods};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, range_error, type_error};
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
     match recv {
@@ -66,10 +66,7 @@ fn range_bsearch_float(
         _ => None,
     };
     let (Some(lo_f), Some(hi_f)) = (to_f(start), to_f(end)) else {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            "can't do binary search for the given Range".to_string(),
-        ));
+        return Err(type_error!("can't do binary search for the given Range"));
     };
     // Map a double to a u64 that is monotonically increasing in its value.
     let f2u = |f: f64| -> u64 {
@@ -163,10 +160,7 @@ builtin_methods! {
             Some(_) => false,
         };
         if unbounded {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                "cannot convert endless range to an array".to_string(),
-            ));
+            return Err(range_error!("cannot convert endless range to an array"));
         }
         crate::builtins::enumerable::enumerable_send(recv, "to_a", &[], None)
             .expect("Enumerable implements to_a")
@@ -237,10 +231,7 @@ builtin_methods! {
                     Some(v) => crate::builtins::class_name_of(v),
                     None => "NilClass".to_string(),
                 };
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("can't iterate from {ty}"),
-                ));
+                return Err(type_error!("can't iterate from {ty}"));
             }
         }
         Ok(recv.clone())
@@ -261,10 +252,7 @@ builtin_methods! {
             return range_bsearch_float(start, end, exclusive, &p);
         }
         let (Some(RubyValue::Int(lo0)), Some(RubyValue::Int(hi0))) = (start, end) else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "can't do binary search for the given Range".to_string(),
-            ));
+            return Err(type_error!("can't do binary search for the given Range"));
         };
         let (mut lo, mut hi) = (*lo0, if exclusive { *hi0 } else { *hi0 + 1 });
         // `found` tracks the first true (find-minimum) or an exact `0` hit
@@ -316,13 +304,8 @@ builtin_methods! {
     "overlap?"[1] => fn overlap_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Range(ob, oe, ox) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "wrong argument type {} (expected Range)",
-                    crate::builtins::class_name_of(&args[0])
-                ),
-            ));
+            return Err(type_error!("wrong argument type {} (expected Range)",
+                    crate::builtins::class_name_of(&args[0])));
         };
         let (sb, se, sx) = range_parts(recv);
         let (ob, oe, ox) = (ob.as_deref(), oe.as_deref(), *ox);
@@ -358,13 +341,8 @@ builtin_methods! {
                 let skip = items.len().saturating_sub(n);
                 Ok(RubyValue::Array(crate::array_new(items[skip..].to_vec())))
             }
-            Some(other) => Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ),
-            )),
+            Some(other) => Err(type_error!("no implicit conversion of {} into Integer",
+                    crate::builtins::convert_name_of(other))),
         }
     }
     "size"[0] => fn size(recv, args, _block) {
@@ -373,10 +351,7 @@ builtin_methods! {
         // The begin must be an Integer (CRuby iterates from it via `succ`).
         let s = match start {
             Some(RubyValue::Int(s)) => *s,
-            None => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                "can't iterate from NilClass".to_string(),
-            )),
+            None => return Err(type_error!("can't iterate from NilClass")),
             // A numeric-but-non-Integer begin (Float, Rational, Complex, or a
             // bignum this path doesn't yet count) can't be succ-iterated, so
             // CRuby raises; a NON-numeric begin (String, Symbol, ...) simply
@@ -384,10 +359,7 @@ builtin_methods! {
             Some(other @ (RubyValue::BigInt(_)
                 | RubyValue::Float(_)
                 | RubyValue::Rational(_)
-                | RubyValue::Complex(_))) => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("can't iterate from {}", crate::builtins::class_name_of(other)),
-            )),
+                | RubyValue::Complex(_))) => return Err(type_error!("can't iterate from {}", crate::builtins::class_name_of(other))),
             Some(_) => return Ok(RubyValue::Nil),
         };
         // The last integer the range covers: an endless (or +Infinity) range is
@@ -401,10 +373,7 @@ builtin_methods! {
                 }
                 if exclusive { f.ceil() as i64 - 1 } else { f.floor() as i64 }
             }
-            Some(other) => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-            )),
+            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
@@ -426,10 +395,7 @@ builtin_methods! {
                 _ => None,
             };
             let (Some(beg), Some(fin)) = (to_f(start), to_f(end)) else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    "can't iterate from the given Range".to_string(),
-                ));
+                return Err(type_error!("can't iterate from the given Range"));
             };
             let unit = match &args[0] {
                 RubyValue::Int(n) => *n as f64,
@@ -437,10 +403,7 @@ builtin_methods! {
                 _ => unreachable!(),
             };
             if unit == 0.0 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "step can't be 0".to_string(),
-                ));
+                return Err(arg_error!("step can't be 0"));
             }
             let n_f = (fin - beg) / unit;
             let err = (((beg.abs() + fin.abs() + (fin - beg).abs()) / unit.abs())
@@ -458,19 +421,11 @@ builtin_methods! {
             panic!("Range#step on a non-Integer range isn't supported (spike scope)");
         };
         let RubyValue::Int(by) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(&args[0])
-                ),
-            ));
+            return Err(type_error!("no implicit conversion of {} into Integer",
+                    crate::builtins::convert_name_of(&args[0])));
         };
         if *by == 0 {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "step can't be 0".to_string(),
-            ));
+            return Err(arg_error!("step can't be 0"));
         }
         // A negative step walks a descending range downward (`(10..2).step(-2)`
         // is 10,8,6,4,2); a step against the range's direction yields nothing.
@@ -502,10 +457,7 @@ builtin_methods! {
         if !args.is_empty() {
             if let Some(RubyValue::Int(n)) = args.first() {
                 if *n < 0 {
-                    return Err(crate::dispatch::raise_error(
-                        "ArgumentError",
-                        "negative array size (or size too big)".to_string(),
-                    ));
+                    return Err(arg_error!("negative array size (or size too big)"));
                 }
             }
             return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
@@ -529,10 +481,7 @@ builtin_methods! {
         // (which a bare `enumerable_send` would attempt endlessly). Holds
         // regardless of arg/block (verified against ruby 4.0.5).
         if start.is_none() {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                "cannot get the minimum of beginless range".to_string(),
-            ));
+            return Err(range_error!("cannot get the minimum of beginless range"));
         }
         if args.is_empty() && block.is_none() {
             // The minimum of an ascending range with no block is its begin. An
@@ -563,10 +512,7 @@ builtin_methods! {
         // (which would loop forever). Holds regardless of arg/block (verified
         // against ruby 4.0.5, including a Float begin: `(1.0..).max`).
         if end.is_none() {
-            return Err(crate::dispatch::raise_error(
-                "RangeError",
-                "cannot get the maximum of endless range".to_string(),
-            ));
+            return Err(range_error!("cannot get the maximum of endless range"));
         }
         let is_float = matches!(start, Some(RubyValue::Float(_)))
             || matches!(end, Some(RubyValue::Float(_)));
@@ -580,10 +526,7 @@ builtin_methods! {
             // An exclusive float end has no maximum element -- CRuby's exact
             // TypeError (only an Integer end can be decremented).
             if exclusive {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    "cannot exclude non Integer end value".to_string(),
-                ));
+                return Err(type_error!("cannot exclude non Integer end value"));
             }
             return Ok(e.clone());
         }

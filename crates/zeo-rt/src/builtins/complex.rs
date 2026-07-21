@@ -11,7 +11,7 @@
 //! demotes.
 
 use crate::builtins::numeric::{num_add_or_panic, num_mul_or_panic, num_sub_or_panic};
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, range_error, type_error};
 use crate::{RubyValue, Signal};
 use num_bigint::BigInt;
 use num_traits::One;
@@ -36,9 +36,9 @@ fn is_component(v: &RubyValue) -> bool {
 pub fn complex_new(real: RubyValue, imag: RubyValue) -> Result<RubyValue, Signal> {
     if !is_component(&real) || !is_component(&imag) {
         let bad = if is_component(&real) { &imag } else { &real };
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!("can't convert {} into Complex", convert_name(bad)),
+        return Err(type_error!(
+            "can't convert {} into Complex",
+            convert_name(bad)
         ));
     }
     Ok(RubyValue::Complex(Arc::new(RComplexData { real, imag })))
@@ -686,13 +686,8 @@ builtin_methods! {
             RubyValue::Complex(_) => args[0].clone(),
             v if is_component(v) => complex_new(v.clone(), RubyValue::Int(0))?,
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "{} can't be coerced into Complex",
-                        crate::builtins::class_name_of(other)
-                    ),
-                ))
+                return Err(type_error!("{} can't be coerced into Complex",
+                        crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Array(crate::array_new(vec![other, recv.clone()])))
@@ -773,13 +768,10 @@ fn imag_is_exact_zero(v: &RubyValue) -> bool {
 fn real_projection(recv: &RubyValue, conv: &str) -> Result<RubyValue, Signal> {
     let c = recv_complex(recv);
     if !imag_is_exact_zero(&c.imag) {
-        return Err(crate::dispatch::raise_error(
-            "RangeError",
-            format!(
-                "can't convert {} into {}",
-                recv.to_display_string(),
-                conv_target(conv)
-            ),
+        return Err(range_error!(
+            "can't convert {} into {}",
+            recv.to_display_string(),
+            conv_target(conv)
         ));
     }
     crate::dispatch::send_value(&c.real, crate::Symbol::intern(conv), &[], None)

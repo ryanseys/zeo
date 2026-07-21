@@ -13,7 +13,7 @@
 //! STRING form (`instance_eval("@x + 1")`), which genuinely needs the eval
 //! VM -- it raises NotImplementedError below, like every other eval path.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use std::sync::Arc;
 
@@ -97,9 +97,8 @@ pub(crate) fn block_proc(
 ) -> Result<crate::RProc, crate::Signal> {
     match block {
         Some(RubyValue::Proc(p)) => Ok(p),
-        _ => Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            format!("tried to create Proc object without a block (in `{method}')"),
+        _ => Err(arg_error!(
+            "tried to create Proc object without a block (in `{method}')"
         )),
     }
 }
@@ -144,18 +143,15 @@ pub(crate) fn dynamic_send(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let Some((name_arg, rest)) = args.split_first() else {
-        return Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "no method name given".to_string(),
-        ));
+        return Err(arg_error!("no method name given"));
     };
     let sym = match name_arg {
         RubyValue::Symbol(s) => *s,
         RubyValue::Str(s) => Symbol::intern(&s.lock().to_utf8_lossy()),
         other => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", other.inspect_string()),
+            return Err(type_error!(
+                "{} is not a symbol nor a string",
+                other.inspect_string()
             ));
         }
     };

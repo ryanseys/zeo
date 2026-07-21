@@ -5,6 +5,7 @@
 //! error messages included.
 
 use crate::Symbol;
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::raise_error;
 use crate::fiber::{self, FiberResume, fiber_alive, fiber_resume, fiber_transfer};
 use crate::signal::Signal;
@@ -15,9 +16,9 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
     match v {
         RubyValue::Symbol(s) => Ok(*s),
         RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        other => Err(raise_error(
-            "TypeError",
-            format!("{} is not a symbol nor a string", other.inspect_string()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
         )),
     }
 }
@@ -90,9 +91,8 @@ fn f_kill(
 fn require_current(recv: &RubyValue) -> Result<crate::fiber::RFiber, Signal> {
     let handle = recv.as_fiber_unchecked();
     if !fiber::fiber_is_current(&handle) {
-        return Err(raise_error(
-            "ArgumentError",
-            "Fiber storage can only be accessed from the Fiber it belongs to".to_string(),
+        return Err(arg_error!(
+            "Fiber storage can only be accessed from the Fiber it belongs to"
         ));
     }
     Ok(handle)
@@ -122,12 +122,9 @@ fn f_set_storage(
             out
         }
         other => {
-            return Err(raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Hash",
-                    crate::builtins::convert_name_of(other)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Hash",
+                crate::builtins::convert_name_of(other)
             ));
         }
     };

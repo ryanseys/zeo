@@ -20,8 +20,8 @@
 //! mixin whose `@mon_data` is nil.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, need_block};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arity, builtin_methods, need_block, thread_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::thread::{
     RMutex, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
 };
@@ -71,7 +71,7 @@ impl RMonitor {
 }
 
 fn thread_error(msg: &str) -> crate::Signal {
-    raise_error("ThreadError", msg.to_string())
+    thread_error!("{msg}")
 }
 
 impl RubyObject for RMonitor {

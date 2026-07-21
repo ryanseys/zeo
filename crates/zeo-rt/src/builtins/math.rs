@@ -5,6 +5,7 @@
 //! CRuby's exact message shape.
 
 use crate::builtins::numeric::num_to_f64_unchecked;
+use crate::builtins::{arg_error, type_error};
 use crate::collections::array_new;
 use crate::{RubyValue, Signal};
 
@@ -27,12 +28,9 @@ fn arg_f64(v: &RubyValue) -> Result<f64, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
             Ok(num_to_f64_unchecked(v))
         }
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "can't convert {} into Float",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "can't convert {} into Float",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -45,10 +43,7 @@ fn domain_error(fn_name: &str) -> Signal {
 }
 
 fn math_arity(given: usize, expected: &str) -> Signal {
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!("wrong number of arguments (given {given}, expected {expected})"),
-    )
+    arg_error!("wrong number of arguments (given {given}, expected {expected})")
 }
 
 /// Every Math module function -- the reflection surface for
@@ -65,12 +60,9 @@ pub(crate) const NAMES: &[&str] = &[
 pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
     fn unary(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<f64, Signal> {
         if args.len() != 1 {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                format!(
-                    "wrong number of arguments (given {}, expected 1)",
-                    args.len()
-                ),
+            return Err(arg_error!(
+                "wrong number of arguments (given {}, expected 1)",
+                args.len()
             ));
         }
         Ok(f(arg_f64(&args[0])?))
@@ -127,12 +119,9 @@ pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Sig
         // `log(x)` natural; `log(x, base)` arbitrary-base.
         "log" => (|| {
             if args.is_empty() || args.len() > 2 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!(
-                        "wrong number of arguments (given {}, expected 1..2)",
-                        args.len()
-                    ),
+                return Err(arg_error!(
+                    "wrong number of arguments (given {}, expected 1..2)",
+                    args.len()
                 ));
             }
             let x = arg_f64(&args[0])?;
@@ -147,12 +136,9 @@ pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Sig
         })(),
         "atan2" | "hypot" => (|| {
             if args.len() != 2 {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    format!(
-                        "wrong number of arguments (given {}, expected 2)",
-                        args.len()
-                    ),
+                return Err(arg_error!(
+                    "wrong number of arguments (given {}, expected 2)",
+                    args.len()
                 ));
             }
             let (a, b) = (arg_f64(&args[0])?, arg_f64(&args[1])?);

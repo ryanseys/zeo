@@ -10,7 +10,7 @@
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::sync::Arc;
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arg_error, arity, builtin_methods, io_error, not_impl_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TCPSERVER_CLASS, TCPSOCKET_CLASS};
@@ -18,10 +18,7 @@ use zeo_abi::{ClassId, TCPSERVER_CLASS, TCPSOCKET_CLASS};
 /// The shared "networking not built" error -- a real, `rescue`-able
 /// `NotImplementedError` (not a panic).
 fn not_implemented(method: &str) -> Signal {
-    raise_error(
-        "NotImplementedError",
-        format!("Socket#{method} is not implemented (live networking is out of scope)"),
-    )
+    not_impl_error!("Socket#{method} is not implemented (live networking is out of scope)")
 }
 
 builtin_methods! {
@@ -84,8 +81,8 @@ fn recv_server(recv: &RubyValue) -> Result<&RTcpServer, Signal> {
         RubyValue::Object(o) => o
             .as_any()
             .downcast_ref::<RTcpServer>()
-            .ok_or_else(|| raise_error("TypeError", "not a TCPServer".to_string())),
-        _ => Err(raise_error("TypeError", "not a TCPServer".to_string())),
+            .ok_or_else(|| type_error!("not a TCPServer")),
+        _ => Err(type_error!("not a TCPServer")),
     }
 }
 
@@ -102,12 +99,9 @@ fn host_port(args: &[RubyValue], default_host: &str) -> Result<(String, u16), Si
             };
             Ok((host, port_of(p)?))
         }
-        _ => Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 1..2)",
-                args.len()
-            ),
+        _ => Err(arg_error!(
+            "wrong number of arguments (given {}, expected 1..2)",
+            args.len()
         )),
     }
 }
@@ -123,10 +117,7 @@ fn port_of(v: &RubyValue) -> Result<u16, Signal> {
             .trim()
             .parse::<u16>()
             .map_err(|_| raise_error("SocketError", "getaddrinfo: unknown service".to_string())),
-        _ => Err(raise_error(
-            "TypeError",
-            "no implicit conversion into Integer".to_string(),
-        )),
+        _ => Err(type_error!("no implicit conversion into Integer")),
     }
 }
 
@@ -160,7 +151,7 @@ builtin_methods! {
         let stream = {
             let guard = server.listener.lock();
             let Some(listener) = guard.as_ref() else {
-                return Err(raise_error("IOError", "closed stream".to_string()));
+                return Err(io_error!("closed stream"));
             };
             listener.accept().map_err(|e| map_io_err(&e, "accept(2)"))?.0
         };
@@ -174,7 +165,7 @@ builtin_methods! {
         let server = recv_server(recv)?;
         let guard = server.listener.lock();
         let Some(listener) = guard.as_ref() else {
-            return Err(raise_error("IOError", "closed stream".to_string()));
+            return Err(io_error!("closed stream"));
         };
         let local = listener.local_addr().map_err(|e| map_io_err(&e, "getsockname(2)"))?;
         Ok(socket_addr_array(local))

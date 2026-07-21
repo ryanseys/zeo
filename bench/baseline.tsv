@@ -1,0 +1,12 @@
+# bench/baseline.tsv -- xtask bench --update-baseline
+bm_ackermann	0.472
+bm_attr_accessor	3.149
+bm_bigint_fib	0.017
+bm_binary_trees	0.093
+bm_csv_process	23.270
+bm_fannkuch	0.041
+bm_fasta	0.041
+bm_fib	0.629
+bm_gcbench	7.787
+bm_getivar	0.253
+bm_getivar_module	4.393

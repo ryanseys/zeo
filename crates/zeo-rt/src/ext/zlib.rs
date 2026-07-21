@@ -6,20 +6,16 @@
 //! `Zlib.gzip` uses a fixed mtime of 0 (a documented divergence from CRuby's
 //! current-time default) so its output is deterministic.
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::raise_error;
+use crate::builtins::{arity, builtin_methods, runtime_error, type_error};
 use crate::{RubyValue, Signal};
 
 fn bytes_arg(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
     match v {
         None | Some(RubyValue::Nil) => Ok(Vec::new()),
         Some(RubyValue::Str(s)) => Ok(s.lock().bytes().to_vec()),
-        Some(other) => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -136,11 +132,11 @@ fn read_all(r: &mut impl std::io::Read) -> Result<RubyValue, Signal> {
     let mut out = Vec::new();
     std::io::Read::read_to_end(r, &mut out)
         .map(|_| bin_str(out))
-        .map_err(|_| raise_error("RuntimeError", "invalid compressed data".to_string()))
+        .map_err(|_| runtime_error!("invalid compressed data"))
 }
 
 fn io_err(_e: std::io::Error) -> Signal {
-    raise_error("RuntimeError", "zlib stream error".to_string())
+    runtime_error!("zlib stream error")
 }
 
 #[cfg(test)]

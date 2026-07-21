@@ -11,8 +11,8 @@
 //! (`digest_length`/`block_length`/`==`/`bubblebabble`/`hexencode`) is built (see
 //! docs/EXTENSIONS.md).
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
 use parking_lot::Mutex;
@@ -173,12 +173,9 @@ fn algo_of_class(recv: &RubyValue) -> Algo {
 fn in_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -218,12 +215,9 @@ fn base64(bytes: &[u8]) -> String {
 /// when an arg was supplied.
 fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
     if args.len() > 1 {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 0..1)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 0..1)",
+            args.len()
         ));
     }
     let d = digest_of(recv);

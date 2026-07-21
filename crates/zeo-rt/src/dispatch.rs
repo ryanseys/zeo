@@ -5,6 +5,7 @@
 //! `zeo` cannot resolve a call statically). Zeo itself never needs
 //! this module at all -- it's the one deliberate architectural addition.
 
+use crate::builtins::{arg_error, frozen_error, name_error, type_error};
 use crate::{RubyValue, Signal, Symbol};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -340,10 +341,7 @@ pub fn bind_dynamic_kwargs<'a>(
         // but this convention already committed it as keywords (the
         // documented no-ruby2_keywords approximation).
         if !has_kwrest {
-            return Err(raise_error(
-                "ArgumentError",
-                format!("wrong number of arguments (in `{method}')"),
-            ));
+            return Err(arg_error!("wrong number of arguments (in `{method}')"));
         }
     }
     if !unknown.is_empty() {
@@ -362,7 +360,7 @@ fn kw_names_error(kind: &str, names: &[String]) -> Signal {
         .map(|n| format!(":{n}"))
         .collect::<Vec<_>>()
         .join(", ");
-    raise_error("ArgumentError", format!("{kind} keyword{plural}: {list}"))
+    arg_error!("{kind} keyword{plural}: {list}")
 }
 
 /// The top-level `self` -- CRuby's `main`, a plain `Object` instance.
@@ -408,9 +406,9 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
         RubyValue::Object(o) => {
             if o.is_frozen() {
                 let cls = crate::builtins::class_name_of(recv);
-                return Err(raise_error(
-                    "FrozenError",
-                    format!("can't modify frozen {cls}: {}", recv.inspect_string()),
+                return Err(frozen_error!(
+                    "can't modify frozen {cls}: {}",
+                    recv.inspect_string()
                 ));
             }
             o.ivar_set_named(name, v.clone());
@@ -426,13 +424,10 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
         }
         // Real Ruby raises here (immediates are frozen and have no ivar
         // table), and the message names the receiver's class.
-        _ => Err(raise_error(
-            "FrozenError",
-            format!(
-                "can't modify frozen {}: {}",
-                crate::builtins::class_name_of(recv),
-                recv.inspect_string()
-            ),
+        _ => Err(frozen_error!(
+            "can't modify frozen {}: {}",
+            crate::builtins::class_name_of(recv),
+            recv.inspect_string()
         )),
     }
 }
@@ -1000,17 +995,16 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
         RubyValue::Symbol(s) => s.name().to_string(),
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => {
-            return Err(raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", v.inspect_string()),
+            return Err(type_error!(
+                "{} is not a symbol nor a string",
+                v.inspect_string()
             ));
         }
     };
     match raw.strip_prefix('@') {
         Some(name) => Ok(name.to_string()),
-        None => Err(raise_error(
-            "NameError",
-            format!("'{raw}' is not allowed as an instance variable name"),
+        None => Err(name_error!(
+            "'{raw}' is not allowed as an instance variable name"
         )),
     }
 }
@@ -1058,23 +1052,17 @@ pub fn remove_instance_variable(
         RubyValue::Object(o) => {
             if o.is_frozen() {
                 let cls = crate::builtins::class_name_of(recv);
-                return Err(raise_error(
-                    "FrozenError",
-                    format!("can't modify frozen {cls}: {}", recv.inspect_string()),
+                return Err(frozen_error!(
+                    "can't modify frozen {cls}: {}",
+                    recv.inspect_string()
                 ));
             }
             match o.ivar_remove_named(&name) {
                 Some(v) => Ok(v),
-                None => Err(raise_error(
-                    "NameError",
-                    format!("instance variable @{name} not defined"),
-                )),
+                None => Err(name_error!("instance variable @{name} not defined")),
             }
         }
-        _ => Err(raise_error(
-            "NameError",
-            format!("instance variable @{name} not defined"),
-        )),
+        _ => Err(name_error!("instance variable @{name} not defined")),
     }
 }
 
@@ -1158,12 +1146,9 @@ pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, S
     }
     let dig = Symbol::intern("dig");
     if !responds_to_value(&cur, dig, false) {
-        return Err(raise_error(
-            "TypeError",
-            format!(
-                "{} does not have #dig method",
-                crate::class_name_of_value(&cur)
-            ),
+        return Err(type_error!(
+            "{} does not have #dig method",
+            crate::class_name_of_value(&cur)
         ));
     }
     send_value(&cur, dig, rest, None)
@@ -1607,9 +1592,9 @@ pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
     match v {
         RubyValue::Symbol(s) => Ok(*s),
         RubyValue::Str(s) => Ok(Symbol::intern(&s.lock().to_utf8_lossy())),
-        other => Err(raise_error(
-            "TypeError",
-            format!("{} is not a symbol nor a string", other.inspect_string()),
+        other => Err(type_error!(
+            "{} is not a symbol nor a string",
+            other.inspect_string()
         )),
     }
 }
@@ -1776,12 +1761,9 @@ pub fn run_initialize(
     // Message shape oracle-verified: CRuby says "wrong number of arguments
     // (given 2, expected 0)" with no method name in it.
     if !args.is_empty() {
-        return Err(raise_error(
-            "ArgumentError",
-            format!(
-                "wrong number of arguments (given {}, expected 0)",
-                args.len()
-            ),
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 0)",
+            args.len()
         ));
     }
     Ok(())

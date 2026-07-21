@@ -2,7 +2,9 @@
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
 use crate::RubyValue;
-use crate::builtins::{arity, block_or_enum, builtin_methods, recv_hash};
+use crate::builtins::{
+    arg_error, arity, block_or_enum, builtin_methods, frozen_error, recv_hash, type_error,
+};
 
 /// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place
 /// mutation. Shared by every mutator so a frozen receiver can't slip through.
@@ -60,10 +62,7 @@ builtin_methods! {
         match &args[0] {
             RubyValue::Nil => g.default_proc = None,
             p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
-            other => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Proc", crate::builtins::convert_name_of(other)),
-            )),
+            other => return Err(type_error!("no implicit conversion of {} into Proc", crate::builtins::convert_name_of(other))),
         }
         Ok(args[0].clone())
     }
@@ -73,10 +72,7 @@ builtin_methods! {
         arity!(args, 0);
         let h = recv_hash!(recv);
         if h.is_frozen() {
-            return Err(crate::dispatch::raise_error(
-                "FrozenError",
-                format!("can't modify frozen Hash: {}", recv.inspect_string()),
-            ));
+            return Err(frozen_error!("can't modify frozen Hash: {}", recv.inspect_string()));
         }
         crate::hash_enable_compare_by_identity(h);
         Ok(recv.clone())
@@ -161,10 +157,7 @@ builtin_methods! {
     }
     "dig" => fn dig(recv, args, _block) {
         if args.is_empty() {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "wrong number of arguments (given 0, expected 1+)".to_string(),
-            ));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
         let cur = crate::hash_get(recv_hash!(recv), &args[0]);
         if args.len() == 1 {
@@ -248,10 +241,7 @@ builtin_methods! {
         let depth = match args.first() {
             None => 1,
             Some(RubyValue::Int(n)) => *n,
-            Some(other) => return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-            )),
+            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
         };
         let mut out = Vec::new();
         for (k, v) in recv_hash!(recv).lock().values() {
@@ -359,10 +349,7 @@ builtin_methods! {
         guard_hash_frozen(recv)?;
         arity!(args, 1);
         let RubyValue::Hash(other) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])),
-            ));
+            return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])));
         };
         let h = recv_hash!(recv);
         let old_keys: Vec<RubyValue> = h.lock().values().map(|(k, _)| k.clone()).collect();
@@ -621,12 +608,9 @@ fn transform_keys_mapping(
     match args.first() {
         Some(RubyValue::Hash(h)) => Ok(Some(h.clone())),
         None | Some(RubyValue::Nil) => Ok(None),
-        Some(other) => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Hash",
-                crate::builtins::convert_name_of(other)
-            ),
+        Some(other) => Err(type_error!(
+            "no implicit conversion of {} into Hash",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -670,9 +654,9 @@ fn hash_filter_bang(
     // `rb_hash_modify_check` at the top of every in-place filter, whether or
     // not an entry would actually be removed.
     if h.is_frozen() {
-        return Err(crate::dispatch::raise_error(
-            "FrozenError",
-            format!("can't modify frozen Hash: {}", recv.inspect_string()),
+        return Err(frozen_error!(
+            "can't modify frozen Hash: {}",
+            recv.inspect_string()
         ));
     }
     let pairs: Vec<(RubyValue, RubyValue)> = h
@@ -698,16 +682,13 @@ fn hash_filter_bang(
 /// with an equal value. A non-Hash `b` is a TypeError, matching CRuby.
 fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate::Signal> {
     let (RubyValue::Hash(small), RubyValue::Hash(big)) = (a, b) else {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into Hash",
-                crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) {
-                    b
-                } else {
-                    a
-                }),
-            ),
+        return Err(type_error!(
+            "no implicit conversion of {} into Hash",
+            crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) {
+                b
+            } else {
+                a
+            }),
         ));
     };
     if proper && crate::hash_len(small) >= crate::hash_len(big) {
@@ -730,12 +711,9 @@ fn merge_into(
     };
     for a in args {
         let RubyValue::Hash(other) = a else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Hash",
-                    crate::builtins::convert_name_of(a)
-                ),
+            return Err(type_error!(
+                "no implicit conversion of {} into Hash",
+                crate::builtins::convert_name_of(a)
             ));
         };
         let pairs: Vec<(RubyValue, RubyValue)> = other.lock().values().cloned().collect();
@@ -784,10 +762,7 @@ builtin_methods! {
         arity!(args, 0..=1);
         if let Some(RubyValue::Proc(_)) = &block {
             if !args.is_empty() {
-                return Err(crate::dispatch::raise_error(
-                    "ArgumentError",
-                    "wrong number of arguments (given 1, expected 0)".to_string(),
-                ));
+                return Err(arg_error!("wrong number of arguments (given 1, expected 0)"));
             }
             return Ok(RubyValue::Hash(crate::hash_new_with_default(RubyValue::Nil, block)));
         }
@@ -808,20 +783,12 @@ builtin_methods! {
                     let mut pairs = Vec::new();
                     for el in a.lock().iter() {
                         let RubyValue::Array(kv) = el else {
-                            return Err(crate::dispatch::raise_error(
-                                "ArgumentError",
-                                format!(
-                                    "wrong element type {} (expected array)",
-                                    crate::builtins::class_name_of(el)
-                                ),
-                            ));
+                            return Err(arg_error!("wrong element type {} (expected array)",
+                                    crate::builtins::class_name_of(el)));
                         };
                         let kv = kv.lock();
                         if kv.is_empty() || kv.len() > 2 {
-                            return Err(crate::dispatch::raise_error(
-                                "ArgumentError",
-                                format!("invalid number of elements ({} for 1..2)", kv.len()),
-                            ));
+                            return Err(arg_error!("invalid number of elements ({} for 1..2)", kv.len()));
                         }
                         pairs.push((kv[0].clone(), kv.get(1).cloned().unwrap_or(RubyValue::Nil)));
                     }
@@ -831,10 +798,7 @@ builtin_methods! {
             }
         }
         if !args.len().is_multiple_of(2) {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "odd number of arguments for Hash".to_string(),
-            ));
+            return Err(arg_error!("odd number of arguments for Hash"));
         }
         let pairs = args.chunks(2).map(|c| (c[0].clone(), c[1].clone())).collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
@@ -851,15 +815,10 @@ builtin_methods! {
         if crate::dispatch::responds_to(v.class_id(), to_hash, false) {
             return match crate::dispatch::send_value(v, to_hash, &[], None)? {
                 r @ (RubyValue::Hash(_) | RubyValue::Nil) => Ok(r),
-                other => Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!(
-                        "can't convert {} to Hash ({}#to_hash gives {})",
+                other => Err(type_error!("can't convert {} to Hash ({}#to_hash gives {})",
                         crate::builtins::class_name_of(v),
                         crate::builtins::class_name_of(v),
-                        crate::builtins::class_name_of(&other)
-                    ),
-                )),
+                        crate::builtins::class_name_of(&other))),
             };
         }
         Ok(RubyValue::Nil)

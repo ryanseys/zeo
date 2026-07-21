@@ -443,7 +443,9 @@ fn try_regexp_dispatch(
                 return Some(quote! { zeo_rt::regexp_to_s(&(#recv_expr).as_regexp_unchecked()) });
             }
             ("inspect", 0) => {
-                return Some(quote! { zeo_rt::regexp_inspect(&(#recv_expr).as_regexp_unchecked()) });
+                return Some(
+                    quote! { zeo_rt::regexp_inspect(&(#recv_expr).as_regexp_unchecked()) },
+                );
             }
             // `===` is safe against ANY subject shape (real Ruby: `Regexp#===`
             // is `false`, not an error, for a non-String) -- routed through

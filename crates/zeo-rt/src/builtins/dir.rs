@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::builtins::file::{path_arg, raise_errno};
-use crate::builtins::{arity, block_or_enum, builtin_methods};
-use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, io_error, type_error};
+use crate::dispatch::{RObj, RubyObject};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, DIR_CLASS};
 
@@ -334,8 +334,8 @@ fn recv_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
         RubyValue::Object(o) => o
             .as_any()
             .downcast_ref::<RDir>()
-            .ok_or_else(|| raise_error("TypeError", "not a Dir".to_string())),
-        _ => Err(raise_error("TypeError", "not a Dir".to_string())),
+            .ok_or_else(|| type_error!("not a Dir")),
+        _ => Err(type_error!("not a Dir")),
     }
 }
 
@@ -343,7 +343,7 @@ fn recv_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
 fn live_dir(recv: &RubyValue) -> Result<&RDir, Signal> {
     let d = recv_dir(recv)?;
     if !d.open.load(Ordering::Relaxed) {
-        return Err(raise_error("IOError", "closed directory".to_string()));
+        return Err(io_error!("closed directory"));
     }
     Ok(d)
 }
@@ -414,7 +414,7 @@ builtin_methods! {
     "pos=" => fn dir_h_pos_set(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
         Ok(args[0].clone())
@@ -422,7 +422,7 @@ builtin_methods! {
     "seek" => fn dir_h_seek(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
         Ok(recv.clone())
@@ -579,10 +579,7 @@ builtin_methods! {
                 )
             }
             Some(other) => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
-                ))
+                return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
             }
         };
         let parent = match args.get(1) {
@@ -631,10 +628,7 @@ builtin_methods! {
     // answers nil; otherwise an Array. Multiple patterns union.
     "glob" | "[]" => fn dir_glob(_recv, args, block) {
         if args.is_empty() {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "wrong number of arguments (given 0, expected 1+)".to_string(),
-            ));
+            return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
         // A trailing Integer FNM flags argument (`File::FNM_DOTMATCH`, ...)
         // governs matching for all patterns. FNM_DOTMATCH is bit 0x4.

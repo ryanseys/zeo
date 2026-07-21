@@ -11,7 +11,7 @@
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, type_error};
 
 /// One end (`idx` 0 = begin, 1 = end) of a group's `offset`/`byteoffset` pair,
 /// nil when the group didn't participate.
@@ -202,10 +202,7 @@ builtin_methods! {
                 }
             }
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("wrong argument type {} (expected Array)", crate::builtins::class_name_of(other)),
-                ))
+                return Err(type_error!("wrong argument type {} (expected Array)", crate::builtins::class_name_of(other)))
             }
         };
         Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))

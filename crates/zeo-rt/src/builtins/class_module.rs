@@ -7,7 +7,7 @@
 //! one file.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, name_error, type_error};
 
 fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     match recv {
@@ -101,10 +101,7 @@ builtin_methods! {
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("{} is not a symbol nor a string", other.inspect_string()),
-                ))
+                return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
         crate::constants::const_set(cid.0, &name, args[1].clone());
@@ -119,20 +116,14 @@ builtin_methods! {
             RubyValue::Symbol(s) => s.name(),
             RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
             other => {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("{} is not a symbol nor a string", other.inspect_string()),
-                ))
+                return Err(type_error!("{} is not a symbol nor a string", other.inspect_string()))
             }
         };
         crate::constants::const_get(cid.0, &name)
             .or_else(|| crate::dispatch::ancestors_of_value(cid)
                 .iter()
                 .find_map(|anc| crate::constants::const_get(anc.0, &name)))
-            .ok_or_else(|| crate::dispatch::raise_error(
-                "NameError",
-                format!("uninitialized constant {name}"),
-            ))
+            .ok_or_else(|| name_error!("uninitialized constant {name}"))
     }
     "constants" => fn constants(recv, args, _block) {
         arity!(args, 0..=1);
@@ -176,10 +167,7 @@ builtin_methods! {
                 }
                 other => crate::builtins::class_name_of(other),
             };
-            crate::dispatch::raise_error(
-                "TypeError",
-                format!("wrong argument type {name} (expected Module)"),
-            )
+            type_error!("wrong argument type {name} (expected Module)")
         };
         let RubyValue::Class(other) = args[0] else {
             return Err(type_err());
@@ -409,13 +397,8 @@ builtin_methods! {
                 return Ok(crate::cvar_get(anc.0, &name));
             }
         }
-        Err(crate::dispatch::raise_error(
-            "NameError",
-            format!(
-                "uninitialized class variable @@{name} in {}",
-                crate::dispatch::class_name(cid).unwrap_or_default()
-            ),
-        ))
+        Err(name_error!("uninitialized class variable @@{name} in {}",
+                crate::dispatch::class_name(cid).unwrap_or_default()))
     }
     "class_variable_set" => fn cvar_set_m(recv, args, _block) {
         arity!(args, 2);
@@ -479,10 +462,7 @@ fn module_ordering_op(
     pred: impl Fn(std::cmp::Ordering) -> bool,
 ) -> Result<RubyValue, crate::Signal> {
     let RubyValue::Class(other) = arg else {
-        return Err(crate::dispatch::raise_error(
-            "TypeError",
-            "compared with non class/module".to_string(),
-        ));
+        return Err(type_error!("compared with non class/module"));
     };
     Ok(match crate::dispatch::module_cmp(recv_cid(recv), *other) {
         Some(o) => RubyValue::Bool(pred(o)),
@@ -496,9 +476,9 @@ fn name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     match v {
         RubyValue::Symbol(s) => Ok(s.name().to_string()),
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        _ => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!("{} is not a symbol nor a string", v.inspect_string()),
+        _ => Err(type_error!(
+            "{} is not a symbol nor a string",
+            v.inspect_string()
         )),
     }
 }
@@ -510,9 +490,8 @@ fn cvar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
     let raw = name_arg(v)?;
     match raw.strip_prefix("@@") {
         Some(name) => Ok(name.to_string()),
-        None => Err(crate::dispatch::raise_error(
-            "NameError",
-            format!("'{raw}' is not allowed as a class variable name"),
+        None => Err(name_error!(
+            "'{raw}' is not allowed as a class variable name"
         )),
     }
 }
@@ -532,17 +511,16 @@ fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
         RubyValue::Symbol(s) => s.name().to_string(),
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("{} is not a symbol nor a string", v.inspect_string()),
+            return Err(type_error!(
+                "{} is not a symbol nor a string",
+                v.inspect_string()
             ));
         }
     };
     match raw.strip_prefix('@') {
         Some(name) => Ok(name.to_string()),
-        None => Err(crate::dispatch::raise_error(
-            "NameError",
-            format!("'{raw}' is not allowed as an instance variable name"),
+        None => Err(name_error!(
+            "'{raw}' is not allowed as an instance variable name"
         )),
     }
 }
@@ -613,10 +591,7 @@ builtin_methods! {
             None => {
                 let n = crate::dispatch::class_name(cid)
                     .unwrap_or_else(|| format!("#<Class:{}>", cid.0));
-                Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("allocator undefined for {n}"),
-                ))
+                Err(type_error!("allocator undefined for {n}"))
             }
         }
     }

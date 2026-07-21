@@ -16,6 +16,7 @@ use std::sync::{Arc, LazyLock};
 
 use crate::RubyValue;
 use crate::builtins::builtin_methods;
+use crate::builtins::type_error;
 use crate::dispatch::{RObj, RubyObject};
 use zeo_abi::{ClassId, OBJECT_CLASS};
 
@@ -70,12 +71,9 @@ pub fn seed_env() {
 fn key(v: &RubyValue) -> Result<String, crate::Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ),
+        other => Err(type_error!(
+            "no implicit conversion of {} into String",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -245,19 +243,13 @@ builtin_methods! {
     // #clone and #freeze, which is why they need explicit entries here rather
     // than falling through to the Hash snapshot).
     "dup" => fn env_dup(_recv, _args, _block) {
-        Err(crate::dispatch::raise_error(
-            "TypeError",
-            "Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash".to_string(),
-        ))
+        Err(type_error!("Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash"))
     }
     "clone" => fn env_clone(_recv, _args, _block) {
-        Err(crate::dispatch::raise_error(
-            "TypeError",
-            "Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash".to_string(),
-        ))
+        Err(type_error!("Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash"))
     }
     "freeze" => fn env_freeze(_recv, _args, _block) {
-        Err(crate::dispatch::raise_error("TypeError", "cannot freeze ENV".to_string()))
+        Err(type_error!("cannot freeze ENV"))
     }
     // `ENV.update(hash, ...)` / `ENV.merge!(...)` -- set each name => value into
     // the real environment; a block resolves a key already present, taking
@@ -265,10 +257,7 @@ builtin_methods! {
     "update" | "merge!" => fn env_update(recv, args, block) {
         for a in args {
             let RubyValue::Hash(h) = a else {
-                return Err(crate::dispatch::raise_error(
-                    "TypeError",
-                    format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(a)),
-                ));
+                return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(a)));
             };
             for (k, v) in crate::collections::hash_pairs(h) {
                 let ks = key(&k)?;
@@ -324,10 +313,7 @@ builtin_methods! {
     "replace" => fn env_replace(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let RubyValue::Hash(h) = &args[0] else {
-            return Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])),
-            ));
+            return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])));
         };
         let next = crate::collections::hash_pairs(h);
         for (k, _) in pairs() {

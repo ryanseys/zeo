@@ -8,7 +8,7 @@
 //! surface -- including `exist?`/`check_until`/`get_byte`/`unscan` -- is
 //! oracle-verified against ruby 4.0.5.
 
-use crate::builtins::{arity, builtin_methods};
+use crate::builtins::{arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal, string_new};
 use parking_lot::Mutex;
@@ -99,12 +99,9 @@ fn anchored_len(pattern: &RubyValue, tail: &str) -> Result<Option<usize>, Signal
             let p = s.lock().to_utf8_lossy().into_owned();
             Ok(tail.starts_with(&p).then_some(p.len()))
         }
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected Regexp)",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(type_error!(
+            "wrong argument type {} (expected Regexp)",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -182,10 +179,7 @@ builtin_methods! {
                 let p = s.lock().to_utf8_lossy().into_owned();
                 tail.find(&p).map(|i| (i, i + p.len()))
             }
-            other => return Err(raise_error(
-                "TypeError",
-                format!("wrong argument type {} (expected Regexp)", crate::builtins::class_name_of(other)),
-            )),
+            other => return Err(type_error!("wrong argument type {} (expected Regexp)", crate::builtins::class_name_of(other))),
         };
         match span {
             Some((rel_start, rel_end)) => {
@@ -218,7 +212,7 @@ builtin_methods! {
     "peek" => fn peek(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         let st = sc_of(recv).state.lock();
         let end = (st.pos + (*n).max(0) as usize).min(st.string.len());
@@ -241,7 +235,7 @@ builtin_methods! {
     "pos=" => fn set_pos(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
-            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+            return Err(type_error!("no implicit conversion into Integer"));
         };
         sc_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
@@ -367,12 +361,9 @@ fn find_forward(pattern: &RubyValue, tail: &str) -> Result<Option<(usize, usize)
             let p = s.lock().to_utf8_lossy().into_owned();
             Ok(tail.find(&p).map(|i| (i, i + p.len())))
         }
-        other => Err(raise_error(
-            "TypeError",
-            format!(
-                "wrong argument type {} (expected Regexp)",
-                crate::builtins::class_name_of(other)
-            ),
+        other => Err(type_error!(
+            "wrong argument type {} (expected Regexp)",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -383,10 +374,7 @@ builtin_methods! {
     "new" => fn new_m(_recv, args, _block) {
         arity!(args, 1..=2); // (string[, opts]) -- opts ignored
         let RubyValue::Str(s) = &args[0] else {
-            return Err(raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])),
-            ));
+            return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])));
         };
         let text = s.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Object(Arc::new(RStringScanner::new(text))))

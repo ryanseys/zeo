@@ -5,6 +5,7 @@
 //! `sp_RbVal` tagged union (`lib/sp_gc.h:42`), but as a real Rust `enum`
 //! instead of a hand-written `{ tag; cls_id; union { ... } }` struct.
 
+use crate::builtins::arg_error;
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ARRAY_CLASS, CLASS_CLASS, ClassId, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
@@ -1217,13 +1218,10 @@ pub(crate) fn cmp_error(a: &RubyValue, b: &RubyValue) -> crate::Signal {
         | RubyValue::Symbol(_) => b.inspect_string(),
         _ => crate::builtins::class_name_of(b),
     };
-    crate::dispatch::raise_error(
-        "ArgumentError",
-        format!(
-            "comparison of {} with {} failed",
-            crate::builtins::class_name_of(a),
-            shown
-        ),
+    arg_error!(
+        "comparison of {} with {} failed",
+        crate::builtins::class_name_of(a),
+        shown
     )
 }
 

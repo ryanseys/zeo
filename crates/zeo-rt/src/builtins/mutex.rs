@@ -8,8 +8,7 @@
 //! than downcasting an `Object` the way `ConditionVariable` does.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, need_block};
-use crate::dispatch::raise_error;
+use crate::builtins::{arity, builtin_methods, need_block, thread_error};
 use crate::thread::{
     mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
 };
@@ -17,7 +16,7 @@ use crate::thread::{
 /// A runtime lock/unlock `Err(&str)` as the `ThreadError` CRuby raises -- the
 /// runtime carries the exact message, exception construction is ours.
 fn thread_error(msg: &str) -> crate::Signal {
-    raise_error("ThreadError", msg.to_string())
+    thread_error!("{msg}")
 }
 
 builtin_methods! {

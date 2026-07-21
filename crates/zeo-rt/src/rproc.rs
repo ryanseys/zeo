@@ -19,6 +19,7 @@
 //! based, the closures codegen generates satisfy this bound with no manual
 //! annotation needed at the construction site.
 
+use crate::builtins::{local_jump_error, type_error};
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
@@ -218,9 +219,9 @@ impl RProc {
             // not swallow), or a top-level proc (current leak behavior kept);
             // a live home is a genuine non-local return in flight.
             Err(Signal::Return(v)) if !self.0.is_lambda => match &self.0.home {
-                Some(home) if !crate::signal::proc_home_alive(home) => Err(
-                    crate::dispatch::raise_error("LocalJumpError", "unexpected return".to_string()),
-                ),
+                Some(home) if !crate::signal::proc_home_alive(home) => {
+                    Err(local_jump_error!("unexpected return"))
+                }
                 _ => Err(Signal::Return(v)),
             },
             other => other,
@@ -361,12 +362,9 @@ pub fn to_hash_coerce(v: &RubyValue) -> Result<crate::RHash, Signal> {
             return Ok(h);
         }
     }
-    Err(crate::dispatch::raise_error(
-        "TypeError",
-        format!(
-            "no implicit conversion of {} into Hash",
-            crate::builtins::convert_name_of(v)
-        ),
+    Err(type_error!(
+        "no implicit conversion of {} into Hash",
+        crate::builtins::convert_name_of(v)
     ))
 }
 
@@ -389,23 +387,17 @@ pub fn block_arg_to_proc(v: crate::RubyValue) -> Result<Option<crate::RubyValue>
             if crate::dispatch::responds_to(other.class_id(), to_proc, false) {
                 return match crate::dispatch::send_value(&other, to_proc, &[], None)? {
                     p @ crate::RubyValue::Proc(_) => Ok(Some(p)),
-                    bad => Err(crate::dispatch::raise_error(
-                        "TypeError",
-                        format!(
-                            "can't convert {} to Proc ({}#to_proc gives {})",
-                            crate::builtins::class_name_of(&other),
-                            crate::builtins::class_name_of(&other),
-                            crate::builtins::class_name_of(&bad)
-                        ),
+                    bad => Err(type_error!(
+                        "can't convert {} to Proc ({}#to_proc gives {})",
+                        crate::builtins::class_name_of(&other),
+                        crate::builtins::class_name_of(&other),
+                        crate::builtins::class_name_of(&bad)
                     )),
                 };
             }
-            Err(crate::dispatch::raise_error(
-                "TypeError",
-                format!(
-                    "no implicit conversion of {} into Proc",
-                    crate::builtins::convert_name_of(&other)
-                ),
+            Err(type_error!(
+                "no implicit conversion of {} into Proc",
+                crate::builtins::convert_name_of(&other)
             ))
         }
     }

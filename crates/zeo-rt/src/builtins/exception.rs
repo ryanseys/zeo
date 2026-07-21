@@ -27,9 +27,9 @@ use zeo_abi::{
     declared_ancestors,
 };
 
+use crate::builtins::{arg_error, type_error};
 use crate::dispatch::{
-    ClassRegistry, ConstructorFn, RObj, RubyObject, class_name, downcast_robj, raise_error,
-    run_initialize, send,
+    ClassRegistry, ConstructorFn, RObj, RubyObject, class_name, downcast_robj, run_initialize, send,
 };
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -369,16 +369,10 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
         return Ok(());
     }
     let RubyValue::Object(cause_obj) = &cause else {
-        return Err(raise_error(
-            "TypeError",
-            "exception object expected".to_string(),
-        ));
+        return Err(type_error!("exception object expected"));
     };
     if !crate::dispatch::is_a(cause_obj.class_id(), zeo_abi::EXCEPTION_CLASS) {
-        return Err(raise_error(
-            "TypeError",
-            "exception object expected".to_string(),
-        ));
+        return Err(type_error!("exception object expected"));
     }
     // A DIRECT self-cause is silently dropped rather than raising -- an
     // asymmetry with the indirect case below that CRuby's own comment flags,
@@ -392,7 +386,7 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
     let mut cur = cause.clone();
     while let RubyValue::Object(c) = &cur {
         if Arc::ptr_eq(c, o) {
-            return Err(raise_error("ArgumentError", "circular causes".to_string()));
+            return Err(arg_error!("circular causes"));
         }
         let Some(ce) = downcast_robj::<RubyException>(c) else {
             break;
@@ -437,10 +431,7 @@ fn exc_receiver(
 ) -> Result<RubyValue, Signal> {
     match exc(recv).detail_opt("receiver") {
         Some(v) => Ok(v),
-        None => Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "no receiver is available".to_string(),
-        )),
+        None => Err(arg_error!("no receiver is available")),
     }
 }
 
@@ -449,10 +440,7 @@ fn exc_receiver(
 fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     match exc(recv).detail_opt("key") {
         Some(v) => Ok(v),
-        None => Err(crate::dispatch::raise_error(
-            "ArgumentError",
-            "no key is available".to_string(),
-        )),
+        None => Err(arg_error!("no key is available")),
     }
 }
 
@@ -653,10 +641,8 @@ fn signal_exception_initialize(
             let msg = match args.get(1) {
                 Some(m) => m.clone(),
                 None => {
-                    let name =
-                        crate::builtins::signal::name_from_signo(signo).ok_or_else(|| {
-                            raise_error("ArgumentError", format!("invalid signal number ({signo})"))
-                        })?;
+                    let name = crate::builtins::signal::name_from_signo(signo)
+                        .ok_or_else(|| arg_error!("invalid signal number ({signo})"))?;
                     RubyValue::Str(string_new(format!("SIG{name}")))
                 }
             };
@@ -664,12 +650,9 @@ fn signal_exception_initialize(
         }
         Some(name @ (RubyValue::Str(_) | RubyValue::Symbol(_))) => {
             if args.len() > 1 {
-                return Err(raise_error(
-                    "ArgumentError",
-                    format!(
-                        "wrong number of arguments (given {}, expected 1)",
-                        args.len()
-                    ),
+                return Err(arg_error!(
+                    "wrong number of arguments (given {}, expected 1)",
+                    args.len()
                 ));
             }
             let spelled = match name {
@@ -679,7 +662,7 @@ fn signal_exception_initialize(
             };
             let signo = crate::builtins::signal::signo_from_name(&spelled).ok_or_else(|| {
                 let bare = spelled.strip_prefix("SIG").unwrap_or(&spelled);
-                raise_error("ArgumentError", format!("unsupported signal `SIG{bare}'"))
+                arg_error!("unsupported signal `SIG{bare}'")
             })?;
             let canonical = crate::builtins::signal::name_from_signo(signo).unwrap_or(&spelled);
             (
@@ -688,9 +671,8 @@ fn signal_exception_initialize(
             )
         }
         _ => {
-            return Err(raise_error(
-                "ArgumentError",
-                "wrong number of arguments (given 0, expected 1+)".to_string(),
+            return Err(arg_error!(
+                "wrong number of arguments (given 0, expected 1+)"
             ));
         }
     };
@@ -817,10 +799,7 @@ fn exc_class_exception(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
-        return Err(raise_error(
-            "TypeError",
-            "exception must be sent to a class".to_string(),
-        ));
+        return Err(type_error!("exception must be sent to a class"));
     };
     exception_construct(*cid, args, block)
 }
