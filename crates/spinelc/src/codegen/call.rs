@@ -4297,7 +4297,9 @@ fn dispatch(
                 {
                     let mut __i: i64 = 0;
                     #outer: loop {
-                        if __i >= #n { break #outer spinel_rt::RubyValue::Nil; }
+                        // `Integer#times` evaluates to its receiver (MRI), not
+                        // nil -- matters in expression position (`x = 5.times {}`).
+                        if __i >= #n { break #outer spinel_rt::RubyValue::Int(#n); }
                         #bind
                         #(#block_locals)*
                         #inner
