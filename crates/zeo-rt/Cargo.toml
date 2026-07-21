@@ -20,6 +20,11 @@ regex = "1"
 # structurally can't do -- in-pattern backreferences and look-around. Selected
 # per-pattern (a pre-scan) so the common case keeps `regex`'s fast path.
 fancy-regex = "0.14"
+# Oniguruma bindings -- the backtracking engine that will replace fancy-regex
+# (the engine CRuby's Onigmo forked from). default-features = false skips the
+# bindgen `generate` feature (pre-generated bindings) and builds the VENDORED C
+# library, never linking a system libonig.
+onig = { version = "6.5", default-features = false }
 zeo-fiber = { path = "../zeo-fiber" }
 may = "0.3"
 # OS entropy for `OpenSSL::Random`/`SecureRandom` -- the real extension draws

@@ -30,6 +30,22 @@ pub struct RegexpData {
 
 pub type RRegexp = Arc<RegexpData>;
 
+/// Link-path proof for the vendored-Oniguruma migration: compiles and runs an
+/// onig pattern so generated programs (linked by bare `rustc` against the
+/// prebuilt rlib, `zeo::build`) demonstrably resolve the bundled C archive.
+/// Exercised by an e2e link test; retired when the real onig engine lands.
+pub fn onig_linkcheck() -> bool {
+    let re = onig::Regex::with_options(
+        r"(a+)\1",
+        onig::RegexOptions::REGEX_OPTION_NONE,
+        onig::Syntax::ruby(),
+    );
+    match re {
+        Ok(re) => re.find("xaaaay").is_some(),
+        Err(_) => false,
+    }
+}
+
 /// The two backing engines. `Fast` is the linear-time `regex` crate (the
 /// overwhelmingly common case); `Fancy` is the backtracking `fancy-regex`,
 /// selected only when a pattern uses a construct `regex` structurally can't do
