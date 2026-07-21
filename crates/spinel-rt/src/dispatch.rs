@@ -1095,7 +1095,44 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     {
         return true;
     }
+    // A class/module receiver also responds to its class methods -- a user
+    // `def self.x`, a `module_function`, or a `class << self` accessor (stored
+    // as class methods), plus a builtin class-method table (`File.read`) -- none
+    // of which the instance-method MRO walk over Class/Module below can see.
+    // Mirrors the class-receiver dispatch order in `send_value_in`.
+    if let RubyValue::Class(cid) = recv {
+        if class_receiver_responds(*cid, name) {
+            return true;
+        }
+    }
     responds_to(recv.class_id(), name, include_all)
+}
+
+/// Whether a class/module VALUE responds to `name` via a class-method source
+/// (runtime singleton overlay, registered `def self.x`/`module_function`/
+/// `class << self` methods, a builtin class-method table, or a native struct
+/// class's own methods) -- the reflection counterpart of `send_value_in`'s
+/// `RubyValue::Class` dispatch probes.
+fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
+    if crate::runtime_meta::is_live()
+        && crate::runtime_meta::overlay_class_method(cid, name).is_some()
+    {
+        return true;
+    }
+    if REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&cid.0))
+        .is_some_and(|e| e.class_methods.contains_key(&name))
+    {
+        return true;
+    }
+    let n = name.name();
+    let n = n.as_str();
+    if crate::builtins::class_method_table(cid).is_some_and(|lookup| lookup(n).is_some()) {
+        return true;
+    }
+    crate::builtins::rstruct::is_struct_class(cid)
+        && crate::builtins::rstruct::class_lookup(n).is_some()
 }
 
 /// `Module#method_defined?` -- true when `name` resolves to a public OR

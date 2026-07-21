@@ -742,3 +742,41 @@ fn marshal_dump_load_roundtrip_and_wire_format() {
          4,8,91,8,58,7,97,98,58,7,99,100,59,0\n4,8,102,8,49,101,50\n",
     );
 }
+
+#[test]
+fn respond_to_sees_class_and_module_singleton_methods() {
+    // respond_to? on a class/module value must see user `def self.x`,
+    // module_function, and class<<self accessors, plus inherited builtin
+    // Class methods -- but a module never responds to :new.
+    let result = run_ruby(
+        r#"
+        class Foo
+          def self.custom; end
+        end
+        module Bar
+          def self.helper; end
+          module_function
+          def mf; end
+        end
+        module Acc
+          class << self
+            attr_accessor :x
+          end
+        end
+        puts Foo.respond_to?(:new)
+        puts Foo.respond_to?(:custom)
+        puts Foo.respond_to?(:name)
+        puts Foo.respond_to?(:nope_xyz)
+        puts Bar.respond_to?(:new)
+        puts Bar.respond_to?(:helper)
+        puts Bar.respond_to?(:mf)
+        puts Acc.respond_to?(:x)
+        puts Acc.respond_to?(:x=)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\ntrue\ntrue\n"
+    );
+}
