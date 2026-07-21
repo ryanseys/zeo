@@ -9,24 +9,6 @@ use quote::quote;
 use crate::codegen::Ctx;
 use proc_macro2::TokenStream;
 
-/// `Array`/`Hash`/`Str`/`Range`'s minimal built-in method set (Phase 3 --
-/// see `zeo_rt::collections`'s module docs for the deliberate scope-cut:
-/// `[]`/`[]=`/`length` only, no Enumerable). `a[i]`/`a[i] = v` are ordinary
-/// `CallNode`s named `"[]"`/`"[]="` at the `ruby-prism` level (just like the
-/// numeric operators above), so this is dispatch-table generalization, not a
-/// new HIR shape -- mirroring the Phase 1 insight that operators were
-/// already plain calls. Returns `None` (falls through to ordinary Path 1/
-/// Path 2 dispatch below) for any receiver whose static type isn't one of
-/// these four, so a user class's own `def []` is completely unaffected.
-/// A `FrozenError` for a mutation attempt on a frozen `class_name` receiver,
-/// with CRuby's exact message shape (`can't modify frozen Array: [1, 2, 3]`
-/// -- `error.c:4221`, the class name static since every guarded site is
-/// type-gated, the receiver's `inspect` computed at runtime). Constructed by
-/// codegen, not inside the `zeo_rt` mutators, for the same reason as
-/// `array_set`'s `IndexError` contract: only codegen can build an exception
-/// object (see `emit_boxed_new`'s docs). `recv_value` must be a
-/// `RubyValue`-typed expression valid at the emission site (the guarded
-/// blocks bind `__recv` first and pass a rewrapped clone here).
 /// A `RactorError` (the flat stand-in for `Ractor::Error` -- nested class
 /// names don't exist yet) whose message comes from a runtime `__msg: String`
 /// in scope at the emission site (boundary-crossing rejections are computed
@@ -38,8 +20,6 @@ pub(super) fn emit_ractor_error(cx: &Ctx) -> TokenStream {
         vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new(__msg)) }],
     )
 }
-/// A `FiberError` with a fixed message -- CRuby's own wording, passed
-/// verbatim from the dispatch sites (Phase 13.3).
 /// A boxed `class_name` exception carrying `msg` -- what a codegen site emits
 /// when real Ruby RAISES where a compile-time check would otherwise reject.
 pub(super) fn emit_simple_error(cx: &Ctx, class_name: &str, msg: &str) -> TokenStream {
@@ -51,6 +31,8 @@ pub(super) fn emit_simple_error(cx: &Ctx, class_name: &str, msg: &str) -> TokenS
         }],
     )
 }
+/// A `FiberError` with a fixed message -- CRuby's own wording, passed
+/// verbatim from the dispatch sites.
 pub(super) fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
     emit_simple_error(cx, "FiberError", msg)
 }
@@ -79,6 +61,15 @@ pub(super) fn emit_missing_block_raise(cx: &Ctx, target: &str) -> TokenStream {
     // form carries the signal out just as well and reads as ordinary Rust.
     quote! { Err(zeo_rt::Signal::Raise(#err))? }
 }
+/// A `FrozenError` for a mutation attempt on a frozen `class_name` receiver,
+/// with CRuby's exact message shape (`can't modify frozen Array: [1, 2, 3]`
+/// -- `error.c:4221`, the class name static since every guarded site is
+/// type-gated, the receiver's `inspect` computed at runtime). Constructed by
+/// codegen, not inside the `zeo_rt` mutators, for the same reason as
+/// `array_set`'s `IndexError` contract: only codegen can build an exception
+/// object (see `emit_boxed_new`'s docs). `recv_value` must be a
+/// `RubyValue`-typed expression valid at the emission site (the guarded
+/// blocks bind `__recv` first and pass a rewrapped clone here).
 pub(super) fn emit_frozen_error(
     cx: &Ctx,
     class_name: &str,

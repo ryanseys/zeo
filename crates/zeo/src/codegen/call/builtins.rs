@@ -14,6 +14,14 @@ use crate::hir::NodeId;
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
 
+/// `Array`/`Hash`/`Str`/`Range`'s built-in method fast path (see
+/// `zeo_rt::collections`'s module docs for the original deliberate
+/// scope-cut this grew from). `a[i]`/`a[i] = v` are ordinary `CallNode`s
+/// named `"[]"`/`"[]="` at the `ruby-prism` level (just like the numeric
+/// operators), so this is dispatch-table generalization, not a new HIR
+/// shape. Returns `None` (falls through to ordinary Path 1/Path 2 dispatch)
+/// for any receiver whose static type isn't one of these four, so a user
+/// class's own `def []` is completely unaffected.
 pub(super) fn try_collection_dispatch(
     cx: &Ctx,
     recv_id: NodeId,
