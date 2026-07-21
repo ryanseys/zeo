@@ -121,3 +121,18 @@ fn time_reports_its_dst_flag() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "false\nfalse\n");
 }
+
+#[test]
+fn time_at_honors_the_in_keyword_offset() {
+    // `Time.at(epoch, in: offset)` attaches a display utc_offset to the
+    // absolute instant (no shift, unlike Time.new's local components).
+    let result = run_ruby(
+        r#"
+        p Time.at(0, in: "+09:00").utc_offset
+        p Time.at(0, in: "-05:00").utc_offset
+        p Time.at(0, in: 3600).utc_offset
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "32400\n-18000\n3600\n");
+}

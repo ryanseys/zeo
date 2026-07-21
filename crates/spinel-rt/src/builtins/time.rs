@@ -592,8 +592,31 @@ builtin_methods! {
     // fractional count in `unit` (default `:microsecond`; also `:millisecond`,
     // `:nanosecond`), added to the base seconds exactly.
     "at" => fn time_at(_recv, args, _block) {
-        arity!(args, 1..=3);
         use num_bigint::BigInt;
+        // A trailing `in:` keyword hash supplies the DISPLAY utc_offset (the
+        // instant itself is the absolute epoch value, so no shift -- unlike
+        // `Time.new`, whose components are local to that offset). Split it off
+        // before the positional (seconds, subsec, unit) arguments.
+        let (args, in_offset) = match args.last() {
+            Some(RubyValue::Hash(h)) => {
+                let off = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("in")));
+                (&args[..args.len() - 1], (!off.is_nil()).then_some(off))
+            }
+            _ => (args, None),
+        };
+        arity!(args, 1..=3);
+        let offset = match &in_offset {
+            None => None,
+            Some(RubyValue::Int(off)) => Some(check_offset(*off)?),
+            Some(RubyValue::Str(s)) => Some(parse_offset(&s.lock().to_utf8_lossy())?),
+            Some(other) => return Err(raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer (utc_offset)",
+                    crate::builtins::class_name_of(other)
+                ),
+            )),
+        };
         let (base_num, base_den) = exact_seconds(&args[0])?;
         let (num, den) = match args.get(1) {
             None => (base_num, base_den),
@@ -621,7 +644,7 @@ builtin_methods! {
                 (total_num, total_den)
             }
         };
-        Ok(time_exact(num, den, None))
+        Ok(time_exact(num, den, offset))
     }
     // `Time.utc(y, mo, d, h, mi, s)` / `Time.gm(...)`. A 7th argument is
     // MICROSECONDS (not the offset -- that is `Time.new`'s 7th; the two
