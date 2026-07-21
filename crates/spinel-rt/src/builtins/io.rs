@@ -1246,6 +1246,26 @@ fn io_stat(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     with_file(recv, |f, _path| crate::builtins::stat::stat_from_fd(f.as_raw_fd()))
 }
 
+/// `#fcntl(cmd[, arg])` -- the raw `fcntl(2)`; answers its integer result
+/// (e.g. `fcntl(F_GETFD)` reads the close-on-exec flag). `arg` defaults to 0.
+fn io_fcntl(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1..=2);
+    let cmd = int_of(&args[0], "fcntl")? as libc::c_int;
+    let arg = match args.get(1) {
+        Some(v) => int_of(v, "fcntl")? as libc::c_int,
+        None => 0,
+    };
+    use std::os::fd::AsRawFd;
+    with_file(recv, |f, path| {
+        // SAFETY: `f` owns a valid fd for the call's duration.
+        let r = unsafe { libc::fcntl(f.as_raw_fd(), cmd, arg) };
+        if r < 0 {
+            return Err(crate::builtins::file::raise_errno(&std::io::Error::last_os_error(), "fcntl", path));
+        }
+        Ok(RubyValue::Int(r as i64))
+    })
+}
+
 /// `File#lstat` -- stat the open file's path WITHOUT following a final symlink.
 /// Unlike `#stat` (which `fstat`s the fd), this must go through the stored path,
 /// since the fd already resolved the link at open time.
@@ -1383,6 +1403,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "eof?" | "eof" => io_eof,
         "stat" => io_stat,
         "lstat" => io_lstat,
+        "fcntl" => io_fcntl,
         "chown" => io_chown,
         "chmod" => io_chmod,
         "truncate" => io_truncate,
@@ -1419,7 +1440,7 @@ pub fn lookup_names() -> &'static [&'static str] {
         "lineno", "lineno=", "getc", "readchar", "getbyte", "readbyte",
         "readlines", "each_line", "each", "each_char", "chars", "each_byte", "bytes",
         "printf", "putc", "readpartial", "sysread", "seek", "sysseek", "flock",
-        "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "lstat", "chown", "chmod", "truncate",
+        "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "lstat", "fcntl", "chown", "chmod", "truncate",
         "mtime", "size", "pipe?", "fsync", "fdatasync", "close", "close_read", "close_write", "closed?",
         "binmode", "binmode?", "autoclose=", "autoclose?", "to_io", "close_on_exec?", "close_on_exec=",
         "advise", "ungetbyte", "ungetc", "pread", "pwrite", "reopen", "each_codepoint", "codepoints",

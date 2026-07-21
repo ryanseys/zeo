@@ -1845,3 +1845,21 @@ fn tcp_server_and_socket_round_trip() {
         "true\nTCPServer\nTCPSocket\n\"hello\\n\"\n\"back\\n\"\n\"tail\"\ntrue\n"
     );
 }
+
+#[test]
+fn symbol_to_proc_arity_and_io_fcntl() {
+    // :name.to_proc reports arity -2 (receiver + optional args); IO#fcntl runs
+    // the raw syscall (F_GETFD reads the close-on-exec flag on the open file).
+    let result = run_ruby(
+        r##"
+        p :upcase.to_proc.arity
+        p ["x", "y"].map(&:upcase)
+        pth = "/tmp/sp_e2e_fcntl_#{Process.pid}.tmp"
+        File.write(pth, "hi")
+        File.open(pth) { |f| p(f.fcntl(1, 0).class) }
+        File.delete(pth)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "-2\n[\"X\", \"Y\"]\nInteger\n");
+}

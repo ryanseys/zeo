@@ -127,15 +127,21 @@ fn sym_via_name(
 /// (`emit_block_option` routes every `&expr` through
 /// `block_arg_to_proc`).
 pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
-    let p: RProc = RProc::new(move |args: &[RubyValue]| {
-        let Some((recv, rest)) = args.split_first() else {
-            return Err(crate::dispatch::raise_error(
-                "ArgumentError",
-                "no receiver given".to_string(),
-            ));
-        };
-        crate::dispatch::send_value(recv, name, rest, None)
-    });
+    // CRuby reports `:name.to_proc.arity` as -2 (one required receiver plus
+    // optional trailing args), and it is a plain proc, not a lambda.
+    let p: RProc = RProc::with_meta(
+        move |args: &[RubyValue]| {
+            let Some((recv, rest)) = args.split_first() else {
+                return Err(crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "no receiver given".to_string(),
+                ));
+            };
+            crate::dispatch::send_value(recv, name, rest, None)
+        },
+        -2,
+        false,
+    );
     RubyValue::Proc(p)
 }
 
