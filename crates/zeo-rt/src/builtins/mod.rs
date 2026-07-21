@@ -28,46 +28,46 @@ pub(crate) mod basic_object;
 pub(crate) mod class_module;
 pub(crate) mod comparable;
 pub(crate) mod complex;
+pub(crate) mod condition_variable;
+pub(crate) mod dir;
+pub(crate) mod encoding;
 pub(crate) mod enumerable;
 pub(crate) mod enumerator;
+pub(crate) mod env;
 pub(crate) mod exception;
+pub(crate) mod fiber;
+pub(crate) mod file;
 pub(crate) mod float;
 pub(crate) mod format;
+pub(crate) mod gc;
 pub(crate) mod hash;
 pub(crate) mod integer;
 pub(crate) mod io;
 pub(crate) mod kernel;
 pub(crate) mod lazy;
-pub(crate) mod method_obj;
+pub(crate) mod marshal;
 pub(crate) mod matchdata;
 pub(crate) mod math;
+pub(crate) mod method_obj;
 pub(crate) mod mutex;
-pub(crate) mod dir;
-pub(crate) mod encoding;
-pub(crate) mod env;
-pub(crate) mod file;
-pub(crate) mod gc;
-pub(crate) mod marshal;
 pub(crate) mod numeric;
 pub(crate) mod object;
 pub(crate) mod pack;
 pub(crate) mod process;
 pub(crate) mod queue;
-pub(crate) mod time;
+pub(crate) mod random;
 pub(crate) mod range;
 pub(crate) mod rational;
-pub(crate) mod random;
-pub(crate) mod condition_variable;
+pub(crate) mod regexp;
+pub(crate) mod rproc;
+pub(crate) mod rstruct;
 pub(crate) mod set;
 pub(crate) mod signal;
 pub(crate) mod stat;
-pub(crate) mod rstruct;
-pub(crate) mod regexp;
-pub(crate) mod fiber;
-pub(crate) mod rproc;
 pub(crate) mod string;
 pub(crate) mod symbol;
 pub(crate) mod thread;
+pub(crate) mod time;
 pub(crate) mod value_subclass;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
@@ -223,7 +223,9 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_arity,
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_arity,
         #[cfg(feature = "ext-ffi")]
-        zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_arity,
+        zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => {
+            crate::ext::ffi::lookup_arity
+        }
         _ => return None,
     })
 }
@@ -383,7 +385,9 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::SOCKET_CLASS => crate::ext::socket::lookup_names(),
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver_names(),
         #[cfg(feature = "ext-ffi")]
-        zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_names(),
+        zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => {
+            crate::ext::ffi::lookup_names()
+        }
         _ => &[],
     }
 }
@@ -471,8 +475,8 @@ pub(crate) fn fallback_ancestors(id: ClassId) -> &'static [ClassId] {
             }
         }
         let mut chains = HashMap::new();
-        for id in std::iter::once(zeo_abi::OBJECT_CLASS)
-            .chain(zeo_abi::BUILTINS.iter().map(|b| b.id))
+        for id in
+            std::iter::once(zeo_abi::OBJECT_CLASS).chain(zeo_abi::BUILTINS.iter().map(|b| b.id))
         {
             let mut chain = Vec::new();
             linearize(id, &mut chain);
@@ -528,7 +532,7 @@ macro_rules! builtin_methods {
                 _ => None,
             }
         }
-        paste::paste! {
+        pastey::paste! {
             /// Every method name this table exposes (each alias enumerated) --
             /// the reflection surface for `instance_methods`/`methods`. Derived
             /// from the same rows as the `lookup` above, so it can't drift.
@@ -567,7 +571,11 @@ macro_rules! arity {
         if $args.len() != $n {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
-                format!("wrong number of arguments (given {}, expected {})", $args.len(), $n),
+                format!(
+                    "wrong number of arguments (given {}, expected {})",
+                    $args.len(),
+                    $n
+                ),
             ));
         }
     };
@@ -666,7 +674,9 @@ macro_rules! block_or_enum {
         match $block {
             Some(crate::RubyValue::Proc(p)) => p,
             _ => {
-                return Ok(crate::builtins::enumerator::enumerator_for($recv, $meth, $args))
+                return Ok(crate::builtins::enumerator::enumerator_for(
+                    $recv, $meth, $args,
+                ))
             }
         }
     };
@@ -679,9 +689,7 @@ macro_rules! need_block {
     ($block:expr_2021) => {
         match &$block {
             Some(crate::RubyValue::Proc(p)) => p.clone(),
-            _ => {
-                return Err(crate::dispatch::raise_no_block_yield())
-            }
+            _ => return Err(crate::dispatch::raise_no_block_yield()),
         }
     };
 }
@@ -729,7 +737,10 @@ mod tests {
             fallback_ancestors(OBJECT_CLASS),
             &[OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]
         );
-        assert_eq!(fallback_ancestors(BASIC_OBJECT_CLASS), &[BASIC_OBJECT_CLASS]);
+        assert_eq!(
+            fallback_ancestors(BASIC_OBJECT_CLASS),
+            &[BASIC_OBJECT_CLASS]
+        );
         assert_eq!(fallback_ancestors(KERNEL_CLASS), &[KERNEL_CLASS]);
         assert_eq!(
             fallback_ancestors(CLASS_CLASS),

@@ -34,7 +34,7 @@ getrandom.workspace = true
 # Ident concatenation in `builtin_methods!` so each method table also emits a
 # companion `<lookup>_names()` slice (the reflection surface for
 # `instance_methods`/`methods`), keeping the names derived from the same rows.
-paste.workspace = true
+pastey.workspace = true
 # The numeric tower (Phase 17.1): arbitrary-precision Integer. num-bigint
 # over malachite (LGPL) / ibig (unmaintained); pure Rust, MIT/Apache, and
 # BigInt's bitwise ops already implement Ruby's infinite-two's-complement
