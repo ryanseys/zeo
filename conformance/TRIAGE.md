@@ -21,7 +21,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
-| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_42617 (Errno::ENOENT) |
+| ? | auto-no-such-file-or-directory-unlink-tmp-sp-c236 | 1 | issue_3118 | uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_24154 (Errno::ENOENT) |
 | ? | auto-not-file-ioerror-6d84 | 1 | stdin_io | uncaught exception: not a file (IOError) |
 | ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |

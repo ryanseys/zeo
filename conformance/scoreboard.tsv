@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=0943181
-# PASS=1971 FAIL_OUTPUT=230 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=7529b9e
+# PASS=1995 FAIL_OUTPUT=206 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -200,7 +200,7 @@ box_nullable_builtin	PASS	-	-
 box_nullable_obj	PASS	-	-
 box_pointer_to_poly	PASS	-	-
 box_unbox_local_assign_cond	PASS	-	-
-boxed_nil_string_identity	FAIL_OUTPUT	expect	-
+boxed_nil_string_identity	PASS	-	-
 bsearch_find_any_mixed	PASS	-	-
 builtin_array_method_capture	PASS	-	-
 bundle_array_a	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-indexerror-4878
@@ -432,7 +432,7 @@ const_alias_path_receiver	PASS	-	-
 const_aliased_class_reopen_include	FAIL_OUTPUT	expect	missing-method:wordy
 const_compound_assign	PASS	-	-
 const_defined_invalid_name	PASS	-	-
-const_env_defined_parity	FAIL_OUTPUT	expect	-
+const_env_defined_parity	PASS	-	-
 const_get_builtin	PASS	-	-
 const_get_literal	PASS	-	-
 const_init_block_param_scan	PASS	-	-
@@ -486,12 +486,12 @@ default_arg_ivar_value_receiver	PASS	-	-
 default_args	PASS	-	-
 default_nil_param_with_str_return	PASS	-	-
 define_singleton_method_literal	PASS	-	-
-defined_classification	FAIL_OUTPUT	expect	-
+defined_classification	PASS	-	-
 defined_const_fallback	PASS	-	-
-defined_globals_methods	FAIL_OUTPUT	expect	-
+defined_globals_methods	PASS	-	-
 defined_guard_dead_branch	PASS	-	-
-defined_op	FAIL_OUTPUT	expect	-
-defined_yield_no_block	FAIL_OUTPUT	expect	-
+defined_op	PASS	-	-
+defined_yield_no_block	PASS	-	-
 destructure_splat_underflow	PASS	-	-
 destructure_typed_ptr_array_return	PASS	-	-
 dir_entries_children	PASS	-	-
@@ -703,16 +703,16 @@ float_spaceship	PASS	-	-
 float_step_block	PASS	-	-
 float_step_to_a	PASS	-	-
 float_to_r	PASS	-	-
-float_to_s_fixed_1e15	FAIL_OUTPUT	expect	-
+float_to_s_fixed_1e15	PASS	-	-
 for_over_hash_and_bigint_when	PASS	-	-
 for_over_paren_collection	PASS	-	-
 format_arg_rooting	PASS	-	-
-format_binary	FAIL_OUTPUT	expect	-
+format_binary	PASS	-	-
 format_dynamic_named	PASS	-	-
 format_hex_float	PASS	-	-
 format_named	PASS	-	-
 format_raise_dollarbang_symproc	PASS	-	-
-format_s_and_nonfinite	FAIL_OUTPUT	expect	-
+format_s_and_nonfinite	PASS	-	-
 forward_args	PASS	-	-
 forward_args_block	PASS	-	-
 forward_call_param_type_inference	PASS	-	-
@@ -1253,7 +1253,7 @@ issue_3104	PASS	-	-
 issue_3105	PASS	-	-
 issue_3108	PASS	-	-
 issue_3109	PASS	-	-
-issue_3110	FAIL_OUTPUT	expect	-
+issue_3110	PASS	-	-
 issue_3111	PASS	-	-
 issue_3112	PASS	-	-
 issue_3113	PASS	-	-
@@ -1292,7 +1292,7 @@ kernel_fail_alias	PASS	-	-
 kernel_float_integer_strict	FAIL_OUTPUT	expect	-
 kernel_float_strict	PASS	-	-
 kernel_integer_float_errors	FAIL_OUTPUT	expect	-
-kernel_integer_float_strict_nil	FAIL_OUTPUT	expect	-
+kernel_integer_float_strict_nil	PASS	-	-
 kernel_integer_with_base	PASS	-	-
 kernel_rational_string_zerodenom	PASS	-	-
 kernel_underscore_id	FAIL_OUTPUT	expect	-
@@ -1304,7 +1304,7 @@ kwargs_instance_dispatch	PASS	-	-
 kwargs_merge_default_hash	PASS	-	-
 kwargs_param	PASS	-	-
 kwargs_param_widen	PASS	-	-
-kwargs_splat_unknown_keyword	FAIL_OUTPUT	expect	-
+kwargs_splat_unknown_keyword	PASS	-	-
 kwsplat_forward_defaults	PASS	-	-
 kwsplat_literal	PASS	-	-
 kwsplat_yield_inline_bind	PASS	-	-
@@ -1363,7 +1363,7 @@ matchdata_values_at_named	PASS	-	-
 matchdata_whole_match	PASS	-	-
 math_domain_error	PASS	-	-
 math_domainerror_namespaced	PASS	-	-
-math_fn_nil_typeerror	FAIL_OUTPUT	expect	-
+math_fn_nil_typeerror	PASS	-	-
 math_poly_arg_unbox	PASS	-	-
 mega	PASS	-	-
 method	PASS	-	-
@@ -1654,7 +1654,7 @@ poly_to_f_via_str_poly_hash	PASS	-	-
 poly_to_i_base	PASS	-	-
 poly_to_i_via_str_poly_hash	PASS	-	-
 poly_to_s_user_class	PASS	-	-
-poly_to_sym	FAIL_OUTPUT	expect	-
+poly_to_sym	PASS	-	-
 poly_value_into_str_str_hash	PASS	-	-
 polyarray_insert_delete_at	PASS	-	-
 polypoly_hash_assoc_to_proc	PASS	-	-
@@ -1862,11 +1862,11 @@ rescue_module_bare_reader	PASS	-	-
 rescue_namespaced_exception	PASS	-	-
 rescue_walks_class_hierarchy	PASS	-	-
 rescue_widens_nil_local_to_exception	PASS	-	-
-respond_to_class_builtins	FAIL_OUTPUT	expect	-
-respond_to_def_self_method	FAIL_OUTPUT	expect	-
-respond_to_implicit_self	FAIL_OUTPUT	expect	-
+respond_to_class_builtins	PASS	-	-
+respond_to_def_self_method	PASS	-	-
+respond_to_implicit_self	PASS	-	-
 respond_to_kernel_mixin	PASS	-	-
-respond_to_module_singleton_accessor	FAIL_OUTPUT	expect	-
+respond_to_module_singleton_accessor	PASS	-	-
 respond_to_poly	PASS	-	-
 respond_to_primitive	PASS	-	-
 respond_to_primitives	PASS	-	-
@@ -1973,7 +1973,7 @@ string_charset_range_notation	PASS	-	-
 string_chomp_bang_mutates	PASS	-	-
 string_clone_frozen	PASS	-	-
 string_conformance_batch	PASS	-	-
-string_conformance_batch3	FAIL_OUTPUT	expect	-
+string_conformance_batch3	PASS	-	-
 string_conformance_batch4	FAIL_OUTPUT	expect	-
 string_conformance_batch6	PASS	-	-
 string_crypt	PASS	-	-
@@ -1998,14 +1998,14 @@ string_frozen_mutation_raises	FAIL_OUTPUT	expect	-
 string_gsub_block	PASS	-	-
 string_identity_tap_then	PASS	-	-
 string_index_assign_forms	PASS	-	-
-string_index_nil_typeerror	FAIL_OUTPUT	expect	-
+string_index_nil_typeerror	PASS	-	-
 string_index_regex	PASS	-	-
 string_lshift_int_codepoint	PASS	-	-
 string_match_block	FAIL_OUTPUT	expect	-
 string_multiply_overflow	PASS	-	-
 string_mutation_plus	PASS	-	-
 string_new_capacity	PASS	-	-
-string_nil_arg_typeerror	FAIL_OUTPUT	expect	-
+string_nil_arg_typeerror	PASS	-	-
 string_nil_float_batch	PASS	-	-
 string_nul_bytes	PASS	-	-
 string_oct_parse	FAIL_OUTPUT	expect	-
@@ -2081,8 +2081,8 @@ sym_poly_hash_merge_sym_int	PASS	-	-
 symbol_case_setbyte_chr_toc	PASS	-	-
 symbol_casecmp	PASS	-	-
 symbol_id2name_ruby_desc_minmax	PASS	-	-
-symbol_inspect_nonascii	FAIL_OUTPUT	expect	-
-symbol_inspect_quoting	FAIL_OUTPUT	expect	-
+symbol_inspect_nonascii	PASS	-	-
+symbol_inspect_quoting	PASS	-	-
 symbol_multibyte_length	PASS	-	-
 symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-can-coerce-complex-into-float-typeerror-9cc0
 symbol_nil_truthiness	PASS	-	-
@@ -2158,7 +2158,7 @@ typed_hash_caller_no_body_widen	PASS	-	-
 typed_hash_inspect_and_each_value	PASS	-	-
 typed_hash_missing_returns_nil	PASS	-	-
 unary_operator_methods	PASS	-	-
-unassigned_ivar_reads_nil	FAIL_OUTPUT	expect	-
+unassigned_ivar_reads_nil	PASS	-	-
 unbound_method_identity	PASS	-	-
 undef_const_scalar_position	PASS	-	-
 undef_method_raises	PASS	-	-
