@@ -54,7 +54,7 @@ builtin_methods! {
             let all = crate::regexp::matchdata_to_a(&md);
             return crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), args, None);
         }
-        Ok(crate::regexp::matchdata_get(&md, &args[0]))
+        crate::regexp::matchdata_get(&md, &args[0])
     }
     "pre_match" => fn pre_match(recv, args, _block) {
         arity!(args, 0);
@@ -90,7 +90,7 @@ builtin_methods! {
         let out = args
             .iter()
             .map(|a| crate::regexp::matchdata_get(&md, a))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "named_captures" => fn named_captures(recv, args, _block) {
@@ -155,11 +155,11 @@ builtin_methods! {
     // character length, or nil when the group didn't participate.
     "match" => fn md_match(recv, args, _block) {
         arity!(args, 1);
-        Ok(crate::regexp::matchdata_get(&recv_md(recv), &args[0]))
+        crate::regexp::matchdata_get(&recv_md(recv), &args[0])
     }
     "match_length" => fn md_match_length(recv, args, _block) {
         arity!(args, 1);
-        Ok(match crate::regexp::matchdata_get(&recv_md(recv), &args[0]) {
+        Ok(match crate::regexp::matchdata_get(&recv_md(recv), &args[0])? {
             RubyValue::Str(s) => RubyValue::Int(s.lock().char_len() as i64),
             _ => RubyValue::Nil,
         })

@@ -1059,6 +1059,21 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         Some(RubyValue::Int(n)) if *n > 0 => RubyValue::Int((r % (*n as u64)) as i64),
         // A negative bound draws from `[0, |n|)` (a non-negative Integer).
         Some(RubyValue::Int(n)) => RubyValue::Int((r % n.unsigned_abs()) as i64),
+        // A bignum bound (`rand(2**70)`) draws from `[0, |n|)`: assemble enough
+        // random words to cover the magnitude, then reduce mod |n|.
+        Some(RubyValue::BigInt(n)) => {
+            use num_bigint::{BigInt, Sign};
+            let n: &BigInt = n;
+            let magnitude = if n.sign() == Sign::Minus { -n } else { n.clone() };
+            let words = (magnitude.bits() / 64 + 1) as usize;
+            let mut bytes = r.to_le_bytes().to_vec();
+            for _ in 1..words {
+                bytes.extend_from_slice(&prng_next().to_le_bytes());
+            }
+            crate::builtins::integer::int_value(
+                BigInt::from_bytes_le(Sign::Plus, &bytes) % magnitude,
+            )
+        }
         Some(RubyValue::Float(x)) => {
             RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64 * x)
         }

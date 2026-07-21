@@ -280,3 +280,25 @@ fn regexp_last_match_and_groups() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "\"abc\"\n\"123\"\n");
 }
+
+#[test]
+fn matchdata_unknown_named_group_raises_index_error() {
+    // An unknown named-group key raises IndexError (previously a Rust panic);
+    // a known name resolves its capture.
+    let result = run_ruby(
+        r##"
+        m = "2026-06".match(/(?<y>\d+)-(?<mo>\d+)/)
+        p m[:mo]
+        begin
+          m[:nope]
+        rescue IndexError => e
+          puts "#{e.class}: #{e.message}"
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"06\"\nIndexError: undefined group name reference: nope\n"
+    );
+}

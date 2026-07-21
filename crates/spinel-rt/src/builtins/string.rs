@@ -562,18 +562,18 @@ fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyVal
 
 /// `String#[]`/`slice` with a Regexp: the whole match or a named/numbered
 /// capture group. `None` group arg means the whole match.
-fn regexp_index(re: &crate::RRegexp, text: &str, group: Option<&RubyValue>) -> RubyValue {
+fn regexp_index(re: &crate::RRegexp, text: &str, group: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let RubyValue::MatchData(m) = crate::regexp_match(re, text) else {
-        return RubyValue::Nil;
+        return Ok(RubyValue::Nil);
     };
     match group {
-        None => crate::matchdata_group(&m, 0),
-        Some(RubyValue::Int(n)) => crate::matchdata_group(&m, *n),
+        None => Ok(crate::matchdata_group(&m, 0)),
+        Some(RubyValue::Int(n)) => Ok(crate::matchdata_group(&m, *n)),
         Some(RubyValue::Str(name)) => {
             crate::matchdata_group_by_name(&m, &name.lock().to_utf8_lossy())
         }
         Some(RubyValue::Symbol(s)) => crate::matchdata_group_by_name(&m, &s.name()),
-        _ => RubyValue::Nil,
+        _ => Ok(RubyValue::Nil),
     }
 }
 
@@ -1849,7 +1849,7 @@ builtin_methods! {
         // :name]` is that capture group (nil when the pattern doesn't match).
         if let RubyValue::Regexp(re) = &args[0] {
             let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-            return Ok(regexp_index(re, &text, args.get(1)));
+            return regexp_index(re, &text, args.get(1));
         }
         let s = recv_str!(recv).lock();
         let n = s.char_len() as i64;

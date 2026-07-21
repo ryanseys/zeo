@@ -149,9 +149,31 @@ fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue,
             }
             Ok(RubyValue::Float(to_unit_float(next_u64(state)) * x))
         }
+        Some(RubyValue::BigInt(b)) => {
+            // A bignum bound (`rand(2**70)`) draws enough random words to cover
+            // its magnitude, then reduces mod n. Only positivity is checked;
+            // the modulo bias is immaterial here (CRuby's exact stream isn't
+            // reproduced for bignum bounds anyway).
+            if b.sign() != num_bigint::Sign::Plus {
+                return Err(invalid(bound.unwrap()));
+            }
+            Ok(int_value(random_bigint_below(state, b)))
+        }
         Some(RubyValue::Range(lo, hi, exclusive)) => rand_range(state, lo, hi, *exclusive),
         Some(other) => Err(invalid(other)),
     }
+}
+
+/// A uniform-ish random `BigInt` in `[0, n)` for a positive `n`: draw enough
+/// 64-bit words to cover `n`'s bit length, assemble a non-negative BigInt, and
+/// reduce mod `n`.
+fn random_bigint_below(state: &Mutex<u64>, n: &BigInt) -> BigInt {
+    let words = (n.bits() / 64 + 1) as usize;
+    let mut bytes = Vec::with_capacity(words * 8);
+    for _ in 0..words {
+        bytes.extend_from_slice(&next_u64(state).to_le_bytes());
+    }
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &bytes) % n
 }
 
 /// `rand(a..b)` / `rand(a...b)` -- an Integer range yields an Integer, a range

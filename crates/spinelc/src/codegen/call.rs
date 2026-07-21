@@ -571,7 +571,7 @@ fn try_regexp_dispatch(
             ("[]", 1) => {
                 let arg_expr = emit_expr(cx, args[0]);
                 return Some(quote! {
-                    spinel_rt::matchdata_get(&(#recv_expr).as_matchdata_unchecked(), &(#arg_expr))
+                    spinel_rt::matchdata_get(&(#recv_expr).as_matchdata_unchecked(), &(#arg_expr))?
                 });
             }
             ("pre_match", 0) => {

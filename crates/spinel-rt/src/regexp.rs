@@ -695,10 +695,13 @@ pub fn matchdata_group(m: &RMatchData, index: i64) -> RubyValue {
 /// group name (mirrors real Ruby's `IndexError` for this case; a real,
 /// catchable exception is a documented future refinement, same "loud, not
 /// silently wrong" posture as this runtime's other `_unchecked` accessors).
-pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> RubyValue {
+pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> Result<RubyValue, Signal> {
     match m.names.iter().find(|(n, _)| n == name) {
-        Some((_, idx)) => matchdata_group(m, *idx as i64),
-        None => panic!("undefined group name reference: {name}"),
+        Some((_, idx)) => Ok(matchdata_group(m, *idx as i64)),
+        None => Err(crate::dispatch::raise_error(
+            "IndexError",
+            format!("undefined group name reference: {name}"),
+        )),
     }
 }
 
@@ -709,18 +712,21 @@ pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> RubyValue {
 /// the index was statically provable. Panics on any other key shape (same
 /// "loud, not silently wrong" posture as this runtime's `_unchecked`
 /// accessors).
-pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> RubyValue {
+pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signal> {
     match key {
-        RubyValue::Int(i) => matchdata_group(m, *i),
+        RubyValue::Int(i) => Ok(matchdata_group(m, *i)),
         RubyValue::Symbol(s) => matchdata_group_by_name(m, &s.name()),
         RubyValue::Str(s) => matchdata_group_by_name(m, &s.lock().to_utf8_lossy()),
         // `md[range]` slices the group array, like `to_a[range]`.
         RubyValue::Range(..) => {
             let all = matchdata_to_a(m);
-            crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), std::slice::from_ref(key), None)
-                .unwrap_or(RubyValue::Nil)
+            Ok(crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), std::slice::from_ref(key), None)
+                .unwrap_or(RubyValue::Nil))
         }
-        other => panic!("MatchData#[] expected an Int/Symbol/String key, got {}", other.to_display_string()),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+        )),
     }
 }
 
