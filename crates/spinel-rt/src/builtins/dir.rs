@@ -141,8 +141,10 @@ fn split_alternatives(body: &[char]) -> Vec<Vec<char>> {
 /// Whether a glob segment matches a directory entry, applying Ruby's
 /// hidden-file rule: a name starting with `.` is invisible to a wildcard,
 /// and only matches a pattern that starts with a literal `.`.
-fn seg_matches(pat: &str, name: &str) -> bool {
-    if name.starts_with('.') && !pat.starts_with('.') {
+fn seg_matches(pat: &str, name: &str, dotmatch: bool) -> bool {
+    // A leading `.` is only matched by a pattern that also starts with `.`,
+    // UNLESS `File::FNM_DOTMATCH` was given (then a dotfile matches `*` too).
+    if !dotmatch && name.starts_with('.') && !pat.starts_with('.') {
         return false;
     }
     let p: Vec<char> = pat.chars().collect();
@@ -153,11 +155,18 @@ fn seg_matches(pat: &str, name: &str) -> bool {
 /// Walk `dir` against the remaining glob segments, pushing every match onto
 /// `out`. `prefix` is the path built so far (as the caller wants it echoed
 /// back -- glob answers paths relative to the same root the pattern was).
-fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
+fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dotmatch: bool) {
     let Some((seg, rest)) = segs.split_first() else {
         return;
     };
-    let dir_path = if prefix.is_empty() { base.to_string() } else { format!("{base}/{prefix}") };
+    // For an absolute pattern `base` is empty and the root to read is `/`
+    // (an empty `read_dir("")` reads nothing -- the bug that made absolute
+    // globs return nothing). A relative pattern's base is ".".
+    let dir_path = if prefix.is_empty() {
+        if base.is_empty() { "/".to_string() } else { base.to_string() }
+    } else {
+        format!("{base}/{prefix}")
+    };
 
     // `**` spans zero or more whole directory segments.
     if *seg == "**" {
@@ -168,7 +177,7 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
                 out.push(prefix.to_string());
             }
         } else {
-            glob_walk(base, prefix, rest, out);
+            glob_walk(base, prefix, rest, out, dotmatch);
         }
         // One or more: descend into every visible subdirectory and retry the
         // whole `**` there.
@@ -182,7 +191,7 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
             }
             if e.path().is_dir() {
                 let next = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
-                glob_walk(base, &next, segs, out);
+                glob_walk(base, &next, segs, out, dotmatch);
             }
         }
         return;
@@ -195,9 +204,18 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
+    // `*` with FNM_DOTMATCH also yields `.` (the directory itself) -- never
+    // `..`. `read_dir` omits both, so inject `.` explicitly; it can only be a
+    // terminal match (descending into it would re-read the same directory).
+    if dotmatch {
+        names.push(".".to_string());
+    }
     names.sort();
     for name in names {
-        if !seg_matches(seg, &name) {
+        if !seg_matches(seg, &name, dotmatch) {
+            continue;
+        }
+        if name == "." && !rest.is_empty() {
             continue;
         }
         let next = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
@@ -210,7 +228,7 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
                 format!("{base}/{prefix}/{name}")
             };
             if std::path::Path::new(&child).is_dir() {
-                glob_walk(base, &next, rest, out);
+                glob_walk(base, &next, rest, out, dotmatch);
             }
         }
     }
@@ -218,12 +236,12 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>) {
 
 /// One glob pattern -> matching paths, relative to the cwd (or absolute, if
 /// the pattern is). Ruby sorts glob results.
-fn glob(pattern: &str) -> Vec<String> {
+fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
     let absolute = pattern.starts_with('/');
     let (base, pat) = if absolute { ("", pattern.trim_start_matches('/')) } else { (".", pattern) };
     let segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
     let mut out = Vec::new();
-    glob_walk(if absolute { "" } else { base }, "", &segs, &mut out);
+    glob_walk(if absolute { "" } else { base }, "", &segs, &mut out, dotmatch);
     if absolute {
         out = out.into_iter().map(|p| format!("/{p}")).collect();
     }
@@ -589,20 +607,25 @@ builtin_methods! {
                 "wrong number of arguments (given 0, expected 1+)".to_string(),
             ));
         }
+        // A trailing Integer FNM flags argument (`File::FNM_DOTMATCH`, ...)
+        // governs matching for all patterns. FNM_DOTMATCH is bit 0x4.
+        let dotmatch = args
+            .iter()
+            .filter_map(|a| if let RubyValue::Int(f) = a { Some(*f) } else { None })
+            .any(|f| f & 0x4 != 0);
         let mut all = Vec::new();
         for a in args {
             match a {
                 RubyValue::Array(pats) => {
                     for p in pats.lock().iter() {
-                        all.extend(glob(&path_arg(p, "glob")?));
+                        all.extend(glob(&path_arg(p, "glob")?, dotmatch));
                     }
                 }
-                // A trailing options Hash (`base:`) or an Integer FNM flags
-                // argument (`File::FNM_DOTMATCH`, ...) is accepted and ignored
-                // rather than mis-globbed as a pattern.
-                // TODO(plan P-B): honor `base:` and the FNM flags.
+                // A trailing options Hash (`base:`) or the Integer FNM flags
+                // argument itself is not a pattern.
+                // TODO(plan P-B): honor `base:`.
                 RubyValue::Hash(_) | RubyValue::Int(_) => {}
-                v => all.extend(glob(&path_arg(v, "glob")?)),
+                v => all.extend(glob(&path_arg(v, "glob")?, dotmatch)),
             }
         }
         all.sort();
@@ -638,6 +661,14 @@ mod tests {
     }
     fn cls() -> RubyValue {
         RubyValue::Class(spinel_abi::DIR_CLASS)
+    }
+    // These exercise the default (non-FNM_DOTMATCH) matching; shadow the real
+    // helpers so the assertions below read without a trailing `false`.
+    fn seg_matches(pat: &str, name: &str) -> bool {
+        super::seg_matches(pat, name, false)
+    }
+    fn glob(pattern: &str) -> Vec<String> {
+        super::glob(pattern, false)
     }
 
     // --- The matcher: pure, no disk --------------------------------------

@@ -711,7 +711,10 @@ builtin_methods! {
         }
         Ok(RubyValue::Int(data.len() as i64))
     }
-    "exist?" | "exists?" => fn file_exist_p(_recv, args, _block) {
+    // `File.exists?` (with the trailing `s`) was removed in Ruby 3.2 -- only
+    // `exist?` remains, so the misspelling raises NoMethodError, as Dir.exist?
+    // already does (no `exists?` alias).
+    "exist?" => fn file_exist_p(_recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(meta(&path_arg(&args[0], "exist?")?).is_some()))
     }
@@ -894,6 +897,29 @@ builtin_methods! {
         Ok(RubyValue::Bool(
             std::fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()),
         ))
+    }
+    // `File.mkfifo(path, mode = 0666)` -- create a FIFO special file; answers 0
+    // (`libc::mkfifo`, the process umask applies to `mode` as usual).
+    "mkfifo" => fn file_mkfifo(_recv, args, _block) {
+        if args.is_empty() || args.len() > 2 {
+            return Err(raise_error(
+                "ArgumentError",
+                format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
+            ));
+        }
+        let path = path_arg(&args[0], "mkfifo")?;
+        let mode: libc::mode_t = match args.get(1) {
+            Some(RubyValue::Int(m)) => *m as libc::mode_t,
+            Some(_) => return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+            None => 0o666,
+        };
+        let c = std::ffi::CString::new(path.clone())
+            .map_err(|_| raise_error("ArgumentError", "string contains null byte".to_string()))?;
+        // SAFETY: `c` is a valid NUL-terminated path.
+        if unsafe { libc::mkfifo(c.as_ptr(), mode) } != 0 {
+            return Err(raise_errno(&std::io::Error::last_os_error(), "mkfifo", &path));
+        }
+        Ok(RubyValue::Int(0))
     }
     // `File.readlink(link)` -- the path a symlink points to.
     "readlink" => fn file_readlink(_recv, args, _block) {

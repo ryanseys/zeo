@@ -964,6 +964,13 @@ fn io_stat(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     with_file(recv, |f, _path| crate::builtins::stat::stat_from_fd(f.as_raw_fd()))
 }
 
+/// `File#lstat` -- stat the open file's path WITHOUT following a final symlink.
+/// Unlike `#stat` (which `fstat`s the fd), this must go through the stored path,
+/// since the fd already resolved the link at open time.
+fn io_lstat(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    with_file(recv, |_f, path| crate::builtins::stat::stat_from_path(path, false))
+}
+
 /// `#chown(uid, gid)` -- `fchown(2)`; a nil arg leaves that id unchanged
 /// (`-1` to the syscall). Answers 0.
 fn io_chown(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
@@ -1093,6 +1100,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "rewind" => io_rewind,
         "eof?" | "eof" => io_eof,
         "stat" => io_stat,
+        "lstat" => io_lstat,
         "chown" => io_chown,
         "chmod" => io_chmod,
         "truncate" => io_truncate,
@@ -1114,7 +1122,7 @@ pub fn lookup_names() -> &'static [&'static str] {
         "lineno", "lineno=", "getc", "readchar", "getbyte", "readbyte",
         "readlines", "each_line", "each", "each_char", "chars", "each_byte", "bytes",
         "printf", "putc", "readpartial", "sysread", "seek", "sysseek", "flock",
-        "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "chown", "chmod", "truncate",
+        "tell", "pos", "pos=", "rewind", "eof?", "eof", "stat", "lstat", "chown", "chmod", "truncate",
         "mtime", "size", "pipe?", "fsync", "fdatasync", "close", "closed?",
     ]
 }

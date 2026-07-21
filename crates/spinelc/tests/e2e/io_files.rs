@@ -1738,3 +1738,37 @@ fn a_feature_with_no_ruby_half_falls_through_to_the_static_ext_table() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "\"aGk=\\n\"\n");
 }
+
+#[test]
+fn file_and_dir_surface_gaps() {
+    // Dir.glob with an ABSOLUTE-path pattern + a `*` wildcard (used to return
+    // [] because the walk read "" instead of "/"); FNM_DOTMATCH yields "." and
+    // dotfiles but never ".."; File.mkfifo returns 0 and creates a FIFO;
+    // File#lstat returns a File::Stat; File.exists? was removed in Ruby 3.2.
+    let result = run_ruby(
+        r##"
+        d = "/tmp/sp_e2e_fdir_#{Process.pid}"
+        Dir.mkdir(d) unless Dir.exist?(d)
+        File.write("#{d}/a1", ""); File.write("#{d}/a2", ""); File.write("#{d}/.hid", "")
+        p Dir.glob("#{d}/*").map { |x| x.sub("#{d}/", "") }.sort
+        p Dir.glob("#{d}/*", File::FNM_DOTMATCH).map { |x| x.sub("#{d}/", "") }.sort
+        fifo = "#{d}/f"
+        p File.mkfifo(fifo)
+        p File.stat(fifo).ftype
+        p File.open("#{d}/a1") { |f| f.lstat.class }
+        r = (begin; File.exists?("#{d}"); rescue => e; e.class; end); p r
+        File.delete("#{d}/a1"); File.delete("#{d}/a2"); File.delete("#{d}/.hid"); File.delete(fifo)
+        Dir.rmdir(d)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"a1\", \"a2\"]\n\
+         [\".\", \".hid\", \"a1\", \"a2\"]\n\
+         0\n\
+         \"fifo\"\n\
+         File::Stat\n\
+         NoMethodError\n"
+    );
+}
