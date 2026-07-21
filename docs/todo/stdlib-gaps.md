@@ -24,3 +24,14 @@ family (unblocks ostruct + delegate together), then the lowering shapes
 (class << self extend, global aliases, splat target, nested require).
 Re-probe each gem after its blocker lands; move rows out of this table as
 they turn green, and delete the file when empty.
+
+# Benchmark-suite gaps (same probe discipline)
+
+Three of the 58 vendored benchmarks fail; `bench/baseline.tsv` records the
+other 55. Each is a real bug, not a harness artifact:
+
+| benchmark | failure | blocker |
+|---|---|---|
+| bm_ao_render | compiler PANIC | nested escaping block capturing its enclosing BLOCK's local (documented spike-scope limit in codegen/call/procs.rs:104 -- but it must become a diagnostic, and the capture shape must land for real programs) |
+| bm_linked_list | runtime stack overflow | deep recursion overflows the `may` coroutine's 2MB stack (`coroutine ... has overflowed its stack, size=2097152`); the OS-thread + GVL migration (plan P3, 8MiB stacks) resolves it structurally |
+| bm_so_mandelbrot | output mismatch | genuine divergence in the generated program's output (binary PBM differs from the oracle at line 3) -- miscompilation or runtime arithmetic bug; triage by diffing intermediate rows |
