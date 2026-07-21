@@ -107,6 +107,16 @@ fn expand_charset(set: &str) -> Vec<char> {
     out
 }
 
+/// A `tr`/`squeeze` character-set spec expanded to `(chars, negated)`: a
+/// leading `^` (with something after it) complements the set, matching CRuby.
+/// A bare `"^"` is the literal caret.
+fn tr_charset(spec: &str) -> (Vec<char>, bool) {
+    match spec.strip_prefix('^') {
+        Some(rest) if !rest.is_empty() => (expand_charset(rest), true),
+        _ => (expand_charset(spec), false),
+    }
+}
+
 /// Lenient `String#to_i(base)`: optional sign + leading digits (with
 /// single underscores), anything else terminates the parse; no valid
 /// digits at all is `0`. (Contrast `Kernel#Integer`'s strict parse.)
@@ -1474,7 +1484,7 @@ builtin_methods! {
     // shared regexp splitter. The optional `limit` caps the field count
     // (`> 0`, tail kept whole), keeps trailing empties (`< 0`), or drops
     // them (`0`/omitted).
-    "split" => fn split(recv, args, _block) {
+    "split" => fn split(recv, args, block) {
         arity!(args, 0..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let limit = match args.get(1) {
@@ -1485,55 +1495,76 @@ builtin_methods! {
                 format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         };
-        match args.first() {
-            None | Some(RubyValue::Nil) => Ok(str_array(awk_split(&text, limit))),
+        let result = match args.first() {
+            None | Some(RubyValue::Nil) => str_array(awk_split(&text, limit)),
             Some(RubyValue::Str(sep)) => {
                 let sep = sep.lock().to_utf8_lossy().into_owned();
-                if sep == " " {
+                let parts: Vec<String> = if sep == " " {
                     // The one magic separator: a single space means
                     // whitespace-run splitting, real Ruby's awk rule.
-                    return Ok(str_array(awk_split(&text, limit)));
-                }
-                if sep.is_empty() {
+                    awk_split(&text, limit)
+                } else if sep.is_empty() {
                     // An empty separator splits into characters (Rust's own
                     // `split("")` would emit spurious leading/trailing empties).
                     let chars: Vec<char> = text.chars().collect();
-                    let parts: Vec<String> = if limit > 0 && (limit as usize) < chars.len() {
+                    if limit > 0 && (limit as usize) < chars.len() {
                         let head = limit as usize - 1;
                         let mut v: Vec<String> = chars[..head].iter().map(|c| c.to_string()).collect();
                         v.push(chars[head..].iter().collect());
                         v
                     } else {
                         chars.iter().map(|c| c.to_string()).collect()
-                    };
-                    return Ok(str_array(parts));
-                }
-                let mut parts: Vec<String> = if limit > 0 {
-                    text.splitn(limit as usize, sep.as_str()).map(str::to_string).collect()
-                } else {
-                    text.split(sep.as_str()).map(str::to_string).collect()
-                };
-                if limit == 0 {
-                    while parts.last().is_some_and(|s| s.is_empty()) {
-                        parts.pop();
                     }
-                }
-                Ok(str_array(parts))
+                } else {
+                    let mut parts: Vec<String> = if limit > 0 {
+                        text.splitn(limit as usize, sep.as_str()).map(str::to_string).collect()
+                    } else {
+                        text.split(sep.as_str()).map(str::to_string).collect()
+                    };
+                    if limit == 0 {
+                        while parts.last().is_some_and(|s| s.is_empty()) {
+                            parts.pop();
+                        }
+                    }
+                    parts
+                };
+                str_array(parts)
             }
-            Some(RubyValue::Regexp(re)) => Ok(crate::regexp_split(re, &text, limit)),
-            Some(other) => Err(crate::dispatch::raise_error(
+            Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit),
+            Some(other) => return Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!(
                     "wrong argument type {} (expected Regexp)",
                     crate::builtins::class_name_of(other)
                 ),
             )),
+        };
+        // The block form yields each field and answers the RECEIVER, not the
+        // array (CRuby's `rb_str_split_m`).
+        if let Some(blk) = &block {
+            if let RubyValue::Array(a) = &result {
+                let pieces: Vec<RubyValue> = a.lock().iter().cloned().collect();
+                for piece in pieces {
+                    crate::dispatch::send_value(blk, crate::Symbol::intern("call"), &[piece], None)?;
+                }
+            }
+            return Ok(recv.clone());
         }
+        Ok(result)
     }
     "chomp" => fn chomp(recv, args, _block) {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = match args.first() {
+            // `chomp("")` is paragraph mode: strip EVERY trailing newline record
+            // (`\n`/`\r\n`), but keep a lone trailing `\r` (CRuby's rb_str_chomp).
+            Some(RubyValue::Str(suffix)) if suffix.lock().to_utf8_lossy().is_empty() => {
+                let mut t = text.as_str();
+                while let Some(rest) = t.strip_suffix('\n') {
+                    t = rest.strip_suffix('\r').unwrap_or(rest);
+                }
+                t.to_string()
+            }
             Some(RubyValue::Str(suffix)) => {
                 let suffix = suffix.lock().to_utf8_lossy().into_owned();
                 text.strip_suffix(&suffix).unwrap_or(&text).to_string()
@@ -1569,6 +1600,15 @@ builtin_methods! {
         arity!(args, 0..=1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = match args.first() {
+            // `chomp("")` is paragraph mode: strip EVERY trailing newline record
+            // (`\n`/`\r\n`), but keep a lone trailing `\r` (CRuby's rb_str_chomp).
+            Some(RubyValue::Str(suffix)) if suffix.lock().to_utf8_lossy().is_empty() => {
+                let mut t = text.as_str();
+                while let Some(rest) = t.strip_suffix('\n') {
+                    t = rest.strip_suffix('\r').unwrap_or(rest);
+                }
+                t.to_string()
+            }
             Some(RubyValue::Str(suffix)) => {
                 let suffix = suffix.lock().to_utf8_lossy().into_owned();
                 text.strip_suffix(&suffix).unwrap_or(&text).to_string()
@@ -2020,17 +2060,25 @@ builtin_methods! {
     // last character (CRuby's rule).
     "tr"[2] => fn tr(recv, args, _block) {
         arity!(args, 2);
-        let from = expand_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
+        let (from, from_neg) = tr_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
         let to = expand_charset(&arg_str!(args, 1).lock().to_utf8_lossy());
         let out = recv_str!(recv)
             .lock()
             .chars()
-            // A char repeated in `from` takes its LAST mapping (`rposition`),
-            // matching CRuby: `"_".tr("___", ".+-") == "-"`. A `to` shorter
-            // than `from` repeats its final char (`.or(to.last())`).
-            .map(|c| match from.iter().rposition(|&f| f == c) {
-                Some(i) => *to.get(i).or(to.last()).unwrap_or(&c),
-                None => c,
+            // A negated `from` (`tr("^a", "x")`) maps every char OUTSIDE the set
+            // to the last `to` char. Otherwise a char repeated in `from` takes
+            // its LAST mapping (`rposition`), matching CRuby (`"_".tr("___",
+            // ".+-") == "-"`), and a `to` shorter than `from` repeats its final
+            // char.
+            .map(|c| {
+                if from_neg {
+                    if from.contains(&c) { c } else { to.last().copied().unwrap_or(c) }
+                } else {
+                    match from.iter().rposition(|&f| f == c) {
+                        Some(i) => *to.get(i).or(to.last()).unwrap_or(&c),
+                        None => c,
+                    }
+                }
             })
             .collect();
         Ok(str_value(out))
@@ -2067,13 +2115,15 @@ builtin_methods! {
         let set = args
             .first()
             .map(|a| match a {
-                RubyValue::Str(s) => expand_charset(&s.lock().to_utf8_lossy()),
-                _ => Vec::new(),
+                RubyValue::Str(s) => tr_charset(&s.lock().to_utf8_lossy()),
+                _ => (Vec::new(), false),
             });
         let mut out = String::new();
         let mut prev: Option<char> = None;
         for c in recv_str!(recv).lock().chars() {
-            let squeezable = set.as_ref().is_none_or(|s| s.contains(&c));
+            let squeezable = set
+                .as_ref()
+                .is_none_or(|(s, neg)| s.contains(&c) != *neg);
             if prev == Some(c) && squeezable {
                 continue;
             }

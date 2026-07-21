@@ -460,3 +460,32 @@ fn last_paren_backreference_and_adjacent_interpolation() {
         "abc\n123\n123\nabc\nnil\n\"b\"\n<a width='16' height='16'>x</a>\nn=7 done\n",
     );
 }
+
+#[test]
+fn tr_squeeze_negation_split_block_and_chomp_paragraph() {
+    // `^`-negated tr/squeeze sets, split's block form (yields fields, returns
+    // the receiver), and chomp("") paragraph mode.
+    let result = run_ruby(
+        r#"
+        p "abc".tr("^a", "x")
+        p "hello".tr("^aeiou", ".")
+        p "aaabbbccc".squeeze("^a")
+        p "aaa^^^bbb".squeeze("^")
+        r = []
+        "a,b,c".split(",") { |p| r << p.upcase }
+        p r
+        acc = 0
+        ret = "aa-bbb-c".split("-") { |p| acc += p.length }
+        p acc
+        p ret.equal?("aa-bbb-c".dup) == false && ret == "aa-bbb-c"
+        p "hello\r\n\r\n".chomp("")
+        p "hello\r".chomp("")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"axx\"\n\".e..o\"\n\"aaabc\"\n\"aaa^bbb\"\n\
+         [\"A\", \"B\", \"C\"]\n6\ntrue\n\"hello\"\n\"hello\\r\"\n",
+    );
+}
