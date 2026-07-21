@@ -51,9 +51,15 @@ pub trait Suite {
     /// synthesizes driver files writes them; most suites ignore it.
     fn discover(&self, root: &Path, work_dir: &Path) -> Result<Vec<TestCase>, String>;
     /// Environment variable consulted when `--dir` isn't given. A suite whose
-    /// corpus resolves through neither `--dir` nor this var is skipped (in a
-    /// multi-suite run) rather than aborting the whole run.
+    /// corpus resolves through none of `--dir`, this var, or `default_root`
+    /// is skipped (in a multi-suite run) rather than aborting the whole run.
     fn root_env_var(&self) -> &'static str;
+    /// The in-repo vendored corpus, if this suite ships one -- consulted
+    /// last, after `--dir` and `$ENV`, and only when it exists on disk (so a
+    /// checkout without the corpus behaves exactly as before).
+    fn default_root(&self, _workspace_root: &Path) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// Outcome of one test, in scoreboard vocabulary.

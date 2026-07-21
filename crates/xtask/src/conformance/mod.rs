@@ -187,10 +187,12 @@ fn selected_suites(opts: &Opts) -> Vec<&'static str> {
     }
 }
 
-/// Locate a suite's corpus: `--dir` wins, then `$ENV`. In a multi-suite run a
-/// suite whose corpus can't be found is skipped (`Ok(None)`); a single
-/// explicitly-selected suite errors instead.
+/// Locate a suite's corpus: `--dir` wins, then `$ENV`, then the suite's
+/// vendored in-repo default. In a multi-suite run a suite whose corpus can't
+/// be found is skipped (`Ok(None)`); a single explicitly-selected suite
+/// errors instead.
 fn resolve_corpus(
+    root: &Path,
     opts: &Opts,
     suite: &dyn suite::Suite,
     allow_skip: bool,
@@ -202,6 +204,9 @@ fn resolve_corpus(
         if !v.is_empty() {
             return Ok(Some(PathBuf::from(v)));
         }
+    }
+    if let Some(d) = suite.default_root(root) {
+        return Ok(Some(d));
     }
     if allow_skip {
         Ok(None)
@@ -270,7 +275,7 @@ fn open_single(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, Stri
         _ => "spinel",
     };
     let suite = make_suite(name, root);
-    let corpus = resolve_corpus(opts, suite.as_ref(), false)?
+    let corpus = resolve_corpus(root, opts, suite.as_ref(), false)?
         .expect("resolve_corpus with allow_skip=false is Some or Err");
     open_session(root, opts, name, &corpus, prebuild)
 }
@@ -361,7 +366,7 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     let mut prebuilt = false;
     for (i, &name) in suites.iter().enumerate() {
         let suite = make_suite(name, root);
-        let corpus = match resolve_corpus(opts, suite.as_ref(), suites.len() > 1)? {
+        let corpus = match resolve_corpus(root, opts, suite.as_ref(), suites.len() > 1)? {
             Some(c) => c,
             None => {
                 println!(

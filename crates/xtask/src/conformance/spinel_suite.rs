@@ -27,6 +27,13 @@ impl Suite for SpinelSuite {
         "SPINEL_TEST_DIR"
     }
 
+    /// The vendored copy under `conformance/corpus/test` (see its
+    /// `UPSTREAM.md` for provenance and why it keeps the `test/` name).
+    fn default_root(&self, workspace_root: &Path) -> Option<std::path::PathBuf> {
+        let root = workspace_root.join("conformance/corpus/test");
+        root.is_dir().then_some(root)
+    }
+
     fn discover(&self, root: &Path, _work_dir: &Path) -> Result<Vec<TestCase>, String> {
         if !root.join("analyze_fail").is_dir() {
             return Err(format!(
