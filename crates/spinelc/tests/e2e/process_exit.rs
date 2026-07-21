@@ -251,3 +251,26 @@ fn nonterminating_and_aborting_operations_raise() {
          \"ababab\"\n",
     );
 }
+
+#[test]
+fn process_times_returns_a_process_tms_struct() {
+    // Process.times returns a Process::Tms with Float utime/stime/cutime/cstime
+    // (via getrusage); the class name and struct-style inspect match CRuby.
+    let result = run_ruby(
+        r##"
+        p Process::Tms
+        t = Process.times
+        p t.class
+        p t.utime.class
+        p t.stime >= 0.0
+        p t.cutime.class
+        p t.cstime.class
+        p t.inspect.start_with?("#<struct Process::Tms utime=")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Process::Tms\nProcess::Tms\nFloat\ntrue\nFloat\nFloat\ntrue\n"
+    );
+}

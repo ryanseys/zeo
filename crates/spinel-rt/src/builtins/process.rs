@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::builtins::{arity, builtin_methods};
 use crate::dispatch::{raise_error, RObj, RubyObject};
 use crate::{RubyValue, Signal};
-use spinel_abi::{ClassId, PROCESS_STATUS_CLASS};
+use spinel_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
 
 builtin_methods! {
     pub(crate) fn lookup_class;
@@ -104,6 +104,21 @@ builtin_methods! {
             .map(|g| RubyValue::Int(*g as i64))
             .collect();
         Ok(RubyValue::Array(crate::array_new(list)))
+    }
+    // `Process.times` -- a Process::Tms of CPU seconds, from `getrusage` for
+    // this process (utime/stime) and its reaped children (cutime/cstime).
+    "times" => fn times(_recv, args, _block) {
+        arity!(args, 0);
+        // SAFETY: each `getrusage` fully initializes its zeroed out-param.
+        let rusage = |who: libc::c_int| -> libc::rusage {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(who, &mut u) };
+            u
+        };
+        let secs = |tv: libc::timeval| tv.tv_sec as f64 + tv.tv_usec as f64 / 1e6;
+        let me = rusage(libc::RUSAGE_SELF);
+        let kids = rusage(libc::RUSAGE_CHILDREN);
+        Ok(new_tms(secs(me.ru_utime), secs(me.ru_stime), secs(kids.ru_utime), secs(kids.ru_stime)))
     }
 }
 
@@ -341,6 +356,102 @@ builtin_methods! {
         Ok(RubyValue::Str(crate::string_new(format!(
             "#<Process::Status: {}>",
             status_describe(recv_status(recv))
+        ))))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `Process::Tms` -- the CPU-times struct `Process.times` answers (utime/stime/
+// cutime/cstime, all Float seconds). CRuby makes it an actual Struct; here it
+// is a small payload object carrying the four values with matching accessors.
+// ---------------------------------------------------------------------------
+
+pub struct RTms {
+    utime: f64,
+    stime: f64,
+    cutime: f64,
+    cstime: f64,
+}
+
+impl RubyObject for RTms {
+    fn class_id(&self) -> ClassId {
+        PROCESS_TMS_CLASS
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        false
+    }
+    fn set_frozen(&self) {}
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        Vec::new()
+    }
+    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+        Arc::new(RTms {
+            utime: self.utime,
+            stime: self.stime,
+            cutime: self.cutime,
+            cstime: self.cstime,
+        })
+    }
+}
+
+fn new_tms(utime: f64, stime: f64, cutime: f64, cstime: f64) -> RubyValue {
+    RubyValue::Object(Arc::new(RTms { utime, stime, cutime, cstime }))
+}
+
+fn recv_tms(recv: &RubyValue) -> &RTms {
+    match recv {
+        RubyValue::Object(o) => o
+            .as_any()
+            .downcast_ref::<RTms>()
+            .expect("Process::Tms table row dispatched on a non-Tms receiver"),
+        _ => panic!("Process::Tms table row dispatched on a non-Object receiver"),
+    }
+}
+
+builtin_methods! {
+    pub(crate) fn lookup_tms;
+
+    "utime" => fn tms_utime(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_tms(recv).utime))
+    }
+    "stime" => fn tms_stime(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_tms(recv).stime))
+    }
+    "cutime" => fn tms_cutime(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_tms(recv).cutime))
+    }
+    "cstime" => fn tms_cstime(recv, args, _block) {
+        arity!(args, 0);
+        Ok(RubyValue::Float(recv_tms(recv).cstime))
+    }
+    "to_a" | "values" => fn tms_to_a(recv, args, _block) {
+        arity!(args, 0);
+        let t = recv_tms(recv);
+        Ok(RubyValue::Array(crate::array_new(vec![
+            RubyValue::Float(t.utime),
+            RubyValue::Float(t.stime),
+            RubyValue::Float(t.cutime),
+            RubyValue::Float(t.cstime),
+        ])))
+    }
+    "to_s" | "inspect" => fn tms_inspect(recv, args, _block) {
+        arity!(args, 0);
+        let t = recv_tms(recv);
+        // Ruby renders a whole-valued Float as `1.0`; `inspect_string` on a
+        // Float value is exactly that formatter, so the struct line matches.
+        let f = |v: f64| RubyValue::Float(v).inspect_string();
+        Ok(RubyValue::Str(crate::string_new(format!(
+            "#<struct Process::Tms utime={}, stime={}, cutime={}, cstime={}>",
+            f(t.utime), f(t.stime), f(t.cutime), f(t.cstime),
         ))))
     }
 }

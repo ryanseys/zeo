@@ -289,6 +289,13 @@ pub const ENUMERATOR_CHAIN_CLASS: ClassId = ClassId(75);
 /// same way as [`ENUMERATOR_CHAIN_CLASS`].
 pub const ENUMERATOR_PRODUCT_CLASS: ClassId = ClassId(76);
 
+/// `Process::Tms` -- the CPU-times struct `Process.times` answers, with
+/// Float members `utime`/`stime`/`cutime`/`cstime`. Carried as a plain
+/// `RubyValue::Object` over `builtins::process::RTms`. MUST stay the LAST
+/// [`BUILTINS`] row so its id equals the array length and the exception block
+/// (`FIRST_EXCEPTION_ID`) sits immediately after it.
+pub const PROCESS_TMS_CLASS: ClassId = ClassId(77);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -384,6 +391,9 @@ pub const BUILTINS: &[BuiltinClass] = &[
     BuiltinClass { id: ARGF_CLASS, name: "ARGF.class", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[ENUMERABLE_CLASS], feature: None },
     BuiltinClass { id: ENUMERATOR_CHAIN_CLASS, name: "Enumerator::Chain", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
     BuiltinClass { id: ENUMERATOR_PRODUCT_CLASS, name: "Enumerator::Product", is_module: false, superclass: Some(ENUMERATOR_CLASS), includes: &[], feature: None },
+    // KEEP LAST: its id must equal BUILTINS.len(), so FIRST_EXCEPTION_ID lands
+    // immediately after it (see PROCESS_TMS_CLASS).
+    BuiltinClass { id: PROCESS_TMS_CLASS, name: "Process::Tms", is_module: false, superclass: Some(OBJECT_CLASS), includes: &[COMPARABLE_CLASS], feature: None },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
