@@ -365,7 +365,8 @@ impl Loader {
                                 continue;
                             }
                             if name == "eval" {
-                                let body = super::lower_box_eval_body(hir, result, &call)?;
+                                let body =
+                                    super::eval_splice::lower_box_eval_body(hir, result, &call)?;
                                 combined.push(hir.push(HirNode::BoxScope { box_id: bx, body }));
                                 continue;
                             }
@@ -378,7 +379,7 @@ impl Loader {
             // handle VALUE (the box's top-level surrogate as a Class), so
             // `p box` works.
             if let Some(lw) = n.as_local_variable_write_node() {
-                if super::is_ruby_box_new(&lw.value()) {
+                if super::eval_splice::is_ruby_box_new(&lw.value()) {
                     let lname = String::from_utf8_lossy(lw.name().as_slice()).into_owned();
                     hir.boxes += 1;
                     let box_id = hir.boxes;
@@ -408,7 +409,7 @@ impl Loader {
                         });
                     if all_constants {
                         for a in &arg_list {
-                            let module = super::constant_path_name(a)?;
+                            let module = super::consts::constant_path_name(a)?;
                             let id = hir.push(crate::hir::HirNode::Include(module));
                             combined.push(id);
                             own.push(id);
@@ -428,7 +429,7 @@ impl Loader {
                 let names = undef
                     .names()
                     .iter()
-                    .map(|name| super::alias_target_name(&name))
+                    .map(|name| super::defs::alias_target_name(&name))
                     .collect::<PResult<Vec<_>>>()?;
                 let id = hir.push(crate::hir::HirNode::Undef(names));
                 combined.push(id);
@@ -440,8 +441,8 @@ impl Loader {
                 // at top level the target may be an inherited Kernel method,
                 // which only `mro::resolve_aliases` can see.
                 let id = hir.push(crate::hir::HirNode::AliasMethod {
-                    new_name: super::alias_target_name(&alias.new_name())?,
-                    old_name: super::alias_target_name(&alias.old_name())?,
+                    new_name: super::defs::alias_target_name(&alias.new_name())?,
+                    old_name: super::defs::alias_target_name(&alias.old_name())?,
                 });
                 combined.push(id);
                 own.push(id);
@@ -519,7 +520,7 @@ impl Loader {
         // up for free, and the one throwaway node on the accepted path is
         // harmless append-only arena bookkeeping.
         let arg_id = lower_node(result, hir, &arg_list[0])?;
-        let Some(feature) = super::literal_string_text(hir, arg_id) else {
+        let Some(feature) = super::eval_splice::literal_string_text(hir, arg_id) else {
             return Err(format!(
                 "`{name}` with a non-literal argument isn't supported (spike scope) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
             ).into());
