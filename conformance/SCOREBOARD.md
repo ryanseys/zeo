@@ -1,18 +1,18 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2036/2231 passing (91.3%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `42a9a75`
+Suite `spinel` — **2047/2231 passing (91.8%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `c0c3642`
 
 | verdict | count |
 |---|---|
-| PASS | 2036 |
-| FAIL_OUTPUT | 167 |
+| PASS | 2047 |
+| FAIL_OUTPUT | 155 |
 | FAIL_COMPILE | 0 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
 | TIMEOUT_RUN | 0 |
 | ORACLE_FAIL | 0 |
-| SKIP | 28 |
+| SKIP | 29 |
 | **TOTAL** | **2231** |
 
 ## Top failure categories
@@ -23,12 +23,12 @@ Suite `spinel` — **2036/2231 passing (91.3%)** — oracle `ruby 4.0.5 (2026-05
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
 | 2 | auto-index-too-small-for-array-minimum-indexerror-4878 | ? | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
 | 2 | auto-no-block-given-yield-localjumperror-1be0 | ? | string_enum_inspect_source | uncaught exception: no block given (yield) (LocalJumpError) |
-| 2 | missing-const:TCPServer | P | socket_tcp_thread | uncaught exception: uninitialized constant TCPServer (NameError) |
 | 2 | missing-method:>= | P | gc_stat_string_heap | uncaught exception: undefined method '>=' for nil (NoMethodError) |
 | 2 | missing-method:define_method | P | analyze_fail/instance_exec_def_in_block | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
 | 2 | missing-method:length | P | param_lengthlike_body_widen | uncaught exception: undefined method 'length' for nil (NoMethodError) |
 | 1 | auto-can-coerce-complex-into-float-typeerror-9cc0 | ? | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
 | 1 | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | ? | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
+| 1 | auto-error-unrecognized-escape-sequence-regexperror-2794 | ? | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 
 ## Skipped tests
 
@@ -59,6 +59,7 @@ Suite `spinel` — **2036/2231 passing (91.3%)** — oracle `ruby 4.0.5 (2026-05
 | ffi_write_roundtrip | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
 | i1011 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
 | i1017 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
+| socket_tcp_thread | blocking accept/read in a spawned Thread stalls the single-worker may green scheduler; needs cooperative (non-blocking + yield) socket I/O -- deferred, like the hard-concurrency plan items. Single-threaded TCP (socket_tcp_basic) works. |
 | sp_crypto_basic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
 | sp_crypto_sha1 | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |
 | sp_net_basic | private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API) |

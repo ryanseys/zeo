@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **167 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `42a9a75`
+Suite `spinel` — **155 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `c0c3642`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1955,58 +1955,6 @@ false
 
 ---
 
-## `dir_full_surface` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/dir_full_surface.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/dir_full_surface.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 7
---- expected (17 lines)
-[".", "..", "x"]
-["x"]
-false
-true
-Errno::ENOENT
-false
-["a1", "a2"]
-["a1", "a2"]
-42
-String
-2
-0
-false
-true
-String
-["sub/deep.txt", "top.txt"]
-[".", "sub", "top.txt"]
-
---- actual (17 lines)
-[".", "..", "x"]
-["x"]
-false
-true
-Errno::ENOENT
-false
-[]
-[]
-42
-String
-0
-0
-false
-true
-String
-[]
-[]
-```
-
----
-
 ## `enum_terminal_chunk_zip_lazy` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/enum_terminal_chunk_zip_lazy.rb`
@@ -2043,64 +1991,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uncaught exception: no block given (yield) (LocalJumpError)
-```
-
----
-
-## `env_full_surface` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/env_full_surface.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/env_full_surface.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (20 lines)
-true
-1
-"missing:ZZ_NOPE"
-"ENV"
-"Cannot dup ENV, use ENV.to_h to get a copy of ENV as a hash"
-"Cannot clone ENV, use ENV.to_h to get a copy of ENV as a hash"
-"cannot freeze ENV"
-"wrong number of arguments (given 0, expected 1..2)"
-"wrong number of arguments (given 3, expected 1..2)"
-"wrong number of arguments (given 2, expected 1)"
-TypeError
-TypeError
-"9"
-"7"
-"7"
-"3"
-"3"
-nil
-String
-Integer
-
---- actual (20 lines)
-true
-1
-"missing:ZZ_NOPE"
-"ENV"
-#<Object:0x0000000b12884330>
-#<Object:0x0000000b12884340>
-#<Object:0x00000001035f8a90>
-"wrong number of arguments (given 0, expected 1..2)"
-"wrong number of arguments (given 3, expected 1..2)"
-"wrong number of arguments (given 2, expected 1)"
-TypeError
-TypeError
-"9"
-"7"
-"7"
-"3"
-"3"
-nil
-String
-Integer
 ```
 
 ---
@@ -2155,80 +2045,6 @@ NoMethodError
 #<ArgumentError: root>
 top
 #<ArgumentError: inner>
-```
-
----
-
-## `file_path_predicates` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/file_path_predicates.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/file_path_predicates.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 25
---- expected (28 lines)
-"a/b"
-"a/b"
-"a/b"
-"/a"
-"a//b"
-"a//b"
-"a/b/c"
-"a/b/c"
-"b"
-"/"
-"b"
-"/"
-""
-"b"
-"c"
-"c"
-"c.tar"
-"c.rb"
-0
-true
-true
-false
-true
-false
-NoMethodError
-NoMethodError
-nil
-true
-
---- actual (28 lines)
-"a/b"
-"a/b"
-"a/b"
-"/a"
-"a//b"
-"a//b"
-"a/b/c"
-"a/b/c"
-"b"
-"/"
-"b"
-"/"
-""
-"b"
-"c"
-"c"
-"c.tar"
-"c.rb"
-0
-true
-true
-false
-true
-false
-true
-NoMethodError
-nil
-true
 ```
 
 ---
@@ -2476,7 +2292,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (98463633) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (99024557) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -2562,7 +2378,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (98463633) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (99024557) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3392,10 +3208,10 @@ true
 
 --- actual (5 lines)
 C
-7041339465024271931
+-2690207005043601422
 S
 P
-false
+true
 ```
 
 ---
@@ -3448,47 +3264,6 @@ nil
 3
 nil
 7
-```
-
----
-
-## `issue_2986` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_2986.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2986.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:lstat` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'lstat' for an instance of File (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 6
---- expected (6 lines)
-File::Stat
-3
-"file"
-"link"
-"file"
-File::Stat
-
---- actual (5 lines)
-File::Stat
-3
-"file"
-"link"
-"file"
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'lstat' for an instance of File (NoMethodError)
 ```
 
 ---
@@ -3745,50 +3520,6 @@ undefined method 'undefined_bareword_thing' for main
 
 ---
 
-## `issue_3038` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3038.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3038.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ungetbyte` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ungetbyte' for an instance of File (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (13 lines)
-104
-104
-false
-true
-true
-"hi"
-nil
-true
-IOError
-nil
-1
-"Xi\n"
-[88, 105, 10]
-
---- actual (1 lines)
-104
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ungetbyte' for an instance of File (NoMethodError)
-```
-
----
-
 ## `issue_3042b` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3042b.rb`
@@ -3809,42 +3540,6 @@ false
 [1, 2]
 false
 false
-```
-
----
-
-## `issue_3044` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3044.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3044.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:Process::Tms` (cluster `P`)
-
-stderr:
-```
-uncaught exception: uninitialized constant Process::Tms (NameError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-Process::Tms
-Process::Tms
-Float
-true
-Float
-Float
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: uninitialized constant Process::Tms (NameError)
 ```
 
 ---
@@ -4208,42 +3903,6 @@ true
 
 ---
 
-## `issue_3118` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3118.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3118.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-such-file-or-directory-unlink-tmp-sp-c236` (cluster `?`)
-
-stderr:
-```
-uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_14065 (Errno::ENOENT)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-0
-true
-false
-true
-
---- actual (2 lines)
-NoMethodError
-false
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: No such file or directory @ unlink - /tmp/sp_mkfifo_3118_14065 (Errno::ENOENT)
-```
-
----
-
 ## `issue_3119` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_3119.rb`
@@ -4310,75 +3969,6 @@ first difference at line 1
 
 --- actual (1 lines)
 NoMethodError
-```
-
----
-
-## `issue_3131` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3131.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3131.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:binmode` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'binmode' for an instance of File (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-true
-false
-"hi"
-"other"
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'binmode' for an instance of File (NoMethodError)
-```
-
----
-
-## `issue_3132` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3132.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3132.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:times` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'times' for module Process (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-Process::Tms
-Process::Tms
-Process::Tms
-
---- actual (2 lines)
-Class
-NilClass
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'times' for module Process (NoMethodError)
 ```
 
 ---
@@ -5351,7 +4941,7 @@ false
 stderr:
 ```
 
-thread '<unnamed>' (98488181) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (99073457) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5425,7 +5015,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (98488181) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (99073457) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -6246,77 +5836,6 @@ uncaught exception: undefined method 'kill' for module Process (NoMethodError)
 
 ---
 
-## `socket_tcp_basic` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/socket_tcp_basic.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/socket_tcp_basic.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:TCPServer` (cluster `P`)
-
-stderr:
-```
-uncaught exception: uninitialized constant TCPServer (NameError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-true
-TCPServer
-TCPSocket
-TCPSocket
-"hello\n"
-"back\n"
-"no-newline"
-:done
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: uninitialized constant TCPServer (NameError)
-```
-
----
-
-## `socket_tcp_thread` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/socket_tcp_thread.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/socket_tcp_thread.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:TCPServer` (cluster `P`)
-
-stderr:
-```
-uncaught exception: uninitialized constant TCPServer (NameError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-"HTTP/1.0 200 OK\r\n"
-true
-"GET / HTTP/1.0\r\n"
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: uninitialized constant TCPServer (NameError)
-```
-
----
-
 ## `source_file` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/source_file.rb`
@@ -6347,44 +5866,6 @@ true
 true
 true
 param: /Users/ryanseys/dev/spinel/test/source_file.rb
-```
-
----
-
-## `stdin_io` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/stdin_io.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/stdin_io.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-not-file-ioerror-6d84` (cluster `?`)
-
-stderr:
-```
-uncaught exception: not a file (IOError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (5 lines)
-"hello\n"
-"world\n"
-nil
-true
-false
-
---- actual (3 lines)
-"hello\n"
-"world\n"
-nil
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: not a file (IOError)
 ```
 
 ---

@@ -44,3 +44,4 @@ spinel	i1017	private ffi_* DSL: CRuby raises NoMethodError for these directives 
 spinel	sp_crypto_basic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
 spinel	sp_crypto_sha1	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
 spinel	sp_net_basic	private ffi_* DSL: CRuby raises NoMethodError for these directives (no require, not real-gem API)
+spinel	socket_tcp_thread	blocking accept/read in a spawned Thread stalls the single-worker may green scheduler; needs cooperative (non-blocking + yield) socket I/O -- deferred, like the hard-concurrency plan items. Single-threaded TCP (socket_tcp_basic) works.

@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=42a9a75
-# PASS=2036 FAIL_OUTPUT=167 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=c0c3642
+# PASS=2047 FAIL_OUTPUT=155 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -496,7 +496,7 @@ destructure_splat_underflow	PASS	-	-
 destructure_typed_ptr_array_return	PASS	-	-
 dir_entries_children	PASS	-	-
 dir_exist	PASS	-	-
-dir_full_surface	FAIL_OUTPUT	expect	-
+dir_full_surface	PASS	-	-
 dir_glob_recursive	PASS	-	-
 dir_handle_objects	PASS	-	-
 dir_methods	PASS	-	-
@@ -581,7 +581,7 @@ enumerator_size	PASS	-	-
 enumerator_to_a	PASS	-	-
 enumerator_wave10	PASS	-	-
 enumerator_with_index_gc	PASS	-	-
-env_full_surface	FAIL_OUTPUT	expect	-
+env_full_surface	PASS	-	-
 env_grep_lazy_followups	PASS	-	-
 env_key_p	PASS	-	-
 env_mutation_surface	PASS	-	-
@@ -666,7 +666,7 @@ file_dir_methods	PASS	-	-
 file_expand_path	PASS	-	-
 file_join_poly_component	PASS	-	-
 file_mtime	PASS	-	-
-file_path_predicates	FAIL_OUTPUT	expect	-
+file_path_predicates	PASS	-	-
 file_read_count	PASS	-	-
 file_readlines	PASS	-	-
 file_seek_tell_rewind	PASS	-	-
@@ -1134,7 +1134,7 @@ issue_2982	PASS	-	-
 issue_2983	FAIL_OUTPUT	expect	-
 issue_2984	PASS	-	-
 issue_2985	PASS	-	-
-issue_2986	FAIL_OUTPUT	expect	missing-method:lstat
+issue_2986	PASS	-	-
 issue_2988	PASS	-	-
 issue_2989	PASS	-	-
 issue_2990	PASS	-	-
@@ -1183,14 +1183,14 @@ issue_3034	PASS	-	-
 issue_3035	PASS	-	-
 issue_3036	FAIL_OUTPUT	expect	-
 issue_3037	FAIL_OUTPUT	expect	-
-issue_3038	FAIL_OUTPUT	expect	missing-method:ungetbyte
+issue_3038	PASS	-	-
 issue_3039	PASS	-	-
 issue_3040	PASS	-	-
 issue_3041	PASS	-	-
 issue_3042	PASS	-	-
 issue_3042b	FAIL_OUTPUT	expect	-
 issue_3043	PASS	-	-
-issue_3044	FAIL_OUTPUT	expect	missing-const:Process::Tms
+issue_3044	PASS	-	-
 issue_3045	PASS	-	-
 issue_3046	PASS	-	-
 issue_3047	PASS	-	-
@@ -1260,7 +1260,7 @@ issue_3113	PASS	-	-
 issue_3114	PASS	-	-
 issue_3116	PASS	-	-
 issue_3117	PASS	-	-
-issue_3118	FAIL_OUTPUT	expect	auto-no-such-file-or-directory-unlink-tmp-sp-c236
+issue_3118	PASS	-	-
 issue_3119	FAIL_OUTPUT	expect	-
 issue_3120	PASS	-	-
 issue_3121	PASS	-	-
@@ -1271,8 +1271,8 @@ issue_3127	PASS	-	-
 issue_3128	PASS	-	-
 issue_3129	PASS	-	-
 issue_3130	FAIL_OUTPUT	expect	-
-issue_3131	FAIL_OUTPUT	expect	missing-method:binmode
-issue_3132	FAIL_OUTPUT	expect	missing-method:times
+issue_3131	PASS	-	-
+issue_3132	PASS	-	-
 iter_block_autosplat	PASS	-	-
 ivar_assign_and_expr	PASS	-	-
 ivar_conditional_nil	PASS	-	-
@@ -1909,8 +1909,8 @@ sleep_return_value	PASS	-	-
 slice_before_after_block	PASS	-	-
 slice_when_first_class	PASS	-	-
 socket_requires_require	PASS	-	-
-socket_tcp_basic	FAIL_OUTPUT	expect	missing-const:TCPServer
-socket_tcp_thread	FAIL_OUTPUT	expect	missing-const:TCPServer
+socket_tcp_basic	PASS	-	-
+socket_tcp_thread	SKIP	-	-
 sort_by_array_key	PASS	-	-
 sort_min_max_block_comparator	PASS	-	-
 sort_mixed_type_raises	PASS	-	-
@@ -1933,7 +1933,7 @@ splat_value_positions	PASS	-	-
 split_on_unresolved_chain	PASS	-	-
 sprintf_long_interp	PASS	-	-
 sprintf_positional	PASS	-	-
-stdin_io	FAIL_OUTPUT	expect	auto-not-file-ioerror-6d84
+stdin_io	PASS	-	-
 stdlib_class_in_ivar	PASS	-	-
 stored_block_call_returns_value	PASS	-	-
 str_array_max_min_by	PASS	-	-
