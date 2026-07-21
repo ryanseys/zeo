@@ -202,3 +202,25 @@ fn time_new_rejects_unparseable_strings() {
         "ArgumentError: can't parse: \"garbage\"\nArgumentError: no time information\n"
     );
 }
+
+#[test]
+fn time_civil_field_range_validation() {
+    // Out-of-range civil fields raise ArgumentError; in-range values that
+    // overflow (Feb 30, the 23:59:60 leap second) roll forward instead.
+    let result = run_ruby(
+        r#"
+        def c; begin; yield; rescue ArgumentError; "ArgumentError"; end; end
+        p c { Time.utc(2020, 13, 1) }
+        p c { Time.utc(2020, 1, 32) }
+        p c { Time.utc(2020, 1, 1, 25) }
+        p c { Time.utc(2020, 1, 1, 23, 60) }
+        p Time.utc(2020, 2, 30).month
+        p Time.utc(2020, 12, 31, 23, 59, 60).year
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"ArgumentError\"\n\"ArgumentError\"\n\"ArgumentError\"\n\"ArgumentError\"\n3\n2021\n",
+    );
+}

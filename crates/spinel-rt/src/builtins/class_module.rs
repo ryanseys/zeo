@@ -107,6 +107,30 @@ builtin_methods! {
         crate::constants::const_set(cid.0, &name, args[1].clone());
         Ok(args[1].clone())
     }
+    // `Module#const_get(name)` -- resolve a constant on this module (walking the
+    // ancestry), a NameError "uninitialized constant <name>" on a miss.
+    "const_get" => fn const_get_m(recv, args, _block) {
+        arity!(args, 1..=2);
+        let cid = recv_cid(recv);
+        let name = match &args[0] {
+            RubyValue::Symbol(s) => s.name(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => {
+                return Err(crate::dispatch::raise_error(
+                    "TypeError",
+                    format!("{} is not a symbol nor a string", other.inspect_string()),
+                ))
+            }
+        };
+        crate::constants::const_get(cid.0, &name)
+            .or_else(|| crate::dispatch::ancestors_of_value(cid)
+                .iter()
+                .find_map(|anc| crate::constants::const_get(anc.0, &name)))
+            .ok_or_else(|| crate::dispatch::raise_error(
+                "NameError",
+                format!("uninitialized constant {name}"),
+            ))
+    }
     "constants" => fn constants(recv, args, _block) {
         arity!(args, 0..=1);
         let cid = recv_cid(recv);

@@ -280,3 +280,18 @@ fn instance_eval_string_rebinds_self_to_a_literal_receiver() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "OLLEH\n");
 }
+
+#[test]
+fn module_const_get_resolves_or_raises_name_error() {
+    let result = run_ruby(
+        r#"
+        class Foo; BAR = 42; end
+        p Foo.const_get(:BAR)
+        p Foo.const_get("BAR")
+        p Object.const_get(:Foo)
+        p((Object.const_get(:MissingXYZ) rescue $!.class))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n42\nFoo\nNameError\n");
+}

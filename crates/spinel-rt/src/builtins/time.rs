@@ -567,6 +567,23 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
         .collect()
 }
 
+/// CRuby range-checks each civil field before normalizing overflow: month
+/// 1..=12, day 1..=31, hour 0..=23, min 0..=59, sec 0..=60 (60 is the leap
+/// second). Feb 30 / 23:59:60 stay in range and roll forward; month 13 / day 32
+/// / hour 25 / min 60 are `ArgumentError`. `parts` is `[year, mon, day, hour,
+/// min, sec]`, any trailing entries absent.
+fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
+    let ranges = [(1usize, 1, 12), (2, 1, 31), (3, 0, 23), (4, 0, 59), (5, 0, 60)];
+    for (i, lo, hi) in ranges {
+        if let Some(&v) = parts.get(i) {
+            if v < lo || v > hi {
+                return Err(raise_error("ArgumentError", "argument out of range".to_string()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// When `Time.utc`/`gm`/`local`'s seconds field (index 5) is fractional
 /// (a Rational or finite Float), split it into the integer civil components
 /// (with the seconds floored) and the exact sub-second `(num, den)`. Returns
@@ -869,6 +886,7 @@ builtin_methods! {
             return Ok(time_exact(num_bigint::BigInt::from(epoch) * &frac_den + &frac_num, frac_den, Some(RTime::UTC)));
         }
         let parts = int_parts(args, 6)?;
+        validate_civil_parts(&parts)?;
         let nsec = subsec_nsec_arg(args.get(6))?;
         Ok(time_value(civil_to_epoch_utc(&parts), nsec, Some(RTime::UTC)))
     }
@@ -895,6 +913,7 @@ builtin_methods! {
             return time_now(recv, &[], None);
         }
         let parts = int_parts(args, 6)?;
+        validate_civil_parts(&parts)?;
         let as_utc = civil_to_epoch_utc(&parts);
         // An `in:` keyword offset takes the place of a 7th positional argument.
         let offset_arg = in_offset.as_ref().or_else(|| args.get(6));
@@ -938,6 +957,7 @@ builtin_methods! {
             Some((parts, ..)) => parts.clone(),
             None => int_parts(args, 6)?,
         };
+        validate_civil_parts(&parts)?;
         let as_utc = civil_to_epoch_utc(&parts);
         let probe = RTime { num: num_bigint::BigInt::from(as_utc), den: num_bigint::BigInt::from(1), offset: parking_lot::Mutex::new(None) };
         let off = civil(&probe).offset as i64;
