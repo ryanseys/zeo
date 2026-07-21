@@ -1835,6 +1835,27 @@ fn dispatch(
                     .to_mut()
                     .extend(nested_captured.iter().cloned());
             }
+            // The counter param IS an `Int` by construction (bound as
+            // `RubyValue::Int(__i)` below) -- tell inference so body reads
+            // take the typed fast paths: an untyped index in `a[i] = ...`
+            // forced 32M dynamic sends in bm_loops_times (~100x slower than
+            // C). A cell-wrapped (nested-captured) param stays untyped, its
+            // reads route through the Arc<Mutex> cell; and either way any
+            // stale OUTER type under the same name must not leak in. Same
+            // for block-locals, which rebind as plain `RubyValue` nil.
+            if let Some(p) = params.required.first() {
+                if nested_captured.contains(p) {
+                    loop_cx.local_types.to_mut().remove(p);
+                } else {
+                    loop_cx
+                        .local_types
+                        .to_mut()
+                        .insert(p.clone(), crate::types::TyKind::Int);
+                }
+            }
+            for name in &params.block_locals {
+                loop_cx.local_types.to_mut().remove(name);
+            }
             let bind = params.required.first().map(|p| {
                 let ident = safe_ident(p);
                 // `mut`: a block param is an ordinary reassignable local.

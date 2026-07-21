@@ -256,6 +256,18 @@ pub fn infer_type_with_locals(
             name,
             ..
         } if name == "new" => match &compiler.hir[*recv] {
+            // The collection constructors type as what they build --
+            // `a = Array.new(10000, 0)` must leave `a` statically `Array`
+            // (element access compiles to the inline fast path instead of
+            // 32M dynamic sends in a hot loop; found via bm_loops_times
+            // running 100x slower than C). A literal block changes nothing
+            // (`Array.new(3) { ... }` is still an Array); the splat/&proc
+            // shapes are already sent to Poly by the guard above. A user
+            // REOPEN of a builtin still wins at the call site: dispatch's
+            // reopened-builtin check runs before the typed fast paths.
+            HirNode::ClassRef(n) if n == "Array" => TyKind::Array,
+            HirNode::ClassRef(n) if n == "Hash" => TyKind::Hash,
+            HirNode::ClassRef(n) if n == "String" => TyKind::Str,
             HirNode::ClassRef(n) if n == "Fiber" => TyKind::Fiber,
             HirNode::ClassRef(n) if n == "Thread" => TyKind::Thread,
             HirNode::ClassRef(n) if n == "Mutex" => TyKind::Mutex,
