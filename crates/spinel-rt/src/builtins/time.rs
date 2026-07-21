@@ -1,11 +1,12 @@
 //! `Time` (CRuby time.c) -- an instant, as seconds+nanoseconds since the
 //! epoch plus the offset it renders in.
 //!
-//! Backed by libc (`localtime_r`/`timegm`/`tzset`), NOT a datetime crate:
-//! the OS already owns the zone database and the DST rules, and Ruby's
-//! `strftime` directive set and zone semantics are specific enough that a
-//! crate's own opinions would have to be fought rather than used. The
-//! civil<->epoch conversion is libc's; the strftime directive table below is
+//! Fully safe Rust, no `unsafe`/libc: the civil<->epoch conversion is done
+//! in-tree with Howard Hinnant's integer days<->civil algorithm (proleptic
+//! Gregorian, no leap seconds -- exactly what `timegm`/`gmtime` compute), and
+//! the OS-dependent LOCAL zone (offset/DST/abbreviation at an instant) is read
+//! via `jiff` over the system zoneinfo. Ruby's `strftime` directive set and
+//! zone semantics are specific enough that the directive table below is
 //! hand-ported, because that part IS Ruby-specific.
 //!
 //! `Time` includes `Comparable` (see the ABI table), so `<`/`between?`/
@@ -349,7 +350,7 @@ const MONTH_NAMES: [&str; 12] = [
 ];
 
 /// Ruby's `strftime` -- hand-ported directive table (the Ruby-specific part;
-/// libc's own strftime lacks Ruby's flags and several directives).
+/// C's own strftime lacks Ruby's flags and several directives).
 ///
 /// Supports the `-` (no padding) and `0`/`_` (pad with zero/space) flags that
 /// Ruby adds on top of C's set. An UNKNOWN directive is emitted verbatim,
@@ -855,10 +856,10 @@ builtin_methods! {
     // MICROSECONDS (not the offset -- that is `Time.new`'s 7th; the two
     // constructors genuinely differ, oracle-verified).
     // TODO(plan P-B): out-of-range fields (`Time.utc(2023, 13, 1)`) are
-    // normalized by libc's timegm (-> 2024-01-01); real Ruby raises
+    // normalized by `civil_to_epoch_utc` (-> 2024-01-01); real Ruby raises
     // ArgumentError ("mon out of range"). Needs a range check per field
     // before the call. Also unsupported: the string-month form
-    // (`Time.utc(2023, "nov", 1)`) and the 10-argument to_a-style form.
+    // (`Time.utc(2023, "nov", 1)`).
     "utc" | "gm" => fn time_utc(_recv, args, _block) {
         arity!(args, 1..=10);
         let norm = normalize_civil_args(args);
