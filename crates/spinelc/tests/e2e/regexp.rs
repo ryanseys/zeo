@@ -363,3 +363,19 @@ fn regexp_introspection_linear_time_and_class_backrefs() {
         "true\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\ntrue\n"
     );
 }
+
+#[test]
+fn class_of_a_failed_match_is_nilclass_not_matchdata() {
+    // str.match(re) types as MatchData but returns nil on no match, so .class
+    // must be read at runtime rather than constant-folded to MatchData.
+    let result = run_ruby(
+        r#"
+        p "hi".match(/h/).class
+        p "hi".match(/z/).class
+        m = "hi".match(/z/)
+        p m.class
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "MatchData\nNilClass\nNilClass\n");
+}

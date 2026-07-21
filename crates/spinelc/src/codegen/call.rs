@@ -3576,11 +3576,15 @@ fn dispatch(
         };
         if !user_defined {
             return match infer_any_class(cx, recv_id) {
-                // `Queue` is the one builtin whose runtime value may be a
-                // subclass (`SizedQueue`, which types as `Queue` but carries
-                // its own class id in the payload), so its `.class` is read
-                // at runtime rather than constant-folded.
-                Some(cid) if cid != spinel_abi::QUEUE_CLASS => {
+                // Two builtins can't be constant-folded here. `Queue` may be a
+                // subclass (`SizedQueue`, which types as `Queue` but carries its
+                // own class id). `MatchData` is nilable: `str.match(re)` types as
+                // MatchData but returns `nil` on no match, so `.class` must be
+                // read at runtime (`"x".match(/z/).class == NilClass`).
+                Some(cid)
+                    if cid != spinel_abi::QUEUE_CLASS
+                        && cid != spinel_abi::MATCH_DATA_CLASS =>
+                {
                     let id = cid.0;
                     quote! { { let _ = #recv_expr; spinel_rt::RubyValue::Class(spinel_rt::ClassId(#id)) } }
                 }
