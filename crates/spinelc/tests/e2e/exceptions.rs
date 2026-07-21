@@ -185,6 +185,9 @@ fn coercion_type_errors_name_nil_true_false_as_literals_not_class_names() {
         msg { "" + :s }
         msg { Float(nil) }
         msg { Integer(true) }
+        # A non-class target phrase ("an exact number") keeps the CLASS name,
+        # even for nil -- the value-name rule is specific to class targets.
+        msg { Time.at(nil) }
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
@@ -196,7 +199,8 @@ fn coercion_type_errors_name_nil_true_false_as_literals_not_class_names() {
          no implicit conversion of Integer into String\n\
          no implicit conversion of Symbol into String\n\
          can't convert nil into Float\n\
-         can't convert true into Integer\n"
+         can't convert true into Integer\n\
+         can't convert NilClass into an exact number\n"
     );
 }
 

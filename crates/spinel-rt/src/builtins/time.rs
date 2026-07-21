@@ -492,7 +492,7 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "can't convert {} into an exact number",
-                    crate::builtins::convert_name_of(other)
+                    crate::builtins::class_name_of(other)
                 ),
             ))
         }
@@ -527,7 +527,7 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             "TypeError",
             format!(
                 "can't convert {} into an exact number",
-                crate::builtins::convert_name_of(other)
+                crate::builtins::class_name_of(other)
             ),
         )),
     }

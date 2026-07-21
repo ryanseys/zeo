@@ -1202,7 +1202,7 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "can't convert {} into time interval",
-                    crate::builtins::convert_name_of(other)
+                    crate::builtins::class_name_of(other)
                 ),
             ))
         }
