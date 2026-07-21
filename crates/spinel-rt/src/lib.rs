@@ -60,7 +60,7 @@ pub use bootstrap::{install_core_constants, register_builtins};
 pub use dispatch::{
     bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
     describe_receiver, downcast_robj, install_class_registry,
-    instance_variable_get, instance_variable_set, instance_variables, is_a,
+    instance_variable_get, instance_variable_set, instance_variables, is_a, ivar_defined,
     ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, MissingReason,
     make_name_error, method_name_symbol, raise_no_block_yield, raise_error, raise_error_details, raise_method_missing,
     raise_stop_iteration, raise_with_cause,

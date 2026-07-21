@@ -1057,6 +1057,21 @@ pub fn remove_instance_variable(
 
 /// `Object#instance_variables` -- the receiver's ivar names as `:@name`
 /// symbols in declaration order (empty for a builtin/immediate).
+/// Whether `recv` has instance variable `@{bare_name}` actually set -- backs
+/// `defined?(@iv)`, which answers `"instance-variable"` only for an assigned
+/// ivar and `nil` otherwise. `bare_name` is the name without the leading `@`.
+pub fn ivar_defined(recv: &RubyValue, bare_name: &str) -> bool {
+    let want = Symbol::intern(&format!("@{bare_name}"));
+    let RubyValue::Array(vars) = instance_variables(recv) else {
+        return false;
+    };
+    let found = vars
+        .lock()
+        .iter()
+        .any(|v| matches!(v, RubyValue::Symbol(s) if *s == want));
+    found
+}
+
 pub fn instance_variables(recv: &RubyValue) -> RubyValue {
     let names: Vec<RubyValue> = match recv {
         // `ivar_pairs` already yields `@`-prefixed names (it backs the

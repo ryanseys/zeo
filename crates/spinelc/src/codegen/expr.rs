@@ -303,6 +303,19 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         return defined_all_or_nil(cx, &nodes);
     }
+    // `defined?(@iv)` is "instance-variable" only if the ivar is actually set
+    // on self (a never-assigned `@iv` answers nil), checked at runtime.
+    if let HirNode::IvarRead(name) = &cx.compiler.hir[id] {
+        let recv = super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
+        let name = name.as_str();
+        return quote! {
+            if spinel_rt::ivar_defined(&#recv, #name) {
+                spinel_rt::RubyValue::Str(spinel_rt::string_new("instance-variable".to_string()))
+            } else {
+                spinel_rt::RubyValue::Nil
+            }
+        };
+    }
     let classification: Option<&str> = match &cx.compiler.hir[id] {
         HirNode::LocalRead(name) => {
             if cx.local_types.contains_key(name) {
@@ -311,7 +324,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
                 None
             }
         }
-        HirNode::IvarRead(_) => Some("instance-variable"),
         HirNode::ClassVarRead(_) => Some("class variable"),
         // A constant reference classifies as `"constant"` only when it
         // provably resolves at compile time; an unresolvable `Scope::NAME`/
@@ -387,8 +399,9 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::GlobalRead(_)
         | HirNode::LastMatchRef(_)
         | HirNode::ArrayLit(_)
-        | HirNode::HashLit(_) => {
-            unreachable!("defined? Call/Yield/GlobalRead/LastMatchRef/Array/Hash handled above")
+        | HirNode::HashLit(_)
+        | HirNode::IvarRead(_) => {
+            unreachable!("defined? runtime-checked nodes handled above")
         }
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
         HirNode::AliasGlobal(..) => Some("expression"),

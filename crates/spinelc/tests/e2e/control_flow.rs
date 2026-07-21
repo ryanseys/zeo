@@ -876,3 +876,25 @@ fn defined_globals_and_match_vars_check_definedness_at_runtime() {
          \"global-variable\"\nnil\n\"expression\"\nnil\n"
     );
 }
+
+#[test]
+fn defined_instance_variable_reflects_assignment() {
+    // defined?(@iv) is "instance-variable" only once assigned, else nil.
+    // (A never-assigned ivar referenced ONLY inside a class body's defined?
+    // hits the documented assigned-nil-vs-never-assigned limitation for
+    // struct-backed objects; top-level ivars use a dynamic map and are exact.)
+    let result = run_ruby(
+        r#"
+        p defined?(@never)
+        @written = 1
+        p defined?(@written)
+        class C
+          def initialize; @a = 1; end
+          def check; defined?(@a); end
+        end
+        p C.new.check
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "nil\n\"instance-variable\"\n\"instance-variable\"\n");
+}
