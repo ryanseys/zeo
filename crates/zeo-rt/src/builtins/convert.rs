@@ -198,6 +198,22 @@ pub fn to_rstr(v: &RubyValue) -> Result<crate::collections::RStr, Signal> {
     }
 }
 
+/// [`to_ary`] unwrapped to the array handle.
+pub fn to_rary(v: &RubyValue) -> Result<crate::collections::RArray, Signal> {
+    match to_ary(v)? {
+        RubyValue::Array(a) => Ok(a),
+        _ => unreachable!("to_ary post-checks its answer"),
+    }
+}
+
+/// [`to_hash`] unwrapped to the hash handle.
+pub fn to_rhash(v: &RubyValue) -> Result<crate::collections::RHash, Signal> {
+    match to_hash(v)? {
+        RubyValue::Hash(h) => Ok(h),
+        _ => unreachable!("to_hash post-checks its answer"),
+    }
+}
+
 // Deliberately no registry-less unit tests: every interesting path (duck
 // types, the two TypeError shapes, nil answers) dispatches through the live
 // class registry, so coverage lives in the e2e tier (`tests/e2e/`) where a
