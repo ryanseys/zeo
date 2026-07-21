@@ -395,7 +395,7 @@ impl KwArg {
     /// The child node ids this element references, for HIR walkers (a `Pair`'s
     /// key+value, or a `DoubleSplat`'s single expression) -- so every pass can
     /// visit a `kwargs` list uniformly without re-matching the variant.
-    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> {
+    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + use<> {
         let (a, b) = match *self {
             KwArg::Pair(k, v) => (k, Some(v)),
             KwArg::DoubleSplat(n) => (n, None),

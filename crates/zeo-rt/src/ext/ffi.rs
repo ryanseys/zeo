@@ -138,7 +138,7 @@ impl RPointer {
         Ok(())
     }
 
-    unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 {
+    unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 { unsafe {
         let p = self.base.add(off);
         match (bytes, signed) {
             (1, true) => (p as *const i8).read_unaligned() as i64,
@@ -151,9 +151,9 @@ impl RPointer {
             (8, false) => (p as *const u64).read_unaligned() as i64,
             _ => unreachable!("FFI int width is 1/2/4/8"),
         }
-    }
+    }}
 
-    unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) {
+    unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) { unsafe {
         let p = self.base.add(off);
         match bytes {
             1 => (p as *mut u8).write_unaligned(v as u8),
@@ -162,25 +162,25 @@ impl RPointer {
             8 => (p as *mut u64).write_unaligned(v as u64),
             _ => unreachable!("FFI int width is 1/2/4/8"),
         }
-    }
+    }}
 
-    unsafe fn read_float(&self, off: usize, bytes: usize) -> f64 {
+    unsafe fn read_float(&self, off: usize, bytes: usize) -> f64 { unsafe {
         let p = self.base.add(off);
         match bytes {
             4 => (p as *const f32).read_unaligned() as f64,
             8 => (p as *const f64).read_unaligned(),
             _ => unreachable!("FFI float width is 4/8"),
         }
-    }
+    }}
 
-    unsafe fn write_float(&self, off: usize, bytes: usize, v: f64) {
+    unsafe fn write_float(&self, off: usize, bytes: usize, v: f64) { unsafe {
         let p = self.base.add(off);
         match bytes {
             4 => (p as *mut f32).write_unaligned(v as f32),
             8 => (p as *mut f64).write_unaligned(v),
             _ => unreachable!("FFI float width is 4/8"),
         }
-    }
+    }}
 }
 
 impl RubyObject for RPointer {

@@ -57,7 +57,7 @@ impl<'a> ConstPath<'a> {
 
     /// Each segment in order, anchor excluded (`::A::B` yields `A`, `B`).
     /// Always at least one item.
-    pub fn segments(&self) -> impl Iterator<Item = &'a str> {
+    pub fn segments(&self) -> impl Iterator<Item = &'a str> + use<'a> {
         self.body.split("::")
     }
 

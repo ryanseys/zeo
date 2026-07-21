@@ -201,12 +201,12 @@ pub fn p(value: RubyValue) -> RubyValue {
 macro_rules! ruby_class {
     (
         class $name:ident : $super:path {
-            id: $id:expr;
+            id: $id:expr_2021;
             name: $rname:literal;
-            ancestors: [ $($anc:expr),* $(,)? ];
+            ancestors: [ $($anc:expr_2021),* $(,)? ];
             ivars { $($ivar:ident),* $(,)? }
             $( def $method:ident ( $slf:tt : std::sync::Arc<Self> $(, $arg:ident : $arg_ty:ty)* $(,)? ) $body:block )*
-            dispatch { $( $dname:literal => $tramp:expr ),* $(,)? }
+            dispatch { $( $dname:literal => $tramp:expr_2021 ),* $(,)? }
         }
     ) => {
         // A NESTED class's mangled Rust name (`__c46_Item` -- see

@@ -13,7 +13,7 @@ use crate::{RubyValue, Signal};
 // No new crate dependency: these come with the always-linked math library, the
 // same way the `libc` crate's time/process calls are used elsewhere in the
 // runtime. (`sinh`/`cosh`/`tanh`/`asinh`/`acosh`/`atanh` use Rust's own `f64`.)
-extern "C" {
+unsafe extern "C" {
     fn tgamma(x: f64) -> f64;
     fn lgamma_r(x: f64, sign: *mut i32) -> f64;
     fn erf(x: f64) -> f64;

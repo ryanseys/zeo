@@ -379,7 +379,7 @@ mod tests {
     // panic message IS the assertion (the codebase's convention for those).
     use super::*;
 
-    fn gen(seed: i64) -> Arc<RandomObj> {
+    fn r#gen(seed: i64) -> Arc<RandomObj> {
         let RubyValue::Object(o) = new_random(Some(&RubyValue::Int(seed))).unwrap() else {
             panic!("Random.new gave a non-object")
         };
@@ -388,8 +388,8 @@ mod tests {
 
     #[test]
     fn same_seed_yields_the_same_sequence() {
-        let a = gen(5);
-        let b = gen(5);
+        let a = r#gen(5);
+        let b = r#gen(5);
         for _ in 0..16 {
             assert_eq!(next_u64(&a.state), next_u64(&b.state));
         }
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn different_seeds_diverge_immediately() {
-        assert_ne!(next_u64(&gen(5).state), next_u64(&gen(6).state));
+        assert_ne!(next_u64(&r#gen(5).state), next_u64(&r#gen(6).state));
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn rand_no_argument_is_a_unit_float() {
-        let r = gen(1);
+        let r = r#gen(1);
         for _ in 0..100 {
             let RubyValue::Float(f) = rand_with(&r.state, None).unwrap() else { panic!() };
             assert!((0.0..1.0).contains(&f));
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn rand_integer_bound_stays_in_range_and_returns_an_integer() {
-        let r = gen(1);
+        let r = r#gen(1);
         for _ in 0..200 {
             let RubyValue::Int(n) = rand_with(&r.state, Some(&RubyValue::Int(10))).unwrap() else {
                 panic!("integer bound must give an Integer")
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn rand_float_bound_returns_a_float_in_range() {
-        let r = gen(1);
+        let r = r#gen(1);
         for _ in 0..100 {
             let RubyValue::Float(f) = rand_with(&r.state, Some(&RubyValue::Float(20.43))).unwrap() else {
                 panic!("float bound must give a Float")
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn rand_integer_range_bound_is_inclusive_and_typed() {
-        let r = gen(3);
+        let r = r#gen(3);
         let range = RubyValue::Range(
             Some(Box::new(RubyValue::Int(5))),
             Some(Box::new(RubyValue::Int(9))),
@@ -462,29 +462,29 @@ mod tests {
     #[test]
     #[should_panic(expected = "ArgumentError")]
     fn rand_zero_bound_raises_argument_error() {
-        let _ = rand_with(&gen(1).state, Some(&RubyValue::Int(0)));
+        let _ = rand_with(&r#gen(1).state, Some(&RubyValue::Int(0)));
     }
 
     #[test]
     #[should_panic(expected = "ArgumentError")]
     fn rand_negative_integer_bound_raises_argument_error() {
-        let _ = rand_with(&gen(1).state, Some(&RubyValue::Int(-12)));
+        let _ = rand_with(&r#gen(1).state, Some(&RubyValue::Int(-12)));
     }
 
     #[test]
     #[should_panic(expected = "ArgumentError")]
     fn rand_negative_float_bound_raises_argument_error() {
-        let _ = rand_with(&gen(1).state, Some(&RubyValue::Float(-1.5)));
+        let _ = rand_with(&r#gen(1).state, Some(&RubyValue::Float(-1.5)));
     }
 
     #[test]
     fn seed_reports_the_integer_seed() {
-        assert!(matches!(gen(42).seed, RubyValue::Int(42)));
+        assert!(matches!(r#gen(42).seed, RubyValue::Int(42)));
     }
 
     #[test]
     fn dup_copies_the_generator_state() {
-        let r = gen(7);
+        let r = r#gen(7);
         let dup = downcast_robj::<RandomObj>(&r.dup_object(false)).unwrap();
         // A copy starts from the same word, so the first draw matches; the two
         // then advance independently (separate Mutexes).
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn bytes_returns_the_requested_length() {
-        let RubyValue::Str(s) = random_bytes(&gen(1).state, 7) else { panic!() };
+        let RubyValue::Str(s) = random_bytes(&r#gen(1).state, 7) else { panic!() };
         assert_eq!(s.lock().bytesize(), 7);
     }
 }

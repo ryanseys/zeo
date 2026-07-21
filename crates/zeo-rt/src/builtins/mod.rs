@@ -563,7 +563,7 @@ pub(crate) use builtin_methods;
 
 /// CRuby's exact ArgumentError shapes for a fixed or ranged arity.
 macro_rules! arity {
-    ($args:expr, $n:literal) => {
+    ($args:expr_2021, $n:literal) => {
         if $args.len() != $n {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
@@ -571,7 +571,7 @@ macro_rules! arity {
             ));
         }
     };
-    ($args:expr, $lo:literal..=$hi:literal) => {
+    ($args:expr_2021, $lo:literal..=$hi:literal) => {
         if !($lo..=$hi).contains(&$args.len()) {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
@@ -590,7 +590,7 @@ pub(crate) use arity;
 /// Receiver unwrappers -- the table's ClassId keying guarantees the
 /// variant, so a mismatch is a dispatch bug, not a user error.
 macro_rules! recv_str {
-    ($recv:expr) => {
+    ($recv:expr_2021) => {
         match $recv {
             crate::RubyValue::Str(s) => s,
             _ => unreachable!("String table row dispatched on a non-String receiver"),
@@ -600,7 +600,7 @@ macro_rules! recv_str {
 pub(crate) use recv_str;
 
 macro_rules! recv_array {
-    ($recv:expr) => {
+    ($recv:expr_2021) => {
         match $recv {
             crate::RubyValue::Array(a) => a,
             _ => unreachable!("Array table row dispatched on a non-Array receiver"),
@@ -610,7 +610,7 @@ macro_rules! recv_array {
 pub(crate) use recv_array;
 
 macro_rules! recv_hash {
-    ($recv:expr) => {
+    ($recv:expr_2021) => {
         match $recv {
             crate::RubyValue::Hash(h) => h,
             _ => unreachable!("Hash table row dispatched on a non-Hash receiver"),
@@ -621,7 +621,7 @@ pub(crate) use recv_hash;
 
 /// Argument coercion guards -- CRuby's exact TypeError shape.
 macro_rules! arg_int {
-    ($args:expr, $i:literal) => {
+    ($args:expr_2021, $i:literal) => {
         match &$args[$i] {
             crate::RubyValue::Int(v) => *v,
             other => {
@@ -639,7 +639,7 @@ macro_rules! arg_int {
 pub(crate) use arg_int;
 
 macro_rules! arg_str {
-    ($args:expr, $i:literal) => {
+    ($args:expr_2021, $i:literal) => {
         match &$args[$i] {
             crate::RubyValue::Str(s) => s,
             other => {
@@ -662,7 +662,7 @@ pub(crate) use arg_str;
 /// captures `(recv, method-name, args)` and re-invokes the method when
 /// iterated (`rb_enumeratorize`'s rule).
 macro_rules! block_or_enum {
-    ($recv:expr, $meth:expr, $args:expr, $block:expr) => {
+    ($recv:expr_2021, $meth:expr_2021, $args:expr_2021, $block:expr_2021) => {
         match $block {
             Some(crate::RubyValue::Proc(p)) => p,
             _ => {
@@ -676,7 +676,7 @@ pub(crate) use block_or_enum;
 /// The block, or CRuby's `LocalJumpError` (what a bare `yield` with no
 /// block raises -- `5.tap` reproduces it, oracle-verified).
 macro_rules! need_block {
-    ($block:expr) => {
+    ($block:expr_2021) => {
         match &$block {
             Some(crate::RubyValue::Proc(p)) => p.clone(),
             _ => {

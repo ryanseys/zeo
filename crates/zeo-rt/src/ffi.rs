@@ -132,10 +132,10 @@ pub fn from_bool(b: bool) -> RubyValue {
 /// # Safety
 /// `p` must be NULL or a valid pointer to a NUL-terminated string that outlives
 /// this read -- the same contract the `ffi` gem places on a `:string` return.
-pub unsafe fn from_cstr(p: *const c_char) -> RubyValue {
+pub unsafe fn from_cstr(p: *const c_char) -> RubyValue { unsafe {
     if p.is_null() {
         return RubyValue::Nil;
     }
     let bytes = CStr::from_ptr(p).to_bytes().to_vec();
     RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::default_external()))
-}
+}}

@@ -84,10 +84,10 @@ macro_rules! tower_binop {
     (
         $(#[$doc:meta])*
         $name:ident,
-        int($ia:ident, $ib:ident) => $int:expr,
-        rat($ra:ident, $rb:ident) => $rat:expr,
-        flo($fa:ident, $fb:ident) => $flo:expr,
-        cpx($ca:ident, $cb:ident) => $cpx:expr $(,)?
+        int($ia:ident, $ib:ident) => $int:expr_2021,
+        rat($ra:ident, $rb:ident) => $rat:expr_2021,
+        flo($fa:ident, $fb:ident) => $flo:expr_2021,
+        cpx($ca:ident, $cb:ident) => $cpx:expr_2021 $(,)?
     ) => {
         $(#[$doc])*
         pub fn $name(a: &RubyValue, b: &RubyValue) -> Option<Result<RubyValue, Signal>> {

@@ -865,7 +865,7 @@ mod tests {
     #[test]
     fn generator_yielder_preserves_arity_for_next_values() {
         // Enumerator.new { |y| y.yield; y.yield nil; y.yield 1, 2 }
-        let gen: RProc = RProc::new(|args: &[RubyValue]| {
+        let generator: RProc = RProc::new(|args: &[RubyValue]| {
             let y = &args[0];
             let RubyValue::Yielder(f) = y else { panic!("expected a Yielder") };
             f.call(&[])?;
@@ -873,7 +873,7 @@ mod tests {
             f.call(&[RubyValue::Int(1), RubyValue::Int(2)])?;
             Ok(RubyValue::Nil)
         });
-        let e = enumerator_new(&[], Some(RubyValue::Proc(gen))).unwrap();
+        let e = enumerator_new(&[], Some(RubyValue::Proc(generator))).unwrap();
         let RubyValue::Enumerator(h) = &e else { panic!() };
         assert_eq!(take_next(h).unwrap().len(), 0); // yield        -> []
         assert_eq!(take_next(h).unwrap().len(), 1); // yield nil    -> [nil]
@@ -886,12 +886,12 @@ mod tests {
     fn a_failed_iteration_propagates_then_restarts() {
         // Enumerator.new { |y| y << 1; raise } -- next -> 1, next -> the
         // error, next again -> a fresh fiber restarting at 1 (oracle).
-        let gen: RProc = RProc::new(|args: &[RubyValue]| {
+        let generator: RProc = RProc::new(|args: &[RubyValue]| {
             let RubyValue::Yielder(f) = &args[0] else { panic!() };
             f.call(&[RubyValue::Int(1)])?;
             Err(Signal::Raise(RubyValue::Int(99)))
         });
-        let e = enumerator_new(&[], Some(RubyValue::Proc(gen))).unwrap();
+        let e = enumerator_new(&[], Some(RubyValue::Proc(generator))).unwrap();
         let RubyValue::Enumerator(h) = &e else { panic!() };
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(1)));
         assert!(matches!(take_next(h), Err(Signal::Raise(RubyValue::Int(99)))));
@@ -927,11 +927,11 @@ mod tests {
             RubyValue::Int(2)
         ));
         // Generator without a hint: nil; with one: the hint.
-        let gen: RProc = RProc::new(|_| Ok(RubyValue::Nil));
-        let bare = enumerator_new(&[], Some(RubyValue::Proc(gen.clone()))).unwrap();
+        let generator: RProc = RProc::new(|_| Ok(RubyValue::Nil));
+        let bare = enumerator_new(&[], Some(RubyValue::Proc(generator.clone()))).unwrap();
         assert!(matches!(size(&bare, &[], None).unwrap(), RubyValue::Nil));
         let hinted =
-            enumerator_new(&[RubyValue::Int(4)], Some(RubyValue::Proc(gen))).unwrap();
+            enumerator_new(&[RubyValue::Int(4)], Some(RubyValue::Proc(generator))).unwrap();
         assert!(matches!(size(&hinted, &[], None).unwrap(), RubyValue::Int(4)));
     }
 

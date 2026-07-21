@@ -578,16 +578,16 @@ fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyVal
                     // `regexp_*index` answers a CHAR index; recover the match's
                     // byte span by re-matching the whole string.
                     let byte_start = text.char_indices().nth(ci as usize).map_or(text.len(), |(b, _)| b);
-                    if let RubyValue::MatchData(m) = crate::regexp_match(re, &text[byte_start..]) {
+                    match crate::regexp_match(re, &text[byte_start..]) { RubyValue::MatchData(m) => {
                         let matched = crate::matchdata_group(&m, 0);
                         let len = match &matched {
                             RubyValue::Str(s) => s.lock().to_utf8_lossy().len(),
                             _ => 0,
                         };
                         Some((byte_start, byte_start + len))
-                    } else {
+                    } _ => {
                         None
-                    }
+                    }}
                 }
                 _ => None,
             }
@@ -885,7 +885,7 @@ fn crypt_impl(recv: &RubyValue, salt_arg: &RubyValue) -> Result<RubyValue, Signa
 
     // `crypt(3)` is an XSI extension the `libc` crate doesn't declare on every
     // target, so bind it directly (it resolves from libSystem/libcrypt).
-    extern "C" {
+    unsafe extern "C" {
         fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
     }
     let _guard = CRYPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -2205,7 +2205,7 @@ builtin_methods! {
             chars
                 .iter()
                 .enumerate()
-                .filter(|(i, &c)| {
+                .filter(|&(ref i, &c)| {
                     !(c == '_'
                         && *i > 0
                         && chars[i - 1].is_ascii_digit()

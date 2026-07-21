@@ -9,7 +9,9 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
+# MSRV floor: edition 2024 needs >=1.85. Checked in CI; bump deliberately.
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 
 # Faster generated-program compiles + faster zeo-rt rebuilds. Every compiled
