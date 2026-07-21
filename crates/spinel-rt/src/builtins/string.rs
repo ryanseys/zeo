@@ -2681,27 +2681,38 @@ fn in_all_charsets(c: char, sets: &[(std::collections::HashSet<char>, bool)]) ->
 /// on whitespace runs. A positive `limit` keeps the tail (internal
 /// whitespace and all) whole as the final field.
 fn awk_split(text: &str, limit: i64) -> Vec<String> {
-    if limit <= 0 {
-        // Whitespace mode never yields empty fields, so trailing-empty
-        // handling is moot for both the 0 and negative cases.
-        return text.split_whitespace().map(str::to_string).collect();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    // `limit == 1`: no splitting at all, the whole string is the one field.
+    if limit == 1 {
+        return if n == 0 { Vec::new() } else { vec![text.to_string()] };
     }
-    let mut fields = Vec::new();
-    let mut rest = text.trim_start();
-    while (fields.len() as i64) + 1 < limit {
-        match rest.find(char::is_whitespace) {
-            Some(i) => {
-                fields.push(rest[..i].to_string());
-                rest = rest[i..].trim_start();
-            }
-            None => break,
+    let mut fields: Vec<String> = Vec::new();
+    let mut i = 0;
+    // Leading whitespace is always skipped in awk mode.
+    while i < n && chars[i].is_whitespace() {
+        i += 1;
+    }
+    while i < n {
+        // At the field cap the remainder (from here, verbatim -- the whitespace
+        // before it was already skipped) is the final field.
+        if limit > 0 && (fields.len() as i64) + 1 >= limit {
+            fields.push(chars[i..].iter().collect());
+            return fields;
         }
-        if rest.is_empty() {
-            break;
+        let beg = i;
+        while i < n && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        fields.push(chars[beg..i].iter().collect());
+        while i < n && chars[i].is_whitespace() {
+            i += 1;
         }
     }
-    if !rest.is_empty() {
-        fields.push(rest.to_string());
+    // A non-zero limit keeps ONE trailing empty field when the string ended with
+    // whitespace (`limit == 0` drops trailing empties, CRuby's default).
+    if limit != 0 && n > 0 && chars[n - 1].is_whitespace() {
+        fields.push(String::new());
     }
     fields
 }

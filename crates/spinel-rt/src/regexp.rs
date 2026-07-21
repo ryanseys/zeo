@@ -900,6 +900,9 @@ pub fn regexp_gsub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Ru
     for caps in re.engine.captures_all(haystack) {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m_start]);
+        // Each iteration sets `$~`/`$1..` so the block can read the capture
+        // groups of the CURRENT match (CRuby updates the frame's backref).
+        crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
         let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
         let replaced = blk.call(&[matched])?;
         out.push_str(&replaced.to_display_string());
@@ -915,6 +918,7 @@ pub fn regexp_sub_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<Rub
     match re.engine.captures_first(haystack) {
         Some(caps) => {
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
+            crate::lastmatch::set_last_match(Some(build_match_data(re, haystack, &caps)));
             let matched = RubyValue::Str(string_new(haystack[m_start..m_end].to_string()));
             let replaced = blk.call(&[matched])?;
             let mut out = String::new();

@@ -512,3 +512,33 @@ fn succ_kind_flip_carry_and_match_block() {
         "\"2.0\"\n\"a-10\"\n\"aaa0\"\n\"Ba0\"\n\"OO\"\nnil\n84\n",
     );
 }
+
+#[test]
+fn awk_split_limits_and_gsub_block_backref() {
+    // awk-mode split honors limit (1 = whole, cap = verbatim remainder, nonzero
+    // keeps a trailing empty); $1 is live inside a gsub/sub block.
+    let result = run_ruby(
+        r#"
+        s = " one two  three "
+        sep = " "
+        p s.split(sep, 1)
+        p s.split(sep, 2)
+        p s.split(sep, -1)
+        p "   ".split(sep, -1)
+        p "trail   ".split(sep, 3)
+        p "a1b2c3".gsub(/(\d)/) { ($1.to_i * 2).to_s }
+        p "x9".sub(/(\d)/) { ($1.to_i + 1).to_s }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\" one two  three \"]\n\
+         [\"one\", \"two  three \"]\n\
+         [\"one\", \"two\", \"three\", \"\"]\n\
+         [\"\"]\n\
+         [\"trail\", \"\"]\n\
+         \"a2b4c6\"\n\
+         \"x10\"\n",
+    );
+}
