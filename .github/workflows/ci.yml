@@ -57,8 +57,10 @@ jobs:
       # The examples/ golden suite (real CLI, committed .expected files --
       # no ruby oracle needed in CI).
       - run: cargo run -p xtask -- test
-      # TODO(corpus vendoring): once conformance/corpus/ is vendored, add the
-      # smoke tier here: cargo run -p xtask -- conformance run --smoke
+      # The conformance smoke tier: ~150 representative tests from the
+      # vendored corpus (committed .expected snapshots, so no ruby needed).
+      # The full 2,295-test run is the nightly job.
+      - run: cargo run -p xtask -- conformance run --smoke
 
   msrv:
     name: MSRV check

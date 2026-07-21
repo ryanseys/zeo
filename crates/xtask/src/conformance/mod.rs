@@ -31,6 +31,10 @@ struct Opts {
     suite: Option<String>,
     dir: Option<PathBuf>,
     filters: Vec<String>,
+    /// `--smoke`: restrict the run to the ids in `conformance/smoke.txt` --
+    /// the small, known-passing, representative subset CI runs per-PR (the
+    /// full corpus is a nightly job).
+    smoke: bool,
     jobs: usize,
     run_timeout: Duration,
     compile_timeout: Duration,
@@ -50,6 +54,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         suite: None,
         dir: None,
         filters: Vec::new(),
+        smoke: false,
         // Leave headroom below the core count: each worker runs a full `zeo`
         // subprocess whose `rustc` + link step already spawn several
         // threads, so `ncpu` workers on `ncpu` cores oversubscribe and inflate every
@@ -78,6 +83,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         match arg.as_str() {
             "--dir" => opts.dir = Some(PathBuf::from(value("--dir")?)),
             "--filter" => opts.filters.push(value("--filter")?),
+            "--smoke" => opts.smoke = true,
             "-j" => opts.jobs = value("-j")?.parse().map_err(|e| format!("-j: {e}"))?,
             "--timeout" => {
                 opts.run_timeout =
@@ -118,7 +124,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
-  run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
+  run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [--smoke] [-j N]\n\
                 [--timeout SECS] [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
   triage        [--suite NAME] [--top N] [--bucket NAME]\n\
@@ -426,9 +432,32 @@ fn run_one_suite(
         }
     }
 
+    // `--smoke` is an id allowlist read once per run; a listed id that has
+    // vanished from the corpus is simply absent (the smoke list is pruned
+    // when tests are renamed, not a hard reference).
+    let smoke_ids: Option<std::collections::HashSet<String>> = if opts.smoke {
+        let path = root.join("conformance/smoke.txt");
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("reading {} (--smoke): {e}", path.display()))?;
+        Some(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(str::to_owned)
+                .collect(),
+        )
+    } else {
+        None
+    };
+
     let mut skipped = Vec::new();
     let mut to_run = Vec::new();
     for case in cases {
+        if let Some(ids) = &smoke_ids {
+            if !ids.contains(&case.id) {
+                continue;
+            }
+        }
         if !opts.filters.is_empty()
             && !opts
                 .filters
