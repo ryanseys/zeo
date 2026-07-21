@@ -207,7 +207,8 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(match recv {
             RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
-            RubyValue::Nil => 8,
+            // CRuby 4.0.5's fixed immediate ids: nil 4, true 20, false 0.
+            RubyValue::Nil => 4,
             RubyValue::Bool(true) => 20,
             RubyValue::Bool(false) => 0,
             RubyValue::Object(o) => std::sync::Arc::as_ptr(o) as *const () as i64,

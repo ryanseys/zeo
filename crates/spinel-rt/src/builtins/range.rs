@@ -13,6 +13,42 @@ fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, boo
     }
 }
 
+/// `Range#cover?(other_range)` -- true iff every element of `other` lies within
+/// `self`: `other`'s begin is at/after self's, and its end at/before self's
+/// (honoring exclusive ends). A missing bound on `self` covers that side; a
+/// bound `self` has that `other` lacks (endless/beginless `other`) is not
+/// covered.
+fn range_covers_range(
+    s_start: Option<&RubyValue>,
+    s_end: Option<&RubyValue>,
+    s_excl: bool,
+    other: &RubyValue,
+) -> bool {
+    let (o_start, o_end, o_excl) = range_parts(other);
+    // Begin side: self.begin <= other.begin.
+    match (s_start, o_start) {
+        (Some(ss), Some(os)) => {
+            if !ss.rb_cmp(os).is_some_and(|c| c <= 0) {
+                return false;
+            }
+        }
+        (Some(_), None) => return false,
+        _ => {}
+    }
+    // End side: self.end >= other.end, with an EQUAL end covered unless self
+    // excludes it while other includes it.
+    match (s_end, o_end) {
+        (Some(se), Some(oe)) => match se.rb_cmp(oe) {
+            Some(c) if c > 0 => {}
+            Some(0) if !s_excl || o_excl => {}
+            _ => return false,
+        },
+        (Some(_), None) => return false,
+        _ => {}
+    }
+    true
+}
+
 /// `Range#bsearch` over a FLOAT range. Bisects on the doubles' monotonic
 /// integer image (a positive-float's bits are already monotonic; the sign flip
 /// extends that to the whole line), so a representable boundary is found
@@ -248,12 +284,22 @@ builtin_methods! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this spike supports the
     // cover check is the faithful behavior for all four names.
-    "==="[1] | "cover?"[1] | "include?"[1] | "member?"[1] => fn case_eq(recv, args, _block) {
+    "==="[1] | "include?"[1] | "member?"[1] => fn case_eq(recv, args, _block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
             start, end, exclusive, &args[0],
         )))
+    }
+    // `cover?` alone accepts a RANGE argument (range containment); `===`/
+    // `include?`/`member?` treat a Range as an ordinary value (never covered).
+    "cover?"[1] => fn cover_p(recv, args, _block) {
+        arity!(args, 1);
+        let (start, end, exclusive) = range_parts(recv);
+        if matches!(&args[0], RubyValue::Range(..)) {
+            return Ok(RubyValue::Bool(range_covers_range(start, end, exclusive, &args[0])));
+        }
+        Ok(RubyValue::Bool(crate::value::range_covers(start, end, exclusive, &args[0])))
     }
     // `overlap?(other)` -- do two ranges share at least one element? False
     // when either range lies wholly beyond the other's end (CRuby range.c's

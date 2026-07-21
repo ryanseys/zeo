@@ -874,3 +874,24 @@ fn class_frozen_false_hash_delete_block_and_default_record_separator() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "false\nfalse\n2\n\"gone z\"\n\"\\n\"\n");
 }
+
+#[test]
+fn nil_object_id_range_cover_and_struct_not_equal() {
+    // nil.object_id is 4 (CRuby 4.0.5). Range#cover? accepts a Range argument
+    // (containment). Struct#!= negates the struct's value == (not identity).
+    let result = run_ruby(
+        r#"
+        p nil.object_id
+        p((1..5).cover?(2..4))
+        p((1..5).cover?(0..4))
+        p((1..5).cover?(2..6))
+        S = Struct.new(:a, :b)
+        x = S.new(5, 6)
+        p(x == S.new(5, 6))
+        p(x != S.new(5, 6))
+        p(x != S.new(5, 9))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4\ntrue\nfalse\nfalse\ntrue\nfalse\ntrue\n");
+}

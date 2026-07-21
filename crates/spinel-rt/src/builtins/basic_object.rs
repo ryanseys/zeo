@@ -26,7 +26,11 @@ builtin_methods! {
     }
     "!=" => fn neq(recv, args, _block) {
         arity!(args, 1);
-        Ok(RubyValue::Bool(!recv.rb_eq(&args[0])))
+        // CRuby's `!=` is `!(self == other)` -- it dispatches the receiver's
+        // OWN `==` (a Struct's value equality, a user override), not the
+        // low-level identity fallback `rb_eq` gives for a plain object.
+        let eq = crate::dispatch::send_value(recv, crate::Symbol::intern("=="), args, None)?;
+        Ok(RubyValue::Bool(!eq.truthy()))
     }
     "!" => fn not(recv, args, _block) {
         arity!(args, 0);
