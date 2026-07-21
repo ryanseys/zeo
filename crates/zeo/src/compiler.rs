@@ -19,12 +19,12 @@ use std::collections::HashMap;
 /// what makes `5.is_a?(Integer)`-style checks work uniformly through the
 /// same `classes`/`ancestors` system as user classes.
 pub use zeo_abi::{
-    ClassId, ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
+    ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS, ClassId,
     DATA_CLASS, ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FFI_STRUCT_CLASS, FIBER_CLASS,
-    FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS,
-    MUTEX_CLASS, NIL_CLASS, NUMERIC_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS,
-    RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS,
-    THREAD_CLASS, TRUE_CLASS,
+    FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS,
+    MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, NUMERIC_CLASS, OBJECT_CLASS, PROC_CLASS, QUEUE_CLASS,
+    RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS,
+    SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -266,15 +266,15 @@ impl Compiler {
                 prepends: Vec::new(),
                 includes: Vec::new(),
                 extends: Vec::new(),
-            undefined: std::collections::HashSet::new(),
-            pending_aliases: Vec::new(),
-            visibility_overrides: Vec::new(),
+                undefined: std::collections::HashSet::new(),
+                pending_aliases: Vec::new(),
+                visibility_overrides: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
                 own_methods: Vec::new(),
                 methods: Vec::new(),
                 explicit_superclass: false,
-            own_class_methods: Vec::new(),
+                own_class_methods: Vec::new(),
                 class_methods: Vec::new(),
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
@@ -445,7 +445,9 @@ impl Compiler {
     ) -> Option<ClassId> {
         self.classes
             .iter()
-            .position(|c| c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent)
+            .position(|c| {
+                c.name == name && c.box_id == box_id && c.lexical_parent == lexical_parent
+            })
             .map(|i| ClassId(i as u32))
     }
 
@@ -477,7 +479,11 @@ impl Compiler {
         while let Some(cid) = cur {
             chain.push(cid);
             let ci = self.class(cid);
-            cur = if ci.qualified_def { None } else { ci.lexical_parent };
+            cur = if ci.qualified_def {
+                None
+            } else {
+                ci.lexical_parent
+            };
         }
         chain.reverse();
         chain
@@ -596,9 +602,7 @@ impl Compiler {
     /// `is_module` guards the `Errno` namespace (a module, never instantiated).
     pub fn is_exception_backed(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
-        !ci.is_module
-            && (ci.is_bootstrap
-                || ci.ancestors.contains(&zeo_abi::EXCEPTION_CLASS))
+        !ci.is_module && (ci.is_bootstrap || ci.ancestors.contains(&zeo_abi::EXCEPTION_CLASS))
     }
 
     /// The instantiable value-builtin a USER subclass wraps as its payload

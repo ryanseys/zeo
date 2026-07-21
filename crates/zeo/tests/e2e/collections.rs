@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn array_literal_indexing_and_mutation() {
@@ -22,10 +22,7 @@ fn array_literal_indexing_and_mutation() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "1\n3\n3\n\n99\n3\n3\n5\n3\n5\n"
-    );
+    assert_eq!(result.stdout, "1\n3\n3\n\n99\n3\n3\n5\n3\n5\n");
 }
 
 #[test]
@@ -46,10 +43,7 @@ fn hash_literal_indexing_and_mutation() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "1\n2\n\n3\n10\n3\n3\n{a: 10, b: 2, c: 3}\n"
-    );
+    assert_eq!(result.stdout, "1\n2\n\n3\n10\n3\n3\n{a: 10, b: 2, c: 3}\n");
 }
 
 #[test]
@@ -1064,10 +1058,7 @@ fn dig_raises_typeerror_through_non_diggable_intermediate() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "TypeError\n2\n3\nnil\n7\n1\nTypeError\n"
-    );
+    assert_eq!(result.stdout, "TypeError\n2\n3\nnil\n7\n1\nTypeError\n");
 }
 
 #[test]

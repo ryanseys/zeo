@@ -3,8 +3,8 @@
 //! `range_covers` (the `Range#===` fix that makes `case x when 1..5` real).
 //! The remaining Tier A rows land in stage E.
 
-use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::RubyValue;
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 
 fn range_parts(recv: &RubyValue) -> (Option<&RubyValue>, Option<&RubyValue>, bool) {
     match recv {
@@ -96,9 +96,18 @@ fn range_bsearch_float(
         };
         match cmp {
             Some(std::cmp::Ordering::Equal) => return Ok(RubyValue::Float(x)),
-            Some(std::cmp::Ordering::Less) => { numeric_mode = true; hi = mid; }
-            Some(std::cmp::Ordering::Greater) => { numeric_mode = true; lo = mid + 1; }
-            None if r.truthy() => { satisfied = Some(x); hi = mid; }
+            Some(std::cmp::Ordering::Less) => {
+                numeric_mode = true;
+                hi = mid;
+            }
+            Some(std::cmp::Ordering::Greater) => {
+                numeric_mode = true;
+                lo = mid + 1;
+            }
+            None if r.truthy() => {
+                satisfied = Some(x);
+                hi = mid;
+            }
             None => lo = mid + 1,
         }
     }
@@ -598,7 +607,10 @@ mod tests {
     #[test]
     fn case_eq_covers_the_oracle_matrix() {
         let r = int_range(1, 5, false);
-        assert!(matches!(case_eq(&r, &[RubyValue::Int(3)], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            case_eq(&r, &[RubyValue::Int(3)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         assert!(matches!(
             case_eq(&r, &[RubyValue::Float(5.5)], None).unwrap(),
             RubyValue::Bool(false)
@@ -615,7 +627,10 @@ mod tests {
         ));
         // Incomparable subject: false, not an error.
         let s = RubyValue::Str(crate::string_new("x".to_string()));
-        assert!(matches!(case_eq(&r, &[s], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            case_eq(&r, &[s], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]

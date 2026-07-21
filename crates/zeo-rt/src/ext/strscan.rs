@@ -9,12 +9,12 @@
 //! oracle-verified against ruby 4.0.5.
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::{string_new, RubyValue, Signal};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::{RubyValue, Signal, string_new};
 use parking_lot::Mutex;
-use zeo_abi::STRING_SCANNER_CLASS;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::STRING_SCANNER_CLASS;
 
 struct State {
     string: String,
@@ -35,7 +35,12 @@ pub struct RStringScanner {
 impl RStringScanner {
     fn new(string: String) -> RStringScanner {
         RStringScanner {
-            state: Mutex::new(State { string, pos: 0, last: None, prev_pos: None }),
+            state: Mutex::new(State {
+                string,
+                pos: 0,
+                last: None,
+                prev_pos: None,
+            }),
             frozen: AtomicBool::new(false),
         }
     }
@@ -96,7 +101,10 @@ fn anchored_len(pattern: &RubyValue, tail: &str) -> Result<Option<usize>, Signal
         }
         other => Err(raise_error(
             "TypeError",
-            format!("wrong argument type {} (expected Regexp)", crate::builtins::class_name_of(other)),
+            format!(
+                "wrong argument type {} (expected Regexp)",
+                crate::builtins::class_name_of(other)
+            ),
         )),
     }
 }
@@ -361,7 +369,10 @@ fn find_forward(pattern: &RubyValue, tail: &str) -> Result<Option<(usize, usize)
         }
         other => Err(raise_error(
             "TypeError",
-            format!("wrong argument type {} (expected Regexp)", crate::builtins::class_name_of(other)),
+            format!(
+                "wrong argument type {} (expected Regexp)",
+                crate::builtins::class_name_of(other)
+            ),
         )),
     }
 }
@@ -405,13 +416,19 @@ mod tests {
         assert_eq!(text(&scan(&sc, &[re("[a-z]+")], None).unwrap()), "foo");
         // Anchored: a digit pattern won't match starting mid-"123"? it does now.
         assert_eq!(text(&scan(&sc, &[re("\\d+")], None).unwrap()), "123");
-        assert!(matches!(eos(&sc, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            eos(&sc, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
     }
 
     #[test]
     fn scan_miss_returns_nil_without_advancing() {
         let sc = new_m(&RubyValue::Nil, &[s("foo")], None).unwrap();
-        assert!(matches!(scan(&sc, &[re("\\d+")], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            scan(&sc, &[re("\\d+")], None).unwrap(),
+            RubyValue::Nil
+        ));
         assert_eq!(sc_of(&sc).state.lock().pos, 0);
     }
 

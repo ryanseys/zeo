@@ -44,7 +44,9 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
             Ok(p) => PathBuf::from(p),
             Err(e) => {
                 eprintln!("gem-compat: locating the gem store: {e}");
-                eprintln!("  (pass one explicitly: `gem-compat <lock> --gem-path $(gem env gemdir)`)");
+                eprintln!(
+                    "  (pass one explicitly: `gem-compat <lock> --gem-path $(gem env gemdir)`)"
+                );
                 return ExitCode::FAILURE;
             }
         },
@@ -77,7 +79,12 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 
     for entry in &entries {
-        eprintln!("{:>18}  {}  {}", tag(&entry.outcome), entry.name, detail(&entry.outcome));
+        eprintln!(
+            "{:>18}  {}  {}",
+            tag(&entry.outcome),
+            entry.name,
+            detail(&entry.outcome)
+        );
     }
 
     match write_artifacts(root, &source, &store, &entries) {
@@ -98,7 +105,9 @@ fn tag(outcome: &GemCompatOutcome) -> &'static str {
     match outcome {
         GemCompatOutcome::Compiled => "pure-ruby",
         GemCompatOutcome::Builtin { diverges: true, .. } => "builtin (diverges)",
-        GemCompatOutcome::Builtin { diverges: false, .. } => "builtin",
+        GemCompatOutcome::Builtin {
+            diverges: false, ..
+        } => "builtin",
         GemCompatOutcome::NativeUnsupported { .. } => "native (unsupported)",
         GemCompatOutcome::ExternalSource => "external-source",
         GemCompatOutcome::Skipped { .. } => "skipped",
@@ -129,7 +138,13 @@ fn write_artifacts(
 
     let mut tsv = String::from("name\tversion\tstatus\tdetail\n");
     for e in entries {
-        tsv.push_str(&format!("{}\t{}\t{}\t{}\n", e.name, e.version, tag(&e.outcome), detail(&e.outcome)));
+        tsv.push_str(&format!(
+            "{}\t{}\t{}\t{}\n",
+            e.name,
+            e.version,
+            tag(&e.outcome),
+            detail(&e.outcome)
+        ));
     }
     let tsv_path = dir.join("gem-compat.tsv");
     std::fs::write(&tsv_path, tsv).map_err(|e| format!("writing {}: {e}", tsv_path.display()))?;
@@ -150,17 +165,29 @@ fn write_artifacts(
          static classification, NOT a verified compile.\n\n",
     );
     md.push_str("| status | count |\n|---|---|\n");
-    md.push_str(&format!("| pure-ruby (resolvable) | {} |\n", counts.compiled));
-    md.push_str(&format!("| built-in (zeo provides) | {} |\n", counts.builtin));
+    md.push_str(&format!(
+        "| pure-ruby (resolvable) | {} |\n",
+        counts.compiled
+    ));
+    md.push_str(&format!(
+        "| built-in (zeo provides) | {} |\n",
+        counts.builtin
+    ));
     md.push_str(&format!("| native (unsupported) | {} |\n", counts.native));
-    md.push_str(&format!("| external source (git/path) | {} |\n", counts.external));
+    md.push_str(&format!(
+        "| external source (git/path) | {} |\n",
+        counts.external
+    ));
     md.push_str(&format!("| skipped | {} |\n\n", counts.skipped));
 
     // The native gems, grouped by detected layout -- the FFI (#161) work-list.
     let mut by_kind: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for e in entries {
         if let GemCompatOutcome::NativeUnsupported { kind, .. } = &e.outcome {
-            by_kind.entry(kind.as_str()).or_default().push(e.name.as_str());
+            by_kind
+                .entry(kind.as_str())
+                .or_default()
+                .push(e.name.as_str());
         }
     }
     if !by_kind.is_empty() {
@@ -184,7 +211,13 @@ struct Counts {
 
 impl Counts {
     fn of(entries: &[GemCompatEntry]) -> Self {
-        let mut c = Counts { compiled: 0, builtin: 0, native: 0, external: 0, skipped: 0 };
+        let mut c = Counts {
+            compiled: 0,
+            builtin: 0,
+            native: 0,
+            external: 0,
+            skipped: 0,
+        };
         for e in entries {
             match e.outcome {
                 GemCompatOutcome::Compiled => c.compiled += 1,

@@ -28,9 +28,9 @@
 //! rather than nil-shadowed (Phase 15.2; see
 //! `emit_hoisted_body_with_extra_roots`'s `param_names` docs).
 
+use super::Ctx;
 use super::ident::safe_ident;
 use super::stmt::emit_body;
-use super::Ctx;
 use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
 use crate::types::TyKind;
@@ -554,7 +554,10 @@ pub(super) fn emit_local_decl(cx: &Ctx, name: &str) -> TokenStream {
 /// explicit declaration at all: an Object-typed own-only name still just
 /// gets its natural shadowing `let` at first assignment, same as anywhere
 /// else in this codebase (see `LocalStorage::Shadowed`'s docs).
-pub fn emit_proc_own_locals_prelude(cx: &Ctx, names: &std::collections::HashSet<String>) -> TokenStream {
+pub fn emit_proc_own_locals_prelude(
+    cx: &Ctx,
+    names: &std::collections::HashSet<String>,
+) -> TokenStream {
     let mut sorted: Vec<&String> = names.iter().collect();
     sorted.sort();
     let decls = sorted.iter().filter_map(|n| {

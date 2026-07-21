@@ -41,13 +41,13 @@
 //! never-finished fibers" simplification.
 
 use crate::{RubyValue, Signal, Symbol};
-use zeo_fiber::{Coroutine, CoroutineResult};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
+use zeo_fiber::{Coroutine, CoroutineResult};
 
 /// The Send+Sync half of a Fiber -- what `RubyValue::Fiber` actually
 /// carries. The coroutine itself is in [`FIBERS`] on `owner`'s thread.
@@ -126,7 +126,9 @@ fn root_fiber() -> RFiber {
 /// The fiber running right now on this thread -- the innermost resumed one,
 /// or the root fiber when none is resumed.
 fn current_handle() -> RFiber {
-    CURRENT_FIBER.with(|s| s.borrow().last().cloned()).unwrap_or_else(root_fiber)
+    CURRENT_FIBER
+        .with(|s| s.borrow().last().cloned())
+        .unwrap_or_else(root_fiber)
 }
 
 /// Whether `handle` is the fiber executing right now -- `#storage`/`#storage=`
@@ -263,7 +265,9 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     // `Fiber.current` inside the body finds it (and nested resumes stack).
     CURRENT_FIBER.with(|s| s.borrow_mut().push(handle.clone()));
     let result = zeo_fiber::resume(&mut coro, input);
-    CURRENT_FIBER.with(|s| { s.borrow_mut().pop(); });
+    CURRENT_FIBER.with(|s| {
+        s.borrow_mut().pop();
+    });
     *handle.handling.lock() = crate::handling::swap_handling(resumer_stack);
     match result {
         CoroutineResult::Yield(v) => {
@@ -339,7 +343,10 @@ pub fn fiber_storage_hash(handle: &RFiber) -> RubyValue {
     match &*handle.storage.lock() {
         None => RubyValue::Nil,
         Some(map) => {
-            let pairs = map.iter().map(|(k, v)| (RubyValue::Symbol(*k), v.clone())).collect();
+            let pairs = map
+                .iter()
+                .map(|(k, v)| (RubyValue::Symbol(*k), v.clone()))
+                .collect();
             RubyValue::Hash(crate::hash_new(pairs))
         }
     }
@@ -415,7 +422,9 @@ mod tests {
     #[test]
     fn resume_and_yield_pass_values_both_ways() {
         let f = fiber_new(proc_counting_yields());
-        let RubyValue::Fiber(h) = &f else { panic!("expected a Fiber") };
+        let RubyValue::Fiber(h) = &f else {
+            panic!("expected a Fiber")
+        };
         // First resume: args become block params; body yields them back.
         match fiber_resume(h, vec![RubyValue::Int(7)]) {
             FiberResume::Value(RubyValue::Int(7)) => {}
@@ -435,7 +444,9 @@ mod tests {
     #[test]
     fn cross_thread_resume_is_rejected_like_cruby() {
         let f = fiber_new(proc_counting_yields());
-        let RubyValue::Fiber(h) = f else { panic!("expected a Fiber") };
+        let RubyValue::Fiber(h) = f else {
+            panic!("expected a Fiber")
+        };
         let h2 = h.clone();
         let outcome = std::thread::spawn(move || {
             matches!(fiber_resume(&h2, vec![]), FiberResume::CrossThread)
@@ -443,12 +454,18 @@ mod tests {
         .join()
         .unwrap();
         assert!(outcome, "resume from another thread must be CrossThread");
-        assert!(fiber_alive(&h), "the rejected resume must not kill the fiber");
+        assert!(
+            fiber_alive(&h),
+            "the rejected resume must not kill the fiber"
+        );
     }
 
     #[test]
     fn yield_with_no_running_fiber_is_the_root_fiber_case() {
-        assert!(matches!(fiber_yield(vec![RubyValue::Int(1)]), FiberYield::Root));
+        assert!(matches!(
+            fiber_yield(vec![RubyValue::Int(1)]),
+            FiberYield::Root
+        ));
     }
 
     #[test]
@@ -457,7 +474,9 @@ mod tests {
             fiber_yield(vec![RubyValue::Int(1), RubyValue::Int(2)]);
             Ok(RubyValue::Nil)
         }));
-        let RubyValue::Fiber(h) = fiber_new(body) else { panic!() };
+        let RubyValue::Fiber(h) = fiber_new(body) else {
+            panic!()
+        };
         match fiber_resume(&h, vec![]) {
             FiberResume::Value(RubyValue::Array(a)) => {
                 assert_eq!(a.lock().len(), 2);

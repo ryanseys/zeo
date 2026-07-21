@@ -11,8 +11,10 @@
 mod locals;
 mod mro;
 
-use crate::compiler::{ClassId, Compiler, Scope, OBJECT_CLASS};
-use crate::hir::{ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility};
+use crate::compiler::{ClassId, Compiler, OBJECT_CLASS, Scope};
+use crate::hir::{
+    ArrayElem, Hir, HirNode, NodeId, Params, Pattern, PatternArm, StrPart, Visibility,
+};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
@@ -110,7 +112,10 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
                     rest.push(s);
                 }
             }
-            compiler.hir[stmt] = HirNode::BoxScope { box_id: bx, body: rest };
+            compiler.hir[stmt] = HirNode::BoxScope {
+                box_id: bx,
+                body: rest,
+            };
             main_statements.push(stmt);
         } else if let HirNode::DefMethod {
             name,
@@ -141,7 +146,11 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
                 // receiver, so a block-taking body threads its block too (the
                 // `method_body` lambda -- Batch G).
                 let self_ref = compiler.hir.push(HirNode::SelfRef);
-                let lambda = compiler.hir.push(HirNode::Lambda { params, body, method_body: true });
+                let lambda = compiler.hir.push(HirNode::Lambda {
+                    params,
+                    body,
+                    method_body: true,
+                });
                 let sym = compiler.hir.push(HirNode::SymbolLit(name));
                 let call = compiler.hir.push(HirNode::Call {
                     receiver: Some(self_ref),
@@ -173,15 +182,21 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             // spreads M's instance methods (and constants) program-wide and a
             // bare `M`-method call resolves through implicit self.
             let target = resolve_module_target(&compiler, m, &[], 0)?;
-            compiler.classes[OBJECT_CLASS.0 as usize].includes.push(target);
+            compiler.classes[OBJECT_CLASS.0 as usize]
+                .includes
+                .push(target);
         } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
             // Top-level `undef m` -- Object's reopen, exactly like the
             // `include` above and like the class-body arm in `walk_class_body`.
             let names = names.clone();
-            compiler.classes[OBJECT_CLASS.0 as usize].undefined.extend(names);
+            compiler.classes[OBJECT_CLASS.0 as usize]
+                .undefined
+                .extend(names);
         } else if let HirNode::AliasMethod { new_name, old_name } = &compiler.hir[stmt] {
             let pair = (new_name.clone(), old_name.clone());
-            compiler.classes[OBJECT_CLASS.0 as usize].pending_aliases.push(pair);
+            compiler.classes[OBJECT_CLASS.0 as usize]
+                .pending_aliases
+                .push(pair);
         } else {
             main_statements.push(stmt);
         }
@@ -339,7 +354,15 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("IO::TimeoutError", "IOError"),
         ("Errno::EDOM", "SystemCallError"),
     ] {
-        register_class(compiler, name.to_string(), Some(superclass.to_string()), false, &[], &[], 0)?;
+        register_class(
+            compiler,
+            name.to_string(),
+            Some(superclass.to_string()),
+            false,
+            &[],
+            &[],
+            0,
+        )?;
     }
     for c in &mut compiler.classes[before..] {
         c.is_bootstrap = true;
@@ -399,17 +422,14 @@ fn register_class(
     // an OVERLAY `ClassInfo` whose methods register as value methods under
     // the box's id (visible only from box code; `box::String == String`
     // stays true because instances keep the ROOT builtin's ClassId).
-    let overlay_root = if box_id != 0
-        && existing.is_none()
-        && lexical_parent.is_none()
-        && superclass.is_none()
-    {
-        compiler
-            .resolve_class(&leaf, &[], box_id)
-            .filter(|&c| compiler.class(c).is_builtin || c == OBJECT_CLASS)
-    } else {
-        None
-    };
+    let overlay_root =
+        if box_id != 0 && existing.is_none() && lexical_parent.is_none() && superclass.is_none() {
+            compiler
+                .resolve_class(&leaf, &[], box_id)
+                .filter(|&c| compiler.class(c).is_builtin || c == OBJECT_CLASS)
+        } else {
+            None
+        };
     if let Some(cid) = existing.or(overlay_root) {
         let ci = compiler.class(cid);
         // NOTE: the implicit `Object` root (id 0) is NOT `is_builtin` (it
@@ -504,7 +524,9 @@ fn register_class(
                     // superclass expression before the new class exists.
                     Some(s) => {
                         let cid = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
-                            format!("unknown superclass `{s}` (must be defined earlier in the file)")
+                            format!(
+                                "unknown superclass `{s}` (must be defined earlier in the file)"
+                            )
                         })?;
                         // Subclassable builtins (D3):
                         //  - `Struct`/`Data`: subclasses are ordinary
@@ -622,7 +644,8 @@ fn register_class(
                         compiler.class(class_id).name
                     ));
                 }
-                let sid = register_method(compiler, class_id, class_id, name, params, body, visibility)?;
+                let sid =
+                    register_method(compiler, class_id, class_id, name, params, body, visibility)?;
                 add_own_method(compiler, class_id, sid, is_class_method);
             }
             // A nested `class`/`module` definition (Phase 15.3) --
@@ -638,7 +661,15 @@ fn register_class(
             } => {
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
-                register_class(compiler, name, superclass, is_module, &body, &child_cref, box_id)?;
+                register_class(
+                    compiler,
+                    name,
+                    superclass,
+                    is_module,
+                    &body,
+                    &child_cref,
+                    box_id,
+                )?;
             }
             HirNode::Include(m) => {
                 let target = resolve_module_target(compiler, m, &child_cref, box_id)?;
@@ -652,14 +683,18 @@ fn register_class(
             // `mro::materialize_methods`. See `HirNode::Undef`.
             HirNode::Undef(names) => {
                 let names = names.clone();
-                compiler.classes[class_id.0 as usize].undefined.extend(names);
+                compiler.classes[class_id.0 as usize]
+                    .undefined
+                    .extend(names);
             }
             // A deferred `alias`/`alias_method` of an INHERITED method --
             // resolved by `mro::resolve_aliases` once ancestors are computed.
             // See `HirNode::AliasMethod`.
             HirNode::AliasMethod { new_name, old_name } => {
                 let pair = (new_name.clone(), old_name.clone());
-                compiler.classes[class_id.0 as usize].pending_aliases.push(pair);
+                compiler.classes[class_id.0 as usize]
+                    .pending_aliases
+                    .push(pair);
             }
             // A `private`/`public`/`protected :m` re-declaring an INHERITED
             // method's visibility -- applied by codegen after materialization.
@@ -709,22 +744,38 @@ fn register_class(
 /// so append-only registration would silently keep dispatching the OLD
 /// body). Instance and class methods are separate namespaces, hence the
 /// separate lists.
-fn add_own_method(compiler: &mut Compiler, class_id: ClassId, sid: crate::compiler::ScopeId, is_class_method: bool) {
+fn add_own_method(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    sid: crate::compiler::ScopeId,
+    is_class_method: bool,
+) {
     let mname = compiler.scope(sid).name.clone();
     let ci = &compiler.classes[class_id.0 as usize];
-    let list = if is_class_method { &ci.own_class_methods } else { &ci.own_methods };
-    let replaced = list
-        .iter()
-        .position(|&s| compiler.scope(s).name == mname);
+    let list = if is_class_method {
+        &ci.own_class_methods
+    } else {
+        &ci.own_methods
+    };
+    let replaced = list.iter().position(|&s| compiler.scope(s).name == mname);
     let ci = &mut compiler.classes[class_id.0 as usize];
-    let list = if is_class_method { &mut ci.own_class_methods } else { &mut ci.own_methods };
+    let list = if is_class_method {
+        &mut ci.own_class_methods
+    } else {
+        &mut ci.own_methods
+    };
     match replaced {
         Some(i) => list[i] = sid,
         None => list.push(sid),
     }
 }
 
-fn resolve_module_target(compiler: &Compiler, name: &str, cref: &[ClassId], box_id: u32) -> Result<ClassId, String> {
+fn resolve_module_target(
+    compiler: &Compiler,
+    name: &str,
+    cref: &[ClassId],
+    box_id: u32,
+) -> Result<ClassId, String> {
     compiler
         .resolve_class(name, cref, box_id)
         .ok_or_else(|| format!("unknown module `{name}` (must be defined earlier in the file)"))
@@ -754,7 +805,13 @@ fn register_method(
     let defining_box = compiler.class(defining_class).box_id;
     let mut local_types = locals::infer_locals(compiler, Some(defining_class), defining_box, &body);
     for id in params.default_ids() {
-        locals::track_extra(compiler, Some(defining_class), defining_box, &mut local_types, id);
+        locals::track_extra(
+            compiler,
+            Some(defining_class),
+            defining_box,
+            &mut local_types,
+            id,
+        );
     }
     if let Some(Some(n)) = &params.rest {
         local_types.entry(n.clone()).or_insert(TyKind::Array);
@@ -1410,9 +1467,7 @@ mod tests {
     /// must never replace a same-named instance method.
     #[test]
     fn class_and_instance_methods_do_not_replace_each_other() {
-        let a = analyze_src(
-            "class Foo\n  def a\n    1\n  end\n  def self.a\n    2\n  end\nend\n",
-        );
+        let a = analyze_src("class Foo\n  def a\n    1\n  end\n  def self.a\n    2\n  end\nend\n");
         let ci = a.compiler.class(class_named(&a, "Foo"));
         assert_eq!(ci.own_methods.len(), 1);
         assert_eq!(ci.own_class_methods.len(), 1);
@@ -1431,10 +1486,12 @@ mod tests {
     /// (oracle-verified messages).
     #[test]
     fn reopen_guards_mirror_ruby_type_errors() {
-        assert!(analyze_err(
-            "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n"
-        )
-        .contains("superclass mismatch for class Sub"));
+        assert!(
+            analyze_err(
+                "class Base\nend\nclass Other\nend\nclass Sub < Base\nend\nclass Sub < Other\nend\n"
+            )
+            .contains("superclass mismatch for class Sub")
+        );
 
         assert!(analyze_err("class Foo\nend\nmodule Foo\nend\n").contains("Foo is not a module"));
         assert!(analyze_err("module Bar\nend\nclass Bar\nend\n").contains("Bar is not a class"));
@@ -1462,7 +1519,10 @@ mod tests {
             .iter()
             .map(|&sid| a.compiler.scope(sid).name.as_str())
             .collect();
-        assert!(names.contains(&"stat"), "reopen method surfaced as a value method");
+        assert!(
+            names.contains(&"stat"),
+            "reopen method surfaced as a value method"
+        );
     }
 }
 
@@ -1547,22 +1607,30 @@ mod builtin_reopen_tests {
         // raises CRuby's `superclass mismatch`.
         let a = analyze_src("class String < Object\n  def x\n    1\n  end\nend\n");
         assert_eq!(class_named(&a, "String"), STRING_CLASS);
-        assert!(analyze_err("class String < Array\n  def x\n    1\n  end\nend\n")
-            .contains("superclass mismatch for class String"));
+        assert!(
+            analyze_err("class String < Array\n  def x\n    1\n  end\nend\n")
+                .contains("superclass mismatch for class String")
+        );
     }
 
     #[test]
     fn operator_definitions_on_builtins_are_rejected() {
-        assert!(analyze_err("class Integer\n  def +(other)\n    0\n  end\nend\n")
-            .contains("defining operator `+`"));
-        assert!(analyze_err("class String\n  def ==(other)\n    true\n  end\nend\n")
-            .contains("defining operator `==`"));
+        assert!(
+            analyze_err("class Integer\n  def +(other)\n    0\n  end\nend\n")
+                .contains("defining operator `+`")
+        );
+        assert!(
+            analyze_err("class String\n  def ==(other)\n    true\n  end\nend\n")
+                .contains("defining operator `==`")
+        );
     }
 
     #[test]
     fn ivars_in_a_builtin_reopen_are_rejected() {
-        assert!(analyze_err("class String\n  def remember\n    @seen = 1\n  end\nend\n")
-            .contains("no ivar storage"));
+        assert!(
+            analyze_err("class String\n  def remember\n    @seen = 1\n  end\nend\n")
+                .contains("no ivar storage")
+        );
     }
 
     #[test]
@@ -1612,9 +1680,7 @@ mod namespacing_tests {
     /// NameError in real Ruby).
     #[test]
     fn qualified_definition_form_cuts_the_cref_chain() {
-        let a = analyze_src(
-            "module Store\n  class Inner\n  end\nend\nclass Store::Cart\nend\n",
-        );
+        let a = analyze_src("module Store\n  class Inner\n  end\nend\nclass Store::Cart\nend\n");
         let store = class_named(&a, "Store");
         let inner = a.compiler.resolve_class("Store::Inner", &[], 0).unwrap();
         let cart = a.compiler.resolve_class("Store::Cart", &[], 0).unwrap();
@@ -1628,7 +1694,11 @@ mod namespacing_tests {
             vec![cart],
             "the qualified form's body does not see `Store` lexically"
         );
-        assert_eq!(a.compiler.fq_name(cart), "Store::Cart", "naming still qualifies");
+        assert_eq!(
+            a.compiler.fq_name(cart),
+            "Store::Cart",
+            "naming still qualifies"
+        );
     }
 
     #[test]
@@ -1661,8 +1731,9 @@ mod namespacing_tests {
 
     #[test]
     fn qualified_definition_with_unknown_prefix_is_an_error() {
-        assert!(analyze_err("class Nowhere::Item\nend\n")
-            .contains("unknown class/module `Nowhere`"));
+        assert!(
+            analyze_err("class Nowhere::Item\nend\n").contains("unknown class/module `Nowhere`")
+        );
     }
 
     /// `module Store; class String; end; end` defines a fresh, unrelated
@@ -1680,7 +1751,10 @@ mod namespacing_tests {
             Some(crate::compiler::STRING_CLASS),
             "top-level `String` is still the builtin"
         );
-        assert_eq!(a.compiler.resolve_class("String", &[store], 0), Some(nested));
+        assert_eq!(
+            a.compiler.resolve_class("String", &[store], 0),
+            Some(nested)
+        );
     }
 
     /// A leading `::` anchors a definition at the top level from any depth.
@@ -1732,7 +1806,13 @@ mod class_value_tests {
         let ancestors = &a.compiler.class(CLASS_CLASS).ancestors;
         assert_eq!(
             ancestors,
-            &vec![CLASS_CLASS, MODULE_CLASS, OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]
+            &vec![
+                CLASS_CLASS,
+                MODULE_CLASS,
+                OBJECT_CLASS,
+                KERNEL_CLASS,
+                BASIC_OBJECT_CLASS
+            ]
         );
     }
 
@@ -1745,11 +1825,19 @@ mod class_value_tests {
         let tail = [OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS];
         assert_eq!(
             chain(INTEGER_CLASS),
-            [[INTEGER_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(), &tail].concat()
+            [
+                [INTEGER_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(),
+                &tail
+            ]
+            .concat()
         );
         assert_eq!(
             chain(RATIONAL_CLASS),
-            [[RATIONAL_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(), &tail].concat()
+            [
+                [RATIONAL_CLASS, NUMERIC_CLASS, COMPARABLE_CLASS].as_slice(),
+                &tail
+            ]
+            .concat()
         );
         assert_eq!(
             chain(STRING_CLASS),
@@ -1759,7 +1847,10 @@ mod class_value_tests {
             chain(STRUCT_CLASS),
             [[STRUCT_CLASS, ENUMERABLE_CLASS].as_slice(), &tail].concat()
         );
-        assert_eq!(chain(OBJECT_CLASS), vec![OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]);
+        assert_eq!(
+            chain(OBJECT_CLASS),
+            vec![OBJECT_CLASS, KERNEL_CLASS, BASIC_OBJECT_CLASS]
+        );
         assert_eq!(chain(BASIC_OBJECT_CLASS), vec![BASIC_OBJECT_CLASS]);
         assert_eq!(chain(KERNEL_CLASS), vec![KERNEL_CLASS]);
     }

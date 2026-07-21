@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn blocks_times_inlines_to_a_native_loop() {
@@ -433,10 +433,7 @@ fn splat_in_a_when_clause_tests_every_candidate() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "hit\nmiss\nmixed hit\nkind hit\nempty ok\n"
-    );
+    assert_eq!(result.stdout, "hit\nmiss\nmixed hit\nkind hit\nempty ok\n");
 }
 
 #[test]
@@ -896,5 +893,8 @@ fn defined_instance_variable_reflects_assignment() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "nil\n\"instance-variable\"\n\"instance-variable\"\n");
+    assert_eq!(
+        result.stdout,
+        "nil\n\"instance-variable\"\n\"instance-variable\"\n"
+    );
 }

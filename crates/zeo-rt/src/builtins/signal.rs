@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::builtins::{arity, builtin_methods, class_name_of};
 use crate::dispatch::raise_error;
-use crate::{string_new, RubyValue, Signal};
+use crate::{RubyValue, Signal, string_new};
 
 /// The Darwin/BSD signal set zeo targets, canonical name (no `SIG` prefix)
 /// -> number, plus the `EXIT` pseudo-signal (0). Canonical-only (no `IOT`/`CLD`
@@ -60,7 +60,10 @@ const UNTRAPPABLE: &[i32] = &[9, 17];
 /// Case-sensitive, matching CRuby (`"INT"`/`"SIGINT"` resolve, `"int"` does not).
 pub(crate) fn signo_from_name(name: &str) -> Option<i32> {
     let bare = name.strip_prefix("SIG").unwrap_or(name);
-    SIGNAL_TABLE.iter().find(|(s, _)| *s == bare).map(|(_, n)| *n)
+    SIGNAL_TABLE
+        .iter()
+        .find(|(s, _)| *s == bare)
+        .map(|(_, n)| *n)
 }
 
 /// The canonical name (no `SIG` prefix) for a signal number, `None` if unknown.
@@ -159,7 +162,10 @@ pub(crate) fn trap_impl(args: &[RubyValue], block: Option<RubyValue>) -> Result<
     arity!(args, 1..=2);
     let no = resolve_signal_arg(&args[0])?;
     if UNTRAPPABLE.contains(&no) {
-        return Err(raise_error("Errno::EINVAL", "Invalid argument - trap".to_string()));
+        return Err(raise_error(
+            "Errno::EINVAL",
+            "Invalid argument - trap".to_string(),
+        ));
     }
     let prev = TRAP_STATE.with(|s| s.borrow().get(&no).cloned());
     let handler = match block {

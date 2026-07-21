@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, compile_packages};
+use crate::support::{compile_packages, run_ruby};
 
 #[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
@@ -227,7 +227,9 @@ fn case_in_with_no_matching_arm_and_no_else_raises() {
     let result = run_ruby("case 5\nin String\n  puts \"no\"\nend\n");
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("uncaught exception: no matching pattern"),
+        result
+            .stderr
+            .contains("uncaught exception: no matching pattern"),
         "stderr: {}",
         result.stderr
     );
@@ -416,10 +418,7 @@ fn user_exception_subclass_super_chain_and_inherited_initialize() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "hi\n[]\na-default\nb\ntrue\nstop\n"
-    );
+    assert_eq!(result.stdout, "hi\n[]\na-default\nb\ntrue\nstop\n");
 }
 
 /// An exception subclass whose `initialize` takes KEYWORD arguments (D3): the
@@ -581,7 +580,10 @@ fn retry_loop_runs_ensure_exactly_once_not_per_attempt() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "succeeded after 3 attempts\nensure ran, attempts=3\n");
+    assert_eq!(
+        result.stdout,
+        "succeeded after 3 attempts\nensure ran, attempts=3\n"
+    );
 }
 
 #[test]
@@ -1118,7 +1120,10 @@ fn class_method_begin_rescue_ensure_with_return() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "factory ensure\nbuilt\nfactory ensure\nfallback\n");
+    assert_eq!(
+        result.stdout,
+        "factory ensure\nbuilt\nfactory ensure\nfallback\n"
+    );
 }
 
 #[test]
@@ -1355,7 +1360,10 @@ fn unset_constant_raises_a_name_error() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "caught: uninitialized constant UNDEFINED_CONST\n");
+    assert_eq!(
+        result.stdout,
+        "caught: uninitialized constant UNDEFINED_CONST\n"
+    );
 }
 
 #[test]
@@ -1488,7 +1496,11 @@ fn other_compound_assignment_operators_still_raise_on_an_undefined_constant() {
     // directly rather than `#[should_panic]`.
     let result = run_ruby("UNDEF += 1");
     assert!(!result.status.success());
-    assert!(result.stderr.contains("uninitialized constant UNDEF"), "{}", result.stderr);
+    assert!(
+        result.stderr.contains("uninitialized constant UNDEF"),
+        "{}",
+        result.stderr
+    );
 }
 
 #[test]
@@ -1762,8 +1774,10 @@ fn bad_manifests_are_loud_configuration_errors() {
     let err = compile_packages(
         &[
             // Gem named "bbb" living in a directory named "aaa".
-            ("packages/aaa/aaa.gemspec",
-                "Gem::Specification.new do |s|\n  s.name = \"bbb\"\n  s.version = \"1.0.0\"\nend\n"),
+            (
+                "packages/aaa/aaa.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"bbb\"\n  s.version = \"1.0.0\"\nend\n",
+            ),
             ("packages/aaa/lib/aaa.rb", "puts 1\n"),
             ("main.rb", "puts :ok\n"),
         ],
@@ -1772,12 +1786,18 @@ fn bad_manifests_are_loud_configuration_errors() {
         &["packages"],
     )
     .unwrap_err();
-    assert!(err.contains("doesn't match its directory name"), "unexpected error: {err}");
+    assert!(
+        err.contains("doesn't match its directory name"),
+        "unexpected error: {err}"
+    );
 
     // A gemspec that sets no name.
     let err = compile_packages(
         &[
-            ("packages/aaa/aaa.gemspec", "Gem::Specification.new do |s|\n  s.version = \"1.0.0\"\nend\n"),
+            (
+                "packages/aaa/aaa.gemspec",
+                "Gem::Specification.new do |s|\n  s.version = \"1.0.0\"\nend\n",
+            ),
             ("main.rb", "puts :ok\n"),
         ],
         "main.rb",
@@ -1790,8 +1810,10 @@ fn bad_manifests_are_loud_configuration_errors() {
     // Default require_paths (["lib"]) pointing at a missing lib/.
     let err = compile_packages(
         &[
-            ("packages/aaa/aaa.gemspec",
-                "Gem::Specification.new do |s|\n  s.name = \"aaa\"\n  s.version = \"1.0.0\"\nend\n"),
+            (
+                "packages/aaa/aaa.gemspec",
+                "Gem::Specification.new do |s|\n  s.name = \"aaa\"\n  s.version = \"1.0.0\"\nend\n",
+            ),
             ("packages/aaa/aaa.rb", "puts 1\n"),
             ("main.rb", "puts :ok\n"),
         ],
@@ -1800,7 +1822,10 @@ fn bad_manifests_are_loud_configuration_errors() {
         &["packages"],
     )
     .unwrap_err();
-    assert!(err.contains("doesn't exist under"), "unexpected error: {err}");
+    assert!(
+        err.contains("doesn't exist under"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -1962,9 +1987,15 @@ fn reopen_guards_mirror_rubys_type_errors() {
 
     // `TypeError: Foo is not a module` / `Bar is not a class` in real Ruby.
     let err = zeo::compile_to_rust("class Foo\nend\nmodule Foo\nend\n").unwrap_err();
-    assert!(err.contains("Foo is not a module"), "unexpected error: {err}");
+    assert!(
+        err.contains("Foo is not a module"),
+        "unexpected error: {err}"
+    );
     let err = zeo::compile_to_rust("module Bar\nend\nclass Bar\nend\n").unwrap_err();
-    assert!(err.contains("Bar is not a class"), "unexpected error: {err}");
+    assert!(
+        err.contains("Bar is not a class"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -2015,10 +2046,7 @@ fn dot_class_works_on_rescue_bindings_and_poly_receivers() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "RuntimeError\nInteger\nString\nNilClass\n"
-    );
+    assert_eq!(result.stdout, "RuntimeError\nInteger\nString\nNilClass\n");
 }
 
 #[test]
@@ -2552,7 +2580,10 @@ fn rescue_naming_an_undefined_constant_raises_name_error_when_matched() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "NameError: uninitialized constant NeverDefined\n");
+    assert_eq!(
+        result.stdout,
+        "NameError: uninitialized constant NeverDefined\n"
+    );
 }
 
 #[test]
@@ -2572,7 +2603,10 @@ fn a_pattern_naming_an_undefined_constant_raises_name_error_when_tried() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "NameError: uninitialized constant NopeClass\n");
+    assert_eq!(
+        result.stdout,
+        "NameError: uninitialized constant NopeClass\n"
+    );
 }
 
 #[test]
@@ -2631,7 +2665,10 @@ fn singleton_method_yield_with_no_block_raises_rescuable_local_jump_error() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "caught LocalJumpError: no block given (yield)\n");
+    assert_eq!(
+        result.stdout,
+        "caught LocalJumpError: no block given (yield)\n"
+    );
 }
 
 #[test]

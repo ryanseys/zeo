@@ -38,10 +38,23 @@ pub fn write_all(
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     // Each suite gets its own committed artifacts so they don't clobber each
     // other; the original `spinel` suite keeps the historical unprefixed names.
-    let prefix = if meta.suite == "spinel" { String::new() } else { format!("{}-", meta.suite) };
-    write(dir.join(format!("{prefix}scoreboard.tsv")), tsv(meta, results))?;
-    write(dir.join(format!("{prefix}SCOREBOARD.md")), summary_md(meta, results))?;
-    write(dir.join(format!("{prefix}TRIAGE.md")), triage_md(meta, results))?;
+    let prefix = if meta.suite == "spinel" {
+        String::new()
+    } else {
+        format!("{}-", meta.suite)
+    };
+    write(
+        dir.join(format!("{prefix}scoreboard.tsv")),
+        tsv(meta, results),
+    )?;
+    write(
+        dir.join(format!("{prefix}SCOREBOARD.md")),
+        summary_md(meta, results),
+    )?;
+    write(
+        dir.join(format!("{prefix}TRIAGE.md")),
+        triage_md(meta, results),
+    )?;
     write(
         dir.join(format!("{prefix}FAILURES.md")),
         failures_md(meta, results, case_meta, diff_dir),
@@ -216,9 +229,10 @@ fn failures_md(
                         None => out.push_str("- expected stderr: *(must be empty)*\n"),
                     }
                 }
-                "live-oracle" => {
-                    out.push_str(&format!("- reference: live oracle `{}`\n", meta.ruby_version))
-                }
+                "live-oracle" => out.push_str(&format!(
+                    "- reference: live oracle `{}`\n",
+                    meta.ruby_version
+                )),
                 "compile-fail" => {
                     out.push_str("- reference: zeo must reject the program (compile-fail)\n")
                 }
@@ -416,10 +430,22 @@ mod tests {
     fn failures_md_embeds_source_reference_and_persisted_diff() {
         let dir = std::env::temp_dir().join(format!("sb_fail_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("t1.diff"), "=== stdout diff ===\nexpected X, got Y\n").unwrap();
+        std::fs::write(
+            dir.join("t1.diff"),
+            "=== stdout diff ===\nexpected X, got Y\n",
+        )
+        .unwrap();
 
-        let meta = RunMeta { suite: "spinel", corpus: 2, ruby_version: "ruby 4.0.5", git_sha: "abc123" };
-        let results = vec![result("t1", Verdict::FailOutput, "boom"), result("p1", Verdict::Pass, "")];
+        let meta = RunMeta {
+            suite: "spinel",
+            corpus: 2,
+            ruby_version: "ruby 4.0.5",
+            git_sha: "abc123",
+        };
+        let results = vec![
+            result("t1", Verdict::FailOutput, "boom"),
+            result("p1", Verdict::Pass, ""),
+        ];
         let mut case_meta = BTreeMap::new();
         case_meta.insert(
             "t1".to_owned(),
@@ -437,7 +463,10 @@ mod tests {
         assert!(md.contains("1 failing test"), "{md}");
         assert!(md.contains("## `t1` — FAIL_OUTPUT"), "{md}");
         assert!(md.contains("- source: `/corpus/t1.rb`"), "{md}");
-        assert!(md.contains("- expected stdout: `/corpus/t1.rb.expected`"), "{md}");
+        assert!(
+            md.contains("- expected stdout: `/corpus/t1.rb.expected`"),
+            "{md}"
+        );
         assert!(md.contains("expected X, got Y"), "{md}");
         // Passing tests never appear in the failures document.
         assert!(!md.contains("p1"), "{md}");

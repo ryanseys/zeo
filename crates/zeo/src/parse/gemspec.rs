@@ -35,8 +35,8 @@
 //! benefit. A consumed attribute whose RHS is *not* a literal is a loud error
 //! naming the attribute, because that one zeo would otherwise get wrong.
 
-use crate::lower_error::LowerError;
 use super::PResult;
+use crate::lower_error::LowerError;
 use std::path::Path;
 
 /// The gemspec fields that determine load-path resolution. Deliberately the
@@ -66,8 +66,7 @@ pub(super) fn parse_file(path: &Path) -> PResult<GemSpec> {
     // Read as BYTES. Four installed specs on the development machine carry raw
     // non-UTF-8 in author names despite their own `# -*- encoding: utf-8 -*-`
     // header, so a strict decode would reject valid input.
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     let text = String::from_utf8_lossy(&bytes);
     if let Some(spec) = parse_stub_header(&text) {
         return Ok(spec);
@@ -106,7 +105,12 @@ fn parse_stub_header(text: &str) -> Option<GemSpec> {
         require_paths,
         extensions: stubs
             .next()
-            .map(|l| l.split(' ').filter(|e| !e.is_empty()).map(String::from).collect())
+            .map(|l| {
+                l.split(' ')
+                    .filter(|e| !e.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
             .unwrap_or_default(),
         platform: Some(platform),
     })
@@ -116,7 +120,10 @@ fn parse_stub_header(text: &str) -> Option<GemSpec> {
 fn parse_body(text: &str) -> PResult<GemSpec> {
     let result = ruby_prism::parse(text.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
+        return Err(LowerError::syntax(format!(
+            "parse error: {}",
+            err.message()
+        )));
     }
     let node = result.node();
     let program = node
@@ -140,7 +147,9 @@ fn parse_body(text: &str) -> PResult<GemSpec> {
         }
     }
     if !saw_block {
-        return Err("no `Gem::Specification.new do |s| ... end` block".to_string().into());
+        return Err("no `Gem::Specification.new do |s| ... end` block"
+            .to_string()
+            .into());
     }
     if spec.name.is_empty() {
         return Err("gemspec sets no `name`".to_string().into());
@@ -274,9 +283,10 @@ mod tests {
 
     #[test]
     fn require_paths_are_nul_joined_in_the_stub() {
-        let spec =
-            parse_stub_header("# stub: x 1.0 ruby lib\u{0}ext/java/lib\nGem::Specification.new do |s|\n")
-                .unwrap();
+        let spec = parse_stub_header(
+            "# stub: x 1.0 ruby lib\u{0}ext/java/lib\nGem::Specification.new do |s|\n",
+        )
+        .unwrap();
         assert_eq!(spec.require_paths, ["lib", "ext/java/lib"]);
     }
 
@@ -286,9 +296,10 @@ mod tests {
     /// detectable later.
     #[test]
     fn a_precompiled_platform_gem_records_its_platform_and_no_extensions() {
-        let spec =
-            parse_stub_header("# stub: nokogiri 1.19.4 arm64-darwin lib\nGem::Specification.new do |s|\n")
-                .unwrap();
+        let spec = parse_stub_header(
+            "# stub: nokogiri 1.19.4 arm64-darwin lib\nGem::Specification.new do |s|\n",
+        )
+        .unwrap();
         assert!(spec.extensions.is_empty());
         assert_eq!(spec.platform.as_deref(), Some("arm64-darwin"));
     }
@@ -330,9 +341,10 @@ end
         let spec = parse_body("Gem::Specification.new do |s|\n  s.name = \"x\"\nend\n").unwrap();
         assert_eq!(spec.require_paths, ["lib"]);
 
-        let spec =
-            parse_body("Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.require_path = \"flat\"\nend\n")
-                .unwrap();
+        let spec = parse_body(
+            "Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.require_path = \"flat\"\nend\n",
+        )
+        .unwrap();
         assert_eq!(spec.require_paths, ["flat"]);
     }
 
@@ -344,7 +356,10 @@ end
             "Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.require_paths = Dir[\"lib\"]\nend\n",
         )
         .unwrap_err();
-        assert!(err.message().contains("s.require_paths"), "unexpected: {err}");
+        assert!(
+            err.message().contains("s.require_paths"),
+            "unexpected: {err}"
+        );
 
         parse_body(
             "Gem::Specification.new do |s|\n  s.name = \"x\"\n  s.files = Dir[\"**/*\"]\nend\n",
@@ -364,14 +379,20 @@ end
     /// the installed corpus is the only large sample of it available.
     #[test]
     fn every_installed_gemspec_parses() {
-        let Ok(out) = std::process::Command::new("gem").args(["env", "gemdir"]).output() else {
+        let Ok(out) = std::process::Command::new("gem")
+            .args(["env", "gemdir"])
+            .output()
+        else {
             return; // no Ruby on this machine
         };
         if !out.status.success() {
             return;
         }
         let gemdir = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-        let dirs = [gemdir.join("specifications"), gemdir.join("specifications/default")];
+        let dirs = [
+            gemdir.join("specifications"),
+            gemdir.join("specifications/default"),
+        ];
         let mut checked = 0usize;
         let mut failures = Vec::new();
         for dir in &dirs {
@@ -409,10 +430,17 @@ end
 
     #[test]
     fn a_gemspec_without_the_block_or_a_name_is_rejected() {
-        assert!(parse_body("1 + 1\n").unwrap_err().message().contains("Gem::Specification.new"));
-        assert!(parse_body("Gem::Specification.new do |s|\n  s.version = \"1\"\nend\n")
-            .unwrap_err()
-            .message()
-            .contains("name"));
+        assert!(
+            parse_body("1 + 1\n")
+                .unwrap_err()
+                .message()
+                .contains("Gem::Specification.new")
+        );
+        assert!(
+            parse_body("Gem::Specification.new do |s|\n  s.version = \"1\"\nend\n")
+                .unwrap_err()
+                .message()
+                .contains("name")
+        );
     }
 }

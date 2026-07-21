@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, run_ruby_project, compile_project};
+use crate::support::{compile_project, run_ruby, run_ruby_project};
 
 #[test]
 fn load_reexecutes_every_time_with_fresh_locals_and_never_registers_the_feature() {
@@ -42,7 +42,10 @@ fn load_cycles_are_detected_at_compile_time() {
     // Real Ruby would recurse forever at runtime (load has no dedup); a
     // compile-time resolver rejects the cycle loudly instead.
     let err = compile_project(
-        &[("selfload.rb", "load \"./selfload.rb\"\n"), ("main.rb", "load \"./selfload.rb\"\n")],
+        &[
+            ("selfload.rb", "load \"./selfload.rb\"\n"),
+            ("main.rb", "load \"./selfload.rb\"\n"),
+        ],
         "main.rb",
         &[],
     )

@@ -16,7 +16,9 @@ use crate::{RubyValue, Signal, Symbol};
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
 fn syms_to_array(names: Vec<Symbol>) -> RubyValue {
-    RubyValue::Array(crate::array_new(names.into_iter().map(RubyValue::Symbol).collect()))
+    RubyValue::Array(crate::array_new(
+        names.into_iter().map(RubyValue::Symbol).collect(),
+    ))
 }
 
 /// Order-preserving dedup for a combined symbol list (each of the two source
@@ -581,7 +583,6 @@ fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Si
     Ok(copy)
 }
 
-
 /// `Kernel#Integer(arg, base = nil)` -- CRuby's strict conversion: strings
 /// allow surrounding whitespace, single underscores between digits, and
 /// radix prefixes (`0x`/`0o`/`0b`, or a leading `0` octal when no base is
@@ -598,7 +599,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                     "no implicit conversion of {} into Integer",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
         None => None,
     };
@@ -673,7 +674,10 @@ pub(crate) fn parse_integer_strict(text: &str, base: Option<u32>) -> Option<Ruby
             }
         }
     }
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__")
+    if digits.is_empty()
+        || digits.starts_with('_')
+        || digits.ends_with('_')
+        || digits.contains("__")
     {
         return None;
     }
@@ -699,7 +703,9 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1);
     match &args[0] {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
-            Ok(RubyValue::Float(crate::builtins::numeric::num_to_f64_unchecked(&args[0])))
+            Ok(RubyValue::Float(
+                crate::builtins::numeric::num_to_f64_unchecked(&args[0]),
+            ))
         }
         RubyValue::Str(s) => {
             let text = s.lock().to_utf8_lossy().into_owned();
@@ -858,9 +864,13 @@ fn parse_complex_string(s: &str) -> Result<(RubyValue, RubyValue), Signal> {
     let t = s.trim();
     let num = |part: &str| -> Result<RubyValue, Signal> {
         if part.contains('.') {
-            part.parse::<f64>().map(RubyValue::Float).map_err(|_| convert_error(s))
+            part.parse::<f64>()
+                .map(RubyValue::Float)
+                .map_err(|_| convert_error(s))
         } else {
-            part.parse::<i64>().map(RubyValue::Int).map_err(|_| convert_error(s))
+            part.parse::<i64>()
+                .map(RubyValue::Int)
+                .map_err(|_| convert_error(s))
         }
     };
     // The imaginary coefficient: an empty/sign-only string is the unit `±1`.
@@ -892,7 +902,9 @@ fn parse_complex_string(s: &str) -> Result<(RubyValue, RubyValue), Signal> {
 /// for builtin receivers).
 pub fn kernel_string(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1);
-    Ok(RubyValue::Str(crate::string_new(args[0].to_display_string())))
+    Ok(RubyValue::Str(crate::string_new(
+        args[0].to_display_string(),
+    )))
 }
 
 /// `Kernel#Array(arg)`: nil -> [], Array -> itself, Hash -> assoc pairs,
@@ -906,9 +918,7 @@ pub fn kernel_array(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         RubyValue::Hash(h) => RubyValue::Array(crate::array_new(
             h.lock()
                 .values()
-                .map(|(k, v)| {
-                    RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()]))
-                })
+                .map(|(k, v)| RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])))
                 .collect(),
         )),
         RubyValue::Range(..) => {
@@ -938,7 +948,6 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     }
 }
 
-
 /// `Kernel#puts`: zero args print one newline; arrays flatten recursively,
 /// each scalar on its own line (nil renders empty) -- CRuby's exact rules.
 /// Routed through whatever `$stdout` currently holds (default: the
@@ -967,8 +976,10 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         let cat_key = RubyValue::Symbol(crate::Symbol::intern("category"));
         let up_key = RubyValue::Symbol(crate::Symbol::intern("uplevel"));
         let pairs = crate::hash_pairs(h);
-        let is_kwargs =
-            !pairs.is_empty() && pairs.iter().all(|(k, _)| k.rb_eq(&cat_key) || k.rb_eq(&up_key));
+        let is_kwargs = !pairs.is_empty()
+            && pairs
+                .iter()
+                .all(|(k, _)| k.rb_eq(&cat_key) || k.rb_eq(&up_key));
         if is_kwargs {
             msgs = &args[..args.len() - 1];
             if let RubyValue::Symbol(s) = crate::hash_get(h, &cat_key) {
@@ -1090,7 +1101,11 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         Some(RubyValue::BigInt(n)) => {
             use num_bigint::{BigInt, Sign};
             let n: &BigInt = n;
-            let magnitude = if n.sign() == Sign::Minus { -n } else { n.clone() };
+            let magnitude = if n.sign() == Sign::Minus {
+                -n
+            } else {
+                n.clone()
+            };
             let words = (magnitude.bits() / 64 + 1) as usize;
             let mut bytes = r.to_le_bytes().to_vec();
             for _ in 1..words {
@@ -1118,7 +1133,7 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
                 format!("invalid argument - {}", other.to_display_string()),
-            ))
+            ));
         }
     })
 }
@@ -1184,7 +1199,9 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut guard = PRNG.lock();
     let previous = guard.1;
     *guard = (new_seed | 1, new_seed);
-    Ok(crate::builtins::integer::int_value(num_bigint::BigInt::from(previous)))
+    Ok(crate::builtins::integer::int_value(
+        num_bigint::BigInt::from(previous),
+    ))
 }
 
 // The per-coroutine stack of tags with a live `catch` frame. `throw` consults
@@ -1216,7 +1233,10 @@ pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     // `UncaughtThrowError` right here, catchable by an ordinary `rescue`.
     let has_live_catch = CATCH_TAGS.with(|s| s.borrow().iter().any(|t| t.rb_eq(&tag)));
     if has_live_catch {
-        Err(Signal::Throw(tag, args.get(1).cloned().unwrap_or(RubyValue::Nil)))
+        Err(Signal::Throw(
+            tag,
+            args.get(1).cloned().unwrap_or(RubyValue::Nil),
+        ))
     } else {
         Err(crate::dispatch::raise_error_details(
             "UncaughtThrowError",
@@ -1246,7 +1266,7 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                     "can't convert {} into time interval",
                     crate::builtins::class_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     may::coroutine::sleep(std::time::Duration::from_secs_f64(secs));
@@ -1303,7 +1323,9 @@ pub fn kernel_exit_bang(args: &[RubyValue]) -> ! {
 /// what the generated top-level consults to exit quietly with that status
 /// instead of reporting an uncaught exception.
 pub fn system_exit_status(exc: &RubyValue) -> Option<i32> {
-    let RubyValue::Object(o) = exc else { return None };
+    let RubyValue::Object(o) = exc else {
+        return None;
+    };
     if !crate::dispatch::is_a(o.class_id(), zeo_abi::SYSTEM_EXIT_CLASS) {
         return None;
     }

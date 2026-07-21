@@ -7,13 +7,12 @@
 //! else is a clean `Err` (mirroring zeo's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
+pub mod gem_compat;
 mod gem_store;
 mod gemspec;
 mod loader;
 mod lockfile;
-pub mod gem_compat;
 mod rename;
-
 
 use crate::hir::{
     ArrayElem, HashPatternRest, Hir, HirNode, KeywordParam, KwArg, LastMatch, NodeId, Params,
@@ -192,7 +191,11 @@ pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
 fn magic_encoding_comment(source: &str) -> Option<String> {
     let mut lines = source.lines();
     let first = lines.next()?;
-    let line = if first.starts_with("#!") { lines.next()? } else { first };
+    let line = if first.starts_with("#!") {
+        lines.next()?
+    } else {
+        first
+    };
     let line = line.trim_start();
     if !line.starts_with('#') {
         return None;
@@ -255,7 +258,8 @@ fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
             return Err(format!(
                 "unsupported source encoding in magic comment: '{name}' \
                  (supported: UTF-8, US-ASCII, ASCII-8BIT/BINARY, ISO-8859-1)"
-            ).into())
+            )
+            .into());
         }
     })
 }
@@ -284,8 +288,9 @@ pub fn parse_and_lower_with(
         hir.script_encoding = encoding_const_name(&name)?.map(str::to_string);
     }
     hir.frozen_string_literal = magic_frozen_string_literal(source);
-    let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB)
-        .map_err(|e| format!("internal error in zeo's built-in exception classes (this is a zeo bug): {e}"))?;
+    let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
+        format!("internal error in zeo's built-in exception classes (this is a zeo bug): {e}")
+    })?;
     hir.builtin_exceptions_len = statements.len();
     let (main_statements, gem_records) = loader::lower_main_file(
         &mut hir,
@@ -309,7 +314,10 @@ pub fn parse_and_lower_with(
 fn parse_and_lower_into(hir: &mut Hir, source: &str) -> PResult<Vec<NodeId>> {
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
+        return Err(LowerError::syntax(format!(
+            "parse error: {}",
+            err.message()
+        )));
     }
     let program = result
         .node()
@@ -370,7 +378,9 @@ fn lower_if_chain(
             } else if let Some(else_node) = n.as_else_node() {
                 lower_body(result, hir, else_node.statements().map(|s| s.as_node()))?
             } else {
-                return Err("expected `elsif` or `else` after `if` (spike scope)".to_string().into());
+                return Err("expected `elsif` or `else` after `if` (spike scope)"
+                    .to_string()
+                    .into());
             }
         }
     };
@@ -474,11 +484,16 @@ pub(super) fn constant_path_name(node: &Node<'_>) -> PResult<String> {
 /// only allocation shape Phase 18 supports, recognized by the loader at
 /// top-level `box = Ruby::Box.new` statements.
 pub(super) fn is_ruby_box_new(node: &Node<'_>) -> bool {
-    let Some(call) = node.as_call_node() else { return false };
+    let Some(call) = node.as_call_node() else {
+        return false;
+    };
     if call.name().as_slice() != b"new" || call.block().is_some() {
         return false;
     }
-    if call.arguments().is_some_and(|a| a.arguments().iter().next().is_some()) {
+    if call
+        .arguments()
+        .is_some_and(|a| a.arguments().iter().next().is_some())
+    {
         return false;
     }
     call.receiver()
@@ -524,13 +539,17 @@ pub(super) fn lower_box_eval_body(
                 .to_string().into(),
         );
     }
-    let Some(src) = args[0].as_string_node().map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned()) else {
+    let Some(src) = args[0]
+        .as_string_node()
+        .map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned())
+    else {
         return Err(
             "`Ruby::Box#eval` with a non-literal argument isn't supported (spike scope) -- the source must be a plain string literal, resolvable at compile time"
                 .to_string().into(),
         );
     };
-    parse_and_lower_into(hir, &src).map_err(|e| crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}")))
+    parse_and_lower_into(hir, &src)
+        .map_err(|e| crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}")))
 }
 
 /// `class << obj; def a; ...; end; ...; end` on a NON-`self` receiver (#97 F3):
@@ -551,15 +570,23 @@ fn desugar_singleton_class_defs(
     let mut out = Vec::with_capacity(inner.len());
     for &id in &inner {
         let (mname, params, body) = match &hir[id] {
-            HirNode::DefMethod { name, params, body, is_class_method: false, .. } => {
-                (name.clone(), params.clone(), body.clone())
-            }
+            HirNode::DefMethod {
+                name,
+                params,
+                body,
+                is_class_method: false,
+                ..
+            } => (name.clone(), params.clone(), body.clone()),
             _ => {
                 return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string().into());
             }
         };
         let recv = lower_node(result, hir, &recv_node)?;
-        let lambda = hir.push(HirNode::Lambda { params, body, method_body: true });
+        let lambda = hir.push(HirNode::Lambda {
+            params,
+            body,
+            method_body: true,
+        });
         let sym = hir.push(HirNode::SymbolLit(mname));
         out.push(hir.push(HirNode::Call {
             receiver: Some(recv),
@@ -718,7 +745,9 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
 /// all -- an explicit top-level anchor) resolves against `Object` directly,
 /// mirroring real Ruby's own representation of top-level constants as
 /// living on `Object`.
-fn constant_path_scope_and_name(node: &ruby_prism::ConstantPathNode<'_>) -> PResult<(String, String)> {
+fn constant_path_scope_and_name(
+    node: &ruby_prism::ConstantPathNode<'_>,
+) -> PResult<(String, String)> {
     let name = node
         .name()
         .ok_or("a `::` constant path with a dynamic/computed name isn't supported (spike scope)")?;
@@ -743,7 +772,10 @@ enum Storage {
     /// `scope: None` = a bare, lexically-resolved name; `scope:
     /// Some(class_name)` = an explicit `Foo::NAME` -- see
     /// `HirNode::ConstWrite`'s docs.
-    Const { scope: Option<String>, name: String },
+    Const {
+        scope: Option<String>,
+        name: String,
+    },
 }
 
 impl Storage {
@@ -811,7 +843,9 @@ fn lower_compound_op_write(hir: &mut Hir, target: Storage, op: String, rhs: Node
 /// `Storage::read` unchanged.
 fn lower_or_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> NodeId {
     let read = match &target {
-        Storage::Const { scope, name } => hir.push(HirNode::ConstReadOrNil(scope.clone(), name.clone())),
+        Storage::Const { scope, name } => {
+            hir.push(HirNode::ConstReadOrNil(scope.clone(), name.clone()))
+        }
         _ => target.read(hir),
     };
     let write = target.write(hir, rhs);
@@ -831,9 +865,9 @@ fn lower_and_write(hir: &mut Hir, target: Storage, rhs: NodeId) -> NodeId {
 /// splat's "post" params are always plain required names, same as the
 /// params before it).
 fn required_param_name(node: &Node<'_>, where_: &str) -> PResult<String> {
-    let p = node
-        .as_required_parameter_node()
-        .ok_or_else(|| format!("only plain required parameters are supported {where_} (spike scope)"))?;
+    let p = node.as_required_parameter_node().ok_or_else(|| {
+        format!("only plain required parameters are supported {where_} (spike scope)")
+    })?;
     Ok(String::from_utf8_lossy(p.name().as_slice()).into_owned())
 }
 
@@ -933,9 +967,9 @@ fn lower_params(
         // existing arity/auto-splat rules cover it with no special case.
         Some(n) if n.as_implicit_rest_node().is_some() => Some(None),
         Some(n) => {
-            let r = n.as_rest_parameter_node().ok_or(
-                "unsupported rest-parameter form (spike scope)",
-            )?;
+            let r = n
+                .as_rest_parameter_node()
+                .ok_or("unsupported rest-parameter form (spike scope)")?;
             // Anonymous `*` (`def m(*)`) gets an internal name so `n(*)`
             // can forward it (Ruby 3.2's anonymous-forwarding semantics).
             Some(Some(match r.name() {
@@ -974,9 +1008,7 @@ fn lower_params(
         // Bare `...` forwarding (a `ForwardingParameterNode` in this slot)
         // -- desugared to `**__fwd_kw` here; `rest`/`block` above already
         // synthesized their `__fwd_*` halves.
-        Some(n) if n.as_forwarding_parameter_node().is_some() => {
-            Some(Some("__fwd_kw".to_string()))
-        }
+        Some(n) if n.as_forwarding_parameter_node().is_some() => Some(Some("__fwd_kw".to_string())),
         Some(n) if n.as_no_keywords_parameter_node().is_some() => {
             // `**nil` -- explicit "no extra keywords accepted". Treated the
             // same as "no keyword_rest at all": real Ruby raises
@@ -1019,7 +1051,11 @@ fn lower_params(
 /// the identical `Option<Node>` shape (a `BlockParametersNode`, or the
 /// `_1`/`it` sugar nodes -- confirmed via `Prism.parse` directly, not just
 /// inferred from the bindings).
-fn lower_block_like_params(result: &ParseResult, hir: &mut Hir, params: Option<Node<'_>>) -> PResult<Params> {
+fn lower_block_like_params(
+    result: &ParseResult,
+    hir: &mut Hir,
+    params: Option<Node<'_>>,
+) -> PResult<Params> {
     match params {
         None => Ok(Params::default()),
         // `_1`/`_2`/... -- `NumberedParametersNode { maximum }` reports the
@@ -1139,7 +1175,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(lambda) = node.as_lambda_node() {
         let params = lower_block_like_params(result, hir, lambda.parameters())?;
         let body = lower_body(result, hir, lambda.body())?;
-        return Ok(hir.push(HirNode::Lambda { params, body, method_body: false }));
+        return Ok(hir.push(HirNode::Lambda {
+            params,
+            body,
+            method_body: false,
+        }));
     }
 
     if let Some(sym) = node.as_symbol_node() {
@@ -1246,7 +1286,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::Local(name), op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::Local(name),
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_local_variable_and_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
@@ -1264,7 +1309,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             .to_string();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::Ivar(name), op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::Ivar(name),
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_instance_variable_and_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice())
@@ -1286,7 +1336,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             .to_string();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::ClassVar(name), op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::ClassVar(name),
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_class_variable_and_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice())
@@ -1306,7 +1361,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::Global(name), op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::Global(name),
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_global_variable_and_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
@@ -1351,9 +1411,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // names as GlobalVariableReadNodes.
     if let Some(alias) = node.as_alias_global_variable_node() {
         let name_of = |n: &Node<'_>| -> PResult<String> {
-            let g = n
-                .as_global_variable_read_node()
-                .ok_or("`alias`'s global targets must both be plain `$name` globals (spike scope)")?;
+            let g = n.as_global_variable_read_node().ok_or(
+                "`alias`'s global targets must both be plain `$name` globals (spike scope)",
+            )?;
             Ok(String::from_utf8_lossy(g.name().as_slice()).into_owned())
         };
         let new_name = name_of(&alias.new_name())?;
@@ -1395,7 +1455,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // or whatever a `# encoding:` magic comment set. Lowered to the ordinary
     // `Encoding::<NAME>` constant read, which resolves to the seeded singleton.
     if node.as_source_encoding_node().is_some() {
-        let const_name = hir.script_encoding.clone().unwrap_or_else(|| "UTF_8".to_string());
+        let const_name = hir
+            .script_encoding
+            .clone()
+            .unwrap_or_else(|| "UTF_8".to_string());
         return Ok(hir.push(HirNode::QualifiedConstRead(
             "Encoding".to_string(),
             const_name,
@@ -1421,7 +1484,8 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             other => {
                 return Err(format!(
                     "the `{other}` back-reference global isn't supported yet (spike scope)"
-                ).into())
+                )
+                .into());
             }
         };
         return Ok(hir.push(HirNode::LastMatchRef(which)));
@@ -1444,12 +1508,21 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::Const { scope: None, name }, op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::Const { scope: None, name },
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_constant_and_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_and_write(hir, Storage::Const { scope: None, name }, rhs));
+        return Ok(lower_and_write(
+            hir,
+            Storage::Const { scope: None, name },
+            rhs,
+        ));
     }
     // A `# shareable_constant_value:` magic comment makes prism wrap the
     // constant write in a `ShareableConstantNode`. Zeo enforces no Ractor
@@ -1460,7 +1533,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     if let Some(op) = node.as_constant_or_write_node() {
         let name = String::from_utf8_lossy(op.name().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_or_write(hir, Storage::Const { scope: None, name }, rhs));
+        return Ok(lower_or_write(
+            hir,
+            Storage::Const { scope: None, name },
+            rhs,
+        ));
     }
     if let Some(cw) = node.as_constant_write_node() {
         let name = String::from_utf8_lossy(cw.name().as_slice()).into_owned();
@@ -1471,7 +1548,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // `const_set` names the freshly anonymous class (`RUBY`'s "assigning an
         // anonymous class to a constant names it"). No compile-time synthesis.
         let value = lower_node(result, hir, &cw.value())?;
-        return Ok(hir.push(HirNode::ConstWrite { scope: None, name, value }));
+        return Ok(hir.push(HirNode::ConstWrite {
+            scope: None,
+            name,
+            value,
+        }));
     }
     // `Foo::BAR` / `Foo::BAR = v` / `Foo::BAR += v` / `Foo::BAR ||= v` /
     // `Foo::BAR &&= v` -- an explicitly namespace-qualified constant
@@ -1481,22 +1562,48 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let (scope, name) = constant_path_scope_and_name(&op.target())?;
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_compound_op_write(hir, Storage::Const { scope: Some(scope), name }, op_name, rhs));
+        return Ok(lower_compound_op_write(
+            hir,
+            Storage::Const {
+                scope: Some(scope),
+                name,
+            },
+            op_name,
+            rhs,
+        ));
     }
     if let Some(op) = node.as_constant_path_and_write_node() {
         let (scope, name) = constant_path_scope_and_name(&op.target())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_and_write(hir, Storage::Const { scope: Some(scope), name }, rhs));
+        return Ok(lower_and_write(
+            hir,
+            Storage::Const {
+                scope: Some(scope),
+                name,
+            },
+            rhs,
+        ));
     }
     if let Some(op) = node.as_constant_path_or_write_node() {
         let (scope, name) = constant_path_scope_and_name(&op.target())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        return Ok(lower_or_write(hir, Storage::Const { scope: Some(scope), name }, rhs));
+        return Ok(lower_or_write(
+            hir,
+            Storage::Const {
+                scope: Some(scope),
+                name,
+            },
+            rhs,
+        ));
     }
     if let Some(cpw) = node.as_constant_path_write_node() {
         let (scope, name) = constant_path_scope_and_name(&cpw.target())?;
         let value = lower_node(result, hir, &cpw.value())?;
-        return Ok(hir.push(HirNode::ConstWrite { scope: Some(scope), name, value }));
+        return Ok(hir.push(HirNode::ConstWrite {
+            scope: Some(scope),
+            name,
+            value,
+        }));
     }
     if let Some(cp) = node.as_constant_path_node() {
         // `box::X` (Phase 18): an external access into the box -- the
@@ -1513,7 +1620,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 )),
                 None => hir.push(HirNode::ClassRef(path.clone())),
             };
-            return Ok(hir.push(HirNode::BoxScope { box_id: bx, body: vec![inner] }));
+            return Ok(hir.push(HirNode::BoxScope {
+                box_id: bx,
+                body: vec![inner],
+            }));
         }
         let (scope, name) = constant_path_scope_and_name(&cp)?;
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
@@ -1578,13 +1688,14 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // += 1` must call `compute_idx()` exactly once too). See
     // `bind_index_target_once`'s docs.
     if let Some(op) = node.as_index_operator_write_node() {
-        let recv = op
-            .receiver()
-            .ok_or("`+=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let recv = op.receiver().ok_or(
+            "`+=` on an indexing expression with no receiver isn't supported (spike scope)",
+        )?;
         let idx = index_arguments(op.arguments())?;
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
         let combined = hir.push(HirNode::Call {
             receiver: Some(read_call),
             name: op_name,
@@ -1600,12 +1711,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Seq(stmts)));
     }
     if let Some(op) = node.as_index_and_write_node() {
-        let recv = op
-            .receiver()
-            .ok_or("`&&=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let recv = op.receiver().ok_or(
+            "`&&=` on an indexing expression with no receiver isn't supported (spike scope)",
+        )?;
         let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
         let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
         let and_node = hir.push(HirNode::And(read_call, write_call));
         let mut stmts = binds;
@@ -1613,12 +1725,13 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         return Ok(hir.push(HirNode::Seq(stmts)));
     }
     if let Some(op) = node.as_index_or_write_node() {
-        let recv = op
-            .receiver()
-            .ok_or("`||=` on an indexing expression with no receiver isn't supported (spike scope)")?;
+        let recv = op.receiver().ok_or(
+            "`||=` on an indexing expression with no receiver isn't supported (spike scope)",
+        )?;
         let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
-        let (binds, read_call, recv_tmp, idx_tmps) = bind_index_target_once(result, hir, &recv, &idx)?;
+        let (binds, read_call, recv_tmp, idx_tmps) =
+            bind_index_target_once(result, hir, &recv, &idx)?;
         let write_call = build_index_target_write(hir, &recv_tmp, &idx_tmps, rhs);
         let or_node = hir.push(HirNode::Or(read_call, write_call));
         let mut stmts = binds;
@@ -1652,8 +1765,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // real Ruby's auto-conversion of a trailing Hash into block keywords,
     // so the peeled kwargs are folded back into one trailing `HashLit`.
     if let Some(yield_node) = node.as_yield_node() {
-        let (mut args, kwargs, _fwd_block) =
-            lower_call_args(result, hir, yield_node.arguments())?;
+        let (mut args, kwargs, _fwd_block) = lower_call_args(result, hir, yield_node.arguments())?;
         // A `*expr` splat needs no handling here: `Yield` carries the same
         // `Vec<ArrayElem>` a `Call`'s positional args do, and codegen flattens
         // a `Splat` element at runtime. Keyword args (literal pairs AND `**h`
@@ -1749,11 +1861,19 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .ok_or("expected an `in` clause inside `case/in` (spike scope)")?;
             let (pattern, guard) = lower_in_pattern_and_guard(result, hir, &in_node.pattern())?;
             let body = lower_body(result, hir, in_node.statements().map(|s| s.as_node()))?;
-            arms.push(PatternArm { pattern, guard, body });
+            arms.push(PatternArm {
+                pattern,
+                guard,
+                body,
+            });
         }
         let else_body = match case_match.else_clause() {
             None => None,
-            Some(e) => Some(lower_body(result, hir, e.statements().map(|s| s.as_node()))?),
+            Some(e) => Some(lower_body(
+                result,
+                hir,
+                e.statements().map(|s| s.as_node()),
+            )?),
         };
         return Ok(hir.push(HirNode::CaseIn {
             subject,
@@ -1796,7 +1916,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(b) => Some(lower_block(result, hir, &b)?),
         };
-        return Ok(hir.push(HirNode::SuperCall { args, kwargs, zsuper: false, block }));
+        return Ok(hir.push(HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper: false,
+            block,
+        }));
     }
 
     // Bare `super` (no parens) -- a distinct prism node from `super(...)`
@@ -1913,7 +2038,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // reach the block the METHOD is called with, threaded through
                 // `ProcData`'s call-site block slot (see `HirNode::Lambda`'s
                 // `method_body`).
-                let lambda = hir.push(HirNode::Lambda { params, body, method_body: true });
+                let lambda = hir.push(HirNode::Lambda {
+                    params,
+                    body,
+                    method_body: true,
+                });
                 let sym = hir.push(HirNode::SymbolLit(name));
                 return Ok(hir.push(HirNode::Call {
                     receiver: Some(recv),
@@ -2001,7 +2130,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // value -- Phase 16.1) falls through to the generic `Call`
                 // lowering and dispatches via `TyKind::ClassObj`/the
                 // runtime constructor.
-                .filter(|r| r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some())
+                .filter(|r| {
+                    r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some()
+                })
             {
                 // `box::Widget.new(...)` (Phase 18): the ordinary static
                 // `New`, resolved inside the box.
@@ -2032,7 +2163,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         a.arguments().iter().any(|n| {
                             n.as_splat_node().is_some()
                                 || n.as_keyword_hash_node().is_some_and(|kw| {
-                                    kw.elements().iter().any(|e| e.as_assoc_splat_node().is_some())
+                                    kw.elements()
+                                        .iter()
+                                        .any(|e| e.as_assoc_splat_node().is_some())
                                 })
                         })
                     })
@@ -2041,9 +2174,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 // forwarded to `initialize`; a block-PASS (`&p`) has no
                 // `.as_block_node()` and falls through to the generic `Call`
                 // lowering (its dynamic `new` dispatch threads the block arg).
-                let block_pass = call
-                    .block()
-                    .is_some_and(|b| b.as_block_node().is_none());
+                let block_pass = call.block().is_some_and(|b| b.as_block_node().is_none());
                 if !has_dynamic_args
                     && !block_pass
                     && !matches!(
@@ -2061,7 +2192,19 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         // It must reach the generic dynamic `new` dispatch rather
                         // than a static `New`; its block is the new class's body,
                         // kept the same way `Class.new`'s is.
-                        "Fiber" | "Thread" | "Mutex" | "Queue" | "SizedQueue" | "Ractor" | "Enumerator" | "Proc" | "Array" | "Hash" | "Set" | "Class" | "Struct"
+                        "Fiber"
+                            | "Thread"
+                            | "Mutex"
+                            | "Queue"
+                            | "SizedQueue"
+                            | "Ractor"
+                            | "Enumerator"
+                            | "Proc"
+                            | "Array"
+                            | "Hash"
+                            | "Set"
+                            | "Class"
+                            | "Struct"
                     )
                 {
                     // A trailing keyword hash lands in `kwargs`, kept apart
@@ -2092,11 +2235,17 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                         }
                         _ => None,
                     };
-                    let new_id = hir.push(HirNode::New { class_name, args, kwargs, block });
+                    let new_id = hir.push(HirNode::New {
+                        class_name,
+                        args,
+                        kwargs,
+                        block,
+                    });
                     return Ok(match box_ctx {
-                        Some((bx, _)) => {
-                            hir.push(HirNode::BoxScope { box_id: bx, body: vec![new_id] })
-                        }
+                        Some((bx, _)) => hir.push(HirNode::BoxScope {
+                            box_id: bx,
+                            body: vec![new_id],
+                        }),
                         None => new_id,
                     });
                 }
@@ -2193,7 +2342,10 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         if name == "define_singleton_method" {
             if let (Some(args), Some(block_node)) = (call.arguments(), call.block()) {
                 let arg_list: Vec<_> = args.arguments().iter().collect();
-                if let (1, Some(sym)) = (arg_list.len(), arg_list.first().and_then(|a| a.as_symbol_node())) {
+                if let (1, Some(sym)) = (
+                    arg_list.len(),
+                    arg_list.first().and_then(|a| a.as_symbol_node()),
+                ) {
                     let recv = call.receiver();
                     let target = match &recv {
                         None => Some(None),
@@ -2259,7 +2411,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // `Call` case and is handled as an ordinary (currently unsupported)
         // implicit-self call.
         if name == "loop" && call.receiver().is_none() {
-            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            let no_args = call
+                .arguments()
+                .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args {
                 if let Some(block_node) = call.block() {
                     if let Some(block) = block_node.as_block_node() {
@@ -2276,8 +2430,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                             // cleanly with the enumeration's result and a
                             // manual `raise StopIteration` returns nil.
                             let native_loop = hir.push(HirNode::Loop { body });
-                            let exc_read =
-                                hir.push(HirNode::LocalRead("__loop_stop".to_string()));
+                            let exc_read = hir.push(HirNode::LocalRead("__loop_stop".to_string()));
                             let result_call = hir.push(HirNode::Call {
                                 receiver: Some(exc_read),
                                 name: "result".to_string(),
@@ -2314,7 +2467,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             Some(r) => r.as_self_node().is_some(),
         };
         if name == "block_given?" && bg_self_or_none {
-            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            let no_args = call
+                .arguments()
+                .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args && call.block().is_none() {
                 return Ok(hir.push(HirNode::BlockGiven));
             }
@@ -2331,7 +2486,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // authorship is gone. That would be silently wrong for a `__dir__`
         // inside a required file, which is the main reason to write one.
         if name == "__dir__" && call.receiver().is_none() {
-            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            let no_args = call
+                .arguments()
+                .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args && call.block().is_none() {
                 let dir = current_dir_str()?;
                 return Ok(hir.push(HirNode::StringLit(vec![StrPart::Lit(dir)])));
@@ -2347,13 +2504,19 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // ordinary `Call`, a clean rejection at codegen if `lambda` itself
         // isn't otherwise defined (matching `loop`'s identical posture).
         if name == "lambda" && call.receiver().is_none() {
-            let no_args = call.arguments().is_none_or(|a| a.arguments().iter().next().is_none());
+            let no_args = call
+                .arguments()
+                .is_none_or(|a| a.arguments().iter().next().is_none());
             if no_args {
                 if let Some(block_node) = call.block() {
                     if let Some(block) = block_node.as_block_node() {
                         let params = lower_block_like_params(result, hir, block.parameters())?;
                         let body = lower_body(result, hir, block.body())?;
-                        return Ok(hir.push(HirNode::Lambda { params, body, method_body: false }));
+                        return Ok(hir.push(HirNode::Lambda {
+                            params,
+                            body,
+                            method_body: false,
+                        }));
                     }
                 }
             }
@@ -2398,9 +2561,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string().into());
             }
             if positional.is_empty() && matches!(cause, RaiseCause::Explicit(_)) {
-                return Err(
-                    "only cause is given with no arguments".to_string().into()
-                );
+                return Err("only cause is given with no arguments".to_string().into());
             }
             let args = positional
                 .iter()
@@ -2548,8 +2709,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             None => None,
             Some(r) => Some(lower_node(result, hir, &r)?),
         };
-        let (args, kwargs, fwd_block) =
-            lower_call_args(result, hir, call.arguments())?;
+        let (args, kwargs, fwd_block) = lower_call_args(result, hir, call.arguments())?;
         // A call's `block()` slot is one of two distinct shapes: a literal
         // `{ }`/`do..end` (`BlockNode`), or `&existing_proc` forwarding an
         // already-built Proc value onward (`BlockArgumentNode`) -- real Ruby
@@ -2619,7 +2779,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // overridable `Kernel#\``. Not a direct syscall: a user who reopens
     // `Kernel#\`` (or defines `` def `(cmd) ``) wins, real Ruby's rule.
     if let Some(xs) = node.as_x_string_node() {
-        let cmd = hir.push(HirNode::StringLit(vec![string_literal_part(xs.unescaped())]));
+        let cmd = hir.push(HirNode::StringLit(vec![string_literal_part(
+            xs.unescaped(),
+        )]));
         return Ok(hir.push(HirNode::Call {
             receiver: None,
             name: "`".to_string(),
@@ -2692,7 +2854,9 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     // -- `$_`/the "last read line" concept isn't modeled at all, a clean
     // rejection rather than silently matching against an always-empty
     // string.
-    if node.as_match_last_line_node().is_some() || node.as_interpolated_match_last_line_node().is_some() {
+    if node.as_match_last_line_node().is_some()
+        || node.as_interpolated_match_last_line_node().is_some()
+    {
         return Err(
             "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (spike scope) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
         );
@@ -2774,7 +2938,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         let target = lower_multi_target(result, hir, &for_node.index())?;
         let iterable = lower_node(result, hir, &for_node.collection())?;
         let body = lower_body(result, hir, for_node.statements().map(|s| s.as_node()))?;
-        return Ok(hir.push(HirNode::For { target, iterable, body }));
+        return Ok(hir.push(HirNode::For {
+            target,
+            iterable,
+            body,
+        }));
     }
 
     // `break`/`next` (with an optional single value) and `redo` -- `ruby-prism`
@@ -2848,7 +3016,8 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
     Err(format!(
         "unsupported syntax at {:?} (spike handles only what the 7 example programs need)",
         node.location()
-    ).into())
+    )
+    .into())
 }
 
 /// One `elements()` entry of an `ArrayNode` -- either a plain value or a
@@ -2916,7 +3085,10 @@ fn lower_call_args(
     // returned separately -- a call's block slot lives outside this
     // function). `**__fwd_kw` enters the ordered `kwargs` list as a trailing
     // double-splat.
-    if let Some(pos) = list.iter().position(|n| n.as_forwarding_arguments_node().is_some()) {
+    if let Some(pos) = list
+        .iter()
+        .position(|n| n.as_forwarding_arguments_node().is_some())
+    {
         list.remove(pos);
         let fwd_kw = hir.push(HirNode::LocalRead("__fwd_kw".to_string()));
         let fwd_block = Some(hir.push(HirNode::LocalRead("__fwd_blk".to_string())));
@@ -3052,12 +3224,16 @@ fn lower_runtime_class_body(
     body: Option<Node<'_>>,
 ) -> PResult<NodeId> {
     let body = lower_class_body(result, hir, body, None)?;
-    if body.iter().any(|&n| matches!(hir[n], HirNode::LocalWrite(..))) {
+    if body
+        .iter()
+        .any(|&n| matches!(hir[n], HirNode::LocalWrite(..)))
+    {
         return Err(format!(
             "local variable assignment in the body of `class {name}` is not supported \
              when {name} is built at runtime (the body would see the enclosing scope's \
              locals instead of its own)"
-        ).into());
+        )
+        .into());
     }
     // The body runs as a block, so every statement in it has to be an
     // ordinary expression. These lower to nodes only the static class path can
@@ -3076,9 +3252,13 @@ fn lower_runtime_class_body(
         return Err(format!(
             "`{construct}` in the body of `class {name}` is not supported when {name} \
              is built at runtime"
-        ).into());
+        )
+        .into());
     }
-    Ok(hir.push(HirNode::Block { params: Params::default(), body }))
+    Ok(hir.push(HirNode::Block {
+        params: Params::default(),
+        body,
+    }))
 }
 
 fn lower_class_body(
@@ -3133,7 +3313,14 @@ fn lower_class_body(
                 continue;
             }
         }
-        lower_class_body_statement(result, hir, stmt, &mut visibility, &mut module_function, &mut out)?;
+        lower_class_body_statement(
+            result,
+            hir,
+            stmt,
+            &mut visibility,
+            &mut module_function,
+            &mut out,
+        )?;
     }
     Ok(out)
 }
@@ -3142,11 +3329,15 @@ fn lower_class_body(
 /// (the real `ffi` gem's idiom). Recognized syntactically so the `FFI::Library`
 /// constant never has to resolve at runtime.
 fn is_extend_ffi_library(node: &Node<'_>) -> bool {
-    let Some(call) = node.as_call_node() else { return false };
+    let Some(call) = node.as_call_node() else {
+        return false;
+    };
     if call.receiver().is_some() || call.name().as_slice() != b"extend" {
         return false;
     }
-    let Some(args) = call.arguments() else { return false };
+    let Some(args) = call.arguments() else {
+        return false;
+    };
     let mut it = args.arguments().iter();
     match (it.next(), it.next()) {
         (Some(arg), None) => const_path_string(&arg).as_deref() == Some("FFI::Library"),
@@ -3179,7 +3370,9 @@ fn lower_ffi_directive(
     aliases: &mut std::collections::HashMap<String, crate::hir::FfiType>,
     out: &mut Vec<NodeId>,
 ) -> PResult<bool> {
-    let Some(call) = node.as_call_node() else { return Ok(false) };
+    let Some(call) = node.as_call_node() else {
+        return Ok(false);
+    };
     if call.receiver().is_some() {
         return Ok(false);
     }
@@ -3204,7 +3397,8 @@ fn lower_ffi_directive(
                 return Err(format!(
                     "typedef expects 2 arguments (existing_type, new_name), got {}",
                     args.len()
-                ).into());
+                )
+                .into());
             }
             let existing = ffi_type_of(&ffi_symbol_str(&args[0])?, aliases)?;
             let new_name = ffi_symbol_str(&args[1])?;
@@ -3219,8 +3413,10 @@ fn lower_ffi_directive(
                 (Some(n), Some(l)) if n.as_symbol_node().is_some() => (ffi_symbol_str(n)?, l),
                 _ => {
                     return Err(
-                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)".to_string().into(),
-                    )
+                        "enum expects `:tag, [members]` (anonymous enums are a follow-on)"
+                            .to_string()
+                            .into(),
+                    );
                 }
             };
             let members = parse_enum_members(list)?;
@@ -3238,9 +3434,9 @@ fn lower_ffi_directive(
                     (ffi_symbol_str(t)?, p)
                 }
                 _ => {
-                    return Err(
-                        "callback expects `:tag, [arg_types], return_type`".to_string().into()
-                    )
+                    return Err("callback expects `:tag, [arg_types], return_type`"
+                        .to_string()
+                        .into());
                 }
             };
             ffi_type_array(params, aliases)?;
@@ -3248,7 +3444,13 @@ fn lower_ffi_directive(
             Ok(true)
         }
         b"attach_function" => {
-            out.push(lower_attach_function(result, hir, &args, ffi_lib.clone(), aliases)?);
+            out.push(lower_attach_function(
+                result,
+                hir,
+                &args,
+                ffi_lib.clone(),
+                aliases,
+            )?);
             Ok(true)
         }
         _ => Ok(false),
@@ -3296,7 +3498,9 @@ fn enum_int_literal(node: &Node<'_>) -> Option<i64> {
 /// `class < FFI::Struct` body and return its `(field, type)` pairs, or `None`
 /// if `node` isn't a `layout` call.
 fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::FfiType)>>> {
-    let Some(call) = node.as_call_node() else { return Ok(None) };
+    let Some(call) = node.as_call_node() else {
+        return Ok(None);
+    };
     if call.receiver().is_some() || call.name().as_slice() != b"layout" {
         return Ok(None);
     }
@@ -3305,7 +3509,9 @@ fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::Ffi
         .map(|a| a.arguments().iter().collect())
         .unwrap_or_default();
     if args.is_empty() || !args.len().is_multiple_of(2) {
-        return Err("FFI::Struct `layout` expects `:name, :type` pairs".to_string().into());
+        return Err("FFI::Struct `layout` expects `:name, :type` pairs"
+            .to_string()
+            .into());
     }
     // Struct field types are the base scalars/pointer -- no per-library aliases.
     let no_aliases = std::collections::HashMap::new();
@@ -3326,16 +3532,25 @@ fn as_ffi_layout(node: &Node<'_>) -> PResult<Option<Vec<(String, crate::hir::Ffi
 fn ffi_field_accessor(ty: &crate::hir::FfiType) -> PResult<(String, String, usize, usize)> {
     use crate::hir::FfiType::*;
     Ok(match ty {
-        Int(w) => (format!("get_int{w}"), format!("put_int{w}"), (*w / 8) as usize, (*w / 8) as usize),
-        Uint(w) => (format!("get_uint{w}"), format!("put_uint{w}"), (*w / 8) as usize, (*w / 8) as usize),
+        Int(w) => (
+            format!("get_int{w}"),
+            format!("put_int{w}"),
+            (*w / 8) as usize,
+            (*w / 8) as usize,
+        ),
+        Uint(w) => (
+            format!("get_uint{w}"),
+            format!("put_uint{w}"),
+            (*w / 8) as usize,
+            (*w / 8) as usize,
+        ),
         Float(32) => ("get_float32".into(), "put_float32".into(), 4, 4),
         Float(64) => ("get_float64".into(), "put_float64".into(), 8, 8),
         Pointer => ("get_pointer".into(), "put_pointer".into(), 8, 8),
-        other => {
-            return Err(format!(
-                "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
-            ).into())
-        }
+        other => return Err(format!(
+            "FFI::Struct field type `{other:?}` isn't supported yet (scalar/pointer fields only)"
+        )
+        .into()),
     })
 }
 
@@ -3362,7 +3577,9 @@ fn synthesize_ffi_struct(fields: &[(String, crate::hir::FfiType)]) -> PResult<St
 
     let read_arms: String = placed
         .iter()
-        .map(|(name, getter, _, off)| format!("        when :{name} then @__ffi_ptr.{getter}({off})\n"))
+        .map(|(name, getter, _, off)| {
+            format!("        when :{name} then @__ffi_ptr.{getter}({off})\n")
+        })
         .collect();
     let write_arms: String = placed
         .iter()
@@ -3428,7 +3645,11 @@ fn ffi_lib_name(node: &Node<'_>) -> PResult<String> {
     }
     match const_path_string(node).as_deref() {
         Some("FFI::Library::LIBC") => Ok("c".to_string()),
-        _ => Err("ffi_lib expects a string library name or FFI::Library::LIBC".to_string().into()),
+        _ => Err(
+            "ffi_lib expects a string library name or FFI::Library::LIBC"
+                .to_string()
+                .into(),
+        ),
     }
 }
 
@@ -3455,11 +3676,17 @@ fn lower_attach_function(
             let name = ffi_symbol_str(&args[0])?;
             (name.clone(), name, &args[1], &args[2])
         }
-        4 => (ffi_symbol_str(&args[0])?, ffi_symbol_str(&args[1])?, &args[2], &args[3]),
+        4 => (
+            ffi_symbol_str(&args[0])?,
+            ffi_symbol_str(&args[1])?,
+            &args[2],
+            &args[3],
+        ),
         n => {
             return Err(format!(
                 "attach_function expects 3 or 4 arguments (name, [args], ret), got {n}"
-            ).into())
+            )
+            .into());
         }
     };
     let arg_types = ffi_type_array(types_node, aliases)?;
@@ -3467,7 +3694,9 @@ fn lower_attach_function(
 
     // The wrapper's params: one required positional per C argument, named so a
     // `LocalRead` in the `Ffi` body reaches it.
-    let param_names: Vec<String> = (0..arg_types.len()).map(|i| format!("__ffi_a{i}")).collect();
+    let param_names: Vec<String> = (0..arg_types.len())
+        .map(|i| format!("__ffi_a{i}"))
+        .collect();
     let call_args: Vec<(NodeId, crate::hir::FfiType)> = param_names
         .iter()
         .zip(arg_types)
@@ -3479,7 +3708,10 @@ fn lower_attach_function(
         args: call_args,
         ret,
     }))];
-    let params = Params { required: param_names, ..Default::default() };
+    let params = Params {
+        required: param_names,
+        ..Default::default()
+    };
     Ok(hir.push(HirNode::DefMethod {
         name: ruby_name,
         params,
@@ -3610,7 +3842,14 @@ fn lower_class_body_statement(
             } else {
                 if_node.subsequent()
             };
-            return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+            return lower_class_body_selected(
+                result,
+                hir,
+                chosen,
+                visibility,
+                module_function,
+                out,
+            );
         }
     }
     if let Some(unless_node) = node.as_unless_node() {
@@ -3620,7 +3859,14 @@ fn lower_class_body_statement(
             } else {
                 unless_node.else_clause().map(|e| e.as_node())
             };
-            return lower_class_body_selected(result, hir, chosen, visibility, module_function, out);
+            return lower_class_body_selected(
+                result,
+                hir,
+                chosen,
+                visibility,
+                module_function,
+                out,
+            );
         }
     }
 
@@ -3808,8 +4054,9 @@ fn lower_class_body_statement(
                             n.as_symbol_node()
                                 .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
                                 .or_else(|| {
-                                    n.as_string_node()
-                                        .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
+                                    n.as_string_node().map(|s| {
+                                        String::from_utf8_lossy(s.unescaped()).into_owned()
+                                    })
                                 })
                         })
                         .collect();
@@ -3845,10 +4092,14 @@ fn lower_class_body_statement(
                     }
                 }
             }
-            if matches!(name.as_str(), "attr" | "attr_reader" | "attr_writer" | "attr_accessor") {
+            if matches!(
+                name.as_str(),
+                "attr" | "attr_reader" | "attr_writer" | "attr_accessor"
+            ) {
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
-                    if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some()) {
+                    if !arg_list.is_empty() && arg_list.iter().all(|n| n.as_symbol_node().is_some())
+                    {
                         for n in &arg_list {
                             let ivar = String::from_utf8_lossy(
                                 n.as_symbol_node().expect("checked above").unescaped(),
@@ -3957,12 +4208,14 @@ fn lower_single_optional_argument(
 fn index_arguments(
     result_args: Option<ruby_prism::ArgumentsNode<'_>>,
 ) -> PResult<ruby_prism::ArgumentsNode<'_>> {
-    let args = result_args
-        .ok_or("`[]`-style compound assignment requires at least one index argument")?;
+    let args =
+        result_args.ok_or("`[]`-style compound assignment requires at least one index argument")?;
     if args.arguments().iter().count() == 0 {
-        return Err("`[]`-style compound assignment requires at least one index argument"
-            .to_string()
-            .into());
+        return Err(
+            "`[]`-style compound assignment requires at least one index argument"
+                .to_string()
+                .into(),
+        );
     }
     Ok(args)
 }
@@ -4095,11 +4348,17 @@ fn local_target_name(node: &Node<'_>) -> PResult<String> {
 /// `MultiTarget`'s docs for the full generalized shape this now covers
 /// (beyond the original plain-local-only restriction): local/ivar/cvar/
 /// global/bare-constant/`obj.attr`/`arr[i]`/nested-group targets.
-fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<crate::hir::MultiTarget> {
+fn lower_multi_target(
+    result: &ParseResult,
+    hir: &mut Hir,
+    node: &Node<'_>,
+) -> PResult<crate::hir::MultiTarget> {
     use crate::hir::MultiTarget;
 
     if let Some(t) = node.as_local_variable_target_node() {
-        return Ok(MultiTarget::Local(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+        return Ok(MultiTarget::Local(
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+        ));
     }
     // The same group shape reached from a PARAMETER list (`|a, (b, c)|` --
     // see `required_param_slot`) names its leaves with parameter nodes rather
@@ -4107,7 +4366,9 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
     // destructuring param binds a plain local exactly as an assignment target
     // does, so both spell the same `MultiTarget::Local`.
     if let Some(t) = node.as_required_parameter_node() {
-        return Ok(MultiTarget::Local(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+        return Ok(MultiTarget::Local(
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+        ));
     }
     if let Some(t) = node.as_instance_variable_target_node() {
         let name = String::from_utf8_lossy(t.name().as_slice())
@@ -4122,10 +4383,14 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
         return Ok(MultiTarget::ClassVar(name));
     }
     if let Some(t) = node.as_global_variable_target_node() {
-        return Ok(MultiTarget::Global(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+        return Ok(MultiTarget::Global(
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+        ));
     }
     if let Some(t) = node.as_constant_target_node() {
-        return Ok(MultiTarget::Const(String::from_utf8_lossy(t.name().as_slice()).into_owned()));
+        return Ok(MultiTarget::Const(
+            String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+        ));
     }
     if let Some(t) = node.as_constant_path_target_node() {
         // Same parent-path + leaf split `ConstWrite`'s own `Foo::BAR = v`
@@ -4134,8 +4399,16 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
             Some(p) => constant_path_name(&p)?,
             None => String::new(), // `::BAR` -- top-level anchored
         };
-        let name = String::from_utf8_lossy(t.name().expect("a constant path target always has a name").as_slice()).into_owned();
-        return Ok(MultiTarget::ScopedConst { scope: parent, name });
+        let name = String::from_utf8_lossy(
+            t.name()
+                .expect("a constant path target always has a name")
+                .as_slice(),
+        )
+        .into_owned();
+        return Ok(MultiTarget::ScopedConst {
+            scope: parent,
+            name,
+        });
     }
     // `obj.attr, ... = ...` -- pre-builds the `attr=` write `Call` right now,
     // with a synthetic hidden local (`tmp_name`) standing in for "the value
@@ -4163,13 +4436,19 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
             block_arg: None,
             safe: false,
         });
-        return Ok(MultiTarget::Call { write_call, tmp_name });
+        return Ok(MultiTarget::Call {
+            write_call,
+            tmp_name,
+        });
     }
     // `arr[i], ... = ...` -- see `MultiTarget::Call`'s docs; same synthetic-
     // hidden-local trick, targeting `[]=` instead of `attr=`.
     if let Some(t) = node.as_index_target_node() {
         let receiver = lower_node(result, hir, &t.receiver())?;
-        let arg_list: Vec<_> = t.arguments().map(|a| a.arguments().iter().collect()).unwrap_or_default();
+        let arg_list: Vec<_> = t
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
         if arg_list.len() != 1 {
             return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (spike scope)".to_string().into());
         }
@@ -4185,7 +4464,10 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
             block_arg: None,
             safe: false,
         });
-        return Ok(MultiTarget::Call { write_call, tmp_name });
+        return Ok(MultiTarget::Call {
+            write_call,
+            tmp_name,
+        });
     }
     // `(a, b), c = ...` -- a nested destructuring group; see
     // `lower_multi_target_group`'s docs.
@@ -4193,7 +4475,11 @@ fn lower_multi_target(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> P
         let group = lower_multi_target_group(result, hir, t.lefts(), t.rest(), t.rights())?;
         return Ok(MultiTarget::Nested(group));
     }
-    Err("unsupported multi-assignment/`for`-loop target shape (spike scope)".to_string().into())
+    Err(
+        "unsupported multi-assignment/`for`-loop target shape (spike scope)"
+            .to_string()
+            .into(),
+    )
 }
 
 /// The `before`/`splat`/`after` shape shared by `MultiWriteNode` and a
@@ -4243,7 +4529,11 @@ fn lower_multi_target_group(
         .iter()
         .map(|n| lower_multi_target(result, hir, &n))
         .collect::<PResult<Vec<_>>>()?;
-    Ok(crate::hir::MultiTargetGroup { before, splat, after })
+    Ok(crate::hir::MultiTargetGroup {
+        before,
+        splat,
+        after,
+    })
 }
 
 /// `begin body rescue R1 rescue R2 ... else ... ensure ... end` -- `rescue`
@@ -4255,7 +4545,11 @@ fn lower_multi_target_group(
 /// same posture as `superclass`/`include`/`extend`/`prepend` resolution
 /// elsewhere in this file. `reference()` (the `=> e` binding) is always a
 /// plain local-variable target in real Ruby's own grammar for this position.
-fn lower_begin(result: &ParseResult, hir: &mut Hir, begin: &ruby_prism::BeginNode<'_>) -> PResult<NodeId> {
+fn lower_begin(
+    result: &ParseResult,
+    hir: &mut Hir,
+    begin: &ruby_prism::BeginNode<'_>,
+) -> PResult<NodeId> {
     let body = lower_body(result, hir, begin.statements().map(|s| s.as_node()))?;
 
     let mut rescues = Vec::new();
@@ -4281,11 +4575,19 @@ fn lower_begin(result: &ParseResult, hir: &mut Hir, begin: &ruby_prism::BeginNod
 
     let else_body = match begin.else_clause() {
         None => None,
-        Some(e) => Some(lower_body(result, hir, e.statements().map(|s| s.as_node()))?),
+        Some(e) => Some(lower_body(
+            result,
+            hir,
+            e.statements().map(|s| s.as_node()),
+        )?),
     };
     let ensure_body = match begin.ensure_clause() {
         None => None,
-        Some(e) => Some(lower_body(result, hir, e.statements().map(|s| s.as_node()))?),
+        Some(e) => Some(lower_body(
+            result,
+            hir,
+            e.statements().map(|s| s.as_node()),
+        )?),
     };
 
     Ok(hir.push(HirNode::Begin {
@@ -4316,7 +4618,8 @@ fn lower_in_pattern_and_guard(
     }
     if let Some(unless_node) = node.as_unless_node() {
         let cond = lower_node(result, hir, &unless_node.predicate())?;
-        let pattern = lower_single_wrapped_pattern(result, hir, unless_node.statements(), "unless")?;
+        let pattern =
+            lower_single_wrapped_pattern(result, hir, unless_node.statements(), "unless")?;
         return Ok((pattern, Some((cond, true))));
     }
     Ok((lower_pattern(result, hir, node)?, None))
@@ -4328,7 +4631,9 @@ fn lower_single_wrapped_pattern(
     stmts: Option<ruby_prism::StatementsNode<'_>>,
     guard_kind: &str,
 ) -> PResult<Pattern> {
-    let stmts = stmts.ok_or_else(|| format!("expected a pattern inside an `{guard_kind}`-guarded `in` clause"))?;
+    let stmts = stmts.ok_or_else(|| {
+        format!("expected a pattern inside an `{guard_kind}`-guarded `in` clause")
+    })?;
     let body: Vec<_> = stmts.body().iter().collect();
     if body.len() != 1 {
         return Err(format!(
@@ -4380,16 +4685,27 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
             .iter()
             .map(|n| lower_pattern(result, hir, &n))
             .collect::<PResult<Vec<_>>>()?;
-        let rest = arr.rest().map(|n| array_or_find_rest_name(&n)).transpose()?;
+        let rest = arr
+            .rest()
+            .map(|n| array_or_find_rest_name(&n))
+            .transpose()?;
         let post = arr
             .posts()
             .iter()
             .map(|n| lower_pattern(result, hir, &n))
             .collect::<PResult<Vec<_>>>()?;
-        return Ok(Pattern::Array { constant, pre, rest, post });
+        return Ok(Pattern::Array {
+            constant,
+            pre,
+            rest,
+            post,
+        });
     }
     if let Some(find) = node.as_find_pattern_node() {
-        let constant = find.constant().map(|c| constant_path_name(&c)).transpose()?;
+        let constant = find
+            .constant()
+            .map(|c| constant_path_name(&c))
+            .transpose()?;
         // `left()` is already typed as `SplatNode` by `ruby-prism`; `right()`
         // (asymmetrically) comes back as a generic `Node` that must still be
         // cast -- confirmed against the actual generated bindings, not
@@ -4429,7 +4745,11 @@ fn lower_pattern(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResul
             pairs.push((key, value_pattern));
         }
         let rest = hash_pattern_rest(hp.rest())?;
-        return Ok(Pattern::Hash { constant, pairs, rest });
+        return Ok(Pattern::Hash {
+            constant,
+            pairs,
+            rest,
+        });
     }
     if let Some(range) = node.as_range_node() {
         let start = match range.left() {
@@ -4500,7 +4820,9 @@ fn splat_target_name(splat: &ruby_prism::SplatNode<'_>) -> PResult<Option<String
             let t = e.as_local_variable_target_node().ok_or(
                 "a pattern's `*` splat may only bind a plain local variable name (spike scope)",
             )?;
-            Ok(Some(String::from_utf8_lossy(t.name().as_slice()).into_owned()))
+            Ok(Some(
+                String::from_utf8_lossy(t.name().as_slice()).into_owned(),
+            ))
         }
     }
 }
@@ -4614,10 +4936,14 @@ fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
 /// way to trigger an old one).
 fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
     for &id in body {
-        if matches!(hir[id], HirNode::ClassDef { .. } | HirNode::DefMethod { .. }) {
+        if matches!(
+            hir[id],
+            HirNode::ClassDef { .. } | HirNode::DefMethod { .. }
+        ) {
             return Err(
                 "`eval` containing a top-level `class`/`def` isn't supported yet (spike scope)"
-                    .to_string().into(),
+                    .to_string()
+                    .into(),
             );
         }
     }
@@ -4649,9 +4975,9 @@ fn lower_named_capture_match(
     let m_tmp = "__named_capture_result".to_string();
     let mut body = vec![hir.push(HirNode::LocalWrite(m_tmp.clone(), match_call))];
     for target in mw.targets().iter() {
-        let lvt = target.as_local_variable_target_node().ok_or(
-            "`=~`'s named-capture auto-binding only writes plain locals (spike scope)",
-        )?;
+        let lvt = target
+            .as_local_variable_target_node()
+            .ok_or("`=~`'s named-capture auto-binding only writes plain locals (spike scope)")?;
         let name = String::from_utf8_lossy(lvt.name().as_slice()).into_owned();
         let group = hir.push(HirNode::SymbolLit(name.clone()));
         let last = hir.push(HirNode::LastMatchRef(LastMatch::Data));
@@ -4699,7 +5025,9 @@ pub(super) fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
         .unwrap_or_default();
     if args.len() != 2 {
         return Err(
-            "`autoload` takes exactly two arguments (`autoload :Const, \"feature\"`)".to_string().into(),
+            "`autoload` takes exactly two arguments (`autoload :Const, \"feature\"`)"
+                .to_string()
+                .into(),
         );
     }
     if let Some(lit) = args[1].as_string_node() {
@@ -4849,7 +5177,13 @@ fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PR
         };
     }
     if let Some(embedded) = node.as_embedded_variable_node() {
-        return Ok(StrPart::Interp(lower_node(result, hir, &embedded.variable())?));
+        return Ok(StrPart::Interp(lower_node(
+            result,
+            hir,
+            &embedded.variable(),
+        )?));
     }
-    Err("unsupported string interpolation part (spike scope)".to_string().into())
+    Err("unsupported string interpolation part (spike scope)"
+        .to_string()
+        .into())
 }

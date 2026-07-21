@@ -15,11 +15,11 @@
 //! fallback re-dispatches through `send_value`).
 
 use crate::builtins::complex::{cpx_add, cpx_div, cpx_eq, cpx_mul, cpx_pow, cpx_sub};
-use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::builtins::integer::{int_add, int_cmp, int_div, int_mod, int_mul, int_pow, int_sub};
 use crate::builtins::rational::{
     as_ratio, rat_add, rat_cmp, rat_div, rat_mul, rat_pow, rat_sub, rat_to_f64, rational_new,
 };
+use crate::builtins::{arity, block_or_enum, builtin_methods};
 use crate::{RubyValue, Signal};
 use num_traits::ToPrimitive;
 
@@ -531,8 +531,7 @@ pub(crate) fn num_coerce_bin(
     }
     let coerce = crate::Symbol::intern("coerce");
     if crate::dispatch::responds_to(arg.class_id(), coerce, false) {
-        let pair =
-            crate::dispatch::send_value(arg, coerce, std::slice::from_ref(recv), None)?;
+        let pair = crate::dispatch::send_value(arg, coerce, std::slice::from_ref(recv), None)?;
         if let RubyValue::Array(a) = &pair {
             let items: Vec<RubyValue> = a.lock().iter().cloned().collect();
             if items.len() == 2 {
@@ -594,43 +593,66 @@ mod tests {
     fn lanes_join_upward() {
         // Int + Rat stays exact: (1/2) + 1 == (3/2)
         let r = num_add(&rat(1, 2), &RubyValue::Int(1)).unwrap().unwrap();
-        assert!(matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(3) && q.den == BigInt::from(2)));
+        assert!(
+            matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(3) && q.den == BigInt::from(2))
+        );
         // Rat + Float promotes to Float: (1/2) + 0.5 == 1.0
-        let r = num_add(&rat(1, 2), &RubyValue::Float(0.5)).unwrap().unwrap();
+        let r = num_add(&rat(1, 2), &RubyValue::Float(0.5))
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::Float(f) if f == 1.0));
         // Anything + Complex is Complex.
-        let c = crate::builtins::complex::complex_new(RubyValue::Int(1), RubyValue::Int(2)).unwrap();
+        let c =
+            crate::builtins::complex::complex_new(RubyValue::Int(1), RubyValue::Int(2)).unwrap();
         let r = num_add(&RubyValue::Int(1), &c).unwrap().unwrap();
         assert!(matches!(r, RubyValue::Complex(_)));
     }
 
     #[test]
     fn int_lane_stays_exact_and_promotes_on_overflow() {
-        let r = num_add(&RubyValue::Int(i64::MAX), &RubyValue::Int(1)).unwrap().unwrap();
+        let r = num_add(&RubyValue::Int(i64::MAX), &RubyValue::Int(1))
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::BigInt(_)));
-        assert_eq!(num_cmp(&big("100000000000000000000"), &RubyValue::Int(5)).unwrap(), Some(1));
+        assert_eq!(
+            num_cmp(&big("100000000000000000000"), &RubyValue::Int(5)).unwrap(),
+            Some(1)
+        );
     }
 
     #[test]
     fn quo_is_rational_preserving() {
-        let r = num_quo(&RubyValue::Int(1), &RubyValue::Int(3)).unwrap().unwrap();
-        assert!(matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(1) && q.den == BigInt::from(3)));
-        let r = num_quo(&RubyValue::Int(4), &RubyValue::Int(2)).unwrap().unwrap();
+        let r = num_quo(&RubyValue::Int(1), &RubyValue::Int(3))
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(1) && q.den == BigInt::from(3))
+        );
+        let r = num_quo(&RubyValue::Int(4), &RubyValue::Int(2))
+            .unwrap()
+            .unwrap();
         assert!(matches!(&r, RubyValue::Rational(q) if q.den == BigInt::from(1)));
     }
 
     #[test]
     fn eq_and_cmp_cross_every_real_lane() {
-        assert_eq!(num_eq(&RubyValue::Int(1), &RubyValue::Float(1.0)), Some(true));
+        assert_eq!(
+            num_eq(&RubyValue::Int(1), &RubyValue::Float(1.0)),
+            Some(true)
+        );
         assert_eq!(num_eq(&rat(2, 1), &RubyValue::Int(2)), Some(true));
         assert_eq!(num_eq(&rat(1, 2), &RubyValue::Float(0.5)), Some(true));
-        assert_eq!(num_cmp(&RubyValue::Int(2), &RubyValue::Float(1.5)).unwrap(), Some(1));
+        assert_eq!(
+            num_cmp(&RubyValue::Int(2), &RubyValue::Float(1.5)).unwrap(),
+            Some(1)
+        );
         assert_eq!(num_cmp(&rat(1, 2), &rat(2, 3)).unwrap(), Some(-1));
         assert_eq!(
             num_cmp(&RubyValue::Float(f64::NAN), &RubyValue::Int(1)).unwrap(),
             None
         );
-        let c = crate::builtins::complex::complex_new(RubyValue::Int(2), RubyValue::Int(0)).unwrap();
+        let c =
+            crate::builtins::complex::complex_new(RubyValue::Int(2), RubyValue::Int(0)).unwrap();
         assert_eq!(num_eq(&c, &RubyValue::Int(2)), Some(true));
         assert_eq!(num_cmp(&c, &RubyValue::Int(2)).unwrap(), None);
     }
@@ -639,7 +661,9 @@ mod tests {
     fn rational_modulo_is_exact() {
         // Rational(7,2) % 2 == (3/2) (floored, oracle rule a - b*(a/b).floor)
         let r = num_mod(&rat(7, 2), &RubyValue::Int(2)).unwrap().unwrap();
-        assert!(matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(3) && q.den == BigInt::from(2)));
+        assert!(
+            matches!(&r, RubyValue::Rational(q) if q.num == BigInt::from(3) && q.den == BigInt::from(2))
+        );
     }
 
     #[test]
@@ -663,7 +687,12 @@ mod tests {
                 c2.lock().push(args[0].inspect_string());
                 Ok(RubyValue::Nil)
             });
-            step(&RubyValue::Int(1), &[RubyValue::Int(10), RubyValue::Int(3)], Some(RubyValue::Proc(p))).unwrap();
+            step(
+                &RubyValue::Int(1),
+                &[RubyValue::Int(10), RubyValue::Int(3)],
+                Some(RubyValue::Proc(p)),
+            )
+            .unwrap();
             seen.extend(cell.lock().iter().cloned());
         }
         assert_eq!(seen, vec!["1", "4", "7", "10"]);
@@ -675,7 +704,9 @@ mod tests {
             num_div(&RubyValue::Int(1), &RubyValue::Int(0))
         }));
         assert!(r.is_err());
-        let r = num_div(&RubyValue::Float(1.0), &RubyValue::Int(0)).unwrap().unwrap();
+        let r = num_div(&RubyValue::Float(1.0), &RubyValue::Int(0))
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::Float(f) if f.is_infinite()));
     }
 }

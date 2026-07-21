@@ -16,9 +16,9 @@ pub mod encoding;
 // `eval_string` is the stub-or-real entry, gating only its prism-backed
 // interpreter internals behind the `eval-vm` feature.
 mod eval_vm;
+mod exec;
 mod ext;
 pub mod ffi;
-mod exec;
 mod fiber;
 mod globals;
 mod handling;
@@ -34,57 +34,51 @@ mod thread;
 mod value;
 
 pub use arith::*;
-pub use collections::*;
-pub use encoding::{EncodingId, StrBuf};
-pub use constants::{const_get, const_set};
-pub use builtins::complex::{complex_from_literal, complex_new, RComplex, RComplexData};
+pub use bootstrap::{install_core_constants, register_builtins};
+pub use builtins::BuiltinMethodFn;
+pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, complex_new};
 pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
-pub use builtins::rational::{rational_from_digits, rational_new, RRational, RRationalData};
-pub use builtins::kernel::{
-    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_exit_bang,
-    system_exit_status, kernel_float,
-    kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
-    kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
-    kernel_warn,
-    kernel_string, kernel_throw,
-};
-pub use builtins::format::sprintf;
-pub use builtins::math::math_call;
-pub use builtins::BuiltinMethodFn;
 pub use builtins::exception::{
     register_exception_subclass, register_exceptions, set_explicit_cause,
 };
-pub use builtins::value_subclass::{register_value_subclass, value_super};
-pub use bootstrap::{install_core_constants, register_builtins};
-pub use dispatch::{
-    bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg, construct_by_class_id,
-    describe_receiver, downcast_robj, install_class_registry,
-    instance_variable_get, instance_variable_set, instance_variables, is_a, ivar_defined,
-    ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, MissingReason,
-    make_name_error, method_name_symbol, raise_no_block_yield, raise_error, raise_error_details, raise_method_missing,
-    raise_stop_iteration, raise_with_cause,
-    responds_to, responds_to_value,
-    run_initialize,
-    send, send_in, send_super_from, send_value, send_value_in, send_value_public_in,
-    AllocatorFn, ClassId, ClassRegistry, ConstructorFn, MethodFn, Object, RObj, RubyObject,
-    ValueMethodFn,
-    ARRAY_CLASS, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
-    ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS, MATH_CLASS, MODULE_CLASS, MUTEX_CLASS,
-    NIL_CLASS, NUMERIC_CLASS, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS,
-    RATIONAL_CLASS, REGEXP_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
-    TRUE_CLASS, YIELDER_CLASS,
+pub use builtins::format::sprintf;
+pub use builtins::kernel::{
+    kernel_abort, kernel_array, kernel_catch, kernel_complex, kernel_exit, kernel_exit_bang,
+    kernel_float, kernel_format, kernel_hash, kernel_integer, kernel_p, kernel_pp, kernel_print,
+    kernel_printf, kernel_puts, kernel_rand, kernel_rational, kernel_sleep, kernel_srand,
+    kernel_string, kernel_throw, kernel_warn, system_exit_status,
 };
-pub use eval_vm::{eval_string, eval_value};
+pub use builtins::math::math_call;
+pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
+pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
+pub use collections::*;
+pub use constants::{const_get, const_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
-pub use method_params::{register_params, ParamKind};
+pub use dispatch::{
+    ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
+    ClassId, ClassRegistry, ConstructorFn, ENUMERABLE_CLASS, ENUMERATOR_CLASS, FALSE_CLASS,
+    FIBER_CLASS, FLOAT_CLASS, HASH_CLASS, INTEGER_CLASS, KERNEL_CLASS, MATCH_DATA_CLASS,
+    MATH_CLASS, MODULE_CLASS, MUTEX_CLASS, MethodFn, MissingReason, NIL_CLASS, NUMERIC_CLASS,
+    Object, PROC_CLASS, QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, RATIONAL_CLASS, REGEXP_CLASS, RObj,
+    RubyObject, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS, ValueMethodFn,
+    YIELDER_CLASS, bind_dynamic_kwargs, class_is_module, class_name, coerce_raise_arg,
+    construct_by_class_id, describe_receiver, downcast_robj, install_class_registry,
+    instance_variable_get, instance_variable_set, instance_variables, is_a, ivar_defined,
+    ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, make_name_error, method_name_symbol,
+    raise_error, raise_error_details, raise_method_missing, raise_no_block_yield,
+    raise_stop_iteration, raise_with_cause, responds_to, responds_to_value, run_initialize, send,
+    send_in, send_super_from, send_value, send_value_in, send_value_public_in,
+};
+pub use encoding::{EncodingId, StrBuf};
+pub use eval_vm::{eval_string, eval_value};
+pub use exec::{at_exit_register, run_at_exit, run_main};
 pub use lastmatch::{
     last_match, last_match_group, last_match_last_group, last_match_post, last_match_pre,
     set_last_match,
 };
-pub use exec::{at_exit_register, run_at_exit, run_main};
+pub use method_params::{ParamKind, register_params};
 
 /// The Ruby class name of any value -- what the generated top level suffixes an
 /// uncaught exception's message with (`"msg (ClassName)"`, CRuby's own form).
@@ -92,34 +86,34 @@ pub fn class_name_of_value(v: &RubyValue) -> String {
     builtins::class_name_of(v)
 }
 
+pub use builtins::process::last_child_status;
 pub use fiber::{
-    fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
-    FiberHandle, FiberResume, FiberYield, RFiber,
+    FiberHandle, FiberResume, FiberYield, RFiber, fiber_alive, fiber_current, fiber_new,
+    fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
 pub use globals::{global_alias, global_defined, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
-pub use builtins::process::last_child_status;
 pub use ractor::{
-    make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send, shareable,
-    RRactor, RactorData,
+    RRactor, RactorData, make_shareable, ractor_new, ractor_outcome, ractor_receive, ractor_send,
+    shareable,
 };
 pub use regexp::*;
-pub use rproc::{block_arg_to_proc, block_auto_splat, to_hash_coerce, ProcParamMeta, RProc};
+pub use rproc::{ProcParamMeta, RProc, block_arg_to_proc, block_auto_splat, to_hash_coerce};
 pub use runtime_meta::{
     name_runtime_class_if_anonymous, runtime_class_new, runtime_define_method,
     runtime_define_singleton_method, send_super_dynamic,
 };
-pub use signal::{catch_break, home_pop, home_push, Signal};
+pub use signal::{Signal, catch_break, home_pop, home_push};
 pub use symbol::Symbol;
 pub use thread::{
-    mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock, queue_close,
-    queue_closed, queue_is_sized, queue_len, queue_max, queue_new, queue_pop, queue_push,
-    queue_set_max, sized_queue_new, thread_new, thread_outcome, MutexData, QueueData, RMutex,
-    RQueue, RThread, ThreadData,
+    MutexData, QueueData, RMutex, RQueue, RThread, ThreadData, mutex_lock, mutex_locked, mutex_new,
+    mutex_owned, mutex_try_lock, mutex_unlock, queue_close, queue_closed, queue_is_sized,
+    queue_len, queue_max, queue_new, queue_pop, queue_push, queue_set_max, sized_queue_new,
+    thread_new, thread_outcome,
 };
+pub use value::RubyValue;
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
-pub use value::RubyValue;
 
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a
 /// GENERATED program's own crate, not this one) can reference
@@ -504,7 +498,7 @@ mod tests {
                 let theirs = match &other {
                     RubyValue::Object(o) => {
                         let t = downcast_robj::<Temp>(o).expect("Temp <=> Temp only in tests");
-                        
+
                         t.deg.lock().clone()
                     }
                     _ => return Ok(RubyValue::Nil),
@@ -528,7 +522,8 @@ mod tests {
 
     fn temp(deg: i64) -> RubyValue {
         RubyValue::Object(Temp::new_handle(std::sync::Arc::new(Temp {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             deg: parking_lot::Mutex::new(RubyValue::Int(deg)),
         })))
     }
@@ -589,18 +584,41 @@ mod tests {
                 QUEUE_CLASS,
                 "Thread::Queue",
                 false,
-                vec![QUEUE_CLASS, Object::CLASS_ID, KERNEL_CLASS, BASIC_OBJECT_CLASS],
+                vec![
+                    QUEUE_CLASS,
+                    Object::CLASS_ID,
+                    KERNEL_CLASS,
+                    BASIC_OBJECT_CLASS,
+                ],
                 None,
             );
-            registry.define_value_method(ARRAY_CLASS, 0, Symbol::intern("shout"), |recv, _args, _blk| {
-                Ok(RubyValue::Str(string_new(format!("{}!", recv.inspect_string()))))
-            });
-            registry.define_value_method(ARRAY_CLASS, 0, Symbol::intern("length"), |_recv, _args, _blk| {
-                Ok(RubyValue::Int(42))
-            });
-            registry.define_value_method(QUEUE_CLASS, 0, Symbol::intern("to_s"), |_recv, _args, _blk| {
-                Ok(RubyValue::Str(string_new("#<a queue, reopened>".to_string())))
-            });
+            registry.define_value_method(
+                ARRAY_CLASS,
+                0,
+                Symbol::intern("shout"),
+                |recv, _args, _blk| {
+                    Ok(RubyValue::Str(string_new(format!(
+                        "{}!",
+                        recv.inspect_string()
+                    ))))
+                },
+            );
+            registry.define_value_method(
+                ARRAY_CLASS,
+                0,
+                Symbol::intern("length"),
+                |_recv, _args, _blk| Ok(RubyValue::Int(42)),
+            );
+            registry.define_value_method(
+                QUEUE_CLASS,
+                0,
+                Symbol::intern("to_s"),
+                |_recv, _args, _blk| {
+                    Ok(RubyValue::Str(string_new(
+                        "#<a queue, reopened>".to_string(),
+                    )))
+                },
+            );
             install_class_registry(registry);
         });
     }
@@ -608,7 +626,8 @@ mod tests {
     #[test]
     fn static_path_stores_and_reads_ivar() {
         let p = std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         });
         p.clone().initialize(RubyValue::Int(5)).unwrap();
@@ -621,7 +640,8 @@ mod tests {
     #[test]
     fn new_handle_erases_to_a_trait_object() {
         let handle: RObj = Point::new_handle(std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Int(7)),
         }));
         assert_eq!(handle.class_id(), Point::CLASS_ID);
@@ -653,7 +673,8 @@ mod tests {
         assert!(s.is_frozen());
 
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         })));
         assert!(!obj.is_frozen());
@@ -670,7 +691,10 @@ mod tests {
     #[test]
     fn dynamic_send_finds_registered_method() {
         install();
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default(), __overflow: Default::default() }));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+            __overflow: Default::default(),
+        }));
         let result = send(&g, Symbol::intern("hello"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "hi");
     }
@@ -678,7 +702,10 @@ mod tests {
     #[test]
     fn dynamic_send_falls_back_to_method_missing() {
         install();
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default(), __overflow: Default::default() }));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+            __overflow: Default::default(),
+        }));
         let result = send(&g, Symbol::intern("nope"), &[], None).unwrap();
         assert_eq!(result.to_display_string(), "no such method: nope");
     }
@@ -689,7 +716,8 @@ mod tests {
     #[test]
     fn dup_object_copies_ivars_into_a_fresh_instance() {
         let p = std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Int(1)),
         });
 
@@ -704,13 +732,20 @@ mod tests {
     #[test]
     fn dup_object_frozen_flag_follows_the_copy_frozen_rule() {
         let p = std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         });
         RubyObject::set_frozen(&*p);
 
-        assert!(!RubyObject::dup_object(&*p, false).is_frozen(), "dup: unfrozen");
-        assert!(RubyObject::dup_object(&*p, true).is_frozen(), "clone: frozen");
+        assert!(
+            !RubyObject::dup_object(&*p, false).is_frozen(),
+            "dup: unfrozen"
+        );
+        assert!(
+            RubyObject::dup_object(&*p, true).is_frozen(),
+            "clone: frozen"
+        );
     }
 
     /// Placement regression: universal `Kernel#dup` must be found BEFORE
@@ -719,7 +754,10 @@ mod tests {
     #[test]
     fn dynamic_send_dup_wins_over_method_missing() {
         install();
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default(), __overflow: Default::default() }));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+            __overflow: Default::default(),
+        }));
         let result = send(&g, Symbol::intern("dup"), &[], None).unwrap();
         let RubyValue::Object(copy) = result else {
             panic!("dup must produce an Object, not a method_missing string")
@@ -759,12 +797,19 @@ mod tests {
         assert_eq!(name.to_display_string(), "Point");
 
         let ancestors = send_value(&point, Symbol::intern("ancestors"), &[], None).unwrap();
-        assert_eq!(ancestors.inspect_string(), "[Point, Object, Kernel, BasicObject]");
+        assert_eq!(
+            ancestors.inspect_string(),
+            "[Point, Object, Kernel, BasicObject]"
+        );
 
         // `.class` on a builtin value, and on an Object through `send`.
-        let five_class = send_value(&RubyValue::Int(5), Symbol::intern("class"), &[], None).unwrap();
+        let five_class =
+            send_value(&RubyValue::Int(5), Symbol::intern("class"), &[], None).unwrap();
         assert!(five_class.rb_eq(&RubyValue::Class(INTEGER_CLASS)));
-        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter { __frozen: Default::default(), __overflow: Default::default() }));
+        let g: RObj = Greeter::new_handle(std::sync::Arc::new(Greeter {
+            __frozen: Default::default(),
+            __overflow: Default::default(),
+        }));
         let g_class = send(&g, Symbol::intern("class"), &[], None).unwrap();
         assert!(g_class.rb_eq(&RubyValue::Class(Greeter::CLASS_ID)));
     }
@@ -792,13 +837,20 @@ mod tests {
         install();
         let point_class = RubyValue::Class(Point::CLASS_ID);
         let instance = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         })));
 
         assert!(point_class.rb_case_eq(&instance));
-        assert!(RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance), "ancestry, not identity");
-        assert!(!point_class.rb_case_eq(&point_class), "Widget === Widget is false");
+        assert!(
+            RubyValue::Class(Object::CLASS_ID).rb_case_eq(&instance),
+            "ancestry, not identity"
+        );
+        assert!(
+            !point_class.rb_case_eq(&point_class),
+            "Widget === Widget is false"
+        );
     }
 
     /// The NoMethodError message cites the registered class NAME (Phase
@@ -809,7 +861,8 @@ mod tests {
     fn no_method_error_names_the_real_class() {
         install();
         let p: RObj = Point::new_handle(std::sync::Arc::new(Point {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
             x: parking_lot::Mutex::new(RubyValue::Nil),
         }));
         let _ = send(&p, Symbol::intern("nope"), &[], None);
@@ -826,8 +879,7 @@ mod tests {
         assert!(lt.truthy());
         let gt = send(&a, Symbol::intern(">"), &[temp(70)], None).unwrap();
         assert!(!gt.truthy());
-        let between =
-            send(&a, Symbol::intern("between?"), &[temp(40), temp(60)], None).unwrap();
+        let between = send(&a, Symbol::intern("between?"), &[temp(40), temp(60)], None).unwrap();
         assert!(between.truthy());
 
         // clamp returns the BOUND when outside it, the receiver otherwise.
@@ -847,10 +899,12 @@ mod tests {
 
         // No `==`, no Comparable: reference identity (real `Object#==`).
         let g1 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
         })));
         let g2 = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
         })));
         assert!(g1.rb_eq(&g1.clone()));
         assert!(!g1.rb_eq(&g2));
@@ -864,7 +918,8 @@ mod tests {
     fn default_object_rendering_carries_class_and_address() {
         install();
         let g = RubyValue::Object(Greeter::new_handle(std::sync::Arc::new(Greeter {
-            __frozen: Default::default(), __overflow: Default::default(),
+            __frozen: Default::default(),
+            __overflow: Default::default(),
         })));
         let s = g.to_display_string();
         assert!(s.starts_with("#<Greeter:0x") && s.ends_with('>'), "got {s}");

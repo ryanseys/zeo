@@ -21,10 +21,10 @@
 
 use quote::{format_ident, quote};
 
+use super::Ctx;
 use super::expr::{box_if_object_typed, emit_expr};
 use super::ident::safe_ident;
-use super::Ctx;
-use crate::hir::{KwArg, HirNode, KeywordParam, NodeId, Params};
+use crate::hir::{HirNode, KeywordParam, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
 
 /// The callee's extra Rust fn parameters (after `&self`), one per `Params`
@@ -137,9 +137,10 @@ fn emit_destructures(cx: &Ctx, params: &Params) -> TokenStream {
 }
 
 pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
-    let optional = params.optional.iter().map(|(name, default)| {
-        emit_lazy_default_shadow(cx, name, *default)
-    });
+    let optional = params
+        .optional
+        .iter()
+        .map(|(name, default)| emit_lazy_default_shadow(cx, name, *default));
     let rest = params.rest.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
@@ -278,7 +279,10 @@ pub fn emit_call_args(
 /// generated `__self` first argument instead of a method receiver.
 pub enum Callee {
     Method(TokenStream),
-    FreeFn { path: TokenStream, recv: TokenStream },
+    FreeFn {
+        path: TokenStream,
+        recv: TokenStream,
+    },
     /// A receiverless free function -- a class method/module function
     /// (`Widget::create(...)`), which has no `self`/`__self` parameter.
     Bare(TokenStream),
@@ -403,7 +407,9 @@ pub fn emit_call_args_to(
     // `is_symbol_keys` check -- see `parse/mod.rs::lower_call_args`).
     // Post-routing, every kwarg here is a literal `Pair` -- `emit_call`'s
     // guard already sent any `**h` `DoubleSplat` to `emit_splat_call`.
-    let kw_temps: Vec<syn::Ident> = (0..kwargs.len()).map(|i| format_ident!("__kw{i}")).collect();
+    let kw_temps: Vec<syn::Ident> = (0..kwargs.len())
+        .map(|i| format_ident!("__kw{i}"))
+        .collect();
     let kw_lets: Vec<TokenStream> = kwargs
         .iter()
         .zip(&kw_temps)
@@ -424,7 +430,9 @@ pub fn emit_call_args_to(
             };
             match &cx.compiler.hir[*k] {
                 HirNode::SymbolLit(s) => s.clone(),
-                _ => panic!("`{method_name}`: keyword argument names must be literal symbols (spike scope)"),
+                _ => panic!(
+                    "`{method_name}`: keyword argument names must be literal symbols (spike scope)"
+                ),
             }
         })
         .collect();
@@ -754,7 +762,11 @@ pub fn emit_dynamic_trampoline(
     // when `needs_block` is false but ALSO named `_blk` there), matching
     // every other unused-parameter convention in this codebase and avoiding
     // a spurious unused-variable warning in the generated program.
-    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let blk_ident = if needs_block {
+        format_ident!("blk")
+    } else {
+        format_ident!("_blk")
+    };
     let block_arg = needs_block.then(|| quote! { blk, });
 
     quote! {
@@ -820,7 +832,11 @@ pub fn emit_value_trampoline(
         quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
     });
     let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
-    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let blk_ident = if needs_block {
+        format_ident!("blk")
+    } else {
+        format_ident!("_blk")
+    };
     let block_arg = needs_block.then(|| quote! { blk, });
     let (recv_ident, recv_arg) = match recv_mode {
         RecvMode::Pass => (format_ident!("recv"), Some(quote! { recv.clone(), })),
@@ -871,7 +887,11 @@ pub fn emit_exc_trampoline(
         quote! { args[(#nreq + __opt_bound)..(args.len() - #npost)].to_vec(), }
     });
     let post_args = (0..npost).map(|i| quote! { args[args.len() - #npost + #i].clone() });
-    let blk_ident = if needs_block { format_ident!("blk") } else { format_ident!("_blk") };
+    let blk_ident = if needs_block {
+        format_ident!("blk")
+    } else {
+        format_ident!("_blk")
+    };
     let block_arg = needs_block.then(|| quote! { blk, });
 
     quote! {
@@ -923,11 +943,7 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
         Some(_) => true,
         None => false,
     };
-    if positive {
-        min
-    } else {
-        -min - 1
-    }
+    if positive { min } else { -min - 1 }
 }
 
 /// `Proc#parameters` metadata: emits `vec![zeo_rt::ProcParamMeta::new(...)]`
@@ -1110,18 +1126,22 @@ pub fn emit_proc_param_bindings(
             let mut #ident: zeo_rt::RubyValue = __positional.get(#i).cloned().unwrap_or(zeo_rt::RubyValue::Nil);
         }
     });
-    let optional_lets = params.optional.iter().enumerate().map(|(i, (name, default))| {
-        let ident = safe_ident(name);
-        let default_expr = emit_expr(cx, *default);
-        quote! {
-            #[allow(unused_mut)]
-            let mut #ident: zeo_rt::RubyValue = if #i < __opt_bound {
-                __positional.get(#nreq + #i).cloned().unwrap_or(zeo_rt::RubyValue::Nil)
-            } else {
-                #default_expr
-            };
-        }
-    });
+    let optional_lets = params
+        .optional
+        .iter()
+        .enumerate()
+        .map(|(i, (name, default))| {
+            let ident = safe_ident(name);
+            let default_expr = emit_expr(cx, *default);
+            quote! {
+                #[allow(unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = if #i < __opt_bound {
+                    __positional.get(#nreq + #i).cloned().unwrap_or(zeo_rt::RubyValue::Nil)
+                } else {
+                    #default_expr
+                };
+            }
+        });
     let rest_let = params.rest.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
@@ -1316,8 +1336,6 @@ mod tests {
         block: bool,
     }
 
-    
-
     fn params(hir: &mut Hir, spec: Spec) -> Params {
         let mut p = Params::default();
         for i in 0..spec.req {
@@ -1359,44 +1377,272 @@ mod tests {
         // (spec, is_lambda, expected) -- the Ruby source each row mirrors
         // is named in the comment.
         let cases: Vec<(Spec, bool, i32, &str)> = vec![
-            (Spec { ..Default::default() }, false, 0, "proc {}"),
-            (Spec { req: 1, ..Default::default() }, false, 1, "proc { |a| }"),
-            (Spec { req: 2, ..Default::default() }, false, 2, "proc { |a, b| }"),
-            (Spec { req: 2, ..Default::default() }, true, 2, "->(a, b) {}"),
-            (Spec { ..Default::default() }, true, 0, "->() {}"),
-            (Spec { block: true, ..Default::default() }, true, 0, "->(&b) {}"),
+            (
+                Spec {
+                    ..Default::default()
+                },
+                false,
+                0,
+                "proc {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    ..Default::default()
+                },
+                false,
+                1,
+                "proc { |a| }",
+            ),
+            (
+                Spec {
+                    req: 2,
+                    ..Default::default()
+                },
+                false,
+                2,
+                "proc { |a, b| }",
+            ),
+            (
+                Spec {
+                    req: 2,
+                    ..Default::default()
+                },
+                true,
+                2,
+                "->(a, b) {}",
+            ),
+            (
+                Spec {
+                    ..Default::default()
+                },
+                true,
+                0,
+                "->() {}",
+            ),
+            (
+                Spec {
+                    block: true,
+                    ..Default::default()
+                },
+                true,
+                0,
+                "->(&b) {}",
+            ),
             // An optional/rest param makes a LAMBDA negative...
-            (Spec { req: 1, opt: 1, ..Default::default() }, true, -2, "->(a, b = 1) {}"),
-            (Spec { req: 1, opt: 2, ..Default::default() }, true, -2, "lambda { |a, b = 1, c = 2| }"),
+            (
+                Spec {
+                    req: 1,
+                    opt: 1,
+                    ..Default::default()
+                },
+                true,
+                -2,
+                "->(a, b = 1) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    opt: 2,
+                    ..Default::default()
+                },
+                true,
+                -2,
+                "lambda { |a, b = 1, c = 2| }",
+            ),
             // ...but a plain proc reports its MINIMUM instead (max is still
             // bounded, so no negation) -- the shape that makes the
             // lambda/proc distinction visible.
-            (Spec { req: 1, opt: 1, ..Default::default() }, false, 1, "proc { |a, b = 1| }"),
+            (
+                Spec {
+                    req: 1,
+                    opt: 1,
+                    ..Default::default()
+                },
+                false,
+                1,
+                "proc { |a, b = 1| }",
+            ),
             // A rest param is unbounded: negative for proc AND lambda.
-            (Spec { req: 1, rest: true, ..Default::default() }, false, -2, "proc { |a, *b| }"),
-            (Spec { rest: true, ..Default::default() }, false, -1, "proc { |*a| }"),
-            (Spec { req: 1, rest: true, ..Default::default() }, true, -2, "->(a, *b) {}"),
-            (Spec { req: 2, rest: true, ..Default::default() }, false, -3, "proc { |a, b, *c| }"),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    ..Default::default()
+                },
+                false,
+                -2,
+                "proc { |a, *b| }",
+            ),
+            (
+                Spec {
+                    rest: true,
+                    ..Default::default()
+                },
+                false,
+                -1,
+                "proc { |*a| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    ..Default::default()
+                },
+                true,
+                -2,
+                "->(a, *b) {}",
+            ),
+            (
+                Spec {
+                    req: 2,
+                    rest: true,
+                    ..Default::default()
+                },
+                false,
+                -3,
+                "proc { |a, b, *c| }",
+            ),
             // Post params are required: they count toward the minimum.
-            (Spec { req: 1, rest: true, post: 1, ..Default::default() }, true, -3, "->(a, *b, c) {}"),
-            (Spec { req: 1, rest: true, post: 2, ..Default::default() }, true, -4, "->(a, *b, c, d) {}"),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    post: 1,
+                    ..Default::default()
+                },
+                true,
+                -3,
+                "->(a, *b, c) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    post: 2,
+                    ..Default::default()
+                },
+                true,
+                -4,
+                "->(a, *b, c, d) {}",
+            ),
             // A REQUIRED keyword adds exactly one mandatory slot, however
             // many there are -- and keeps the count positive.
-            (Spec { req: 1, kw_required: 1, ..Default::default() }, true, 2, "->(a, b:) {}"),
-            (Spec { kw_required: 1, ..Default::default() }, true, 1, "->(b:) {}"),
-            (Spec { req: 1, kw_required: 2, ..Default::default() }, true, 2, "->(a, b:, c:) {}"),
-            (Spec { req: 1, kw_required: 1, kw_optional: 1, ..Default::default() }, true, 2, "->(a, b:, c: 1) {}"),
-            (Spec { req: 1, kw_required: 1, kwrest: true, ..Default::default() }, true, 2, "->(a, e:, **g) {}"),
-            (Spec { req: 1, kw_required: 1, ..Default::default() }, false, 2, "proc { |a, b:| }"),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 1,
+                    ..Default::default()
+                },
+                true,
+                2,
+                "->(a, b:) {}",
+            ),
+            (
+                Spec {
+                    kw_required: 1,
+                    ..Default::default()
+                },
+                true,
+                1,
+                "->(b:) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 2,
+                    ..Default::default()
+                },
+                true,
+                2,
+                "->(a, b:, c:) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 1,
+                    kw_optional: 1,
+                    ..Default::default()
+                },
+                true,
+                2,
+                "->(a, b:, c: 1) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 1,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                true,
+                2,
+                "->(a, e:, **g) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 1,
+                    ..Default::default()
+                },
+                false,
+                2,
+                "proc { |a, b:| }",
+            ),
             // An OPTIONAL keyword / **kwrest alone widens the maximum, so a
             // lambda goes negative while a proc reports its minimum.
-            (Spec { req: 1, kw_optional: 1, ..Default::default() }, true, -2, "->(a, b: 1) {}"),
-            (Spec { req: 1, kwrest: true, ..Default::default() }, true, -2, "->(a, **k) {}"),
-            (Spec { req: 1, kw_optional: 1, ..Default::default() }, false, 1, "proc { |a, b: 1| }"),
-            (Spec { req: 1, kwrest: true, ..Default::default() }, false, 1, "proc { |a, **k| }"),
+            (
+                Spec {
+                    req: 1,
+                    kw_optional: 1,
+                    ..Default::default()
+                },
+                true,
+                -2,
+                "->(a, b: 1) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                true,
+                -2,
+                "->(a, **k) {}",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_optional: 1,
+                    ..Default::default()
+                },
+                false,
+                1,
+                "proc { |a, b: 1| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                false,
+                1,
+                "proc { |a, **k| }",
+            ),
             // Everything at once.
             (
-                Spec { req: 1, opt: 1, rest: true, post: 1, kw_required: 1, kw_optional: 1, kwrest: true, block: true },
+                Spec {
+                    req: 1,
+                    opt: 1,
+                    rest: true,
+                    post: 1,
+                    kw_required: 1,
+                    kw_optional: 1,
+                    kwrest: true,
+                    block: true,
+                },
                 true,
                 -4,
                 "->(a, b = 1, *c, d, e:, f: 2, **g, &h) {}",
@@ -1419,45 +1665,226 @@ mod tests {
         let hir = &mut Hir::default();
         let cases: Vec<(Spec, bool, &str)> = vec![
             // Nothing positional to spread into.
-            (Spec { ..Default::default() }, false, "{ }"),
-            (Spec { rest: true, ..Default::default() }, false, "{ |*a| }"),
-            (Spec { rest: true, kwrest: true, ..Default::default() }, false, "{ |*a, **k| }"),
-            (Spec { kw_required: 1, ..Default::default() }, false, "{ |a:| }"),
+            (
+                Spec {
+                    ..Default::default()
+                },
+                false,
+                "{ }",
+            ),
+            (
+                Spec {
+                    rest: true,
+                    ..Default::default()
+                },
+                false,
+                "{ |*a| }",
+            ),
+            (
+                Spec {
+                    rest: true,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                false,
+                "{ |*a, **k| }",
+            ),
+            (
+                Spec {
+                    kw_required: 1,
+                    ..Default::default()
+                },
+                false,
+                "{ |a:| }",
+            ),
             // `ambiguous_param0`: exactly one lead and nothing else
             // positional. Keywords do NOT disturb the exemption.
-            (Spec { req: 1, ..Default::default() }, false, "{ |a| }"),
-            (Spec { req: 1, kwrest: true, ..Default::default() }, false, "{ |a, **k| }"),
-            (Spec { req: 1, kw_required: 1, ..Default::default() }, false, "{ |a, b:| }"),
+            (
+                Spec {
+                    req: 1,
+                    ..Default::default()
+                },
+                false,
+                "{ |a| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                false,
+                "{ |a, **k| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    kw_required: 1,
+                    ..Default::default()
+                },
+                false,
+                "{ |a, b:| }",
+            ),
             // A LONE optional is the `|a|` case by another spelling -- one
             // slot, no lead, so nothing forces a spread.
-            (Spec { opt: 1, ..Default::default() }, false, "{ |a = 9| }"),
+            (
+                Spec {
+                    opt: 1,
+                    ..Default::default()
+                },
+                false,
+                "{ |a = 9| }",
+            ),
             // The subtle one: one optional plus a rest still has no lead and
             // only one optional, so it does NOT splat -- unlike `|a, *b|`
             // just below, which is identical but for the lead. This pair is
             // why the rule can't be "count the positional slots".
-            (Spec { opt: 1, rest: true, ..Default::default() }, false, "{ |a = 5, *b| }"),
+            (
+                Spec {
+                    opt: 1,
+                    rest: true,
+                    ..Default::default()
+                },
+                false,
+                "{ |a = 5, *b| }",
+            ),
             // lead + post > 0 -> splats.
-            (Spec { req: 2, ..Default::default() }, true, "{ |a, b| }"),
-            (Spec { req: 2, kwrest: true, ..Default::default() }, true, "{ |a, b, **k| }"),
-            (Spec { req: 1, rest: true, ..Default::default() }, true, "{ |a, *b| }"),
-            (Spec { req: 1, opt: 1, ..Default::default() }, true, "{ |a, b = 5| }"),
-            (Spec { req: 1, rest: true, post: 1, ..Default::default() }, true, "{ |a, *b, c| }"),
-            (Spec { req: 1, post: 1, ..Default::default() }, true, "{ |a, (b)| }-shaped post"),
-            (Spec { rest: true, post: 1, ..Default::default() }, true, "{ |*a, b| }"),
-            (Spec { rest: true, post: 2, ..Default::default() }, true, "{ |*a, b, c| }"),
-            (Spec { opt: 1, rest: true, post: 1, ..Default::default() }, true, "{ |a = 5, *b, c| }"),
+            (
+                Spec {
+                    req: 2,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, b| }",
+            ),
+            (
+                Spec {
+                    req: 2,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, b, **k| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, *b| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    opt: 1,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, b = 5| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    post: 1,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, *b, c| }",
+            ),
+            (
+                Spec {
+                    req: 1,
+                    post: 1,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, (b)| }-shaped post",
+            ),
+            (
+                Spec {
+                    rest: true,
+                    post: 1,
+                    ..Default::default()
+                },
+                true,
+                "{ |*a, b| }",
+            ),
+            (
+                Spec {
+                    rest: true,
+                    post: 2,
+                    ..Default::default()
+                },
+                true,
+                "{ |*a, b, c| }",
+            ),
+            (
+                Spec {
+                    opt: 1,
+                    rest: true,
+                    post: 1,
+                    ..Default::default()
+                },
+                true,
+                "{ |a = 5, *b, c| }",
+            ),
             // opt > 1 -> splats, with no lead at all.
-            (Spec { opt: 2, ..Default::default() }, true, "{ |a = 5, b = 4| }"),
-            (Spec { opt: 2, kwrest: true, ..Default::default() }, true, "{ |a = 1, b = 2, **k| }"),
-            (Spec { opt: 2, rest: true, ..Default::default() }, true, "{ |a = 5, b = 4, *c| }"),
-            (Spec { opt: 3, ..Default::default() }, true, "{ |a = 1, b = 2, c = 3| }"),
+            (
+                Spec {
+                    opt: 2,
+                    ..Default::default()
+                },
+                true,
+                "{ |a = 5, b = 4| }",
+            ),
+            (
+                Spec {
+                    opt: 2,
+                    kwrest: true,
+                    ..Default::default()
+                },
+                true,
+                "{ |a = 1, b = 2, **k| }",
+            ),
+            (
+                Spec {
+                    opt: 2,
+                    rest: true,
+                    ..Default::default()
+                },
+                true,
+                "{ |a = 5, b = 4, *c| }",
+            ),
+            (
+                Spec {
+                    opt: 3,
+                    ..Default::default()
+                },
+                true,
+                "{ |a = 1, b = 2, c = 3| }",
+            ),
             // A trailing comma (`|a, |`) lowers to an anonymous rest, which
             // breaks the exemption exactly as `*b` does.
-            (Spec { req: 1, rest: true, ..Default::default() }, true, "{ |a, | }"),
+            (
+                Spec {
+                    req: 1,
+                    rest: true,
+                    ..Default::default()
+                },
+                true,
+                "{ |a, | }",
+            ),
         ];
         for (spec, expected, source) in cases {
             let p = params(hir, spec);
-            assert_eq!(auto_splats(&p), expected, "auto-splat of a block `{source}`");
+            assert_eq!(
+                auto_splats(&p),
+                expected,
+                "auto-splat of a block `{source}`"
+            );
         }
     }
 
@@ -1468,15 +1895,27 @@ mod tests {
     #[test]
     fn auto_splats_is_only_consulted_for_non_lambdas() {
         let hir = &mut Hir::default();
-        let p = params(hir, Spec { req: 2, ..Default::default() });
+        let p = params(
+            hir,
+            Spec {
+                req: 2,
+                ..Default::default()
+            },
+        );
         // The shape itself says "splat"...
         assert!(auto_splats(&p));
         // ...and `emit_proc_param_bindings` gates on `!is_lambda`, so the
         // emitted lambda body carries no auto-splat call at all.
         let cx_free = emit_proc_param_bindings_probe(&p, true);
-        assert!(!cx_free.contains("block_auto_splat"), "lambda body: {cx_free}");
+        assert!(
+            !cx_free.contains("block_auto_splat"),
+            "lambda body: {cx_free}"
+        );
         let proc_body = emit_proc_param_bindings_probe(&p, false);
-        assert!(proc_body.contains("block_auto_splat"), "proc body: {proc_body}");
+        assert!(
+            proc_body.contains("block_auto_splat"),
+            "proc body: {proc_body}"
+        );
     }
 
     /// `emit_proc_param_bindings` needs a `Ctx` (for default-value

@@ -14,12 +14,12 @@
 //! arbitrary bytes with an encoding.
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::{string_new, RubyValue};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::{RubyValue, string_new};
 use parking_lot::Mutex;
-use zeo_abi::STRINGIO_CLASS;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::STRINGIO_CLASS;
 
 struct State {
     bytes: Vec<u8>,
@@ -35,7 +35,11 @@ pub struct RStringIO {
 impl RStringIO {
     fn with_bytes(bytes: Vec<u8>) -> RStringIO {
         RStringIO {
-            state: Mutex::new(State { bytes, pos: 0, closed: false }),
+            state: Mutex::new(State {
+                bytes,
+                pos: 0,
+                closed: false,
+            }),
             frozen: AtomicBool::new(false),
         }
     }
@@ -394,7 +398,10 @@ mod tests {
         let io = new_m(&RubyValue::Nil, &[s("hello")], None).unwrap();
         assert_eq!(text(&read(&io, &[RubyValue::Int(3)], None).unwrap()), "hel");
         assert_eq!(text(&read(&io, &[], None).unwrap()), "lo");
-        assert!(matches!(eof(&io, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            eof(&io, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         rewind(&io, &[], None).unwrap();
         assert_eq!(text(&read(&io, &[], None).unwrap()), "hello");
     }

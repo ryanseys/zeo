@@ -55,22 +55,22 @@ fn math_arity(given: usize, expected: &str) -> Signal {
 /// `Math.instance_methods` / `include Math` name enumeration. Must mirror
 /// `math_call`'s match arms (the single dispatch source of truth).
 pub(crate) const NAMES: &[&str] = &[
-    "sqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh",
-    "tanh", "asinh", "acosh", "atanh", "exp", "log2", "log10", "log", "atan2",
-    "hypot", "frexp", "ldexp", "gamma", "lgamma", "erf", "erfc",
+    "sqrt", "cbrt", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh",
+    "acosh", "atanh", "exp", "log2", "log10", "log", "atan2", "hypot", "frexp", "ldexp", "gamma",
+    "lgamma", "erf", "erfc",
 ];
 
 /// One Math module function -- `None` when `name` isn't one (the caller
 /// falls to its NoMethodError path). Arity is validated per function.
 pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Signal>> {
-    fn unary(
-        args: &[RubyValue],
-        f: impl Fn(f64) -> f64,
-    ) -> Result<f64, Signal> {
+    fn unary(args: &[RubyValue], f: impl Fn(f64) -> f64) -> Result<f64, Signal> {
         if args.len() != 1 {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
-                format!("wrong number of arguments (given {}, expected 1)", args.len()),
+                format!(
+                    "wrong number of arguments (given {}, expected 1)",
+                    args.len()
+                ),
             ));
         }
         Ok(f(arg_f64(&args[0])?))
@@ -129,7 +129,10 @@ pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Sig
             if args.is_empty() || args.len() > 2 {
                 return Err(crate::dispatch::raise_error(
                     "ArgumentError",
-                    format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
+                    format!(
+                        "wrong number of arguments (given {}, expected 1..2)",
+                        args.len()
+                    ),
                 ));
             }
             let x = arg_f64(&args[0])?;
@@ -146,11 +149,18 @@ pub fn math_call(name: &str, args: &[RubyValue]) -> Option<Result<RubyValue, Sig
             if args.len() != 2 {
                 return Err(crate::dispatch::raise_error(
                     "ArgumentError",
-                    format!("wrong number of arguments (given {}, expected 2)", args.len()),
+                    format!(
+                        "wrong number of arguments (given {}, expected 2)",
+                        args.len()
+                    ),
                 ));
             }
             let (a, b) = (arg_f64(&args[0])?, arg_f64(&args[1])?);
-            Ok(if name == "atan2" { a.atan2(b) } else { a.hypot(b) })
+            Ok(if name == "atan2" {
+                a.atan2(b)
+            } else {
+                a.hypot(b)
+            })
         })(),
         "sinh" => unary(args, f64::sinh),
         "cosh" => unary(args, f64::cosh),
@@ -202,7 +212,10 @@ fn math_frexp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 
 /// A `[float, integer]` result pair (for `frexp`/`lgamma`).
 fn pair(value: f64, tag: i64) -> RubyValue {
-    RubyValue::Array(array_new(vec![RubyValue::Float(value), RubyValue::Int(tag)]))
+    RubyValue::Array(array_new(vec![
+        RubyValue::Float(value),
+        RubyValue::Int(tag),
+    ]))
 }
 
 /// `Math.lgamma(x) -> [log(|gamma(x)|), sign]` (`sign` is -1 or 1), matching
@@ -239,10 +252,18 @@ fn math_gamma(args: &[RubyValue]) -> Result<f64, Signal> {
     }
     let d = arg_f64(&args[0])?;
     if d.is_infinite() {
-        return if d < 0.0 { Err(domain_error("gamma")) } else { Ok(f64::INFINITY) };
+        return if d < 0.0 {
+            Err(domain_error("gamma"))
+        } else {
+            Ok(f64::INFINITY)
+        };
     }
     if d == 0.0 {
-        return Ok(if d.is_sign_negative() { f64::NEG_INFINITY } else { f64::INFINITY });
+        return Ok(if d.is_sign_negative() {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
     }
     if d == d.floor() {
         // Integer: negative is a pole -> DomainError; small positive -> exact (n-1)!.
@@ -260,10 +281,29 @@ fn math_gamma(args: &[RubyValue]) -> Result<f64, Signal> {
 /// verbatim, so gamma of small positive integers is bit-identical to Ruby's.
 /// (`23!` needs a 56-bit mantissa, so CRuby stops here and falls to `tgamma`.)
 const FACT_TABLE: [f64; 23] = [
-    1.0, 1.0, 2.0, 6.0, 24.0, 120.0, 720.0, 5040.0, 40320.0, 362880.0, 3628800.0,
-    39916800.0, 479001600.0, 6227020800.0, 87178291200.0, 1307674368000.0,
-    20922789888000.0, 355687428096000.0, 6402373705728000.0, 121645100408832000.0,
-    2432902008176640000.0, 51090942171709440000.0, 1124000727777607680000.0,
+    1.0,
+    1.0,
+    2.0,
+    6.0,
+    24.0,
+    120.0,
+    720.0,
+    5040.0,
+    40320.0,
+    362880.0,
+    3628800.0,
+    39916800.0,
+    479001600.0,
+    6227020800.0,
+    87178291200.0,
+    1307674368000.0,
+    20922789888000.0,
+    355687428096000.0,
+    6402373705728000.0,
+    121645100408832000.0,
+    2432902008176640000.0,
+    51090942171709440000.0,
+    1124000727777607680000.0,
 ];
 
 #[cfg(test)]
@@ -281,7 +321,10 @@ mod tests {
     fn functions_coerce_across_the_tower() {
         assert_eq!(f(math_call("sqrt", &[RubyValue::Int(4)])), 2.0);
         assert_eq!(f(math_call("log2", &[RubyValue::Int(8)])), 3.0);
-        assert_eq!(f(math_call("hypot", &[RubyValue::Int(3), RubyValue::Int(4)])), 5.0);
+        assert_eq!(
+            f(math_call("hypot", &[RubyValue::Int(3), RubyValue::Int(4)])),
+            5.0
+        );
         let quarter = crate::builtins::rational::rational_new(1.into(), 4.into()).unwrap();
         assert_eq!(f(math_call("sqrt", &[quarter])), 0.5);
         assert!(math_call("nope", &[]).is_none());

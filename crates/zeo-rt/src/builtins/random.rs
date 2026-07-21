@@ -5,15 +5,15 @@
 //! oracle tests assert reproducibility, ranges, and return types -- never exact
 //! values.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use num_bigint::BigInt;
 use num_traits::cast::FromPrimitive;
 use parking_lot::Mutex;
 
 use crate::builtins::integer::int_value;
-use crate::dispatch::{downcast_robj, raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, downcast_robj, raise_error};
 use crate::encoding::ASCII_8BIT;
 use crate::value::RubyValue;
 use crate::{ClassId, Signal};
@@ -109,9 +109,8 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
         Some(RubyValue::Int(n)) => Ok((scramble(*n as u64), RubyValue::Int(*n))),
         Some(RubyValue::BigInt(b)) => Ok((scramble_bigint(b), RubyValue::BigInt(b.clone()))),
         Some(RubyValue::Float(x)) => {
-            let truncated = BigInt::from_f64(x.trunc()).ok_or_else(|| {
-                raise_error("FloatDomainError", format!("{x}"))
-            })?;
+            let truncated = BigInt::from_f64(x.trunc())
+                .ok_or_else(|| raise_error("FloatDomainError", format!("{x}")))?;
             Ok((scramble_bigint(&truncated), int_value(truncated)))
         }
         Some(other) => Err(raise_error(
@@ -218,7 +217,9 @@ fn rand_range(
             if b < a || (b == a && exclusive) {
                 return Err(invalid());
             }
-            Ok(RubyValue::Float(a + to_unit_float(next_u64(state)) * (b - a)))
+            Ok(RubyValue::Float(
+                a + to_unit_float(next_u64(state)) * (b - a),
+            ))
         }
     }
 }
@@ -229,7 +230,10 @@ fn to_f64(v: &RubyValue) -> Result<f64, Signal> {
         RubyValue::Float(x) => Ok(*x),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Float",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -408,7 +412,10 @@ mod tests {
         let (w2, _) = seed_from(Some(&RubyValue::Float(2e300))).unwrap();
         assert_eq!(w1, w1b);
         assert_ne!(w1, w2);
-        assert!(matches!(s1, RubyValue::BigInt(_)), "seed reported as the truncated integer");
+        assert!(
+            matches!(s1, RubyValue::BigInt(_)),
+            "seed reported as the truncated integer"
+        );
         // 3.9 truncates to 3.
         let (_, small) = seed_from(Some(&RubyValue::Float(3.9))).unwrap();
         assert!(matches!(small, RubyValue::Int(3)));
@@ -418,7 +425,9 @@ mod tests {
     fn rand_no_argument_is_a_unit_float() {
         let r = r#gen(1);
         for _ in 0..100 {
-            let RubyValue::Float(f) = rand_with(&r.state, None).unwrap() else { panic!() };
+            let RubyValue::Float(f) = rand_with(&r.state, None).unwrap() else {
+                panic!()
+            };
             assert!((0.0..1.0).contains(&f));
         }
     }
@@ -438,7 +447,8 @@ mod tests {
     fn rand_float_bound_returns_a_float_in_range() {
         let r = r#gen(1);
         for _ in 0..100 {
-            let RubyValue::Float(f) = rand_with(&r.state, Some(&RubyValue::Float(20.43))).unwrap() else {
+            let RubyValue::Float(f) = rand_with(&r.state, Some(&RubyValue::Float(20.43))).unwrap()
+            else {
                 panic!("float bound must give a Float")
             };
             assert!((0.0..20.43).contains(&f));
@@ -454,7 +464,9 @@ mod tests {
             false,
         );
         for _ in 0..200 {
-            let RubyValue::Int(n) = rand_with(&r.state, Some(&range)).unwrap() else { panic!() };
+            let RubyValue::Int(n) = rand_with(&r.state, Some(&range)).unwrap() else {
+                panic!()
+            };
             assert!((5..=9).contains(&n));
         }
     }
@@ -493,7 +505,9 @@ mod tests {
 
     #[test]
     fn bytes_returns_the_requested_length() {
-        let RubyValue::Str(s) = random_bytes(&r#gen(1).state, 7) else { panic!() };
+        let RubyValue::Str(s) = random_bytes(&r#gen(1).state, 7) else {
+            panic!()
+        };
         assert_eq!(s.lock().bytesize(), 7);
     }
 }

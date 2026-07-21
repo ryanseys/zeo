@@ -21,9 +21,9 @@
 
 use quote::quote;
 
+use super::Ctx;
 use super::expr::{emit_expr, infer};
 use super::stmt::emit_body;
-use super::Ctx;
 use crate::hir::{MultiTarget, MultiTargetGroup, NodeId};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
@@ -42,7 +42,11 @@ pub(super) fn fresh_label(cx: &Ctx, tag: &str) -> Lifetime {
 /// construct below (and by `.times`'s block inlining in `codegen::call`).
 /// `loop_cx` must already carry this loop's own `(redo_label, outer_label)`
 /// pair (see `Ctx::loop_labels`).
-pub(super) fn emit_redo_wrapped_body(loop_cx: &Ctx, body: &[NodeId], redo_label: &Lifetime) -> TokenStream {
+pub(super) fn emit_redo_wrapped_body(
+    loop_cx: &Ctx,
+    body: &[NodeId],
+    redo_label: &Lifetime,
+) -> TokenStream {
     let body_val = emit_body(loop_cx, body, false);
     // `body_val` is a whole sequence of statements ending in a tail
     // expression, not one expression -- wrapped in its own `{ }` block (then
@@ -310,7 +314,10 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
         MultiTarget::ScopedConst { scope, name } => {
             super::expr::emit_const_write_stmt(cx, Some(scope), name, value)
         }
-        MultiTarget::Call { write_call, tmp_name } => {
+        MultiTarget::Call {
+            write_call,
+            tmp_name,
+        } => {
             let bind = super::hoisting::emit_local_write(cx, tmp_name, value);
             let call = emit_expr(cx, *write_call);
             quote! { #bind let _ = #call; }
@@ -328,7 +335,11 @@ pub fn emit_target_write(cx: &Ctx, target: &MultiTarget, value: TokenStream) -> 
 /// `emit_target_write`'s own storage-appropriate rules. See
 /// `zeo_rt::multi_assign`'s docs for the destructuring rules this
 /// implements.
-pub fn emit_multi_target_group(cx: &Ctx, group: &crate::hir::MultiTargetGroup, value_expr: TokenStream) -> TokenStream {
+pub fn emit_multi_target_group(
+    cx: &Ctx,
+    group: &crate::hir::MultiTargetGroup,
+    value_expr: TokenStream,
+) -> TokenStream {
     let n_before = group.before.len();
     let n_after = group.after.len();
     let has_splat = group.splat.is_some();

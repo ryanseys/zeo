@@ -17,10 +17,15 @@
 
 use crate::compiler::{ClassId, Compiler};
 use crate::hir::{ArrayElem, HirNode, NodeId, StrPart};
-use crate::types::{infer_type_with_locals, TyKind};
+use crate::types::{TyKind, infer_type_with_locals};
 use std::collections::{HashMap, HashSet};
 
-pub fn infer_locals(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, body: &[NodeId]) -> HashMap<String, TyKind> {
+pub fn infer_locals(
+    compiler: &Compiler,
+    defining: Option<ClassId>,
+    box_id: u32,
+    body: &[NodeId],
+) -> HashMap<String, TyKind> {
     let mut locals = HashMap::new();
     for &stmt in body {
         track_node(compiler, defining, box_id, &mut locals, stmt);
@@ -33,7 +38,13 @@ pub fn infer_locals(compiler: &Compiler, defining: Option<ClassId>, box_id: u32,
 /// `hir::Params`'s docs: a default can reference/assign a
 /// local exactly like an ordinary body statement can, and `infer_locals`
 /// alone never sees it (defaults aren't part of `body`).
-pub fn track_extra(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, locals: &mut HashMap<String, TyKind>, id: NodeId) {
+pub fn track_extra(
+    compiler: &Compiler,
+    defining: Option<ClassId>,
+    box_id: u32,
+    locals: &mut HashMap<String, TyKind>,
+    id: NodeId,
+) {
     track_node(compiler, defining, box_id, locals, id);
 }
 
@@ -42,7 +53,13 @@ pub fn track_extra(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, 
 /// assignment nested inside a call's receiver/args/block -- not just a
 /// bare top-level statement -- still updates the map before later
 /// statements read it.
-fn track_node(compiler: &Compiler, defining: Option<ClassId>, box_id: u32, locals: &mut HashMap<String, TyKind>, id: NodeId) {
+fn track_node(
+    compiler: &Compiler,
+    defining: Option<ClassId>,
+    box_id: u32,
+    locals: &mut HashMap<String, TyKind>,
+    id: NodeId,
+) {
     match &compiler.hir[id] {
         // An `attach_function` wrapper body (#204) assigns no locals -- it
         // reads only its own params -- so there is nothing to track.
@@ -412,7 +429,14 @@ fn merge_locals(maps: Vec<HashMap<String, TyKind>>) -> HashMap<String, TyKind> {
         .map(|key| {
             let first = maps[0].get(key).copied();
             let agrees = maps.iter().all(|m| m.get(key).copied() == first);
-            (key.clone(), if agrees { first.unwrap_or(TyKind::Poly) } else { TyKind::Poly })
+            (
+                key.clone(),
+                if agrees {
+                    first.unwrap_or(TyKind::Poly)
+                } else {
+                    TyKind::Poly
+                },
+            )
         })
         .collect()
 }
@@ -514,12 +538,18 @@ mod tests {
     /// `join_branches`.
     #[test]
     fn branch_disagreement_still_widens_to_poly() {
-        assert_eq!(ty_of("if true\n  x = 1\nelse\n  x = \"s\"\nend", "x"), TyKind::Poly);
+        assert_eq!(
+            ty_of("if true\n  x = 1\nelse\n  x = \"s\"\nend", "x"),
+            TyKind::Poly
+        );
     }
 
     #[test]
     fn branch_agreement_still_keeps_the_type() {
-        assert_eq!(ty_of("if true\n  x = 1\nelse\n  x = 2\nend", "x"), TyKind::Int);
+        assert_eq!(
+            ty_of("if true\n  x = 1\nelse\n  x = 2\nend", "x"),
+            TyKind::Int
+        );
     }
 
     /// An assignment nested inside a call's arguments still registers.

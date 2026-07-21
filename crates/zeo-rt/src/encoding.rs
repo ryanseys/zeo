@@ -286,7 +286,10 @@ impl StrBuf {
         std::str::from_utf8(&self.bytes).map_err(|_| {
             crate::dispatch::raise_error(
                 "Encoding::CompatibilityError",
-                format!("incompatible character encodings: {} and UTF-8", self.enc.name()),
+                format!(
+                    "incompatible character encodings: {} and UTF-8",
+                    self.enc.name()
+                ),
             )
         })
     }
@@ -465,11 +468,7 @@ impl StrBuf {
     /// `"abc"` one key across encodings while `"caf\xe9"` in UTF-8 vs
     /// Latin-1 are distinct keys.
     pub fn hash_key_tag(&self) -> u8 {
-        if self.ascii_only() {
-            0
-        } else {
-            self.enc.0 + 1
-        }
+        if self.ascii_only() { 0 } else { self.enc.0 + 1 }
     }
 
     /// One byte, or `None` past the end (`String#getbyte`).
@@ -558,7 +557,9 @@ pub fn inspect(buf: &StrBuf) -> String {
             for i in 0..bytes.len() {
                 let b = bytes[i];
                 if b < 0x80 {
-                    let next = bytes.get(i + 1).and_then(|&nb| (nb < 0x80).then_some(nb as char));
+                    let next = bytes
+                        .get(i + 1)
+                        .and_then(|&nb| (nb < 0x80).then_some(nb as char));
                     push_inspect_char(&mut out, b as char, next, false);
                 } else {
                     out.push_str(&format!("\\x{b:02X}"));
@@ -766,7 +767,9 @@ pub fn transcode(
                 } else {
                     return Err(TranscodeError::InvalidByteSequence(format!(
                         "\"{}\" on {}",
-                        raw.iter().map(|b| format!("\\x{b:02X}")).collect::<String>(),
+                        raw.iter()
+                            .map(|b| format!("\\x{b:02X}"))
+                            .collect::<String>(),
                         from.name()
                     )));
                 }
@@ -784,7 +787,10 @@ pub fn transcode(
                 let s = c.encode_utf8(&mut buf);
                 if let Some(f) = fallback.as_deref_mut() {
                     if let Some(rep) = f(s) {
-                        out.extend(rep.chars().flat_map(|c| encode_char(c, to).unwrap_or_default()));
+                        out.extend(
+                            rep.chars()
+                                .flat_map(|c| encode_char(c, to).unwrap_or_default()),
+                        );
                         continue;
                     }
                 }
@@ -903,17 +909,19 @@ fn case_bytes(bytes: &[u8], mode: CaseMode, fold: fn(u8, bool) -> u8) -> Vec<u8>
             .iter()
             .map(|b| {
                 let up = fold(*b, true);
-                if up != *b {
-                    up
-                } else {
-                    fold(*b, false)
-                }
+                if up != *b { up } else { fold(*b, false) }
             })
             .collect(),
         CaseMode::Cap => bytes
             .iter()
             .enumerate()
-            .map(|(i, b)| if i == 0 { fold(*b, true) } else { fold(*b, false) })
+            .map(|(i, b)| {
+                if i == 0 {
+                    fold(*b, true)
+                } else {
+                    fold(*b, false)
+                }
+            })
             .collect(),
     }
 }
@@ -991,8 +999,14 @@ mod tests {
 
     #[test]
     fn coderange_classifies_per_encoding() {
-        assert_eq!(StrBuf::from_utf8("abc".into()).coderange(), CodeRange::SevenBit);
-        assert_eq!(StrBuf::from_utf8("caf\u{e9}".into()).coderange(), CodeRange::Valid);
+        assert_eq!(
+            StrBuf::from_utf8("abc".into()).coderange(),
+            CodeRange::SevenBit
+        );
+        assert_eq!(
+            StrBuf::from_utf8("caf\u{e9}".into()).coderange(),
+            CodeRange::Valid
+        );
         // A lone 0xE9 is broken UTF-8 but a valid Latin-1 character.
         assert_eq!(
             StrBuf::from_bytes(vec![0xE9], UTF_8).coderange(),
@@ -1053,7 +1067,10 @@ mod tests {
 
     #[test]
     fn casing_is_encoding_aware() {
-        assert_eq!(StrBuf::from_utf8("caf\u{e9}".into()).upcased().bytes(), "CAF\u{c9}".as_bytes());
+        assert_eq!(
+            StrBuf::from_utf8("caf\u{e9}".into()).upcased().bytes(),
+            "CAF\u{c9}".as_bytes()
+        );
         // BINARY: only ASCII bytes fold; high bytes are untouched.
         let bin = StrBuf::from_bytes(vec![0x63, 0x61, 0x66, 0xC3, 0x89], ASCII_8BIT);
         assert_eq!(bin.upcased().bytes(), &[0x43, 0x41, 0x46, 0xC3, 0x89]);
@@ -1082,14 +1099,20 @@ mod tests {
             transcode("caf\u{e9}".as_bytes(), UTF_8, US_ASCII, &strict, None),
             Err(TranscodeError::UndefinedConversion(_))
         ));
-        let replace = TranscodeOptions { undef_replace: true, ..Default::default() };
+        let replace = TranscodeOptions {
+            undef_replace: true,
+            ..Default::default()
+        };
         let out = transcode("caf\u{e9}".as_bytes(), UTF_8, US_ASCII, &replace, None).unwrap();
         assert_eq!(out, b"caf?");
     }
 
     #[test]
     fn transcode_xml_text_escapes() {
-        let opts = TranscodeOptions { xml: Some(XmlMode::Text), ..Default::default() };
+        let opts = TranscodeOptions {
+            xml: Some(XmlMode::Text),
+            ..Default::default()
+        };
         let out = transcode(b"a<b>&c", UTF_8, US_ASCII, &opts, None).unwrap();
         assert_eq!(out, b"a&lt;b&gt;&amp;c");
     }
@@ -1098,7 +1121,10 @@ mod tests {
     fn inspect_escapes_invalid_and_high_bytes() {
         // Valid UTF-8: byte-identical to the old Debug quoting.
         assert_eq!(inspect(&StrBuf::from_utf8("a\nb".into())), r#""a\nb""#);
-        assert_eq!(inspect(&StrBuf::from_utf8("caf\u{e9}".into())), "\"caf\u{e9}\"");
+        assert_eq!(
+            inspect(&StrBuf::from_utf8("caf\u{e9}".into())),
+            "\"caf\u{e9}\""
+        );
         // A broken UTF-8 byte renders as \xNN.
         assert_eq!(
             inspect(&StrBuf::from_bytes(vec![0x61, 0xE9, 0x62], UTF_8)),
@@ -1106,7 +1132,10 @@ mod tests {
         );
         // A Latin-1 high byte renders as \xNN, not as its codepoint char.
         assert_eq!(
-            inspect(&StrBuf::from_bytes(vec![0x63, 0x61, 0x66, 0xE9], ISO_8859_1)),
+            inspect(&StrBuf::from_bytes(
+                vec![0x63, 0x61, 0x66, 0xE9],
+                ISO_8859_1
+            )),
             r#""caf\xE9""#
         );
     }
@@ -1130,7 +1159,14 @@ mod tests {
     fn transcode_fallback_consulted_first() {
         let opts = TranscodeOptions::default();
         let mut fb = |s: &str| (s == "\u{e9}").then(|| "e".to_string());
-        let out = transcode("caf\u{e9}".as_bytes(), UTF_8, US_ASCII, &opts, Some(&mut fb)).unwrap();
+        let out = transcode(
+            "caf\u{e9}".as_bytes(),
+            UTF_8,
+            US_ASCII,
+            &opts,
+            Some(&mut fb),
+        )
+        .unwrap();
         assert_eq!(out, b"cafe");
     }
 }

@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, compile_project};
+use crate::support::{compile_project, run_ruby};
 
 #[test]
 fn eval_can_write_an_ivar_on_self() {
@@ -419,7 +419,10 @@ fn class_shovel_self_attr_accessor_backs_onto_class_level_ivars() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "\"H\"\n\"helped\"\n\"default\"\n\"custom\"\n");
+    assert_eq!(
+        result.stdout,
+        "\"H\"\n\"helped\"\n\"default\"\n\"custom\"\n"
+    );
 }
 
 #[test]
@@ -800,10 +803,7 @@ fn module_metaprogramming_attr_class_eval_exec_and_invented_ivars() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "5\n[42, 63, \"n=21\"]\n10\n\"mm\"\n99\n"
-    );
+    assert_eq!(result.stdout, "5\n[42, 63, \"n=21\"]\n10\n\"mm\"\n99\n");
 }
 
 #[test]
@@ -1798,14 +1798,18 @@ fn singleton_methods_on_objects_constants_and_modules() {
 fn unsupported_constructs_in_a_runtime_class_body_are_rejected_not_panics() {
     for (body, want) in [
         ("include Greet", "`include` in the body of `class Foo`"),
-        ("y = 1", "local variable assignment in the body of `class Foo`"),
+        (
+            "y = 1",
+            "local variable assignment in the body of `class Foo`",
+        ),
     ] {
-        let src = format!(
-            "module Greet; end\ny = 99\nclass Foo < Struct.new(:a)\n  {body}\nend\n"
-        );
+        let src = format!("module Greet; end\ny = 99\nclass Foo < Struct.new(:a)\n  {body}\nend\n");
         let err = compile_project(&[("main.rb", src.as_str())], "main.rb", &[])
             .expect_err("expected a compile-time rejection");
-        assert!(err.contains(want), "expected `{want}` for `{body}`, got: {err}");
+        assert!(
+            err.contains(want),
+            "expected `{want}` for `{body}`, got: {err}"
+        );
     }
 }
 

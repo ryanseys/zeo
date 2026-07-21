@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
@@ -21,8 +21,14 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
         .expect("a pure-Ruby store gem resolves and compiles");
     let json = std::fs::read_to_string(&report).unwrap();
     let _ = std::fs::remove_file(&report);
-    assert!(json.contains(r#""purelib": {"by": "bundled-gem""#), "{json}");
-    assert!(json.contains(r#""nativelib": {"by": null, "excluded": "native-extension""#), "{json}");
+    assert!(
+        json.contains(r#""purelib": {"by": "bundled-gem""#),
+        "{json}"
+    );
+    assert!(
+        json.contains(r#""nativelib": {"by": null, "excluded": "native-extension""#),
+        "{json}"
+    );
     assert!(
         json.contains(r#""precompiled": {"by": null, "excluded": "precompiled-platform-gem""#),
         "{json}"
@@ -266,7 +272,10 @@ fn ffi_memory_pointer_reads_writes_and_arithmetic() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "10\n20\n30\n12\n[7, 8, 9]\nhi there\n9\n3.5\nIndexError\n");
+    assert_eq!(
+        result.stdout,
+        "10\n20\n30\n12\n[7, 8, 9]\nhi there\n9\n3.5\nIndexError\n"
+    );
 }
 
 /// FFI `:pointer` marshaling (#204 follow-on): a `MemoryPointer` passed to a C
@@ -363,5 +372,8 @@ fn ffi_struct_layout_fields_and_c_call() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "16\n8\n[:tv_sec, :tv_usec]\n123\n456\n24\n8\n16\ntrue\n");
+    assert_eq!(
+        result.stdout,
+        "16\n8\n[:tv_sec, :tv_usec]\n123\n456\n24\n8\n16\ntrue\n"
+    );
 }

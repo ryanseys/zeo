@@ -17,7 +17,7 @@
 
 use crate::builtins::{arity, builtin_methods};
 use crate::dispatch::raise_error;
-use crate::{string_new, RubyValue, Signal};
+use crate::{RubyValue, Signal, string_new};
 
 const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -120,8 +120,16 @@ fn encode(data: &[u8], alphabet: &[u8; 64]) -> String {
             | u32::from(*chunk.get(2).unwrap_or(&0));
         out.push(alphabet[(n >> 18) as usize & 63] as char);
         out.push(alphabet[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { alphabet[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { alphabet[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            alphabet[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            alphabet[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -178,8 +186,14 @@ mod tests {
     #[test]
     fn decode_variants_match_ruby() {
         assert_eq!(out(decode64(&RubyValue::Nil, &[s("YWJj\n")], None)), "abc");
-        assert_eq!(out(strict_decode64(&RubyValue::Nil, &[s("YWJj")], None)), "abc");
-        assert_eq!(out(urlsafe_decode64(&RubyValue::Nil, &[s("YWI")], None)), "ab");
+        assert_eq!(
+            out(strict_decode64(&RubyValue::Nil, &[s("YWJj")], None)),
+            "abc"
+        );
+        assert_eq!(
+            out(urlsafe_decode64(&RubyValue::Nil, &[s("YWI")], None)),
+            "ab"
+        );
     }
     // The `strict_decode64` raise path (now a rescuable ArgumentError, retiring
     // the native crate's panic) is covered by the e2e test -- `raise_error`

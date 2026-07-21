@@ -6,8 +6,8 @@
 //! `struct`/`class`/`module` being Rust keywords is why the two share this
 //! one file.
 
-use crate::builtins::{arity, builtin_methods};
 use crate::RubyValue;
+use crate::builtins::{arity, builtin_methods};
 
 fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     match recv {
@@ -24,22 +24,25 @@ fn method_defined_with_vis(
     want: crate::dispatch::MethodVisibility,
 ) -> Result<bool, crate::Signal> {
     let name = name_arg(arg)?;
-    let vis = crate::dispatch::instance_method_visibility(
-        recv_cid(recv),
-        crate::Symbol::intern(&name),
-    );
+    let vis =
+        crate::dispatch::instance_method_visibility(recv_cid(recv), crate::Symbol::intern(&name));
     Ok(vis == Some(want))
 }
 
 /// The optional `inherit` boolean of `instance_methods`/`methods` (default
 /// true) -- only an explicit `false`/`nil` narrows to own methods.
 fn inherit_flag(args: &[RubyValue]) -> bool {
-    !matches!(args.first(), Some(RubyValue::Bool(false)) | Some(RubyValue::Nil))
+    !matches!(
+        args.first(),
+        Some(RubyValue::Bool(false)) | Some(RubyValue::Nil)
+    )
 }
 
 /// A `Vec<Symbol>` as a Ruby Array of Symbols -- reflection's return shape.
 fn syms_to_array(names: Vec<crate::Symbol>) -> RubyValue {
-    RubyValue::Array(crate::array_new(names.into_iter().map(RubyValue::Symbol).collect()))
+    RubyValue::Array(crate::array_new(
+        names.into_iter().map(RubyValue::Symbol).collect(),
+    ))
 }
 
 builtin_methods! {
@@ -532,7 +535,7 @@ fn ivar_name_arg(v: &RubyValue) -> Result<String, crate::Signal> {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!("{} is not a symbol nor a string", v.inspect_string()),
-            ))
+            ));
         }
     };
     match raw.strip_prefix('@') {
@@ -640,19 +643,9 @@ mod tests {
     #[test]
     fn module_case_eq_checks_ancestry_registry_free() {
         // 5.class == Integer; Integer's fallback chain contains Numeric.
-        let r = case_eq(
-            &RubyValue::Class(NUMERIC_CLASS),
-            &[RubyValue::Int(5)],
-            None,
-        )
-        .unwrap();
+        let r = case_eq(&RubyValue::Class(NUMERIC_CLASS), &[RubyValue::Int(5)], None).unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
-        let r = case_eq(
-            &RubyValue::Class(STRING_CLASS),
-            &[RubyValue::Int(5)],
-            None,
-        )
-        .unwrap();
+        let r = case_eq(&RubyValue::Class(STRING_CLASS), &[RubyValue::Int(5)], None).unwrap();
         assert!(matches!(r, RubyValue::Bool(false)));
     }
 

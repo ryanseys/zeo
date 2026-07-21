@@ -19,13 +19,15 @@
 //! MonitorMixin` is therefore a loud `NameError` rather than a half-working
 //! mixin whose `@mon_data` is nil.
 
-use crate::builtins::{arity, builtin_methods, need_block};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::thread::{mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock, RMutex};
 use crate::RubyValue;
-use zeo_abi::MONITOR_CLASS;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::builtins::{arity, builtin_methods, need_block};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::thread::{
+    RMutex, mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
+};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use zeo_abi::MONITOR_CLASS;
 
 pub struct RMonitor {
     mutex: RMutex,

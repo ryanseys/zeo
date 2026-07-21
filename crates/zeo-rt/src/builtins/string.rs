@@ -204,15 +204,42 @@ fn dump_str(buf: &StrBuf) -> crate::collections::RStr {
                 out.push('#');
                 i += 1;
             }
-            b'\n' => { out.push_str("\\n"); i += 1; }
-            b'\r' => { out.push_str("\\r"); i += 1; }
-            b'\t' => { out.push_str("\\t"); i += 1; }
-            0x0C => { out.push_str("\\f"); i += 1; }
-            0x0B => { out.push_str("\\v"); i += 1; }
-            0x08 => { out.push_str("\\b"); i += 1; }
-            0x07 => { out.push_str("\\a"); i += 1; }
-            0x1B => { out.push_str("\\e"); i += 1; }
-            0x20..=0x7E => { out.push(c as char); i += 1; }
+            b'\n' => {
+                out.push_str("\\n");
+                i += 1;
+            }
+            b'\r' => {
+                out.push_str("\\r");
+                i += 1;
+            }
+            b'\t' => {
+                out.push_str("\\t");
+                i += 1;
+            }
+            0x0C => {
+                out.push_str("\\f");
+                i += 1;
+            }
+            0x0B => {
+                out.push_str("\\v");
+                i += 1;
+            }
+            0x08 => {
+                out.push_str("\\b");
+                i += 1;
+            }
+            0x07 => {
+                out.push_str("\\a");
+                i += 1;
+            }
+            0x1B => {
+                out.push_str("\\e");
+                i += 1;
+            }
+            0x20..=0x7E => {
+                out.push(c as char);
+                i += 1;
+            }
             _ => {
                 if u8enc && c > 0x7F {
                     if let Some((cp, len)) = decode_utf8_char(&bytes[i..]) {
@@ -381,14 +408,38 @@ fn undump_backslash(
             out.push(c);
             *i += 1;
         }
-        b'n' => { out.push(b'\n'); *i += 1; }
-        b'r' => { out.push(b'\r'); *i += 1; }
-        b't' => { out.push(b'\t'); *i += 1; }
-        b'f' => { out.push(0x0C); *i += 1; }
-        b'v' => { out.push(0x0B); *i += 1; }
-        b'b' => { out.push(0x08); *i += 1; }
-        b'a' => { out.push(0x07); *i += 1; }
-        b'e' => { out.push(0x1B); *i += 1; }
+        b'n' => {
+            out.push(b'\n');
+            *i += 1;
+        }
+        b'r' => {
+            out.push(b'\r');
+            *i += 1;
+        }
+        b't' => {
+            out.push(b'\t');
+            *i += 1;
+        }
+        b'f' => {
+            out.push(0x0C);
+            *i += 1;
+        }
+        b'v' => {
+            out.push(0x0B);
+            *i += 1;
+        }
+        b'b' => {
+            out.push(0x08);
+            *i += 1;
+        }
+        b'a' => {
+            out.push(0x07);
+            *i += 1;
+        }
+        b'e' => {
+            out.push(0x1B);
+            *i += 1;
+        }
         b'u' => {
             if *binary {
                 return Err(runtime_err("hex escape and Unicode escape are mixed"));
@@ -404,8 +455,13 @@ fn undump_backslash(
                 loop {
                     match bytes.get(*i) {
                         None => return Err(runtime_err("unterminated Unicode escape")),
-                        Some(b'}') => { *i += 1; break; }
-                        Some(c) if c.is_ascii_whitespace() => { *i += 1; }
+                        Some(b'}') => {
+                            *i += 1;
+                            break;
+                        }
+                        Some(c) if c.is_ascii_whitespace() => {
+                            *i += 1;
+                        }
                         _ => {
                             let (cp, hexlen) = scan_hex(&bytes[*i..], 7);
                             if hexlen == 0 || hexlen > 6 {
@@ -490,7 +546,9 @@ fn byte_rfind(hay: &[u8], needle: &[u8], before: usize) -> Option<usize> {
         return Some(before.min(hay.len()));
     }
     let last_start = before.min(hay.len().saturating_sub(needle.len()));
-    (0..=last_start).rev().find(|&i| hay[i..].starts_with(needle))
+    (0..=last_start)
+        .rev()
+        .find(|&i| hay[i..].starts_with(needle))
 }
 
 /// CRuby's `rb_str_modify` guard: a frozen receiver can't be mutated in place.
@@ -517,10 +575,10 @@ fn str_bang_replace(recv: &RubyValue, new_text: String) -> Result<RubyValue, Sig
     let s = recv_str!(recv);
     if s.is_frozen() {
         return Err(crate::dispatch::raise_error_details(
-                "FrozenError",
-                format!("can't modify frozen String: {}", recv.inspect_string()),
-                &[("receiver", recv.clone())],
-            ));
+            "FrozenError",
+            format!("can't modify frozen String: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
+        ));
     }
     let unchanged = s.lock().to_utf8_lossy() == new_text;
     if unchanged {
@@ -577,17 +635,21 @@ fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyVal
                 RubyValue::Int(ci) => {
                     // `regexp_*index` answers a CHAR index; recover the match's
                     // byte span by re-matching the whole string.
-                    let byte_start = text.char_indices().nth(ci as usize).map_or(text.len(), |(b, _)| b);
-                    match crate::regexp_match(re, &text[byte_start..]) { RubyValue::MatchData(m) => {
-                        let matched = crate::matchdata_group(&m, 0);
-                        let len = match &matched {
-                            RubyValue::Str(s) => s.lock().to_utf8_lossy().len(),
-                            _ => 0,
-                        };
-                        Some((byte_start, byte_start + len))
-                    } _ => {
-                        None
-                    }}
+                    let byte_start = text
+                        .char_indices()
+                        .nth(ci as usize)
+                        .map_or(text.len(), |(b, _)| b);
+                    match crate::regexp_match(re, &text[byte_start..]) {
+                        RubyValue::MatchData(m) => {
+                            let matched = crate::matchdata_group(&m, 0);
+                            let len = match &matched {
+                                RubyValue::Str(s) => s.lock().to_utf8_lossy().len(),
+                                _ => 0,
+                            };
+                            Some((byte_start, byte_start + len))
+                        }
+                        _ => None,
+                    }
                 }
                 _ => None,
             }
@@ -595,8 +657,11 @@ fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyVal
         other => {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("type mismatch: {} given", crate::builtins::class_name_of(other)),
-            ))
+                format!(
+                    "type mismatch: {} given",
+                    crate::builtins::class_name_of(other)
+                ),
+            ));
         }
     };
     Ok(match span {
@@ -605,14 +670,26 @@ fn str_partition(text: &str, sep: &RubyValue, from_end: bool) -> Result<[RubyVal
             str_value(text[start..end].to_string()),
             str_value(text[end..].to_string()),
         ],
-        None if from_end => [str_value(String::new()), str_value(String::new()), str_value(text.to_string())],
-        None => [str_value(text.to_string()), str_value(String::new()), str_value(String::new())],
+        None if from_end => [
+            str_value(String::new()),
+            str_value(String::new()),
+            str_value(text.to_string()),
+        ],
+        None => [
+            str_value(text.to_string()),
+            str_value(String::new()),
+            str_value(String::new()),
+        ],
     })
 }
 
 /// `String#[]`/`slice` with a Regexp: the whole match or a named/numbered
 /// capture group. `None` group arg means the whole match.
-fn regexp_index(re: &crate::RRegexp, text: &str, group: Option<&RubyValue>) -> Result<RubyValue, Signal> {
+fn regexp_index(
+    re: &crate::RRegexp,
+    text: &str,
+    group: Option<&RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::MatchData(m) = crate::regexp_match(re, text) else {
         return Ok(RubyValue::Nil);
     };
@@ -704,11 +781,7 @@ fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Si
             let end = match e.as_deref() {
                 Some(RubyValue::Int(v)) => {
                     let v = norm(*v);
-                    if *exclusive {
-                        v
-                    } else {
-                        v + 1
-                    }
+                    if *exclusive { v } else { v + 1 }
                 }
                 None => n,
                 _ => return Ok(RubyValue::Nil),
@@ -740,10 +813,10 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
     let handle = recv_str!(recv);
     if handle.is_frozen() {
         return Err(crate::dispatch::raise_error_details(
-                "FrozenError",
-                format!("can't modify frozen String: {}", recv.inspect_string()),
-                &[("receiver", recv.clone())],
-            ));
+            "FrozenError",
+            format!("can't modify frozen String: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
+        ));
     }
     let val = args.last().unwrap();
     let RubyValue::Str(repl) = val else {
@@ -837,7 +910,7 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
                         "no implicit conversion of {} into Integer",
                         crate::builtins::convert_name_of(other)
                     ),
-                ))
+                ));
             }
         }
     };
@@ -919,7 +992,7 @@ fn normalize_form(text: &str, form: Option<&RubyValue>) -> Result<String, Signal
                     "no implicit conversion of {} into String",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     Ok(match name.as_str() {
@@ -931,7 +1004,7 @@ fn normalize_form(text: &str, form: Option<&RubyValue>) -> Result<String, Signal
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
                 format!("Invalid normalization form {name}."),
-            ))
+            ));
         }
     })
 }
@@ -950,7 +1023,6 @@ fn find_subslice(haystack: &[char], needle: &[char]) -> Option<usize> {
     }
     haystack.windows(needle.len()).position(|w| w == needle)
 }
-
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -2518,7 +2590,11 @@ fn encode_impl(recv: &RubyValue, args: &[RubyValue], in_place: bool) -> Result<R
     let mut fb = fallback_val.as_ref().map(|fv| {
         move |c: &str| -> Option<String> {
             let key = RubyValue::Str(crate::string_new(c.to_string()));
-            let method = if matches!(fv, RubyValue::Hash(_)) { "[]" } else { "call" };
+            let method = if matches!(fv, RubyValue::Hash(_)) {
+                "[]"
+            } else {
+                "call"
+            };
             match crate::dispatch::send_value(fv, crate::Symbol::intern(method), &[key], None) {
                 Ok(v) if !v.is_nil() => Some(v.to_display_string()),
                 _ => None,
@@ -2530,7 +2606,8 @@ fn encode_impl(recv: &RubyValue, args: &[RubyValue], in_place: bool) -> Result<R
         from_enc,
         to_enc,
         &opts,
-        fb.as_mut().map(|f| f as &mut dyn FnMut(&str) -> Option<String>),
+        fb.as_mut()
+            .map(|f| f as &mut dyn FnMut(&str) -> Option<String>),
     )
     .map_err(|e| e.into_signal())?;
 
@@ -2579,7 +2656,10 @@ fn unpack_template(v: &RubyValue) -> Result<String, Signal> {
         RubyValue::Str(t) => Ok(t.lock().to_utf8_lossy().into_owned()),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -2603,7 +2683,9 @@ fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
 /// when past the end) -- bridges this runtime's char-indexed string API to
 /// Rust's byte-indexed slicing.
 fn byte_at_char(text: &str, char_idx: usize) -> usize {
-    text.char_indices().nth(char_idx).map_or(text.len(), |(b, _)| b)
+    text.char_indices()
+        .nth(char_idx)
+        .map_or(text.len(), |(b, _)| b)
 }
 
 /// Wraps a `Regexp` or `String` pattern argument as a compiled Regexp --
@@ -2627,7 +2709,10 @@ fn to_regexp(v: &RubyValue) -> Result<crate::regexp::RRegexp, Signal> {
 /// start position (char offset, end-relative when negative). `None` means
 /// the position lands outside the string -- the caller reports "no match"
 /// without running the engine.
-pub(crate) fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Option<String>, Signal> {
+pub(crate) fn match_haystack(
+    text: &str,
+    pos: Option<&RubyValue>,
+) -> Result<Option<String>, Signal> {
     let Some(v) = pos else {
         return Ok(Some(text.to_string()));
     };
@@ -2646,7 +2731,9 @@ pub(crate) fn match_haystack(text: &str, pos: Option<&RubyValue>) -> Result<Opti
 /// leading `^` negates (a bare `"^"` stays literal), `a-z` expands to a
 /// range. Zero arguments is CRuby's `ArgumentError`.
 #[allow(clippy::type_complexity)]
-fn charset_specs(args: &[RubyValue]) -> Result<Vec<(std::collections::HashSet<char>, bool)>, Signal> {
+fn charset_specs(
+    args: &[RubyValue],
+) -> Result<Vec<(std::collections::HashSet<char>, bool)>, Signal> {
     if args.is_empty() {
         return Err(crate::dispatch::raise_error(
             "ArgumentError",
@@ -2658,7 +2745,10 @@ fn charset_specs(args: &[RubyValue]) -> Result<Vec<(std::collections::HashSet<ch
             let RubyValue::Str(s) = a else {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(a)),
+                    format!(
+                        "no implicit conversion of {} into String",
+                        crate::builtins::convert_name_of(a)
+                    ),
                 ));
             };
             let spec = s.lock().to_utf8_lossy().into_owned();
@@ -2674,7 +2764,8 @@ fn charset_specs(args: &[RubyValue]) -> Result<Vec<(std::collections::HashSet<ch
 /// Whether `c` belongs to EVERY char-set spec (CRuby's intersection rule for
 /// the multi-argument `count`/`delete` forms).
 fn in_all_charsets(c: char, sets: &[(std::collections::HashSet<char>, bool)]) -> bool {
-    sets.iter().all(|(set, negated)| set.contains(&c) != *negated)
+    sets.iter()
+        .all(|(set, negated)| set.contains(&c) != *negated)
 }
 
 /// `split`'s whitespace (awk) mode: leading whitespace skipped, fields split
@@ -2685,7 +2776,11 @@ fn awk_split(text: &str, limit: i64) -> Vec<String> {
     let n = chars.len();
     // `limit == 1`: no splitting at all, the whole string is the one field.
     if limit == 1 {
-        return if n == 0 { Vec::new() } else { vec![text.to_string()] };
+        return if n == 0 {
+            Vec::new()
+        } else {
+            vec![text.to_string()]
+        };
     }
     let mut fields: Vec<String> = Vec::new();
     let mut i = 0;
@@ -2760,7 +2855,11 @@ fn lines_from_args(text: &str, args: &[RubyValue]) -> Vec<RubyValue> {
         .map(|l| {
             let cut = if chomp {
                 let l = l.strip_suffix(&sep).unwrap_or(l);
-                if sep == "\n" { l.strip_suffix('\r').unwrap_or(l) } else { l }
+                if sep == "\n" {
+                    l.strip_suffix('\r').unwrap_or(l)
+                } else {
+                    l
+                }
             } else {
                 l
             };
@@ -2821,9 +2920,8 @@ fn sub_gsub(
             // match up -- so it rides the existing block-substitution path.
             RubyValue::Hash(h) => {
                 let table = h.clone();
-                let p = crate::RProc::new(move |a: &[RubyValue]| {
-                    Ok(crate::hash_get(&table, &a[0]))
-                });
+                let p =
+                    crate::RProc::new(move |a: &[RubyValue]| Ok(crate::hash_get(&table, &a[0])));
                 if global {
                     crate::regexp_gsub_block(re, &text, &p)
                 } else {
@@ -2832,7 +2930,10 @@ fn sub_gsub(
             }
             other => Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+                format!(
+                    "no implicit conversion of {} into String",
+                    crate::builtins::convert_name_of(other)
+                ),
             )),
         },
         (RubyValue::Regexp(re), Some(p)) => {
@@ -2860,7 +2961,7 @@ fn sub_gsub(
                             "no implicit conversion of {} into String",
                             crate::builtins::convert_name_of(other)
                         ),
-                    ))
+                    ));
                 }
             };
             Ok(RubyValue::Str(crate::string_new(if global {
@@ -2980,17 +3081,28 @@ fn kw_unpack_offset(args: &[RubyValue], len: usize) -> Result<usize, Signal> {
     let off = match v {
         RubyValue::Nil => return Ok(0),
         RubyValue::Int(n) => n,
-        other => return Err(crate::dispatch::raise_error(
-            "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&other)),
-        )),
+        other => {
+            return Err(crate::dispatch::raise_error(
+                "TypeError",
+                format!(
+                    "no implicit conversion of {} into Integer",
+                    crate::builtins::convert_name_of(&other)
+                ),
+            ));
+        }
     };
     if off < 0 {
-        return Err(crate::dispatch::raise_error("ArgumentError", "offset can't be negative".to_string()));
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "offset can't be negative".to_string(),
+        ));
     }
     let off = off as usize;
     if off > len {
-        return Err(crate::dispatch::raise_error("ArgumentError", "offset outside of string".to_string()));
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "offset outside of string".to_string(),
+        ));
     }
     Ok(off)
 }
@@ -3064,7 +3176,14 @@ mod tests {
     #[test]
     fn slice_bang_removes_in_place_and_returns_the_slice() {
         let str = s("hello");
-        assert_eq!(show(slice_bang(&str, &[RubyValue::Int(1), RubyValue::Int(2)], None)), "\"el\"");
+        assert_eq!(
+            show(slice_bang(
+                &str,
+                &[RubyValue::Int(1), RubyValue::Int(2)],
+                None
+            )),
+            "\"el\""
+        );
         assert_eq!(str.to_display_string(), "hlo");
         let str2 = s("hello");
         assert_eq!(show(slice_bang(&str2, &[s("ll")], None)), "\"ll\"");
@@ -3073,20 +3192,40 @@ mod tests {
 
     #[test]
     fn split_empty_separator_yields_characters() {
-        assert_eq!(show(split(&s("hello"), &[s("")], None)), "[\"h\", \"e\", \"l\", \"l\", \"o\"]");
-        assert_eq!(show(split(&s("hello"), &[s(""), RubyValue::Int(2)], None)), "[\"h\", \"ello\"]");
+        assert_eq!(
+            show(split(&s("hello"), &[s("")], None)),
+            "[\"h\", \"e\", \"l\", \"l\", \"o\"]"
+        );
+        assert_eq!(
+            show(split(&s("hello"), &[s(""), RubyValue::Int(2)], None)),
+            "[\"h\", \"ello\"]"
+        );
     }
 
     #[test]
     fn index_with_regexp_and_group() {
-        let re = RubyValue::Regexp(crate::regexp_new("(\\w+) (\\w+)", false, false, false).unwrap());
-        assert_eq!(show(index_op(&s("hello world foo"), std::slice::from_ref(&re), None)), "\"hello world\"");
-        assert_eq!(show(index_op(&s("hello world"), &[re, RubyValue::Int(2)], None)), "\"world\"");
+        let re =
+            RubyValue::Regexp(crate::regexp_new("(\\w+) (\\w+)", false, false, false).unwrap());
+        assert_eq!(
+            show(index_op(
+                &s("hello world foo"),
+                std::slice::from_ref(&re),
+                None
+            )),
+            "\"hello world\""
+        );
+        assert_eq!(
+            show(index_op(&s("hello world"), &[re, RubyValue::Int(2)], None)),
+            "\"world\""
+        );
     }
 
     #[test]
     fn case_and_strip_families_match_the_oracle() {
-        assert_eq!(show(capitalize(&s("hello world"), &[], None)), "\"Hello world\"");
+        assert_eq!(
+            show(capitalize(&s("hello world"), &[], None)),
+            "\"Hello world\""
+        );
         assert_eq!(show(swapcase(&s("HeLLo"), &[], None)), "\"hEllO\"");
         assert_eq!(show(strip(&s("  hi  "), &[], None)), "\"hi\"");
         assert_eq!(show(lstrip(&s("  hi"), &[], None)), "\"hi\"");
@@ -3094,12 +3233,18 @@ mod tests {
 
     #[test]
     fn split_covers_the_three_separator_shapes() {
-        assert_eq!(show(split(&s("a b  c"), &[], None)), "[\"a\", \"b\", \"c\"]");
+        assert_eq!(
+            show(split(&s("a b  c"), &[], None)),
+            "[\"a\", \"b\", \"c\"]"
+        );
         assert_eq!(
             show(split(&s("a,b,,c"), &[s(",")], None)),
             "[\"a\", \"b\", \"\", \"c\"]"
         );
-        assert_eq!(show(split(&s("hello"), &[s("l")], None)), "[\"he\", \"\", \"o\"]");
+        assert_eq!(
+            show(split(&s("hello"), &[s("l")], None)),
+            "[\"he\", \"\", \"o\"]"
+        );
     }
 
     #[test]
@@ -3113,26 +3258,48 @@ mod tests {
 
     #[test]
     fn tr_expands_ranges_and_repeats_the_last_target() {
-        assert_eq!(show(tr(&s("hello"), &[s("el"), s("ip")], None)), "\"hippo\"");
-        assert_eq!(show(tr(&s("hello"), &[s("a-y"), s("b-z")], None)), "\"ifmmp\"");
+        assert_eq!(
+            show(tr(&s("hello"), &[s("el"), s("ip")], None)),
+            "\"hippo\""
+        );
+        assert_eq!(
+            show(tr(&s("hello"), &[s("a-y"), s("b-z")], None)),
+            "\"ifmmp\""
+        );
         assert_eq!(show(tr(&s("a-b_c"), &[s("-_"), s(" ")], None)), "\"a b c\"");
     }
 
     #[test]
     fn tr_duplicate_from_char_uses_the_last_mapping() {
         // CRuby: a char repeated in `from` takes its LAST corresponding `to`.
-        assert_eq!(show(tr(&s("a___b"), &[s("___"), s(".+-")], None)), "\"a---b\"");
-        assert_eq!(show(tr(&s("abcaa"), &[s("aa"), s("xy")], None)), "\"ybcyy\"");
+        assert_eq!(
+            show(tr(&s("a___b"), &[s("___"), s(".+-")], None)),
+            "\"a---b\""
+        );
+        assert_eq!(
+            show(tr(&s("abcaa"), &[s("aa"), s("xy")], None)),
+            "\"ybcyy\""
+        );
     }
 
     #[test]
     fn lenient_conversions_match_the_oracle() {
-        assert!(matches!(to_i(&s("42abc"), &[], None).unwrap(), RubyValue::Int(42)));
-        assert!(matches!(to_i(&s("abc"), &[], None).unwrap(), RubyValue::Int(0)));
-        assert!(matches!(to_i(&s("0x1A"), &[], None).unwrap(), RubyValue::Int(0)));
-        assert!(
-            matches!(to_i(&s("ff"), &[RubyValue::Int(16)], None).unwrap(), RubyValue::Int(255))
-        );
+        assert!(matches!(
+            to_i(&s("42abc"), &[], None).unwrap(),
+            RubyValue::Int(42)
+        ));
+        assert!(matches!(
+            to_i(&s("abc"), &[], None).unwrap(),
+            RubyValue::Int(0)
+        ));
+        assert!(matches!(
+            to_i(&s("0x1A"), &[], None).unwrap(),
+            RubyValue::Int(0)
+        ));
+        assert!(matches!(
+            to_i(&s("ff"), &[RubyValue::Int(16)], None).unwrap(),
+            RubyValue::Int(255)
+        ));
         assert!(
             matches!(to_f(&s("42.5xyz"), &[], None).unwrap(), RubyValue::Float(f) if f == 42.5)
         );
@@ -3140,9 +3307,16 @@ mod tests {
 
     #[test]
     fn indexing_forms_match_the_oracle() {
-        assert_eq!(show(index_op(&s("hello"), &[RubyValue::Int(1)], None)), "\"e\"");
         assert_eq!(
-            show(index_op(&s("hello"), &[RubyValue::Int(1), RubyValue::Int(3)], None)),
+            show(index_op(&s("hello"), &[RubyValue::Int(1)], None)),
+            "\"e\""
+        );
+        assert_eq!(
+            show(index_op(
+                &s("hello"),
+                &[RubyValue::Int(1), RubyValue::Int(3)],
+                None
+            )),
             "\"ell\""
         );
         let range = RubyValue::Range(
@@ -3151,13 +3325,22 @@ mod tests {
             false,
         );
         assert_eq!(show(index_op(&s("hello"), &[range], None)), "\"ell\"");
-        assert_eq!(show(index_op(&s("hello"), &[RubyValue::Int(99)], None)), "nil");
+        assert_eq!(
+            show(index_op(&s("hello"), &[RubyValue::Int(99)], None)),
+            "nil"
+        );
     }
 
     #[test]
     fn padding_and_charset_rows_match_the_oracle() {
-        assert_eq!(show(center(&s("hi"), &[RubyValue::Int(7), s("*")], None)), "\"**hi***\"");
-        assert_eq!(show(ljust(&s("hi"), &[RubyValue::Int(5), s(".")], None)), "\"hi...\"");
+        assert_eq!(
+            show(center(&s("hi"), &[RubyValue::Int(7), s("*")], None)),
+            "\"**hi***\""
+        );
+        assert_eq!(
+            show(ljust(&s("hi"), &[RubyValue::Int(5), s(".")], None)),
+            "\"hi...\""
+        );
         assert_eq!(show(delete(&s("hello"), &[s("l")], None)), "\"heo\"");
         assert_eq!(show(squeeze(&s("aabbcc"), &[], None)), "\"abc\"");
         assert_eq!(show(squeeze(&s("aabbcc"), &[s("a")], None)), "\"abbcc\"");

@@ -17,7 +17,7 @@
 use crate::builtins::{arity, builtin_methods};
 use crate::collections::{array_new, hash_new};
 use crate::dispatch::raise_error;
-use crate::{string_new, RubyValue, Signal};
+use crate::{RubyValue, Signal, string_new};
 
 /// `serde_json::Value` -> `RubyValue`. `symbolize` turns object keys into
 /// Symbols.
@@ -61,7 +61,9 @@ fn number_to_ruby(n: &serde_json::Number) -> RubyValue {
 
 /// Whether `symbolize_names: true` was passed as the trailing options Hash.
 fn symbolize_opt(opts: Option<&RubyValue>) -> bool {
-    let Some(RubyValue::Hash(h)) = opts else { return false };
+    let Some(RubyValue::Hash(h)) = opts else {
+        return false;
+    };
     let key = RubyValue::Symbol(crate::symbol::Symbol::intern("symbolize_names"));
     matches!(crate::collections::hash_get(h, &key), RubyValue::Bool(true))
 }
@@ -157,7 +159,10 @@ fn parse_text(v: &RubyValue) -> Result<String, Signal> {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -208,18 +213,21 @@ mod tests {
             RubyValue::Nil,
             RubyValue::Bool(true),
         ]));
-        let h = RubyValue::Hash(hash_new(vec![
-            (s("a"), RubyValue::Int(1)),
-            (s("b"), inner),
-        ]));
-        assert_eq!(t(generate(&RubyValue::Nil, &[h], None)), "{\"a\":1,\"b\":[2,3.5,null,true]}");
+        let h = RubyValue::Hash(hash_new(vec![(s("a"), RubyValue::Int(1)), (s("b"), inner)]));
+        assert_eq!(
+            t(generate(&RubyValue::Nil, &[h], None)),
+            "{\"a\":1,\"b\":[2,3.5,null,true]}"
+        );
     }
 
     #[test]
     fn pretty_generate_matches_ruby() {
         let h = RubyValue::Hash(hash_new(vec![
             (s("a"), RubyValue::Int(1)),
-            (s("b"), RubyValue::Array(array_new(vec![RubyValue::Int(2), RubyValue::Int(3)]))),
+            (
+                s("b"),
+                RubyValue::Array(array_new(vec![RubyValue::Int(2), RubyValue::Int(3)])),
+            ),
         ]));
         assert_eq!(
             t(pretty_generate(&RubyValue::Nil, &[h], None)),
@@ -229,10 +237,26 @@ mod tests {
 
     #[test]
     fn parse_roundtrips_types() {
-        let v = parse(&RubyValue::Nil, &[s(r#"{"a":1,"b":[2,3.5,null,true],"c":"x"}"#)], None).unwrap();
-        let RubyValue::Hash(h) = &v else { panic!("expected Hash") };
-        assert!(matches!(crate::collections::hash_get(h, &s("a")), RubyValue::Int(1)));
-        assert!(matches!(parse(&RubyValue::Nil, &[s("42")], None).unwrap(), RubyValue::Int(42)));
-        assert!(matches!(parse(&RubyValue::Nil, &[s("3.14")], None).unwrap(), RubyValue::Float(_)));
+        let v = parse(
+            &RubyValue::Nil,
+            &[s(r#"{"a":1,"b":[2,3.5,null,true],"c":"x"}"#)],
+            None,
+        )
+        .unwrap();
+        let RubyValue::Hash(h) = &v else {
+            panic!("expected Hash")
+        };
+        assert!(matches!(
+            crate::collections::hash_get(h, &s("a")),
+            RubyValue::Int(1)
+        ));
+        assert!(matches!(
+            parse(&RubyValue::Nil, &[s("42")], None).unwrap(),
+            RubyValue::Int(42)
+        ));
+        assert!(matches!(
+            parse(&RubyValue::Nil, &[s("3.14")], None).unwrap(),
+            RubyValue::Float(_)
+        ));
     }
 }

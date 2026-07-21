@@ -110,8 +110,11 @@ fn resolve_name(name: &str) -> Result<EncodingId, Signal> {
                 // Ruby returns nil for a nil default_internal via find, but
                 // `Encoding.find("internal")` specifically returns nil -- the
                 // caller handles that; here an unset one is "not found".
-                crate::dispatch::raise_error("ArgumentError", "unknown encoding name - internal".into())
-            })
+                crate::dispatch::raise_error(
+                    "ArgumentError",
+                    "unknown encoding name - internal".into(),
+                )
+            });
         }
         _ => {}
     }
@@ -324,7 +327,12 @@ mod tests {
 
     #[test]
     fn find_resolves_aliases() {
-        let found = find(&RubyValue::Class(ENCODING_CLASS), &[str_val("BINARY")], None).unwrap();
+        let found = find(
+            &RubyValue::Class(ENCODING_CLASS),
+            &[str_val("BINARY")],
+            None,
+        )
+        .unwrap();
         assert_eq!(recv_encoding(&found), encoding::ASCII_8BIT);
     }
 

@@ -37,7 +37,10 @@ pub fn rational_new(num: BigInt, den: BigInt) -> Result<RubyValue, Signal> {
         n = -n;
         d = -d;
     }
-    Ok(RubyValue::Rational(Arc::new(RRationalData { num: n, den: d })))
+    Ok(RubyValue::Rational(Arc::new(RRationalData {
+        num: n,
+        den: d,
+    })))
 }
 
 /// `String#to_r`'s lenient parse: a leading `[sign] digits [/ digits]` or
@@ -47,8 +50,14 @@ pub fn rational_new(num: BigInt, den: BigInt) -> Result<RubyValue, Signal> {
 pub fn parse_str_to_r(s: &str) -> (BigInt, BigInt) {
     let mut chars = s.trim_start().chars().peekable();
     let negative = match chars.peek() {
-        Some('+') => { chars.next(); false }
-        Some('-') => { chars.next(); true }
+        Some('+') => {
+            chars.next();
+            false
+        }
+        Some('-') => {
+            chars.next();
+            true
+        }
         _ => false,
     };
     let take_digits = |chars: &mut std::iter::Peekable<std::str::Chars>| {
@@ -66,23 +75,36 @@ pub fn parse_str_to_r(s: &str) -> (BigInt, BigInt) {
         d
     };
     let int_part = take_digits(&mut chars);
-    let sign = if negative { BigInt::from(-1) } else { BigInt::from(1) };
+    let sign = if negative {
+        BigInt::from(-1)
+    } else {
+        BigInt::from(1)
+    };
     let (num, den) = match chars.peek() {
         Some('/') => {
             chars.next();
             let den_digits = take_digits(&mut chars);
             let num = int_part.parse::<BigInt>().unwrap_or_default();
-            let den = den_digits.parse::<BigInt>().unwrap_or_else(|_| BigInt::from(1));
+            let den = den_digits
+                .parse::<BigInt>()
+                .unwrap_or_else(|_| BigInt::from(1));
             (num, den)
         }
         Some('.') => {
             chars.next();
             let frac = take_digits(&mut chars);
-            let combined = format!("{int_part}{frac}").parse::<BigInt>().unwrap_or_default();
-            let den = format!("1{}", "0".repeat(frac.len())).parse::<BigInt>().unwrap_or_else(|_| BigInt::from(1));
+            let combined = format!("{int_part}{frac}")
+                .parse::<BigInt>()
+                .unwrap_or_default();
+            let den = format!("1{}", "0".repeat(frac.len()))
+                .parse::<BigInt>()
+                .unwrap_or_else(|_| BigInt::from(1));
             (combined, den)
         }
-        _ => (int_part.parse::<BigInt>().unwrap_or_default(), BigInt::from(1)),
+        _ => (
+            int_part.parse::<BigInt>().unwrap_or_default(),
+            BigInt::from(1),
+        ),
     };
     (sign * num, den)
 }
@@ -110,7 +132,10 @@ pub(crate) fn as_ratio(v: &RubyValue) -> (BigInt, BigInt) {
         RubyValue::Int(i) => (BigInt::from(*i), BigInt::from(1)),
         RubyValue::BigInt(b) => ((**b).clone(), BigInt::from(1)),
         RubyValue::Rational(r) => (r.num.clone(), r.den.clone()),
-        other => panic!("expected an exact numeric, got {}", other.to_display_string()),
+        other => panic!(
+            "expected an exact numeric, got {}",
+            other.to_display_string()
+        ),
     }
 }
 
@@ -196,7 +221,9 @@ mod tests {
     }
 
     fn parts(v: &RubyValue) -> (i64, i64) {
-        let RubyValue::Rational(r) = v else { panic!("not a Rational") };
+        let RubyValue::Rational(r) = v else {
+            panic!("not a Rational")
+        };
         (r.num.to_i64().unwrap(), r.den.to_i64().unwrap())
     }
 
@@ -216,13 +243,22 @@ mod tests {
         assert_eq!(parts(&rat_mul(&rat(1, 2), &rat(2, 3)).unwrap()), (1, 3));
         assert_eq!(parts(&rat_div(&rat(1, 2), &rat(3, 4)).unwrap()), (2, 3));
         // Int lane lifts: (1/2) + 1 == (3/2)
-        assert_eq!(parts(&rat_add(&rat(1, 2), &RubyValue::Int(1)).unwrap()), (3, 2));
+        assert_eq!(
+            parts(&rat_add(&rat(1, 2), &RubyValue::Int(1)).unwrap()),
+            (3, 2)
+        );
     }
 
     #[test]
     fn pow_stays_exact_for_integer_exponents() {
-        assert_eq!(parts(&rat_pow(&rat(3, 4), &RubyValue::Int(2)).unwrap()), (9, 16));
-        assert_eq!(parts(&rat_pow(&rat(3, 4), &RubyValue::Int(-1)).unwrap()), (4, 3));
+        assert_eq!(
+            parts(&rat_pow(&rat(3, 4), &RubyValue::Int(2)).unwrap()),
+            (9, 16)
+        );
+        assert_eq!(
+            parts(&rat_pow(&rat(3, 4), &RubyValue::Int(-1)).unwrap()),
+            (4, 3)
+        );
         let r = rat_pow(&rat(4, 1), &RubyValue::Float(0.5)).unwrap();
         assert!(matches!(r, RubyValue::Float(f) if f == 2.0));
     }
@@ -231,7 +267,9 @@ mod tests {
     fn cmp_is_exact_and_rendering_matches() {
         assert_eq!(rat_cmp(&rat(1, 2), &rat(2, 3)), -1);
         assert_eq!(rat_cmp(&rat(1, 2), &rat(2, 4)), 0);
-        let RubyValue::Rational(r) = rat(-1, 2) else { panic!() };
+        let RubyValue::Rational(r) = rat(-1, 2) else {
+            panic!()
+        };
         assert_eq!(rat_to_s(&r), "-1/2");
     }
 }
@@ -290,14 +328,14 @@ fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], RoundMode), Sig
                 return Err(crate::dispatch::raise_error(
                     "ArgumentError",
                     format!("invalid rounding mode: {other}"),
-                ))
+                ));
             }
         },
         other => {
             return Err(crate::dispatch::raise_error(
                 "ArgumentError",
                 format!("invalid rounding mode: {}", other.inspect_string()),
-            ))
+            ));
         }
     };
     Ok((&args[..args.len() - 1], mode))
@@ -330,7 +368,11 @@ fn round_int(num: &BigInt, den: &BigInt, mode: RoundMode) -> BigInt {
                 std::cmp::Ordering::Less => k,
                 std::cmp::Ordering::Greater => k + BigInt::from(1),
                 std::cmp::Ordering::Equal => {
-                    if (&k % &two).is_zero() { k } else { k + BigInt::from(1) }
+                    if (&k % &two).is_zero() {
+                        k
+                    } else {
+                        k + BigInt::from(1)
+                    }
                 }
             };
             if num.is_negative() { -m } else { m }

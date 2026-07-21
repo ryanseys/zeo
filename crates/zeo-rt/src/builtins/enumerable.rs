@@ -129,31 +129,67 @@ pub(crate) fn enumerable_send(
 /// to `enumerable_send`'s match, which stays the single source of truth
 /// for what actually DISPATCHES; this list must mirror its arms.
 pub(crate) const NAMES: &[&str] = &[
-    "map", "collect",
-    "select", "filter", "find_all",
+    "map",
+    "collect",
+    "select",
+    "filter",
+    "find_all",
     "reject",
-    "to_a", "entries",
-    "include?", "member?",
+    "to_a",
+    "entries",
+    "include?",
+    "member?",
     "count",
-    "any?", "all?", "none?", "one?",
-    "find", "detect",
+    "any?",
+    "all?",
+    "none?",
+    "one?",
+    "find",
+    "detect",
     "first",
-    "reduce", "inject",
+    "reduce",
+    "inject",
     "each_with_index",
     "sum",
-    "min", "max",
-    "sort", "sort_by",
-    "min_by", "max_by", "minmax",
-    "group_by", "partition",
-    "flat_map", "collect_concat", "filter_map",
-    "each_slice", "each_cons", "each_with_object",
-    "take", "drop", "take_while", "drop_while",
+    "min",
+    "max",
+    "sort",
+    "sort_by",
+    "min_by",
+    "max_by",
+    "minmax",
+    "group_by",
+    "partition",
+    "flat_map",
+    "collect_concat",
+    "filter_map",
+    "each_slice",
+    "each_cons",
+    "each_with_object",
+    "take",
+    "drop",
+    "take_while",
+    "drop_while",
     "find_index",
-    "tally", "uniq", "to_h", "reverse_each",
-    "grep", "grep_v",
-    "chunk_while", "slice_when", "slice_before", "slice_after",
-    "minmax_by", "each_entry", "chunk", "lazy", "zip",
-    "compact", "cycle", "chain", "to_set",
+    "tally",
+    "uniq",
+    "to_h",
+    "reverse_each",
+    "grep",
+    "grep_v",
+    "chunk_while",
+    "slice_when",
+    "slice_before",
+    "slice_after",
+    "minmax_by",
+    "each_entry",
+    "chunk",
+    "lazy",
+    "zip",
+    "compact",
+    "cycle",
+    "chain",
+    "to_set",
 ];
 
 pub(crate) fn responds(name: &str) -> bool {
@@ -167,12 +203,12 @@ pub(crate) fn responds(name: &str) -> bool {
 /// (`Enumerable.instance_method(name).arity`).
 pub(crate) fn arity(name: &str) -> Option<i64> {
     Some(match name {
-        "map" | "collect" | "select" | "filter" | "find_all" | "reject" | "sort"
-        | "sort_by" | "minmax" | "group_by" | "partition" | "flat_map"
-        | "collect_concat" | "filter_map" | "take_while" | "drop_while" | "uniq"
-        | "chunk_while" | "slice_when" | "minmax_by" | "chunk" | "lazy" | "compact" => 0,
-        "include?" | "member?" | "each_slice" | "each_cons" | "each_with_object"
-        | "take" | "drop" | "grep" | "grep_v" => 1,
+        "map" | "collect" | "select" | "filter" | "find_all" | "reject" | "sort" | "sort_by"
+        | "minmax" | "group_by" | "partition" | "flat_map" | "collect_concat" | "filter_map"
+        | "take_while" | "drop_while" | "uniq" | "chunk_while" | "slice_when" | "minmax_by"
+        | "chunk" | "lazy" | "compact" => 0,
+        "include?" | "member?" | "each_slice" | "each_cons" | "each_with_object" | "take"
+        | "drop" | "grep" | "grep_v" => 1,
         _ => return None,
     })
 }
@@ -266,7 +302,11 @@ fn reject_args(args: &[RubyValue], method: &str, what: &str) {
 
 /// map/collect: the user block receives the RAW yielded values
 /// (`rb_yield_values2`, enum.c:631-633); results collect into an Array.
-fn map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn map(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "map", "arguments");
     let blk = block_or_enum!(recv, "map", args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
@@ -421,7 +461,7 @@ fn cycle(
                     "no implicit conversion of {} into Integer",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     let p = block_or_enum!(recv, "cycle", args, block);
@@ -472,7 +512,11 @@ fn include(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// 1-arg counts `==` matches (arg + block: the arg wins, block ignored --
 /// CRuby warns "given block not used", enum.c:320). Always iterates
 /// (Enumerable#count has no size fast path -- enum.c:302-328).
-fn count(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn count(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let n = Arc::new(Mutex::new(0i64));
     let n2 = n.clone();
     let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -615,7 +659,11 @@ fn any_all(
 /// The optional `ifnone` callable argument is invoked (with no arguments) only
 /// when NO element matches, and its result becomes the answer; a match --
 /// including a `nil` element -- ignores it. With no `ifnone` and no match, nil.
-fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn find(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let ifnone = args.first().cloned();
     let blk = block_or_enum!(recv, "find", &[], block);
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
@@ -697,7 +745,11 @@ fn first(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// first element seeds the accumulator WITHOUT invoking the block; empty
 /// with no init -> nil. The block is always called with exactly
 /// `(acc, packed_element)`.
-fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn reduce(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     enum Step {
         Block(RProc),
         Op(Symbol),
@@ -709,7 +761,9 @@ fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
         (1, Some(RubyValue::Proc(p))) => (Some(args[0].clone()), Step::Block(p.clone())),
         (1, None) => match &args[0] {
             RubyValue::Symbol(op) => (None, Step::Op(*op)),
-            _ => panic!("Enumerable#reduce: a single non-Symbol argument needs a block (the argument is the initial value)"),
+            _ => panic!(
+                "Enumerable#reduce: a single non-Symbol argument needs a block (the argument is the initial value)"
+            ),
         },
         (2, _) => match &args[1] {
             RubyValue::Symbol(op) => (Some(args[0].clone()), Step::Op(*op)),
@@ -758,7 +812,11 @@ fn each_with_index(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    reject_args(args, "each_with_index", "arguments (forwarding them to #each)");
+    reject_args(
+        args,
+        "each_with_index",
+        "arguments (forwarding them to #each)",
+    );
     let blk = block_or_enum!(recv, "each_with_index", args, block);
     let idx = Arc::new(Mutex::new(0i64));
     let idx2 = idx.clone();
@@ -786,7 +844,11 @@ fn each_with_index(
 /// algorithm), and to generic `+` dispatch on the first non-numeric
 /// (sticking there). The optional block is applied to the PACKED element
 /// (single argument -- `rb_yield(i)`, enum.c:4712-4746).
-fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn sum(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     enum Acc {
         Int(i64),
         Float { sum: f64, compensation: f64 },
@@ -797,13 +859,18 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
             Ok(match (self, v) {
                 (Acc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {
                     Some(n) => Acc::Int(n),
-                    None => panic!("integer overflow in Enumerable#sum (Bignum isn't supported, spike scope)"),
+                    None => panic!(
+                        "integer overflow in Enumerable#sum (Bignum isn't supported, spike scope)"
+                    ),
                 },
                 (Acc::Int(a), RubyValue::Float(b)) => Acc::Float {
                     sum: a as f64 + b,
                     compensation: 0.0,
                 },
-                (Acc::Float { sum, compensation }, v @ (RubyValue::Int(_) | RubyValue::Float(_))) => {
+                (
+                    Acc::Float { sum, compensation },
+                    v @ (RubyValue::Int(_) | RubyValue::Float(_)),
+                ) => {
                     let x = match v {
                         RubyValue::Int(i) => i as f64,
                         RubyValue::Float(f) => f,
@@ -817,11 +884,17 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
                     } else {
                         compensation + ((x - t) + sum)
                     };
-                    Acc::Float { sum: t, compensation }
+                    Acc::Float {
+                        sum: t,
+                        compensation,
+                    }
                 }
-                (Acc::Int(a), other) => {
-                    Acc::Generic(send_value(&RubyValue::Int(a), Symbol::intern("+"), &[other], None)?)
-                }
+                (Acc::Int(a), other) => Acc::Generic(send_value(
+                    &RubyValue::Int(a),
+                    Symbol::intern("+"),
+                    &[other],
+                    None,
+                )?),
                 (Acc::Float { sum, compensation }, other) => Acc::Generic(send_value(
                     &RubyValue::Float(sum + compensation),
                     Symbol::intern("+"),
@@ -848,7 +921,10 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
     };
     let acc = Arc::new(Mutex::new(Some(match init {
         RubyValue::Int(n) => Acc::Int(n),
-        RubyValue::Float(f) => Acc::Float { sum: f, compensation: 0.0 },
+        RubyValue::Float(f) => Acc::Float {
+            sum: f,
+            compensation: 0.0,
+        },
         other => Acc::Generic(other),
     })));
     let blk = match block {
@@ -866,7 +942,11 @@ fn sum(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
         *acc2.lock() = Some(next);
         Ok(RubyValue::Nil)
     })?;
-    let result = acc.lock().take().expect("accumulator always present").finish();
+    let result = acc
+        .lock()
+        .take()
+        .expect("accumulator always present")
+        .finish();
     Ok(result)
 }
 
@@ -941,11 +1021,7 @@ fn min_max(
                     }
                     None => crate::value::cmp_or_raise(&elem, b.as_ref().expect("checked Some"))?,
                 };
-                if want_min {
-                    ord < 0
-                } else {
-                    ord > 0
-                }
+                if want_min { ord < 0 } else { ord > 0 }
             }
         };
         if replace {
@@ -983,17 +1059,28 @@ fn collect_elements(recv: &RubyValue) -> Result<Vec<Element>, Signal> {
 }
 
 fn collect_packed(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
-    Ok(collect_elements(recv)?.into_iter().map(|e| e.packed).collect())
+    Ok(collect_elements(recv)?
+        .into_iter()
+        .map(|e| e.packed)
+        .collect())
 }
 
-fn sort(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn sort(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "sort", "arguments");
     let mut items = collect_packed(recv)?;
     crate::builtins::array::sort_items(&mut items, &block)?;
     Ok(RubyValue::Array(array_new(items)))
 }
 
-fn sort_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn sort_by(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "sort_by", "arguments");
     let blk = block_or_enum!(recv, "sort_by", args, block);
     let items = collect_elements(recv)?;
@@ -1050,7 +1137,7 @@ fn min_max_by(
                     "no implicit conversion of {} into Integer",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     let blk = block_or_enum!(recv, name, &[], block);
@@ -1066,7 +1153,9 @@ fn min_max_by(
         // order-unspecified in CRuby (a heap), and the corpus uses distinct
         // keys, so a stable sort on the comparison is faithful enough.
         keyed.sort_by(|a, b| {
-            let ord = a.0.rb_cmp(&b.0).map_or(std::cmp::Ordering::Equal, |c| c.cmp(&0));
+            let ord =
+                a.0.rb_cmp(&b.0)
+                    .map_or(std::cmp::Ordering::Equal, |c| c.cmp(&0));
             if min { ord } else { ord.reverse() }
         });
         let out = keyed.into_iter().take(n).map(|(_, e)| e).collect();
@@ -1091,14 +1180,22 @@ fn min_max_by(
     Ok(best.map(|(_, e)| e).unwrap_or(RubyValue::Nil))
 }
 
-fn minmax(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn minmax(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "minmax", "arguments");
     let lo = min_max(recv, &[], block.clone(), true)?;
     let hi = min_max(recv, &[], block, false)?;
     Ok(RubyValue::Array(array_new(vec![lo, hi])))
 }
 
-fn group_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn group_by(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "group_by", "arguments");
     let blk = block_or_enum!(recv, "group_by", args, block);
     let items = collect_elements(recv)?;
@@ -1119,7 +1216,11 @@ fn group_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
     Ok(RubyValue::Hash(groups))
 }
 
-fn partition(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn partition(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "partition", "arguments");
     let blk = block_or_enum!(recv, "partition", args, block);
     let items = collect_elements(recv)?;
@@ -1137,7 +1238,11 @@ fn partition(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
     ])))
 }
 
-fn flat_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn flat_map(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "flat_map", "arguments");
     let blk = block_or_enum!(recv, "flat_map", args, block);
     let items = collect_elements(recv)?;
@@ -1152,7 +1257,11 @@ fn flat_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> R
     Ok(RubyValue::Array(array_new(out)))
 }
 
-fn filter_map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn filter_map(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "filter_map", "arguments");
     let blk = block_or_enum!(recv, "filter_map", args, block);
     let items = collect_elements(recv)?;
@@ -1173,13 +1282,24 @@ fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
     if *n < 1 {
         // CRuby names it differently per method: `each_slice` says "invalid
         // slice size", `each_cons` (and the rest) just "invalid size".
-        let msg = if method == "each_slice" { "invalid slice size" } else { "invalid size" };
-        return Err(crate::dispatch::raise_error("ArgumentError", msg.to_string()));
+        let msg = if method == "each_slice" {
+            "invalid slice size"
+        } else {
+            "invalid size"
+        };
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            msg.to_string(),
+        ));
     }
     Ok(*n as usize)
 }
 
-fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn each_slice(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let n = slice_size(args, "each_slice")?;
     let blk = block_or_enum!(recv, "each_slice", args, block);
     let items = collect_packed(recv)?;
@@ -1190,7 +1310,11 @@ fn each_slice(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
     Ok(recv.clone())
 }
 
-fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn each_cons(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let n = slice_size(args, "each_cons")?;
     let blk = block_or_enum!(recv, "each_cons", args, block);
     let items = collect_packed(recv)?;
@@ -1203,7 +1327,11 @@ fn each_cons(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> 
     Ok(recv.clone())
 }
 
-fn each_with_object(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn each_with_object(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     if args.len() != 1 {
         panic!("Enumerable#each_with_object takes exactly one argument");
     }
@@ -1260,8 +1388,17 @@ fn take_drop_while(
     block: Option<RubyValue>,
     take: bool,
 ) -> Result<RubyValue, Signal> {
-    reject_args(args, if take { "take_while" } else { "drop_while" }, "arguments");
-    let blk = block_or_enum!(recv, if take { "take_while" } else { "drop_while" }, args, block);
+    reject_args(
+        args,
+        if take { "take_while" } else { "drop_while" },
+        "arguments",
+    );
+    let blk = block_or_enum!(
+        recv,
+        if take { "take_while" } else { "drop_while" },
+        args,
+        block
+    );
     let items = collect_elements(recv)?;
     let mut boundary = items.len();
     for (i, e) in items.iter().enumerate() {
@@ -1292,7 +1429,7 @@ fn tally(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
                     "no implicit conversion of {} into Hash",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     let items = collect_packed(recv)?;
@@ -1318,7 +1455,11 @@ fn uniq(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Array(array_new(out)))
 }
 
-fn enum_to_h(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn enum_to_h(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "to_h", "arguments");
     let items = collect_elements(recv)?;
     let pairs = to_h_pairs(items.iter().map(|e| (e.raw.as_slice(), &e.packed)), &block)?;
@@ -1363,7 +1504,11 @@ pub(crate) fn to_h_pairs<'a>(
     Ok(pairs)
 }
 
-fn reverse_each(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn reverse_each(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "reverse_each", "arguments");
     let blk = block_or_enum!(recv, "reverse_each", args, block);
     let items = collect_elements(recv)?;
@@ -1406,10 +1551,13 @@ fn enum_find_index(
 /// (==), and every one of those already has its own row. A user class's
 /// own `def ===` works for free for the same reason.
 fn case_eq(pattern: &RubyValue, value: &RubyValue) -> Result<bool, Signal> {
-    Ok(
-        send_value(pattern, Symbol::intern("==="), std::slice::from_ref(value), None)?
-            .truthy(),
-    )
+    Ok(send_value(
+        pattern,
+        Symbol::intern("==="),
+        std::slice::from_ref(value),
+        None,
+    )?
+    .truthy())
 }
 
 /// `grep(pattern)` / `grep(pattern) { |e| ... }` and their `grep_v`
@@ -1471,14 +1619,20 @@ fn chunk(
         let same = cur_key.as_ref().is_some_and(|k| k.rb_eq(&key));
         if !same {
             if let Some(k) = cur_key.take() {
-                out.push(RubyValue::Array(array_new(vec![k, RubyValue::Array(array_new(std::mem::take(&mut cur)))])));
+                out.push(RubyValue::Array(array_new(vec![
+                    k,
+                    RubyValue::Array(array_new(std::mem::take(&mut cur))),
+                ])));
             }
             cur_key = Some(key);
         }
         cur.push(e);
     }
     if let Some(k) = cur_key {
-        out.push(RubyValue::Array(array_new(vec![k, RubyValue::Array(array_new(cur))])));
+        out.push(RubyValue::Array(array_new(vec![
+            k,
+            RubyValue::Array(array_new(cur)),
+        ])));
     }
     Ok(RubyValue::Array(array_new(out)))
 }
@@ -1523,7 +1677,11 @@ fn slice_before_after(
     block: Option<RubyValue>,
     before: bool,
 ) -> Result<RubyValue, Signal> {
-    let name = if before { "slice_before" } else { "slice_after" };
+    let name = if before {
+        "slice_before"
+    } else {
+        "slice_after"
+    };
     let mut out: Vec<RubyValue> = Vec::new();
     let mut cur: Vec<RubyValue> = Vec::new();
     // Exactly one of a pattern argument or a block, real Ruby's own rule.
@@ -1535,7 +1693,11 @@ fn slice_before_after(
         }
         (0, Some(b)) => {
             let b = b.clone();
-            Box::new(move |e: &RubyValue| Ok(b.as_proc_unchecked().call(std::slice::from_ref(e))?.truthy()))
+            Box::new(move |e: &RubyValue| {
+                Ok(b.as_proc_unchecked()
+                    .call(std::slice::from_ref(e))?
+                    .truthy())
+            })
         }
         _ => panic!("Enumerable#{name} takes exactly one pattern argument OR a block"),
     };
@@ -1567,7 +1729,11 @@ fn slice_before_after(
 /// ```
 ///
 /// Answers the receiver.
-fn each_entry(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn each_entry(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "each_entry", "arguments");
     let blk = block_or_enum!(recv, "each_entry", args, block);
     for e in collect_packed(recv)? {
@@ -1579,17 +1745,27 @@ fn each_entry(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) ->
 /// `minmax_by { |e| ... }` -- `[min_by, max_by]`, computed in ONE pass so
 /// the block runs once per element, as CRuby's does. `[nil, nil]` for an
 /// empty receiver (not `[]`).
-fn minmax_by(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn minmax_by(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     reject_args(args, "minmax_by", "arguments");
     let blk = block_or_enum!(recv, "minmax_by", args, block);
     let mut lo: Option<(RubyValue, RubyValue)> = None;
     let mut hi: Option<(RubyValue, RubyValue)> = None;
     for e in collect_packed(recv)? {
         let k = blk.call(std::slice::from_ref(&e))?;
-        if lo.as_ref().is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o < 0)) {
+        if lo
+            .as_ref()
+            .is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o < 0))
+        {
             lo = Some((k.clone(), e.clone()));
         }
-        if hi.as_ref().is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o > 0)) {
+        if hi
+            .as_ref()
+            .is_none_or(|(bk, _)| k.rb_cmp(bk).is_some_and(|o| o > 0))
+        {
             hi = Some((k, e));
         }
     }
@@ -1645,9 +1821,13 @@ mod tests {
     /// The blockless no-count forms are unaffected.
     #[test]
     fn min_max_without_a_count_still_answer_a_single_element() {
-        let min = enumerable_send(&ints(&[5, 1, 4]), "min", &[], None).unwrap().unwrap();
+        let min = enumerable_send(&ints(&[5, 1, 4]), "min", &[], None)
+            .unwrap()
+            .unwrap();
         assert_eq!(min.inspect_string(), "1");
-        let max = enumerable_send(&ints(&[5, 1, 4]), "max", &[], None).unwrap().unwrap();
+        let max = enumerable_send(&ints(&[5, 1, 4]), "max", &[], None)
+            .unwrap()
+            .unwrap();
         assert_eq!(max.inspect_string(), "5");
     }
 
@@ -1661,9 +1841,14 @@ mod tests {
             };
             Ok(RubyValue::Int((b - a).signum()))
         });
-        let out = enumerable_send(&ints(&[5, 1, 4]), "min", &[RubyValue::Int(2)], Some(RubyValue::Proc(cmp)))
-            .unwrap()
-            .unwrap();
+        let out = enumerable_send(
+            &ints(&[5, 1, 4]),
+            "min",
+            &[RubyValue::Int(2)],
+            Some(RubyValue::Proc(cmp)),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(out.inspect_string(), "[5, 4]");
     }
 
@@ -1681,7 +1866,9 @@ mod tests {
     #[test]
     fn to_h_maps_elements_through_a_block() {
         let blk: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Int(i) = &args[0] else { panic!("ints only") };
+            let RubyValue::Int(i) = &args[0] else {
+                panic!("ints only")
+            };
             Ok(RubyValue::Array(array_new(vec![
                 RubyValue::Int(*i),
                 RubyValue::Int(i * i),
@@ -1739,16 +1926,24 @@ mod tests {
     /// (there is no adjacent pair to test).
     #[test]
     fn chunk_while_on_short_receivers_never_calls_the_block() {
-        let never = || {
-            RProc::new(|_: &[RubyValue]| unreachable!("no adjacent pair exists"))
-        };
-        let e = enumerable_send(&ints(&[]), "chunk_while", &[], Some(RubyValue::Proc(never())))
-            .unwrap()
-            .unwrap();
+        let never = || RProc::new(|_: &[RubyValue]| unreachable!("no adjacent pair exists"));
+        let e = enumerable_send(
+            &ints(&[]),
+            "chunk_while",
+            &[],
+            Some(RubyValue::Proc(never())),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(e.inspect_string(), "[]");
-        let one = enumerable_send(&ints(&[7]), "chunk_while", &[], Some(RubyValue::Proc(never())))
-            .unwrap()
-            .unwrap();
+        let one = enumerable_send(
+            &ints(&[7]),
+            "chunk_while",
+            &[],
+            Some(RubyValue::Proc(never())),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(one.inspect_string(), "[[7]]");
     }
 

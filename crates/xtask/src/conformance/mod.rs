@@ -6,8 +6,8 @@
 
 pub(crate) mod exec;
 mod oracle;
-mod runlock;
 mod rubyspec_suite;
+mod runlock;
 mod runner;
 mod scoreboard;
 mod skiplist;
@@ -351,7 +351,8 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     let suites = selected_suites(opts);
     if opts.dir.is_some() && suites.len() > 1 {
         return Err(
-            "--dir names a single corpus; pass --suite to pick which suite it applies to".to_owned(),
+            "--dir names a single corpus; pass --suite to pick which suite it applies to"
+                .to_owned(),
         );
     }
 
@@ -475,7 +476,10 @@ fn run_one_suite(
     }
     println!("{:>16} {}", "TOTAL", results.len());
     // Pass RATE, so a run ends with the one number that should climb over time.
-    let passed = results.iter().filter(|r| r.verdict == Verdict::Pass).count();
+    let passed = results
+        .iter()
+        .filter(|r| r.verdict == Verdict::Pass)
+        .count();
     let total = results.len();
     let pct = if total > 0 {
         passed as f64 / total as f64 * 100.0
@@ -553,7 +557,11 @@ fn run_one_suite(
             &case_meta,
             &runner.diff_dir,
         )?;
-        let prefix = if suite_name == "spinel" { "" } else { suite_name };
+        let prefix = if suite_name == "spinel" {
+            ""
+        } else {
+            suite_name
+        };
         let sep = if prefix.is_empty() { "" } else { "-" };
         println!(
             "\nwrote conformance/{p}{s}scoreboard.tsv, {p}{s}SCOREBOARD.md, {p}{s}TRIAGE.md, {p}{s}FAILURES.md",
@@ -573,9 +581,10 @@ fn build_case_meta(cases: &[TestCase]) -> std::collections::BTreeMap<String, sco
         .iter()
         .map(|c| {
             let (expected_stdout, expected_stderr, reference) = match &c.expectation {
-                suite::Expectation::Snapshot { stdout: Some(o), stderr } => {
-                    (Some(o.clone()), stderr.clone(), "snapshot")
-                }
+                suite::Expectation::Snapshot {
+                    stdout: Some(o),
+                    stderr,
+                } => (Some(o.clone()), stderr.clone(), "snapshot"),
                 suite::Expectation::Snapshot { stdout: None, .. } => (None, None, "live-oracle"),
                 suite::Expectation::CompileFail => (None, None, "compile-fail"),
                 suite::Expectation::SelfReport => (None, None, "self-report"),
@@ -633,7 +642,9 @@ fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     let id = opts.test_id.as_deref().ok_or("show requires a test id")?;
     let session = open_single(root, opts, false)?;
     let Some(r) = session.stamps.load_any(id) else {
-        return Err(format!("no stamp for {id:?} -- run `conformance run` first"));
+        return Err(format!(
+            "no stamp for {id:?} -- run `conformance run` first"
+        ));
     };
     let case = session
         .cases
@@ -643,7 +654,10 @@ fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
     println!("test:     {id}");
     println!("source:   {}", case.source.display());
     match &case.expectation {
-        suite::Expectation::Snapshot { stdout: Some(o), stderr } => {
+        suite::Expectation::Snapshot {
+            stdout: Some(o),
+            stderr,
+        } => {
             println!("expected: {}", o.display());
             match stderr {
                 Some(e) => println!("exp-err:  {}", e.display()),
@@ -678,7 +692,10 @@ fn cmd_oracle_verify(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
             )
         })
         .collect();
-    println!("verifying {} live-oracle tests (2 runs each)...", live.len());
+    println!(
+        "verifying {} live-oracle tests (2 runs each)...",
+        live.len()
+    );
     let mut nondet = 0;
     for case in live {
         let a = session.oracle.run(case, true)?;

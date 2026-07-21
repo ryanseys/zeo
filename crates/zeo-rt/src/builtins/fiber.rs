@@ -4,11 +4,11 @@
 //! held in an ivar/Hash/`send` target), mirroring that codegen arm exactly,
 //! error messages included.
 
+use crate::Symbol;
 use crate::dispatch::raise_error;
-use crate::fiber::{self, fiber_alive, fiber_resume, fiber_transfer, FiberResume};
+use crate::fiber::{self, FiberResume, fiber_alive, fiber_resume, fiber_transfer};
 use crate::signal::Signal;
 use crate::value::RubyValue;
-use crate::Symbol;
 
 /// A Symbol/String storage-key argument as a `Symbol`.
 fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
@@ -22,7 +22,11 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-fn f_resume(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_resume(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     match fiber_resume(&recv.as_fiber_unchecked(), args.to_vec()) {
         FiberResume::Value(v) => Ok(v),
         FiberResume::RubyError(sig) => Err(sig),
@@ -41,7 +45,11 @@ fn f_resume(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     }
 }
 
-fn f_transfer(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_transfer(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     match fiber_transfer(&recv.as_fiber_unchecked(), args.to_vec()) {
         FiberResume::Value(v) => Ok(v),
         FiberResume::RubyError(sig) => Err(sig),
@@ -60,11 +68,19 @@ fn f_transfer(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> 
     }
 }
 
-fn f_alive_p(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_alive_p(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Bool(fiber_alive(&recv.as_fiber_unchecked())))
 }
 
-fn f_kill(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_kill(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     fiber::fiber_kill(&recv.as_fiber_unchecked());
     // CRuby answers the (now terminated) fiber itself.
     Ok(recv.clone())
@@ -82,11 +98,19 @@ fn require_current(recv: &RubyValue) -> Result<crate::fiber::RFiber, Signal> {
     Ok(handle)
 }
 
-fn f_storage(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_storage(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(fiber::fiber_storage_hash(&require_current(recv)?))
 }
 
-fn f_set_storage(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_set_storage(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let handle = require_current(recv)?;
     let pairs = match &args[0] {
         RubyValue::Nil => Vec::new(),
@@ -100,8 +124,11 @@ fn f_set_storage(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) 
         other => {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(other)),
-            ))
+                format!(
+                    "no implicit conversion of {} into Hash",
+                    crate::builtins::convert_name_of(other)
+                ),
+            ));
         }
     };
     fiber::fiber_set_storage(&handle, pairs);
@@ -115,8 +142,12 @@ fn resolve_raise_exc(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     match args.first() {
         None => Ok(exc_of("RuntimeError", String::new())),
         Some(RubyValue::Class(cid)) => {
-            let name = crate::dispatch::class_name(*cid).unwrap_or_else(|| "RuntimeError".to_string());
-            let msg = args.get(1).map(|m| m.to_display_string()).unwrap_or_default();
+            let name =
+                crate::dispatch::class_name(*cid).unwrap_or_else(|| "RuntimeError".to_string());
+            let msg = args
+                .get(1)
+                .map(|m| m.to_display_string())
+                .unwrap_or_default();
             Ok(exc_of(&name, msg))
         }
         Some(v) => Ok(crate::dispatch::coerce_raise_arg(v.clone())),
@@ -132,7 +163,11 @@ fn exc_of(class_name: &str, msg: String) -> RubyValue {
     }
 }
 
-fn f_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_raise(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let exc = resolve_raise_exc(args)?;
     match fiber::fiber_raise(&recv.as_fiber_unchecked(), exc) {
         FiberResume::Value(v) => Ok(v),
@@ -153,7 +188,11 @@ fn f_raise(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 }
 
 // Two Fiber objects are equal iff they are the same fiber (identity).
-fn f_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn f_eq(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let same = matches!(&args[0], RubyValue::Fiber(o) if std::sync::Arc::ptr_eq(&recv.as_fiber_unchecked(), o));
     Ok(RubyValue::Bool(same))
 }
@@ -181,20 +220,35 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
-    &["resume", "transfer", "alive?", "kill", "raise", "storage", "storage=", "==", "eql?", "equal?"]
+    &[
+        "resume", "transfer", "alive?", "kill", "raise", "storage", "storage=", "==", "eql?",
+        "equal?",
+    ]
 }
 
 // --- Class methods (`Fiber.current`, `Fiber[]`, `Fiber.[]=`) ---------------
 
-fn c_current(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn c_current(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(fiber::fiber_current())
 }
 
-fn c_aref(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn c_aref(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(fiber::fiber_storage_get(key_sym(&args[0])?))
 }
 
-fn c_aset(_recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn c_aset(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     fiber::fiber_storage_set(key_sym(&args[0])?, args[1].clone());
     Ok(args[1].clone())
 }

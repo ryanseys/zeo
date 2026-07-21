@@ -88,7 +88,7 @@ pub(super) fn static_cond(cx: &Ctx, id: NodeId) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analyze::{analyze, Analyzed};
+    use crate::analyze::{Analyzed, analyze};
     use crate::compiler::Compiler;
     use proc_macro2::Ident;
     use quote::format_ident;

@@ -12,12 +12,24 @@ use super::util::fnv1a64;
 const CLUSTERS: &[(&str, &str, &str)] = &[
     // (substring, cluster, bucket)
     // -- compile-time rejections/panics ---------------------------------
-    ("unexpected top-level-only node in expression position", "?", "toplevel-node-in-expr"),
+    (
+        "unexpected top-level-only node in expression position",
+        "?",
+        "toplevel-node-in-expr",
+    ),
     ("unsupported implicit-self call", "?", "implicit-self-call"),
-    ("receiver's class isn't statically known", "?", "dynamic-receiver-call"),
+    (
+        "receiver's class isn't statically known",
+        "?",
+        "dynamic-receiver-call",
+    ),
     ("unknown class", "?", "unknown-class"),
     ("must already be defined earlier", "?", "alias-inherited"),
-    ("keyword arguments isn't supported", "b", "kwargs-call-shape"),
+    (
+        "keyword arguments isn't supported",
+        "b",
+        "kwargs-call-shape",
+    ),
     ("forwarding isn't supported", "a", "arg-forwarding"),
     ("double-splat", "a", "double-splat"),
     ("splat", "a", "splat"),
@@ -72,7 +84,10 @@ pub fn classify(stderr: &str) -> Triage {
     // the triage ranks individual methods/constants (the actionable worklist)
     // instead of collapsing every "undefined method" into one 100+ pile.
     if let Some((cluster, bucket)) = specific_bucket(&message) {
-        return Triage { cluster: cluster.to_owned(), bucket };
+        return Triage {
+            cluster: cluster.to_owned(),
+            bucket,
+        };
     }
     let normalized = normalize(&message);
     for (needle, cluster, bucket) in CLUSTERS {
@@ -108,7 +123,13 @@ fn auto_bucket(normalized: &str) -> String {
         .trim_start_matches("internal error: ");
     let slug = core
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .filter(|w| w.len() > 1)
@@ -227,7 +248,9 @@ mod tests {
 
     #[test]
     fn classifies_clean_rejection() {
-        let t = classify("zeo: only plain required parameters are supported in a method definition (spike scope)");
+        let t = classify(
+            "zeo: only plain required parameters are supported in a method definition (spike scope)",
+        );
         assert_eq!(t.cluster, "a");
         assert_eq!(t.bucket, "param-shapes");
     }
@@ -261,7 +284,8 @@ mod tests {
         // scoreboard/triage lists are debuggable at a glance.
         let t = classify("can't convert String into Complex");
         assert!(
-            t.bucket.starts_with("auto-can-convert-string-into-complex-"),
+            t.bucket
+                .starts_with("auto-can-convert-string-into-complex-"),
             "bucket was {}",
             t.bucket
         );

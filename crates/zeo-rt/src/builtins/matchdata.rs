@@ -10,8 +10,8 @@
 //!
 //! The rows delegate rather than reimplement, so the two paths cannot drift.
 
-use crate::builtins::{arity, builtin_methods};
 use crate::RubyValue;
+use crate::builtins::{arity, builtin_methods};
 
 /// One end (`idx` 0 = begin, 1 = end) of a group's `offset`/`byteoffset` pair,
 /// nil when the group didn't participate.

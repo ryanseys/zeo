@@ -13,11 +13,11 @@
 //! not modelled here).
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::{string_new, ClassId, RubyValue, Signal};
-use zeo_abi::{DATE_CLASS, DATETIME_CLASS};
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::{ClassId, RubyValue, Signal, string_new};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::{DATE_CLASS, DATETIME_CLASS};
 
 pub struct RDate {
     jdn: i64,
@@ -27,7 +27,11 @@ pub struct RDate {
 
 impl RDate {
     fn new(jdn: i64, class_id: ClassId) -> Arc<RDate> {
-        Arc::new(RDate { jdn, class_id, frozen: AtomicBool::new(false) })
+        Arc::new(RDate {
+            jdn,
+            class_id,
+            frozen: AtomicBool::new(false),
+        })
     }
 }
 
@@ -60,11 +64,27 @@ impl RubyObject for RDate {
 }
 
 const DAY_NAMES: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
 ];
 const MONTH_NAMES: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August",
-    "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 /// The JDN of a proleptic-Gregorian `(year, month, day)`.
@@ -146,7 +166,13 @@ fn date_strftime(jdn: i64, fmt: &str) -> String {
             out.push('%');
             break;
         };
-        let num = |v: i64, width: usize| if dash { v.to_string() } else { format!("{v:0width$}") };
+        let num = |v: i64, width: usize| {
+            if dash {
+                v.to_string()
+            } else {
+                format!("{v:0width$}")
+            }
+        };
         match dir {
             'Y' => out.push_str(&y.to_string()),
             'y' => out.push_str(&num(y.rem_euclid(100), 2)),
@@ -296,7 +322,10 @@ fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
         match args.get(i) {
             None => Ok(default),
             Some(RubyValue::Int(v)) => Ok(*v),
-            Some(_) => Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+            Some(_) => Err(raise_error(
+                "TypeError",
+                "no implicit conversion into Integer".to_string(),
+            )),
         }
     };
     Ok((int_at(0, -4712)?, int_at(1, 1)?, int_at(2, 1)?))
@@ -369,13 +398,18 @@ fn parse_date(text: &str) -> Result<(i64, i64, i64), Signal> {
     let cleaned = text.trim();
     let parts: Vec<&str> = cleaned.split(['-', '/']).collect();
     if parts.len() == 3 {
-        if let (Ok(y), Ok(m), Ok(d)) =
-            (parts[0].parse::<i64>(), parts[1].parse::<i64>(), parts[2].parse::<i64>())
-        {
+        if let (Ok(y), Ok(m), Ok(d)) = (
+            parts[0].parse::<i64>(),
+            parts[1].parse::<i64>(),
+            parts[2].parse::<i64>(),
+        ) {
             return Ok((y, m, d));
         }
     }
-    Err(raise_error("ArgumentError", format!("invalid date: {text:?}")))
+    Err(raise_error(
+        "ArgumentError",
+        format!("invalid date: {text:?}"),
+    ))
 }
 
 #[cfg(test)]
@@ -428,7 +462,23 @@ mod tests {
     #[test]
     fn strftime_covers_common_directives() {
         let dt = date(2024, 3, 15);
-        assert_eq!(s(&strftime(&dt, &[RubyValue::Str(string_new("%Y-%m-%d (%A)".into()))], None).unwrap()), "2024-03-15 (Friday)");
-        assert_eq!(s(&strftime(&dt, &[RubyValue::Str(string_new("%b %-d, %Y".into()))], None).unwrap()), "Mar 15, 2024");
+        assert_eq!(
+            s(&strftime(
+                &dt,
+                &[RubyValue::Str(string_new("%Y-%m-%d (%A)".into()))],
+                None
+            )
+            .unwrap()),
+            "2024-03-15 (Friday)"
+        );
+        assert_eq!(
+            s(&strftime(
+                &dt,
+                &[RubyValue::Str(string_new("%b %-d, %Y".into()))],
+                None
+            )
+            .unwrap()),
+            "Mar 15, 2024"
+        );
     }
 }

@@ -8,12 +8,12 @@
 //! literally). Wrapping a crate would mean fighting its opinions at every
 //! one of those points; the rules themselves are short.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::builtins::file::{path_arg, raise_errno};
 use crate::builtins::{arity, block_or_enum, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, DIR_CLASS};
 
@@ -163,7 +163,11 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
     // (an empty `read_dir("")` reads nothing -- the bug that made absolute
     // globs return nothing). A relative pattern's base is ".".
     let dir_path = if prefix.is_empty() {
-        if base.is_empty() { "/".to_string() } else { base.to_string() }
+        if base.is_empty() {
+            "/".to_string()
+        } else {
+            base.to_string()
+        }
     } else {
         format!("{base}/{prefix}")
     };
@@ -190,7 +194,11 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
                 continue; // `**` does not descend into hidden dirs
             }
             if e.path().is_dir() {
-                let next = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+                let next = if prefix.is_empty() {
+                    name
+                } else {
+                    format!("{prefix}/{name}")
+                };
                 glob_walk(base, &next, segs, out, dotmatch);
             }
         }
@@ -218,7 +226,11 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
         if name == "." && !rest.is_empty() {
             continue;
         }
-        let next = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+        let next = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
         if rest.is_empty() {
             out.push(next);
         } else {
@@ -238,10 +250,20 @@ fn glob_walk(base: &str, prefix: &str, segs: &[&str], out: &mut Vec<String>, dot
 /// the pattern is). Ruby sorts glob results.
 fn glob(pattern: &str, dotmatch: bool) -> Vec<String> {
     let absolute = pattern.starts_with('/');
-    let (base, pat) = if absolute { ("", pattern.trim_start_matches('/')) } else { (".", pattern) };
+    let (base, pat) = if absolute {
+        ("", pattern.trim_start_matches('/'))
+    } else {
+        (".", pattern)
+    };
     let segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
     let mut out = Vec::new();
-    glob_walk(if absolute { "" } else { base }, "", &segs, &mut out, dotmatch);
+    glob_walk(
+        if absolute { "" } else { base },
+        "",
+        &segs,
+        &mut out,
+        dotmatch,
+    );
     if absolute {
         out = out.into_iter().map(|p| format!("/{p}")).collect();
     }

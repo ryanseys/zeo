@@ -268,7 +268,10 @@ impl Profile {
     /// symbolicated runtime when chasing a panic. An unrecognized value keeps
     /// the default.
     pub fn from_env_or(default: Profile) -> Self {
-        match std::env::var_os("ZEO_RUNTIME_PROFILE").as_deref().and_then(|s| s.to_str()) {
+        match std::env::var_os("ZEO_RUNTIME_PROFILE")
+            .as_deref()
+            .and_then(|s| s.to_str())
+        {
             Some("release") => Profile::Release,
             Some("debug") => Profile::Debug,
             _ => default,
@@ -366,7 +369,9 @@ pub fn build_binary(
     // CLI, the e2e harness) run `ensure_runtime_built` first; a driver that
     // prebuilds (the conformance harness) needs nothing here.
     let runtime_lib = rlib_for("zeo-rt", profile, runtime)?;
-    let deps_dir = variant_target_dir(runtime).join(profile.subdir()).join("deps");
+    let deps_dir = variant_target_dir(runtime)
+        .join(profile.subdir())
+        .join("deps");
 
     let cached = cache_path(rust_source, profile, runtime)?;
     // A failed link is treated as a miss rather than an error: a concurrent
@@ -395,8 +400,13 @@ pub fn build_binary(
         std::process::id(),
         thread_unique_suffix()
     ));
-    std::fs::create_dir_all(&staging).map_err(|e| format!("creating {}: {e}", staging.display()))?;
-    let staged = staging.join(cached.file_name().expect("cache_path always has a file name"));
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("creating {}: {e}", staging.display()))?;
+    let staged = staging.join(
+        cached
+            .file_name()
+            .expect("cache_path always has a file name"),
+    );
 
     let src_path = generated_source_path(rust_source);
     write_atomically(&src_path, rust_source)?;
@@ -556,7 +566,10 @@ fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    Ok(fnv1a64_with(generation, format!("{name}:{}:{mtime};", meta.len()).as_bytes()))
+    Ok(fnv1a64_with(
+        generation,
+        format!("{name}:{}:{mtime};", meta.len()).as_bytes(),
+    ))
 }
 
 /// Removes every cache generation no current runtime artifact can produce,
@@ -661,7 +674,10 @@ const GENERATED_CRATE_NAME: &str = "zeo_gen";
 /// Content-addressing also makes the path in a `rustc` failure stable and
 /// findable, rather than naming a file a previous run had already deleted.
 fn generated_source_path(rust_source: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("zeo-gen-{:016x}.rs", fnv1a64(rust_source.as_bytes())))
+    std::env::temp_dir().join(format!(
+        "zeo-gen-{:016x}.rs",
+        fnv1a64(rust_source.as_bytes())
+    ))
 }
 
 /// Writes via a per-writer temp file + rename, so that concurrent compiles of
@@ -683,7 +699,7 @@ fn write_atomically(path: &Path, contents: &str) -> Result<(), String> {
         thread_unique_suffix()
     ));
     std::fs::write(&tmp, contents).map_err(|e| format!("writing {}: {e}", tmp.display()))?;
-    
+
     std::fs::rename(&tmp, path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("renaming into {}: {e}", path.display())
@@ -773,9 +789,18 @@ mod tests {
 
         // What poisoned the cache: truncating the OUTPUT, which is the same
         // inode as the entry.
-        let truncate = std::fs::OpenOptions::new().write(true).truncate(true).open(&output);
-        assert!(truncate.is_err(), "an in-place write to a sealed entry must fail");
-        assert!(is_usable_entry(&entry), "the cache entry must survive intact");
+        let truncate = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&output);
+        assert!(
+            truncate.is_err(),
+            "an in-place write to a sealed entry must fail"
+        );
+        assert!(
+            is_usable_entry(&entry),
+            "the cache entry must survive intact"
+        );
 
         // The output is still executable/readable -- sealing keeps 0o555.
         assert_eq!(std::fs::read(&output).unwrap(), b"a real binary's bytes");

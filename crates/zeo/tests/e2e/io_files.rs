@@ -1,4 +1,6 @@
-use crate::support::{run_ruby, run_ruby_project, run_ruby_packages, compile_project, compile_packages};
+use crate::support::{
+    compile_packages, compile_project, run_ruby, run_ruby_packages, run_ruby_project,
+};
 
 #[test]
 fn ivars_store_real_per_instance_state() {
@@ -468,7 +470,10 @@ fn class_shift_self_containing_an_unsupported_statement_is_a_clean_lowering_erro
         "#,
     )
     .unwrap_err();
-    assert!(err.contains("unsupported statement in `class << self`"), "{err}");
+    assert!(
+        err.contains("unsupported statement in `class << self`"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -512,10 +517,7 @@ fn kernel_caller_and_conversion_functions_resolve_through_every_dispatch_path() 
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "true\ntrue\n3-x\n[1, 2, 3]\n[1, 255]\n101\n"
-    );
+    assert_eq!(result.stdout, "true\ntrue\n3-x\n[1, 2, 3]\n[1, 255]\n101\n");
 }
 
 #[test]
@@ -850,7 +852,10 @@ fn pathless_require_relative_cannot_infer_basepath() {
     // `compile_to_rust` (no input path) mirrors CRuby's eval/irb context:
     // require_relative has no requiring-file directory to resolve against.
     let err = zeo::compile_to_rust("require_relative \"x\"\n").unwrap_err();
-    assert!(err.contains("cannot infer basepath"), "unexpected error: {err}");
+    assert!(
+        err.contains("cannot infer basepath"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -903,10 +908,7 @@ fn dash_i_roots_shadow_packages_and_earlier_package_dirs_shadow_later_ones() {
                 "bundledpkgs/dual/lib/dual.rb",
                 "puts \"dual from package\"\n",
             ),
-            (
-                "main.rb",
-                "require \"dual\"\nrequire \"thing\"\n",
-            ),
+            ("main.rb", "require \"dual\"\nrequire \"thing\"\n"),
         ],
         "main.rb",
         &["override"],
@@ -952,7 +954,10 @@ fn stringio_reads_writes_and_tracks_position() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "\"hello\\nworld\"\n\"hello\\n\"\n\"world\"\n");
+    assert_eq!(
+        result.stdout,
+        "\"hello\\nworld\"\n\"hello\\n\"\n\"world\"\n"
+    );
 }
 
 #[test]
@@ -1102,7 +1107,10 @@ fn interpolation_takes_multi_statement_empty_and_braceless_forms() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "\"v=2\"\n\"v=6\"\n3\n\"xy\"\n\"iv=ivar g=glob\"\n");
+    assert_eq!(
+        result.stdout,
+        "\"v=2\"\n\"v=6\"\n3\n\"xy\"\n\"iv=ivar g=glob\"\n"
+    );
 }
 
 #[test]
@@ -1144,7 +1152,10 @@ fn stdout_stderr_constants_and_globals() {
         puts STDOUT.inspect
         "#,
     );
-    assert_eq!(result.stdout, "via const\nvia global\nabc\n4\nback\n#<IO:<STDOUT>>\n");
+    assert_eq!(
+        result.stdout,
+        "via const\nvia global\nabc\n4\nback\n#<IO:<STDOUT>>\n"
+    );
     assert_eq!(result.stderr, "err const\nerr global\nredirected\n");
 }
 
@@ -1566,10 +1577,7 @@ fn dir_and_file_mutation_round_trips() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "true\nfalse\n[false, true]\n1\nfalse\n"
-    );
+    assert_eq!(result.stdout, "true\nfalse\n[false, true]\n1\nfalse\n");
 }
 
 #[test]
@@ -1727,7 +1735,10 @@ fn an_explicit_so_require_resolves_a_statically_linked_extension() {
 
     // A .so naming no static ext is still a clean LoadError, not a silent no-op.
     let err = zeo::compile_to_rust("require \"nope.so\"\n").unwrap_err();
-    assert!(err.contains("cannot load such file -- nope.so"), "unexpected: {err}");
+    assert!(
+        err.contains("cannot load such file -- nope.so"),
+        "unexpected: {err}"
+    );
 }
 
 /// A feature with no Ruby half falls through to the static-ext table, which is

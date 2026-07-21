@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, run_ruby_packages, compile_project};
+use crate::support::{compile_project, run_ruby, run_ruby_packages};
 
 #[test]
 fn load_with_a_wrap_argument_is_a_clean_rejection() {
@@ -6,10 +6,7 @@ fn load_with_a_wrap_argument_is_a_clean_rejection() {
     // `autoload_*` tests above.) `load "file", wrap` still needs load-time
     // anonymous-module scoping this compiler lacks.
     let err = compile_project(
-        &[
-            ("w.rb", "puts 1\n"),
-            ("main.rb", "load \"./w.rb\", true\n"),
-        ],
+        &[("w.rb", "puts 1\n"), ("main.rb", "load \"./w.rb\", true\n")],
         "main.rb",
         &[],
     )
@@ -334,7 +331,10 @@ fn lazy_enumerator_over_infinite_and_finite_sources() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "[4, 16, 36]\n[2, 3, 4, 5]\n\"Enumerator::Lazy\"\n");
+    assert_eq!(
+        result.stdout,
+        "[4, 16, 36]\n[2, 3, 4, 5]\n\"Enumerator::Lazy\"\n"
+    );
 }
 
 #[test]
@@ -373,7 +373,10 @@ fn random_rejects_non_positive_bounds() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "invalid argument - 0\ninvalid argument - -3\n");
+    assert_eq!(
+        result.stdout,
+        "invalid argument - 0\ninvalid argument - -3\n"
+    );
 }
 
 #[test]
@@ -388,7 +391,10 @@ fn hash_transform_keys_accepts_a_mapping() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "{x: 1, b: 2}\n{x: 1, \"b\" => 2}\n{a: 1, y: 2}\n");
+    assert_eq!(
+        result.stdout,
+        "{x: 1, b: 2}\n{x: 1, \"b\" => 2}\n{a: 1, y: 2}\n"
+    );
 }
 
 #[test]
@@ -408,10 +414,7 @@ fn enumerator_produce_endless_generator() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "[1, 2, 4]\n[1, 2, 3, 4]\n0\n2\n[1, 2, 3]\n",
-    );
+    assert_eq!(result.stdout, "[1, 2, 4]\n[1, 2, 3, 4]\n0\n2\n[1, 2, 3]\n",);
 }
 
 #[test]
@@ -519,10 +522,7 @@ fn break_with_a_value_makes_the_iterator_call_return_it() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "99\n:s\n7\n100\n5\n-1\n1\nnil\n[2, 3, 4]\n"
-    );
+    assert_eq!(result.stdout, "99\n:s\n7\n100\n5\n-1\n1\nnil\n[2, 3, 4]\n");
 }
 
 #[test]
@@ -537,5 +537,8 @@ fn each_slice_and_frozen_hash_filter_error_messages() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "invalid slice size\ninvalid size\nFrozenError\n");
+    assert_eq!(
+        result.stdout,
+        "invalid slice size\ninvalid size\nFrozenError\n"
+    );
 }

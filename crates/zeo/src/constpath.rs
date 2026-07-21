@@ -26,7 +26,10 @@ pub struct ConstPath<'a> {
 
 impl<'a> ConstPath<'a> {
     pub fn parse(joined: &'a str) -> ConstPath<'a> {
-        ConstPath { joined, body: joined.strip_prefix("::").unwrap_or(joined) }
+        ConstPath {
+            joined,
+            body: joined.strip_prefix("::").unwrap_or(joined),
+        }
     }
 
     /// The spelling as written -- what `HirNode`'s name fields carry.

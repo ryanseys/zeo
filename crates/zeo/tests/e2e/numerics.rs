@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn arith_adds_integer_literals() {
@@ -267,10 +267,7 @@ fn time_arithmetic_picks_by_argument_type() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "1700000060\n1699999940\n60.0\nFloat\nTime\n"
-    );
+    assert_eq!(result.stdout, "1700000060\n1699999940\n60.0\nFloat\nTime\n");
 }
 
 /// A Float epoch is stored EXACTLY (Ruby keeps the double's true rational,
@@ -848,5 +845,8 @@ fn rand_float_bound_is_integer_and_digits_radix_messages() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "Integer\ntrue\n\"invalid radix 0\"\n\"negative radix\"\n");
+    assert_eq!(
+        result.stdout,
+        "Integer\ntrue\n\"invalid radix 0\"\n\"negative radix\"\n"
+    );
 }

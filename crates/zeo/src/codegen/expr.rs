@@ -8,14 +8,14 @@
 
 use quote::quote;
 
+use super::Ctx;
 use super::call::emit_call;
 use super::collections::{emit_array_lit, emit_hash_lit, emit_range_lit, emit_string_lit};
 use super::ident::safe_ident;
 use super::loops::{emit_break, emit_for, emit_loop, emit_next, emit_redo, emit_while};
-use super::Ctx;
 use crate::compiler::ClassId;
 use crate::hir::{ArrayElem, HirNode, NodeId};
-use crate::types::{infer_type_with_locals, TyKind};
+use crate::types::{TyKind, infer_type_with_locals};
 use proc_macro2::TokenStream;
 
 /// A node's static type, given the enclosing scope's local-type context --
@@ -27,7 +27,9 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
     // (position-insensitive) local-type map for reads of that exact name --
     // see `Ctx::for_var_override`'s docs for why the map alone can't express
     // this.
-    if let (HirNode::LocalRead(name), Some((var, ty))) = (&cx.compiler.hir[id], &cx.for_var_override) {
+    if let (HirNode::LocalRead(name), Some((var, ty))) =
+        (&cx.compiler.hir[id], &cx.for_var_override)
+    {
         if name == var {
             return *ty;
         }
@@ -64,7 +66,13 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return TyKind::Object(cid);
         }
     }
-    infer_type_with_locals(cx.compiler, cx.defining_class, cx.box_id, &cx.local_types, id)
+    infer_type_with_locals(
+        cx.compiler,
+        cx.defining_class,
+        cx.box_id,
+        &cx.local_types,
+        id,
+    )
 }
 
 /// The static type of `self` inside a reopened BUILTIN class's methods --
@@ -185,11 +193,29 @@ fn is_predefined_global(name: &str) -> bool {
     matches!(
         name,
         "$!" | "$@"
-            | "$;" | "$," | "$/" | "$\\" | "$." | "$<" | "$>" | "$_" | "$0" | "$*" | "$:"
-            | "$\"" | "$$" | "$?"
-            | "$DEBUG" | "$VERBOSE" | "$FILENAME" | "$PROGRAM_NAME"
-            | "$stdin" | "$stdout" | "$stderr"
-            | "$LOAD_PATH" | "$LOADED_FEATURES"
+            | "$;"
+            | "$,"
+            | "$/"
+            | "$\\"
+            | "$."
+            | "$<"
+            | "$>"
+            | "$_"
+            | "$0"
+            | "$*"
+            | "$:"
+            | "$\""
+            | "$$"
+            | "$?"
+            | "$DEBUG"
+            | "$VERBOSE"
+            | "$FILENAME"
+            | "$PROGRAM_NAME"
+            | "$stdin"
+            | "$stdout"
+            | "$stderr"
+            | "$LOAD_PATH"
+            | "$LOADED_FEATURES"
     )
 }
 
@@ -197,8 +223,7 @@ fn is_predefined_global(name: &str) -> bool {
 /// keys+values): `"expression"` only when every node is itself defined, else
 /// `nil`. An empty list is defined.
 fn defined_all_or_nil(cx: &Ctx, nodes: &[NodeId]) -> TokenStream {
-    let expr_str =
-        quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("expression".to_string())) };
+    let expr_str = quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("expression".to_string())) };
     if nodes.is_empty() {
         return expr_str;
     }
@@ -252,7 +277,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
-    let global_var = quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
+    let global_var =
+        quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("global-variable".to_string())) };
     // `defined?($g)` is `"global-variable"` only if the global has been
     // assigned (a predefined special like `$!`/`$stdout` always is); a
     // never-written user global answers nil.
@@ -306,7 +332,8 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // `defined?(@iv)` is "instance-variable" only if the ivar is actually set
     // on self (a never-assigned `@iv` answers nil), checked at runtime.
     if let HirNode::IvarRead(name) = &cx.compiler.hir[id] {
-        let recv = super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
+        let recv =
+            super::call::boxed_implicit_self(cx).expect("every context has an implicit self");
         let name = name.as_str();
         return quote! {
             if zeo_rt::ivar_defined(&#recv, #name) {
@@ -548,7 +575,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::BigIntegerLit { negative, digits } => {
             quote! { zeo_rt::int_from_u32_digits(#negative, &[#(#digits),*]) }
         }
-        HirNode::RationalLit { negative, num_digits, den_digits } => {
+        HirNode::RationalLit {
+            negative,
+            num_digits,
+            den_digits,
+        } => {
             quote! {
                 zeo_rt::rational_from_digits(
                     #negative,
@@ -577,7 +608,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { zeo_rt::RubyValue::Float(#konst) }
         }
         HirNode::FloatLit(v) => quote! { zeo_rt::RubyValue::Float(#v) },
-        HirNode::Lambda { params, body, method_body } => {
+        HirNode::Lambda {
+            params,
+            body,
+            method_body,
+        } => {
             // A `method_body` lambda IS a runtime method body -- the two parse
             // sites that build one are the `def obj.m` and `class << obj`
             // desugars, both of which install through
@@ -826,19 +861,33 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
                 emit_const_read(cx, path.scope(), path.base())
             }
         },
-        HirNode::QualifiedConstRead(scope, name) if qualified_const_class(cx, scope, name).is_some() => {
-            let id = qualified_const_class(cx, scope, name).expect("guarded above").0;
+        HirNode::QualifiedConstRead(scope, name)
+            if qualified_const_class(cx, scope, name).is_some() =>
+        {
+            let id = qualified_const_class(cx, scope, name)
+                .expect("guarded above")
+                .0;
             quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) }
         }
-        HirNode::New { class_name, args, kwargs, block } => {
-            super::call::emit_new(cx, class_name, args, kwargs, *block)
-        }
-        HirNode::SuperCall { args, kwargs, zsuper, block } => {
-            super::call::emit_super_inline(cx, args, kwargs, *zsuper, *block)
-        }
+        HirNode::New {
+            class_name,
+            args,
+            kwargs,
+            block,
+        } => super::call::emit_new(cx, class_name, args, kwargs, *block),
+        HirNode::SuperCall {
+            args,
+            kwargs,
+            zsuper,
+            block,
+        } => super::call::emit_super_inline(cx, args, kwargs, *zsuper, *block),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
-        HirNode::For { target, iterable, body } => emit_for(cx, target, *iterable, body),
+        HirNode::For {
+            target,
+            iterable,
+            body,
+        } => emit_for(cx, target, *iterable, body),
         HirNode::Break(v) => emit_break(cx, *v),
         HirNode::Next(v) => emit_next(cx, *v),
         HirNode::Redo => emit_redo(cx),
@@ -860,7 +909,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             safe,
         } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
         HirNode::Block { .. } => {
-            panic!("internal error: a Block node should only be reached via the Call that invokes it")
+            panic!(
+                "internal error: a Block node should only be reached via the Call that invokes it"
+            )
         }
         HirNode::GlobalRead(name) if name == "$!" => {
             // `$!` is the exception currently being handled -- the SAME
@@ -922,7 +973,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // The `defined?`/`X ||= ...` fallback: an unregistered scope class
             // means the constant is simply absent -> `nil`, never a panic.
             match const_owner_id_opt(cx, scope.as_deref(), name) {
-                Some(owner) => quote! { zeo_rt::const_get(#owner, #name).unwrap_or(zeo_rt::RubyValue::Nil) },
+                Some(owner) => {
+                    quote! { zeo_rt::const_get(#owner, #name).unwrap_or(zeo_rt::RubyValue::Nil) }
+                }
                 None => quote! { zeo_rt::RubyValue::Nil },
             }
         }
@@ -1061,7 +1114,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // straight into a borrowed slice literal with no Vec allocated.
             if !args.iter().any(|a| matches!(a, ArrayElem::Splat(_))) {
                 let arg_exprs = args.iter().map(|a| {
-                    let ArrayElem::Single(n) = a else { unreachable!("just checked for splats") };
+                    let ArrayElem::Single(n) = a else {
+                        unreachable!("just checked for splats")
+                    };
                     box_if_object_typed(cx, *n, emit_expr(cx, *n))
                 });
                 return quote! { (#invoke).call(&[#(#arg_exprs),*])? };
@@ -1090,9 +1145,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         }
         HirNode::BlockGiven => quote! { zeo_rt::RubyValue::Bool(__blk.is_some()) },
         HirNode::Raise(args, cause) => emit_raise(cx, args, cause),
-        HirNode::CaseIn { subject, arms, else_body } => {
-            super::patterns::emit_case_in(cx, *subject, arms, else_body)
-        }
+        HirNode::CaseIn {
+            subject,
+            arms,
+            else_body,
+        } => super::patterns::emit_case_in(cx, *subject, arms, else_body),
         HirNode::MatchPredicate { subject, pattern } => {
             super::patterns::emit_match_predicate(cx, *subject, pattern)
         }
@@ -1115,18 +1172,27 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // `self` to the receiver when the method runs. Only reachable with a
         // runtime (dynamic) self -- a block's -- since a class body / top-level
         // `def` is handled before ever reaching expression position.
-        HirNode::DefMethod { name, params, body, is_class_method, .. } => {
+        HirNode::DefMethod {
+            name,
+            params,
+            body,
+            is_class_method,
+            ..
+        } => {
             // A `def` in value position installs on: the block's DYNAMIC self
             // when inside one (`Class.new { def g; end }`), otherwise the
             // ENCLOSING class -- Object at top level, so `p(def foo; end)`
             // defines foo as a private method of Object and returns :foo,
             // matching CRuby (a plain object doesn't respond to define_method).
             let self_val = if cx.self_is_dynamic {
-                super::call::boxed_implicit_self(cx).expect(
-                    "a dynamic-self `def` in expression position must have a boxed self",
-                )
+                super::call::boxed_implicit_self(cx)
+                    .expect("a dynamic-self `def` in expression position must have a boxed self")
             } else {
-                let cid = cx.class_self.or(cx.current_class).unwrap_or(crate::compiler::OBJECT_CLASS).0;
+                let cid = cx
+                    .class_self
+                    .or(cx.current_class)
+                    .unwrap_or(crate::compiler::OBJECT_CLASS)
+                    .0;
                 quote! { zeo_rt::RubyValue::Class(zeo_rt::ClassId(#cid)) }
             };
             // The body becomes a method-body lambda: its `yield`/
@@ -1148,8 +1214,11 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
             let proc = super::call::emit_proc_or_lambda_value(&body_cx, params, body, true, true);
-            let installer =
-                if *is_class_method { "define_singleton_method" } else { "define_method" };
+            let installer = if *is_class_method {
+                "define_singleton_method"
+            } else {
+                "define_method"
+            };
             quote! {
                 zeo_rt::send_value(
                     &#self_val,
@@ -1299,7 +1368,9 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
         if const_path_of(cx, node).is_some() {
             return emit_expr(cx, node);
         }
-        panic!("`raise <expr>, message` with a computed (non-constant) class operand isn't supported (spike scope) -- name the exception class as a literal constant");
+        panic!(
+            "`raise <expr>, message` with a computed (non-constant) class operand isn't supported (spike scope) -- name the exception class as a literal constant"
+        );
     }
     match infer(cx, node) {
         TyKind::Str => {
@@ -1314,7 +1385,12 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
             // non-exception object is coerced at runtime to CRuby's TypeError.
             // `Exception`'s id is fixed (`zeo-abi`), so no lookup is needed.
             let exc_cid = zeo_abi::EXCEPTION_CLASS.0;
-            let is_exc = cx.compiler.class(cid).ancestors.iter().any(|a| a.0 == exc_cid);
+            let is_exc = cx
+                .compiler
+                .class(cid)
+                .ancestors
+                .iter()
+                .any(|a| a.0 == exc_cid);
             if is_exc {
                 boxed
             } else {
@@ -1352,14 +1428,20 @@ pub(super) fn const_path_of(cx: &Ctx, id: NodeId) -> Option<String> {
     }
 }
 
-pub(super) fn emit_boxed_new(cx: &Ctx, class_name: &str, arg_exprs: Vec<TokenStream>) -> TokenStream {
+pub(super) fn emit_boxed_new(
+    cx: &Ctx,
+    class_name: &str,
+    arg_exprs: Vec<TokenStream>,
+) -> TokenStream {
     let cid = cx
         .resolve_class(class_name)
         // Callers pass a class already known to resolve (a filtered user class,
         // or a literal builtin like `NameError`/`TypeError`); an undefined
         // constant in a user program raises a runtime NameError well before
         // reaching here (see `emit_const_read`).
-        .unwrap_or_else(|| panic!("internal error: unknown class `{class_name}` in emit_boxed_new"));
+        .unwrap_or_else(|| {
+            panic!("internal error: unknown class `{class_name}` in emit_boxed_new")
+        });
     // A NATIVE-BACKED class (exception or value-builtin subclass, D3) has no
     // generated struct to `new_handle` -- `emit_new_with_arg_tokens` already
     // returns a fully-boxed `RubyValue` built by the runtime, so hand it back
@@ -1449,7 +1531,12 @@ pub(super) fn box_if_object_typed(cx: &Ctx, id: NodeId, value: TokenStream) -> T
 /// RHS is the ONLY class ever assigned to it) needs no boxing at all -- it
 /// keeps its natural unboxed `Arc<Concrete>` type, exactly as
 /// `LocalStorage::Shadowed`'s docs describe.
-pub(super) fn box_for_local_storage(cx: &Ctx, name: &str, value_id: NodeId, value: TokenStream) -> TokenStream {
+pub(super) fn box_for_local_storage(
+    cx: &Ctx,
+    name: &str,
+    value_id: NodeId,
+    value: TokenStream,
+) -> TokenStream {
     if super::hoisting::local_storage(cx, name) == super::hoisting::LocalStorage::Shadowed {
         return value;
     }
@@ -1601,7 +1688,10 @@ pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
         // or dead-branch reference must use `const_owner_id_opt` and raise a
         // runtime `NameError` instead -- see `emit_const_read`/
         // `emit_const_write_stmt`.
-        panic!("internal error: unknown class/module `{}` in const_owner_id", scope.unwrap_or(name))
+        panic!(
+            "internal error: unknown class/module `{}` in const_owner_id",
+            scope.unwrap_or(name)
+        )
     })
 }
 
@@ -1659,7 +1749,11 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
         // Restricted to the "Object" scope: an arbitrary `Scope::Name` must NOT
         // fall back to a same-named top-level class (`M::V` is M's own value
         // constant `V`, not the unrelated top-level module `V`).
-        .or_else(|| (scope == "Object").then(|| cx.resolve_class(name)).flatten())
+        .or_else(|| {
+            (scope == "Object")
+                .then(|| cx.resolve_class(name))
+                .flatten()
+        })
 }
 
 fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
@@ -1704,7 +1798,12 @@ fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
 /// A constant WRITE as a bare Rust STATEMENT -- see `emit_ivar_write_stmt`'s
 /// docs for why this is factored out the same way (reused by
 /// `codegen::loops::emit_target_write`'s `Const` multi-assignment target).
-pub(super) fn emit_const_write_stmt(cx: &Ctx, scope: Option<&str>, name: &str, value: TokenStream) -> TokenStream {
+pub(super) fn emit_const_write_stmt(
+    cx: &Ctx,
+    scope: Option<&str>,
+    name: &str,
+    value: TokenStream,
+) -> TokenStream {
     // An explicit `Scope::NAME = ...` whose scope class isn't registered is a
     // `NameError` on the missing scope. CRuby resolves the scope BEFORE
     // evaluating the value (`Nope::X = (puts 1; 5)` raises without printing --

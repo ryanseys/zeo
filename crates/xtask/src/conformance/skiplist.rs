@@ -25,8 +25,7 @@ pub fn load(path: &Path) -> Result<Vec<SkipEntry>, String> {
             continue;
         }
         let mut parts = line.splitn(3, '\t');
-        let (Some(suite), Some(pattern), Some(reason)) =
-            (parts.next(), parts.next(), parts.next())
+        let (Some(suite), Some(pattern), Some(reason)) = (parts.next(), parts.next(), parts.next())
         else {
             return Err(format!(
                 "{}:{}: expected `suite<TAB>pattern<TAB>reason`",

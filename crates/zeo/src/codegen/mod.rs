@@ -732,113 +732,112 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             (class.is_builtin || idx == 0) && compiler.feature_active(ClassId(idx as u32))
         })
     {
-            let id = idx as u32;
-            // The registered display name is the FULLY-QUALIFIED path, not the
-            // bare leaf: a nested builtin (`Enumerator::Lazy`, `Digest::SHA256`)
-            // is stored as its leaf under a lexical parent (so constant paths
-            // resolve into it), but `.name`/`.inspect` must still print the
-            // full path.
-            let name = compiler.fq_name(ClassId(id));
-            let is_module = class.is_module;
-            let ancestor_ids = class.ancestors.iter().map(|a| a.0);
-            // A per-box OVERLAY (Phase 18) never registers a class entry of
-            // its own -- instances keep the ROOT builtin's identity -- but
-            // its methods/body statements below still run (registered on
-            // the root's entry, keyed by the box).
-            let is_overlay = class.builtin_overlay.is_some();
-            // A REOPENED builtin (Phase 16.3): each of its methods (own or
-            // module-included, all already materialized) registers as a
-            // value method so `send_value` dispatches it FIRST -- see
-            // `ValueMethodFn`'s docs for the precedence contract. Its
-            // `@@cvar = .../CONST = ...` body statements run here too --
-            // slightly earlier than their file position (builtins register
-            // ahead of user classes), a documented approximation that only
-            // matters if a builtin's class body reads a user class.
-            let value_defs = class.methods.iter().map(|&sid| {
-                let scope = compiler.scope(sid);
-                let mod_ident = ident::class_ident(compiler, ClassId(id));
-                let method_ident = safe_ident(&scope.name);
-                let fn_path = quote! { #mod_ident::#method_ident };
-                let tramp = params::emit_value_trampoline(
-                    &fn_path,
-                    &scope.name,
-                    &scope.params,
-                    scope.needs_block_param(),
-                    params::RecvMode::Pass,
-                );
-                // The dispatch KEY is the real Ruby name, not the escaped
-                // Rust ident -- same reasoning as `emit_class`'s
-                // `dispatch_key`.
-                let key = &scope.name;
-                let ci = compiler.class(ClassId(id));
-                let box_id = ci.box_id;
-                // A per-box OVERLAY's methods register on the ROOT
-                // builtin's entry, keyed by the overlay's box (Phase 18).
-                let target = ci.builtin_overlay.map_or(id, |root| root.0);
-                // A PRIVATE `def` (every top-level def, and an explicit
-                // `private def x`) is recorded so `respond_to?` skips it; a
-                // PROTECTED one so the `protected_*` reflection reports it. See
-                // `ClassRegistry::mark_private`/`mark_protected`.
-                let mark_vis = match scope.visibility {
-                    crate::hir::Visibility::Private => Some(quote! {
-                        __registry.mark_private(
-                            zeo_rt::ClassId(#target),
-                            zeo_rt::Symbol::intern(#key),
-                        );
-                    }),
-                    crate::hir::Visibility::Protected => Some(quote! {
-                        __registry.mark_protected(
-                            zeo_rt::ClassId(#target),
-                            zeo_rt::Symbol::intern(#key),
-                        );
-                    }),
-                    crate::hir::Visibility::Public => None,
-                };
-                // Bake this method's signature for `Method#arity`/`#parameters`
-                // reflection -- the `own_methods` loop above only covers user
-                // CLASSES, not a reopened builtin (Object, which every top-level
-                // `def` materializes onto). `descriptor_of` keys on (cid, name).
-                let params_entries = param_descriptor_entries(&scope.params);
-                quote! {
-                    __registry.define_value_method(
+        let id = idx as u32;
+        // The registered display name is the FULLY-QUALIFIED path, not the
+        // bare leaf: a nested builtin (`Enumerator::Lazy`, `Digest::SHA256`)
+        // is stored as its leaf under a lexical parent (so constant paths
+        // resolve into it), but `.name`/`.inspect` must still print the
+        // full path.
+        let name = compiler.fq_name(ClassId(id));
+        let is_module = class.is_module;
+        let ancestor_ids = class.ancestors.iter().map(|a| a.0);
+        // A per-box OVERLAY (Phase 18) never registers a class entry of
+        // its own -- instances keep the ROOT builtin's identity -- but
+        // its methods/body statements below still run (registered on
+        // the root's entry, keyed by the box).
+        let is_overlay = class.builtin_overlay.is_some();
+        // A REOPENED builtin (Phase 16.3): each of its methods (own or
+        // module-included, all already materialized) registers as a
+        // value method so `send_value` dispatches it FIRST -- see
+        // `ValueMethodFn`'s docs for the precedence contract. Its
+        // `@@cvar = .../CONST = ...` body statements run here too --
+        // slightly earlier than their file position (builtins register
+        // ahead of user classes), a documented approximation that only
+        // matters if a builtin's class body reads a user class.
+        let value_defs = class.methods.iter().map(|&sid| {
+            let scope = compiler.scope(sid);
+            let mod_ident = ident::class_ident(compiler, ClassId(id));
+            let method_ident = safe_ident(&scope.name);
+            let fn_path = quote! { #mod_ident::#method_ident };
+            let tramp = params::emit_value_trampoline(
+                &fn_path,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                params::RecvMode::Pass,
+            );
+            // The dispatch KEY is the real Ruby name, not the escaped
+            // Rust ident -- same reasoning as `emit_class`'s
+            // `dispatch_key`.
+            let key = &scope.name;
+            let ci = compiler.class(ClassId(id));
+            let box_id = ci.box_id;
+            // A per-box OVERLAY's methods register on the ROOT
+            // builtin's entry, keyed by the overlay's box (Phase 18).
+            let target = ci.builtin_overlay.map_or(id, |root| root.0);
+            // A PRIVATE `def` (every top-level def, and an explicit
+            // `private def x`) is recorded so `respond_to?` skips it; a
+            // PROTECTED one so the `protected_*` reflection reports it. See
+            // `ClassRegistry::mark_private`/`mark_protected`.
+            let mark_vis = match scope.visibility {
+                crate::hir::Visibility::Private => Some(quote! {
+                    __registry.mark_private(
                         zeo_rt::ClassId(#target),
-                        #box_id,
                         zeo_rt::Symbol::intern(#key),
-                        #tramp,
                     );
-                    zeo_rt::register_params(
-                        #target, #key, vec![ #(#params_entries),* ],
+                }),
+                crate::hir::Visibility::Protected => Some(quote! {
+                    __registry.mark_protected(
+                        zeo_rt::ClassId(#target),
+                        zeo_rt::Symbol::intern(#key),
                     );
-                    #mark_vis
-                }
-            });
-            builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
-            // Always-on builtins with their DEFAULT ancestors are registered
-            // once by `zeo_rt::register_builtins` -- so emit a base register
-            // here only for a require-gated extension (per-program, and the loop
-            // already feature-gates it) or a builtin whose ancestors a reopen
-            // actually changed (`class Array; include M; end`). The latter is an
-            // OVERRIDE: it lands after `register_builtins` in `main` and replaces
-            // the default entry. This keeps the common program free of the ~540
-            // identical builtin registrations while preserving full reopen parity.
-            let is_ext = class.feature_gate.is_some();
-            let ancestors_default =
-                class.ancestors == zeo_abi::declared_ancestors(ClassId(id));
-            let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
-                quote! {
-                    __registry.register(
-                        zeo_rt::ClassId(#id),
-                        #name,
-                        #is_module,
-                        vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
-                        None,
-                    );
-                }
-            });
-            builtin_registrations.push(quote! {
-                #register
-                #(#value_defs)*
-            });
+                }),
+                crate::hir::Visibility::Public => None,
+            };
+            // Bake this method's signature for `Method#arity`/`#parameters`
+            // reflection -- the `own_methods` loop above only covers user
+            // CLASSES, not a reopened builtin (Object, which every top-level
+            // `def` materializes onto). `descriptor_of` keys on (cid, name).
+            let params_entries = param_descriptor_entries(&scope.params);
+            quote! {
+                __registry.define_value_method(
+                    zeo_rt::ClassId(#target),
+                    #box_id,
+                    zeo_rt::Symbol::intern(#key),
+                    #tramp,
+                );
+                zeo_rt::register_params(
+                    #target, #key, vec![ #(#params_entries),* ],
+                );
+                #mark_vis
+            }
+        });
+        builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
+        // Always-on builtins with their DEFAULT ancestors are registered
+        // once by `zeo_rt::register_builtins` -- so emit a base register
+        // here only for a require-gated extension (per-program, and the loop
+        // already feature-gates it) or a builtin whose ancestors a reopen
+        // actually changed (`class Array; include M; end`). The latter is an
+        // OVERRIDE: it lands after `register_builtins` in `main` and replaces
+        // the default entry. This keeps the common program free of the ~540
+        // identical builtin registrations while preserving full reopen parity.
+        let is_ext = class.feature_gate.is_some();
+        let ancestors_default = class.ancestors == zeo_abi::declared_ancestors(ClassId(id));
+        let register = (!is_overlay && (is_ext || !ancestors_default)).then(|| {
+            quote! {
+                __registry.register(
+                    zeo_rt::ClassId(#id),
+                    #name,
+                    #is_module,
+                    vec![#(zeo_rt::ClassId(#ancestor_ids)),*],
+                    None,
+                );
+            }
+        });
+        builtin_registrations.push(quote! {
+            #register
+            #(#value_defs)*
+        });
     }
 
     let main_label_counter = Cell::new(0u32);
@@ -1048,7 +1047,10 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
 fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
-    let fns = ci.class_methods.iter().map(|&sid| emit_class_method_fn(compiler, sid));
+    let fns = ci
+        .class_methods
+        .iter()
+        .map(|&sid| emit_class_method_fn(compiler, sid));
     // A container without a generated struct to attach an `impl` to -- a module,
     // OR a native-backed class (`RubyException`/`ValueSubclass`), OR an immediate
     // subclass (registry-only) -- emits `def self.x` into a `pub mod` of free
@@ -1090,7 +1092,8 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let method_ident = ident::class_method_ident(&scope.name);
     let sig_params = params::emit_signature_params_free(params, needs_block);
     let label_counter = Cell::new(0u32);
-    let no_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
+    let no_captures =
+        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, None);
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -1272,7 +1275,9 @@ fn emit_exception_deltas(
         return None;
     }
     let mod_ident = format_ident!("__exc_{}", cid.0);
-    let fns = deltas.iter().map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+    let fns = deltas
+        .iter()
+        .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
     let container = quote! {
         #[allow(non_snake_case)]
         pub mod #mod_ident { #[allow(unused_imports)] use super::*; #(#fns)* }
@@ -1285,8 +1290,12 @@ fn emit_exception_deltas(
             let name = &scope.name;
             let method_ident = safe_ident(name);
             let fn_path = quote! { #mod_ident::#method_ident };
-            let tramp =
-                params::emit_exc_trampoline(&fn_path, name, &scope.params, scope.needs_block_param());
+            let tramp = params::emit_exc_trampoline(
+                &fn_path,
+                name,
+                &scope.params,
+                scope.needs_block_param(),
+            );
             quote! {
                 __registry.define_method(
                     zeo_rt::ClassId(#id),
@@ -1317,7 +1326,8 @@ fn emit_builtin_method_fn(
     let needs_block = scope.needs_block_param();
     let sig_params = params::emit_signature_params(&scope.params, needs_block);
     let label_counter = Cell::new(0u32);
-    let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+    let method_captures =
+        captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
     let cx = Ctx {
         compiler,
         box_id: compiler.class(scope.defining_class).box_id,
@@ -1396,7 +1406,8 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_block = scope.needs_block_param();
         let sig_params = params::emit_signature_params(&scope.params, needs_block);
         let method_label_counter = Cell::new(0u32);
-        let method_captures = captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
+        let method_captures =
+            captures::collect_escaping_captures(compiler, &scope.body, &scope.params, Some(cid));
         let method_cx = Ctx {
             compiler,
             box_id: compiler.class(scope.defining_class).box_id,

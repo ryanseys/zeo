@@ -2,8 +2,8 @@
 //! old curated table (arg-type mismatches upgraded from silent fall-through
 //! to CRuby's real TypeError); the Tier A breadth lands in stage E.
 
-use crate::builtins::{arg_int, arity, block_or_enum, builtin_methods, recv_array};
 use crate::RubyValue;
+use crate::builtins::{arg_int, arity, block_or_enum, builtin_methods, recv_array};
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -1453,7 +1453,10 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
 
 /// Raise `FrozenError` if `recv` (an Array) is frozen -- the guard every
 /// mutating method runs before touching its storage.
-fn check_frozen(handle: &crate::collections::RArray, recv: &RubyValue) -> Result<(), crate::Signal> {
+fn check_frozen(
+    handle: &crate::collections::RArray,
+    recv: &RubyValue,
+) -> Result<(), crate::Signal> {
     if handle.is_frozen() {
         return Err(crate::dispatch::raise_error(
             "FrozenError",
@@ -1777,7 +1780,6 @@ builtin_methods! {
     }
 }
 
-
 /// `arr[start, len] = value` / `arr[range] = value` -- CRuby's
 /// `rb_ary_splice`: replaces the `start..start+len` span with `value`'s
 /// `to_ary` coercion (see `splice_elems`), padding with `nil` when `start`
@@ -1834,7 +1836,7 @@ fn splice_elems(value: &RubyValue) -> Result<Vec<RubyValue>, crate::Signal> {
                         crate::builtins::class_name_of(value),
                         crate::builtins::class_name_of(&other)
                     ),
-                ))
+                ));
             }
         }
     }
@@ -1934,7 +1936,11 @@ fn in_place_filter(
     }
     let changed = out.len() != items.len();
     *handle.lock() = out;
-    Ok(if changed { recv.clone() } else { RubyValue::Nil })
+    Ok(if changed {
+        recv.clone()
+    } else {
+        RubyValue::Nil
+    })
 }
 
 #[cfg(test)]
@@ -1949,13 +1955,17 @@ mod tests {
     fn push_is_variadic_and_returns_the_receiver() {
         let a = arr(vec![RubyValue::Int(1)]);
         push(&a, &[RubyValue::Int(2), RubyValue::Int(3)], None).unwrap();
-        let RubyValue::Array(inner) = &a else { panic!() };
+        let RubyValue::Array(inner) = &a else {
+            panic!()
+        };
         assert_eq!(inner.lock().len(), 3);
     }
 
     fn items_of(v: &RubyValue) -> Vec<String> {
-        let RubyValue::Array(inner) = v else { panic!("expected an Array") };
-        
+        let RubyValue::Array(inner) = v else {
+            panic!("expected an Array")
+        };
+
         inner.lock().iter().map(|e| e.inspect_string()).collect()
     }
 
@@ -1964,7 +1974,12 @@ mod tests {
     /// `array_splice` example covers them end to end.
     #[test]
     fn index_set_splices_a_start_length_span() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+            RubyValue::Int(4),
+        ]);
         let repl = arr(vec![RubyValue::Int(8), RubyValue::Int(9)]);
         index_set(&a, &[RubyValue::Int(1), RubyValue::Int(2), repl], None).unwrap();
         assert_eq!(items_of(&a), ["1", "8", "9", "4"]);
@@ -1980,7 +1995,11 @@ mod tests {
 
     #[test]
     fn index_set_splice_shrinks_when_the_replacement_is_shorter() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+        ]);
         let repl = arr(vec![RubyValue::Int(9)]);
         index_set(&a, &[RubyValue::Int(0), RubyValue::Int(3), repl], None).unwrap();
         assert_eq!(items_of(&a), ["9"]);
@@ -1989,8 +2008,17 @@ mod tests {
     /// A non-Array value inserts as ONE element (no to_ary here).
     #[test]
     fn index_set_splice_inserts_a_scalar_as_one_element() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
-        index_set(&a, &[RubyValue::Int(0), RubyValue::Int(2), RubyValue::Int(9)], None).unwrap();
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+        ]);
+        index_set(
+            &a,
+            &[RubyValue::Int(0), RubyValue::Int(2), RubyValue::Int(9)],
+            None,
+        )
+        .unwrap();
         assert_eq!(items_of(&a), ["9", "3"]);
     }
 
@@ -2014,7 +2042,12 @@ mod tests {
 
     #[test]
     fn index_set_splices_an_inclusive_range() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+            RubyValue::Int(4),
+        ]);
         let range = RubyValue::Range(
             Some(Box::new(RubyValue::Int(1))),
             Some(Box::new(RubyValue::Int(2))),
@@ -2026,7 +2059,12 @@ mod tests {
 
     #[test]
     fn index_set_splices_an_exclusive_range() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)]);
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+            RubyValue::Int(4),
+        ]);
         let range = RubyValue::Range(
             Some(Box::new(RubyValue::Int(1))),
             Some(Box::new(RubyValue::Int(3))),
@@ -2039,12 +2077,20 @@ mod tests {
     /// An endless range splices to the end; a beginless one from the start.
     #[test]
     fn index_set_splices_open_ended_ranges() {
-        let a = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let a = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+        ]);
         let endless = RubyValue::Range(Some(Box::new(RubyValue::Int(1))), None, false);
         index_set(&a, &[endless, RubyValue::Int(9)], None).unwrap();
         assert_eq!(items_of(&a), ["1", "9"]);
 
-        let b = arr(vec![RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)]);
+        let b = arr(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            RubyValue::Int(3),
+        ]);
         let beginless = RubyValue::Range(None, Some(Box::new(RubyValue::Int(1))), false);
         index_set(&b, &[beginless, RubyValue::Int(9)], None).unwrap();
         assert_eq!(items_of(&b), ["9", "3"]);
@@ -2060,15 +2106,21 @@ mod tests {
 
     #[test]
     fn to_h_maps_each_element_through_a_block() {
-        let a = arr(vec![
-            RubyValue::Array(crate::array_new(vec![RubyValue::Int(1), RubyValue::Int(2)])),
-        ]);
+        let a = arr(vec![RubyValue::Array(crate::array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+        ]))]);
         // `{ |pair| [pair[1], pair[0]] }` -- an Array yields ONE value per
         // element, so the block sees the element itself.
         let p: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Array(pair) = &args[0] else { panic!("expected the element") };
+            let RubyValue::Array(pair) = &args[0] else {
+                panic!("expected the element")
+            };
             let pair = pair.lock().clone();
-            Ok(RubyValue::Array(crate::array_new(vec![pair[1].clone(), pair[0].clone()])))
+            Ok(RubyValue::Array(crate::array_new(vec![
+                pair[1].clone(),
+                pair[0].clone(),
+            ])))
         });
         let out = to_h(&a, &[], Some(RubyValue::Proc(p))).unwrap();
         assert_eq!(out.inspect_string(), "{2 => 1}");
@@ -2076,9 +2128,10 @@ mod tests {
 
     #[test]
     fn to_h_without_a_block_requires_pair_shaped_elements() {
-        let a = arr(vec![
-            RubyValue::Array(crate::array_new(vec![RubyValue::Int(1), RubyValue::Int(2)])),
-        ]);
+        let a = arr(vec![RubyValue::Array(crate::array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+        ]))]);
         let out = to_h(&a, &[], None).unwrap();
         assert_eq!(out.inspect_string(), "{1 => 2}");
     }

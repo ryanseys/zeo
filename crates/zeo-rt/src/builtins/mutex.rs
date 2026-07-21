@@ -7,12 +7,12 @@
 //! (like Thread/Fiber), so a row unwraps it with `as_mutex_unchecked` rather
 //! than downcasting an `Object` the way `ConditionVariable` does.
 
+use crate::RubyValue;
 use crate::builtins::{arity, builtin_methods, need_block};
 use crate::dispatch::raise_error;
 use crate::thread::{
     mutex_lock, mutex_locked, mutex_new, mutex_owned, mutex_try_lock, mutex_unlock,
 };
-use crate::RubyValue;
 
 /// A runtime lock/unlock `Err(&str)` as the `ThreadError` CRuby raises -- the
 /// runtime carries the exact message, exception construction is ours.

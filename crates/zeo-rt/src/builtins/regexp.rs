@@ -3,8 +3,8 @@
 //! The dynamic-path breadth (`match`/`=~`/`source`/...) rides stage D with
 //! String's, sharing `crate::regexp`'s helpers with the static paths.
 
-use crate::builtins::{arity, builtin_methods};
 use crate::RubyValue;
+use crate::builtins::{arity, builtin_methods};
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -213,7 +213,10 @@ fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
         RubyValue::Nil => Ok(None),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -396,10 +399,17 @@ mod tests {
 
     #[test]
     fn case_eq_matches_a_string_subject() {
-        let re = RubyValue::Regexp(crate::regexp_new("ab", false, false, false).expect("valid pattern"));
+        let re =
+            RubyValue::Regexp(crate::regexp_new("ab", false, false, false).expect("valid pattern"));
         let s = RubyValue::Str(crate::string_new("cabs".to_string()));
-        assert!(matches!(case_eq(&re, &[s], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            case_eq(&re, &[s], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         let miss = RubyValue::Str(crate::string_new("xyz".to_string()));
-        assert!(matches!(case_eq(&re, &[miss], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            case_eq(&re, &[miss], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 }

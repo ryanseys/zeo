@@ -61,7 +61,10 @@ fn convert_name(v: &RubyValue) -> String {
 /// yields `(0+0i)`. A `/0` denominator raises ZeroDivisionError, matching
 /// `"1/0".to_c`.
 pub(crate) fn parse_str_to_c(input: &str) -> Result<RubyValue, Signal> {
-    let mut cur = Cur { s: input.as_bytes(), i: 0 };
+    let mut cur = Cur {
+        s: input.as_bytes(),
+        i: 0,
+    };
     cur.skip_ws();
     let mut buf = String::new();
     let sign = read_sign(&mut cur, &mut buf);
@@ -449,10 +452,20 @@ mod tests {
     #[test]
     fn polar_class_constructor_builds_a_complex() {
         // `Complex.polar(3, 0)` == `3 * (cos 0 + i sin 0)` == (3+0i).
-        let c = polar_c(&RubyValue::Nil, &[RubyValue::Int(3), RubyValue::Int(0)], None).unwrap();
+        let c = polar_c(
+            &RubyValue::Nil,
+            &[RubyValue::Int(3), RubyValue::Int(0)],
+            None,
+        )
+        .unwrap();
         assert!(matches!(c, RubyValue::Complex(_)));
         // Zero magnitude collapses to the origin regardless of the angle.
-        let z = polar_c(&RubyValue::Nil, &[RubyValue::Int(0), RubyValue::Int(5)], None).unwrap();
+        let z = polar_c(
+            &RubyValue::Nil,
+            &[RubyValue::Int(0), RubyValue::Int(5)],
+            None,
+        )
+        .unwrap();
         assert!(z.rb_eq(&cpx(0, 0)));
     }
 
@@ -470,7 +483,9 @@ mod tests {
         // (1+2i)/(3+4i) == ((11/25)+(2/25)*i)
         let r = cpx_div(&cpx(1, 2), &cpx(3, 4)).unwrap();
         let RubyValue::Complex(c) = &r else { panic!() };
-        assert!(matches!(&c.real, RubyValue::Rational(q) if q.num == BigInt::from(11) && q.den == BigInt::from(25)));
+        assert!(
+            matches!(&c.real, RubyValue::Rational(q) if q.num == BigInt::from(11) && q.den == BigInt::from(25))
+        );
         // (1+2i)/2: real (1/2), imag demotes to Integer 1.
         let r = cpx_div(&cpx(1, 2), &RubyValue::Int(2)).unwrap();
         let RubyValue::Complex(c) = &r else { panic!() };
@@ -490,10 +505,14 @@ mod tests {
 
     #[test]
     fn formatting_matches_the_oracle() {
-        let RubyValue::Complex(c) = cpx(1, 2) else { panic!() };
+        let RubyValue::Complex(c) = cpx(1, 2) else {
+            panic!()
+        };
         assert_eq!(cpx_format(&c, false), "1+2i");
         assert_eq!(cpx_format(&c, true), "(1+2i)");
-        let RubyValue::Complex(c) = cpx(1, -2) else { panic!() };
+        let RubyValue::Complex(c) = cpx(1, -2) else {
+            panic!()
+        };
         assert_eq!(cpx_format(&c, false), "1-2i");
         let r = cpx_div(&cpx(1, 2), &cpx(3, 4)).unwrap();
         let RubyValue::Complex(c) = r else { panic!() };
@@ -546,7 +565,11 @@ fn complex_abs_value(c: &RComplexData) -> RubyValue {
             RubyValue::Int(i) => RubyValue::Int(i.abs()),
             RubyValue::BigInt(b) => {
                 let val = (**b).clone();
-                let abs = if num_to_f64_unchecked(other) < 0.0 { -val } else { val };
+                let abs = if num_to_f64_unchecked(other) < 0.0 {
+                    -val
+                } else {
+                    val
+                };
                 RubyValue::BigInt(std::sync::Arc::new(abs))
             }
             _ => RubyValue::Float(num_to_f64_unchecked(other).abs()),
@@ -752,7 +775,11 @@ fn real_projection(recv: &RubyValue, conv: &str) -> Result<RubyValue, Signal> {
     if !imag_is_exact_zero(&c.imag) {
         return Err(crate::dispatch::raise_error(
             "RangeError",
-            format!("can't convert {} into {}", recv.to_display_string(), conv_target(conv)),
+            format!(
+                "can't convert {} into {}",
+                recv.to_display_string(),
+                conv_target(conv)
+            ),
         ));
     }
     crate::dispatch::send_value(&c.real, crate::Symbol::intern(conv), &[], None)

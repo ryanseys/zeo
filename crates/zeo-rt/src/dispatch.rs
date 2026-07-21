@@ -175,6 +175,12 @@ impl Object {
     pub const CLASS_ID: ClassId = ClassId(0);
 }
 
+/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
+/// `send`'s Enumerable fallback (an Object whose registered ancestors
+/// contain this id dispatches unresolved Enumerable-method names to
+/// `crate::enumerable`). Like every id above, re-exported from the shared
+/// `zeo-abi` numbering.
+pub use zeo_abi::ENUMERABLE_CLASS;
 /// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
 /// models as a `RubyValue` variant rather than a generated `ruby_class!`
 /// struct -- numerically mirrored by `zeo::compiler::BUILTIN_CLASSES`
@@ -194,12 +200,6 @@ pub use zeo_abi::{
     REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS, STRUCT_CLASS, SYMBOL_CLASS, THREAD_CLASS,
     TRUE_CLASS, YIELDER_CLASS,
 };
-/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
-/// `send`'s Enumerable fallback (an Object whose registered ancestors
-/// contain this id dispatches unresolved Enumerable-method names to
-/// `crate::enumerable`). Like every id above, re-exported from the shared
-/// `zeo-abi` numbering.
-pub use zeo_abi::ENUMERABLE_CLASS;
 
 impl RubyObject for Object {
     fn class_id(&self) -> ClassId {
@@ -215,7 +215,8 @@ impl RubyObject for Object {
         self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn set_frozen(&self) {
-        self.frozen.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.lock().values().cloned().collect()
@@ -226,14 +227,24 @@ impl RubyObject for Object {
         // diverge. Insertion order isn't preserved (a plain `HashMap`) -- a
         // minor divergence limited to the name-keyed main object, which is
         // rarely inspected with ivars.
-        self.ivars.lock().iter().map(|(k, v)| (format!("@{k}"), v.clone())).collect()
+        self.ivars
+            .lock()
+            .iter()
+            .map(|(k, v)| (format!("@{k}"), v.clone()))
+            .collect()
     }
     fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
         // A never-assigned ivar reads `nil` rather than raising -- Ruby's
         // rule, and the reason this answers `Some(Nil)` instead of `None`
         // (`None` means "this class has no such slot", which for a
         // name-keyed object is never true).
-        Some(self.ivars.lock().get(name).cloned().unwrap_or(RubyValue::Nil))
+        Some(
+            self.ivars
+                .lock()
+                .get(name)
+                .cloned()
+                .unwrap_or(RubyValue::Nil),
+        )
     }
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
         self.ivars.lock().insert(name.to_string(), v);
@@ -514,7 +525,8 @@ pub type AllocatorFn = fn(ClassId) -> RObj;
 /// the builtin behavior -- real Ruby's rule, oracle-verified (`class String;
 /// def length; 42; end` wins everywhere). Phase 18 keys per-box overlays off
 /// this same table.
-pub type ValueMethodFn = fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
+pub type ValueMethodFn =
+    fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
 
 struct ClassEntry {
     /// The Ruby-visible, fully-qualified name (`"Store::Item"`) -- what
@@ -681,12 +693,10 @@ impl ClassRegistry {
             .and_then(|id| self.entries.get(&id))
             .and_then(|entry| entry.constructor);
         match (id, ctor) {
-            (Some(id), Some(ctor)) => ctor(
-                ClassId(id),
-                &[RubyValue::Str(crate::string_new(msg))],
-                None,
-            )
-            .expect("Exception#initialize can't signal"),
+            (Some(id), Some(ctor)) => {
+                ctor(ClassId(id), &[RubyValue::Str(crate::string_new(msg))], None)
+                    .expect("Exception#initialize can't signal")
+            }
             // No such class registered: a `raise_error` site naming a class no
             // exception defines (a zeo-rt bug), or a partial test registry.
             // Panic with the full message -- the same uncatchable fallback the
@@ -775,7 +785,13 @@ impl ClassRegistry {
         })
     }
 
-    pub fn define_value_method(&mut self, id: ClassId, box_id: u32, name: Symbol, f: ValueMethodFn) {
+    pub fn define_value_method(
+        &mut self,
+        id: ClassId,
+        box_id: u32,
+        name: Symbol,
+        f: ValueMethodFn,
+    ) {
         self.entries
             .get_mut(&id.0)
             .expect("class must be registered before defining value methods on it")
@@ -835,8 +851,7 @@ impl ClassRegistry {
         let Some(e) = self.entries.get(&id.0) else {
             return false;
         };
-        e.own_methods.contains(&name)
-            || e.value_methods.keys().any(|(_, n)| *n == name)
+        e.own_methods.contains(&name) || e.value_methods.keys().any(|(_, n)| *n == name)
     }
 
     /// This class's registered instance-method names, each tagged private/not,
@@ -846,7 +861,11 @@ impl ClassRegistry {
     /// reopens (`value_methods`) are always own. When `own_only` is set but the
     /// class recorded no own-set (e.g. a builtin with no reopens), nothing is
     /// dropped only because there is nothing to drop.
-    fn own_instance_method_names(&self, id: ClassId, own_only: bool) -> Vec<(Symbol, MethodVisibility)> {
+    fn own_instance_method_names(
+        &self,
+        id: ClassId,
+        own_only: bool,
+    ) -> Vec<(Symbol, MethodVisibility)> {
         let Some(e) = self.entries.get(&id.0) else {
             return Vec::new();
         };
@@ -984,7 +1003,7 @@ pub fn ivar_name_arg(v: &RubyValue) -> Result<String, Signal> {
             return Err(raise_error(
                 "TypeError",
                 format!("{} is not a symbol nor a string", v.inspect_string()),
-            ))
+            ));
         }
     };
     match raw.strip_prefix('@') {
@@ -1069,9 +1088,8 @@ pub fn ivar_defined(recv: &RubyValue, bare_name: &str) -> bool {
     let RubyValue::Array(vars) = instance_variables(recv) else {
         return false;
     };
-    
-    vars
-        .lock()
+
+    vars.lock()
         .iter()
         .any(|v| matches!(v, RubyValue::Symbol(s) if *s == want))
 }
@@ -1110,7 +1128,8 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
 /// so invisible to the class-id-only `responds_to`. Codegen's `respond_to?`
 /// fast path routes here so a `def obj.foo` singleton answers `true`.
 pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> bool {
-    if crate::runtime_meta::is_live() && crate::runtime_meta::object_has_singleton_method(recv, name)
+    if crate::runtime_meta::is_live()
+        && crate::runtime_meta::object_has_singleton_method(recv, name)
     {
         return true;
     }
@@ -1141,7 +1160,10 @@ pub(crate) fn obj_dig(cur: RubyValue, rest: &[RubyValue]) -> Result<RubyValue, S
     if !responds_to_value(&cur, dig, false) {
         return Err(raise_error(
             "TypeError",
-            format!("{} does not have #dig method", crate::class_name_of_value(&cur)),
+            format!(
+                "{} does not have #dig method",
+                crate::class_name_of_value(&cur)
+            ),
         ));
     }
     send_value(&cur, dig, rest, None)
@@ -1193,7 +1215,9 @@ pub fn method_defined_inherit(recv_class: ClassId, name: Symbol, inherit: bool) 
     if inherit {
         return method_defined(recv_class, name);
     }
-    let Some(r) = REGISTRY.get() else { return false };
+    let Some(r) = REGISTRY.get() else {
+        return false;
+    };
     r.defines_own(recv_class, name)
         && r.own_method_visibility(recv_class, name) != Some(MethodVisibility::Private)
 }
@@ -1363,7 +1387,10 @@ impl VisFilter {
 /// bearing case: `super` from any `initialize` must reach it, but
 /// `obj.initialize` must raise. Kernel's print family is the same shape.
 fn is_hidden_builtin_private(name: &str) -> bool {
-    matches!(name, "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`")
+    matches!(
+        name,
+        "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`"
+    )
 }
 
 /// The instance-method names of `class` and -- when `inherit` -- its
@@ -1378,8 +1405,11 @@ fn is_hidden_builtin_private(name: &str) -> bool {
 /// CRuby's exactly -- reflection callers assert membership, not equality. A
 /// user class's own list (`inherit=false`) is exact.
 pub fn instance_method_names(class: ClassId, filter: VisFilter, inherit: bool) -> Vec<Symbol> {
-    let chain: Vec<ClassId> =
-        if inherit { ancestors_of_value(class).to_vec() } else { vec![class] };
+    let chain: Vec<ClassId> = if inherit {
+        ancestors_of_value(class).to_vec()
+    } else {
+        vec![class]
+    };
     let reg = REGISTRY.get();
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -1463,7 +1493,11 @@ pub fn class_method_names(class: ClassId) -> Vec<Symbol> {
 /// The registry's dynamic constructor for `id` (`Class#new`'s row) --
 /// `None` for modules, builtins without allocators, or a missing registry.
 pub(crate) fn constructor_of(id: ClassId) -> Option<ConstructorFn> {
-    if let Some(c) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).and_then(|e| e.constructor) {
+    if let Some(c) = REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&id.0))
+        .and_then(|e| e.constructor)
+    {
         return Some(c);
     }
     // A runtime class (`Class.new`) registers its generic constructor in the
@@ -1558,7 +1592,12 @@ pub fn send_super_from(
             return f(recv, args, block);
         }
     }
-    Err(raise_method_missing(recv, &method_name, args, MissingReason::Super))
+    Err(raise_method_missing(
+        recv,
+        &method_name,
+        args,
+        MissingReason::Super,
+    ))
 }
 
 /// Coerces a dynamic method-name value the way `send`/`__send__` do:
@@ -1615,7 +1654,11 @@ pub(crate) fn registry_value_method_impl(id: ClassId, name: Symbol) -> Option<Me
 /// before any statement runs). See `RubyValue::Class`'s display arms for
 /// the fallback rendering.
 pub fn class_name(id: ClassId) -> Option<String> {
-    if let Some(name) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).map(|e| e.name.clone()) {
+    if let Some(name) = REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&id.0))
+        .map(|e| e.name.clone())
+    {
         return Some(name);
     }
     if crate::runtime_meta::is_live() {
@@ -1630,13 +1673,20 @@ pub fn class_name(id: ClassId) -> Option<String> {
 /// `eval("Integer")` -- codegen resolves those statically and so never
 /// `const_set`s them, leaving the runtime constants table without them.
 pub fn class_id_by_name(name: &str) -> Option<ClassId> {
-    REGISTRY.get().and_then(|r| r.by_name.get(name)).map(|&id| ClassId(id))
+    REGISTRY
+        .get()
+        .and_then(|r| r.by_name.get(name))
+        .map(|&id| ClassId(id))
 }
 
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs
 /// `Enumerable.class` -> `Module`) -- same graceful `None` as `class_name`.
 pub fn class_is_module(id: ClassId) -> Option<bool> {
-    if let Some(m) = REGISTRY.get().and_then(|r| r.entries.get(&id.0)).map(|e| e.is_module) {
+    if let Some(m) = REGISTRY
+        .get()
+        .and_then(|r| r.entries.get(&id.0))
+        .map(|e| e.is_module)
+    {
         return Some(m);
     }
     if crate::runtime_meta::is_live() {
@@ -1659,7 +1709,10 @@ pub(crate) fn call_user_method(
     args: &[RubyValue],
 ) -> Option<Result<RubyValue, Signal>> {
     let id = recv.class_id();
-    if let Some(f) = REGISTRY.get().and_then(|r| r.lookup(id, Symbol::intern(name))) {
+    if let Some(f) = REGISTRY
+        .get()
+        .and_then(|r| r.lookup(id, Symbol::intern(name)))
+    {
         return Some(f.call(recv, args, None));
     }
     // A RUNTIME-defined method on the receiver's OWN class (a `define_method`
@@ -1784,7 +1837,9 @@ fn note_dispatch(name: Symbol) {
 /// "wrong number of arguments" pile. A no-op (and no env lookup on the common
 /// path) unless the message is an arity error.
 fn arity_debug_context(msg: String) -> String {
-    if !msg.starts_with("wrong number of arguments") || std::env::var_os("ZEO_ARITY_DEBUG").is_none() {
+    if !msg.starts_with("wrong number of arguments")
+        || std::env::var_os("ZEO_ARITY_DEBUG").is_none()
+    {
         return msg;
     }
     match CURRENT_METHOD.with(|c| c.get()) {
@@ -1900,11 +1955,18 @@ impl MissingReason {
         match self {
             Self::NoEntry => ("NoMethodError", "undefined method '{name}' for {recv}"),
             Self::Private => ("NoMethodError", "private method '{name}' called for {recv}"),
-            Self::Protected => ("NoMethodError", "protected method '{name}' called for {recv}"),
-            Self::VCall => {
-                ("NameError", "undefined local variable or method '{name}' for {recv}")
-            }
-            Self::Super => ("NoMethodError", "super: no superclass method '{name}' for {recv}"),
+            Self::Protected => (
+                "NoMethodError",
+                "protected method '{name}' called for {recv}",
+            ),
+            Self::VCall => (
+                "NameError",
+                "undefined local variable or method '{name}' for {recv}",
+            ),
+            Self::Super => (
+                "NoMethodError",
+                "super: no superclass method '{name}' for {recv}",
+            ),
         }
     }
 }
@@ -1931,7 +1993,11 @@ pub fn describe_receiver(recv: &RubyValue) -> String {
         // A class or module receiver gets its own shape ("for class Widget" /
         // "for module Helper"), oracle-verified.
         RubyValue::Class(cid) => {
-            let kind = if class_is_module(*cid).unwrap_or(false) { "module" } else { "class" };
+            let kind = if class_is_module(*cid).unwrap_or(false) {
+                "module"
+            } else {
+                "class"
+            };
             format!("{kind} {}", named(*cid))
         }
         // The top-level `self` is rendered literally as `main`
@@ -1977,7 +2043,11 @@ pub fn raise_method_missing(
         }
         _ => {
             let args_detail = ("args", RubyValue::Array(crate::array_new(args.to_vec())));
-            raise_error_details(class_name, msg, &[name_detail, receiver_detail, args_detail])
+            raise_error_details(
+                class_name,
+                msg,
+                &[name_detail, receiver_detail, args_detail],
+            )
         }
     }
 }
@@ -2019,10 +2089,8 @@ pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
 pub fn raise_stop_iteration(result: RubyValue) -> Signal {
     match REGISTRY.get() {
         Some(reg) => {
-            let exc = reg.construct_exception(
-                "StopIteration",
-                "iteration reached an end".to_string(),
-            );
+            let exc =
+                reg.construct_exception("StopIteration", "iteration reached an end".to_string());
             send(
                 &exc.as_object_unchecked(),
                 Symbol::intern("__set_result"),
@@ -2036,7 +2104,6 @@ pub fn raise_stop_iteration(result: RubyValue) -> Signal {
         None => panic!("StopIteration: iteration reached an end"),
     }
 }
-
 
 /// The general dispatcher -- reached only on Path 2 (see module docs).
 /// Since every reachable method (own, inherited, or mixed-in) is already
@@ -2232,7 +2299,12 @@ pub fn send_value_in(
     // Every receiver shape -- class, module, immediate, object -- gets its
     // message from the one method-missing raiser, so the class/module form
     // ("for class Widget") and the instance form stay in step.
-    Err(raise_method_missing(recv, &name.to_string(), args, MissingReason::NoEntry))
+    Err(raise_method_missing(
+        recv,
+        &name.to_string(),
+        args,
+        MissingReason::NoEntry,
+    ))
 }
 
 pub fn send(
@@ -2339,11 +2411,9 @@ pub fn send_in(
                         if payload_root == Some(anc) {
                             if let Some(ref p) = payload {
                                 let result = f(p, args, block)?;
-                                return Ok(
-                                    crate::builtins::value_subclass::rewrap_self_return(
-                                        result, p, recv, n,
-                                    ),
-                                );
+                                return Ok(crate::builtins::value_subclass::rewrap_self_return(
+                                    result, p, recv, n,
+                                ));
                             }
                         }
                         return f(&boxed, args, block);
@@ -2393,9 +2463,9 @@ mod tests {
         let s = MethodImpl::from_fn(stat);
         assert!(matches!(s.call(&recv, &[], None), Ok(RubyValue::Int(1))));
 
-        let d = MethodImpl::Dynamic(Arc::new(|_: &RObj, _: &[RubyValue], _: Option<RubyValue>| {
-            Ok(RubyValue::Int(2))
-        }));
+        let d = MethodImpl::Dynamic(Arc::new(
+            |_: &RObj, _: &[RubyValue], _: Option<RubyValue>| Ok(RubyValue::Int(2)),
+        ));
         assert!(matches!(d.call(&recv, &[], None), Ok(RubyValue::Int(2))));
     }
 }

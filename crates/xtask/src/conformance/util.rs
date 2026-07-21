@@ -34,7 +34,9 @@ pub fn sanitize_id(id: &str) -> String {
 
 /// Escape a string onto one line for the stamp format.
 pub fn escape_line(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\n', "\\n").replace('\t', "\\t")
+    s.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
 }
 
 pub fn unescape_line(s: &str) -> String {

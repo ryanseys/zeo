@@ -8,14 +8,14 @@
 //! file's contents at open time (enough for the line/whole-file readers the
 //! corpus uses); a streaming rework is only needed for unbounded inputs.
 
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::value::RubyValue;
 use crate::Signal;
-use zeo_abi::{ClassId, ARGF_CLASS};
+use crate::builtins::{arity, builtin_methods};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::value::RubyValue;
+use zeo_abi::{ARGF_CLASS, ClassId};
 
 /// The singleton `ARGF` reader. Its cursor state is the current file name and
 /// line number; the file list itself is read live from the `ARGV` constant
@@ -99,7 +99,8 @@ fn read_all(argf: &RArgf) -> Result<Vec<u8>, Signal> {
     }
     let mut out = Vec::new();
     for f in files {
-        let bytes = std::fs::read(&f).map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &f))?;
+        let bytes = std::fs::read(&f)
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &f))?;
         *argf.filename.lock() = f;
         out.extend(bytes);
     }

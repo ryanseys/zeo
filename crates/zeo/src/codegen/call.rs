@@ -9,9 +9,11 @@
 
 use quote::{format_ident, quote};
 
-use super::expr::{box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_any_class, infer_class};
-use super::ident::safe_ident;
 use super::Ctx;
+use super::expr::{
+    box_if_object_typed, emit_expr, emit_symbol_expr, infer, infer_any_class, infer_class,
+};
+use super::ident::safe_ident;
 use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, KeywordParam, KwArg, NodeId, Params, Visibility};
 use crate::types::TyKind;
@@ -24,7 +26,12 @@ use proc_macro2::TokenStream;
 /// real, heap-allocated `Proc` (see that module's docs -- there is no
 /// separate "escape analysis" beyond this one check, since `.times` is the
 /// only inline fast path that exists).
-pub fn is_times_fast_path(compiler: &Compiler, receiver: Option<NodeId>, name: &str, kwargs_empty: bool) -> bool {
+pub fn is_times_fast_path(
+    compiler: &Compiler,
+    receiver: Option<NodeId>,
+    name: &str,
+    kwargs_empty: bool,
+) -> bool {
     kwargs_empty
         && name == "times"
         && receiver.is_some_and(|r| matches!(compiler.hir[r], HirNode::IntegerLit(_)))
@@ -84,11 +91,7 @@ enum IntOpKind {
     Cmp,
 }
 
-const INT_UNARY_OPS: &[(&str, &str)] = &[
-    ("-@", "int_neg"),
-    ("+@", "int_pos"),
-    ("~", "int_bnot"),
-];
+const INT_UNARY_OPS: &[(&str, &str)] = &[("-@", "int_neg"), ("+@", "int_pos"), ("~", "int_bnot")];
 
 /// Wraps `zeo_rt::int_div`/`int_mod`'s call with a zero-divisor check,
 /// raising a real, catchable `ZeroDivisionError` instead of letting the
@@ -222,7 +225,10 @@ fn emit_fiber_error(cx: &Ctx, msg: &str) -> TokenStream {
 fn emit_missing_block_raise(cx: &Ctx, target: &str) -> TokenStream {
     let (class_name, msg) = match target {
         "Thread" => ("ThreadError", "must be called with a block"),
-        "Fiber" => ("ArgumentError", "tried to create Proc object without a block"),
+        "Fiber" => (
+            "ArgumentError",
+            "tried to create Proc object without a block",
+        ),
         _ => ("ArgumentError", "must be called with a block"),
     };
     let err = emit_simple_error(cx, class_name, msg);
@@ -294,8 +300,11 @@ fn try_collection_dispatch(
                     ))
                 }],
             );
-            let frozen_error =
-                emit_frozen_error(cx, "Array", quote! { zeo_rt::RubyValue::Array(__recv.clone()) });
+            let frozen_error = emit_frozen_error(
+                cx,
+                "Array",
+                quote! { zeo_rt::RubyValue::Array(__recv.clone()) },
+            );
             quote! {
                 {
                     // Receiver and arguments evaluate FIRST, then the frozen
@@ -331,8 +340,11 @@ fn try_collection_dispatch(
             let key = super::expr::box_if_object_typed(cx, args[0], key);
             let val = emit_expr(cx, args[1]);
             let val = super::expr::box_if_object_typed(cx, args[1], val);
-            let frozen_error =
-                emit_frozen_error(cx, "Hash", quote! { zeo_rt::RubyValue::Hash(__recv.clone()) });
+            let frozen_error = emit_frozen_error(
+                cx,
+                "Hash",
+                quote! { zeo_rt::RubyValue::Hash(__recv.clone()) },
+            );
             // The frozen check runs BEFORE `hash_set` ever hashes the key --
             // the same ordering CRuby guarantees (`rb_hash_modify` is
             // `rb_hash_aset`'s first statement, ahead of any `st_update`).
@@ -424,9 +436,15 @@ fn try_regexp_dispatch(
 
     if ty == TyKind::Regexp {
         match (name, args.len()) {
-            ("source", 0) => return Some(quote! { zeo_rt::regexp_source(&(#recv_expr).as_regexp_unchecked()) }),
-            ("to_s", 0) => return Some(quote! { zeo_rt::regexp_to_s(&(#recv_expr).as_regexp_unchecked()) }),
-            ("inspect", 0) => return Some(quote! { zeo_rt::regexp_inspect(&(#recv_expr).as_regexp_unchecked()) }),
+            ("source", 0) => {
+                return Some(quote! { zeo_rt::regexp_source(&(#recv_expr).as_regexp_unchecked()) });
+            }
+            ("to_s", 0) => {
+                return Some(quote! { zeo_rt::regexp_to_s(&(#recv_expr).as_regexp_unchecked()) });
+            }
+            ("inspect", 0) => {
+                return Some(quote! { zeo_rt::regexp_inspect(&(#recv_expr).as_regexp_unchecked()) });
+            }
             // `===` is safe against ANY subject shape (real Ruby: `Regexp#===`
             // is `false`, not an error, for a non-String) -- routed through
             // `RubyValue::rb_case_eq` rather than requiring a statically
@@ -435,7 +453,9 @@ fn try_regexp_dispatch(
             // an arbitrary-shaped subject (`case/when` dispatch).
             ("===", 1) => {
                 let arg_expr = emit_expr(cx, args[0]);
-                return Some(quote! { zeo_rt::RubyValue::Bool((#recv_expr).rb_case_eq(&(#arg_expr))) });
+                return Some(
+                    quote! { zeo_rt::RubyValue::Bool((#recv_expr).rb_case_eq(&(#arg_expr))) },
+                );
             }
             ("=~", 1) => {
                 let guard = str_guard(args[0], "__h")?;
@@ -590,20 +610,40 @@ fn try_regexp_dispatch(
                 });
             }
             ("pre_match", 0) => {
-                return Some(quote! { zeo_rt::matchdata_pre_match(&(#recv_expr).as_matchdata_unchecked()) })
+                return Some(
+                    quote! { zeo_rt::matchdata_pre_match(&(#recv_expr).as_matchdata_unchecked()) },
+                );
             }
             ("post_match", 0) => {
-                return Some(quote! { zeo_rt::matchdata_post_match(&(#recv_expr).as_matchdata_unchecked()) })
+                return Some(
+                    quote! { zeo_rt::matchdata_post_match(&(#recv_expr).as_matchdata_unchecked()) },
+                );
             }
-            ("to_a", 0) => return Some(quote! { zeo_rt::matchdata_to_a(&(#recv_expr).as_matchdata_unchecked()) }),
+            ("to_a", 0) => {
+                return Some(
+                    quote! { zeo_rt::matchdata_to_a(&(#recv_expr).as_matchdata_unchecked()) },
+                );
+            }
             ("captures", 0) => {
-                return Some(quote! { zeo_rt::matchdata_captures(&(#recv_expr).as_matchdata_unchecked()) })
+                return Some(
+                    quote! { zeo_rt::matchdata_captures(&(#recv_expr).as_matchdata_unchecked()) },
+                );
             }
             ("named_captures", 0) => {
-                return Some(quote! { zeo_rt::matchdata_named_captures(&(#recv_expr).as_matchdata_unchecked()) })
+                return Some(
+                    quote! { zeo_rt::matchdata_named_captures(&(#recv_expr).as_matchdata_unchecked()) },
+                );
             }
-            ("string", 0) => return Some(quote! { zeo_rt::matchdata_string(&(#recv_expr).as_matchdata_unchecked()) }),
-            ("to_s", 0) => return Some(quote! { zeo_rt::matchdata_to_s(&(#recv_expr).as_matchdata_unchecked()) }),
+            ("string", 0) => {
+                return Some(
+                    quote! { zeo_rt::matchdata_string(&(#recv_expr).as_matchdata_unchecked()) },
+                );
+            }
+            ("to_s", 0) => {
+                return Some(
+                    quote! { zeo_rt::matchdata_to_s(&(#recv_expr).as_matchdata_unchecked()) },
+                );
+            }
             _ => {}
         }
     }
@@ -643,7 +683,9 @@ fn try_proc_dispatch(
         }
         None => quote! { None },
     };
-    Some(quote! { ((#recv_expr).as_proc_unchecked()).call_with_block(&[#(#arg_exprs),*], #block_expr)? })
+    Some(
+        quote! { ((#recv_expr).as_proc_unchecked()).call_with_block(&[#(#arg_exprs),*], #block_expr)? },
+    )
 }
 
 pub fn emit_new(
@@ -764,9 +806,7 @@ pub fn emit_new(
     // convention), so `AError.new(msg, code: 9)`'s options reach the row.
     // (A struct-backed user class binds keywords through `emit_call_args_to`
     // above, not here.)
-    if !kwargs.is_empty()
-        && (ci.is_builtin || ci.is_module || cx.compiler.is_native_backed(cid))
-    {
+    if !kwargs.is_empty() && (ci.is_builtin || ci.is_module || cx.compiler.is_native_backed(cid)) {
         let inserts = super::collections::emit_kwarg_inserts(cx, kwargs, &quote! { __kw });
         arg_exprs.push(quote! {
             {
@@ -825,7 +865,9 @@ pub fn emit_new_with_arg_tokens(
         // An undefined `X.new` raises a runtime NameError via the const read
         // for `X` well before construction; reaching here with an unresolved
         // name is a compiler invariant violation, not a user error.
-        .unwrap_or_else(|| panic!("internal error: unknown class `{class_name}` in emit_new_with_arg_tokens"));
+        .unwrap_or_else(|| {
+            panic!("internal error: unknown class `{class_name}` in emit_new_with_arg_tokens")
+        });
     // A BUILT-IN's `.new` -- no generated struct exists to construct, but
     // that doesn't make the call an error: `Time.new(...)` is ordinary Ruby,
     // answered by the runtime's own class-method table. Route it dynamically
@@ -1099,7 +1141,11 @@ pub fn emit_super_inline(
     // Which pool a `super` search consults, per the note above.
     let own_pool = |compiler: &crate::compiler::Compiler, anc: crate::compiler::ClassId| {
         let info = compiler.class(anc);
-        if in_class_method { info.own_class_methods.clone() } else { info.own_methods.clone() }
+        if in_class_method {
+            info.own_class_methods.clone()
+        } else {
+            info.own_methods.clone()
+        }
     };
 
     let ancestors = &cx.compiler.class(receiver_class).ancestors;
@@ -1231,7 +1277,15 @@ pub fn emit_super_inline(
     // happening to share names with the calling method's own, since the
     // spliced body just referenced its param names directly with nothing
     // ever binding them. See `emit_super_arg_bindings`'s docs.
-    let bindings = emit_super_arg_bindings(cx, &inline_cx, &defining_scope.params, &current_params, args, kwargs, zsuper);
+    let bindings = emit_super_arg_bindings(
+        cx,
+        &inline_cx,
+        &defining_scope.params,
+        &current_params,
+        args,
+        kwargs,
+        zsuper,
+    );
     // A literal block at the `super` site becomes the spliced body's
     // `__blk` (its `yield` runs this block) -- built as a real Proc in the
     // CALLING scope (`cx`: captures resolve against the child method's own
@@ -1491,8 +1545,9 @@ fn emit_super_forwarding_bindings(
             .chain(current_params.post.iter())
             .map(|n| safe_ident(n))
             .collect();
-        let temps: Vec<syn::Ident> =
-            (0..src.len()).map(|i| format_ident!("__super_fwd{i}")).collect();
+        let temps: Vec<syn::Ident> = (0..src.len())
+            .map(|i| format_ident!("__super_fwd{i}"))
+            .collect();
         for (t, s) in temps.iter().zip(&src) {
             lets.push(quote! { let #t = #s.clone(); });
         }
@@ -1504,7 +1559,8 @@ fn emit_super_forwarding_bindings(
                 nreq + parent_params.post.len()
             );
         }
-        let opt_bound = (src.len() - nreq - parent_params.post.len()).min(parent_params.optional.len());
+        let opt_bound =
+            (src.len() - nreq - parent_params.post.len()).min(parent_params.optional.len());
         for (i, name) in parent_params.required.iter().enumerate() {
             let dst = safe_ident(name);
             let t = &temps[i];
@@ -1627,7 +1683,9 @@ fn emit_super_explicit_bindings(
     let opt_bound = extra.min(nopt);
     let rest_count = extra - opt_bound;
 
-    let pos_temps: Vec<syn::Ident> = (0..args.len()).map(|i| format_ident!("__super_a{i}")).collect();
+    let pos_temps: Vec<syn::Ident> = (0..args.len())
+        .map(|i| format_ident!("__super_a{i}"))
+        .collect();
     let pos_lets = args.iter().zip(&pos_temps).map(|(&a, t)| {
         let e = emit_expr(cx, a);
         quote! { let #t = #e; }
@@ -1638,16 +1696,20 @@ fn emit_super_explicit_bindings(
         let src = &pos_temps[i];
         quote! { let #dst: zeo_rt::RubyValue = #src.clone(); }
     });
-    let optional_lets = parent_params.optional.iter().enumerate().map(|(i, (name, default))| {
-        let dst = safe_ident(name);
-        if i < opt_bound {
-            let src = &pos_temps[nreq + i];
-            quote! { let #dst: zeo_rt::RubyValue = #src.clone(); }
-        } else {
-            let default_expr = emit_expr(inline_cx, *default);
-            quote! { let #dst: zeo_rt::RubyValue = #default_expr; }
-        }
-    });
+    let optional_lets = parent_params
+        .optional
+        .iter()
+        .enumerate()
+        .map(|(i, (name, default))| {
+            let dst = safe_ident(name);
+            if i < opt_bound {
+                let src = &pos_temps[nreq + i];
+                quote! { let #dst: zeo_rt::RubyValue = #src.clone(); }
+            } else {
+                let default_expr = emit_expr(inline_cx, *default);
+                quote! { let #dst: zeo_rt::RubyValue = #default_expr; }
+            }
+        });
     let rest_let = parent_params.rest.as_ref().and_then(|r| r.as_ref()).map(|name| {
         let dst = safe_ident(name);
         let elems = pos_temps[nreq + opt_bound..nreq + opt_bound + rest_count]
@@ -1694,7 +1756,9 @@ fn emit_super_explicit_keyword_bindings(
                 HirNode::SymbolLit(name) => {
                     provided.insert(name.clone(), *v);
                 }
-                _ => panic!("`super`: keyword argument names must be literal symbols (spike scope)"),
+                _ => {
+                    panic!("`super`: keyword argument names must be literal symbols (spike scope)")
+                }
             },
             KwArg::DoubleSplat(_) => {
                 panic!("`super(**h)` (double-splat into super) isn't supported yet (spike scope)")
@@ -1750,7 +1814,11 @@ fn emit_super_explicit_keyword_bindings(
         let msg = if missing.len() == 1 {
             format!("missing keyword: :{}", missing[0])
         } else {
-            let names = missing.iter().map(|n| format!(":{n}")).collect::<Vec<_>>().join(", ");
+            let names = missing
+                .iter()
+                .map(|n| format!(":{n}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("missing keywords: {names}")
         };
         return quote! { return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string())); };
@@ -1768,7 +1836,8 @@ fn emit_super_explicit_keyword_bindings(
                 quote! { let #dst: zeo_rt::RubyValue = #e; }
             }
             None => {
-                let default_expr = emit_expr(inline_cx, *default.expect("required-missing handled above"));
+                let default_expr =
+                    emit_expr(inline_cx, *default.expect("required-missing handled above"));
                 quote! { let #dst: zeo_rt::RubyValue = #default_expr; }
             }
         }
@@ -1817,14 +1886,29 @@ pub fn emit_proc_value(cx: &Ctx, block_id: NodeId) -> TokenStream {
 /// arity (`is_lambda: true` gates a runtime `ArgumentError` check
 /// `emit_proc_or_lambda_value` inserts) and folding `Signal::Return`/`Break`
 /// into a normal `Ok` return instead of letting them propagate.
-pub fn emit_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], method_body: bool) -> TokenStream {
+pub fn emit_lambda_value(
+    cx: &Ctx,
+    params: &Params,
+    body: &[NodeId],
+    method_body: bool,
+) -> TokenStream {
     emit_proc_or_lambda_value(cx, params, body, true, method_body)
 }
 
-pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeId], is_lambda: bool, method_body: bool) -> TokenStream {
+pub(crate) fn emit_proc_or_lambda_value(
+    cx: &Ctx,
+    params: &Params,
+    body: &[NodeId],
+    is_lambda: bool,
+    method_body: bool,
+) -> TokenStream {
     let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
 
-    let mut genuine: Vec<&String> = block_caps.locals.iter().filter(|n| cx.captured_locals.contains(*n)).collect();
+    let mut genuine: Vec<&String> = block_caps
+        .locals
+        .iter()
+        .filter(|n| cx.captured_locals.contains(*n))
+        .collect();
     genuine.sort();
     let capture_clones = genuine.iter().map(|name| {
         let ident = safe_ident(name);
@@ -1878,8 +1962,8 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     // own block param must NOT also clone in the lexical `__blk` (the param owns
     // that name here).
     let takes_own_block = params.block.is_some();
-    let blk_clone =
-        (bare_block_use && !method_body && !takes_own_block).then(|| quote! { let __blk = __blk.clone(); });
+    let blk_clone = (bare_block_use && !method_body && !takes_own_block)
+        .then(|| quote! { let __blk = __blk.clone(); });
 
     // Whether a METHOD-BODY closure must name its call-site block parameter
     // `__blk` (vs `_`): needed if the body uses bare block OR declares a `&blk`
@@ -1930,12 +2014,17 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     own_only.retain(|n| !nested_captured.contains(n));
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
     if !nested_captured.is_empty() {
-        proc_cx.captured_locals.to_mut().extend(nested_captured.iter().cloned());
+        proc_cx
+            .captured_locals
+            .to_mut()
+            .extend(nested_captured.iter().cloned());
     }
     // Cell-wrap this block's own PARAMS that a nested block captures (after the
     // plain param binding reads its value).
-    let mut nested_param_names: Vec<&String> =
-        own_params.iter().filter(|n| nested_captured.contains(*n)).collect();
+    let mut nested_param_names: Vec<&String> = own_params
+        .iter()
+        .filter(|n| nested_captured.contains(*n))
+        .collect();
     nested_param_names.sort();
     let nested_param_wraps = nested_param_names.into_iter().map(|name| {
         let ident = safe_ident(name);
@@ -1959,9 +2048,14 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
         }
     });
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
-    let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
-    let param_bindings =
-        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda);
+    let arity_check =
+        is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
+    let param_bindings = super::params::emit_proc_param_bindings(
+        &proc_cx,
+        params,
+        &format_ident!("__args"),
+        is_lambda,
+    );
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
     // this block references (including the genuine captures above) and
     // declare them AGAIN, shadowing the shared `Arc::clone`s just captured
@@ -2066,7 +2160,11 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
 /// shape but raising a real, catchable exception instead of a bare panic
 /// (a lambda's `ArgumentError` is ordinary Ruby-level control flow, fully
 /// expected to be rescued).
-fn emit_lambda_arity_check(cx: &Ctx, params: &Params, args_ident: &proc_macro2::Ident) -> TokenStream {
+fn emit_lambda_arity_check(
+    cx: &Ctx,
+    params: &Params,
+    args_ident: &proc_macro2::Ident,
+) -> TokenStream {
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
@@ -2152,7 +2250,11 @@ pub(super) fn emit_kwargs_trailing_hash(cx: &Ctx, kwargs: &[KwArg]) -> Option<To
     })
 }
 
-pub(super) fn emit_block_option(cx: &Ctx, block: Option<NodeId>, block_arg: Option<NodeId>) -> TokenStream {
+pub(super) fn emit_block_option(
+    cx: &Ctx,
+    block: Option<NodeId>,
+    block_arg: Option<NodeId>,
+) -> TokenStream {
     match (block, block_arg) {
         (Some(b), None) => {
             let v = emit_proc_value(cx, b);
@@ -2221,8 +2323,12 @@ pub fn emit_call(
     // is out of scope (it would need a captured-scope object).
     if name == "local_variable_get" && args.len() == 1 {
         if let Some(rid) = receiver {
-            if let HirNode::Call { receiver: None, name: bname, args: bargs, .. } =
-                &cx.compiler.hir[rid]
+            if let HirNode::Call {
+                receiver: None,
+                name: bname,
+                args: bargs,
+                ..
+            } = &cx.compiler.hir[rid]
             {
                 if bname == "binding" && bargs.is_empty() {
                     if let HirNode::SymbolLit(local) = &cx.compiler.hir[args[0]] {
@@ -2402,7 +2508,9 @@ pub fn emit_call(
         if cx.current_class.is_none() {
             if let Some(defining) = cx.class_self.or(cx.defining_class) {
                 if cx.compiler.class_method_in_chain(defining, name).is_some() {
-                    return emit_class_method_call_on(cx, defining, name, args, kwargs, block, block_arg);
+                    return emit_class_method_call_on(
+                        cx, defining, name, args, kwargs, block, block_arg,
+                    );
                 }
                 // A bare `new` inside a class method (`def self.create;
                 // new; end`) constructs the class itself -- `self` there IS
@@ -2445,8 +2553,9 @@ pub fn emit_call(
         // Checked BEFORE the Kernel functions below so a top-level
         // `def puts` overrides the built-in, same as a sibling method would.
         if cx.current_class.is_none() {
-            if let Some((_, sid)) =
-                cx.compiler.method_in_chain(crate::compiler::OBJECT_CLASS, name)
+            if let Some((_, sid)) = cx
+                .compiler
+                .method_in_chain(crate::compiler::OBJECT_CLASS, name)
             {
                 let scope = cx.compiler.scope(sid);
                 let mod_ident =
@@ -2481,8 +2590,7 @@ pub fn emit_call(
         // ordering was a latent bug this stage fixed). Capitalized-name
         // conversion calls WITH arguments parse as ordinary CallNodes, so
         // there's no ClassRef ambiguity.
-        if let Some(tokens) =
-            emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
+        if let Some(tokens) = emit_universal_implicit_form(cx, name, args, kwargs, block, block_arg)
         {
             return tokens;
         }
@@ -2777,7 +2885,9 @@ pub fn emit_call(
                 ("Fiber", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!("`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                            panic!(
+                                "`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)"
+                            );
                         }
                         return emit_missing_block_raise(cx, "Fiber");
                     };
@@ -2808,7 +2918,9 @@ pub fn emit_call(
                 ("Thread", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!("`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)");
+                            panic!(
+                                "`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)"
+                            );
                         }
                         return emit_missing_block_raise(cx, "Thread");
                     };
@@ -2848,9 +2960,16 @@ pub fn emit_call(
                         return emit_missing_block_raise(cx, "Ractor");
                     };
                     let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                        panic!("internal error: a Block node should only be reached via the Call that invokes it");
+                        panic!(
+                            "internal error: a Block node should only be reached via the Call that invokes it"
+                        );
                     };
-                    let block_caps = super::captures::block_captures(cx.compiler, params, body, cx.current_class);
+                    let block_caps = super::captures::block_captures(
+                        cx.compiler,
+                        params,
+                        body,
+                        cx.current_class,
+                    );
                     // `block_captures` reports every referenced non-param
                     // name, INCLUDING the block's own locals (`msg =
                     // Ractor.receive` -- found the hard way). An outer-scope
@@ -2869,10 +2988,14 @@ pub fn emit_call(
                         .filter(|n| cx.captured_locals.contains(*n) || !assigned_here.contains(n))
                         .min()
                     {
-                        panic!("can not isolate a Proc because it accesses outer variables ({outer})");
+                        panic!(
+                            "can not isolate a Proc because it accesses outer variables ({outer})"
+                        );
                     }
                     if block_caps.self_captured {
-                        panic!("can not isolate a Proc because it accesses instance variables of the enclosing object");
+                        panic!(
+                            "can not isolate a Proc because it accesses instance variables of the enclosing object"
+                        );
                     }
                     let proc = emit_proc_value(cx, block_id);
                     let arg_exprs: Vec<TokenStream> = args
@@ -2936,7 +3059,9 @@ pub fn emit_call(
             let is_static = cx.compiler.class_method_in_chain(target, name).is_some();
             if is_static {
                 if safe {
-                    panic!("safe-navigation on a class-method call isn't supported yet (spike scope)");
+                    panic!(
+                        "safe-navigation on a class-method call isn't supported yet (spike scope)"
+                    );
                 }
                 return emit_class_method_call_on(cx, target, name, args, kwargs, block, block_arg);
             }
@@ -2953,19 +3078,24 @@ pub fn emit_call(
     if let TyKind::ClassObj(target) = infer(cx, recv_id) {
         // `x.class.const_get(:N)` / `.const_defined?(:N)` fold too, evaluating
         // the receiver expression for its side effects first.
-        if let Some(folded) = try_const_reflection(cx, target, name, args, kwargs, block, block_arg) {
+        if let Some(folded) = try_const_reflection(cx, target, name, args, kwargs, block, block_arg)
+        {
             let recv_expr = emit_expr(cx, recv_id);
             return quote! { { let _ = #recv_expr; #folded } };
         }
         if !safe && kwargs.is_empty() && block.is_none() && block_arg.is_none() {
-            if name == "new" && !cx.compiler.class(target).is_module && !cx.compiler.class(target).is_builtin {
+            if name == "new"
+                && !cx.compiler.class(target).is_module
+                && !cx.compiler.class(target).is_builtin
+            {
                 let recv_expr = emit_expr(cx, recv_id);
                 let ctor = emit_new(cx, &cx.compiler.fq_name(target), args, kwargs, None);
                 return quote! { { let _ = #recv_expr; #ctor } };
             }
             if cx.compiler.class_method_in_chain(target, name).is_some() {
                 let recv_expr = emit_expr(cx, recv_id);
-                let call = emit_class_method_call_on(cx, target, name, args, kwargs, block, block_arg);
+                let call =
+                    emit_class_method_call_on(cx, target, name, args, kwargs, block, block_arg);
                 return quote! { { let _ = #recv_expr; #call } };
             }
         }
@@ -2973,7 +3103,9 @@ pub fn emit_call(
 
     if safe {
         if !kwargs.is_empty() {
-            panic!("keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)");
+            panic!(
+                "keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)"
+            );
         }
         if block.is_some() || block_arg.is_some() {
             panic!("a block on a safe-navigation (`&.`) call isn't supported yet (spike scope)");
@@ -2982,7 +3114,9 @@ pub fn emit_call(
     }
 
     let recv_expr = emit_expr(cx, recv_id);
-    dispatch(cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr, false)
+    dispatch(
+        cx, recv_id, name, args, kwargs, block, block_arg, &recv_expr, false,
+    )
 }
 
 /// A call site carrying a `*arr` positional splat and/or `**h` double-splat
@@ -3009,7 +3143,9 @@ fn emit_splat_call(
 ) -> TokenStream {
     let __bx = cx.box_id;
     if safe {
-        panic!("safe-navigation (`&.`) on a call with a splat argument isn't supported yet (spike scope)");
+        panic!(
+            "safe-navigation (`&.`) on a call with a splat argument isn't supported yet (spike scope)"
+        );
     }
     let recv_obj_expr = match receiver {
         Some(recv_id) => {
@@ -3028,20 +3164,20 @@ fn emit_splat_call(
             if is_class_receiver {
                 emit_expr(cx, recv_id)
             } else {
-            let recv_expr = emit_expr(cx, recv_id);
-            match infer_class(cx, recv_id) {
-                Some(cid) => {
-                    let class_ident = super::ident::class_ident(cx.compiler, cid);
-                    quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
+                let recv_expr = emit_expr(cx, recv_id);
+                match infer_class(cx, recv_id) {
+                    Some(cid) => {
+                        let class_ident = super::ident::class_ident(cx.compiler, cid);
+                        quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#recv_expr)) }
+                    }
+                    // A receiver with no user-class type -- `Poly`, or a builtin
+                    // value type like `Proc`/`Array` (`pr.call(*args)`,
+                    // `arr.push(*xs)`): pass the raw receiver so `send_value_in`
+                    // dispatches through its runtime method table (`rproc::lookup`
+                    // answers `call`/`[]`/`yield`, etc.), the same dynamic path a
+                    // non-splat call on such a receiver already takes.
+                    None => quote! { (#recv_expr) },
                 }
-                // A receiver with no user-class type -- `Poly`, or a builtin
-                // value type like `Proc`/`Array` (`pr.call(*args)`,
-                // `arr.push(*xs)`): pass the raw receiver so `send_value_in`
-                // dispatches through its runtime method table (`rproc::lookup`
-                // answers `call`/`[]`/`yield`, etc.), the same dynamic path a
-                // non-splat call on such a receiver already takes.
-                None => quote! { (#recv_expr) },
-            }
             }
         }
         None => {
@@ -3332,7 +3468,9 @@ fn enforce_visibility(
             }
         }
         Visibility::Protected => {
-            let owner = scope.class.expect("a materialized method always has an owner class");
+            let owner = scope
+                .class
+                .expect("a materialized method always has an owner class");
             let related = cx.current_class.is_some_and(|caller_cid| {
                 caller_cid == owner
                     || cx.compiler.class(caller_cid).ancestors.contains(&owner)
@@ -3351,12 +3489,7 @@ fn enforce_visibility(
 /// unreachable bad call stays silent and a `rescue NoMethodError` around a
 /// deliberate one works. Message shape verbatim from CRuby
 /// ("private method 'x' called for an instance of Foo").
-fn emit_visibility_error(
-    cx: &Ctx,
-    recv_id: NodeId,
-    kind: &str,
-    method_name: &str,
-) -> TokenStream {
+fn emit_visibility_error(cx: &Ctx, recv_id: NodeId, kind: &str, method_name: &str) -> TokenStream {
     let describe = match infer_any_class(cx, recv_id) {
         Some(cid) => format!("an instance of {}", cx.compiler.class(cid).name),
         None => "an instance of Object".to_string(),
@@ -3459,9 +3592,11 @@ fn dispatch(
             // A top-level anchor `::Name` carries the scope "Object" (the
             // root); its name is an ordinary top-level class, so fall back to
             // resolving the tail when `Object::Name` doesn't resolve directly.
-            let resolved = cx
-                .resolve_class(&target_name)
-                .or_else(|| target_name.strip_prefix("Object::").and_then(|t| cx.resolve_class(t)));
+            let resolved = cx.resolve_class(&target_name).or_else(|| {
+                target_name
+                    .strip_prefix("Object::")
+                    .and_then(|t| cx.resolve_class(t))
+            });
             let Some(target) = resolved else {
                 // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
                 // F4): resolve it at runtime and ancestry-check its id.
@@ -3521,11 +3656,15 @@ fn dispatch(
     // negates a user-defined `==` even when no `!=` was written.
     // Receivers with a matching own definition fall through to ordinary
     // Path 1 dispatch below.
-    if no_kwargs && (name == "==" || name == "!=") && args.len() == 1 && block.is_none() && block_arg.is_none() {
+    if no_kwargs
+        && (name == "==" || name == "!=")
+        && args.len() == 1
+        && block.is_none()
+        && block_arg.is_none()
+    {
         if let TyKind::Object(cid) = infer(cx, recv_id) {
             if cx.compiler.method_in_chain(cid, name).is_none() {
-                let recv_boxed =
-                    super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
+                let recv_boxed = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
                 let arg = emit_expr(cx, args[0]);
                 let arg = super::expr::box_if_object_typed(cx, args[0], arg);
                 let negate = name == "!=";
@@ -3546,9 +3685,11 @@ fn dispatch(
             // A top-level anchor `::Name` carries the scope "Object" (the
             // root); its name is an ordinary top-level class, so fall back to
             // resolving the tail when `Object::Name` doesn't resolve directly.
-            let resolved = cx
-                .resolve_class(&target_name)
-                .or_else(|| target_name.strip_prefix("Object::").and_then(|t| cx.resolve_class(t)));
+            let resolved = cx.resolve_class(&target_name).or_else(|| {
+                target_name
+                    .strip_prefix("Object::")
+                    .and_then(|t| cx.resolve_class(t))
+            });
             let Some(target) = resolved else {
                 // A constant bound to a RUNTIME class (`Foo = Class.new`, #97
                 // F4): resolve it at runtime and check EXACT class identity.
@@ -3606,10 +3747,7 @@ fn dispatch(
                 // own class id). `MatchData` is nilable: `str.match(re)` types as
                 // MatchData but returns `nil` on no match, so `.class` must be
                 // read at runtime (`"x".match(/z/).class == NilClass`).
-                Some(cid)
-                    if cid != zeo_abi::QUEUE_CLASS
-                        && cid != zeo_abi::MATCH_DATA_CLASS =>
-                {
+                Some(cid) if cid != zeo_abi::QUEUE_CLASS && cid != zeo_abi::MATCH_DATA_CLASS => {
                     let id = cid.0;
                     quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
                 }
@@ -3692,7 +3830,8 @@ fn dispatch(
     // copy it via `ENV.to_h`), which only the runtime dispatch path -- its
     // identity check in `send_in` -- honors. A direct `ENV.<m>` must therefore
     // skip the universal value fast paths below and fall through to `send`.
-    let recv_is_env = matches!(&cx.compiler.hir[recv_id], crate::hir::HirNode::ClassRef(n) if n == "ENV");
+    let recv_is_env =
+        matches!(&cx.compiler.hir[recv_id], crate::hir::HirNode::ClassRef(n) if n == "ENV");
 
     if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() && !recv_is_env {
         // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
@@ -4033,7 +4172,9 @@ fn dispatch(
                 let closed_err = super::expr::emit_boxed_new(
                     cx,
                     "ClosedQueueError",
-                    vec![quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("queue closed".to_string())) }],
+                    vec![
+                        quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("queue closed".to_string())) },
+                    ],
                 );
                 return quote! {
                     {
@@ -4189,7 +4330,9 @@ fn dispatch(
         let arg_ty = infer(cx, args[0]);
         let is_float_op = matches!(
             (recv_ty, arg_ty),
-            (TyKind::Float, TyKind::Float) | (TyKind::Float, TyKind::Int) | (TyKind::Int, TyKind::Float)
+            (TyKind::Float, TyKind::Float)
+                | (TyKind::Float, TyKind::Int)
+                | (TyKind::Int, TyKind::Float)
         );
         if is_float_op {
             let arg_expr = emit_expr(cx, args[0]);
@@ -4219,7 +4362,9 @@ fn dispatch(
                     zeo_rt::float_mod_checked(#recv_f, #arg_f)?
                 };
             }
-            if let Some(&(_, rt_fn, result_ty)) = FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name) {
+            if let Some(&(_, rt_fn, result_ty)) =
+                FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
+            {
                 let func = format_ident!("{rt_fn}");
                 let wrapper = format_ident!("{result_ty}");
                 return quote! {
@@ -4301,7 +4446,9 @@ fn dispatch(
     // Blockless `5.times` falls through to the dynamic row, which answers
     // an Enumerator (Phase 17.2) -- the inline splice below is only for the
     // block form.
-    if let Some(block_id) = block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs)) {
+    if let Some(block_id) =
+        block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
+    {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
             let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
@@ -4324,10 +4471,19 @@ fn dispatch(
             // this, the nested block would fresh-declare the name and read
             // `nil` (the case the old nested-capture guard rejected outright).
             let nested_captured: std::collections::HashSet<String> =
-                super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class).locals;
+                super::captures::collect_escaping_captures(
+                    cx.compiler,
+                    body,
+                    params,
+                    cx.current_class,
+                )
+                .locals;
             let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
             if !nested_captured.is_empty() {
-                loop_cx.captured_locals.to_mut().extend(nested_captured.iter().cloned());
+                loop_cx
+                    .captured_locals
+                    .to_mut()
+                    .extend(nested_captured.iter().cloned());
             }
             let bind = params.required.first().map(|p| {
                 let ident = safe_ident(p);
@@ -4421,7 +4577,17 @@ fn dispatch(
                     let public_ok = name != "public_send"
                         || cx.compiler.scope(sid).visibility == Visibility::Public;
                     if public_ok {
-                        return dispatch(cx, recv_id, &target, &args[1..], kwargs, block, block_arg, recv_expr, true);
+                        return dispatch(
+                            cx,
+                            recv_id,
+                            &target,
+                            &args[1..],
+                            kwargs,
+                            block,
+                            block_arg,
+                            recv_expr,
+                            true,
+                        );
                     }
                 }
             }

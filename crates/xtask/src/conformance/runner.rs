@@ -68,59 +68,65 @@ impl Runner {
         let done = std::sync::atomic::AtomicUsize::new(0);
         let stop = std::sync::atomic::AtomicBool::new(false);
         let started = std::time::Instant::now();
-        let progress_path = self.bin_dir.parent().unwrap_or(&self.bin_dir).join("progress");
+        let progress_path = self
+            .bin_dir
+            .parent()
+            .unwrap_or(&self.bin_dir)
+            .join("progress");
         std::fs::write(&progress_path, format!("0/{total} 0.0% starting\n")).ok();
 
         std::thread::scope(|scope| {
             for _ in 0..jobs.max(1) {
-                scope.spawn(|| loop {
-                    if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                        break;
-                    }
-                    let Some((case, hash)) = queue.lock().unwrap().pop_front() else {
-                        break;
-                    };
-                    let result = match (!force).then(|| stamps.load(&case.id, hash)).flatten() {
-                        Some(cached) => cached,
-                        None => {
-                            let result = self.run_one(&case, oracle);
-                            if let Err(e) = stamps.save(&result, hash) {
-                                eprintln!("warning: {e}");
-                            }
-                            result
+                scope.spawn(|| {
+                    loop {
+                        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
                         }
-                    };
-                    let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    // Per-test compile/run timing inline, so a single slow case
-                    // stands out in the stream (the "many fast, then one stalls"
-                    // pattern) instead of only showing up in the ranking below.
-                    // The percentage and ETA make a long run answerable at a
-                    // glance ("how far along?") without counting lines.
-                    let pct = n as f64 / total.max(1) as f64 * 100.0;
-                    let elapsed = started.elapsed();
-                    let eta = if n > 0 {
-                        let per = elapsed.as_secs_f64() / n as f64;
-                        format!(" eta {}", fmt_secs(per * (total - n) as f64))
-                    } else {
-                        String::new()
-                    };
-                    println!(
-                        "[{n}/{total} {pct:5.1}%{eta}] {} {} (c:{}ms r:{}ms){}",
-                        result.verdict.as_str(),
-                        result.id,
-                        result.compile_ms,
-                        result.run_ms,
-                        if result.cached { " (cached)" } else { "" }
-                    );
-                    // A single-line heartbeat file, rewritten in place. stdout
-                    // can be redirected or swallowed by a pipe (`| tail` shows
-                    // nothing until the run ends), so progress also lands
-                    // somewhere that is cheap to poll at any moment.
-                    write_progress(&progress_path, n, total, pct, elapsed, &result.id);
-                    if fail_fast && result.verdict != Verdict::Pass {
-                        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let Some((case, hash)) = queue.lock().unwrap().pop_front() else {
+                            break;
+                        };
+                        let result = match (!force).then(|| stamps.load(&case.id, hash)).flatten() {
+                            Some(cached) => cached,
+                            None => {
+                                let result = self.run_one(&case, oracle);
+                                if let Err(e) = stamps.save(&result, hash) {
+                                    eprintln!("warning: {e}");
+                                }
+                                result
+                            }
+                        };
+                        let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        // Per-test compile/run timing inline, so a single slow case
+                        // stands out in the stream (the "many fast, then one stalls"
+                        // pattern) instead of only showing up in the ranking below.
+                        // The percentage and ETA make a long run answerable at a
+                        // glance ("how far along?") without counting lines.
+                        let pct = n as f64 / total.max(1) as f64 * 100.0;
+                        let elapsed = started.elapsed();
+                        let eta = if n > 0 {
+                            let per = elapsed.as_secs_f64() / n as f64;
+                            format!(" eta {}", fmt_secs(per * (total - n) as f64))
+                        } else {
+                            String::new()
+                        };
+                        println!(
+                            "[{n}/{total} {pct:5.1}%{eta}] {} {} (c:{}ms r:{}ms){}",
+                            result.verdict.as_str(),
+                            result.id,
+                            result.compile_ms,
+                            result.run_ms,
+                            if result.cached { " (cached)" } else { "" }
+                        );
+                        // A single-line heartbeat file, rewritten in place. stdout
+                        // can be redirected or swallowed by a pipe (`| tail` shows
+                        // nothing until the run ends), so progress also lands
+                        // somewhere that is cheap to poll at any moment.
+                        write_progress(&progress_path, n, total, pct, elapsed, &result.id);
+                        if fail_fast && result.verdict != Verdict::Pass {
+                            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        results.lock().unwrap().push(result);
                     }
-                    results.lock().unwrap().push(result);
                 });
             }
         });
@@ -146,7 +152,10 @@ impl Runner {
         // -- compile --------------------------------------------------------
         let bin_path = self.bin_dir.join(sanitize_id(&case.id));
         let mut cmd = Command::new(&self.zeo);
-        cmd.arg(&case.source).arg("-o").arg(&bin_path).env("RUST_BACKTRACE", "0");
+        cmd.arg(&case.source)
+            .arg("-o")
+            .arg(&bin_path)
+            .env("RUST_BACKTRACE", "0");
         // The conformance suite knows substitutions happen (it exercises them
         // on purpose) -- suppress the Phase-2b disclosure record and its
         // warnings so N thousand cases don't each drop a `zeo-gems.json`.
@@ -160,10 +169,10 @@ impl Runner {
         if self.mspec_stubs {
             cmd.env("ZEO_MSPEC_STUBS", "1");
         }
-            // No `ZEO_ASSUME_BUILT` needed: `prebuild` above already built
-            // `zeo-rt`, so each subprocess's `ensure_runtime_built` is a cheap
-            // existence check and `build_binary` itself only links -- neither runs
-            // cargo, so there's no build-lock to contend on.
+        // No `ZEO_ASSUME_BUILT` needed: `prebuild` above already built
+        // `zeo-rt`, so each subprocess's `ensure_runtime_built` is a cheap
+        // existence check and `build_binary` itself only links -- neither runs
+        // cargo, so there's no build-lock to contend on.
         let compile = match run_with_timeout(cmd, None, self.compile_timeout) {
             Ok(e) => e,
             Err(e) => return harness_error(result, "compile", &e),
@@ -434,7 +443,10 @@ pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
         .current_dir(workspace_root)
         .status()
         .map_err(|e| format!("running cargo build: {e}"))?;
-    status.success().then_some(()).ok_or_else(|| "cargo build -p zeo failed".to_owned())?;
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "cargo build -p zeo failed".to_owned())?;
 
     // Prebuild BOTH runtime variants -- the lean (parser-free) default AND the
     // prism-backed `eval-vm` one -- so a sweep never stalls building prism
@@ -445,7 +457,7 @@ pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
     // the existence-checked path would skip an out-of-date artifact. Routed
     // through zeo's own builder so the eval variant's separate target dir
     // stays a single source of truth rather than a path duplicated here.
-    use zeo::build::{build_runtime, sweep_stale_cache_generations, Profile, Runtime};
+    use zeo::build::{Profile, Runtime, build_runtime, sweep_stale_cache_generations};
     let profile = Profile::from_env_or(Profile::Release);
     build_runtime(profile, Runtime::Lean)?;
     build_runtime(profile, Runtime::Eval)?;

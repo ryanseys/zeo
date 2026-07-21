@@ -7,11 +7,11 @@
 //! only the set-specific surface lives here.
 
 use crate::builtins::{arity, block_or_enum, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RHash, RubyValue, Signal};
-use zeo_abi::SET_CLASS;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::SET_CLASS;
 
 pub struct RSet {
     /// Element -> unit. The value is unused; membership is key presence, and
@@ -75,7 +75,10 @@ impl RubyObject for RSet {
         Vec::new()
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
-        let dup = RSet { hash: crate::hash_new(vec![]), frozen: AtomicBool::new(copy_frozen) };
+        let dup = RSet {
+            hash: crate::hash_new(vec![]),
+            frozen: AtomicBool::new(copy_frozen),
+        };
         for e in self.elements() {
             dup.insert(e);
         }
@@ -85,12 +88,18 @@ impl RubyObject for RSet {
 
 /// A fresh empty Set value.
 fn empty_set() -> RubyValue {
-    RubyValue::Object(Arc::new(RSet { hash: crate::hash_new(vec![]), frozen: AtomicBool::new(false) }))
+    RubyValue::Object(Arc::new(RSet {
+        hash: crate::hash_new(vec![]),
+        frozen: AtomicBool::new(false),
+    }))
 }
 
 /// A Set value seeded with `elements` (deduplicated by the insert path).
 pub(crate) fn set_from(elements: impl IntoIterator<Item = RubyValue>) -> RubyValue {
-    let s = RSet { hash: crate::hash_new(vec![]), frozen: AtomicBool::new(false) };
+    let s = RSet {
+        hash: crate::hash_new(vec![]),
+        frozen: AtomicBool::new(false),
+    };
     for e in elements {
         s.insert(e);
     }
@@ -169,7 +178,11 @@ fn flatten_into(s: &RSet, out: &mut Vec<RubyValue>) {
 /// (so `select!`/`keep_if` pass `true`, `reject!`/`delete_if` pass `false`),
 /// rewriting the receiver in place. Returns whether anything was removed --
 /// the `!`-variants answer nil on no change.
-fn filter_in_place(recv: &RubyValue, block: &crate::RProc, keep_truthy: bool) -> Result<bool, Signal> {
+fn filter_in_place(
+    recv: &RubyValue,
+    block: &crate::RProc,
+    keep_truthy: bool,
+) -> Result<bool, Signal> {
     let s = set_of(recv);
     let before = s.elements();
     let mut kept = Vec::with_capacity(before.len());
@@ -584,7 +597,10 @@ builtin_methods! {
 fn coerce_set(v: &RubyValue) -> Result<RubyValue, Signal> {
     match v {
         RubyValue::Object(o) if o.class_id() == SET_CLASS => Ok(v.clone()),
-        _ => Err(raise_error("ArgumentError", "value must be a set".to_string())),
+        _ => Err(raise_error(
+            "ArgumentError",
+            "value must be a set".to_string(),
+        )),
     }
 }
 
@@ -627,22 +643,39 @@ mod tests {
 
     #[test]
     fn new_deduplicates_and_preserves_insertion_order() {
-        let s = new_m(&RubyValue::Nil, &[RubyValue::Array(crate::array_new(
-            [3, 1, 3, 2, 1].iter().map(|&i| RubyValue::Int(i)).collect(),
-        ))], None).unwrap();
-        let RubyValue::Array(a) = to_a(&s, &[], None).unwrap() else { panic!() };
-        let got: Vec<i64> = a.lock().iter().map(|v| match v {
-            RubyValue::Int(i) => *i,
-            _ => panic!(),
-        }).collect();
+        let s = new_m(
+            &RubyValue::Nil,
+            &[RubyValue::Array(crate::array_new(
+                [3, 1, 3, 2, 1].iter().map(|&i| RubyValue::Int(i)).collect(),
+            ))],
+            None,
+        )
+        .unwrap();
+        let RubyValue::Array(a) = to_a(&s, &[], None).unwrap() else {
+            panic!()
+        };
+        let got: Vec<i64> = a
+            .lock()
+            .iter()
+            .map(|v| match v {
+                RubyValue::Int(i) => *i,
+                _ => panic!(),
+            })
+            .collect();
         assert_eq!(got, vec![3, 1, 2]);
     }
 
     #[test]
     fn membership_and_size() {
         let s = ints(&[1, 2, 3]);
-        assert!(matches!(include_p(&s, &[RubyValue::Int(2)], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(include_p(&s, &[RubyValue::Int(9)], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            include_p(&s, &[RubyValue::Int(2)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            include_p(&s, &[RubyValue::Int(9)], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
         assert!(matches!(size(&s, &[], None).unwrap(), RubyValue::Int(3)));
     }
 
@@ -650,9 +683,15 @@ mod tests {
     fn set_algebra() {
         let a = ints(&[1, 2, 3]);
         let union = union(&a, &[ints(&[3, 4])], None).unwrap();
-        assert!(matches!(size(&union, &[], None).unwrap(), RubyValue::Int(4)));
+        assert!(matches!(
+            size(&union, &[], None).unwrap(),
+            RubyValue::Int(4)
+        ));
         let inter = intersection(&a, &[ints(&[2, 3, 4])], None).unwrap();
-        assert!(matches!(size(&inter, &[], None).unwrap(), RubyValue::Int(2)));
+        assert!(matches!(
+            size(&inter, &[], None).unwrap(),
+            RubyValue::Int(2)
+        ));
         let diff = difference(&a, &[ints(&[2])], None).unwrap();
         assert!(matches!(size(&diff, &[], None).unwrap(), RubyValue::Int(2)));
         let sym = symmetric_difference(&a, &[ints(&[2, 3, 4])], None).unwrap();
@@ -661,16 +700,31 @@ mod tests {
 
     #[test]
     fn equality_is_structural_and_order_independent() {
-        assert!(matches!(eq(&ints(&[1, 2, 3]), &[ints(&[3, 2, 1])], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(eq(&ints(&[1, 2]), &[ints(&[1, 2, 3])], None).unwrap(), RubyValue::Bool(false)));
-        assert!(matches!(eq(&ints(&[1]), &[RubyValue::Int(1)], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            eq(&ints(&[1, 2, 3]), &[ints(&[3, 2, 1])], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            eq(&ints(&[1, 2]), &[ints(&[1, 2, 3])], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
+        assert!(matches!(
+            eq(&ints(&[1]), &[RubyValue::Int(1)], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]
     fn add_p_reports_novelty_and_frozen_is_enforced() {
         let s = ints(&[1, 2]);
-        assert!(matches!(add_p(&s, &[RubyValue::Int(2)], None).unwrap(), RubyValue::Nil));
-        assert!(matches!(add_p(&s, &[RubyValue::Int(3)], None).unwrap(), RubyValue::Object(_)));
+        assert!(matches!(
+            add_p(&s, &[RubyValue::Int(2)], None).unwrap(),
+            RubyValue::Nil
+        ));
+        assert!(matches!(
+            add_p(&s, &[RubyValue::Int(3)], None).unwrap(),
+            RubyValue::Object(_)
+        ));
         set_of(&s).set_frozen();
         // A frozen mutation raises; with no registry installed, `raise_error`
         // panics rather than building the exception (the comparable-test
@@ -685,13 +739,25 @@ mod tests {
     fn bang_filters_report_change_and_flatten_reports_nesting() {
         // `select!` returns self when it removed something, nil when it did not.
         let s = ints(&[1, 2, 3, 4]);
-        assert!(matches!(select_bang(&s, &[], pred(|x| x % 2 == 0)).unwrap(), RubyValue::Object(_)));
+        assert!(matches!(
+            select_bang(&s, &[], pred(|x| x % 2 == 0)).unwrap(),
+            RubyValue::Object(_)
+        ));
         let done = ints(&[2, 4]);
-        assert!(matches!(select_bang(&done, &[], pred(|x| x % 2 == 0)).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            select_bang(&done, &[], pred(|x| x % 2 == 0)).unwrap(),
+            RubyValue::Nil
+        ));
         // `flatten!` returns nil on a flat Set.
-        assert!(matches!(flatten_bang(&ints(&[1, 2]), &[], None).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            flatten_bang(&ints(&[1, 2]), &[], None).unwrap(),
+            RubyValue::Nil
+        ));
         let nested = set_from([ints(&[1, 2]), ints(&[3])]);
-        assert!(matches!(flatten_bang(&nested, &[], None).unwrap(), RubyValue::Object(_)));
+        assert!(matches!(
+            flatten_bang(&nested, &[], None).unwrap(),
+            RubyValue::Object(_)
+        ));
         assert_eq!(elems_sorted(&nested), vec![1, 2, 3]);
     }
 
@@ -699,51 +765,79 @@ mod tests {
     fn divide_by_value_and_by_connected_components() {
         // One-arg block groups by return value.
         let by_value = divide(&ints(&[1, 2, 3, 4]), &[], block(|x| x % 3)).unwrap();
-        assert!(matches!(size(&by_value, &[], None).unwrap(), RubyValue::Int(3)));
+        assert!(matches!(
+            size(&by_value, &[], None).unwrap(),
+            RubyValue::Int(3)
+        ));
         // Two-arg block: 1-2-3-4 chain is one strongly-connected component.
         let chain = divide(&ints(&[1, 2, 3, 4]), &[], block2(|x, y| (x - y).abs() == 1)).unwrap();
-        assert!(matches!(size(&chain, &[], None).unwrap(), RubyValue::Int(1)));
+        assert!(matches!(
+            size(&chain, &[], None).unwrap(),
+            RubyValue::Int(1)
+        ));
     }
 
     fn elems_sorted(s: &RubyValue) -> Vec<i64> {
-        let mut got: Vec<i64> = set_of(s).elements().iter().map(|v| match v {
-            RubyValue::Int(i) => *i,
-            _ => panic!(),
-        }).collect();
+        let mut got: Vec<i64> = set_of(s)
+            .elements()
+            .iter()
+            .map(|v| match v {
+                RubyValue::Int(i) => *i,
+                _ => panic!(),
+            })
+            .collect();
         got.sort();
         got
     }
 
     /// A one-arg Int->Int test block wrapped as a `Proc` value.
     fn block(f: impl Fn(i64) -> i64 + Send + Sync + 'static) -> Option<RubyValue> {
-        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
-            let RubyValue::Int(x) = args[0] else { panic!() };
-            Ok(RubyValue::Int(f(x)))
-        }, 1, false)))
+        Some(RubyValue::Proc(crate::RProc::with_meta(
+            move |args| {
+                let RubyValue::Int(x) = args[0] else { panic!() };
+                Ok(RubyValue::Int(f(x)))
+            },
+            1,
+            false,
+        )))
     }
 
     /// A one-arg Int predicate test block (returns a Bool, so truthiness is
     /// meaningful) wrapped as a `Proc` value.
     fn pred(f: impl Fn(i64) -> bool + Send + Sync + 'static) -> Option<RubyValue> {
-        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
-            let RubyValue::Int(x) = args[0] else { panic!() };
-            Ok(RubyValue::Bool(f(x)))
-        }, 1, false)))
+        Some(RubyValue::Proc(crate::RProc::with_meta(
+            move |args| {
+                let RubyValue::Int(x) = args[0] else { panic!() };
+                Ok(RubyValue::Bool(f(x)))
+            },
+            1,
+            false,
+        )))
     }
 
     /// A two-arg Int,Int->bool test block wrapped as a `Proc` value.
     fn block2(f: impl Fn(i64, i64) -> bool + Send + Sync + 'static) -> Option<RubyValue> {
-        Some(RubyValue::Proc(crate::RProc::with_meta(move |args| {
-            let (RubyValue::Int(x), RubyValue::Int(y)) = (&args[0], &args[1]) else { panic!() };
-            Ok(RubyValue::Bool(f(*x, *y)))
-        }, 2, false)))
+        Some(RubyValue::Proc(crate::RProc::with_meta(
+            move |args| {
+                let (RubyValue::Int(x), RubyValue::Int(y)) = (&args[0], &args[1]) else {
+                    panic!()
+                };
+                Ok(RubyValue::Bool(f(*x, *y)))
+            },
+            2,
+            false,
+        )))
     }
 
     #[test]
     fn inspect_renders_bracket_form() {
-        let RubyValue::Str(s) = inspect(&ints(&[1, 2, 3]), &[], None).unwrap() else { panic!() };
+        let RubyValue::Str(s) = inspect(&ints(&[1, 2, 3]), &[], None).unwrap() else {
+            panic!()
+        };
         assert_eq!(s.lock().to_utf8_lossy(), "Set[1, 2, 3]");
-        let RubyValue::Str(e) = inspect(&ints(&[]), &[], None).unwrap() else { panic!() };
+        let RubyValue::Str(e) = inspect(&ints(&[]), &[], None).unwrap() else {
+            panic!()
+        };
         assert_eq!(e.lock().to_utf8_lossy(), "Set[]");
     }
 }

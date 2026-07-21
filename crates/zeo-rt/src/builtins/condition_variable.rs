@@ -10,13 +10,13 @@
 //! in between the release and the park -- the classic no-lost-wakeup guarantee.
 //! On wake (or timeout) the Ruby mutex is re-acquired before returning.
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
 use crate::RubyValue;
-use zeo_abi::CONDITION_VARIABLE_CLASS;
-use std::sync::atomic::{AtomicBool, Ordering};
+use crate::builtins::{arity, builtin_methods};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use zeo_abi::CONDITION_VARIABLE_CLASS;
 
 pub struct RConditionVariable {
     /// Guards the wait/signal handoff -- see the module docs' no-lost-wakeup
@@ -178,7 +178,9 @@ mod tests {
 
     #[test]
     fn dup_is_a_fresh_independent_object() {
-        let RubyValue::Object(o) = new_cv() else { unreachable!() };
+        let RubyValue::Object(o) = new_cv() else {
+            unreachable!()
+        };
         let dup = o.dup_object(false);
         assert_eq!(dup.class_id(), CONDITION_VARIABLE_CLASS);
         assert!(!Arc::ptr_eq(

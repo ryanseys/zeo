@@ -96,8 +96,8 @@ impl GemSourceKind {
 }
 
 pub(super) fn parse_file(path: &Path) -> PResult<Lockfile> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     parse(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
@@ -168,8 +168,8 @@ pub(super) fn parse(text: &str) -> PResult<Lockfile> {
                     };
                     // ruby-platform row (no suffix) wins over a platform variant.
                     match gems.get(&name) {
-                        Some(existing)
-                            if existing.platform.is_none() && gem.platform.is_some() => {}
+                        Some(existing) if existing.platform.is_none() && gem.platform.is_some() => {
+                        }
                         _ => {
                             gems.insert(name, gem);
                         }
@@ -245,12 +245,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(lock.gems.len(), 2);
-        assert_eq!(lock.gems[0], LockedGem {
-            name: "addressable".into(),
-            version: "2.9.0".into(),
-            platform: None,
-            source: GemSource::Rubygems,
-        });
+        assert_eq!(
+            lock.gems[0],
+            LockedGem {
+                name: "addressable".into(),
+                version: "2.9.0".into(),
+                platform: None,
+                source: GemSource::Rubygems,
+            }
+        );
         assert_eq!(lock.gems[1].name, "ast");
         assert_eq!(lock.platforms, vec!["arm64-darwin-24", "ruby"]);
         assert_eq!(lock.bundler_version.as_deref(), Some("2.5.6"));
@@ -276,7 +279,14 @@ mod tests {
             "GIT\n  remote: https://github.com/x/y.git\n  revision: abc\n  specs:\n    cuprite (0.17)\n\nPATH\n  remote: .\n  specs:\n    sow (0.1.0)\n\nGEM\n  specs:\n    ast (2.4.3)\n",
         )
         .unwrap();
-        let by = |n: &str| lock.gems.iter().find(|g| g.name == n).unwrap().source.clone();
+        let by = |n: &str| {
+            lock.gems
+                .iter()
+                .find(|g| g.name == n)
+                .unwrap()
+                .source
+                .clone()
+        };
         assert_eq!(by("cuprite"), GemSource::Git);
         assert_eq!(by("sow"), GemSource::Path);
         assert_eq!(by("ast"), GemSource::Rubygems);
@@ -294,8 +304,8 @@ mod tests {
     /// with a platform suffix and the `CHECKSUMS`/`BUNDLED WITH` sections.
     #[test]
     fn parses_the_checked_in_fixture_lockfile() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/gem_store/Gemfile.lock");
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/Gemfile.lock");
         let lock = parse_file(&path).unwrap();
         let gem = |n: &str| lock.gems.iter().find(|g| g.name == n).unwrap();
 

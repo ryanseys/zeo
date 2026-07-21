@@ -87,7 +87,10 @@ pub struct ProcParamMeta {
 impl ProcParamMeta {
     /// Codegen's constructor: a static kind and an optional name to intern.
     pub fn new(kind: &'static str, name: Option<&str>) -> ProcParamMeta {
-        ProcParamMeta { kind, name: name.map(crate::Symbol::intern) }
+        ProcParamMeta {
+            kind,
+            name: name.map(crate::Symbol::intern),
+        }
     }
 }
 
@@ -145,7 +148,12 @@ impl RProc {
         arity: i32,
         is_lambda: bool,
     ) -> RProc {
-        RProc::with_self_and_block(move |s, args, _block| f(s, args), self_val, arity, is_lambda)
+        RProc::with_self_and_block(
+            move |s, args, _block| f(s, args),
+            self_val,
+            arity,
+            is_lambda,
+        )
     }
 
     /// `with_self` for a body that can also see the CALL-SITE block -- what a
@@ -153,9 +161,9 @@ impl RProc {
     /// the block passed to the method, not the one passed to define_method.
     pub fn with_self_and_block(
         f: impl Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
         self_val: RubyValue,
         arity: i32,
         is_lambda: bool,
@@ -210,10 +218,9 @@ impl RProc {
             // not swallow), or a top-level proc (current leak behavior kept);
             // a live home is a genuine non-local return in flight.
             Err(Signal::Return(v)) if !self.0.is_lambda => match &self.0.home {
-                Some(home) if !crate::signal::proc_home_alive(home) => Err(crate::dispatch::raise_error(
-                    "LocalJumpError",
-                    "unexpected return".to_string(),
-                )),
+                Some(home) if !crate::signal::proc_home_alive(home) => Err(
+                    crate::dispatch::raise_error("LocalJumpError", "unexpected return".to_string()),
+                ),
                 _ => Err(Signal::Return(v)),
             },
             other => other,
@@ -368,14 +375,10 @@ pub fn to_hash_coerce(v: &RubyValue) -> Result<crate::RHash, Signal> {
 /// `Symbol#to_proc` (`map(&:to_s)`), nil means "no block", anything else
 /// is real Ruby's TypeError. Codegen's `emit_block_option` routes every
 /// forwarded block argument through this.
-pub fn block_arg_to_proc(
-    v: crate::RubyValue,
-) -> Result<Option<crate::RubyValue>, crate::Signal> {
+pub fn block_arg_to_proc(v: crate::RubyValue) -> Result<Option<crate::RubyValue>, crate::Signal> {
     match v {
         crate::RubyValue::Proc(_) => Ok(Some(v)),
-        crate::RubyValue::Symbol(s) => {
-            Ok(Some(crate::builtins::symbol::symbol_to_proc(s)))
-        }
+        crate::RubyValue::Symbol(s) => Ok(Some(crate::builtins::symbol::symbol_to_proc(s))),
         crate::RubyValue::Nil => Ok(None),
         // Anything else duck-types through `to_proc` (CRuby's
         // `rb_block_arg_to_proc`): a user object defining it (or a
@@ -413,7 +416,9 @@ mod tests {
     use super::*;
     use crate::collections::{array_new, hash_new, string_new};
 
-    fn proc_of(f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static) -> RubyValue {
+    fn proc_of(
+        f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
+    ) -> RubyValue {
         RubyValue::Proc(RProc::new(f))
     }
 
@@ -438,7 +443,10 @@ mod tests {
     #[test]
     fn a_homeless_proc_propagates_a_return_signal() {
         let p = RProc::new(|_| Err(Signal::Return(RubyValue::Int(7))));
-        assert!(matches!(p.call(&[]), Err(Signal::Return(RubyValue::Int(7)))));
+        assert!(matches!(
+            p.call(&[]),
+            Err(Signal::Return(RubyValue::Int(7)))
+        ));
     }
 
     /// A Proc whose captured home is still alive propagates its `Signal::Return`
@@ -449,9 +457,13 @@ mod tests {
     #[test]
     fn a_captured_home_gates_return_between_propagate_and_localjump() {
         crate::signal::home_push();
-        let live = RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(1))), 0, false).with_home();
+        let live =
+            RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(1))), 0, false).with_home();
         // Home is on the stack: the return propagates.
-        assert!(matches!(live.call(&[]), Err(Signal::Return(RubyValue::Int(1)))));
+        assert!(matches!(
+            live.call(&[]),
+            Err(Signal::Return(RubyValue::Int(1)))
+        ));
         // Kill the home; the SAME proc now finds no live home.
         crate::signal::home_pop();
         let dead = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| live.call(&[])));
@@ -463,7 +475,10 @@ mod tests {
     #[test]
     fn a_lambda_never_converts_a_return() {
         let lam = RProc::with_meta(|_| Err(Signal::Return(RubyValue::Int(9))), 0, true).with_home();
-        assert!(matches!(lam.call(&[]), Err(Signal::Return(RubyValue::Int(9)))));
+        assert!(matches!(
+            lam.call(&[]),
+            Err(Signal::Return(RubyValue::Int(9)))
+        ));
     }
 
     /// The newtype still CALLS like the bare `Arc<dyn Fn>` it replaced --
@@ -538,7 +553,9 @@ mod tests {
         let out = block_arg_to_proc(RubyValue::Symbol(crate::Symbol::intern("upcase")))
             .unwrap()
             .expect("a Symbol converts");
-        let RubyValue::Proc(p) = out else { panic!("expected a Proc") };
+        let RubyValue::Proc(p) = out else {
+            panic!("expected a Proc")
+        };
         let s = RubyValue::Str(string_new("hi".to_string()));
         assert_eq!(p.call(&[s]).unwrap().to_display_string(), "HI");
     }

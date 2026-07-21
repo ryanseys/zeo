@@ -16,7 +16,10 @@ fn bytes_arg(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
         Some(RubyValue::Str(s)) => Ok(s.lock().bytes().to_vec()),
         Some(other) => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -35,7 +38,11 @@ fn crc32(data: &[u8], crc: u32) -> u32 {
     for &b in data {
         c ^= u32::from(b);
         for _ in 0..8 {
-            c = if c & 1 != 0 { (c >> 1) ^ 0xEDB8_8320 } else { c >> 1 };
+            c = if c & 1 != 0 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
         }
     }
     c ^ 0xFFFF_FFFF
@@ -154,7 +161,14 @@ mod tests {
     fn checksums_match_ruby() {
         assert_eq!(int(crc32_m(&RubyValue::Nil, &[s("abc")], None)), 891568578);
         assert_eq!(int(crc32_m(&RubyValue::Nil, &[], None)), 0);
-        assert_eq!(int(crc32_m(&RubyValue::Nil, &[s("abc"), RubyValue::Int(100)], None)), 2063213118);
+        assert_eq!(
+            int(crc32_m(
+                &RubyValue::Nil,
+                &[s("abc"), RubyValue::Int(100)],
+                None
+            )),
+            2063213118
+        );
         assert_eq!(int(adler32_m(&RubyValue::Nil, &[s("abc")], None)), 38600999);
         assert_eq!(int(adler32_m(&RubyValue::Nil, &[], None)), 1);
     }
@@ -171,7 +185,9 @@ mod tests {
         // Ruby 4.0.5: `Zlib.deflate("hello world").bytes`.
         assert_eq!(
             bytes(deflate(&RubyValue::Nil, &[s("hello world")], None)),
-            vec![120, 156, 203, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 0, 26, 11, 4, 93],
+            vec![
+                120, 156, 203, 72, 205, 201, 201, 87, 40, 207, 47, 202, 73, 1, 0, 26, 11, 4, 93
+            ],
         );
     }
 
@@ -180,7 +196,10 @@ mod tests {
         let text = "compress me ".repeat(20);
         let msg = s(&text);
         let comp = deflate(&RubyValue::Nil, std::slice::from_ref(&msg), None).unwrap();
-        assert_eq!(bytes(inflate(&RubyValue::Nil, &[comp], None)), text.as_bytes());
+        assert_eq!(
+            bytes(inflate(&RubyValue::Nil, &[comp], None)),
+            text.as_bytes()
+        );
         let gz = gzip(&RubyValue::Nil, &[msg], None).unwrap();
         assert_eq!(bytes(gunzip(&RubyValue::Nil, &[gz], None)), text.as_bytes());
     }

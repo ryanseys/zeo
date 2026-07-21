@@ -48,9 +48,7 @@ pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
         other => {
             let to_path = crate::Symbol::intern("to_path");
             if crate::dispatch::responds_to(other.class_id(), to_path, false) {
-                if let RubyValue::Str(s) =
-                    crate::dispatch::send_value(other, to_path, &[], None)?
-                {
+                if let RubyValue::Str(s) = crate::dispatch::send_value(other, to_path, &[], None)? {
                     return Ok(s.lock().to_utf8_lossy().into_owned());
                 }
             }
@@ -101,7 +99,13 @@ fn write_bytes(v: &RubyValue) -> Vec<u8> {
 #[allow(clippy::type_complexity)]
 fn read_encodings(
     trailing: Option<&RubyValue>,
-) -> Result<(crate::encoding::EncodingId, Option<crate::encoding::EncodingId>), Signal> {
+) -> Result<
+    (
+        crate::encoding::EncodingId,
+        Option<crate::encoding::EncodingId>,
+    ),
+    Signal,
+> {
     let mut ext = crate::encoding::default_external();
     let mut int = None;
     let Some(RubyValue::Hash(h)) = trailing else {
@@ -200,7 +204,11 @@ fn split_records(bytes: &[u8], sep: &str, chomp: bool) -> Vec<RubyValue> {
     while i < bytes.len() {
         if bytes[i..].starts_with(sep) {
             let end = i + sep.len();
-            let piece = if chomp { &bytes[start..i] } else { &bytes[start..end] };
+            let piece = if chomp {
+                &bytes[start..i]
+            } else {
+                &bytes[start..end]
+            };
             out.push(str_val(String::from_utf8_lossy(piece).into_owned()));
             i = end;
             start = end;
@@ -209,7 +217,9 @@ fn split_records(bytes: &[u8], sep: &str, chomp: bool) -> Vec<RubyValue> {
         }
     }
     if start < bytes.len() {
-        out.push(str_val(String::from_utf8_lossy(&bytes[start..]).into_owned()));
+        out.push(str_val(
+            String::from_utf8_lossy(&bytes[start..]).into_owned(),
+        ));
     }
     out
 }
@@ -245,7 +255,10 @@ fn fnmatch(pattern: &str, name: &str) -> bool {
             Some(&c) => n.first() == Some(&c) && rec(&p[1..], &n[1..]),
         }
     }
-    rec(&pattern.chars().collect::<Vec<_>>(), &name.chars().collect::<Vec<_>>())
+    rec(
+        &pattern.chars().collect::<Vec<_>>(),
+        &name.chars().collect::<Vec<_>>(),
+    )
 }
 
 /// `File.basename(path)` / `File.basename(path, suffix)`. Pure string work:
@@ -255,7 +268,11 @@ fn basename_of(path: &str, suffix: Option<&str>) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
         // The path was "/" (or all slashes) -- basename is "/".
-        return if path.is_empty() { String::new() } else { "/".to_string() };
+        return if path.is_empty() {
+            String::new()
+        } else {
+            "/".to_string()
+        };
     }
     let base = trimmed.rsplit('/').next().unwrap_or(trimmed).to_string();
     match suffix {
@@ -277,7 +294,11 @@ fn basename_of(path: &str, suffix: Option<&str>) -> String {
 fn dirname_of(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
-        return if path.starts_with('/') { "/".to_string() } else { ".".to_string() };
+        return if path.starts_with('/') {
+            "/".to_string()
+        } else {
+            ".".to_string()
+        };
     }
     match trimmed.rfind('/') {
         None => ".".to_string(),
@@ -395,13 +416,18 @@ fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
         RubyValue::Int(i) => Ok(*i as libc::time_t),
         RubyValue::Float(f) => Ok(*f as libc::time_t),
         // A Time (or anything Integer-ish) answers via `to_i`.
-        other => match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
-            RubyValue::Int(i) => Ok(i as libc::time_t),
-            _ => Err(raise_error(
-                "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
-            )),
-        },
+        other => {
+            match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
+                RubyValue::Int(i) => Ok(i as libc::time_t),
+                _ => Err(raise_error(
+                    "TypeError",
+                    format!(
+                        "no implicit conversion of {} into Integer",
+                        crate::builtins::convert_name_of(other)
+                    ),
+                )),
+            }
+        }
     }
 }
 
@@ -519,7 +545,7 @@ fn open_options(mode: &str) -> Result<std::fs::OpenOptions, Signal> {
             return Err(raise_error(
                 "ArgumentError",
                 format!("invalid access mode {mode}"),
-            ))
+            ));
         }
     };
     Ok(o)
@@ -1273,8 +1299,14 @@ mod tests {
     fn predicates_distinguish_files_from_directories() {
         let p = tmp("predicates");
         std::fs::write(&p, "x").unwrap();
-        assert!(matches!(file_exist_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(file_file_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            file_exist_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            file_file_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         assert!(matches!(
             file_directory_p(&cls(), &[s(&p)], None).unwrap(),
             RubyValue::Bool(false)
@@ -1284,7 +1316,10 @@ mod tests {
             file_directory_p(&cls(), &[s(&dir)], None).unwrap(),
             RubyValue::Bool(true)
         ));
-        assert!(matches!(file_file_p(&cls(), &[s(&dir)], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            file_file_p(&cls(), &[s(&dir)], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
         let _ = std::fs::remove_file(&p);
     }
 
@@ -1292,15 +1327,33 @@ mod tests {
     fn size_reads_the_byte_count_and_zero_p_detects_empty() {
         let p = tmp("size");
         std::fs::write(&p, "12345").unwrap();
-        assert!(matches!(file_size(&cls(), &[s(&p)], None).unwrap(), RubyValue::Int(5)));
-        assert!(matches!(file_size_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Int(5)));
-        assert!(matches!(file_zero_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            file_size(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Int(5)
+        ));
+        assert!(matches!(
+            file_size_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Int(5)
+        ));
+        assert!(matches!(
+            file_zero_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
 
         std::fs::write(&p, "").unwrap();
-        assert!(matches!(file_zero_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            file_zero_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         // An EMPTY file's `size?` is nil, though its `size` is 0.
-        assert!(matches!(file_size_p(&cls(), &[s(&p)], None).unwrap(), RubyValue::Nil));
-        assert!(matches!(file_size(&cls(), &[s(&p)], None).unwrap(), RubyValue::Int(0)));
+        assert!(matches!(
+            file_size_p(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Nil
+        ));
+        assert!(matches!(
+            file_size(&cls(), &[s(&p)], None).unwrap(),
+            RubyValue::Int(0)
+        ));
         let _ = std::fs::remove_file(&p);
     }
 
@@ -1312,7 +1365,10 @@ mod tests {
             panic!("expected an Array")
         };
         let got: Vec<String> = lines.lock().iter().map(|l| l.to_display_string()).collect();
-        assert_eq!(got, vec!["a\n".to_string(), "b\n".to_string(), "c".to_string()]);
+        assert_eq!(
+            got,
+            vec!["a\n".to_string(), "b\n".to_string(), "c".to_string()]
+        );
         let _ = std::fs::remove_file(&p);
     }
 

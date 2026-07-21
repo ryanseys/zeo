@@ -19,8 +19,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::gem_report::{GemRecord, SatisfiedBy};
-use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
 use crate::parse::PResult;
+use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
 
 /// What an installed store yields for a lockfile: the pure-Ruby gems zeo can
 /// compile (as `(name, roots)`), and disclosure entries for the rest.
@@ -161,7 +161,11 @@ pub(super) fn installed_as_lockfile(store: &Path) -> PResult<Lockfile> {
     if gems.is_empty() {
         return Err(format!("no gemspecs found under {}", specs.display()).into());
     }
-    Ok(Lockfile { gems: gems.into_values().collect(), platforms: Vec::new(), bundler_version: None })
+    Ok(Lockfile {
+        gems: gems.into_values().collect(),
+        platforms: Vec::new(),
+        bundler_version: None,
+    })
 }
 
 /// The result of locating a locked gem's gemspec, forcing the ruby platform.
@@ -210,12 +214,18 @@ fn is_native(spec: &super::gemspec::GemSpec, gem_dir: &Path) -> bool {
     if !spec.extensions.is_empty() {
         return true;
     }
-    if spec.platform.as_deref().is_some_and(|p| p != "ruby" && !p.is_empty()) {
+    if spec
+        .platform
+        .as_deref()
+        .is_some_and(|p| p != "ruby" && !p.is_empty())
+    {
         return true;
     }
     // A `.bundle`/`.so` under any require path -- a precompiled gem that
     // declared no `s.extensions`.
-    spec.require_paths.iter().any(|rp| dir_has_native_object(&gem_dir.join(rp)))
+    spec.require_paths
+        .iter()
+        .any(|rp| dir_has_native_object(&gem_dir.join(rp)))
 }
 
 /// Recursively: does this directory tree contain a `.bundle`/`.so`/`.dylib`?
@@ -241,6 +251,9 @@ fn dir_has_native_object(dir: &Path) -> bool {
 fn excluded(name: &str, kind: &str, reason: String) -> GemRecord {
     GemRecord {
         name: name.to_string(),
-        by: SatisfiedBy::Excluded { kind: kind.to_string(), reason },
+        by: SatisfiedBy::Excluded {
+            kind: kind.to_string(),
+            reason,
+        },
     }
 }

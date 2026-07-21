@@ -18,9 +18,9 @@
 
 use quote::{format_ident, quote};
 
+use super::Ctx;
 use super::expr::{emit_expr, infer};
 use super::loops::fresh_label;
-use super::Ctx;
 use crate::hir::{HashPatternRest, NodeId, Pattern, PatternArm};
 use crate::types::TyKind;
 use proc_macro2::TokenStream;
@@ -115,7 +115,8 @@ pub fn emit_match_required(cx: &Ctx, subject: NodeId, pattern: &Pattern) -> Toke
 }
 
 fn emit_no_matching_pattern_raise(cx: &Ctx) -> TokenStream {
-    let msg = quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("no matching pattern".to_string())) };
+    let msg =
+        quote! { zeo_rt::RubyValue::Str(zeo_rt::string_new("no matching pattern".to_string())) };
     let boxed = super::expr::emit_boxed_new(cx, "NoMatchingPatternError", vec![msg]);
     quote! { return Err(zeo_rt::Signal::Raise(#boxed)); }
 }
@@ -129,10 +130,16 @@ fn emit_no_matching_pattern_raise(cx: &Ctx) -> TokenStream {
 /// (never moves it) -- deliberate: `Capture(Box::new(Bind(x)), y)` (`in x =>
 /// y`, binding the SAME value to two names) would otherwise move `__subject`
 /// into `x` and then fail to compile reading it again for `y`.
-fn emit_pattern_match(cx: &Ctx, pattern: &Pattern, scrutinee_ty: TyKind, scrutinee: &TokenStream) -> TokenStream {
+fn emit_pattern_match(
+    cx: &Ctx,
+    pattern: &Pattern,
+    scrutinee_ty: TyKind,
+    scrutinee: &TokenStream,
+) -> TokenStream {
     match pattern {
         Pattern::Bind(name) => {
-            let write = super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
+            let write =
+                super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
             quote! { { #write true } }
         }
         // Value and pin patterns match via `zeo_rt::case_eq`, real Ruby's
@@ -150,26 +157,51 @@ fn emit_pattern_match(cx: &Ctx, pattern: &Pattern, scrutinee_ty: TyKind, scrutin
             quote! { zeo_rt::case_eq(&(#pin_expr), &(#scrutinee))? }
         }
         Pattern::ClassCheck(name) => emit_class_check(cx, name, scrutinee_ty, scrutinee),
-        Pattern::Range { start, end, exclusive } => emit_range_pattern(cx, *start, *end, *exclusive, scrutinee),
+        Pattern::Range {
+            start,
+            end,
+            exclusive,
+        } => emit_range_pattern(cx, *start, *end, *exclusive, scrutinee),
         Pattern::Or(pats) => {
             let checks: Vec<TokenStream> = pats
                 .iter()
                 .map(|p| emit_pattern_match(cx, p, scrutinee_ty, scrutinee))
                 .collect();
-            checks.into_iter().fold(quote! { false }, |acc, next| quote! { (#acc) || (#next) })
+            checks
+                .into_iter()
+                .fold(quote! { false }, |acc, next| quote! { (#acc) || (#next) })
         }
         Pattern::Capture(inner, name) => {
             let cond = emit_pattern_match(cx, inner, scrutinee_ty, scrutinee);
-            let write = super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
+            let write =
+                super::hoisting::emit_local_write(cx, name, quote! { (#scrutinee).clone() });
             quote! { (#cond) && { #write true } }
         }
-        Pattern::Array { constant, pre, rest, post } => {
-            emit_array_pattern(cx, constant, pre, rest, post, scrutinee_ty, scrutinee)
-        }
-        Pattern::Find { constant, pre_rest, mid, post_rest } => {
-            emit_find_pattern(cx, constant, pre_rest, mid, post_rest, scrutinee_ty, scrutinee)
-        }
-        Pattern::Hash { constant, pairs, rest } => emit_hash_pattern(cx, constant, pairs, rest, scrutinee_ty, scrutinee),
+        Pattern::Array {
+            constant,
+            pre,
+            rest,
+            post,
+        } => emit_array_pattern(cx, constant, pre, rest, post, scrutinee_ty, scrutinee),
+        Pattern::Find {
+            constant,
+            pre_rest,
+            mid,
+            post_rest,
+        } => emit_find_pattern(
+            cx,
+            constant,
+            pre_rest,
+            mid,
+            post_rest,
+            scrutinee_ty,
+            scrutinee,
+        ),
+        Pattern::Hash {
+            constant,
+            pairs,
+            rest,
+        } => emit_hash_pattern(cx, constant, pairs, rest, scrutinee_ty, scrutinee),
     }
 }
 
@@ -206,7 +238,12 @@ fn emit_range_pattern(
 /// `in Integer` / `in SomeClass` (also used for an `Array`/`Hash`/`Find`
 /// pattern's optional CONSTANT guard, e.g. `Point[x, y]`) -- resolves both
 /// built-in primitive names and user-defined classes.
-fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &TokenStream) -> TokenStream {
+fn emit_class_check(
+    cx: &Ctx,
+    name: &str,
+    scrutinee_ty: TyKind,
+    scrutinee: &TokenStream,
+) -> TokenStream {
     if let Some(check) = emit_builtin_class_check(name, scrutinee_ty, scrutinee) {
         return check;
     }
@@ -249,11 +286,18 @@ fn emit_class_check(cx: &Ctx, name: &str, scrutinee_ty: TyKind, scrutinee: &Toke
 /// falls back to user-class ancestry). `NilClass`/`TrueClass`/`FalseClass`
 /// have no `TyKind` variant at all (see `types.rs`), so they're ALWAYS a
 /// runtime tag check regardless of `scrutinee_ty`.
-fn emit_builtin_class_check(name: &str, scrutinee_ty: TyKind, scrutinee: &TokenStream) -> Option<TokenStream> {
+fn emit_builtin_class_check(
+    name: &str,
+    scrutinee_ty: TyKind,
+    scrutinee: &TokenStream,
+) -> Option<TokenStream> {
     let (tag_pattern, static_ty): (TokenStream, Option<TyKind>) = match name {
         "Integer" => (quote! { zeo_rt::RubyValue::Int(_) }, Some(TyKind::Int)),
         "String" => (quote! { zeo_rt::RubyValue::Str(_) }, Some(TyKind::Str)),
-        "Symbol" => (quote! { zeo_rt::RubyValue::Symbol(_) }, Some(TyKind::Symbol)),
+        "Symbol" => (
+            quote! { zeo_rt::RubyValue::Symbol(_) },
+            Some(TyKind::Symbol),
+        ),
         "Float" => (quote! { zeo_rt::RubyValue::Float(_) }, Some(TyKind::Float)),
         "Array" => (quote! { zeo_rt::RubyValue::Array(_) }, Some(TyKind::Array)),
         "Hash" => (quote! { zeo_rt::RubyValue::Hash(_) }, Some(TyKind::Hash)),
@@ -311,7 +355,9 @@ fn collect_narrowing_into(pattern: &Pattern, out: &mut HashMap<String, TyKind>) 
                 collect_narrowing_into(p, out);
             }
         }
-        Pattern::Array { pre, rest, post, .. } => {
+        Pattern::Array {
+            pre, rest, post, ..
+        } => {
             for p in pre.iter().chain(post) {
                 collect_narrowing_into(p, out);
             }
@@ -326,7 +372,12 @@ fn collect_narrowing_into(pattern: &Pattern, out: &mut HashMap<String, TyKind>) 
                 out.insert(name.clone(), TyKind::Array);
             }
         }
-        Pattern::Find { pre_rest, mid, post_rest, .. } => {
+        Pattern::Find {
+            pre_rest,
+            mid,
+            post_rest,
+            ..
+        } => {
             if let Some(name) = pre_rest {
                 out.insert(name.clone(), TyKind::Array);
             }
@@ -349,7 +400,11 @@ fn collect_narrowing_into(pattern: &Pattern, out: &mut HashMap<String, TyKind>) 
                 out.insert(name.clone(), TyKind::Hash);
             }
         }
-        Pattern::Bind(_) | Pattern::Value(_) | Pattern::Pin(_) | Pattern::ClassCheck(_) | Pattern::Range { .. } => {}
+        Pattern::Bind(_)
+        | Pattern::Value(_)
+        | Pattern::Pin(_)
+        | Pattern::ClassCheck(_)
+        | Pattern::Range { .. } => {}
     }
 }
 
@@ -398,10 +453,12 @@ fn emit_array_binding(
         TyKind::Array => Some(quote! {
             let #arr_ident: Vec<zeo_rt::RubyValue> = (#scrutinee).as_array_unchecked().lock().clone();
         }),
-        TyKind::Object(cid) if cx.compiler.method_in_chain(cid, "deconstruct").is_some() => Some(quote! {
-            let #arr_ident: Vec<zeo_rt::RubyValue> =
-                (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().clone();
-        }),
+        TyKind::Object(cid) if cx.compiler.method_in_chain(cid, "deconstruct").is_some() => {
+            Some(quote! {
+                let #arr_ident: Vec<zeo_rt::RubyValue> =
+                    (#scrutinee.clone()).deconstruct()?.as_array_unchecked().lock().clone();
+            })
+        }
         // A Poly scrutinee that isn't a runtime Array dispatches
         // `#deconstruct` (real Ruby's array-pattern protocol) when it responds
         // to it; anything else simply doesn't match (no raise).
@@ -434,10 +491,17 @@ fn emit_hash_binding(
         TyKind::Hash => Some(quote! {
             let #h_ident: zeo_rt::RHash = (#scrutinee).as_hash_unchecked();
         }),
-        TyKind::Object(cid) if cx.compiler.method_in_chain(cid, "deconstruct_keys").is_some() => Some(quote! {
-            let #h_ident: zeo_rt::RHash =
-                (#scrutinee.clone()).deconstruct_keys(zeo_rt::RubyValue::Nil)?.as_hash_unchecked();
-        }),
+        TyKind::Object(cid)
+            if cx
+                .compiler
+                .method_in_chain(cid, "deconstruct_keys")
+                .is_some() =>
+        {
+            Some(quote! {
+                let #h_ident: zeo_rt::RHash =
+                    (#scrutinee.clone()).deconstruct_keys(zeo_rt::RubyValue::Nil)?.as_hash_unchecked();
+            })
+        }
         // A MatchData scrutinee (`"s".match(/re/)` is statically typed
         // MatchData) deconstructs via `MatchData#deconstruct_keys` -- the
         // regex's named captures become a symbol-keyed hash. A no-match `match`
@@ -484,7 +548,8 @@ fn emit_array_pattern(
 ) -> TokenStream {
     let label = fresh_label(cx, "pat_arr");
     let arr_ident = fresh_temp(cx, "arr");
-    let Some(arr_binding) = emit_array_binding(cx, &label, &arr_ident, scrutinee_ty, scrutinee) else {
+    let Some(arr_binding) = emit_array_binding(cx, &label, &arr_ident, scrutinee_ty, scrutinee)
+    else {
         return quote! { false };
     };
 
@@ -558,7 +623,8 @@ fn emit_find_pattern(
 ) -> TokenStream {
     let label = fresh_label(cx, "pat_find");
     let arr_ident = fresh_temp(cx, "find_arr");
-    let Some(arr_binding) = emit_array_binding(cx, &label, &arr_ident, scrutinee_ty, scrutinee) else {
+    let Some(arr_binding) = emit_array_binding(cx, &label, &arr_ident, scrutinee_ty, scrutinee)
+    else {
         return quote! { false };
     };
 

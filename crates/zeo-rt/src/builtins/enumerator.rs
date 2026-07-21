@@ -46,12 +46,12 @@ use crate::signal::Signal;
 use crate::value::RubyValue;
 use crate::{RProc, Symbol};
 use parking_lot::Mutex;
-use zeo_fiber::CoroutineResult;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::ThreadId;
+use zeo_fiber::CoroutineResult;
 
 /// What `to_enum` captures -- CRuby's `struct enumerator`'s `obj`/`meth`/
 /// `args` triple, or the `Enumerator.new` generator block. Cloned into
@@ -59,19 +59,32 @@ use std::thread::ThreadId;
 /// (everything inside is `Arc`-backed or small).
 #[derive(Clone)]
 enum EnumSource {
-    Method { recv: RubyValue, meth: String, args: Vec<RubyValue> },
-    Generator { block: RProc },
+    Method {
+        recv: RubyValue,
+        meth: String,
+        args: Vec<RubyValue>,
+    },
+    Generator {
+        block: RProc,
+    },
     /// `Enumerator.produce(initial) { |prev| ... }` -- an infinite generator.
     /// The first yielded value is `initial` (or, absent, `block.call(nil)`);
     /// each subsequent value is `block` applied to the previous one.
-    Produce { initial: Option<RubyValue>, block: RProc },
+    Produce {
+        initial: Option<RubyValue>,
+        block: RProc,
+    },
     /// `Enumerator#+` / `Enumerable#chain` -- the sources iterated back to
     /// back. Carried as an ordinary Enumerator; `class_of` reports
     /// `Enumerator::Chain` off this variant.
-    Chain { sources: Vec<RubyValue> },
+    Chain {
+        sources: Vec<RubyValue>,
+    },
     /// `Enumerator.product(*enums)` -- the cartesian product, yielded as one
     /// Array per combination, rightmost source varying fastest.
-    Product { sources: Vec<RubyValue> },
+    Product {
+        sources: Vec<RubyValue>,
+    },
 }
 
 /// The mutable external-iteration half, all behind one short-held lock
@@ -197,14 +210,20 @@ pub(crate) fn enumerator_new(
         // An Integer/Float is the size directly; a Proc/lambda is a size
         // CALLABLE, invoked lazily by `#size` (never at construction), so it is
         // stored as-is here.
-        Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Proc(_))) => {
-            Some(v.clone())
-        }
+        Some(
+            v @ (RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Float(_)
+            | RubyValue::Proc(_)),
+        ) => Some(v.clone()),
         Some(other) => {
             return Err(raise_error(
                 "TypeError",
-                format!("can't convert {} into Integer", crate::builtins::convert_name_of(other)),
-            ))
+                format!(
+                    "can't convert {} into Integer",
+                    crate::builtins::convert_name_of(other)
+                ),
+            ));
         }
     };
     Ok(RubyValue::Enumerator(Arc::new(EnumeratorData {
@@ -273,7 +292,10 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
             let each_block = block.as_proc_unchecked();
             generator.call(&[RubyValue::Yielder(each_block)])
         }
-        EnumSource::Produce { initial, block: generator } => {
+        EnumSource::Produce {
+            initial,
+            block: generator,
+        } => {
             let each_block = block.as_proc_unchecked();
             let mut cur = match initial {
                 Some(v) => v.clone(),
@@ -304,10 +326,12 @@ fn internal_each(source: &EnumSource, block: RubyValue) -> Result<RubyValue, Sig
 fn product_lists(sources: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, Signal> {
     sources
         .iter()
-        .map(|s| match send_value(s, Symbol::intern("to_a"), &[], None)? {
-            RubyValue::Array(a) => Ok(a.lock().clone()),
-            _ => Ok(Vec::new()),
-        })
+        .map(
+            |s| match send_value(s, Symbol::intern("to_a"), &[], None)? {
+                RubyValue::Array(a) => Ok(a.lock().clone()),
+                _ => Ok(Vec::new()),
+            },
+        )
         .collect()
 }
 
@@ -351,10 +375,12 @@ fn ensure_fiber(e: &REnumerator) -> u64 {
         let shuttle: RProc = RProc::new(|raw: &[RubyValue]| {
             // `y.yield` suspends, then returns the value `#feed` injected on the
             // resume (empty resume -> nil), so `got = y.yield(x)` sees it.
-            let fed = zeo_fiber::yield_current::<Vec<RubyValue>, RubyValue>(
-                RubyValue::Array(array_new(raw.to_vec())),
-            );
-            Ok(fed.and_then(|v| v.into_iter().next()).unwrap_or(RubyValue::Nil))
+            let fed = zeo_fiber::yield_current::<Vec<RubyValue>, RubyValue>(RubyValue::Array(
+                array_new(raw.to_vec()),
+            ));
+            Ok(fed
+                .and_then(|v| v.into_iter().next())
+                .unwrap_or(RubyValue::Nil))
         });
         internal_each(&source, RubyValue::Proc(shuttle))
     });
@@ -476,12 +502,8 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source {
         // CRuby prints the generator with its address; addresses are
         // omitted crate-wide (the 16.2 posture).
-        EnumSource::Generator { .. } => {
-            "#<Enumerator: #<Enumerator::Generator>:each>".to_string()
-        }
-        EnumSource::Produce { .. } => {
-            "#<Enumerator: #<Enumerator::Producer>:each>".to_string()
-        }
+        EnumSource::Generator { .. } => "#<Enumerator: #<Enumerator::Generator>:each>".to_string(),
+        EnumSource::Produce { .. } => "#<Enumerator: #<Enumerator::Producer>:each>".to_string(),
         // A chain/product prints its sources verbatim (CRuby renders the
         // held array, so `[1,2].chain([3])` shows the arrays themselves
         // while `a.each + b.each` shows the two enumerators).
@@ -553,11 +575,7 @@ fn enum_size(e: &EnumeratorData) -> RubyValue {
 
 /// Fold the sources' sizes with `f`, propagating nil (unknown) and
 /// Float::INFINITY (endless) rather than folding them numerically.
-fn fold_sizes(
-    sources: &[RubyValue],
-    identity: i64,
-    f: impl Fn(i64, i64) -> i64,
-) -> RubyValue {
+fn fold_sizes(sources: &[RubyValue], identity: i64, f: impl Fn(i64, i64) -> i64) -> RubyValue {
     let mut acc = identity;
     for src in sources {
         match receiver_size(src) {
@@ -603,11 +621,7 @@ fn int_span(recv: &RubyValue, to: Option<&RubyValue>, ascending: bool) -> RubyVa
 /// iteration with a counting wrapper -- multi-value yields pack into an
 /// array as the block's first param, the index appends (CRuby's
 /// `enumerator_with_index_i`).
-fn drive_with_index(
-    e: &REnumerator,
-    block: RubyValue,
-    offset: i64,
-) -> Result<RubyValue, Signal> {
+fn drive_with_index(e: &REnumerator, block: RubyValue, offset: i64) -> Result<RubyValue, Signal> {
     let blk = block.as_proc_unchecked();
     let counter = Arc::new(Mutex::new(offset));
     let wrapper: RProc = RProc::new(move |raw: &[RubyValue]| {
@@ -843,7 +857,9 @@ mod tests {
     #[test]
     fn external_iteration_advances_and_peek_caches() {
         let e = enumerator_for(&ints(&[7, 8, 9]), "each", &[]);
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(7)));
         assert!(matches!(ary2sv(fill_peek(h).unwrap()), RubyValue::Int(8)));
         assert!(matches!(ary2sv(fill_peek(h).unwrap()), RubyValue::Int(8)));
@@ -857,7 +873,9 @@ mod tests {
         // No exception factory in unit tests: raise_stop_iteration panics
         // loudly instead (the raise_error posture).
         let e = enumerator_for(&ints(&[1]), "each", &[]);
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         take_next(h).unwrap();
         let _ = take_next(h);
     }
@@ -867,14 +885,18 @@ mod tests {
         // Enumerator.new { |y| y.yield; y.yield nil; y.yield 1, 2 }
         let generator: RProc = RProc::new(|args: &[RubyValue]| {
             let y = &args[0];
-            let RubyValue::Yielder(f) = y else { panic!("expected a Yielder") };
+            let RubyValue::Yielder(f) = y else {
+                panic!("expected a Yielder")
+            };
             f.call(&[])?;
             f.call(&[RubyValue::Nil])?;
             f.call(&[RubyValue::Int(1), RubyValue::Int(2)])?;
             Ok(RubyValue::Nil)
         });
         let e = enumerator_new(&[], Some(RubyValue::Proc(generator))).unwrap();
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         assert_eq!(take_next(h).unwrap().len(), 0); // yield        -> []
         assert_eq!(take_next(h).unwrap().len(), 1); // yield nil    -> [nil]
         let two = take_next(h).unwrap(); //            yield 1, 2   -> [1, 2]
@@ -887,21 +909,30 @@ mod tests {
         // Enumerator.new { |y| y << 1; raise } -- next -> 1, next -> the
         // error, next again -> a fresh fiber restarting at 1 (oracle).
         let generator: RProc = RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Yielder(f) = &args[0] else { panic!() };
+            let RubyValue::Yielder(f) = &args[0] else {
+                panic!()
+            };
             f.call(&[RubyValue::Int(1)])?;
             Err(Signal::Raise(RubyValue::Int(99)))
         });
         let e = enumerator_new(&[], Some(RubyValue::Proc(generator))).unwrap();
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(1)));
-        assert!(matches!(take_next(h), Err(Signal::Raise(RubyValue::Int(99)))));
+        assert!(matches!(
+            take_next(h),
+            Err(Signal::Raise(RubyValue::Int(99)))
+        ));
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(1)));
     }
 
     #[test]
     fn rewind_restarts_from_the_top() {
         let e = enumerator_for(&ints(&[5, 6]), "each", &[]);
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(5)));
         rewind(&e, &[], None).unwrap();
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(5)));
@@ -932,16 +963,23 @@ mod tests {
         assert!(matches!(size(&bare, &[], None).unwrap(), RubyValue::Nil));
         let hinted =
             enumerator_new(&[RubyValue::Int(4)], Some(RubyValue::Proc(generator))).unwrap();
-        assert!(matches!(size(&hinted, &[], None).unwrap(), RubyValue::Int(4)));
+        assert!(matches!(
+            size(&hinted, &[], None).unwrap(),
+            RubyValue::Int(4)
+        ));
     }
 
     #[test]
     fn inspect_prints_the_cruby_shape() {
         let e = enumerator_for(&ints(&[1, 2]), "each", &[]);
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         assert_eq!(enum_inspect(h), "#<Enumerator: [1, 2]:each>");
         let sliced = enumerator_for(&ints(&[1, 2]), "each_slice", &[RubyValue::Int(2)]);
-        let RubyValue::Enumerator(h) = &sliced else { panic!() };
+        let RubyValue::Enumerator(h) = &sliced else {
+            panic!()
+        };
         assert_eq!(enum_inspect(h), "#<Enumerator: [1, 2]:each_slice(2)>");
     }
 
@@ -976,12 +1014,17 @@ mod tests {
     #[test]
     fn dup_copies_the_source_but_not_the_iteration() {
         let e = enumerator_for(&ints(&[1, 2]), "each", &[]);
-        let RubyValue::Enumerator(h) = &e else { panic!() };
+        let RubyValue::Enumerator(h) = &e else {
+            panic!()
+        };
         take_next(h).unwrap();
         assert!(h.iteration_live());
         let copy = h.fresh_copy();
         assert!(!copy.iteration_live());
-        assert!(matches!(ary2sv(take_next(&copy).unwrap()), RubyValue::Int(1)));
+        assert!(matches!(
+            ary2sv(take_next(&copy).unwrap()),
+            RubyValue::Int(1)
+        ));
         // The original is unaffected: still at element 2.
         assert!(matches!(ary2sv(take_next(h).unwrap()), RubyValue::Int(2)));
     }

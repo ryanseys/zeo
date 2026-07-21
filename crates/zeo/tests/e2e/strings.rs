@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn hello_prints_a_symbol() {
@@ -24,10 +24,7 @@ fn string_literal_interpolation_indexing_and_mutation() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "hello world, 3 times\n20\nh\ns\nbat\n"
-    );
+    assert_eq!(result.stdout, "hello world, 3 times\n20\nh\ns\nbat\n");
 }
 
 // --- Phase 12.7: Regexp -----------------------------------------------
@@ -261,7 +258,10 @@ fn string_new_builds_empty_and_copied_buffers_with_encoding() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "\"\"\n\"hi\"\n\"ASCII-8BIT\"\n\"ASCII-8BIT\"\n");
+    assert_eq!(
+        result.stdout,
+        "\"\"\n\"hi\"\n\"ASCII-8BIT\"\n\"ASCII-8BIT\"\n"
+    );
 }
 
 #[test]

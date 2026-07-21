@@ -117,10 +117,14 @@ fn parse_args() -> Result<Args, String> {
             }
             // The external gem store (Phase 3).
             "--gem-path" => {
-                gem_path = Some(PathBuf::from(iter.next().ok_or("--gem-path requires a directory")?));
+                gem_path = Some(PathBuf::from(
+                    iter.next().ok_or("--gem-path requires a directory")?,
+                ));
             }
             "--lockfile" => {
-                lockfile = Some(PathBuf::from(iter.next().ok_or("--lockfile requires a path")?));
+                lockfile = Some(PathBuf::from(
+                    iter.next().ok_or("--lockfile requires a path")?,
+                ));
             }
             "--help" | "-h" => {
                 print!("{HELP}");
@@ -217,7 +221,10 @@ fn run() -> Result<(), String> {
             p.set_extension("");
             p
         });
-        let dir = artifact.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let dir = artifact
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         Some(dir.join("zeo-gems.json"))
     };
     let opts = zeo::CompileOptions {
@@ -241,7 +248,7 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    use zeo::build::{build_binary, ensure_runtime_built, Profile, Runtime};
+    use zeo::build::{Profile, Runtime, build_binary, ensure_runtime_built};
 
     // Which runtime variant this program's binary links: the lean, parser-free
     // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime

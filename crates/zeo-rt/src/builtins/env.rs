@@ -14,9 +14,9 @@
 
 use std::sync::{Arc, LazyLock};
 
+use crate::RubyValue;
 use crate::builtins::builtin_methods;
 use crate::dispatch::{RObj, RubyObject};
-use crate::RubyValue;
 use zeo_abi::{ClassId, OBJECT_CLASS};
 
 /// The ENV singleton's payload -- stateless: every method reads or writes
@@ -101,7 +101,10 @@ fn pairs() -> Vec<(String, String)> {
 /// must write the real environment, not a copy.
 pub fn snapshot() -> RubyValue {
     RubyValue::Hash(crate::collections::hash_new(
-        pairs().into_iter().map(|(k, v)| (str_val(k), str_val(v))).collect(),
+        pairs()
+            .into_iter()
+            .map(|(k, v)| (str_val(k), str_val(v)))
+            .collect(),
     ))
 }
 
@@ -352,7 +355,9 @@ fn require_block(block: Option<RubyValue>) -> Result<RubyValue, crate::Signal> {
 /// `select!`). Returns whether anything was removed, which the bang variants
 /// use to answer nil-on-no-change.
 fn env_remove_matching(block: &RubyValue, remove_when: bool) -> Result<bool, crate::Signal> {
-    let RubyValue::Proc(p) = block else { unreachable!("require_block returns a Proc") };
+    let RubyValue::Proc(p) = block else {
+        unreachable!("require_block returns a Proc")
+    };
     let mut changed = false;
     for (k, v) in pairs() {
         if p.call(&[str_val(k.clone()), str_val(v)])?.truthy() == remove_when {
@@ -407,7 +412,9 @@ mod tests {
         let e = env_value();
         env_set(&e, &[s("ZEO_TEST_SET"), s("v1")], None).unwrap();
         assert_eq!(
-            env_get(&e, &[s("ZEO_TEST_SET")], None).unwrap().to_display_string(),
+            env_get(&e, &[s("ZEO_TEST_SET")], None)
+                .unwrap()
+                .to_display_string(),
             "v1"
         );
         // `ENV["X"] = nil` deletes.
@@ -437,9 +444,7 @@ mod tests {
     /// A bare `fetch` miss raises KeyError (registry-less: a panic).
     #[test]
     fn fetch_raises_key_error_with_no_default() {
-        let r = std::panic::catch_unwind(|| {
-            env_fetch(&env_value(), &[s("ZEO_TEST_ABSENT")], None)
-        });
+        let r = std::panic::catch_unwind(|| env_fetch(&env_value(), &[s("ZEO_TEST_ABSENT")], None));
         assert!(r.is_err());
     }
 
@@ -468,7 +473,11 @@ mod tests {
     #[test]
     fn a_non_string_key_raises_type_error() {
         let r = std::panic::catch_unwind(|| {
-            env_get(&env_value(), &[RubyValue::Symbol(Symbol::intern("PATH"))], None)
+            env_get(
+                &env_value(),
+                &[RubyValue::Symbol(Symbol::intern("PATH"))],
+                None,
+            )
         });
         assert!(r.is_err());
     }

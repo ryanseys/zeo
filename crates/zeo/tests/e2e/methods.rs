@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn inheritance_super_chain() {
@@ -502,7 +502,10 @@ fn data_custom_initialize_supers_with_keyword_args() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "#<data Point x=500, y=3>\nerr: missing keyword: :n\n");
+    assert_eq!(
+        result.stdout,
+        "#<data Point x=500, y=3>\nerr: missing keyword: :n\n"
+    );
 }
 
 /// A `Hash` subclass with a `super` in `initialize` (D3): `super(0)` seeds the
@@ -1866,10 +1869,7 @@ fn anonymous_struct_and_data_custom_initialize_super() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "[5, 10]\n[1, 2]\n#<data lat=10, lng=2>\n"
-    );
+    assert_eq!(result.stdout, "[5, 10]\n[1, 2]\n#<data lat=10, lng=2>\n");
 }
 
 /// #192 feature (1): a `super` in an override installed via a `Class.new(Parent)`
@@ -2399,10 +2399,7 @@ fn alias_and_alias_method_including_inherited_sources() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "hi a\nhi b\nhi c\nhi d\nhi e\ntrue\n"
-    );
+    assert_eq!(result.stdout, "hi a\nhi b\nhi c\nhi d\nhi e\ntrue\n");
 }
 
 #[test]

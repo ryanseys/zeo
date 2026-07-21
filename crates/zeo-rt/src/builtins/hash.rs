@@ -1,8 +1,8 @@
 //! `Hash` (CRuby hash.c) -- stage B carries the rows migrated from the old
 //! curated table; the Tier A breadth (merge/fetch/dig/...) lands in stage E.
 
-use crate::builtins::{arity, block_or_enum, builtin_methods, recv_hash};
 use crate::RubyValue;
+use crate::builtins::{arity, block_or_enum, builtin_methods, recv_hash};
 
 /// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place
 /// mutation. Shared by every mutator so a frozen receiver can't slip through.
@@ -613,10 +613,11 @@ builtin_methods! {
     }
 }
 
-
 /// `transform_keys`'s optional first argument: a mapping Hash (`nil`/absent is
 /// none), else CRuby's `no implicit conversion into Hash` TypeError.
-fn transform_keys_mapping(args: &[RubyValue]) -> Result<Option<crate::collections::RHash>, crate::Signal> {
+fn transform_keys_mapping(
+    args: &[RubyValue],
+) -> Result<Option<crate::collections::RHash>, crate::Signal> {
     match args.first() {
         Some(RubyValue::Hash(h)) => Ok(Some(h.clone())),
         None | Some(RubyValue::Nil) => Ok(None),
@@ -674,8 +675,11 @@ fn hash_filter_bang(
             format!("can't modify frozen Hash: {}", recv.inspect_string()),
         ));
     }
-    let pairs: Vec<(RubyValue, RubyValue)> =
-        h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let pairs: Vec<(RubyValue, RubyValue)> = h
+        .lock()
+        .values()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     let mut removed = 0;
     for (k, v) in pairs {
         let accepted = p.call(&[k.clone(), v])?.truthy();
@@ -698,16 +702,21 @@ fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate
             "TypeError",
             format!(
                 "no implicit conversion of {} into Hash",
-                crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) { b } else { a }),
+                crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) {
+                    b
+                } else {
+                    a
+                }),
             ),
         ));
     };
     if proper && crate::hash_len(small) >= crate::hash_len(big) {
         return Ok(false);
     }
-    let contained = small.lock().values().all(|(k, v)| {
-        crate::hash_has_key(big, k) && crate::hash_get(big, k).rb_eq(v)
-    });
+    let contained = small
+        .lock()
+        .values()
+        .all(|(k, v)| crate::hash_has_key(big, k) && crate::hash_get(big, k).rb_eq(v));
     Ok(contained)
 }
 
@@ -866,7 +875,12 @@ mod tests {
         // Flat k, v, k, v list.
         let flat = hash_bracket(
             &RubyValue::Nil,
-            &[RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3), RubyValue::Int(4)],
+            &[
+                RubyValue::Int(1),
+                RubyValue::Int(2),
+                RubyValue::Int(3),
+                RubyValue::Int(4),
+            ],
             None,
         )
         .unwrap();
@@ -878,11 +892,16 @@ mod tests {
             vec![RubyValue::Int(9), RubyValue::Int(8)],
         ))]));
         let from_pairs = hash_bracket(&RubyValue::Nil, &[pairs], None).unwrap();
-        let RubyValue::Hash(h2) = from_pairs else { panic!() };
+        let RubyValue::Hash(h2) = from_pairs else {
+            panic!()
+        };
         assert_eq!(h2.lock().len(), 1);
 
         // Empty.
-        assert!(matches!(hash_bracket(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Hash(_)));
+        assert!(matches!(
+            hash_bracket(&RubyValue::Nil, &[], None).unwrap(),
+            RubyValue::Hash(_)
+        ));
     }
 
     #[test]
@@ -899,7 +918,9 @@ mod tests {
         index_set(&h, &[k.clone(), RubyValue::Int(1)], None).unwrap();
         let r = key_p(&h, &[k], None).unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
-        let RubyValue::Array(ks) = keys(&h, &[], None).unwrap() else { panic!() };
+        let RubyValue::Array(ks) = keys(&h, &[], None).unwrap() else {
+            panic!()
+        };
         assert_eq!(ks.lock().len(), 1);
     }
 }

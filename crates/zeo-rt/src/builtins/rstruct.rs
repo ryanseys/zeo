@@ -37,9 +37,7 @@ use parking_lot::Mutex;
 use zeo_abi::{ClassId, DATA_CLASS, STRUCT_CLASS};
 
 use crate::builtins::{arity, block_or_enum, builtin_methods};
-use crate::dispatch::{
-    class_name, raise_error, send_in, send_value, MethodImpl, RObj, RubyObject,
-};
+use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -100,7 +98,10 @@ pub fn is_struct_class(class_id: ClassId) -> bool {
 /// so no `register_params` descriptor exists). A reader (`:x`) takes no args; a
 /// writer (`:x=`, structs only) takes one required `value`. `None` when `name`
 /// is not a member accessor of this class.
-pub fn accessor_params(class_id: ClassId, name: Symbol) -> Option<crate::method_params::Descriptor> {
+pub fn accessor_params(
+    class_id: ClassId,
+    name: Symbol,
+) -> Option<crate::method_params::Descriptor> {
     use crate::method_params::ParamKind;
     let meta = meta_of(class_id)?;
     let n = name.name();
@@ -110,10 +111,7 @@ pub fn accessor_params(class_id: ClassId, name: Symbol) -> Option<crate::method_
         }
         return None;
     }
-    meta.members
-        .iter()
-        .any(|m| m.name() == n)
-        .then(Vec::new)
+    meta.members.iter().any(|m| m.name() == n).then(Vec::new)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,9 +224,9 @@ fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
             }
             Ok(idx as usize)
         }
-        RubyValue::Symbol(s) => meta.index_of(*s).ok_or_else(|| {
-            raise_error("NameError", format!("no member '{}' in struct", s.name()))
-        }),
+        RubyValue::Symbol(s) => meta
+            .index_of(*s)
+            .ok_or_else(|| raise_error("NameError", format!("no member '{}' in struct", s.name()))),
         RubyValue::Str(s) => {
             let name = s.lock().to_utf8_lossy().into_owned();
             meta.index_of(Symbol::intern(&name))
@@ -548,7 +546,11 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
     // Keyword construction: a plain Struct only when declared `keyword_init:`;
     // Data when the sole arg is a keyword hash (else positional).
     let kw_hash = match args.last() {
-        Some(RubyValue::Hash(h)) if (meta.keyword_init == Some(true) || is_data) && args.len() == 1 => Some(h),
+        Some(RubyValue::Hash(h))
+            if (meta.keyword_init == Some(true) || is_data) && args.len() == 1 =>
+        {
+            Some(h)
+        }
         _ => None,
     };
 
@@ -557,7 +559,10 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
         let mut seen = vec![false; n];
         for (k, v) in h.lock().values() {
             let RubyValue::Symbol(s) = k else {
-                return Err(raise_error("ArgumentError", "keyword must be a symbol".to_string()));
+                return Err(raise_error(
+                    "ArgumentError",
+                    "keyword must be a symbol".to_string(),
+                ));
             };
             match meta.index_of(*s) {
                 Some(i) => {
@@ -568,16 +573,24 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
                     return Err(raise_error(
                         "ArgumentError",
                         format!("unknown keyword: :{}", s.name()),
-                    ))
+                    ));
                 }
             }
         }
         // Data requires every member; a plain keyword_init Struct nil-fills.
         if is_data {
-            let missing: Vec<String> =
-                seen.iter().enumerate().filter(|(_, s)| !**s).map(|(i, _)| format!(":{}", meta.members[i].name())).collect();
+            let missing: Vec<String> = seen
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| !**s)
+                .map(|(i, _)| format!(":{}", meta.members[i].name()))
+                .collect();
             if !missing.is_empty() {
-                let word = if missing.len() == 1 { "keyword" } else { "keywords" };
+                let word = if missing.len() == 1 {
+                    "keyword"
+                } else {
+                    "keywords"
+                };
                 return Err(raise_error(
                     "ArgumentError",
                     format!("missing {word}: {}", missing.join(", ")),
@@ -592,22 +605,37 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
     if meta.keyword_init == Some(true) && !args.is_empty() {
         return Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 0)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 0)",
+                args.len()
+            ),
         ));
     }
     if args.len() > n || (is_data && args.len() != n && !args.is_empty()) {
         return Err(raise_error(
             "ArgumentError",
             if is_data {
-                format!("wrong number of arguments (given {}, expected {})", args.len(), n)
+                format!(
+                    "wrong number of arguments (given {}, expected {})",
+                    args.len(),
+                    n
+                )
             } else {
                 "struct size differs".to_string()
             },
         ));
     }
     if is_data && args.is_empty() && n > 0 {
-        let missing: Vec<String> = meta.members.iter().map(|m| format!(":{}", m.name())).collect();
-        let word = if missing.len() == 1 { "keyword" } else { "keywords" };
+        let missing: Vec<String> = meta
+            .members
+            .iter()
+            .map(|m| format!(":{}", m.name()))
+            .collect();
+        let word = if missing.len() == 1 {
+            "keyword"
+        } else {
+            "keywords"
+        };
         return Err(raise_error(
             "ArgumentError",
             format!("missing {word}: {}", missing.join(", ")),
@@ -686,7 +714,7 @@ fn parse_members(args: &[RubyValue], is_data: bool) -> Result<ParsedMembers, Sig
                 return Err(raise_error(
                     "TypeError",
                     format!("{} is not a symbol nor a string", other.inspect_string()),
-                ))
+                ));
             }
         };
         if members.contains(&sym) {
@@ -764,7 +792,14 @@ fn define_value_class(
     }
 
     let class_id = crate::runtime_meta::intern_native_class(root, methods, struct_construct);
-    put_meta(class_id, StructMeta { members, is_data, keyword_init });
+    put_meta(
+        class_id,
+        StructMeta {
+            members,
+            is_data,
+            keyword_init,
+        },
+    );
     if let Some(n) = &name {
         crate::runtime_meta::name_runtime_class_if_anonymous(class_id, n);
     }
@@ -809,7 +844,11 @@ pub fn class_lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     }
 }
 
-fn class_members(recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn class_members(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
         unreachable!("struct class method on a non-class receiver")
     };
@@ -819,14 +858,22 @@ fn class_members(recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue
     )))
 }
 
-fn class_new_instance(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn class_new_instance(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
         unreachable!("struct class method on a non-class receiver")
     };
     struct_construct(*cid, args, block)
 }
 
-fn class_keyword_init(recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn class_keyword_init(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
         unreachable!("struct class method on a non-class receiver")
     };

@@ -15,15 +15,15 @@
 //! analyze rejection (documented), so this covers the collection roots that
 //! matter (`Array`/`String`/`Hash`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
-use zeo_abi::{ClassId, ARRAY_CLASS, HASH_CLASS, STRING_CLASS};
+use zeo_abi::{ARRAY_CLASS, ClassId, HASH_CLASS, STRING_CLASS};
 
 use crate::dispatch::{
-    ancestors_of_value, has_instance_method, raise_error, run_initialize, ClassRegistry,
-    ConstructorFn, RObj, RubyObject,
+    ClassRegistry, ConstructorFn, RObj, RubyObject, ancestors_of_value, has_instance_method,
+    raise_error, run_initialize,
 };
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -197,15 +197,21 @@ pub fn value_subclass_construct(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let root = value_root_of(class_id)
-        .unwrap_or_else(|| panic!("no value payload root in ancestry of class id {}", class_id.0));
+    let root = value_root_of(class_id).unwrap_or_else(|| {
+        panic!(
+            "no value payload root in ancestry of class id {}",
+            class_id.0
+        )
+    });
     if has_instance_method(class_id, Symbol::intern("initialize")) {
         let handle = ValueSubclass::alloc(class_id, root, empty_payload(root));
         run_initialize(class_id, &handle, args, block)?;
         Ok(RubyValue::Object(handle))
     } else {
         let payload = construct_root_payload(root, args, block)?;
-        Ok(RubyValue::Object(ValueSubclass::alloc(class_id, root, payload)))
+        Ok(RubyValue::Object(ValueSubclass::alloc(
+            class_id, root, payload,
+        )))
     }
 }
 

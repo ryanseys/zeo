@@ -11,7 +11,7 @@ use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::sync::Arc;
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TCPSERVER_CLASS, TCPSOCKET_CLASS};
 
@@ -73,7 +73,9 @@ impl RubyObject for RTcpServer {
     // A listener owns a unique fd; there is no meaningful shallow copy, so a
     // `dup` answers a fresh closed server rather than aliasing the fd.
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RTcpServer { listener: parking_lot::Mutex::new(None) })
+        Arc::new(RTcpServer {
+            listener: parking_lot::Mutex::new(None),
+        })
     }
 }
 
@@ -102,7 +104,10 @@ fn host_port(args: &[RubyValue], default_host: &str) -> Result<(String, u16), Si
         }
         _ => Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 1..2)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 1..2)",
+                args.len()
+            ),
         )),
     }
 }
@@ -118,14 +123,21 @@ fn port_of(v: &RubyValue) -> Result<u16, Signal> {
             .trim()
             .parse::<u16>()
             .map_err(|_| raise_error("SocketError", "getaddrinfo: unknown service".to_string())),
-        _ => Err(raise_error("TypeError", "no implicit conversion into Integer".to_string())),
+        _ => Err(raise_error(
+            "TypeError",
+            "no implicit conversion into Integer".to_string(),
+        )),
     }
 }
 
 /// `[family, port, hostname, ip]` -- the shape `#addr`/`#peeraddr` answer.
 fn socket_addr_array(addr: std::net::SocketAddr) -> RubyValue {
     let ip = addr.ip().to_string();
-    let family = if addr.is_ipv6() { "AF_INET6" } else { "AF_INET" };
+    let family = if addr.is_ipv6() {
+        "AF_INET6"
+    } else {
+        "AF_INET"
+    };
     RubyValue::Array(crate::array_new(vec![
         RubyValue::Str(crate::string_new(family.to_string())),
         RubyValue::Int(addr.port() as i64),

@@ -32,13 +32,20 @@ struct Rendered {
 
 impl Default for Rendered {
     fn default() -> Rendered {
-        Rendered { head: String::new(), body: String::new(), fill: '0' }
+        Rendered {
+            head: String::new(),
+            body: String::new(),
+            fill: '0',
+        }
     }
 }
 
 impl Rendered {
     fn plain(body: String) -> Rendered {
-        Rendered { body, ..Default::default() }
+        Rendered {
+            body,
+            ..Default::default()
+        }
     }
 }
 
@@ -86,7 +93,11 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
         if !f.is_finite() {
             return Ok(Rendered {
                 head: sign_prefix(spec, f.is_sign_negative() && !f.is_nan()),
-                body: if f.is_nan() { "NaN".to_string() } else { "Inf".to_string() },
+                body: if f.is_nan() {
+                    "NaN".to_string()
+                } else {
+                    "Inf".to_string()
+                },
                 ..Default::default()
             });
         }
@@ -157,7 +168,11 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
                 let s = format!("{abs}");
                 s.trim_end_matches(".0").to_string()
             };
-            Rendered { head: sign_prefix(spec, f.is_sign_negative()), body, ..Default::default() }
+            Rendered {
+                head: sign_prefix(spec, f.is_sign_negative()),
+                body,
+                ..Default::default()
+            }
         }
         // C99 hexadecimal float (`%a`/`%A`): `0x1.5p+2`-style. Rare; a
         // straightforward mantissa/exponent decomposition of the IEEE bits.
@@ -166,7 +181,12 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
             render_hexfloat(spec, f)
         }
         'c' => Rendered::plain(match arg {
-            RubyValue::Str(s) => s.lock().chars().next().map(String::from).unwrap_or_default(),
+            RubyValue::Str(s) => s
+                .lock()
+                .chars()
+                .next()
+                .map(String::from)
+                .unwrap_or_default(),
             RubyValue::Int(i) => u32::try_from(*i)
                 .ok()
                 .and_then(char::from_u32)
@@ -176,7 +196,7 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
                 return Err(arg_error(format!(
                     "invalid value for %c: {}",
                     other.inspect_string()
-                )))
+                )));
             }
         }),
         other => return Err(arg_error(format!("malformed format string - %{other}"))),
@@ -207,7 +227,11 @@ fn render_hexfloat(spec: &Spec, f: f64) -> Rendered {
         while hex.ends_with('0') {
             hex.pop();
         }
-        let frac = if hex.is_empty() { String::new() } else { format!(".{hex}") };
+        let frac = if hex.is_empty() {
+            String::new()
+        } else {
+            format!(".{hex}")
+        };
         let sign = if unbiased < 0 { "-" } else { "+" };
         let out = format!("0x{lead}{frac}p{sign}{}", unbiased.abs());
         if spec.conv == 'A' {
@@ -216,7 +240,11 @@ fn render_hexfloat(spec: &Spec, f: f64) -> Rendered {
             out
         }
     };
-    Rendered { head, body, ..Default::default() }
+    Rendered {
+        head,
+        body,
+        ..Default::default()
+    }
 }
 
 /// A radix integer conversion (`%x`/`%o`/`%b`/`%B`/`%X`). Positive values are
@@ -249,7 +277,11 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
         if spec.alt && n.sign() != Sign::NoSign {
             head.push_str(prefix);
         }
-        return Rendered { head, body, fill: '0' };
+        return Rendered {
+            head,
+            body,
+            fill: '0',
+        };
     }
 
     if signed {
@@ -264,7 +296,11 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
         if spec.alt {
             head.push_str(prefix);
         }
-        return Rendered { head, body, fill: '0' };
+        return Rendered {
+            head,
+            body,
+            fill: '0',
+        };
     }
 
     // Infinite two's-complement `..` notation. The `..` and any `#` prefix live
@@ -284,27 +320,23 @@ fn render_radix(spec: &Spec, n: num_bigint::BigInt) -> Rendered {
         head.push_str(prefix);
     }
     head.push_str("..");
-    Rendered { head, body, fill: sign_digit }
+    Rendered {
+        head,
+        body,
+        fill: sign_digit,
+    }
 }
 
 /// The base-`radix` magnitude of a non-negative integer, uppercased for `%X`.
 fn radix_digits(n: &num_bigint::BigInt, radix: u32, upper: bool) -> String {
     let s = n.to_str_radix(radix);
-    if upper {
-        s.to_uppercase()
-    } else {
-        s
-    }
+    if upper { s.to_uppercase() } else { s }
 }
 
 /// A single digit value (0..=15 here) as its character, uppercased when `upper`.
 fn digit_char(d: u32, upper: bool) -> char {
     let c = std::char::from_digit(d, 36).unwrap_or('0');
-    if upper {
-        c.to_ascii_uppercase()
-    } else {
-        c
-    }
+    if upper { c.to_ascii_uppercase() } else { c }
 }
 
 /// The minimal infinite-two's-complement digit string for a negative integer:
@@ -357,24 +389,31 @@ fn named_source(args: &[RubyValue]) -> Option<&crate::RHash> {
 }
 
 fn named_get(args: &[RubyValue], name: &str) -> Result<RubyValue, Signal> {
-    let source = named_source(args)
-        .ok_or_else(|| arg_error("one hash required".to_string()))?;
+    let source = named_source(args).ok_or_else(|| arg_error("one hash required".to_string()))?;
     let key = RubyValue::Symbol(crate::Symbol::intern(name));
     if crate::collections::hash_has_key(source, &key) {
         Ok(crate::collections::hash_get(source, &key))
     } else {
-        Err(crate::dispatch::raise_error("KeyError", format!("key<{name}> not found")))
+        Err(crate::dispatch::raise_error(
+            "KeyError",
+            format!("key<{name}> not found"),
+        ))
     }
 }
 
 /// Reads a `*` width/precision argument (an Integer) from the sequential
 /// argument stream.
 fn star_int(args: &[RubyValue], next_arg: &mut usize) -> Result<i64, Signal> {
-    let v = args.get(*next_arg).ok_or_else(|| arg_error("too few arguments".to_string()))?;
+    let v = args
+        .get(*next_arg)
+        .ok_or_else(|| arg_error("too few arguments".to_string()))?;
     *next_arg += 1;
     match v {
         RubyValue::Int(n) => Ok(*n),
-        other => Err(arg_error(format!("invalid width/precision: {}", other.inspect_string()))),
+        other => Err(arg_error(format!(
+            "invalid width/precision: {}",
+            other.inspect_string()
+        ))),
     }
 }
 
@@ -532,7 +571,9 @@ fn read_until(
         }
         name.push(c);
     }
-    Err(arg_error(format!("malformed name - unmatched delimiter, expected '{end}'")))
+    Err(arg_error(format!(
+        "malformed name - unmatched delimiter, expected '{end}'"
+    )))
 }
 
 #[cfg(test)]
@@ -561,7 +602,11 @@ mod tests {
         .unwrap();
         assert_eq!(r, "003.1|ff|10|101|1.234568e+04|1e-05|%");
         // "%-8s|%+d|% d" % ["ab", 5, 7]
-        let r = sprintf("%-8s|%+d|% d", &[s("ab"), RubyValue::Int(5), RubyValue::Int(7)]).unwrap();
+        let r = sprintf(
+            "%-8s|%+d|% d",
+            &[s("ab"), RubyValue::Int(5), RubyValue::Int(7)],
+        )
+        .unwrap();
         assert_eq!(r, "ab      |+5| 7");
         // "Hello %s, you are %d"
         let r = sprintf("Hello %s, you are %d", &[s("Bob"), RubyValue::Int(42)]).unwrap();
@@ -586,7 +631,10 @@ mod tests {
     #[test]
     fn named_references_angle_and_brace() {
         let h = named(&[("x", RubyValue::Int(42)), ("y", s("hi"))]);
-        assert_eq!(sprintf("%<x>d and %<y>s", std::slice::from_ref(&h)).unwrap(), "42 and hi");
+        assert_eq!(
+            sprintf("%<x>d and %<y>s", std::slice::from_ref(&h)).unwrap(),
+            "42 and hi"
+        );
         assert_eq!(sprintf("%{y}!", std::slice::from_ref(&h)).unwrap(), "hi!");
         // Named references carry flags/width/precision.
         assert_eq!(sprintf("%<x>05d", &[h]).unwrap(), "00042");
@@ -599,16 +647,28 @@ mod tests {
         assert_eq!(sprintf("%#o", &[RubyValue::Int(8)]).unwrap(), "010");
         assert_eq!(sprintf("%X", &[RubyValue::Int(255)]).unwrap(), "FF");
         // The `0x` prefix counts toward width; zero-padding fills after it.
-        assert_eq!(sprintf("%#08x", &[RubyValue::Int(255)]).unwrap(), "0x0000ff");
+        assert_eq!(
+            sprintf("%#08x", &[RubyValue::Int(255)]).unwrap(),
+            "0x0000ff"
+        );
     }
 
     #[test]
     fn star_width_and_positional_and_precision() {
-        assert_eq!(sprintf("%*d", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(), "   42");
-        assert_eq!(sprintf("%-*d|", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(), "42   |");
+        assert_eq!(
+            sprintf("%*d", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(),
+            "   42"
+        );
+        assert_eq!(
+            sprintf("%-*d|", &[RubyValue::Int(5), RubyValue::Int(42)]).unwrap(),
+            "42   |"
+        );
         assert_eq!(sprintf("%2$s %1$s", &[s("a"), s("b")]).unwrap(), "b a");
         assert_eq!(sprintf("%.3d", &[RubyValue::Int(7)]).unwrap(), "007");
-        assert_eq!(sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(8.7654)]).unwrap(), "8.77");
+        assert_eq!(
+            sprintf("%.*f", &[RubyValue::Int(2), RubyValue::Float(8.7654)]).unwrap(),
+            "8.77"
+        );
     }
 
     #[test]

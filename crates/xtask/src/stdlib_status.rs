@@ -21,8 +21,8 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use crate::conformance::exec::run_with_timeout;
@@ -115,19 +115,21 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
 
     std::thread::scope(|scope| {
         for _ in 0..jobs {
-            scope.spawn(|| loop {
-                let Some(file) = queue.lock().unwrap().pop_front() else {
-                    break;
-                };
-                let status = classify(&zeo, &lib_dir, &file);
-                let rel = file
-                    .strip_prefix(&lib_dir)
-                    .unwrap_or(&file)
-                    .display()
-                    .to_string();
-                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                eprintln!("[{n}/{total}] {:>13}  {rel}", status.tag());
-                results.lock().unwrap().push((rel, status));
+            scope.spawn(|| {
+                loop {
+                    let Some(file) = queue.lock().unwrap().pop_front() else {
+                        break;
+                    };
+                    let status = classify(&zeo, &lib_dir, &file);
+                    let rel = file
+                        .strip_prefix(&lib_dir)
+                        .unwrap_or(&file)
+                        .display()
+                        .to_string();
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    eprintln!("[{n}/{total}] {:>13}  {rel}", status.tag());
+                    results.lock().unwrap().push((rel, status));
+                }
             });
         }
     });
@@ -139,7 +141,11 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     match write_artifacts(root, &ruby_version, &results) {
         Ok((tsv, md)) => {
             print_summary(&results);
-            eprintln!("stdlib-status: wrote {} and {}", tsv.display(), md.display());
+            eprintln!(
+                "stdlib-status: wrote {} and {}",
+                tsv.display(),
+                md.display()
+            );
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -171,7 +177,11 @@ fn classify(zeo: &Path, lib_dir: &Path, file: &Path) -> Status {
 /// class of rejection buckets together across files.
 fn reason_bucket(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
-    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
     if let Some(l) = lines.iter().find(|l| l.starts_with("zeo: ")) {
         return normalize_reason(l.strip_prefix("zeo: ").unwrap());
     }
@@ -245,8 +255,14 @@ fn write_artifacts(
     std::fs::write(&tsv_path, tsv).map_err(|e| format!("writing {}: {e}", tsv_path.display()))?;
 
     let total = results.len();
-    let pass = results.iter().filter(|(_, s)| matches!(s, Status::Pass)).count();
-    let timeout = results.iter().filter(|(_, s)| matches!(s, Status::Timeout)).count();
+    let pass = results
+        .iter()
+        .filter(|(_, s)| matches!(s, Status::Pass))
+        .count();
+    let timeout = results
+        .iter()
+        .filter(|(_, s)| matches!(s, Status::Timeout))
+        .count();
     let harness = results
         .iter()
         .filter(|(_, s)| matches!(s, Status::HarnessError(_)))
@@ -263,7 +279,13 @@ fn write_artifacts(
     let mut ranked: Vec<(&str, usize)> = buckets.into_iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
 
-    let pct = |n: usize| if total == 0 { 0.0 } else { n as f64 * 100.0 / total as f64 };
+    let pct = |n: usize| {
+        if total == 0 {
+            0.0
+        } else {
+            n as f64 * 100.0 / total as f64
+        }
+    };
     let mut md = String::new();
     md.push_str("# stdlib compile status\n\n");
     md.push_str(
@@ -271,10 +293,15 @@ fn write_artifacts(
          (Ruby -> Rust codegen only, no `rustc`/runtime) each `.rb` in the \
          installed Ruby stdlib `lib`, dropped in via `-I` (no bespoke flag).\n\n",
     );
-    md.push_str(&format!("- Ruby stdlib: **{ruby_version}** (`RbConfig rubylibdir`)\n"));
+    md.push_str(&format!(
+        "- Ruby stdlib: **{ruby_version}** (`RbConfig rubylibdir`)\n"
+    ));
     md.push_str(&format!("- Files swept: **{total}**\n"));
     md.push_str(&format!("- Compiles: **{pass}** ({:.1}%)\n", pct(pass)));
-    md.push_str(&format!("- Compile-errors: **{fail}** ({:.1}%)\n", pct(fail)));
+    md.push_str(&format!(
+        "- Compile-errors: **{fail}** ({:.1}%)\n",
+        pct(fail)
+    ));
     if timeout > 0 {
         md.push_str(&format!("- Timeouts: **{timeout}**\n"));
     }
@@ -296,8 +323,15 @@ fn write_artifacts(
 
 fn print_summary(results: &[(String, Status)]) {
     let total = results.len();
-    let pass = results.iter().filter(|(_, s)| matches!(s, Status::Pass)).count();
-    let pct = if total == 0 { 0.0 } else { pass as f64 * 100.0 / total as f64 };
+    let pass = results
+        .iter()
+        .filter(|(_, s)| matches!(s, Status::Pass))
+        .count();
+    let pct = if total == 0 {
+        0.0
+    } else {
+        pass as f64 * 100.0 / total as f64
+    };
     eprintln!("stdlib-status: {pass}/{total} files compile ({pct:.1}%)");
 }
 

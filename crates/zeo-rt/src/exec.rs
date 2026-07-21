@@ -73,7 +73,9 @@ pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>
 where
     F: FnOnce() -> Result<RubyValue, Signal> + Send + 'static,
 {
-    may::config().set_workers(worker_count()).set_stack_size(STACK_SIZE_WORDS);
+    may::config()
+        .set_workers(worker_count())
+        .set_stack_size(STACK_SIZE_WORDS);
     match may::go!(body).join() {
         Ok(result) => result,
         Err(panic_payload) => std::panic::resume_unwind(panic_payload),
@@ -93,7 +95,9 @@ fn worker_count() -> usize {
         return n;
     }
     if std::env::args().any(|a| a == "--no-gvl") {
-        return std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        return std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
     }
     1
 }

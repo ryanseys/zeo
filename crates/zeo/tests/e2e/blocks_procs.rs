@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 // --- Phase 6: real escaping Proc/closures, yield, block_given?, self-capture ---
 
@@ -244,7 +244,10 @@ fn matchdata_to_a_and_captures() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "hello world\nhello\nworld\n---\nhello\nworld\n");
+    assert_eq!(
+        result.stdout,
+        "hello world\nhello\nworld\n---\nhello\nworld\n"
+    );
 }
 
 #[test]
@@ -1071,7 +1074,10 @@ fn array_join_recursive_and_delete_block() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "\"1-2-3-4-5\"\n\"1|a|2|3\"\n\"missing\"\n\"a\"\nnil\n");
+    assert_eq!(
+        result.stdout,
+        "\"1-2-3-4-5\"\n\"1|a|2|3\"\n\"missing\"\n\"a\"\nnil\n"
+    );
 }
 
 #[test]

@@ -67,7 +67,9 @@ pub fn const_set(owner_class_id: u32, name: &str, value: RubyValue) {
         };
         crate::runtime_meta::name_runtime_class_if_anonymous(*cid, &qualified);
     }
-    CONSTANTS.lock().insert((owner_class_id, name.to_string()), value);
+    CONSTANTS
+        .lock()
+        .insert((owner_class_id, name.to_string()), value);
 }
 
 /// Installs `ARGV` (the program's arguments, minus the binary name, as an
@@ -80,5 +82,9 @@ pub fn seed_argv() {
         .skip(1)
         .map(|a| RubyValue::Str(crate::collections::string_new(a)))
         .collect();
-    const_set(0, "ARGV", RubyValue::Array(crate::collections::array_new(args)));
+    const_set(
+        0,
+        "ARGV",
+        RubyValue::Array(crate::collections::array_new(args)),
+    );
 }

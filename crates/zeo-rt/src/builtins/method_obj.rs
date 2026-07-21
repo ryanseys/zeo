@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
 use crate::value::RubyValue;
@@ -34,7 +34,10 @@ impl RubyObject for RMethod {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RMethod { recv: self.recv.clone(), name: self.name })
+        Arc::new(RMethod {
+            recv: self.recv.clone(),
+            name: self.name,
+        })
     }
 }
 
@@ -73,7 +76,10 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
             ),
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
+    Ok(RubyValue::Object(Arc::new(RMethod {
+        recv: recv.clone(),
+        name,
+    })))
 }
 
 /// `Object#singleton_method(:name)` -- a `Method` bound to the receiver, but
@@ -93,7 +99,10 @@ pub fn singleton_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<Ru
             ),
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })))
+    Ok(RubyValue::Object(Arc::new(RMethod {
+        recv: recv.clone(),
+        name,
+    })))
 }
 
 /// `Kernel#public_method(:name)` -- like `method`, but a PRIVATE (or
@@ -104,7 +113,10 @@ pub fn public_method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyV
     let cid = recv.class_id();
     let class = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
     if crate::dispatch::responds_to(cid, name, false) {
-        return Ok(RubyValue::Object(Arc::new(RMethod { recv: recv.clone(), name })));
+        return Ok(RubyValue::Object(Arc::new(RMethod {
+            recv: recv.clone(),
+            name,
+        })));
     }
     let msg = if crate::dispatch::responds_to(cid, name, true) {
         format!("method '{}' for class '{}' is private", name.name(), class)
@@ -123,20 +135,36 @@ fn recv_method(recv: &RubyValue) -> &RMethod {
         .expect("class_id guarantees this downcast")
 }
 
-fn m_call(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_call(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     crate::dispatch::send_value(&m.recv, m.name, args, blk)
 }
 
-fn m_name(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_name(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Symbol(recv_method(recv).name))
 }
 
-fn m_receiver(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_receiver(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(recv_method(recv).recv.clone())
 }
 
-fn m_to_proc(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_to_proc(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     let (target, name) = (m.recv.clone(), m.name);
     // `Method#to_proc` yields a lambda (`lambda? == true`) carrying the
@@ -150,7 +178,11 @@ fn m_to_proc(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
     )))
 }
 
-fn m_arity(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_arity(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     // A user `def` has a baked descriptor; a builtin has none, so `-1`
     // (var-args) stays the honest catch-all there.
@@ -159,7 +191,11 @@ fn m_arity(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
     ))
 }
 
-fn m_parameters(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_parameters(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     // Builtins have no baked signature -- CRuby reports them as a lone rest;
     // mirror that so `#parameters` is always an Array.
@@ -167,7 +203,11 @@ fn m_parameters(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) 
         .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
 }
 
-fn m_unbind(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_unbind(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     Ok(RubyValue::Object(Arc::new(RUnboundMethod {
         class_id: m.recv.class_id(),
@@ -175,7 +215,11 @@ fn m_unbind(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> R
     })))
 }
 
-fn m_inspect(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_inspect(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     Ok(RubyValue::Str(crate::collections::string_new(format!(
         "#<Method: {}#{}>",
@@ -187,39 +231,64 @@ fn m_inspect(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
 /// `Method#owner` -- the class or module in the receiver's ancestry that
 /// actually defines the method (which may be an ancestor of the receiver's
 /// class, not the class itself).
-fn m_owner(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_owner(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
-    let owner = crate::dispatch::method_owner(m.recv.class_id(), m.name).unwrap_or(m.recv.class_id());
+    let owner =
+        crate::dispatch::method_owner(m.recv.class_id(), m.name).unwrap_or(m.recv.class_id());
     Ok(RubyValue::Class(owner))
 }
 
 /// `Method#original_name` -- the name the method was defined under. We don't
 /// record aliases, so this is `#name` (exact except for aliased methods).
-fn m_original_name(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_original_name(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Symbol(recv_method(recv).name))
 }
 
 /// `Method#source_location` -- `nil` for a method with no Ruby source location
 /// this AOT runtime tracks (builtins, and any method whose defining `.rb` span
 /// isn't recorded), matching CRuby's `nil` for C-defined methods.
-fn m_source_location(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_source_location(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Nil)
 }
 
 /// `Method#super_method` -- `nil` (this runtime tracks no super-method chain
 /// for a bound Method object).
-fn m_super_method(_recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_super_method(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Nil)
 }
 
 /// `meth >> other` -- a Proc running `meth` then piping its result into
 /// `other` (`other.call(meth.call(*args))`). `other` is any callable.
-fn m_compose_forward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_compose_forward(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     compose(recv, args, true)
 }
 
 /// `meth << other` -- the reverse pipe: `meth.call(other.call(*args))`.
-fn m_compose_backward(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_compose_backward(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     compose(recv, args, false)
 }
 
@@ -229,22 +298,35 @@ fn compose(recv: &RubyValue, args: &[RubyValue], forward: bool) -> Result<RubyVa
     if args.len() != 1 {
         return Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 1)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 1)",
+                args.len()
+            ),
         ));
     }
     let this = recv.clone();
     let other = args[0].clone();
     let call = Symbol::intern("call");
-    Ok(RubyValue::Proc(crate::RProc::new(move |call_args: &[RubyValue]| {
-        let (first, second) = if forward { (&this, &other) } else { (&other, &this) };
-        let mid = crate::dispatch::send_value(first, call, call_args, None)?;
-        crate::dispatch::send_value(second, call, &[mid], None)
-    })))
+    Ok(RubyValue::Proc(crate::RProc::new(
+        move |call_args: &[RubyValue]| {
+            let (first, second) = if forward {
+                (&this, &other)
+            } else {
+                (&other, &this)
+            };
+            let mid = crate::dispatch::send_value(first, call, call_args, None)?;
+            crate::dispatch::send_value(second, call, &[mid], None)
+        },
+    )))
 }
 
 /// `Method#==`/`#eql?` -- same defining method (name + owner) bound to an
 /// equal receiver.
-fn m_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_eq(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let m = recv_method(recv);
     let RubyValue::Object(o) = &args[0] else {
         return Ok(RubyValue::Bool(false));
@@ -258,14 +340,23 @@ fn m_eq(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result
     if !same_method {
         return Ok(RubyValue::Bool(false));
     }
-    let recv_eq = crate::dispatch::send_value(&m.recv, Symbol::intern("=="), std::slice::from_ref(&other.recv), None)?;
+    let recv_eq = crate::dispatch::send_value(
+        &m.recv,
+        Symbol::intern("=="),
+        std::slice::from_ref(&other.recv),
+        None,
+    )?;
     Ok(RubyValue::Bool(recv_eq.truthy()))
 }
 
 /// `Method#hash` -- consistent with `#==`: keyed on name and owner (an equal
 /// receiver is required for `==`, but folding it in isn't needed for the
 /// equal-objects-hash-equal contract, so name+owner is enough).
-fn m_hash(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_hash(
+    recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     use std::hash::{Hash, Hasher};
     let m = recv_method(recv);
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -277,7 +368,11 @@ fn m_hash(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 }
 
 /// `Method#curry` -- curries the equivalent Proc (`to_proc.curry`).
-fn m_curry(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn m_curry(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let proc = m_to_proc(recv, &[], None)?;
     crate::dispatch::send_value(&proc, Symbol::intern("curry"), args, None)
 }
@@ -315,10 +410,28 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 /// Reflection companion to `lookup` (hand-written table).
 pub fn lookup_names() -> &'static [&'static str] {
     &[
-        "call", "()", "[]", "===", "name", "receiver", "to_proc", "arity",
-        "parameters", "unbind", "owner", "original_name", "source_location",
-        "super_method", ">>", "<<", "==",
-        "eql?", "hash", "curry", "inspect", "to_s",
+        "call",
+        "()",
+        "[]",
+        "===",
+        "name",
+        "receiver",
+        "to_proc",
+        "arity",
+        "parameters",
+        "unbind",
+        "owner",
+        "original_name",
+        "source_location",
+        "super_method",
+        ">>",
+        "<<",
+        "==",
+        "eql?",
+        "hash",
+        "curry",
+        "inspect",
+        "to_s",
     ]
 }
 
@@ -352,7 +465,10 @@ impl RubyObject for RUnboundMethod {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RUnboundMethod { class_id: self.class_id, name: self.name })
+        Arc::new(RUnboundMethod {
+            class_id: self.class_id,
+            name: self.name,
+        })
     }
 }
 
@@ -370,7 +486,10 @@ pub fn unbound_method_new(cid: ClassId, name_arg: &RubyValue) -> Result<RubyValu
             ),
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RUnboundMethod { class_id: cid, name })))
+    Ok(RubyValue::Object(Arc::new(RUnboundMethod {
+        class_id: cid,
+        name,
+    })))
 }
 
 fn recv_unbound(recv: &RubyValue) -> &RUnboundMethod {
@@ -394,7 +513,10 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
             ),
         ));
     }
-    Ok(RubyValue::Object(Arc::new(RMethod { recv: obj.clone(), name: um.name })))
+    Ok(RubyValue::Object(Arc::new(RMethod {
+        recv: obj.clone(),
+        name: um.name,
+    })))
 }
 
 /// `Method#arity` twin of `lookup_unbound` -- this hand-rolled table declares no
@@ -420,8 +542,15 @@ pub fn lookup_unbound(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
 
 pub fn lookup_unbound_names() -> &'static [&'static str] {
     &[
-        "name", "arity", "parameters", "bind", "bind_call", "owner",
-        "original_name", "inspect", "to_s",
+        "name",
+        "arity",
+        "parameters",
+        "bind",
+        "bind_call",
+        "owner",
+        "original_name",
+        "inspect",
+        "to_s",
     ]
 }
 
@@ -434,7 +563,11 @@ fn u_owner(recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>) -> Result<
 }
 
 /// `UnboundMethod#original_name` -- the defined name (we track no aliases).
-fn u_original_name(recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn u_original_name(
+    recv: &RubyValue,
+    _a: &[RubyValue],
+    _b: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Symbol(recv_unbound(recv).name))
 }
 
@@ -449,23 +582,38 @@ fn u_arity(recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>) -> Result<
     ))
 }
 
-fn u_parameters(recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn u_parameters(
+    recv: &RubyValue,
+    _a: &[RubyValue],
+    _b: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let um = recv_unbound(recv);
     Ok(crate::method_params::parameters(um.class_id, um.name)
         .unwrap_or_else(|| RubyValue::Array(crate::array_new(vec![]))))
 }
 
-fn u_bind(recv: &RubyValue, args: &[RubyValue], _b: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn u_bind(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _b: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     if args.len() != 1 {
         return Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 1)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 1)",
+                args.len()
+            ),
         ));
     }
     bind_target(recv_unbound(recv), &args[0])
 }
 
-fn u_bind_call(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn u_bind_call(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     if args.is_empty() {
         return Err(raise_error(
             "ArgumentError",
@@ -478,7 +626,11 @@ fn u_bind_call(recv: &RubyValue, args: &[RubyValue], blk: Option<RubyValue>) -> 
     crate::dispatch::send_value(&args[0], um.name, &args[1..], blk)
 }
 
-fn u_inspect(recv: &RubyValue, _a: &[RubyValue], _b: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn u_inspect(
+    recv: &RubyValue,
+    _a: &[RubyValue],
+    _b: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let um = recv_unbound(recv);
     Ok(RubyValue::Str(crate::collections::string_new(format!(
         "#<UnboundMethod: {}#{}>",

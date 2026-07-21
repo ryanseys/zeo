@@ -59,9 +59,9 @@
 //! per-file magic comments (`frozen_string_literal`) and `__END__`/`DATA`
 //! are pre-existing unsupported territory, unchanged by splicing.
 
-use crate::lower_error::LowerError;
-use super::{lower_node, rename, PResult};
+use super::{PResult, lower_node, rename};
 use crate::hir::{Hir, HirNode, LoadedFile, NodeId};
+use crate::lower_error::LowerError;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -130,7 +130,10 @@ impl BindingsFrame {
     }
     fn bind(&self, name: String, box_id: u32) {
         BOX_BINDINGS.with(|b| {
-            b.borrow_mut().last_mut().expect("frame pushed").insert(name, box_id);
+            b.borrow_mut()
+                .last_mut()
+                .expect("frame pushed")
+                .insert(name, box_id);
         });
     }
 }
@@ -258,14 +261,19 @@ pub(super) fn lower_main_file(
             // An excluded gem's reason is kept so a `require` of it fails
             // precisely; every record is also disclosed in the report.
             if let crate::gem_report::SatisfiedBy::Excluded { reason, .. } = &record.by {
-                loader.store_exclusions.insert(record.name.clone(), reason.clone());
+                loader
+                    .store_exclusions
+                    .insert(record.name.clone(), reason.clone());
             }
             loader.record_gem(record);
         }
     }
     let result = ruby_prism::parse(source.as_bytes());
     if let Some(err) = result.errors().next() {
-        return Err(LowerError::syntax(format!("parse error: {}", err.message())));
+        return Err(LowerError::syntax(format!(
+            "parse error: {}",
+            err.message()
+        )));
     }
     let program = result
         .node()
@@ -325,7 +333,13 @@ impl Loader {
                     && matches!(name.as_str(), "require" | "require_relative" | "load")
                 {
                     combined.extend(self.lower_require_statement(
-                        hir, result, &call, &name, dir, file_idx, current_box,
+                        hir,
+                        result,
+                        &call,
+                        &name,
+                        dir,
+                        file_idx,
+                        current_box,
                     )?);
                     continue;
                 }
@@ -352,10 +366,7 @@ impl Loader {
                             }
                             if name == "eval" {
                                 let body = super::lower_box_eval_body(hir, result, &call)?;
-                                combined.push(hir.push(HirNode::BoxScope {
-                                    box_id: bx,
-                                    body,
-                                }));
+                                combined.push(hir.push(HirNode::BoxScope { box_id: bx, body }));
                                 continue;
                             }
                         }
@@ -500,7 +511,8 @@ impl Loader {
         if arg_list.len() != 1 {
             return Err(format!(
                 "`{name}` is only supported with exactly one string-literal argument (spike scope)"
-            ).into());
+            )
+            .into());
         }
         // Lower the argument through the ordinary path first (same trick as
         // `eval`'s recognizer): prism's adjacent-literal folding is picked
@@ -580,7 +592,10 @@ impl Loader {
                     path: display_path(&path),
                 },
             };
-            self.record_gem(crate::gem_report::GemRecord { name: feature.to_string(), by });
+            self.record_gem(crate::gem_report::GemRecord {
+                name: feature.to_string(),
+                by,
+            });
         }
 
         let canonical = path
@@ -599,7 +614,6 @@ impl Loader {
         }
         self.splice_file(hir, &canonical, file_idx, package, current_box)
     }
-
 
     /// The static-ext fallthrough: a `require` that found nothing on disk.
     ///
@@ -784,7 +798,8 @@ impl Loader {
                 Err(format!(
                     "`require \"{feature}\"` is ambiguous: found in multiple gems ({})",
                     names.join(", ")
-                ).into())
+                )
+                .into())
             }
         }
     }
@@ -905,7 +920,9 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 /// `cargo run` and the test harness live in the repo); an installed
 /// distribution would locate it relative to the executable instead.
 pub(super) fn bundled_gems_dir() -> Option<PathBuf> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join("gems");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("gems");
     dir.is_dir().then_some(dir)
 }
 
@@ -947,9 +964,8 @@ fn discover_packages(package_dirs: &[PathBuf]) -> PResult<Vec<Gem>> {
 /// Every declared `require_paths` entry must exist -- a gem whose `lib/` is
 /// missing is a loud configuration error, not a silently empty search root.
 fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
-    let manifest_path = gemspec_path(pkg_dir).ok_or_else(|| {
-        format!("{}: no `.gemspec`", pkg_dir.display())
-    })?;
+    let manifest_path =
+        gemspec_path(pkg_dir).ok_or_else(|| format!("{}: no `.gemspec`", pkg_dir.display()))?;
     let spec = super::gemspec::parse_file(&manifest_path)?;
     let dir_name = pkg_dir
         .file_name()
@@ -960,7 +976,8 @@ fn parse_manifest(pkg_dir: &Path) -> PResult<Gem> {
             "{}: gem name \"{}\" doesn't match its directory name \"{dir_name}\"",
             manifest_path.display(),
             spec.name
-        ).into());
+        )
+        .into());
     }
     let roots = spec
         .require_paths
@@ -1049,8 +1066,20 @@ fn is_known_native_gem(name: &str) -> bool {
         name,
         // `ffi` is NOT here: zeo provides it (the compile-time FFI frontend,
         // #204), so `require "ffi"` succeeds via `is_builtin_feature`.
-        "sqlite3" | "nokogiri" | "pg" | "mysql2" | "bcrypt" | "nio4r" | "puma"
-            | "grpc" | "protobuf" | "oj" | "msgpack" | "eventmachine" | "sass" | "rmagick"
+        "sqlite3"
+            | "nokogiri"
+            | "pg"
+            | "mysql2"
+            | "bcrypt"
+            | "nio4r"
+            | "puma"
+            | "grpc"
+            | "protobuf"
+            | "oj"
+            | "msgpack"
+            | "eventmachine"
+            | "sass"
+            | "rmagick"
     )
 }
 

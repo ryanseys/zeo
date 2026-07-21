@@ -284,7 +284,10 @@ mod tests {
     fn inspect_quotes_only_non_bare_names() {
         // Bare: identifiers, constants, sigils, suffixed methods, operators,
         // and any non-ASCII characters (letters or symbols like an emoji).
-        for bare in ["abc", "Foo", "_x9", "@iv", "@@cv", "$g", "foo?", "baz=", "+", "<=>", "[]=", "`", "café", "λ", "😀"] {
+        for bare in [
+            "abc", "Foo", "_x9", "@iv", "@@cv", "$g", "foo?", "baz=", "+", "<=>", "[]=", "`",
+            "café", "λ", "😀",
+        ] {
             assert!(!needs_quoting(bare), "{bare:?} should print bare");
             assert_eq!(inspect_name(bare), format!(":{bare}"));
         }

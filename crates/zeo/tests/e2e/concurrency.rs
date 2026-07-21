@@ -284,14 +284,12 @@ fn scheduler_config_knobs_change_nothing_observable() {
 
 #[test]
 fn a_malformed_zeo_threads_value_fails_loudly_at_startup() {
-    let result = run_ruby_configured(
-        "puts 1\n",
-        &[("ZEO_THREADS", "not-a-number")],
-        &[],
-    );
+    let result = run_ruby_configured("puts 1\n", &[("ZEO_THREADS", "not-a-number")], &[]);
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("ZEO_THREADS must be a positive integer"),
+        result
+            .stderr
+            .contains("ZEO_THREADS must be a positive integer"),
         "stderr: {}",
         result.stderr
     );
@@ -357,7 +355,10 @@ fn an_uncaught_exception_in_a_thread_reraises_at_join_and_value() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "joined error: thread boom\nvalued error: thread boom2\n");
+    assert_eq!(
+        result.stdout,
+        "joined error: thread boom\nvalued error: thread boom2\n"
+    );
 }
 
 #[test]
@@ -573,7 +574,10 @@ fn each_threads_bare_reraise_sees_its_own_handled_exception() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "t1 re-raised: from t1\nt2 re-raised: from t2\n");
+    assert_eq!(
+        result.stdout,
+        "t1 re-raised: from t1\nt2 re-raised: from t2\n"
+    );
 }
 
 #[test]
@@ -846,7 +850,10 @@ fn ractor_shareable_tiering_and_make_shareable() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "true\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\n");
+    assert_eq!(
+        result.stdout,
+        "true\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\n"
+    );
 }
 
 #[test]
@@ -908,7 +915,9 @@ fn an_unfrozen_object_sent_across_a_ractor_boundary_raises_ractor_error() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert!(
-        result.stdout.starts_with("rejected: an unfrozen Object can't cross a Ractor boundary"),
+        result
+            .stdout
+            .starts_with("rejected: an unfrozen Object can't cross a Ractor boundary"),
         "stdout: {}",
         result.stdout
     );
@@ -1265,7 +1274,10 @@ fn no_method_error_propagates_out_of_fibers_and_ractors() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "rescued in resumer\nfalse\nrescued at value\n");
+    assert_eq!(
+        result.stdout,
+        "rescued in resumer\nfalse\nrescued at value\n"
+    );
 }
 
 #[test]

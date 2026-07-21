@@ -322,7 +322,11 @@ fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal
             None => {
                 // Shifted right past every bit: all-ones for a negative endless
                 // range, else 0.
-                return Ok(RubyValue::Int(if val.is_negative() && width.is_none() { -1 } else { 0 }));
+                return Ok(RubyValue::Int(if val.is_negative() && width.is_none() {
+                    -1
+                } else {
+                    0
+                }));
             }
         }
     };
@@ -1040,7 +1044,10 @@ mod tests {
         assert!(matches!(sq(RubyValue::Int(9)), RubyValue::Int(3)));
         assert!(matches!(sq(RubyValue::Int(15)), RubyValue::Int(3)));
         // Exact for a bignum (no float rounding): sqrt(10**20) == 10**10.
-        assert!(matches!(sq(big("100000000000000000000")), RubyValue::Int(10_000_000_000)));
+        assert!(matches!(
+            sq(big("100000000000000000000")),
+            RubyValue::Int(10_000_000_000)
+        ));
         // A Float argument truncates to its integer part first.
         assert!(matches!(sq(RubyValue::Float(26.9)), RubyValue::Int(5)));
     }

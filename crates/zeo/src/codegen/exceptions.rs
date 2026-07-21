@@ -57,8 +57,8 @@
 
 use quote::quote;
 
-use super::loops::fresh_label;
 use super::Ctx;
+use super::loops::fresh_label;
 use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, NodeId, RescueClause, StrPart};
 use proc_macro2::TokenStream;
@@ -213,10 +213,9 @@ fn emit_rescue_chain(closure_cx: &Ctx, rescues: &[RescueClause]) -> TokenStream 
         // downcast to the literal `StandardError` struct. `e` stays `Poly`
         // (`RubyValue::Object(...)`) -- calling an ordinary method on it
         // needs `.send(:name)` (Path 2), a real, documented scope-cut.
-        let binding_write = r
-            .binding
-            .as_ref()
-            .map(|name| super::hoisting::emit_local_write(closure_cx, name, quote! { __exc.clone() }));
+        let binding_write = r.binding.as_ref().map(|name| {
+            super::hoisting::emit_local_write(closure_cx, name, quote! { __exc.clone() })
+        });
         let body_tokens = super::stmt::emit_body(closure_cx, &r.body, true);
         let previous = chain;
         chain = quote! {
@@ -302,7 +301,8 @@ fn loop_crossing_target(
 }
 
 fn body_contains_bubbling_loop_jump(compiler: &Compiler, body: &[NodeId]) -> bool {
-    body.iter().any(|&n| node_contains_bubbling_loop_jump(compiler, n))
+    body.iter()
+        .any(|&n| node_contains_bubbling_loop_jump(compiler, n))
 }
 
 /// Whether `id` lexically contains a bare `break`/`next`/`redo` that would
@@ -317,43 +317,77 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
     match &compiler.hir[id] {
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo => true,
         HirNode::While { .. } | HirNode::Loop { .. } | HirNode::For { .. } => false,
-        HirNode::Begin { body, rescues, else_body, ensure_body } => {
+        HirNode::Begin {
+            body,
+            rescues,
+            else_body,
+            ensure_body,
+        } => {
             // A nested `begin` re-raises the jump rather than absorbing it, so
             // descend into every clause EXCEPT `ensure` (its jumps compile to
             // literal jumps directly, never a bubbling `Signal`).
             let _ = ensure_body;
             body_contains_bubbling_loop_jump(compiler, body)
-                || rescues.iter().any(|r| body_contains_bubbling_loop_jump(compiler, &r.body))
-                || else_body.as_deref().is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
+                || rescues
+                    .iter()
+                    .any(|r| body_contains_bubbling_loop_jump(compiler, &r.body))
+                || else_body
+                    .as_deref()
+                    .is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
         }
-        HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
-            node_contains_bubbling_loop_jump(compiler, *v)
-        }
+        HirNode::LocalWrite(_, v)
+        | HirNode::IvarWrite(_, v)
+        | HirNode::ClassVarWrite(_, v)
+        | HirNode::Defined(v) => node_contains_bubbling_loop_jump(compiler, *v),
         HirNode::And(l, r) | HirNode::Or(l, r) => {
-            node_contains_bubbling_loop_jump(compiler, *l) || node_contains_bubbling_loop_jump(compiler, *r)
+            node_contains_bubbling_loop_jump(compiler, *l)
+                || node_contains_bubbling_loop_jump(compiler, *r)
         }
-        HirNode::If { cond, then_body, else_body } => {
+        HirNode::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
             node_contains_bubbling_loop_jump(compiler, *cond)
                 || body_contains_bubbling_loop_jump(compiler, then_body)
                 || body_contains_bubbling_loop_jump(compiler, else_body)
         }
-        HirNode::CaseWhen { subject, arms, else_body } => {
+        HirNode::CaseWhen {
+            subject,
+            arms,
+            else_body,
+        } => {
             subject.is_some_and(|s| node_contains_bubbling_loop_jump(compiler, s))
                 || arms.iter().any(|(values, body)| {
                     values.iter().any(|e| {
                         let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
                         node_contains_bubbling_loop_jump(compiler, *v)
-                    })
-                        || body_contains_bubbling_loop_jump(compiler, body)
+                    }) || body_contains_bubbling_loop_jump(compiler, body)
                 })
                 || body_contains_bubbling_loop_jump(compiler, else_body)
         }
-        HirNode::CaseIn { subject, arms, else_body } => {
+        HirNode::CaseIn {
+            subject,
+            arms,
+            else_body,
+        } => {
             node_contains_bubbling_loop_jump(compiler, *subject)
-                || arms.iter().any(|arm| body_contains_bubbling_loop_jump(compiler, &arm.body))
-                || else_body.as_deref().is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
+                || arms
+                    .iter()
+                    .any(|arm| body_contains_bubbling_loop_jump(compiler, &arm.body))
+                || else_body
+                    .as_deref()
+                    .is_some_and(|b| body_contains_bubbling_loop_jump(compiler, b))
         }
-        HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
+        HirNode::Call {
+            receiver,
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            ..
+        } => {
             let block_jumps = block.is_some_and(|b| {
                 let HirNode::Block { body, .. } = &compiler.hir[b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
@@ -385,14 +419,19 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         }
         HirNode::GlobalWrite(_, value) => node_contains_bubbling_loop_jump(compiler, *value),
         HirNode::ConstWrite { value, .. } => node_contains_bubbling_loop_jump(compiler, *value),
-        HirNode::PreExec(body) | HirNode::Seq(body) => body_contains_bubbling_loop_jump(compiler, body),
+        HirNode::PreExec(body) | HirNode::Seq(body) => {
+            body_contains_bubbling_loop_jump(compiler, body)
+        }
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_bubbling_loop_jump(compiler, *n)
         }),
-        HirNode::Raise(args, _) => args.iter().any(|&a| node_contains_bubbling_loop_jump(compiler, a)),
+        HirNode::Raise(args, _) => args
+            .iter()
+            .any(|&a| node_contains_bubbling_loop_jump(compiler, a)),
         HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
-            args.iter().any(|&a| node_contains_bubbling_loop_jump(compiler, a))
+            args.iter()
+                .any(|&a| node_contains_bubbling_loop_jump(compiler, a))
                 || kwargs
                     .iter()
                     .flat_map(|kw| kw.node_ids())
@@ -402,9 +441,10 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
             node_contains_bubbling_loop_jump(compiler, *n)
         }),
-        HirNode::HashLit(pairs) => {
-            pairs.iter().flat_map(|kw| kw.node_ids()).any(|n| node_contains_bubbling_loop_jump(compiler, n))
-        }
+        HirNode::HashLit(pairs) => pairs
+            .iter()
+            .flat_map(|kw| kw.node_ids())
+            .any(|n| node_contains_bubbling_loop_jump(compiler, n)),
         HirNode::RangeLit { start, end, .. } => {
             start.is_some_and(|s| node_contains_bubbling_loop_jump(compiler, s))
                 || end.is_some_and(|e| node_contains_bubbling_loop_jump(compiler, e))
@@ -413,7 +453,9 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
             StrPart::Interp(n) => node_contains_bubbling_loop_jump(compiler, *n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
-        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_bubbling_loop_jump(compiler, body),
+        HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+            body_contains_bubbling_loop_jump(compiler, body)
+        }
         HirNode::MatchPredicate { subject, .. } | HirNode::MatchRequired { subject, .. } => {
             node_contains_bubbling_loop_jump(compiler, *subject)
         }

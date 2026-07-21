@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn backtick_interpolates_and_runs_a_shell_command() {
@@ -66,7 +66,9 @@ fn uncaught_exceptions_still_exit_nonzero_through_the_coroutine_boundary() {
     let result = run_ruby("raise \"through the boundary\"\n");
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("uncaught exception: through the boundary"),
+        result
+            .stderr
+            .contains("uncaught exception: through the boundary"),
         "stderr: {}",
         result.stderr
     );
@@ -148,7 +150,9 @@ fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
     );
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("uncaught exception: undefined method 'missing'"),
+        result
+            .stderr
+            .contains("uncaught exception: undefined method 'missing'"),
         "stderr: {}",
         result.stderr
     );

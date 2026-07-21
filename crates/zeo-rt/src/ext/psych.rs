@@ -22,7 +22,7 @@
 use crate::builtins::{arity, builtin_methods};
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
-use crate::{string_new, RubyValue, Signal};
+use crate::{RubyValue, Signal, string_new};
 use yaml_rust2::{Yaml, YamlLoader};
 
 fn yaml_to_ruby(y: &Yaml) -> RubyValue {
@@ -34,7 +34,9 @@ fn yaml_to_ruby(y: &Yaml) -> RubyValue {
         Yaml::String(s) => RubyValue::Str(string_new(s.clone())),
         Yaml::Array(a) => RubyValue::Array(array_new(a.iter().map(yaml_to_ruby).collect())),
         Yaml::Hash(h) => RubyValue::Hash(hash_new(
-            h.iter().map(|(k, v)| (yaml_to_ruby(k), yaml_to_ruby(v))).collect(),
+            h.iter()
+                .map(|(k, v)| (yaml_to_ruby(k), yaml_to_ruby(v)))
+                .collect(),
         )),
         // Aliases resolve to their anchor in a full loader; unsupported here.
         Yaml::Alias(_) => RubyValue::Nil,
@@ -55,7 +57,10 @@ fn load_text(v: &RubyValue) -> Result<String, Signal> {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -91,7 +96,12 @@ fn yaml_string(s: &str) -> String {
         return "''".to_string();
     }
     if s.contains('\n') {
-        return format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"));
+        return format!(
+            "\"{}\"",
+            s.replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+        );
     }
     if is_plain_safe(s) {
         s.to_string()
@@ -105,11 +115,28 @@ fn yaml_string(s: &str) -> String {
 fn is_plain_safe(s: &str) -> bool {
     let reserved = matches!(
         s,
-        "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "~"
-            | "True" | "False" | "Null" | "TRUE" | "FALSE" | "NULL"
+        "true"
+            | "false"
+            | "null"
+            | "yes"
+            | "no"
+            | "on"
+            | "off"
+            | "~"
+            | "True"
+            | "False"
+            | "Null"
+            | "TRUE"
+            | "FALSE"
+            | "NULL"
     );
-    let first_ok = s.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
-    let body_ok = s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ' ' | '/' | '.' | '-'));
+    let first_ok = s
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
+    let body_ok = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ' ' | '/' | '.' | '-'));
     let edge_ok = !s.starts_with(' ') && !s.ends_with(' ');
     let no_colon = !s.contains(": ") && !s.ends_with(':');
     first_ok && body_ok && edge_ok && no_colon && !reserved
@@ -282,27 +309,53 @@ mod tests {
 
     #[test]
     fn load_maps_and_sequences() {
-        let v = load(&RubyValue::Nil, &[s("a: 1\nb:\n  - 2\n  - 3.5\n  - null\n  - true")], None).unwrap();
-        let RubyValue::Hash(h) = &v else { panic!("expected Hash") };
-        assert!(matches!(crate::collections::hash_get(h, &s("a")), RubyValue::Int(1)));
+        let v = load(
+            &RubyValue::Nil,
+            &[s("a: 1\nb:\n  - 2\n  - 3.5\n  - null\n  - true")],
+            None,
+        )
+        .unwrap();
+        let RubyValue::Hash(h) = &v else {
+            panic!("expected Hash")
+        };
+        assert!(matches!(
+            crate::collections::hash_get(h, &s("a")),
+            RubyValue::Int(1)
+        ));
     }
 
     #[test]
     fn load_scalars() {
-        assert!(matches!(load(&RubyValue::Nil, &[s("42")], None).unwrap(), RubyValue::Int(42)));
-        assert!(matches!(load(&RubyValue::Nil, &[s("hello")], None).unwrap(), RubyValue::Str(_)));
+        assert!(matches!(
+            load(&RubyValue::Nil, &[s("42")], None).unwrap(),
+            RubyValue::Int(42)
+        ));
+        assert!(matches!(
+            load(&RubyValue::Nil, &[s("hello")], None).unwrap(),
+            RubyValue::Str(_)
+        ));
     }
 
     #[test]
     fn dump_matches_ruby_block_style() {
         assert_eq!(dumped(&RubyValue::Nil), "---\n");
         assert_eq!(dumped(&RubyValue::Int(42)), "--- 42\n");
-        let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(2), s("x")]));
+        let arr = RubyValue::Array(array_new(vec![
+            RubyValue::Int(1),
+            RubyValue::Int(2),
+            s("x"),
+        ]));
         assert_eq!(dumped(&arr), "---\n- 1\n- 2\n- x\n");
         // A sequence nested under a key stays at the key's indent (Psych quirk).
         let h = RubyValue::Hash(hash_new(vec![
-            (s("a"), RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(2)]))),
-            (s("b"), RubyValue::Hash(hash_new(vec![(s("c"), RubyValue::Int(3))]))),
+            (
+                s("a"),
+                RubyValue::Array(array_new(vec![RubyValue::Int(1), RubyValue::Int(2)])),
+            ),
+            (
+                s("b"),
+                RubyValue::Hash(hash_new(vec![(s("c"), RubyValue::Int(3))])),
+            ),
         ]));
         assert_eq!(dumped(&h), "---\na:\n- 1\n- 2\nb:\n  c: 3\n");
     }

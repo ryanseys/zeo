@@ -187,7 +187,10 @@ fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
         }
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("{verb} {} into Float", crate::builtins::class_name_of(other)),
+            format!(
+                "{verb} {} into Float",
+                crate::builtins::class_name_of(other)
+            ),
         )),
     }
 }
@@ -309,8 +312,11 @@ fn exact_abs_rational(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::
         other => {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("can't convert {} into Float", crate::builtins::convert_name_of(other)),
-            ))
+                format!(
+                    "can't convert {} into Float",
+                    crate::builtins::convert_name_of(other)
+                ),
+            ));
         }
     })
 }
@@ -347,7 +353,11 @@ fn float_rationalize(d: f64, eps: Option<&RubyValue>) -> Result<RubyValue, Signa
         None => {
             let (f, n) = frexp_parts(ad);
             if f.is_zero() || n >= 0 {
-                let val = if n >= 0 { f << (n as usize) } else { BigInt::zero() };
+                let val = if n >= 0 {
+                    f << (n as usize)
+                } else {
+                    BigInt::zero()
+                };
                 (val, BigInt::one())
             } else {
                 let two_f = &f * 2;
@@ -378,9 +388,27 @@ fn round_half(x: f64, mode: HalfMode) -> f64 {
         fl + 1.0
     } else {
         match mode {
-            HalfMode::Up => if x >= 0.0 { fl + 1.0 } else { fl },
-            HalfMode::Down => if x >= 0.0 { fl } else { fl + 1.0 },
-            HalfMode::Even => if (fl as i64) % 2 == 0 { fl } else { fl + 1.0 },
+            HalfMode::Up => {
+                if x >= 0.0 {
+                    fl + 1.0
+                } else {
+                    fl
+                }
+            }
+            HalfMode::Down => {
+                if x >= 0.0 {
+                    fl
+                } else {
+                    fl + 1.0
+                }
+            }
+            HalfMode::Even => {
+                if (fl as i64) % 2 == 0 {
+                    fl
+                } else {
+                    fl + 1.0
+                }
+            }
         }
     }
 }
@@ -399,14 +427,14 @@ fn split_round_half(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Sign
                     return Err(crate::dispatch::raise_error(
                         "ArgumentError",
                         format!("invalid rounding mode: {other}"),
-                    ))
+                    ));
                 }
             },
             other => {
                 return Err(crate::dispatch::raise_error(
                     "ArgumentError",
                     format!("invalid rounding mode: {}", other.to_display_string()),
-                ))
+                ));
             }
         };
         return Ok((&args[..args.len() - 1], mode));

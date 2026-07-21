@@ -64,14 +64,25 @@ fn parse_template(tmpl: &str) -> Result<Vec<Directive>, Signal> {
             while i < chars.len() && chars[i].is_ascii_digit() {
                 i += 1;
             }
-            Count::Fixed(chars[start..i].iter().collect::<String>().parse().unwrap_or(0))
+            Count::Fixed(
+                chars[start..i]
+                    .iter()
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0),
+            )
         } else {
             Count::One
         };
         if matches!(kind, 'v' | 'V') {
             big_endian = false;
         }
-        out.push(Directive { kind, count, big_endian, native });
+        out.push(Directive {
+            kind,
+            count,
+            big_endian,
+            native,
+        });
     }
     Ok(out)
 }
@@ -83,7 +94,10 @@ fn err(msg: impl Into<String>) -> Signal {
 /// `Array#pack`'s result encoding: UTF-8 when EVERY directive is `U`,
 /// otherwise ASCII-8BIT (CRuby's rule).
 pub fn result_encoding(template: &str) -> crate::encoding::EncodingId {
-    let letters: Vec<char> = template.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let letters: Vec<char> = template
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect();
     if !letters.is_empty() && letters.iter().all(|c| *c == 'U') {
         crate::encoding::UTF_8
     } else {
@@ -203,7 +217,13 @@ fn int_size(kind: char, native: bool) -> usize {
         'C' | 'c' => 1,
         'S' | 's' | 'n' | 'v' => 2,
         'i' | 'I' => 4,
-        'L' | 'l' | 'N' | 'V' => if native { 8 } else { 4 },
+        'L' | 'l' | 'N' | 'V' => {
+            if native {
+                8
+            } else {
+                4
+            }
+        }
         'Q' | 'q' | 'j' | 'J' => 8,
         _ => unreachable!(),
     }
@@ -261,7 +281,11 @@ fn pack_hex(out: &mut Vec<u8>, s: &[u8], high_first: bool, count: Count) {
     while i < take {
         let hi = nibbles.get(i).copied().unwrap_or(0);
         let lo = nibbles.get(i + 1).copied().unwrap_or(0);
-        let byte = if high_first { (hi << 4) | lo } else { (lo << 4) | hi };
+        let byte = if high_first {
+            (hi << 4) | lo
+        } else {
+            (lo << 4) | hi
+        };
         out.push(byte);
         i += 2;
     }
@@ -293,7 +317,11 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                 }
             }
             'D' | 'd' | 'E' | 'G' | 'F' | 'f' | 'e' | 'g' => {
-                let size = if matches!(d.kind, 'D' | 'd' | 'E' | 'G') { 8 } else { 4 };
+                let size = if matches!(d.kind, 'D' | 'd' | 'E' | 'G') {
+                    8
+                } else {
+                    4
+                };
                 let avail = (bytes.len().saturating_sub(pos)) / size;
                 let n = numeric_count(d.count, avail);
                 for _ in 0..n {
@@ -321,9 +349,11 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                 pos += width;
                 match d.kind {
                     // `A` strips trailing spaces and NULs.
-                    'A' => while matches!(field.last(), Some(b' ') | Some(0)) {
-                        field.pop();
-                    },
+                    'A' => {
+                        while matches!(field.last(), Some(b' ') | Some(0)) {
+                            field.pop();
+                        }
+                    }
                     // `Z*` reads up to the first NUL; `Z` with a width keeps
                     // the fixed field but truncates at the first NUL.
                     'Z' => {
@@ -333,7 +363,10 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                     }
                     _ => {}
                 }
-                out.push(RubyValue::Str(crate::string_from_bytes(field, crate::encoding::ASCII_8BIT)));
+                out.push(RubyValue::Str(crate::string_from_bytes(
+                    field,
+                    crate::encoding::ASCII_8BIT,
+                )));
             }
             'H' | 'h' => {
                 let take = match d.count {
@@ -341,23 +374,36 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                     Count::One => 1,
                     Count::Fixed(n) => n,
                 };
-                out.push(RubyValue::Str(crate::string_new(unpack_hex(&bytes[pos..], take, d.kind == 'H'))));
+                out.push(RubyValue::Str(crate::string_new(unpack_hex(
+                    &bytes[pos..],
+                    take,
+                    d.kind == 'H',
+                ))));
                 pos = bytes.len().min(pos + take.div_ceil(2));
             }
             'm' => {
                 let decoded = base64_decode(&bytes[pos..]);
                 pos = bytes.len();
-                out.push(RubyValue::Str(crate::string_from_bytes(decoded, crate::encoding::ASCII_8BIT)));
+                out.push(RubyValue::Str(crate::string_from_bytes(
+                    decoded,
+                    crate::encoding::ASCII_8BIT,
+                )));
             }
             'M' => {
                 let decoded = qpdecode(&bytes[pos..]);
                 pos = bytes.len();
-                out.push(RubyValue::Str(crate::string_from_bytes(decoded, crate::encoding::ASCII_8BIT)));
+                out.push(RubyValue::Str(crate::string_from_bytes(
+                    decoded,
+                    crate::encoding::ASCII_8BIT,
+                )));
             }
             'u' => {
                 let decoded = uu_decode(&bytes[pos..]);
                 pos = bytes.len();
-                out.push(RubyValue::Str(crate::string_from_bytes(decoded, crate::encoding::ASCII_8BIT)));
+                out.push(RubyValue::Str(crate::string_from_bytes(
+                    decoded,
+                    crate::encoding::ASCII_8BIT,
+                )));
             }
             'w' => {
                 let n = numeric_count(d.count, usize::MAX);
@@ -367,7 +413,9 @@ pub fn unpack(bytes: &[u8], template: &str) -> Result<Vec<RubyValue>, Signal> {
                     }
                     let (val, used) = read_ber(&bytes[pos..]);
                     pos += used;
-                    out.push(crate::builtins::integer::int_value(num_bigint::BigInt::from(val)));
+                    out.push(crate::builtins::integer::int_value(
+                        num_bigint::BigInt::from(val),
+                    ));
                 }
             }
             'U' => {
@@ -421,7 +469,11 @@ fn unpack_hex(bytes: &[u8], nibbles: usize, high_first: bool) -> String {
             Some(b) => *b,
             None => break,
         };
-        let nib = if (i % 2 == 0) == high_first { byte >> 4 } else { byte & 0x0f };
+        let nib = if (i % 2 == 0) == high_first {
+            byte >> 4
+        } else {
+            byte & 0x0f
+        };
         out.push(std::char::from_digit(nib as u32, 16).unwrap());
     }
     out
@@ -447,7 +499,10 @@ fn next_int(elems: &[RubyValue], idx: &mut usize) -> Result<i64, Signal> {
         RubyValue::BigInt(b) => Ok(num_traits::ToPrimitive::to_i64(&**b).unwrap_or(0)),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -471,7 +526,10 @@ fn next_int_bits(elems: &[RubyValue], idx: &mut usize) -> Result<u64, Signal> {
         },
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -493,7 +551,10 @@ fn next_float(elems: &[RubyValue], idx: &mut usize) -> Result<f64, Signal> {
         }
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion to float from {}", crate::builtins::class_name_of(other)),
+            format!(
+                "no implicit conversion to float from {}",
+                crate::builtins::class_name_of(other)
+            ),
         )),
     }
 }
@@ -503,7 +564,11 @@ fn next_float(elems: &[RubyValue], idx: &mut usize) -> Result<f64, Signal> {
 fn read_bits(bytes: &[u8], big: bool) -> u64 {
     let mut val: u64 = 0;
     for (i, &b) in bytes.iter().enumerate() {
-        let shift = if big { (bytes.len() - 1 - i) * 8 } else { i * 8 };
+        let shift = if big {
+            (bytes.len() - 1 - i) * 8
+        } else {
+            i * 8
+        };
         val |= (b as u64) << shift;
     }
     val
@@ -516,7 +581,10 @@ fn next_str(elems: &[RubyValue], idx: &mut usize) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -549,12 +617,24 @@ fn base64_encode(out: &mut Vec<u8>, data: &[u8], line: usize) {
 /// final group. No line breaks -- the caller wraps.
 fn base64_chunk(out: &mut Vec<u8>, data: &[u8]) {
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(B64[(n >> 18) as usize & 63]);
         out.push(B64[(n >> 12) as usize & 63]);
-        out.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] } else { b'=' });
-        out.push(if chunk.len() > 2 { B64[n as usize & 63] } else { b'=' });
+        out.push(if chunk.len() > 1 {
+            B64[(n >> 6) as usize & 63]
+        } else {
+            b'='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[n as usize & 63]
+        } else {
+            b'='
+        });
     }
 }
 
@@ -586,8 +666,7 @@ fn base64_decode(data: &[u8]) -> Vec<u8> {
 const HEX: &[u8; 16] = b"0123456789ABCDEF";
 /// The 6-bit -> character table CRuby's uuencode uses (value 0 is a backtick,
 /// not a space).
-const UU: &[u8; 64] =
-    b"`!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
+const UU: &[u8; 64] = b"`!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_";
 
 fn qpencode(out: &mut Vec<u8>, s: &[u8], len: usize) {
     let mut n = 0usize;
@@ -746,16 +825,20 @@ mod tests {
     /// `RubyValue` isn't `PartialEq`; project unpack results to a comparable
     /// `(i64, bytes)`-ish form for assertions.
     fn i64s(vs: &[RubyValue]) -> Vec<i64> {
-        vs.iter().map(|v| match v {
-            RubyValue::Int(n) => *n,
-            _ => panic!("expected Int"),
-        }).collect()
+        vs.iter()
+            .map(|v| match v {
+                RubyValue::Int(n) => *n,
+                _ => panic!("expected Int"),
+            })
+            .collect()
     }
     fn strs(vs: &[RubyValue]) -> Vec<String> {
-        vs.iter().map(|v| match v {
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            _ => panic!("expected Str"),
-        }).collect()
+        vs.iter()
+            .map(|v| match v {
+                RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+                _ => panic!("expected Str"),
+            })
+            .collect()
     }
 
     #[test]
@@ -769,15 +852,24 @@ mod tests {
 
     #[test]
     fn unpack_integers() {
-        assert_eq!(i64s(&unpack(b"hello", "C*").unwrap()), [104, 101, 108, 108, 111]);
+        assert_eq!(
+            i64s(&unpack(b"hello", "C*").unwrap()),
+            [104, 101, 108, 108, 111]
+        );
         assert_eq!(i64s(&unpack(&[1, 2, 3, 4], "N").unwrap()), [16909060]);
         assert_eq!(i64s(&unpack(&[255], "c").unwrap()), [-1]);
     }
 
     #[test]
     fn pack_and_unpack_strings() {
-        assert_eq!(pack(&[str_val("abc")], "a5").unwrap(), vec![97, 98, 99, 0, 0]);
-        assert_eq!(pack(&[str_val("abc")], "A5").unwrap(), vec![97, 98, 99, 32, 32]);
+        assert_eq!(
+            pack(&[str_val("abc")], "a5").unwrap(),
+            vec![97, 98, 99, 0, 0]
+        );
+        assert_eq!(
+            pack(&[str_val("abc")], "A5").unwrap(),
+            vec![97, 98, 99, 32, 32]
+        );
         assert_eq!(pack(&[str_val("abc")], "Z*").unwrap(), vec![97, 98, 99, 0]);
         assert_eq!(strs(&unpack(b"abc\0\0", "A5").unwrap()), ["abc"]);
         assert_eq!(strs(&unpack(b"abc\0de", "Z*").unwrap()), ["abc"]);
@@ -789,14 +881,20 @@ mod tests {
         assert_eq!(strs(&unpack(&[255, 1], "H*").unwrap()), ["ff01"]);
         assert_eq!(pack(&ints(&[300]), "w").unwrap(), vec![130, 44]);
         assert_eq!(i64s(&unpack(&[130, 44], "w").unwrap()), [300]);
-        assert_eq!(pack(&[str_val("hello world")], "m").unwrap(), b"aGVsbG8gd29ybGQ=\n");
+        assert_eq!(
+            pack(&[str_val("hello world")], "m").unwrap(),
+            b"aGVsbG8gd29ybGQ=\n"
+        );
         assert_eq!(strs(&unpack(b"aGVsbG8=\n", "m").unwrap()), ["hello"]);
     }
 
     #[test]
     fn utf8_codepoints() {
         assert_eq!(pack(&ints(&[0x3042]), "U").unwrap(), "\u{3042}".as_bytes());
-        assert_eq!(i64s(&unpack("\u{3042}".as_bytes(), "U*").unwrap()), [0x3042]);
+        assert_eq!(
+            i64s(&unpack("\u{3042}".as_bytes(), "U*").unwrap()),
+            [0x3042]
+        );
     }
 
     fn floats(vs: &[f64]) -> Vec<RubyValue> {
@@ -814,11 +912,23 @@ mod tests {
     #[test]
     fn float_directives_endianness_and_width() {
         // `1.5` little-endian double vs `G` big-endian double.
-        assert_eq!(pack(&floats(&[1.5]), "D").unwrap(), vec![0, 0, 0, 0, 0, 0, 248, 63]);
-        assert_eq!(pack(&floats(&[1.5]), "G").unwrap(), vec![63, 248, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            pack(&floats(&[1.5]), "D").unwrap(),
+            vec![0, 0, 0, 0, 0, 0, 248, 63]
+        );
+        assert_eq!(
+            pack(&floats(&[1.5]), "G").unwrap(),
+            vec![63, 248, 0, 0, 0, 0, 0, 0]
+        );
         assert_eq!(pack(&floats(&[1.5]), "F").unwrap(), vec![0, 0, 192, 63]);
-        assert_eq!(f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap(), "d").unwrap()), [3.5]);
-        assert_eq!(f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap(), "E*").unwrap()), [2.0, 3.0]);
+        assert_eq!(
+            f64s(&unpack(&pack(&floats(&[3.5]), "d").unwrap(), "d").unwrap()),
+            [3.5]
+        );
+        assert_eq!(
+            f64s(&unpack(&pack(&floats(&[2.0, 3.0]), "E*").unwrap(), "E*").unwrap()),
+            [2.0, 3.0]
+        );
     }
 
     #[test]
@@ -860,10 +970,15 @@ mod tests {
 
     #[test]
     fn quoted_printable_and_uuencode() {
-        assert_eq!(pack(&[str_val("hello world")], "M").unwrap(), b"hello world=\n");
+        assert_eq!(
+            pack(&[str_val("hello world")], "M").unwrap(),
+            b"hello world=\n"
+        );
         assert_eq!(pack(&[str_val("a=b c")], "M").unwrap(), b"a=3Db c=\n");
         let decoded = unpack(b"caf=C3=A9=\n", "M").unwrap();
-        let RubyValue::Str(s) = &decoded[0] else { panic!("expected Str") };
+        let RubyValue::Str(s) = &decoded[0] else {
+            panic!("expected Str")
+        };
         assert_eq!(s.lock().bytes(), &[99, 97, 102, 0xC3, 0xA9]);
         // uuencode round-trips over arbitrary bytes, including a partial line.
         for s in ["", "x", "ab", "abc", "hello world foo bar"] {

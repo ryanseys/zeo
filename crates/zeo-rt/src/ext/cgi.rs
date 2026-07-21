@@ -9,7 +9,7 @@
 //! URL escapers is alphanumerics plus `_.-~`.
 
 use crate::builtins::{arity, builtin_methods};
-use crate::{string_new, RubyValue};
+use crate::{RubyValue, string_new};
 
 fn in_bytes(v: &RubyValue) -> Vec<u8> {
     match v {
@@ -182,15 +182,34 @@ mod tests {
 
     #[test]
     fn url_escapes_match_ruby() {
-        assert_eq!(t(escape(&RubyValue::Nil, &[s("a b&c=d~e.f-g_h")], None)), "a+b%26c%3Dd~e.f-g_h");
+        assert_eq!(
+            t(escape(&RubyValue::Nil, &[s("a b&c=d~e.f-g_h")], None)),
+            "a+b%26c%3Dd~e.f-g_h"
+        );
         assert_eq!(t(unescape(&RubyValue::Nil, &[s("a+b%26c")], None)), "a b&c");
-        assert_eq!(t(escape_uri_component(&RubyValue::Nil, &[s("a b&c")], None)), "a%20b%26c");
+        assert_eq!(
+            t(escape_uri_component(&RubyValue::Nil, &[s("a b&c")], None)),
+            "a%20b%26c"
+        );
     }
 
     #[test]
     fn html_escapes_match_ruby() {
-        assert_eq!(t(escape_html(&RubyValue::Nil, &[s("<a>&\"'")], None)), "&lt;a&gt;&amp;&quot;&#39;");
-        assert_eq!(t(unescape_html(&RubyValue::Nil, &[s("&lt;a&gt;&amp;&quot;&#39;")], None)), "<a>&\"'");
-        assert_eq!(t(unescape_html(&RubyValue::Nil, &[s("&#x41;&#66;")], None)), "AB");
+        assert_eq!(
+            t(escape_html(&RubyValue::Nil, &[s("<a>&\"'")], None)),
+            "&lt;a&gt;&amp;&quot;&#39;"
+        );
+        assert_eq!(
+            t(unescape_html(
+                &RubyValue::Nil,
+                &[s("&lt;a&gt;&amp;&quot;&#39;")],
+                None
+            )),
+            "<a>&\"'"
+        );
+        assert_eq!(
+            t(unescape_html(&RubyValue::Nil, &[s("&#x41;&#66;")], None)),
+            "AB"
+        );
     }
 }

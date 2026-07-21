@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn not_match_operator_negates_from_both_receivers() {
@@ -485,8 +485,5 @@ fn matchdata_hash_is_value_based() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "false\ntrue\ntrue\n99\nnil\ntrue\n"
-    );
+    assert_eq!(result.stdout, "false\ntrue\ntrue\n99\nnil\ntrue\n");
 }

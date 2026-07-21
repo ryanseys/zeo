@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, run_ruby_project, run_ruby_packages};
+use crate::support::{run_ruby, run_ruby_packages, run_ruby_project};
 
 #[test]
 fn operators_work_on_locals_not_just_literals() {

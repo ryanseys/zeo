@@ -21,13 +21,13 @@
 //! owned buffer, so they are non-deterministic and never golden-tested.
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{ClassId, RubyValue, Signal, Symbol};
-use zeo_abi::{FFI_MEMORY_POINTER_CLASS, FFI_POINTER_CLASS};
-use std::alloc::{alloc_zeroed, dealloc, Layout};
+use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::{FFI_MEMORY_POINTER_CLASS, FFI_POINTER_CLASS};
 
 /// A heap buffer an owned pointer allocated, freed when the last pointer
 /// sharing it (via pointer arithmetic) drops. Raw alloc rather than `Vec` so
@@ -138,49 +138,57 @@ impl RPointer {
         Ok(())
     }
 
-    unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 { unsafe {
-        let p = self.base.add(off);
-        match (bytes, signed) {
-            (1, true) => (p as *const i8).read_unaligned() as i64,
-            (1, false) => (p as *const u8).read_unaligned() as i64,
-            (2, true) => (p as *const i16).read_unaligned() as i64,
-            (2, false) => (p as *const u16).read_unaligned() as i64,
-            (4, true) => (p as *const i32).read_unaligned() as i64,
-            (4, false) => (p as *const u32).read_unaligned() as i64,
-            (8, true) => (p as *const i64).read_unaligned(),
-            (8, false) => (p as *const u64).read_unaligned() as i64,
-            _ => unreachable!("FFI int width is 1/2/4/8"),
+    unsafe fn read_int(&self, off: usize, bytes: usize, signed: bool) -> i64 {
+        unsafe {
+            let p = self.base.add(off);
+            match (bytes, signed) {
+                (1, true) => (p as *const i8).read_unaligned() as i64,
+                (1, false) => (p as *const u8).read_unaligned() as i64,
+                (2, true) => (p as *const i16).read_unaligned() as i64,
+                (2, false) => (p as *const u16).read_unaligned() as i64,
+                (4, true) => (p as *const i32).read_unaligned() as i64,
+                (4, false) => (p as *const u32).read_unaligned() as i64,
+                (8, true) => (p as *const i64).read_unaligned(),
+                (8, false) => (p as *const u64).read_unaligned() as i64,
+                _ => unreachable!("FFI int width is 1/2/4/8"),
+            }
         }
-    }}
+    }
 
-    unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) { unsafe {
-        let p = self.base.add(off);
-        match bytes {
-            1 => p.write_unaligned(v as u8),
-            2 => (p as *mut u16).write_unaligned(v as u16),
-            4 => (p as *mut u32).write_unaligned(v as u32),
-            8 => (p as *mut u64).write_unaligned(v as u64),
-            _ => unreachable!("FFI int width is 1/2/4/8"),
+    unsafe fn write_int(&self, off: usize, bytes: usize, v: i64) {
+        unsafe {
+            let p = self.base.add(off);
+            match bytes {
+                1 => p.write_unaligned(v as u8),
+                2 => (p as *mut u16).write_unaligned(v as u16),
+                4 => (p as *mut u32).write_unaligned(v as u32),
+                8 => (p as *mut u64).write_unaligned(v as u64),
+                _ => unreachable!("FFI int width is 1/2/4/8"),
+            }
         }
-    }}
+    }
 
-    unsafe fn read_float(&self, off: usize, bytes: usize) -> f64 { unsafe {
-        let p = self.base.add(off);
-        match bytes {
-            4 => (p as *const f32).read_unaligned() as f64,
-            8 => (p as *const f64).read_unaligned(),
-            _ => unreachable!("FFI float width is 4/8"),
+    unsafe fn read_float(&self, off: usize, bytes: usize) -> f64 {
+        unsafe {
+            let p = self.base.add(off);
+            match bytes {
+                4 => (p as *const f32).read_unaligned() as f64,
+                8 => (p as *const f64).read_unaligned(),
+                _ => unreachable!("FFI float width is 4/8"),
+            }
         }
-    }}
+    }
 
-    unsafe fn write_float(&self, off: usize, bytes: usize, v: f64) { unsafe {
-        let p = self.base.add(off);
-        match bytes {
-            4 => (p as *mut f32).write_unaligned(v as f32),
-            8 => (p as *mut f64).write_unaligned(v),
-            _ => unreachable!("FFI float width is 4/8"),
+    unsafe fn write_float(&self, off: usize, bytes: usize, v: f64) {
+        unsafe {
+            let p = self.base.add(off);
+            match bytes {
+                4 => (p as *mut f32).write_unaligned(v as f32),
+                8 => (p as *mut f64).write_unaligned(v),
+                _ => unreachable!("FFI float width is 4/8"),
+            }
         }
-    }}
+    }
 }
 
 impl RubyObject for RPointer {
@@ -293,7 +301,10 @@ fn write_int_m(
 ) -> Result<RubyValue, Signal> {
     let (off, v) = if with_off {
         arity!(args, 2);
-        (crate::ffi::to_i64(&args[0])? as usize, crate::ffi::to_i64(&args[1])?)
+        (
+            crate::ffi::to_i64(&args[0])? as usize,
+            crate::ffi::to_i64(&args[1])?,
+        )
     } else {
         arity!(args, 1);
         (0, crate::ffi::to_i64(&args[0])?)
@@ -330,7 +341,10 @@ fn write_float_m(
 ) -> Result<RubyValue, Signal> {
     let (off, v) = if with_off {
         arity!(args, 2);
-        (crate::ffi::to_i64(&args[0])? as usize, crate::ffi::to_f64(&args[1])?)
+        (
+            crate::ffi::to_i64(&args[0])? as usize,
+            crate::ffi::to_f64(&args[1])?,
+        )
     } else {
         arity!(args, 1);
         (0, crate::ffi::to_f64(&args[0])?)
@@ -347,13 +361,19 @@ fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
 
 fn bytes_to_str(bytes: Vec<u8>) -> RubyValue {
-    RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::default_external()))
+    RubyValue::Str(crate::string_from_bytes(
+        bytes,
+        crate::encoding::default_external(),
+    ))
 }
 
 builtin_methods! {
@@ -580,7 +600,11 @@ fn read_int_array(
 }
 
 /// `write_array_of_<int>(array)` -- writes each element sequentially.
-fn write_int_array(recv: &RubyValue, args: &[RubyValue], bytes: usize) -> Result<RubyValue, Signal> {
+fn write_int_array(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    bytes: usize,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let elems = array_elems(&args[0])?;
     let p = ptr_of(recv);
@@ -591,7 +615,11 @@ fn write_int_array(recv: &RubyValue, args: &[RubyValue], bytes: usize) -> Result
     Ok(recv.clone())
 }
 
-fn read_float_array(recv: &RubyValue, args: &[RubyValue], bytes: usize) -> Result<RubyValue, Signal> {
+fn read_float_array(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    bytes: usize,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let n = crate::ffi::to_i64(&args[0])? as usize;
     let p = ptr_of(recv);
@@ -602,7 +630,11 @@ fn read_float_array(recv: &RubyValue, args: &[RubyValue], bytes: usize) -> Resul
     Ok(RubyValue::Array(crate::array_new(out)))
 }
 
-fn write_float_array(recv: &RubyValue, args: &[RubyValue], bytes: usize) -> Result<RubyValue, Signal> {
+fn write_float_array(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    bytes: usize,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     let elems = array_elems(&args[0])?;
     let p = ptr_of(recv);
@@ -618,7 +650,10 @@ fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
         RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Array", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Array",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -680,12 +715,14 @@ builtin_methods! {
 fn memptr_elem_size(v: &RubyValue) -> Result<usize, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n as usize),
-        RubyValue::Symbol(s) => type_size(&s.name()).ok_or_else(|| {
-            raise_error("ArgumentError", format!("unknown FFI type {}", s.name()))
-        }),
+        RubyValue::Symbol(s) => type_size(&s.name())
+            .ok_or_else(|| raise_error("ArgumentError", format!("unknown FFI type {}", s.name()))),
         other => Err(raise_error(
             "TypeError",
-            format!("cannot derive a size from {}", crate::builtins::class_name_of(other)),
+            format!(
+                "cannot derive a size from {}",
+                crate::builtins::class_name_of(other)
+            ),
         )),
     }
 }
@@ -759,7 +796,9 @@ mod tests {
         ]));
         call(&p, "write_array_of_int", &[arr]);
         let out = call(&p, "read_array_of_int", &[RubyValue::Int(3)]);
-        let RubyValue::Array(a) = out else { panic!("expected array") };
+        let RubyValue::Array(a) = out else {
+            panic!("expected array")
+        };
         let got: Vec<i64> = a.lock().iter().cloned().map(as_int).collect();
         assert_eq!(got, vec![1, 2, 3]);
     }

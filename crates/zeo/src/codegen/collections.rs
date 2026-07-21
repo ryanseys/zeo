@@ -6,8 +6,8 @@
 
 use quote::{format_ident, quote};
 
-use super::expr::{box_if_object_typed, emit_boxed_new, emit_expr};
 use super::Ctx;
+use super::expr::{box_if_object_typed, emit_boxed_new, emit_expr};
 use crate::hir::{ArrayElem, KwArg, NodeId, RegexpFlags, StrPart};
 use proc_macro2::TokenStream;
 
@@ -82,7 +82,9 @@ pub fn emit_kwarg_inserts(cx: &Ctx, kwargs: &[KwArg], hash_ident: &TokenStream) 
 pub fn emit_hash_lit(cx: &Ctx, kwargs: &[KwArg]) -> TokenStream {
     if kwargs.iter().all(|kw| matches!(kw, KwArg::Pair(..))) {
         let inserts = kwargs.iter().map(|kw| {
-            let KwArg::Pair(k, v) = kw else { unreachable!("guarded all-Pair above") };
+            let KwArg::Pair(k, v) = kw else {
+                unreachable!("guarded all-Pair above")
+            };
             let k_expr = box_if_object_typed(cx, *k, emit_expr(cx, *k));
             let v_expr = box_if_object_typed(cx, *v, emit_expr(cx, *v));
             quote! { __pairs.push((#k_expr, #v_expr)); }

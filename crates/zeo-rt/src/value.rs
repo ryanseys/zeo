@@ -7,15 +7,15 @@
 
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
-    ClassId, ARRAY_CLASS, CLASS_CLASS, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
-    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS,
-    QUEUE_CLASS, RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS,
-    SYMBOL_CLASS, THREAD_CLASS, TRUE_CLASS,
+    ARRAY_CLASS, CLASS_CLASS, ClassId, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
+    INTEGER_CLASS, MATCH_DATA_CLASS, MODULE_CLASS, MUTEX_CLASS, NIL_CLASS, PROC_CLASS, QUEUE_CLASS,
+    RACTOR_CLASS, RANGE_CLASS, REGEXP_CLASS, SIZED_QUEUE_CLASS, STRING_CLASS, SYMBOL_CLASS,
+    THREAD_CLASS, TRUE_CLASS,
 };
 use crate::fiber::RFiber;
 use crate::ractor::RRactor;
-use crate::thread::{RMutex, RQueue, RThread};
 use crate::regexp::{RMatchData, RRegexp};
+use crate::thread::{RMutex, RQueue, RThread};
 use crate::{RObj, RProc, Symbol};
 
 #[derive(Clone)]
@@ -114,7 +114,11 @@ fn float_to_display_string(f: f64) -> String {
         return "NaN".to_string();
     }
     if f.is_infinite() {
-        return if f > 0.0 { "Infinity".to_string() } else { "-Infinity".to_string() };
+        return if f > 0.0 {
+            "Infinity".to_string()
+        } else {
+            "-Infinity".to_string()
+        };
     }
     // Ruby switches to scientific notation when the shortest decimal's point
     // position `decpt` leaves `-3..=15` -- i.e. `|x| >= 1e15` or `|x| < 1e-4`
@@ -146,11 +150,7 @@ fn float_to_display_string(f: f64) -> String {
         };
     }
     let s = f.to_string();
-    if s.contains('.') {
-        s
-    } else {
-        format!("{s}.0")
-    }
+    if s.contains('.') { s } else { format!("{s}.0") }
 }
 
 /// The pointer identity of a shared, potentially SELF-REFERENTIAL container
@@ -185,7 +185,11 @@ pub(crate) fn container_identity(v: &RubyValue) -> Option<usize> {
 /// never-assigned ivar, but our generated structs pre-declare every `@x` the
 /// class body mentions, so an unassigned one shows as `@x=nil` -- same root as
 /// `ivar_get_named`'s invented-ivar TODO.
-pub(crate) fn default_object_repr(o: &crate::RObj, with_ivars: bool, seen: &mut Vec<usize>) -> String {
+pub(crate) fn default_object_repr(
+    o: &crate::RObj,
+    with_ivars: bool,
+    seen: &mut Vec<usize>,
+) -> String {
     let name = crate::dispatch::class_name(o.class_id()).unwrap_or_else(|| "Object".to_string());
     let addr = std::sync::Arc::as_ptr(o) as *const () as usize;
     if !with_ivars {
@@ -295,7 +299,11 @@ impl RubyValue {
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", crate::builtins::symbol::hash_key(&s.name()), v.inspect_with(seen)),
+                        RubyValue::Symbol(s) => format!(
+                            "{}: {}",
+                            crate::builtins::symbol::hash_key(&s.name()),
+                            v.inspect_with(seen)
+                        ),
                         _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()
@@ -304,8 +312,14 @@ impl RubyValue {
                 format!("{{{body}}}")
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start.as_ref().map(|b| b.display_with(seen)).unwrap_or_default();
-                let e = end.as_ref().map(|b| b.display_with(seen)).unwrap_or_default();
+                let s = start
+                    .as_ref()
+                    .map(|b| b.display_with(seen))
+                    .unwrap_or_default();
+                let e = end
+                    .as_ref()
+                    .map(|b| b.display_with(seen))
+                    .unwrap_or_default();
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
@@ -354,8 +368,9 @@ impl RubyValue {
             // The registered fully-qualified name (`puts Widget` ->
             // "Widget", `puts Store::Item` -> "Store::Item"); the id form
             // is only reachable registry-less (this crate's unit tests).
-            RubyValue::Class(cid) => crate::dispatch::class_name(*cid)
-                .unwrap_or_else(|| format!("#<Class:{}>", cid.0)),
+            RubyValue::Class(cid) => {
+                crate::dispatch::class_name(*cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0))
+            }
         }
     }
 
@@ -438,7 +453,11 @@ impl RubyValue {
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", crate::builtins::symbol::hash_key(&s.name()), v.inspect_with(seen)),
+                        RubyValue::Symbol(s) => format!(
+                            "{}: {}",
+                            crate::builtins::symbol::hash_key(&s.name()),
+                            v.inspect_with(seen)
+                        ),
                         _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()
@@ -447,8 +466,14 @@ impl RubyValue {
                 format!("{{{body}}}")
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start.as_ref().map(|b| b.inspect_with(seen)).unwrap_or_default();
-                let e = end.as_ref().map(|b| b.inspect_with(seen)).unwrap_or_default();
+                let s = start
+                    .as_ref()
+                    .map(|b| b.inspect_with(seen))
+                    .unwrap_or_default();
+                let e = end
+                    .as_ref()
+                    .map(|b| b.inspect_with(seen))
+                    .unwrap_or_default();
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
@@ -773,13 +798,14 @@ impl RubyValue {
                 RubyValue::Range(a_start, a_end, a_excl),
                 RubyValue::Range(b_start, b_end, b_excl),
             ) => {
-                let bounds_eq = |x: &Option<Box<RubyValue>>,
-                                 y: &Option<Box<RubyValue>>,
-                                 seen: &mut Vec<(usize, usize)>| match (x, y) {
-                    (None, None) => true,
-                    (Some(x), Some(y)) => x.rb_eq_guarded(y, seen),
-                    _ => false,
-                };
+                let bounds_eq =
+                    |x: &Option<Box<RubyValue>>,
+                     y: &Option<Box<RubyValue>>,
+                     seen: &mut Vec<(usize, usize)>| match (x, y) {
+                        (None, None) => true,
+                        (Some(x), Some(y)) => x.rb_eq_guarded(y, seen),
+                        _ => false,
+                    };
                 a_excl == b_excl
                     && bounds_eq(a_start, b_start, seen)
                     && bounds_eq(a_end, b_end, seen)
@@ -799,7 +825,10 @@ impl RubyValue {
                 let av: Vec<RubyValue> = a.lock().clone();
                 let bv: Vec<RubyValue> = b.lock().clone();
                 let eq = av.len() == bv.len()
-                    && av.iter().zip(bv.iter()).all(|(x, y)| x.rb_eq_guarded(y, seen));
+                    && av
+                        .iter()
+                        .zip(bv.iter())
+                        .all(|(x, y)| x.rb_eq_guarded(y, seen));
                 seen.pop();
                 eq
             }
@@ -821,8 +850,7 @@ impl RubyValue {
                 let pairs: Vec<(RubyValue, RubyValue)> = a.lock().values().cloned().collect();
                 let eq = crate::hash_len(a) == crate::hash_len(b)
                     && pairs.iter().all(|(k, va)| {
-                        crate::hash_has_key(b, k)
-                            && va.rb_eq_guarded(&crate::hash_get(b, k), seen)
+                        crate::hash_has_key(b, k) && va.rb_eq_guarded(&crate::hash_get(b, k), seen)
                     });
                 seen.pop();
                 eq
@@ -922,9 +950,7 @@ impl RubyValue {
             // Symbols order by their names, CRuby's `Symbol#<=>` -- what makes
             // `%i[b a].sort` and `{b: 1, a: 2}.sort` (which orders `[:key, v]`
             // pairs) work.
-            (RubyValue::Symbol(a), RubyValue::Symbol(b)) => {
-                Some(a.name().cmp(&b.name()) as i64)
-            }
+            (RubyValue::Symbol(a), RubyValue::Symbol(b)) => Some(a.name().cmp(&b.name()) as i64),
             // Arrays order lexicographically, element by element (CRuby's
             // `Array#<=>`) -- what lets `[[:b, 2], [:a, 1]].sort` and hence
             // `Hash#sort` work, since the generic comparison drivers use
@@ -1193,7 +1219,11 @@ pub(crate) fn cmp_error(a: &RubyValue, b: &RubyValue) -> crate::Signal {
     };
     crate::dispatch::raise_error(
         "ArgumentError",
-        format!("comparison of {} with {} failed", crate::builtins::class_name_of(a), shown),
+        format!(
+            "comparison of {} with {} failed",
+            crate::builtins::class_name_of(a),
+            shown
+        ),
     )
 }
 
@@ -1324,7 +1354,7 @@ pub(crate) fn range_covers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{array_new, array_push, hash_new, hash_set, string_new, Symbol};
+    use crate::{Symbol, array_new, array_push, hash_new, hash_set, string_new};
 
     fn sym(name: &str) -> RubyValue {
         RubyValue::Symbol(Symbol::intern(name))
@@ -1432,10 +1462,16 @@ mod tests {
         s.freeze_value();
 
         assert!(!s.dup_value(false).is_frozen(), "dup of frozen is unfrozen");
-        assert!(s.dup_value(true).is_frozen(), "clone of frozen stays frozen");
+        assert!(
+            s.dup_value(true).is_frozen(),
+            "clone of frozen stays frozen"
+        );
 
         let unfrozen = RubyValue::Str(string_new("abc".to_string()));
-        assert!(!unfrozen.dup_value(true).is_frozen(), "clone of unfrozen stays unfrozen");
+        assert!(
+            !unfrozen.dup_value(true).is_frozen(),
+            "clone of unfrozen stays unfrozen"
+        );
     }
 
     /// The copy's top-level payload is FRESH (mutating it leaves the

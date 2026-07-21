@@ -14,7 +14,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
 
@@ -128,7 +128,10 @@ builtin_methods! {
 /// the clock it named, and one that passes a bare integer gets whatever that
 /// integer means to this OS, as in CRuby.
 fn clock_seconds(clock: i64) -> Result<f64, crate::Signal> {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: `ts` is a valid, fully-initialized out-param for the duration
     // of the call; `clock_gettime` writes it and touches nothing else.
     let rc = unsafe { libc::clock_gettime(clock as libc::clockid_t, &mut ts) };
@@ -144,7 +147,10 @@ fn clock_seconds(clock: i64) -> Result<f64, crate::Signal> {
 /// A single clock's RESOLUTION in seconds (`clock_getres`), the companion of
 /// [`clock_seconds`].
 fn clock_res_seconds(clock: i64) -> Result<f64, crate::Signal> {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: `ts` is a valid out-param; `clock_getres` writes it and nothing else.
     let rc = unsafe { libc::clock_getres(clock as libc::clockid_t, &mut ts) };
     if rc != 0 {
@@ -169,7 +175,10 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
             "millisecond" => Ok(RubyValue::Int((secs * 1e3) as i64)),
             "microsecond" => Ok(RubyValue::Int((secs * 1e6) as i64)),
             "nanosecond" => Ok(RubyValue::Int((secs * 1e9) as i64)),
-            other => Err(raise_error("ArgumentError", format!("unexpected unit: {other}"))),
+            other => Err(raise_error(
+                "ArgumentError",
+                format!("unexpected unit: {other}"),
+            )),
         },
         Some(other) => Err(raise_error(
             "ArgumentError",
@@ -254,7 +263,10 @@ impl RubyObject for RProcessStatus {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RProcessStatus { pid: self.pid, raw: self.raw })
+        Arc::new(RProcessStatus {
+            pid: self.pid,
+            raw: self.raw,
+        })
     }
 }
 
@@ -401,7 +413,12 @@ impl RubyObject for RTms {
 }
 
 fn new_tms(utime: f64, stime: f64, cutime: f64, cstime: f64) -> RubyValue {
-    RubyValue::Object(Arc::new(RTms { utime, stime, cutime, cstime }))
+    RubyValue::Object(Arc::new(RTms {
+        utime,
+        stime,
+        cutime,
+        cstime,
+    }))
 }
 
 fn recv_tms(recv: &RubyValue) -> &RTms {
@@ -481,8 +498,10 @@ fn set_last_child_status(v: RubyValue) {
 /// single-string command containing any of these runs through `/bin/sh -c`;
 /// otherwise it is whitespace-split and exec'd directly. A plain space is NOT
 /// a metacharacter -- `system("echo hi")` execs `["echo","hi"]` directly.
-const SHELL_META: &[char] =
-    &['*', '?', '{', '}', '[', ']', '<', '>', '(', ')', '~', '&', '|', '\\', '$', ';', '\'', '"', '`', '\n'];
+const SHELL_META: &[char] = &[
+    '*', '?', '{', '}', '[', ']', '<', '>', '(', ')', '~', '&', '|', '\\', '$', ';', '\'', '"',
+    '`', '\n',
+];
 
 fn needs_shell(cmd: &str) -> bool {
     cmd.chars().any(|c| SHELL_META.contains(&c))
@@ -540,7 +559,11 @@ fn build_command(args: &[RubyValue]) -> Result<Option<Command>, Signal> {
 /// `Kernel#system` -- runs the command with stdout/stderr inherited, sets `$?`,
 /// and answers `true` (exit 0) / `false` (any other exit or a signal) / `nil`
 /// (the command could not be executed). Does not raise on a nonzero exit.
-pub fn system(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn system(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     set_last_child_status(RubyValue::Nil);
     let Some(mut cmd) = build_command(args)? else {
         return Ok(RubyValue::Bool(false));
@@ -562,7 +585,11 @@ pub fn system(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) 
 /// sets `$?`, and answers the captured output as a String. A nonzero exit does
 /// NOT raise; a command that cannot be started raises `Errno::ENOENT`, CRuby's
 /// own behaviour.
-pub fn backquote(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+pub fn backquote(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     arity!(args, 1);
     set_last_child_status(RubyValue::Nil);
     let raw_cmd = cmd_str(&args[0])?;
@@ -579,7 +606,7 @@ pub fn backquote(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue
             return Err(raise_error(
                 "Errno::ENOENT",
                 format!("No such file or directory - {raw_cmd}"),
-            ))
+            ));
         }
         Err(e) => return Err(raise_error("SystemCallError", e.to_string())),
     };
@@ -595,7 +622,10 @@ pub fn backquote(_recv: &RubyValue, args: &[RubyValue], _block: Option<RubyValue
         .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
     // Tagged with the default external encoding, as CRuby's backtick output is.
-    Ok(RubyValue::Str(crate::string_from_bytes(out, crate::encoding::default_external())))
+    Ok(RubyValue::Str(crate::string_from_bytes(
+        out,
+        crate::encoding::default_external(),
+    )))
 }
 
 #[cfg(test)]
@@ -623,7 +653,8 @@ mod tests {
     #[test]
     fn the_monotonic_clock_advances() {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
-        let RubyValue::Float(a) = clock_gettime(&process_module(), std::slice::from_ref(&m), None).unwrap()
+        let RubyValue::Float(a) =
+            clock_gettime(&process_module(), std::slice::from_ref(&m), None).unwrap()
         else {
             panic!("expected a Float")
         };
@@ -641,7 +672,10 @@ mod tests {
         let m = RubyValue::Int(libc::CLOCK_MONOTONIC as i64);
         let ms = clock_gettime(
             &process_module(),
-            &[m.clone(), RubyValue::Symbol(crate::Symbol::intern("millisecond"))],
+            &[
+                m.clone(),
+                RubyValue::Symbol(crate::Symbol::intern("millisecond")),
+            ],
             None,
         )
         .unwrap();

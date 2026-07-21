@@ -122,7 +122,9 @@ mod classification_tests {
     /// isn't.
     #[test]
     fn lowering_distinguishes_bad_ruby_from_unimplemented_ruby() {
-        let err = crate::parse::parse_and_lower("def foo(\n").err().expect("malformed source is rejected");
+        let err = crate::parse::parse_and_lower("def foo(\n")
+            .err()
+            .expect("malformed source is rejected");
         assert!(
             matches!(err, LowerError::Syntax(_)),
             "malformed source must be a SyntaxError, got: {err:?}"
@@ -130,7 +132,9 @@ mod classification_tests {
         assert_eq!(err.ruby_class(), "SyntaxError");
 
         // Valid Ruby (prism parses it) that this front end declines to lower.
-        let err = crate::parse::parse_and_lower("p(/foo/e)\n").err().expect("unsupported construct is rejected");
+        let err = crate::parse::parse_and_lower("p(/foo/e)\n")
+            .err()
+            .expect("unsupported construct is rejected");
         assert!(
             matches!(err, LowerError::Unsupported(_)),
             "an unimplemented construct must be NotImplementedError, got: {err:?}"

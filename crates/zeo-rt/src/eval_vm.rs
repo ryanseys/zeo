@@ -42,8 +42,7 @@ pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyVa
         let _ = (src, self_val, box_id);
         Err(crate::dispatch::raise_error(
             "NotImplementedError",
-            "string eval requires the eval VM (build zeo-rt with --features eval-vm)"
-                .to_string(),
+            "string eval requires the eval VM (build zeo-rt with --features eval-vm)".to_string(),
         ))
     }
 }
@@ -53,11 +52,7 @@ pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyVa
 /// even a Symbol) and evaluate it with `self` bound to `self_val`. Keeping the
 /// coercion here means every caller -- `Kernel#eval`, `instance_eval`,
 /// `class_eval` -- shares one definition of "what counts as evalable source".
-pub fn eval_value(
-    src: RubyValue,
-    self_val: RubyValue,
-    box_id: u32,
-) -> Result<RubyValue, Signal> {
+pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
     match &src {
         RubyValue::Str(s) => {
             let code = s.lock().to_utf8_lossy().into_owned();
@@ -238,7 +233,7 @@ mod imp {
                         return Err(crate::dispatch::raise_error(
                             "TypeError",
                             format!("{} is not a class/module", other.inspect_string()),
-                        ))
+                        ));
                     }
                 },
             };
@@ -425,7 +420,8 @@ mod imp {
         if let RubyValue::Str(s) = v {
             return Ok(s.lock().to_utf8_lossy().into_owned());
         }
-        let s = crate::dispatch::send_value_in(box_id, v, crate::Symbol::intern("to_s"), &[], None)?;
+        let s =
+            crate::dispatch::send_value_in(box_id, v, crate::Symbol::intern("to_s"), &[], None)?;
         match s {
             RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
             other => Ok(other.inspect_string()),
@@ -516,14 +512,23 @@ mod imp {
 
         #[test]
         fn if_selects_the_true_branch() {
-            assert!(matches!(eval("if true then 1 else 2 end"), RubyValue::Int(1)));
-            assert!(matches!(eval("if false then 1 else 2 end"), RubyValue::Int(2)));
+            assert!(matches!(
+                eval("if true then 1 else 2 end"),
+                RubyValue::Int(1)
+            ));
+            assert!(matches!(
+                eval("if false then 1 else 2 end"),
+                RubyValue::Int(2)
+            ));
             assert!(matches!(eval("if false then 1 end"), RubyValue::Nil));
         }
 
         #[test]
         fn unless_inverts() {
-            assert!(matches!(eval("unless false then 1 else 2 end"), RubyValue::Int(1)));
+            assert!(matches!(
+                eval("unless false then 1 else 2 end"),
+                RubyValue::Int(1)
+            ));
         }
 
         #[test]

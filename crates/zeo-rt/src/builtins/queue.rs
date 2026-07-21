@@ -7,13 +7,13 @@
 //! agree. `Queue` has a dedicated `RubyValue::Queue` variant (like
 //! Thread/Fiber), unwrapped with `as_queue_unchecked`.
 
-use crate::builtins::{arity, arg_int, builtin_methods};
+use crate::RubyValue;
+use crate::builtins::{arg_int, arity, builtin_methods};
 use crate::dispatch::raise_error;
 use crate::thread::{
     queue_close, queue_closed, queue_len, queue_max, queue_new, queue_pop, queue_push,
     queue_set_max, sized_queue_new,
 };
-use crate::RubyValue;
 
 builtin_methods! {
     pub(crate) fn lookup;

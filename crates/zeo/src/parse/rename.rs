@@ -130,8 +130,8 @@ impl Walker {
             consider(n);
         }
         for kw in &params.keywords {
-            let (crate::hir::KeywordParam::Required(n)
-            | crate::hir::KeywordParam::Optional(n, _)) = kw;
+            let (crate::hir::KeywordParam::Required(n) | crate::hir::KeywordParam::Optional(n, _)) =
+                kw;
             consider(n);
         }
         for slot in [&params.rest, &params.keyword_rest, &params.block] {
@@ -177,9 +177,7 @@ impl Walker {
             | HirNode::Eval(body)
             | HirNode::PreExec(body)
             | HirNode::Seq(body)
-            | HirNode::BoxScope { body, .. } => {
-                self.visit_all(hir, &body.clone())
-            }
+            | HirNode::BoxScope { body, .. } => self.visit_all(hir, &body.clone()),
             HirNode::And(l, r) | HirNode::Or(l, r) => {
                 self.visit(hir, *l);
                 self.visit(hir, *r);
@@ -262,7 +260,12 @@ impl Walker {
                 self.visit_all(hir, &args.clone());
                 self.visit_opt(hir, block);
             }
-            HirNode::SuperCall { args, kwargs, block, .. } => {
+            HirNode::SuperCall {
+                args,
+                kwargs,
+                block,
+                ..
+            } => {
                 self.visit_all(hir, &args.clone());
                 let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
                 self.visit_all(hir, &kw_ids);
@@ -299,7 +302,13 @@ impl Walker {
                 self.visit(hir, *value);
             }
             HirNode::Yield(elems) => {
-                let ids: Vec<_> = elems.iter().map(|e| { let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e; *n }).collect();
+                let ids: Vec<_> = elems
+                    .iter()
+                    .map(|e| {
+                        let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
+                        *n
+                    })
+                    .collect();
                 self.visit_all(hir, &ids)
             }
             HirNode::Raise(args, cause) => {
@@ -367,11 +376,11 @@ impl Walker {
             | HirNode::ClassVarRead(_)
             | HirNode::ClassRef(_)
             | HirNode::GlobalRead(_)
-        | HirNode::LastMatchRef(_)
-        | HirNode::Undef(_)
-        | HirNode::AliasMethod { .. }
-        | HirNode::MethodVisibility { .. }
-        | HirNode::AliasGlobal(..)
+            | HirNode::LastMatchRef(_)
+            | HirNode::Undef(_)
+            | HirNode::AliasMethod { .. }
+            | HirNode::MethodVisibility { .. }
+            | HirNode::AliasGlobal(..)
             | HirNode::QualifiedConstRead(..)
             | HirNode::ConstReadOrNil(..)
             | HirNode::Include(_)

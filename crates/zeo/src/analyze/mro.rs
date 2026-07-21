@@ -145,8 +145,9 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         let scope = compiler.scope(sid);
         let (params, body, visibility) =
             (scope.params.clone(), scope.body.clone(), scope.visibility);
-        let new_sid =
-            super::register_method(compiler, class_id, class_id, new_name, params, body, visibility)?;
+        let new_sid = super::register_method(
+            compiler, class_id, class_id, new_name, params, body, visibility,
+        )?;
         super::add_own_method(compiler, class_id, new_sid, false);
     }
     Ok(())
@@ -207,8 +208,12 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body, visibility, native_default) =
-                    (scope.params.clone(), scope.body.clone(), scope.visibility, scope.native_default);
+                let (params, body, visibility, native_default) = (
+                    scope.params.clone(),
+                    scope.body.clone(),
+                    scope.visibility,
+                    scope.native_default,
+                );
                 let new_id =
                     register_method(compiler, class_id, anc_id, name, params, body, visibility)?;
                 // A pristine exception body stays pristine when inherited: the
@@ -314,7 +319,8 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 let scope = compiler.scope(sid);
                 let (params, body, visibility) =
                     (scope.params.clone(), scope.body.clone(), scope.visibility);
-                let new_id = register_method(compiler, class_id, cid, name, params, body, visibility)?;
+                let new_id =
+                    register_method(compiler, class_id, cid, name, params, body, visibility)?;
                 materialized.push(new_id);
             }
         }
@@ -327,7 +333,8 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 let scope = compiler.scope(sid);
                 let (params, body, visibility) =
                     (scope.params.clone(), scope.body.clone(), scope.visibility);
-                let new_id = register_method(compiler, class_id, m, name, params, body, visibility)?;
+                let new_id =
+                    register_method(compiler, class_id, m, name, params, body, visibility)?;
                 materialized.push(new_id);
             }
         }
@@ -523,13 +530,7 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
                     .skip(1)
                     .find_map(|&anc| compiler.class(anc).const_owners.get(name).copied())
             })
-            .or_else(|| {
-                compiler
-                    .class(OBJECT_CLASS)
-                    .const_owners
-                    .get(name)
-                    .copied()
-            })
+            .or_else(|| compiler.class(OBJECT_CLASS).const_owners.get(name).copied())
             .unwrap_or(class_id)
     };
     compiler.classes[class_id.0 as usize]
@@ -545,7 +546,12 @@ fn const_owner_of(compiler: &mut Compiler, class_id: ClassId, name: &str) -> Cla
 /// see `HirNode::ClassRef`'s dual reuse, `codegen::expr`'s docs), and a bare
 /// `ConstWrite { scope: None, .. }` always counts (an explicit `Foo::NAME`
 /// write needs no ownership DISCOVERY, its target is already named).
-fn collect_const_refs(compiler: &Compiler, id: crate::hir::NodeId, cref: &[ClassId], out: &mut Vec<String>) {
+fn collect_const_refs(
+    compiler: &Compiler,
+    id: crate::hir::NodeId,
+    cref: &[ClassId],
+    out: &mut Vec<String>,
+) {
     use crate::hir::{ArrayElem, StrPart};
     let hir = &compiler.hir;
     match &hir[id] {

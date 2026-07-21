@@ -7,11 +7,11 @@
 //! (`install_core_constants`). The alternative was ~540 identical `register(...)`
 //! calls plus eight `seed_*` calls emitted into every program.
 
-use zeo_abi::{declared_ancestors, BUILTINS, OBJECT_CLASS};
+use zeo_abi::{BUILTINS, OBJECT_CLASS, declared_ancestors};
 
+use crate::RubyValue;
 use crate::builtins::exception::register_exceptions;
 use crate::dispatch::ClassRegistry;
-use crate::RubyValue;
 
 /// Install the always-on built-in classes/modules (`Integer`, `Array`,
 /// `Kernel`, ... and `Object`) into `registry` with their DECLARED ancestors --

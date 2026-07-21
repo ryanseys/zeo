@@ -272,7 +272,9 @@ pub fn thread_status(t: &RThread) -> RubyValue {
         return RubyValue::Str(crate::string_new("run".to_string()));
     }
     match &*t.state.lock() {
-        Some(ThreadState::Running(_)) | None => RubyValue::Str(crate::string_new("run".to_string())),
+        Some(ThreadState::Running(_)) | None => {
+            RubyValue::Str(crate::string_new("run".to_string()))
+        }
         Some(ThreadState::Done(Ok(_))) => RubyValue::Bool(false),
         Some(ThreadState::Done(Err(_))) => RubyValue::Nil,
     }
@@ -311,7 +313,11 @@ pub fn thread_local_key(t: &RThread, key: Symbol) -> bool {
 }
 
 pub fn thread_local_keys(t: &RThread) -> Vec<RubyValue> {
-    t.locals.lock().keys().map(|k| RubyValue::Symbol(*k)).collect()
+    t.locals
+        .lock()
+        .keys()
+        .map(|k| RubyValue::Symbol(*k))
+        .collect()
 }
 
 pub fn thread_variable_get(t: &RThread, key: Symbol) -> RubyValue {
@@ -327,7 +333,11 @@ pub fn thread_variable_key(t: &RThread, key: Symbol) -> bool {
 }
 
 pub fn thread_variable_keys(t: &RThread) -> Vec<RubyValue> {
-    t.tvars.lock().keys().map(|k| RubyValue::Symbol(*k)).collect()
+    t.tvars
+        .lock()
+        .keys()
+        .map(|k| RubyValue::Symbol(*k))
+        .collect()
 }
 
 /// Blocks (a real `may` yield point) until the thread finishes, then
@@ -358,7 +368,9 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
         // Another coroutine is currently INSIDE `handle.join()` for this
         // same thread. Rare enough (two joiners racing) that the honest
         // spike answer is a loud failure, not a silent wrong one.
-        None => panic!("concurrent join/value on the same Thread isn't supported yet (spike scope)"),
+        None => {
+            panic!("concurrent join/value on the same Thread isn't supported yet (spike scope)")
+        }
     }
 }
 
@@ -398,7 +410,9 @@ pub fn mutex_lock(m: &RMutex) -> Result<(), &'static str> {
     if *m.owner.lock() == Some(me) {
         return Err("deadlock; recursive locking");
     }
-    m.token_rx.recv().expect("mutex token channel can't disconnect while the mutex is alive");
+    m.token_rx
+        .recv()
+        .expect("mutex token channel can't disconnect while the mutex is alive");
     *m.owner.lock() = Some(me);
     Ok(())
 }
@@ -409,13 +423,15 @@ pub fn mutex_unlock(m: &RMutex) -> Result<(), &'static str> {
     match *owner {
         None => return Err("Attempt to unlock a mutex which is not locked"),
         Some(o) if o != me => {
-            return Err("Attempt to unlock a mutex which is locked by another thread/fiber")
+            return Err("Attempt to unlock a mutex which is locked by another thread/fiber");
         }
         Some(_) => {}
     }
     *owner = None;
     drop(owner);
-    m.token_tx.send(()).expect("mutex token channel can't disconnect while the mutex is alive");
+    m.token_tx
+        .send(())
+        .expect("mutex token channel can't disconnect while the mutex is alive");
     Ok(())
 }
 
@@ -591,7 +607,11 @@ pub fn queue_closed(q: &RQueue) -> bool {
 }
 
 pub fn queue_len(q: &RQueue) -> i64 {
-    q.inner.lock().unwrap_or_else(|e| e.into_inner()).items.len() as i64
+    q.inner
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .items
+        .len() as i64
 }
 
 #[cfg(test)]
@@ -604,13 +624,18 @@ mod tests {
     #[test]
     fn queue_rendezvous_and_close_semantics() {
         let q_val = queue_new();
-        let RubyValue::Queue(q) = &q_val else { panic!() };
+        let RubyValue::Queue(q) = &q_val else {
+            panic!()
+        };
         queue_push(q, RubyValue::Int(1)).unwrap();
         queue_push(q, RubyValue::Int(2)).unwrap();
         assert_eq!(queue_len(q), 2);
         assert!(matches!(queue_pop(q), Ok(RubyValue::Int(1))));
         queue_close(q);
-        assert!(queue_push(q, RubyValue::Int(3)).is_err(), "push to closed queue");
+        assert!(
+            queue_push(q, RubyValue::Int(3)).is_err(),
+            "push to closed queue"
+        );
         // Closed queues still DRAIN before returning nil.
         assert!(matches!(queue_pop(q), Ok(RubyValue::Int(2))));
         assert!(matches!(queue_pop(q), Ok(RubyValue::Nil)));
@@ -619,7 +644,9 @@ mod tests {
     #[test]
     fn mutex_error_semantics_match_cruby() {
         let m_val = mutex_new();
-        let RubyValue::Mutex(m) = &m_val else { panic!() };
+        let RubyValue::Mutex(m) = &m_val else {
+            panic!()
+        };
         assert_eq!(
             mutex_unlock(m).unwrap_err(),
             "Attempt to unlock a mutex which is not locked"

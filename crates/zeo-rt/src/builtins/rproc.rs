@@ -4,8 +4,8 @@
 //! `case x when ->(v) { ... }` means); leaving it to Kernel's equality
 //! default would be silent wrongness.
 
-use crate::builtins::builtin_methods;
 use crate::RubyValue;
+use crate::builtins::builtin_methods;
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
@@ -205,7 +205,9 @@ mod tests {
     #[test]
     fn case_eq_invokes_the_proc() {
         let doubler: crate::RProc = crate::RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Int(i) = &args[0] else { panic!() };
+            let RubyValue::Int(i) = &args[0] else {
+                panic!()
+            };
             Ok(RubyValue::Int(i * 2))
         });
         let p = RubyValue::Proc(doubler);
@@ -217,10 +219,13 @@ mod tests {
     fn adder3() -> RubyValue {
         RubyValue::Proc(crate::RProc::with_meta(
             |args: &[RubyValue]| {
-                let sum = args.iter().map(|a| match a {
-                    RubyValue::Int(i) => *i,
-                    _ => panic!("ints only"),
-                }).sum();
+                let sum = args
+                    .iter()
+                    .map(|a| match a {
+                        RubyValue::Int(i) => *i,
+                        _ => panic!("ints only"),
+                    })
+                    .sum();
                 Ok(RubyValue::Int(sum))
             },
             3,
@@ -248,8 +253,14 @@ mod tests {
         assert_eq!(lambda_p(&p, &[], None).unwrap().inspect_string(), "true");
 
         let plain = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
-        assert_eq!(proc_arity(&plain, &[], None).unwrap().inspect_string(), "-1");
-        assert_eq!(lambda_p(&plain, &[], None).unwrap().inspect_string(), "false");
+        assert_eq!(
+            proc_arity(&plain, &[], None).unwrap().inspect_string(),
+            "-1"
+        );
+        assert_eq!(
+            lambda_p(&plain, &[], None).unwrap().inspect_string(),
+            "false"
+        );
     }
 
     /// `curry` collects arguments until the arity is satisfied, then calls.
@@ -271,8 +282,12 @@ mod tests {
         let out = call(&step, &[RubyValue::Int(3)], None).unwrap();
         assert!(matches!(out, RubyValue::Int(6)));
 
-        let at_once = call(&curry(&adder3(), &[], None).unwrap(),
-            &[RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)], None).unwrap();
+        let at_once = call(
+            &curry(&adder3(), &[], None).unwrap(),
+            &[RubyValue::Int(1), RubyValue::Int(2), RubyValue::Int(3)],
+            None,
+        )
+        .unwrap();
         assert!(matches!(at_once, RubyValue::Int(6)));
     }
 
@@ -280,9 +295,24 @@ mod tests {
     /// accumulate arguments from a previous chain.
     #[test]
     fn each_curry_step_is_independent() {
-        let step = call(&curry(&adder3(), &[], None).unwrap(), &[RubyValue::Int(10)], None).unwrap();
-        let a = call(&call(&step, &[RubyValue::Int(1)], None).unwrap(), &[RubyValue::Int(2)], None).unwrap();
-        let b = call(&call(&step, &[RubyValue::Int(3)], None).unwrap(), &[RubyValue::Int(4)], None).unwrap();
+        let step = call(
+            &curry(&adder3(), &[], None).unwrap(),
+            &[RubyValue::Int(10)],
+            None,
+        )
+        .unwrap();
+        let a = call(
+            &call(&step, &[RubyValue::Int(1)], None).unwrap(),
+            &[RubyValue::Int(2)],
+            None,
+        )
+        .unwrap();
+        let b = call(
+            &call(&step, &[RubyValue::Int(3)], None).unwrap(),
+            &[RubyValue::Int(4)],
+            None,
+        )
+        .unwrap();
         assert!(matches!(a, RubyValue::Int(13)));
         assert!(matches!(b, RubyValue::Int(17)));
     }
@@ -292,8 +322,14 @@ mod tests {
     #[test]
     fn a_curried_proc_reports_var_args_arity_and_is_a_lambda() {
         let curried = curry(&adder3(), &[], None).unwrap();
-        assert_eq!(proc_arity(&curried, &[], None).unwrap().inspect_string(), "-1");
-        assert_eq!(lambda_p(&curried, &[], None).unwrap().inspect_string(), "true");
+        assert_eq!(
+            proc_arity(&curried, &[], None).unwrap().inspect_string(),
+            "-1"
+        );
+        assert_eq!(
+            lambda_p(&curried, &[], None).unwrap().inspect_string(),
+            "true"
+        );
     }
 
     /// An explicit count curries a proc whose own arity is unbounded.

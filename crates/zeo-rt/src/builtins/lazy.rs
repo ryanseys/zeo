@@ -16,11 +16,11 @@
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::{array_new, RProc, RubyValue, Signal};
-use zeo_abi::LAZY_CLASS;
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
 use std::sync::Arc;
+use zeo_abi::LAZY_CLASS;
 
 /// One link in a lazy chain. Block-bearing ops store the block; `Take`/`Drop`
 /// store a count; `Grep` stores its `===` pattern, whether to invert
@@ -83,7 +83,10 @@ impl RubyObject for RLazy {
         Vec::new()
     }
     fn dup_object(&self, _copy_frozen: bool) -> RObj {
-        Arc::new(RLazy { source: self.source.clone(), ops: clone_ops(&self.ops) })
+        Arc::new(RLazy {
+            source: self.source.clone(),
+            ops: clone_ops(&self.ops),
+        })
     }
 }
 
@@ -98,7 +101,10 @@ fn source_size(source: &RubyValue) -> RubyValue {
 
 /// `Enumerable#lazy` -- the entry point every enumerable dispatches to.
 pub(crate) fn make_lazy(source: &RubyValue) -> RubyValue {
-    RubyValue::Object(Arc::new(RLazy { source: source.clone(), ops: Vec::new() }))
+    RubyValue::Object(Arc::new(RLazy {
+        source: source.clone(),
+        ops: Vec::new(),
+    }))
 }
 
 fn lazy_of(recv: &RubyValue) -> &RLazy {
@@ -135,7 +141,10 @@ fn extend(recv: &RubyValue, op: LazyOp) -> RubyValue {
     let l = lazy_of(recv);
     let mut ops = clone_ops(&l.ops);
     ops.push(op);
-    RubyValue::Object(Arc::new(RLazy { source: l.source.clone(), ops }))
+    RubyValue::Object(Arc::new(RLazy {
+        source: l.source.clone(),
+        ops,
+    }))
 }
 
 /// A required block, or CRuby's ArgumentError shape for a lazy op missing one.
@@ -152,12 +161,16 @@ fn need_block(block: Option<RubyValue>, meth: &str) -> Result<RProc, Signal> {
 fn count_arg(v: &RubyValue, meth: &str) -> Result<i64, Signal> {
     match v {
         RubyValue::Int(n) if *n >= 0 => Ok(*n),
-        RubyValue::Int(_) => {
-            Err(raise_error("ArgumentError", format!("attempt to {meth} negative size")))
-        }
+        RubyValue::Int(_) => Err(raise_error(
+            "ArgumentError",
+            format!("attempt to {meth} negative size"),
+        )),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -171,7 +184,10 @@ enum Flow {
 /// Where a driven value ends up: collected into a bounded buffer
 /// (`first`/`to_a`/`force`) or handed to a block (`each`).
 enum Sink<'a> {
-    Collect { out: &'a mut Vec<RubyValue>, limit: Option<usize> },
+    Collect {
+        out: &'a mut Vec<RubyValue>,
+        limit: Option<usize>,
+    },
     Each(&'a RProc),
 }
 
@@ -180,7 +196,11 @@ impl Sink<'_> {
         match self {
             Sink::Collect { out, limit } => {
                 out.push(val);
-                Ok(if limit.is_some_and(|l| out.len() >= l) { Flow::Stop } else { Flow::Continue })
+                Ok(if limit.is_some_and(|l| out.len() >= l) {
+                    Flow::Stop
+                } else {
+                    Flow::Continue
+                })
             }
             Sink::Each(p) => {
                 p.call(std::slice::from_ref(&val))?;
@@ -295,7 +315,11 @@ fn push(
                 return Ok(Flow::Stop);
             }
             let flow = push(ops, st, idx + 1, val, sink)?;
-            Ok(if flow == Flow::Stop || last { Flow::Stop } else { Flow::Continue })
+            Ok(if flow == Flow::Stop || last {
+                Flow::Stop
+            } else {
+                Flow::Continue
+            })
         }
         LazyOp::Drop(n) => {
             let skip = match &mut st[idx] {
@@ -360,7 +384,13 @@ fn drive(lazy: &RLazy, sink: &mut Sink) -> Result<(), Signal> {
 
 fn collect(lazy: &RLazy, limit: Option<usize>) -> Result<Vec<RubyValue>, Signal> {
     let mut out = Vec::new();
-    drive(lazy, &mut Sink::Collect { out: &mut out, limit })?;
+    drive(
+        lazy,
+        &mut Sink::Collect {
+            out: &mut out,
+            limit,
+        },
+    )?;
     Ok(out)
 }
 
@@ -494,23 +524,32 @@ mod tests {
     }
 
     fn ints(v: &RubyValue) -> Vec<i64> {
-        let RubyValue::Array(a) = v else { panic!("expected array") };
-        a.lock().iter().map(|e| match e {
-            RubyValue::Int(i) => *i,
-            _ => panic!("expected ints"),
-        }).collect()
+        let RubyValue::Array(a) = v else {
+            panic!("expected array")
+        };
+        a.lock()
+            .iter()
+            .map(|e| match e {
+                RubyValue::Int(i) => *i,
+                _ => panic!("expected ints"),
+            })
+            .collect()
     }
 
     fn times_two() -> RubyValue {
         RubyValue::Proc(RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Int(i) = args[0] else { unreachable!() };
+            let RubyValue::Int(i) = args[0] else {
+                unreachable!()
+            };
             Ok(RubyValue::Int(i * 2))
         }))
     }
 
     fn is_even() -> RubyValue {
         RubyValue::Proc(RProc::new(|args: &[RubyValue]| {
-            let RubyValue::Int(i) = args[0] else { unreachable!() };
+            let RubyValue::Int(i) = args[0] else {
+                unreachable!()
+            };
             Ok(RubyValue::Bool(i % 2 == 0))
         }))
     }
@@ -539,14 +578,22 @@ mod tests {
 
     #[test]
     fn take_bounds_the_pull() {
-        let taken = take(&make_lazy(&arr(&[10, 20, 30, 40, 50])), &[RubyValue::Int(2)], None).unwrap();
+        let taken = take(
+            &make_lazy(&arr(&[10, 20, 30, 40, 50])),
+            &[RubyValue::Int(2)],
+            None,
+        )
+        .unwrap();
         assert_eq!(first_n(&taken, 2), vec![10, 20]);
     }
 
     #[test]
     fn first_without_arg_returns_one_element() {
         let mapped = map(&make_lazy(&arr(&[1, 2, 3, 4])), &[], Some(times_two())).unwrap();
-        assert!(matches!(first(&mapped, &[], None).unwrap(), RubyValue::Int(2)));
+        assert!(matches!(
+            first(&mapped, &[], None).unwrap(),
+            RubyValue::Int(2)
+        ));
     }
 
     #[test]
@@ -558,7 +605,11 @@ mod tests {
         assert_eq!(first_n(&uniqued, 3), vec![1, 2, 3]);
 
         let with_nils = RubyValue::Array(array_new(vec![
-            RubyValue::Int(1), RubyValue::Nil, RubyValue::Int(2), RubyValue::Nil, RubyValue::Int(3),
+            RubyValue::Int(1),
+            RubyValue::Nil,
+            RubyValue::Int(2),
+            RubyValue::Nil,
+            RubyValue::Int(3),
         ]));
         let compacted = compact(&make_lazy(&with_nils), &[], None).unwrap();
         assert_eq!(first_n(&compacted, 2), vec![1, 2]);

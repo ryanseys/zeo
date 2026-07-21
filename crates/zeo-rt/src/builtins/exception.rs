@@ -16,20 +16,20 @@
 //! subclasses), so a `class MyError < StandardError` is unchanged -- only the
 //! fixed classes themselves move here.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use zeo_abi::{
-    declared_ancestors, ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, FROZEN_ERROR_CLASS,
-    INTERRUPT_CLASS, KEY_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS,
-    NO_METHOD_ERROR_CLASS, SIGNAL_EXCEPTION_CLASS, SYSTEM_EXIT_CLASS, STOP_ITERATION_CLASS,
-    UNCAUGHT_THROW_ERROR_CLASS,
+    ClassId, EXCEPTION_CLASS, EXCEPTION_CLASSES, FROZEN_ERROR_CLASS, INTERRUPT_CLASS,
+    KEY_ERROR_CLASS, LOCAL_JUMP_ERROR_CLASS, NAME_ERROR_CLASS, NO_METHOD_ERROR_CLASS,
+    SIGNAL_EXCEPTION_CLASS, STOP_ITERATION_CLASS, SYSTEM_EXIT_CLASS, UNCAUGHT_THROW_ERROR_CLASS,
+    declared_ancestors,
 };
 
 use crate::dispatch::{
-    class_name, downcast_robj, raise_error, run_initialize, send, ClassRegistry, ConstructorFn,
-    RObj, RubyObject,
+    ClassRegistry, ConstructorFn, RObj, RubyObject, class_name, downcast_robj, raise_error,
+    run_initialize, send,
 };
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -195,7 +195,11 @@ fn guard_frozen(recv: &RObj, e: &RubyException) -> Result<(), Signal> {
 // --- the shared Exception methods -----------------------------------------
 
 /// `def initialize(msg = nil); @message = msg; end`
-fn exc_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let msg = args.first().cloned().unwrap_or(RubyValue::Nil);
     guard_frozen(recv, &e)?;
@@ -205,7 +209,11 @@ fn exc_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> R
 
 /// `def to_s; message_slot || self.class.name; end` -- reads the hidden `mesg`
 /// slot (NOT a `@message` ivar, which a subclass may set independently).
-fn exc_to_s(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_to_s(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let msg = e.mesg.lock().clone();
     match msg {
@@ -223,7 +231,11 @@ fn exc_to_s(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result
 /// `Exception#==`: true when `other` is an exception of the SAME class with an
 /// equal message (backtraces are always `[]` here, so they never differ).
 /// Identity is NOT required -- two `RuntimeError.new("m")` are `==`.
-fn exc_equal(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_equal(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Object(other) = &args[0] else {
         return Ok(RubyValue::Bool(false));
     };
@@ -252,7 +264,11 @@ fn exc_eql(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<R
 /// `Exception#exception`: no argument answers the receiver itself; an argument
 /// equal to the current message also answers self; a different message answers
 /// a copy carrying the new message (CRuby's `exc_exception`).
-fn exc_exception(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_exception(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     match args.first() {
         None => Ok(RubyValue::Object(recv.clone())),
         Some(msg) if msg.rb_eq(&exc(recv).mesg.lock()) => Ok(RubyValue::Object(recv.clone())),
@@ -270,19 +286,31 @@ fn exc_exception(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Re
 /// `to_s` (but not `message`) has its `to_s` honored here, exactly as in CRuby
 /// (`Custom#message` follows `Custom#to_s`). Calling `exc_to_s` directly would
 /// bypass the override.
-fn exc_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_message(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     send(recv, Symbol::intern("to_s"), &[], None)
 }
 
 /// `def backtrace; []; end`
-fn exc_backtrace(_recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_backtrace(
+    _recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Array(array_new(Vec::new())))
 }
 
 /// `def cause; <cause slot>; end` -- the exception that was being handled when
 /// this one was raised (`nil` if none), threaded in at raise time by
 /// [`attach_cause`].
-fn exc_cause(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_cause(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).cause.lock().clone())
 }
 
@@ -292,9 +320,15 @@ fn exc_cause(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Resul
 /// is not the same object as the current `$!` (a bare re-raise leaves its cause
 /// untouched). A no-op for a non-exception raise operand.
 pub fn attach_cause(exc_value: &RubyValue) {
-    let RubyValue::Object(o) = exc_value else { return };
-    let Some(e) = downcast_robj::<RubyException>(o) else { return };
-    let Some(current) = crate::handling::current_exception() else { return };
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return;
+    };
+    let Some(current) = crate::handling::current_exception() else {
+        return;
+    };
     // A bare re-raise of the exception being handled must not become its own
     // cause.
     if let RubyValue::Object(cur_obj) = &current {
@@ -323,18 +357,28 @@ pub fn attach_cause(exc_value: &RubyValue) {
 /// starts out `Nil`, so the two already coincide and the walk below
 /// terminates on its own.
 pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(), Signal> {
-    let RubyValue::Object(o) = exc_value else { return Ok(()) };
-    let Some(e) = downcast_robj::<RubyException>(o) else { return Ok(()) };
+    let RubyValue::Object(o) = exc_value else {
+        return Ok(());
+    };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return Ok(());
+    };
 
     // `cause: nil` -- leave the slot empty, suppressing chaining.
     if matches!(cause, RubyValue::Nil) {
         return Ok(());
     }
     let RubyValue::Object(cause_obj) = &cause else {
-        return Err(raise_error("TypeError", "exception object expected".to_string()));
+        return Err(raise_error(
+            "TypeError",
+            "exception object expected".to_string(),
+        ));
     };
     if !crate::dispatch::is_a(cause_obj.class_id(), zeo_abi::EXCEPTION_CLASS) {
-        return Err(raise_error("TypeError", "exception object expected".to_string()));
+        return Err(raise_error(
+            "TypeError",
+            "exception object expected".to_string(),
+        ));
     }
     // A DIRECT self-cause is silently dropped rather than raising -- an
     // asymmetry with the indirect case below that CRuby's own comment flags,
@@ -350,7 +394,9 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
         if Arc::ptr_eq(c, o) {
             return Err(raise_error("ArgumentError", "circular causes".to_string()));
         }
-        let Some(ce) = downcast_robj::<RubyException>(c) else { break };
+        let Some(ce) = downcast_robj::<RubyException>(c) else {
+            break;
+        };
         let next = ce.cause.lock().clone();
         cur = next;
     }
@@ -363,14 +409,20 @@ pub fn set_explicit_cause(exc_value: &RubyValue, cause: RubyValue) -> Result<(),
 /// `NoMethodError#args`, `UncaughtThrowError#tag`/`#value`. A no-op for a
 /// non-native exception value, so a raise site can call it unconditionally.
 pub fn set_exception_detail(exc_value: &RubyValue, key: &'static str, v: RubyValue) {
-    let RubyValue::Object(o) = exc_value else { return };
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
     if let Some(e) = downcast_robj::<RubyException>(o) {
         e.set_detail(key, v);
     }
 }
 
 /// `NameError#name`/`NoMethodError#name` -- the missing name, `nil` if unset.
-fn exc_name(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_name(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("name"))
 }
 
@@ -378,10 +430,17 @@ fn exc_name(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result
 /// against. CRuby raises `ArgumentError: no receiver is available` when it was
 /// never set (a manually-built `NameError.new("m")`), while a real miss like
 /// `nil.foo` sets it (to nil, here), which still answers nil.
-fn exc_receiver(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_receiver(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     match exc(recv).detail_opt("receiver") {
         Some(v) => Ok(v),
-        None => Err(crate::dispatch::raise_error("ArgumentError", "no receiver is available".to_string())),
+        None => Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "no receiver is available".to_string(),
+        )),
     }
 }
 
@@ -390,20 +449,31 @@ fn exc_receiver(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Re
 fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     match exc(recv).detail_opt("key") {
         Some(v) => Ok(v),
-        None => Err(crate::dispatch::raise_error("ArgumentError", "no key is available".to_string())),
+        None => Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            "no key is available".to_string(),
+        )),
     }
 }
 
 /// `NoMethodError#args` -- the arguments of the failed call, `nil` if the
 /// exception was constructed without them.
-fn exc_args(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_args(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("args"))
 }
 
 /// `NoMethodError#private_call?` -- whether the missing method was invoked
 /// function-style (no explicit receiver). False for an ordinary `recv.meth`
 /// miss, which is every method_missing zeo raises today.
-fn exc_private_call(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_private_call(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Bool(exc(recv).detail("private_call").truthy()))
 }
 
@@ -413,7 +483,11 @@ fn exc_tag(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<
 }
 
 /// `UncaughtThrowError#value` -- the second `throw` argument, `nil` if omitted.
-fn exc_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_value(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("value"))
 }
 
@@ -422,7 +496,11 @@ fn exc_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Resul
 /// classes accept and expose. Registered over the shared `initialize` for every
 /// class whose ancestry includes `NameError`, so a user `class E < NameError`
 /// stores its name the same way.
-fn name_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn name_error_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     guard_frozen(recv, &e)?;
     let msg = args.first().cloned().unwrap_or(RubyValue::Nil);
@@ -446,7 +524,11 @@ fn name_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue
 /// `receiver:`/`key:` keywords the class accepts, which arrive as one trailing
 /// options Hash (the G2 convention). Registered over the shared `initialize` for
 /// `KeyError` and its subclasses.
-fn key_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn key_error_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     guard_frozen(recv, &e)?;
     // The trailing keyword Hash, if present, is NOT the message.
@@ -472,7 +554,11 @@ fn key_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>
 
 /// `SystemExit.new(status = 0, message = "SystemExit")` -- `status` is an
 /// Integer, or `true`/`false` (0 / 1). Exposes `#status`/`#success?`.
-fn system_exit_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn system_exit_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     guard_frozen(recv, &e)?;
     let (status, msg) = match args.first() {
@@ -489,7 +575,11 @@ fn system_exit_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValu
 }
 
 /// `SystemExit#status` -- the exit status (0 when unset).
-fn exc_status(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_status(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(match exc(recv).detail("status") {
         RubyValue::Int(n) => RubyValue::Int(n),
         _ => RubyValue::Int(0),
@@ -497,20 +587,35 @@ fn exc_status(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Resu
 }
 
 /// `SystemExit#success?` -- whether the status is 0.
-fn exc_success(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Bool(matches!(exc(recv).detail("status"), RubyValue::Int(0) | RubyValue::Nil)))
+fn exc_success(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(matches!(
+        exc(recv).detail("status"),
+        RubyValue::Int(0) | RubyValue::Nil
+    )))
 }
 
 /// `LocalJumpError#reason` -- the jump kind (`:noreason`/`:break`/`:return`/...);
 /// `#exit_value` the value carried by the jump.
-fn exc_reason(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_reason(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(match exc(recv).detail("reason") {
         RubyValue::Nil => RubyValue::Symbol(Symbol::intern("noreason")),
         v => v,
     })
 }
 
-fn exc_exit_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_exit_value(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("exit_value"))
 }
 
@@ -518,7 +623,11 @@ fn exc_exit_value(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> 
 /// (<ClassName>)"`. The optional `error_highlight` gem's source-snippet
 /// augmentation is a separate concern and not reproduced; the keyword options
 /// are accepted and ignored, as the core method does.
-fn exc_detailed_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_detailed_message(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let name = class_name(e.class_id).unwrap_or_default();
     let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
@@ -531,7 +640,11 @@ fn exc_detailed_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue
 /// message, else `"SIG<name>"`); a String/Symbol first argument is a signal
 /// NAME and must be the only one (a second argument is `ArgumentError`, as in
 /// CRuby). An unknown name/number is `ArgumentError`.
-fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn signal_exception_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     guard_frozen(recv, &e)?;
     let (signo, message) = match args.first() {
@@ -540,9 +653,10 @@ fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<Rub
             let msg = match args.get(1) {
                 Some(m) => m.clone(),
                 None => {
-                    let name = crate::builtins::signal::name_from_signo(signo).ok_or_else(|| {
-                        raise_error("ArgumentError", format!("invalid signal number ({signo})"))
-                    })?;
+                    let name =
+                        crate::builtins::signal::name_from_signo(signo).ok_or_else(|| {
+                            raise_error("ArgumentError", format!("invalid signal number ({signo})"))
+                        })?;
                     RubyValue::Str(string_new(format!("SIG{name}")))
                 }
             };
@@ -552,7 +666,10 @@ fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<Rub
             if args.len() > 1 {
                 return Err(raise_error(
                     "ArgumentError",
-                    format!("wrong number of arguments (given {}, expected 1)", args.len()),
+                    format!(
+                        "wrong number of arguments (given {}, expected 1)",
+                        args.len()
+                    ),
                 ));
             }
             let spelled = match name {
@@ -565,13 +682,16 @@ fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<Rub
                 raise_error("ArgumentError", format!("unsupported signal `SIG{bare}'"))
             })?;
             let canonical = crate::builtins::signal::name_from_signo(signo).unwrap_or(&spelled);
-            (signo as i64, RubyValue::Str(string_new(format!("SIG{canonical}"))))
+            (
+                signo as i64,
+                RubyValue::Str(string_new(format!("SIG{canonical}"))),
+            )
         }
         _ => {
             return Err(raise_error(
                 "ArgumentError",
                 "wrong number of arguments (given 0, expected 1+)".to_string(),
-            ))
+            ));
         }
     };
     *e.mesg.lock() = message.clone();
@@ -582,7 +702,11 @@ fn signal_exception_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<Rub
 /// `Interrupt.new(message = nil)` -- a `SignalException` pinned to `SIGINT`
 /// (signo 2), whose message defaults to `"Interrupt"` (its class name) rather
 /// than being derived from the signal, matching CRuby.
-fn interrupt_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn interrupt_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     guard_frozen(recv, &e)?;
     let msg = match args.first() {
@@ -595,18 +719,30 @@ fn interrupt_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>
 }
 
 /// `SignalException#signo` -- the signal number.
-fn exc_signo(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_signo(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("signo"))
 }
 
 /// `SignalException#signm` -- an alias for `#message` (a DYNAMIC send, so a
 /// subclass override of `message`/`to_s` is honored).
-fn exc_signm(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_signm(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     send(recv, Symbol::intern("message"), &[], None)
 }
 
 /// `def full_message; self.class.name + ": " + message; end`
-fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_full_message(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let name = class_name(e.class_id).unwrap_or_default();
     // Dynamic `to_s` (honors a subclass override), matching `#message`/`#inspect`.
@@ -616,7 +752,11 @@ fn exc_full_message(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -
 
 /// The exception `inspect`: empty message -> the class name; a message with a
 /// newline -> `#<Name:<message.inspect>>`; else `#<Name: message>`.
-fn exc_inspect(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_inspect(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let name = class_name(e.class_id).unwrap_or_default();
     // `#inspect` reads `to_s` (NOT `message`) -- oracle: a `message`-only
@@ -635,7 +775,11 @@ fn exc_inspect(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Res
 }
 
 /// `StopIteration#__set_result(v); @result = v; end`
-fn stop_set_result(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn stop_set_result(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let e = exc(recv);
     let v = args.first().cloned().unwrap_or(RubyValue::Nil);
     guard_frozen(recv, &e)?;
@@ -644,7 +788,11 @@ fn stop_set_result(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue>) -> 
 }
 
 /// `StopIteration#result` -- the hidden `res` slot (not a `@result` ivar).
-fn stop_result(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn stop_result(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(exc(recv).res.lock().clone())
 }
 
@@ -663,9 +811,16 @@ fn exception_construct(
 
 /// `Exception.exception(*args)` -- the class-method form, an alias for `.new`
 /// (constructs an instance of the receiver class).
-fn exc_class_exception(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_class_exception(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     let RubyValue::Class(cid) = recv else {
-        return Err(raise_error("TypeError", "exception must be sent to a class".to_string()));
+        return Err(raise_error(
+            "TypeError",
+            "exception must be sent to a class".to_string(),
+        ));
     };
     exception_construct(*cid, args, block)
 }
@@ -673,7 +828,11 @@ fn exc_class_exception(recv: &RubyValue, args: &[RubyValue], block: Option<RubyV
 /// `Exception.to_tty?` -- whether the error stream is a TTY. Under the
 /// conformance harness stderr is redirected (not a TTY), so `false`; the value
 /// is environment-dependent, and callers only rely on it being a boolean.
-fn exc_class_to_tty(_recv: &RubyValue, _args: &[RubyValue], _block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+fn exc_class_to_tty(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
     Ok(RubyValue::Bool(false))
 }
 
@@ -783,7 +942,11 @@ pub fn register_exception_subclass(
     if is_signal_exception {
         // `Interrupt` pins SIGINT and defaults its message to the class name, so
         // it takes a distinct `initialize`; both expose `#signo`/`#signm`.
-        let ctor = if is_interrupt { interrupt_initialize } else { signal_exception_initialize };
+        let ctor = if is_interrupt {
+            interrupt_initialize
+        } else {
+            signal_exception_initialize
+        };
         registry.define_method(id, Symbol::intern("initialize"), ctor);
         registry.define_method(id, Symbol::intern("signo"), exc_signo);
         registry.define_method(id, Symbol::intern("signm"), exc_signm);

@@ -106,10 +106,14 @@ impl Engine {
     fn captures_first(&self, haystack: &str) -> Option<Caps> {
         match self {
             Engine::Fast(r) => r.captures(haystack).map(|c| Caps {
-                spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                spans: (0..c.len())
+                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                    .collect(),
             }),
             Engine::Fancy(r) => r.captures(haystack).ok().flatten().map(|c| Caps {
-                spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                spans: (0..c.len())
+                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                    .collect(),
             }),
             Engine::Unmatchable => None,
         }
@@ -121,14 +125,18 @@ impl Engine {
             Engine::Fast(r) => r
                 .captures_iter(haystack)
                 .map(|c| Caps {
-                    spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                    spans: (0..c.len())
+                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                        .collect(),
                 })
                 .collect(),
             Engine::Fancy(r) => r
                 .captures_iter(haystack)
                 .filter_map(|c| c.ok())
                 .map(|c| Caps {
-                    spans: (0..c.len()).map(|i| c.get(i).map(|m| (m.start(), m.end()))).collect(),
+                    spans: (0..c.len())
+                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                        .collect(),
                 })
                 .collect(),
             Engine::Unmatchable => Vec::new(),
@@ -313,15 +321,11 @@ fn needs_fancy(pattern: &str) -> bool {
                 i += 2; // skip the escaped char
                 continue;
             }
-            b'(' if bytes.get(i + 1) == Some(&b'?') => {
-                match bytes.get(i + 2) {
-                    Some(b'=') | Some(b'!') | Some(b'>') | Some(b'#') => return true,
-                    Some(b'<') if matches!(bytes.get(i + 3), Some(b'=') | Some(b'!')) => {
-                        return true
-                    }
-                    _ => {}
-                }
-            }
+            b'(' if bytes.get(i + 1) == Some(&b'?') => match bytes.get(i + 2) {
+                Some(b'=') | Some(b'!') | Some(b'>') | Some(b'#') => return true,
+                Some(b'<') if matches!(bytes.get(i + 3), Some(b'=') | Some(b'!')) => return true,
+                _ => {}
+            },
             // Possessive quantifiers: a quantifier immediately followed by `+`.
             b'+' if i > 0 && matches!(bytes[i - 1], b'*' | b'+' | b'?' | b'}') => return true,
             _ => {}
@@ -335,7 +339,12 @@ fn needs_fancy(pattern: &str) -> bool {
 /// flag groups (fancy-regex's builder exposes only case-insensitivity): `(?m)`
 /// is unconditional (Ruby's `^`/`$` are always line-anchored), `s` maps Ruby's
 /// `/m` (dot matches newline), `x` maps `/x`.
-fn build_fancy(translated: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<fancy_regex::Regex, String> {
+fn build_fancy(
+    translated: &str,
+    ignore_case: bool,
+    extended: bool,
+    multiline: bool,
+) -> Result<fancy_regex::Regex, String> {
     let mut flags = String::from("m");
     if multiline {
         flags.push('s');
@@ -383,7 +392,9 @@ fn validate_posix_classes(source: &str) -> Result<(), String> {
                 j += 1;
             }
             if j + 1 < bytes.len() {
-                let name = source[start..j].strip_prefix('^').unwrap_or(&source[start..j]);
+                let name = source[start..j]
+                    .strip_prefix('^')
+                    .unwrap_or(&source[start..j]);
                 if !POSIX_CLASSES.contains(&name) {
                     return Err(format!("invalid POSIX bracket type: /{source}/"));
                 }
@@ -415,7 +426,12 @@ fn cruby_regex_error(source: &str, raw: &str) -> String {
     format!("{reason}: /{source}/")
 }
 
-pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<RRegexp, String> {
+pub fn regexp_new(
+    source: &str,
+    ignore_case: bool,
+    extended: bool,
+    multiline: bool,
+) -> Result<RRegexp, String> {
     validate_posix_classes(source)?;
     let translated = translate_ruby_escapes(source);
     let engine = if needs_fancy(&translated) {
@@ -682,12 +698,15 @@ pub fn matchdata_offset(
                     "no implicit conversion of {} into Integer",
                     crate::builtins::convert_name_of(other)
                 ),
-            ))
+            ));
         }
     };
-    let span = md.groups.get(usize::try_from(idx).unwrap_or(usize::MAX)).ok_or_else(|| {
-        crate::dispatch::raise_error("IndexError", format!("index {idx} out of matches"))
-    })?;
+    let span = md
+        .groups
+        .get(usize::try_from(idx).unwrap_or(usize::MAX))
+        .ok_or_else(|| {
+            crate::dispatch::raise_error("IndexError", format!("index {idx} out of matches"))
+        })?;
     let (lo, hi) = match span {
         Some((lo, hi)) => (*lo, *hi),
         None => return Ok(offset_pair(RubyValue::Nil, RubyValue::Nil)),
@@ -938,7 +957,9 @@ pub fn regexp_scan(re: &RRegexp, haystack: &str) -> RubyValue {
                 .collect();
             results.push(RubyValue::Array(array_new(group_vals)));
         } else {
-            let whole = caps.str(0, haystack).expect("group 0 is always the whole match");
+            let whole = caps
+                .str(0, haystack)
+                .expect("group 0 is always the whole match");
             results.push(RubyValue::Str(string_new(whole.to_string())));
         }
     }
@@ -962,7 +983,9 @@ pub fn regexp_scan_block(re: &RRegexp, haystack: &str, blk: &RProc) -> Result<()
                 .collect();
             RubyValue::Array(array_new(group_vals))
         } else {
-            let whole = caps.str(0, haystack).expect("group 0 is always the whole match");
+            let whole = caps
+                .str(0, haystack)
+                .expect("group 0 is always the whole match");
             RubyValue::Str(string_new(whole.to_string()))
         };
         blk.call(&[yielded])?;
@@ -1007,7 +1030,10 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
             segments.pop();
         }
     }
-    let items = segments.into_iter().map(|s| RubyValue::Str(string_new(s))).collect();
+    let items = segments
+        .into_iter()
+        .map(|s| RubyValue::Str(string_new(s)))
+        .collect();
     RubyValue::Array(array_new(items))
 }
 
@@ -1020,7 +1046,14 @@ pub fn regexp_split(re: &RRegexp, haystack: &str, limit: i64) -> RubyValue {
 /// supported despite the pattern-matching engine itself having no
 /// backreference support -- a replacement string's `\1` just indexes into
 /// the ALREADY-COMPUTED `Captures`, no re-matching involved.
-fn expand_replacement(template: &str, caps: &Caps, names: &[(String, usize)], haystack: &str, match_start: usize, match_end: usize) -> Result<String, Signal> {
+fn expand_replacement(
+    template: &str,
+    caps: &Caps,
+    names: &[(String, usize)],
+    haystack: &str,
+    match_start: usize,
+    match_end: usize,
+) -> Result<String, Signal> {
     let mut out = String::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
@@ -1073,7 +1106,7 @@ fn expand_replacement(template: &str, caps: &Caps, names: &[(String, usize)], ha
                         return Err(crate::dispatch::raise_error(
                             "IndexError",
                             format!("undefined group name reference: {name}"),
-                        ))
+                        ));
                     }
                 }
             }
@@ -1095,7 +1128,14 @@ pub fn regexp_gsub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<Ru
     for caps in re.engine.captures_all(haystack) {
         let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
         out.push_str(&haystack[last_end..m_start]);
-        out.push_str(&expand_replacement(replacement, &caps, &names, haystack, m_start, m_end)?);
+        out.push_str(&expand_replacement(
+            replacement,
+            &caps,
+            &names,
+            haystack,
+            m_start,
+            m_end,
+        )?);
         last_end = m_end;
     }
     out.push_str(&haystack[last_end..]);
@@ -1110,7 +1150,14 @@ pub fn regexp_sub(re: &RRegexp, haystack: &str, replacement: &str) -> Result<Rub
             let (m_start, m_end) = caps.get(0).expect("group 0 is always the whole match");
             let mut out = String::new();
             out.push_str(&haystack[..m_start]);
-            out.push_str(&expand_replacement(replacement, &caps, &names, haystack, m_start, m_end)?);
+            out.push_str(&expand_replacement(
+                replacement,
+                &caps,
+                &names,
+                haystack,
+                m_start,
+                m_end,
+            )?);
             out.push_str(&haystack[m_end..]);
             Ok(RubyValue::Str(string_new(out)))
         }
@@ -1205,12 +1252,20 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signa
         // `md[range]` slices the group array, like `to_a[range]`.
         RubyValue::Range(..) => {
             let all = matchdata_to_a(m);
-            Ok(crate::dispatch::send_value(&all, crate::Symbol::intern("[]"), std::slice::from_ref(key), None)
-                .unwrap_or(RubyValue::Nil))
+            Ok(crate::dispatch::send_value(
+                &all,
+                crate::Symbol::intern("[]"),
+                std::slice::from_ref(key),
+                None,
+            )
+            .unwrap_or(RubyValue::Nil))
         }
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into Integer",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -1227,13 +1282,17 @@ pub fn matchdata_post_match(m: &RMatchData) -> RubyValue {
 
 /// `MatchData#to_a` -- the whole match (`[0]`) followed by every capture.
 pub fn matchdata_to_a(m: &RMatchData) -> RubyValue {
-    let items = (0..m.groups.len() as i64).map(|i| matchdata_group(m, i)).collect();
+    let items = (0..m.groups.len() as i64)
+        .map(|i| matchdata_group(m, i))
+        .collect();
     RubyValue::Array(array_new(items))
 }
 
 /// `MatchData#captures` -- every capture, EXCLUDING the whole match.
 pub fn matchdata_captures(m: &RMatchData) -> RubyValue {
-    let items = (1..m.groups.len() as i64).map(|i| matchdata_group(m, i)).collect();
+    let items = (1..m.groups.len() as i64)
+        .map(|i| matchdata_group(m, i))
+        .collect();
     RubyValue::Array(array_new(items))
 }
 
@@ -1242,7 +1301,12 @@ pub fn matchdata_named_captures(m: &RMatchData) -> RubyValue {
     let pairs = m
         .names
         .iter()
-        .map(|(name, idx)| (RubyValue::Str(string_new(name.clone())), matchdata_group(m, *idx as i64)))
+        .map(|(name, idx)| {
+            (
+                RubyValue::Str(string_new(name.clone())),
+                matchdata_group(m, *idx as i64),
+            )
+        })
         .collect();
     RubyValue::Hash(hash_new(pairs))
 }
@@ -1275,7 +1339,9 @@ pub fn matchdata_inspect(m: &RMatchData) -> String {
             .map(|(name, _)| name.clone())
             .unwrap_or_else(|| i.to_string());
         let value = match m.groups[i] {
-            Some((s, e)) => RubyValue::Str(string_new(m.haystack[s..e].to_string())).inspect_string(),
+            Some((s, e)) => {
+                RubyValue::Str(string_new(m.haystack[s..e].to_string())).inspect_string()
+            }
             None => "nil".to_string(),
         };
         out.push_str(&format!(" {label}:{value}"));
@@ -1289,7 +1355,9 @@ mod tests {
     use super::*;
 
     fn strs(v: &RubyValue) -> Vec<String> {
-        let RubyValue::Array(a) = v else { panic!("expected an Array") };
+        let RubyValue::Array(a) = v else {
+            panic!("expected an Array")
+        };
         a.lock().iter().map(RubyValue::to_display_string).collect()
     }
 
@@ -1303,14 +1371,14 @@ mod tests {
     fn needs_fancy_detects_only_unsupported_constructs() {
         // Fancy-only constructs.
         for p in [
-            r"(\w)\1",       // backreference
-            r"foo(?=bar)",   // lookahead
-            r"foo(?!bar)",   // negative lookahead
-            r"(?<=\$)\d+",   // lookbehind
-            r"(?<!x)y",      // negative lookbehind
-            r"(?>ab)",       // atomic group
-            r"a(?#note)b",   // inline comment
-            r"a++",          // possessive
+            r"(\w)\1",        // backreference
+            r"foo(?=bar)",    // lookahead
+            r"foo(?!bar)",    // negative lookahead
+            r"(?<=\$)\d+",    // lookbehind
+            r"(?<!x)y",       // negative lookbehind
+            r"(?>ab)",        // atomic group
+            r"a(?#note)b",    // inline comment
+            r"a++",           // possessive
             r"(?<n>\w)\k<n>", // named backref
         ] {
             assert!(needs_fancy(p), "{p} should need fancy");
@@ -1319,9 +1387,9 @@ mod tests {
         for p in [
             r"\d+",
             r"(?<year>\d{4})", // named GROUP is fine on regex
-            r"[a-z]\\1",        // an escaped backslash then literal 1, not a backref
+            r"[a-z]\\1",       // an escaped backslash then literal 1, not a backref
             r"a|b",
-            r"(?i)abc",         // inline flag, supported by regex
+            r"(?i)abc", // inline flag, supported by regex
         ] {
             assert!(!needs_fancy(p), "{p} should NOT need fancy");
         }
@@ -1347,7 +1415,10 @@ mod tests {
     #[test]
     fn split_matches_real_ruby_leniency() {
         let comma = regexp_new(",", false, false, false).unwrap();
-        assert_eq!(strs(&regexp_split(&comma, "a,b,,c", 0)), ["a", "b", "", "c"]);
+        assert_eq!(
+            strs(&regexp_split(&comma, "a,b,,c", 0)),
+            ["a", "b", "", "c"]
+        );
         assert_eq!(strs(&regexp_split(&comma, ",a,b", 0)), ["", "a", "b"]);
         assert_eq!(strs(&regexp_split(&comma, "a,b,", 0)), ["a", "b"]);
         assert!(strs(&regexp_split(&comma, "", 0)).is_empty());
@@ -1368,13 +1439,19 @@ mod tests {
         assert_eq!(&*s.lock().to_utf8_lossy(), "Smith John");
 
         let o = regexp_new("o", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&o, "hello world", "0").unwrap() else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_gsub(&o, "hello world", "0").unwrap() else {
+            panic!("expected a Str")
+        };
         assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 w0rld");
-        let RubyValue::Str(s) = regexp_sub(&o, "hello world", "0").unwrap() else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_sub(&o, "hello world", "0").unwrap() else {
+            panic!("expected a Str")
+        };
         assert_eq!(&*s.lock().to_utf8_lossy(), "hell0 world");
 
         let l = regexp_new("l", false, false, false).unwrap();
-        let RubyValue::Str(s) = regexp_gsub(&l, "hello", r"[\&]").unwrap() else { panic!("expected a Str") };
+        let RubyValue::Str(s) = regexp_gsub(&l, "hello", r"[\&]").unwrap() else {
+            panic!("expected a Str")
+        };
         assert_eq!(&*s.lock().to_utf8_lossy(), "he[l][l]o");
     }
 
@@ -1402,7 +1479,9 @@ mod tests {
         assert_eq!(strs(&regexp_scan(&word, "one two")), ["one", "two"]);
 
         let pair = regexp_new(r"([a-z])(\d)", false, false, false).unwrap();
-        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2") else { panic!("expected an Array") };
+        let RubyValue::Array(a) = regexp_scan(&pair, "a1b2") else {
+            panic!("expected an Array")
+        };
         let groups = a.lock();
         assert_eq!(groups.len(), 2);
         assert_eq!(strs(&groups[0]), ["a", "1"]);

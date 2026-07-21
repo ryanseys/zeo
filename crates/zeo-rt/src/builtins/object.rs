@@ -2,8 +2,8 @@
 //! three) -- the boolean algebra rows and nil's conversion family.
 //! `to_s`/`inspect` resolve through Kernel's rows (nil renders ""/"nil").
 
-use crate::builtins::{arity, builtin_methods};
 use crate::RubyValue;
+use crate::builtins::{arity, builtin_methods};
 
 builtin_methods! {
     pub(crate) fn lookup_nil;
@@ -83,8 +83,16 @@ mod tests {
             nil_or(&RubyValue::Nil, &[RubyValue::Int(1)], None).unwrap(),
             RubyValue::Bool(true)
         ));
-        assert_eq!(nil_to_a(&RubyValue::Nil, &[], None).unwrap().inspect_string(), "[]");
-        assert!(matches!(nil_to_i(&RubyValue::Nil, &[], None).unwrap(), RubyValue::Int(0)));
+        assert_eq!(
+            nil_to_a(&RubyValue::Nil, &[], None)
+                .unwrap()
+                .inspect_string(),
+            "[]"
+        );
+        assert!(matches!(
+            nil_to_i(&RubyValue::Nil, &[], None).unwrap(),
+            RubyValue::Int(0)
+        ));
     }
 
     #[test]

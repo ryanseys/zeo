@@ -25,16 +25,16 @@
 //! lock held across its own execution.
 
 use crate::dispatch::{
-    ancestors_of_value, raise_error, registry_lookup_cloned, send_super_from, ConstructorFn,
-    MethodImpl, RObj, RubyObject,
+    ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
+    registry_lookup_cloned, send_super_from,
 };
 use crate::{ClassId, RProc, RubyValue, Signal, Symbol};
-use zeo_abi::RUNTIME_CLASS_ID_BASE;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
+use zeo_abi::RUNTIME_CLASS_ID_BASE;
 
 /// One runtime-defined class, OR a set of runtime method deltas over a frozen
 /// class (a `define_method` that overrides/adds to an existing class). The two
@@ -226,7 +226,10 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> RubyValu
     let m = dynamic_from_proc(id, name, body);
     {
         let mut w = maps().classes.write().unwrap();
-        w.entry(id.0).or_insert_with(OverlayEntry::delta).methods.insert(name, m);
+        w.entry(id.0)
+            .or_insert_with(OverlayEntry::delta)
+            .methods
+            .insert(name, m);
     }
     mark_live();
     RubyValue::Symbol(name)
@@ -265,7 +268,10 @@ pub fn runtime_define_singleton_method(
         }
         other => Err(raise_error(
             "TypeError",
-            format!("can't define singleton method for {}", immediate_kind(other)),
+            format!(
+                "can't define singleton method for {}",
+                immediate_kind(other)
+            ),
         )),
     }
 }
@@ -293,11 +299,8 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             format!("can't extend {}", immediate_kind(recv)),
         ));
     };
-    let mut names = crate::dispatch::instance_method_names(
-        *mid,
-        crate::dispatch::VisFilter::NotPrivate,
-        false,
-    );
+    let mut names =
+        crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::NotPrivate, false);
     // A runtime module (`Module.new` + `define_method`) keeps its methods in the
     // overlay, which the registry-based enumeration above can't see -- add them.
     for n in overlay_own_method_names(*mid) {
@@ -425,7 +428,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
             return Err(raise_error(
                 "TypeError",
                 "can't define singleton".to_string(),
-            ))
+            ));
         }
         _ => None,
     };
@@ -443,8 +446,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     anc.push(new_id);
     anc.extend_from_slice(super_chain);
     let leaked: &'static [ClassId] = Box::leak(anc.into_boxed_slice());
-    let real_name =
-        crate::dispatch::class_name(real).unwrap_or_else(|| "Object".to_string());
+    let real_name = crate::dispatch::class_name(real).unwrap_or_else(|| "Object".to_string());
     {
         let mut w = maps().classes.write().unwrap();
         w.insert(
@@ -461,7 +463,11 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
     }
     if let Some(k) = cache_key {
         maps().singleton_classes.write().unwrap().insert(k, new_id);
-        maps().singleton_owner.write().unwrap().insert(id_num, owner);
+        maps()
+            .singleton_owner
+            .write()
+            .unwrap()
+            .insert(id_num, owner);
     }
     mark_live();
     Ok(RubyValue::Class(new_id))
@@ -510,7 +516,10 @@ pub fn runtime_class_new(
         None => ClassId(0), // default super is Object
         Some(RubyValue::Class(cid)) => *cid,
         Some(_) => {
-            return Err(raise_error("TypeError", "superclass must be a Class".to_string()))
+            return Err(raise_error(
+                "TypeError",
+                "superclass must be a Class".to_string(),
+            ));
         }
     };
 
@@ -679,7 +688,9 @@ pub fn overlay_own_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
 /// `respond_to?`'s identity-keyed probe, since the class-id walk can't see a
 /// singleton installed on one specific object.
 pub fn object_has_singleton_method(recv: &RubyValue, name: Symbol) -> bool {
-    let RubyValue::Object(o) = recv else { return false };
+    let RubyValue::Object(o) = recv else {
+        return false;
+    };
     maps()
         .singletons
         .read()
@@ -692,7 +703,12 @@ pub fn object_has_singleton_method(recv: &RubyValue, name: Symbol) -> bool {
 /// runtime `define_method` delta on a frozen class, or a runtime class's own
 /// method. `respond_to?`'s ancestor walk consults this per ancestor.
 pub fn overlay_has_instance_method(id: ClassId, name: Symbol) -> bool {
-    maps().classes.read().unwrap().get(&id.0).is_some_and(|e| e.methods.contains_key(&name))
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .is_some_and(|e| e.methods.contains_key(&name))
 }
 
 /// A runtime class's leaked ancestor chain -- `None` for a frozen id or a pure
@@ -700,11 +716,7 @@ pub fn overlay_has_instance_method(id: ClassId, name: Symbol) -> bool {
 pub fn overlay_ancestors(id: ClassId) -> Option<&'static [ClassId]> {
     let c = maps().classes.read().unwrap();
     let anc = c.get(&id.0)?.ancestors;
-    if anc.is_empty() {
-        None
-    } else {
-        Some(anc)
-    }
+    if anc.is_empty() { None } else { Some(anc) }
 }
 
 /// A runtime class's Ruby-visible name (or the anonymous `#<Class:ID>` form).
@@ -809,7 +821,10 @@ fn dyn_object_construct(
     } else if !args.is_empty() {
         return Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 0)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 0)",
+                args.len()
+            ),
         ));
     }
     Ok(RubyValue::Object(obj))
@@ -857,12 +872,22 @@ impl RubyObject for DynObject {
     fn ivar_pairs(&self) -> Vec<(String, RubyValue)> {
         // Keys are stored without the leading `@` (see `ivar_set_named`); pair
         // in one lock so name/value order can't diverge.
-        self.ivars.lock().iter().map(|(k, v)| (format!("@{k}"), v.clone())).collect()
+        self.ivars
+            .lock()
+            .iter()
+            .map(|(k, v)| (format!("@{k}"), v.clone()))
+            .collect()
     }
     fn ivar_get_named(&self, name: &str) -> Option<RubyValue> {
         // A never-assigned ivar reads nil (Ruby's rule), so `Some(Nil)` not
         // `None` -- a name-keyed object always "has" the slot.
-        Some(self.ivars.lock().get(name).cloned().unwrap_or(RubyValue::Nil))
+        Some(
+            self.ivars
+                .lock()
+                .get(name)
+                .cloned()
+                .unwrap_or(RubyValue::Nil),
+        )
     }
     fn ivar_set_named(&self, name: &str, v: RubyValue) -> bool {
         self.ivars.lock().insert(name.to_string(), v);
@@ -937,12 +962,16 @@ mod tests {
     fn runtime_class_inherits_from_another_runtime_class() {
         // parent defines #greet; child < parent inherits it.
         let parent = runtime_class_new(None, None).unwrap();
-        let RubyValue::Class(parent_id) = parent else { panic!() };
+        let RubyValue::Class(parent_id) = parent else {
+            panic!()
+        };
         let greet = Symbol::intern("greet");
         runtime_define_method(parent_id, greet, nullary(99));
 
         let child = runtime_class_new(Some(parent), None).unwrap();
-        let RubyValue::Class(child_id) = child else { panic!() };
+        let RubyValue::Class(child_id) = child else {
+            panic!()
+        };
         assert!(child_id.0 >= RUNTIME_CLASS_ID_BASE);
         // child's ancestors include parent.
         let anc = overlay_ancestors(child_id).unwrap();
@@ -971,7 +1000,9 @@ mod tests {
             false,
         );
         let klass = runtime_class_new(None, Some(body)).unwrap();
-        let RubyValue::Class(cid) = klass else { panic!() };
+        let RubyValue::Class(cid) = klass else {
+            panic!()
+        };
         let inst = dyn_object_construct(cid, &[], None).unwrap();
         let RubyValue::Object(o) = inst else { panic!() };
         let m = resolve_dynamic(&o, cid, Symbol::intern("x")).unwrap();

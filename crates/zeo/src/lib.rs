@@ -21,7 +21,7 @@ pub mod gem_report;
 pub mod hir;
 pub mod lower_error;
 
-pub use parse::gem_compat::{gem_compat, gem_compat_installed, GemCompatEntry, GemCompatOutcome};
+pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
 pub mod parse;
 pub mod types;
 

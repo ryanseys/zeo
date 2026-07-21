@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn float_to_s_scientific_notation_threshold() {
@@ -68,10 +68,7 @@ fn to_s_renders_the_canonical_opts_body_form_and_inspect_the_literal_form() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "(?x-mi:abc)\n(?mi-x:a.c)\n/abc/x\n/abc/mi\n"
-    );
+    assert_eq!(result.stdout, "(?x-mi:abc)\n(?mi-x:a.c)\n/abc/x\n/abc/mi\n");
 }
 
 #[test]
@@ -527,7 +524,10 @@ fn time_interpolates_through_its_own_to_s() {
         "##,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "at 2023-11-14 22:13:20 UTC\n2023-11\nString\n");
+    assert_eq!(
+        result.stdout,
+        "at 2023-11-14 22:13:20 UTC\n2023-11\nString\n"
+    );
 }
 
 #[test]

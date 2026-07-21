@@ -14,7 +14,10 @@ fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -36,9 +39,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// from OpenSSL's RAND_bytes, so this must be a genuine CSPRNG, not a seeded
 /// generator. `OpenSSL::Random::RandomError` is the CRuby failure surface.
 fn fill_random(buf: &mut [u8]) -> Result<(), Signal> {
-    getrandom::fill(buf).map_err(|e| {
-        raise_error("OpenSSL::Random::RandomError", format!("RAND_bytes: {e}"))
-    })
+    getrandom::fill(buf)
+        .map_err(|e| raise_error("OpenSSL::Random::RandomError", format!("RAND_bytes: {e}")))
 }
 
 builtin_methods! {
@@ -89,23 +91,40 @@ mod tests {
     #[test]
     fn random_bytes_returns_requested_length() {
         let r = random_bytes(&RubyValue::Nil, &[RubyValue::Int(16)], None).unwrap();
-        let RubyValue::Str(bytes) = r else { panic!("expected a String") };
+        let RubyValue::Str(bytes) = r else {
+            panic!("expected a String")
+        };
         assert_eq!(bytes.lock().bytes().len(), 16);
     }
 
     #[test]
     fn secure_compare_matches_equality() {
-        assert!(matches!(secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
         // Different lengths compare unequal (never raise, unlike fixed_length).
-        assert!(matches!(secure_compare(&RubyValue::Nil, &[s("abc"), s("abcd")], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            secure_compare(&RubyValue::Nil, &[s("abc"), s("abcd")], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]
     fn fixed_length_secure_compare_on_equal_length() {
         // The unequal-length ArgumentError path needs a class registry (it
         // panics registry-less), so it is exercised by the e2e example instead.
-        assert!(matches!(fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abc")], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            fixed_length_secure_compare(&RubyValue::Nil, &[s("abc"), s("abd")], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 }

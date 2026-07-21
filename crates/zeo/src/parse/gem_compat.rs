@@ -22,7 +22,10 @@ pub enum GemCompatOutcome {
     Compiled,
     /// A name zeo provides via a built-in; the store copy is ignored.
     /// `diverges` when zeo's implementation is not the upstream gem.
-    Builtin { diverges: bool, note: Option<String> },
+    Builtin {
+        diverges: bool,
+        note: Option<String>,
+    },
     /// A native gem zeo can't provide -- the detected layout and why.
     NativeUnsupported { kind: String, reason: String },
     /// A GIT/PATH-source lockfile gem, not drawn from the RubyGems store.
@@ -47,9 +50,7 @@ pub fn gem_compat(
 /// lockfile's subset -- the broad out-of-the-box sample `cargo xtask
 /// gem-compat` runs when given no lockfile. Builds a synthetic gem set from the
 /// store's own `specifications/`.
-pub fn gem_compat_installed(
-    store: &std::path::Path,
-) -> Result<Vec<GemCompatEntry>, String> {
+pub fn gem_compat_installed(store: &std::path::Path) -> Result<Vec<GemCompatEntry>, String> {
     let parsed = gem_store::installed_as_lockfile(store)?;
     classify(store, &parsed)
 }

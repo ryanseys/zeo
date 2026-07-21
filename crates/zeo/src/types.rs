@@ -65,9 +65,7 @@ pub enum TyKind {
 /// `2 ** -2` is a Rational -- an Int-Int `**` result types `Poly`.
 /// (Overflow itself is fine: a Bignum result is still `TyKind::Int`, one
 /// Ruby class with two payloads.)
-pub const INT_RESULT_BINARY_OPS: &[&str] = &[
-    "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
-];
+pub const INT_RESULT_BINARY_OPS: &[&str] = &["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"];
 
 /// An empty locals map, for callers that have no per-scope local-type
 /// context available (or don't need it) -- see `infer_type`.
@@ -174,9 +172,9 @@ pub fn infer_type_with_locals(
         // A box-scoped splice types as its last statement, RESOLVED IN THE
         // BOX (Phase 18) -- what keeps `w = box.eval("Widget.new")`
         // statically typed as the box's own Widget.
-        HirNode::BoxScope { box_id: bx, body } => body
-            .last()
-            .map_or(TyKind::Poly, |&s| infer_type_with_locals(compiler, defining, *bx, locals, s)),
+        HirNode::BoxScope { box_id: bx, body } => body.last().map_or(TyKind::Poly, |&s| {
+            infer_type_with_locals(compiler, defining, *bx, locals, s)
+        }),
         HirNode::BoxHandle(_) => TyKind::Poly,
         // Resolved against the referencing method's own lexical chain
         // (Phase 15.3) -- `defining` is the AOT def->cref: a bare `Item.new`
@@ -243,8 +241,12 @@ pub fn infer_type_with_locals(
             block_arg,
             ..
         } if name == "new"
-            && (args.iter().any(|a| matches!(a, crate::hir::ArrayElem::Splat(_)))
-                || kwargs.iter().any(|k| matches!(k, crate::hir::KwArg::DoubleSplat(_)))
+            && (args
+                .iter()
+                .any(|a| matches!(a, crate::hir::ArrayElem::Splat(_)))
+                || kwargs
+                    .iter()
+                    .any(|k| matches!(k, crate::hir::KwArg::DoubleSplat(_)))
                 || block_arg.is_some()) =>
         {
             TyKind::Poly
@@ -274,7 +276,9 @@ pub fn infer_type_with_locals(
                 _ => TyKind::Poly,
             },
         },
-        HirNode::LocalWrite(_, value) => infer_type_with_locals(compiler, defining, box_id, locals, *value),
+        HirNode::LocalWrite(_, value) => {
+            infer_type_with_locals(compiler, defining, box_id, locals, *value)
+        }
         HirNode::Call {
             receiver: Some(recv),
             name,

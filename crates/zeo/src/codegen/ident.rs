@@ -18,11 +18,11 @@
 use proc_macro2::{Ident, Span};
 
 const RUST_KEYWORDS: &[&str] = &[
-    "as", "async", "await", "break", "const", "continue", "dyn", "else", "enum", "extern",
-    "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub",
-    "ref", "return", "static", "struct", "trait", "true", "type", "unsafe", "use", "where",
-    "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof",
-    "unsized", "virtual", "yield", "try",
+    "as", "async", "await", "break", "const", "continue", "dyn", "else", "enum", "extern", "false",
+    "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+    "return", "static", "struct", "trait", "true", "type", "unsafe", "use", "where", "while",
+    "abstract", "become", "box", "do", "final", "macro", "override", "priv", "typeof", "unsized",
+    "virtual", "yield", "try",
 ];
 
 const UNESCAPABLE: &[&str] = &["self", "Self", "super", "crate"];
@@ -35,11 +35,48 @@ const UNESCAPABLE: &[&str] = &["self", "Self", "super", "crate"];
 /// Hash, ...) never reach this check -- they take `class_ident`'s `__bm_`
 /// reopen arm first.
 const RUST_PRELUDE_COLLISIONS: &[&str] = &[
-    "Option", "Some", "None", "Result", "Ok", "Err", "String", "Vec", "Box", "Clone", "Copy",
-    "Debug", "Default", "Drop", "Eq", "PartialEq", "Ord", "PartialOrd", "Hash", "Iterator",
-    "IntoIterator", "DoubleEndedIterator", "ExactSizeIterator", "Extend", "Fn", "FnMut", "FnOnce",
-    "From", "Into", "TryFrom", "TryInto", "AsRef", "AsMut", "Send", "Sync", "Sized", "Unpin",
-    "ToOwned", "ToString", "FromIterator", "Future", "IntoFuture",
+    "Option",
+    "Some",
+    "None",
+    "Result",
+    "Ok",
+    "Err",
+    "String",
+    "Vec",
+    "Box",
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Drop",
+    "Eq",
+    "PartialEq",
+    "Ord",
+    "PartialOrd",
+    "Hash",
+    "Iterator",
+    "IntoIterator",
+    "DoubleEndedIterator",
+    "ExactSizeIterator",
+    "Extend",
+    "Fn",
+    "FnMut",
+    "FnOnce",
+    "From",
+    "Into",
+    "TryFrom",
+    "TryInto",
+    "AsRef",
+    "AsMut",
+    "Send",
+    "Sync",
+    "Sized",
+    "Unpin",
+    "ToOwned",
+    "ToString",
+    "FromIterator",
+    "Future",
+    "IntoFuture",
 ];
 
 /// A Ruby method name that's a bare operator symbol (`def +`/`def <=>`/
@@ -91,7 +128,9 @@ const OPERATOR_METHOD_NAMES: &[(&str, &str)] = &[
 
 pub fn safe_ident(name: &str) -> Ident {
     if UNESCAPABLE.contains(&name) {
-        panic!("internal error: `{name}` is a Rust path keyword with no raw-identifier form and isn't a legal Ruby identifier either, so safe_ident should never receive it");
+        panic!(
+            "internal error: `{name}` is a Rust path keyword with no raw-identifier form and isn't a legal Ruby identifier either, so safe_ident should never receive it"
+        );
     }
     // Ruby's `_` is an ordinary (readable) local; Rust's `_` is not a named
     // binding at all (`let mut _` won't parse, macro `$x:ident` matchers
@@ -218,7 +257,13 @@ pub(super) fn class_ident(
         let flat: String = ci
             .name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         if ci.box_id != 0 {
             return proc_macro2::Ident::new(
@@ -226,10 +271,7 @@ pub(super) fn class_ident(
                 proc_macro2::Span::call_site(),
             );
         }
-        return proc_macro2::Ident::new(
-            &format!("__bm_{}", flat),
-            proc_macro2::Span::call_site(),
-        );
+        return proc_macro2::Ident::new(&format!("__bm_{}", flat), proc_macro2::Span::call_site());
     }
     // A class DEFINED IN a box (Phase 18): `__b<box>_<leaf>` -- the box id
     // disambiguates it from a same-named main-program class (the ClassId
@@ -242,7 +284,10 @@ pub(super) fn class_ident(
         );
     }
     if RUST_PRELUDE_COLLISIONS.contains(&ci.name.as_str()) {
-        return proc_macro2::Ident::new(&format!("__p_{}", ci.name), proc_macro2::Span::call_site());
+        return proc_macro2::Ident::new(
+            &format!("__p_{}", ci.name),
+            proc_macro2::Span::call_site(),
+        );
     }
     safe_ident(&ci.name)
 }
@@ -333,7 +378,9 @@ mod tests {
 
         fn analyzed(source: &str) -> Compiler {
             let (hir, root) = crate::parse::parse_and_lower(source).expect("parses");
-            crate::analyze::analyze(hir, root).expect("analyzes").compiler
+            crate::analyze::analyze(hir, root)
+                .expect("analyzes")
+                .compiler
         }
 
         fn ident_of(compiler: &Compiler, name: &str) -> String {
@@ -358,9 +405,15 @@ mod tests {
         /// suddenly meant the user's own `Vec`).
         #[test]
         fn a_class_named_after_a_rust_prelude_type_is_mangled() {
-            for name in ["Vec", "Option", "Box", "Result", "Iterator", "Send", "Clone"] {
+            for name in [
+                "Vec", "Option", "Box", "Result", "Iterator", "Send", "Clone",
+            ] {
                 let compiler = analyzed(&format!("class {name}; end"));
-                assert_eq!(ident_of(&compiler, name), format!("__p_{name}"), "class {name}");
+                assert_eq!(
+                    ident_of(&compiler, name),
+                    format!("__p_{name}"),
+                    "class {name}"
+                );
             }
         }
 
@@ -378,7 +431,10 @@ mod tests {
         #[test]
         fn object_takes_the_reopen_arm_too() {
             let compiler = analyzed("def helper; 1; end");
-            assert_eq!(class_ident(&compiler, OBJECT_CLASS).to_string(), "__bm_Object");
+            assert_eq!(
+                class_ident(&compiler, OBJECT_CLASS).to_string(),
+                "__bm_Object"
+            );
         }
 
         /// A NESTED class mangles by ClassId, which is collision-free by

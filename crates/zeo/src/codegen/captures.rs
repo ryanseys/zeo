@@ -83,7 +83,11 @@ pub fn collect_escaping_captures(
     let mut outer: HashSet<String> = outer_names.into_iter().collect();
     outer.extend(own_param_names(params));
     Captures {
-        locals: raw.locals.into_iter().filter(|n| outer.contains(n)).collect(),
+        locals: raw
+            .locals
+            .into_iter()
+            .filter(|n| outer.contains(n))
+            .collect(),
         self_captured: raw.self_captured,
     }
 }
@@ -126,7 +130,8 @@ pub fn block_captures(
 /// escaping block can ever be the right place to catch a `Signal::Return`
 /// that block raises.
 pub fn body_contains_escaping_block(compiler: &Compiler, body: &[NodeId]) -> bool {
-    body.iter().any(|&n| node_contains_escaping_block(compiler, n))
+    body.iter()
+        .any(|&n| node_contains_escaping_block(compiler, n))
 }
 
 fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
@@ -951,13 +956,30 @@ fn walk_multi_target(
         | MultiTarget::Global(_)
         | MultiTarget::Const(_)
         | MultiTarget::ScopedConst { .. } => {}
-        MultiTarget::Call { write_call, tmp_name } => {
+        MultiTarget::Call {
+            write_call,
+            tmp_name,
+        } => {
             if in_escaping && !param_exclusions.contains(tmp_name) {
                 caps.locals.insert(tmp_name.clone());
             }
-            walk(compiler, *write_call, in_escaping, param_exclusions, caps, self_class);
+            walk(
+                compiler,
+                *write_call,
+                in_escaping,
+                param_exclusions,
+                caps,
+                self_class,
+            );
         }
-        MultiTarget::Nested(group) => walk_multi_target_group(compiler, group, in_escaping, param_exclusions, caps, self_class),
+        MultiTarget::Nested(group) => walk_multi_target_group(
+            compiler,
+            group,
+            in_escaping,
+            param_exclusions,
+            caps,
+            self_class,
+        ),
     }
 }
 

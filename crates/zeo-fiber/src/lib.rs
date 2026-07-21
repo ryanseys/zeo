@@ -46,8 +46,8 @@
 //! propagation, not `Drop` impls), so this is unreachable from compiled
 //! programs.
 
-pub use corosensei::{Coroutine, CoroutineResult};
 use corosensei::Yielder;
+pub use corosensei::{Coroutine, CoroutineResult};
 use std::any::TypeId;
 use std::cell::Cell;
 
@@ -195,10 +195,13 @@ mod tests {
     #[test]
     fn panic_inside_a_fiber_restores_the_tls_cell() {
         let mut coro = new_fiber::<i64, i64, i64, _>(|_| panic!("boom"));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            resume(&mut coro, 0)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| resume(&mut coro, 0)));
         assert!(result.is_err());
-        assert_eq!(yield_current::<i64, i64>(1), None, "cell must be back to root state");
+        assert_eq!(
+            yield_current::<i64, i64>(1),
+            None,
+            "cell must be back to root state"
+        );
     }
 }

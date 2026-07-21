@@ -1,4 +1,4 @@
-use crate::support::{run_ruby};
+use crate::support::run_ruby;
 
 #[test]
 fn case_in_array_pattern_binds_pre_and_rest() {
@@ -548,7 +548,10 @@ fn enumerable_predicates_accept_a_pattern() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "true\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\n");
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\n"
+    );
 }
 
 #[test]

@@ -101,10 +101,17 @@ pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
         .any(|(k, _)| matches!(k, ParamKind::Opt | ParamKind::Rest));
     if d.iter().any(|(k, _)| *k == ParamKind::KeyReq) {
         mandatory += 1;
-    } else if d.iter().any(|(k, _)| matches!(k, ParamKind::Key | ParamKind::KeyRest)) {
+    } else if d
+        .iter()
+        .any(|(k, _)| matches!(k, ParamKind::Key | ParamKind::KeyRest))
+    {
         variadic = true;
     }
-    if variadic { -(mandatory + 1) } else { mandatory }
+    if variadic {
+        -(mandatory + 1)
+    } else {
+        mandatory
+    }
 }
 
 /// `Method#parameters`: the array of `[kind, name]` pairs (an anonymous

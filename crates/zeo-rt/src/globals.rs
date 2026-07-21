@@ -85,7 +85,9 @@ pub fn seed_default_globals() {
 /// which reads any unset global as `nil`). Predefined special globals
 /// (`$!`, `$~`, ...) are handled by the caller and never reach here.
 pub fn global_defined(box_id: u32, name: &str) -> bool {
-    GLOBALS.lock().contains_key(&(box_id, resolve(box_id, name)))
+    GLOBALS
+        .lock()
+        .contains_key(&(box_id, resolve(box_id, name)))
 }
 
 #[cfg(test)]

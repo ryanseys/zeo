@@ -12,13 +12,13 @@
 //! docs/EXTENSIONS.md).
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::{string_new, ClassId, RubyValue, Signal};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
 use parking_lot::Mutex;
-use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use zeo_abi::{DIGEST_MD5_CLASS, DIGEST_SHA1_CLASS, DIGEST_SHA256_CLASS, DIGEST_SHA512_CLASS};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Algo {
@@ -116,7 +116,11 @@ pub struct RDigest {
 
 impl RDigest {
     fn new(algo: Algo) -> RDigest {
-        RDigest { algo, buf: Mutex::new(Vec::new()), frozen: AtomicBool::new(false) }
+        RDigest {
+            algo,
+            buf: Mutex::new(Vec::new()),
+            frozen: AtomicBool::new(false),
+        }
     }
 }
 
@@ -171,7 +175,10 @@ fn in_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+            format!(
+                "no implicit conversion of {} into String",
+                crate::builtins::convert_name_of(other)
+            ),
         )),
     }
 }
@@ -192,8 +199,16 @@ fn base64(bytes: &[u8]) -> String {
             | u32::from(*chunk.get(2).unwrap_or(&0));
         s.push(B64[(n >> 18) as usize & 63] as char);
         s.push(B64[(n >> 12) as usize & 63] as char);
-        s.push(if chunk.len() > 1 { B64[(n >> 6) as usize & 63] as char } else { '=' });
-        s.push(if chunk.len() > 2 { B64[n as usize & 63] as char } else { '=' });
+        s.push(if chunk.len() > 1 {
+            B64[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        s.push(if chunk.len() > 2 {
+            B64[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     s
 }
@@ -205,7 +220,10 @@ fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
     if args.len() > 1 {
         return Err(raise_error(
             "ArgumentError",
-            format!("wrong number of arguments (given {}, expected 0..1)", args.len()),
+            format!(
+                "wrong number of arguments (given {}, expected 0..1)",
+                args.len()
+            ),
         ));
     }
     let d = digest_of(recv);
@@ -335,13 +353,22 @@ mod tests {
 
     #[test]
     fn class_hexdigest_matches_ruby() {
-        assert_eq!(t(hexdigest_c(&cls(DIGEST_MD5_CLASS), &[s("")], None)), "d41d8cd98f00b204e9800998ecf8427e");
-        assert_eq!(t(hexdigest_c(&cls(DIGEST_SHA1_CLASS), &[s("abc")], None)), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            t(hexdigest_c(&cls(DIGEST_MD5_CLASS), &[s("")], None)),
+            "d41d8cd98f00b204e9800998ecf8427e"
+        );
+        assert_eq!(
+            t(hexdigest_c(&cls(DIGEST_SHA1_CLASS), &[s("abc")], None)),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
         assert_eq!(
             t(hexdigest_c(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        assert_eq!(t(base64digest_c(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)), "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=");
+        assert_eq!(
+            t(base64digest_c(&cls(DIGEST_SHA256_CLASS), &[s("abc")], None)),
+            "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+        );
     }
 
     #[test]
@@ -349,7 +376,10 @@ mod tests {
         let d = new_m(&cls(DIGEST_SHA256_CLASS), &[], None).unwrap();
         update(&d, &[s("a")], None).unwrap();
         update(&d, &[s("bc")], None).unwrap();
-        assert_eq!(t(hexdigest(&d, &[], None)), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            t(hexdigest(&d, &[], None)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
@@ -361,7 +391,9 @@ mod tests {
             (DIGEST_SHA512_CLASS, 64, 128),
         ] {
             let d = new_m(&cls(id), &[], None).unwrap();
-            assert!(matches!(digest_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == dlen));
+            assert!(
+                matches!(digest_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == dlen)
+            );
             assert!(matches!(block_length(&d, &[], None).unwrap(), RubyValue::Int(n) if n == blen));
         }
     }
@@ -374,14 +406,23 @@ mod tests {
         update(&b, &[s("hello")], None).unwrap();
         assert!(matches!(eq(&a, &[b], None).unwrap(), RubyValue::Bool(true)));
         let hexed = t(hexdigest(&a, &[], None));
-        assert!(matches!(eq(&a, &[s(&hexed)], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(eq(&a, &[s("nope")], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            eq(&a, &[s(&hexed)], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            eq(&a, &[s("nope")], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]
     fn bubble_babble_matches_ruby_reference() {
         // `Digest.bubblebabble("1234567890")` from ruby 4.0.5.
-        assert_eq!(bubble_babble(b"1234567890"), "xesef-disof-gytuf-katof-movif-baxux");
+        assert_eq!(
+            bubble_babble(b"1234567890"),
+            "xesef-disof-gytuf-katof-movif-baxux"
+        );
         assert_eq!(bubble_babble(b"Pineapple"), "xigak-nyryk-humil-bosek-sonax");
         assert_eq!(bubble_babble(b""), "xexax");
     }

@@ -1,4 +1,4 @@
-use crate::support::{run_ruby, run_ruby_project, compile_project};
+use crate::support::{compile_project, run_ruby, run_ruby_project};
 
 #[test]
 fn defined_classifies_syntactic_form() {
@@ -363,10 +363,7 @@ fn value_subclass_of_string_equality_and_hashing() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "HI!\nTag\ntrue\ntrue\ntrue\n1\na\nab\n"
-    );
+    assert_eq!(result.stdout, "HI!\nTag\ntrue\ntrue\ntrue\n1\na\nab\n");
 }
 
 /// A `Numeric` subclass (D3) is an ordinary ivar-carrying object: it defines its
@@ -1417,7 +1414,10 @@ fn anonymous_struct_mints_a_native_class_at_runtime() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(result.stdout, "#<struct a=1, b=2>\n1\n[1, 2]\n[:a, :b]\n9\n");
+    assert_eq!(
+        result.stdout,
+        "#<struct a=1, b=2>\n1\n[1, 2]\n[:a, :b]\n9\n"
+    );
 }
 
 /// `to_enum`/`enum_for` on a user class -- the real-Ruby
@@ -1686,10 +1686,7 @@ fn class_allocate_skips_initialize() {
         "#,
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
-    assert_eq!(
-        result.stdout,
-        "\"Thing\"\nnil\ntrue\n\"\"\n[]\n{}\nThing\n",
-    );
+    assert_eq!(result.stdout, "\"Thing\"\nnil\ntrue\n\"\"\n[]\n{}\nThing\n",);
 }
 
 #[test]
@@ -1862,15 +1859,21 @@ fn subclassing_and_reopening_a_runtime_class() {
 /// than the wrong answer it already had.
 #[test]
 fn reopening_a_runtime_class_falls_back_rather_than_failing_to_compile() {
-    let compiles = |src: &str| {
-        compile_project(&[("main.rb", src)], "main.rb", &[]).is_ok()
-    };
-    assert!(compiles("module M; end\nFoo = Class.new\nclass Foo\n  include M\nend\n"));
-    assert!(compiles("y = 99\nFoo = Class.new\nclass Foo\n  y = 1\nend\n"));
-    assert!(compiles("Foo = Class.new\nclass Foo\n  private\n  def h; 1; end\nend\n"));
+    let compiles = |src: &str| compile_project(&[("main.rb", src)], "main.rb", &[]).is_ok();
+    assert!(compiles(
+        "module M; end\nFoo = Class.new\nclass Foo\n  include M\nend\n"
+    ));
+    assert!(compiles(
+        "y = 99\nFoo = Class.new\nclass Foo\n  y = 1\nend\n"
+    ));
+    assert!(compiles(
+        "Foo = Class.new\nclass Foo\n  private\n  def h; 1; end\nend\n"
+    ));
     // The runtime path is still taken when the body IS expressible -- a
     // generated Data reader has to resolve in the reopened body.
-    let result = run_ruby("D = Data.define(:x)\nclass D\n  def double; x * 2; end\nend\np D.new(3).double\n");
+    let result = run_ruby(
+        "D = Data.define(:x)\nclass D\n  def double; x * 2; end\nend\np D.new(3).double\n",
+    );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "6\n");
 }

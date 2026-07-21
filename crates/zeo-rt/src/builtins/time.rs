@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
+use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, TIME_CLASS};
 
@@ -126,16 +126,20 @@ impl RubyObject for RTime {
 /// derive from them and still agree with it. Without reducing, `2/2` and
 /// `1/1` would be the same instant with different fields, and equal Times
 /// would hash differently.
-fn time_exact(
-    num: num_bigint::BigInt,
-    den: num_bigint::BigInt,
-    offset: Option<i32>,
-) -> RubyValue {
+fn time_exact(num: num_bigint::BigInt, den: num_bigint::BigInt, offset: Option<i32>) -> RubyValue {
     use num_bigint::BigInt;
     use num_integer::Integer;
-    let (num, den) = if den < BigInt::from(0) { (-num, -den) } else { (num, den) };
+    let (num, den) = if den < BigInt::from(0) {
+        (-num, -den)
+    } else {
+        (num, den)
+    };
     let g = num.gcd(&den);
-    let (num, den) = if g > BigInt::from(1) { (num / &g, den / &g) } else { (num, den) };
+    let (num, den) = if g > BigInt::from(1) {
+        (num / &g, den / &g)
+    } else {
+        (num, den)
+    };
     RubyValue::Object(Arc::new(RTime {
         num,
         den,
@@ -151,7 +155,11 @@ fn time_exact(
 fn time_value(sec: i64, nsec: u32, offset: Option<i32>) -> RubyValue {
     use num_bigint::BigInt;
     let billion = BigInt::from(1_000_000_000u32);
-    time_exact(BigInt::from(sec) * &billion + BigInt::from(nsec), billion, offset)
+    time_exact(
+        BigInt::from(sec) * &billion + BigInt::from(nsec),
+        billion,
+        offset,
+    )
 }
 
 /// Build a LOCAL Time from raw epoch parts -- for the other builtins that
@@ -225,7 +233,11 @@ fn local_zone(secs: i64) -> (i32, i32, String) {
     let tz = jiff::tz::TimeZone::system();
     let info = tz.to_offset_info(ts);
     let isdst = i32::from(info.dst().is_dst());
-    (info.offset().seconds(), isdst, info.abbreviation().to_string())
+    (
+        info.offset().seconds(),
+        isdst,
+        info.abbreviation().to_string(),
+    )
 }
 
 /// Break epoch seconds into UTC civil fields via Howard Hinnant's days<->civil
@@ -342,11 +354,27 @@ fn render(t: &RTime, with_subsec: bool) -> String {
 }
 
 const DAY_NAMES: [&str; 7] = [
-    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
 ];
 const MONTH_NAMES: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 /// Ruby's `strftime` -- hand-ported directive table (the Ruby-specific part;
@@ -420,8 +448,22 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'j' => num(tm.tm_yday as i64 + 1, 3),
             'H' => num(tm.tm_hour as i64, 2),
             'k' => format!("{:>2}", tm.tm_hour),
-            'I' => num(if tm.tm_hour % 12 == 0 { 12 } else { (tm.tm_hour % 12) as i64 }, 2),
-            'l' => format!("{:>2}", if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 }),
+            'I' => num(
+                if tm.tm_hour % 12 == 0 {
+                    12
+                } else {
+                    (tm.tm_hour % 12) as i64
+                },
+                2,
+            ),
+            'l' => format!(
+                "{:>2}",
+                if tm.tm_hour % 12 == 0 {
+                    12
+                } else {
+                    tm.tm_hour % 12
+                }
+            ),
             'M' => num(tm.tm_min as i64, 2),
             'S' => num(tm.tm_sec as i64, 2),
             'L' => frac(width.unwrap_or(3)),
@@ -435,7 +477,12 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             'B' => MONTH_NAMES[tm.tm_mon as usize].to_string(),
             'p' => (if tm.tm_hour < 12 { "AM" } else { "PM" }).to_string(),
             'P' => (if tm.tm_hour < 12 { "am" } else { "pm" }).to_string(),
-            'u' => (if tm.tm_wday == 0 { 7 } else { tm.tm_wday as i64 }).to_string(),
+            'u' => (if tm.tm_wday == 0 {
+                7
+            } else {
+                tm.tm_wday as i64
+            })
+            .to_string(),
             'w' => (tm.tm_wday as i64).to_string(),
             's' => t.sec().to_string(),
             // The compound directives, in terms of the above.
@@ -457,7 +504,13 @@ fn strftime(t: &RTime, fmt: &str) -> String {
         } else if swapcase {
             piece = piece
                 .chars()
-                .map(|c| if c.is_uppercase() { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+                .map(|c| {
+                    if c.is_uppercase() {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c.to_ascii_uppercase()
+                    }
+                })
                 .collect();
         }
         out.push_str(&piece);
@@ -485,7 +538,7 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
             return Err(raise_error(
                 "FloatDomainError",
                 RubyValue::Float(*f).to_display_string(),
-            ))
+            ));
         }
         other => {
             return Err(raise_error(
@@ -494,7 +547,7 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
                     "can't convert {} into an exact number",
                     crate::builtins::class_name_of(other)
                 ),
-            ))
+            ));
         }
     };
     // Everything over the common denominator `den`, in nanoseconds.
@@ -573,11 +626,20 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
 /// / hour 25 / min 60 are `ArgumentError`. `parts` is `[year, mon, day, hour,
 /// min, sec]`, any trailing entries absent.
 fn validate_civil_parts(parts: &[i64]) -> Result<(), Signal> {
-    let ranges = [(1usize, 1, 12), (2, 1, 31), (3, 0, 23), (4, 0, 59), (5, 0, 60)];
+    let ranges = [
+        (1usize, 1, 12),
+        (2, 1, 31),
+        (3, 0, 23),
+        (4, 0, 59),
+        (5, 0, 60),
+    ];
     for (i, lo, hi) in ranges {
         if let Some(&v) = parts.get(i) {
             if v < lo || v > hi {
-                return Err(raise_error("ArgumentError", "argument out of range".to_string()));
+                return Err(raise_error(
+                    "ArgumentError",
+                    "argument out of range".to_string(),
+                ));
             }
         }
     }
@@ -670,7 +732,10 @@ fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
         return Err(cant());
     }
     let Some(time) = tokens.next() else {
-        return Err(raise_error("ArgumentError", "no time information".to_string()));
+        return Err(raise_error(
+            "ArgumentError",
+            "no time information".to_string(),
+        ));
     };
     let (hms, frac_str) = match time.split_once('.') {
         Some((h, f)) => (h, Some(f)),
@@ -681,9 +746,10 @@ fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
     let min: i64 = hms.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
     let sec: i64 = hms.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
     let (frac_num, frac_den) = match frac_str {
-        Some(f) if !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()) => {
-            (f.parse::<BigInt>().map_err(|_| cant())?, BigInt::from(10).pow(f.len() as u32))
-        }
+        Some(f) if !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()) => (
+            f.parse::<BigInt>().map_err(|_| cant())?,
+            BigInt::from(10).pow(f.len() as u32),
+        ),
         Some(_) => return Err(cant()),
         None => (BigInt::from(0), BigInt::from(1)),
     };
@@ -694,7 +760,12 @@ fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
         Some("UTC") | Some("Z") => Some(RTime::UTC),
         Some(z) => Some(parse_offset(z)?),
     };
-    Ok(build_civil_time(&[year, mon, day, hour, min, sec], frac_num, frac_den, offset))
+    Ok(build_civil_time(
+        &[year, mon, day, hour, min, sec],
+        frac_num,
+        frac_den,
+        offset,
+    ))
 }
 
 /// A `utc_offset` in seconds, range-checked as real Ruby does: strictly
@@ -710,7 +781,10 @@ fn offset_arg(v: Option<&RubyValue>) -> Result<Option<i32>, Signal> {
         Some(RubyValue::Str(s)) => Ok(Some(parse_offset(&s.lock().to_utf8_lossy())?)),
         Some(other) => Err(raise_error(
             "ArgumentError",
-            format!("\"+HH:MM\" expected for utc_offset: {}", other.to_display_string()),
+            format!(
+                "\"+HH:MM\" expected for utc_offset: {}",
+                other.to_display_string()
+            ),
         )),
     }
 }
@@ -731,7 +805,9 @@ fn parse_offset(s: &str) -> Result<i32, Signal> {
     let bad = || {
         raise_error(
             "ArgumentError",
-            format!("\"+HH:MM\", \"-HH:MM\", \"UTC\" or \"A\"..\"I\",\"K\"..\"Z\" expected for utc_offset: {s}"),
+            format!(
+                "\"+HH:MM\", \"-HH:MM\", \"UTC\" or \"A\"..\"I\",\"K\"..\"Z\" expected for utc_offset: {s}"
+            ),
         )
     };
     if s == "UTC" || s == "Z" {
@@ -770,7 +846,10 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
                 _ => unreachable!(),
             };
             if !(0.0..1_000_000.0).contains(&usec) {
-                return Err(raise_error("ArgumentError", "subsecx out of range".to_string()));
+                return Err(raise_error(
+                    "ArgumentError",
+                    "subsecx out of range".to_string(),
+                ));
             }
             Ok((usec * 1000.0) as u32)
         }
@@ -1382,7 +1461,10 @@ mod tests {
     #[test]
     fn to_i_and_to_f_answer_the_epoch() {
         let t = utc_at(EPOCH);
-        assert!(matches!(to_i(&t, &[], None).unwrap(), RubyValue::Int(EPOCH)));
+        assert!(matches!(
+            to_i(&t, &[], None).unwrap(),
+            RubyValue::Int(EPOCH)
+        ));
         let RubyValue::Float(f) = to_f(&t, &[], None).unwrap() else {
             panic!()
         };
@@ -1418,11 +1500,11 @@ mod tests {
             to_s(&t, &[], None).unwrap().to_display_string(),
             "2023-11-14 22:13:20 UTC"
         );
-        assert_eq!(
-            zone(&t, &[], None).unwrap().to_display_string(),
-            "UTC"
-        );
-        assert!(matches!(utc_p(&t, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert_eq!(zone(&t, &[], None).unwrap().to_display_string(), "UTC");
+        assert!(matches!(
+            utc_p(&t, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
     }
 
     #[test]
@@ -1442,7 +1524,10 @@ mod tests {
             "2023-11-14 17:13:20 -0500"
         );
         assert!(matches!(zone(&t, &[], None).unwrap(), RubyValue::Nil));
-        assert!(matches!(utc_p(&t, &[], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            utc_p(&t, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     /// The strftime directives, against the oracle's own output for this
@@ -1481,7 +1566,9 @@ mod tests {
         let jan = utc_at(1_704_067_200); // 2024-01-01 00:00:00 UTC
         let g = |fmt: &str| {
             let arg = RubyValue::Str(crate::collections::string_new(fmt.to_string()));
-            strftime_row(&jan, &[arg], None).unwrap().to_display_string()
+            strftime_row(&jan, &[arg], None)
+                .unwrap()
+                .to_display_string()
         };
         assert_eq!(g("%m"), "01");
         assert_eq!(g("%-m"), "1");
@@ -1536,14 +1623,24 @@ mod tests {
         let t = time_value(10, 800_000_000, Some(0));
         let sum = plus(&t, &[RubyValue::Float(0.5)], None).unwrap();
         assert!(matches!(to_i(&sum, &[], None).unwrap(), RubyValue::Int(11)));
-        assert!(matches!(nsec(&sum, &[], None).unwrap(), RubyValue::Int(300_000_000)));
+        assert!(matches!(
+            nsec(&sum, &[], None).unwrap(),
+            RubyValue::Int(300_000_000)
+        ));
 
         // The DOUBLE 10.8 -- whose tail survives into the difference.
-        let from_float =
-            time_at(&RubyValue::Class(TIME_CLASS), &[RubyValue::Float(10.8)], None).unwrap();
+        let from_float = time_at(
+            &RubyValue::Class(TIME_CLASS),
+            &[RubyValue::Float(10.8)],
+            None,
+        )
+        .unwrap();
         let diff = minus(&from_float, &[RubyValue::Float(0.9)], None).unwrap();
         assert!(matches!(to_i(&diff, &[], None).unwrap(), RubyValue::Int(9)));
-        assert!(matches!(nsec(&diff, &[], None).unwrap(), RubyValue::Int(900_000_000)));
+        assert!(matches!(
+            nsec(&diff, &[], None).unwrap(),
+            RubyValue::Int(900_000_000)
+        ));
     }
 
     /// A Float epoch is stored EXACTLY, so `subsec` answers the double's true
@@ -1553,25 +1650,43 @@ mod tests {
     /// `Rational(8, 10)`.
     #[test]
     fn a_float_epoch_keeps_its_exact_fraction() {
-        let t = time_at(&RubyValue::Class(TIME_CLASS), &[RubyValue::Float(10.8)], None).unwrap();
+        let t = time_at(
+            &RubyValue::Class(TIME_CLASS),
+            &[RubyValue::Float(10.8)],
+            None,
+        )
+        .unwrap();
         assert_eq!(
             subsec(&t, &[], None).unwrap().inspect_string(),
             "(225179981368525/281474976710656)"
         );
         // ...while `nsec` is the truncated VIEW of that same fraction.
-        assert!(matches!(nsec(&t, &[], None).unwrap(), RubyValue::Int(800_000_000)));
+        assert!(matches!(
+            nsec(&t, &[], None).unwrap(),
+            RubyValue::Int(800_000_000)
+        ));
     }
 
     #[test]
     fn at_accepts_a_float_and_keeps_the_fraction() {
-        let t = time_at(&RubyValue::Class(TIME_CLASS), &[RubyValue::Float(1_700_000_000.5)], None)
-            .unwrap();
+        let t = time_at(
+            &RubyValue::Class(TIME_CLASS),
+            &[RubyValue::Float(1_700_000_000.5)],
+            None,
+        )
+        .unwrap();
         let RubyValue::Float(f) = to_f(&t, &[], None).unwrap() else {
             panic!()
         };
         assert_eq!(f, 1_700_000_000.5);
-        assert!(matches!(nsec(&t, &[], None).unwrap(), RubyValue::Int(500_000_000)));
-        assert!(matches!(usec(&t, &[], None).unwrap(), RubyValue::Int(500_000)));
+        assert!(matches!(
+            nsec(&t, &[], None).unwrap(),
+            RubyValue::Int(500_000_000)
+        ));
+        assert!(matches!(
+            usec(&t, &[], None).unwrap(),
+            RubyValue::Int(500_000)
+        ));
     }
 
     /// `inspect` shows sub-second digits (trimmed) where `to_s` doesn't.
@@ -1604,7 +1719,10 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(matches!(to_i(&t, &[], None).unwrap(), RubyValue::Int(EPOCH)));
+        assert!(matches!(
+            to_i(&t, &[], None).unwrap(),
+            RubyValue::Int(EPOCH)
+        ));
         assert_eq!(
             to_s(&t, &[], None).unwrap().to_display_string(),
             "2023-11-14 22:13:20 UTC"
@@ -1617,9 +1735,18 @@ mod tests {
     fn comparison_is_by_instant_not_by_offset() {
         let a = utc_at(EPOCH);
         let b = utc_at(EPOCH + 1);
-        assert!(matches!(cmp(&a, std::slice::from_ref(&b), None).unwrap(), RubyValue::Int(-1)));
-        assert!(matches!(cmp(&b, std::slice::from_ref(&a), None).unwrap(), RubyValue::Int(1)));
-        assert!(matches!(cmp(&a, std::slice::from_ref(&a), None).unwrap(), RubyValue::Int(0)));
+        assert!(matches!(
+            cmp(&a, std::slice::from_ref(&b), None).unwrap(),
+            RubyValue::Int(-1)
+        ));
+        assert!(matches!(
+            cmp(&b, std::slice::from_ref(&a), None).unwrap(),
+            RubyValue::Int(1)
+        ));
+        assert!(matches!(
+            cmp(&a, std::slice::from_ref(&a), None).unwrap(),
+            RubyValue::Int(0)
+        ));
 
         let same_instant_other_offset = time_value(EPOCH, 0, Some(-5 * 3600));
         assert!(matches!(
@@ -1629,7 +1756,9 @@ mod tests {
         // Equal Times hash equally.
         assert_eq!(
             hash(&a, &[], None).unwrap().inspect_string(),
-            hash(&same_instant_other_offset, &[], None).unwrap().inspect_string()
+            hash(&same_instant_other_offset, &[], None)
+                .unwrap()
+                .inspect_string()
         );
     }
 
@@ -1651,19 +1780,37 @@ mod tests {
     fn getutc_answers_a_utc_copy_without_mutating() {
         let local = time_value(EPOCH, 0, None);
         let u = getutc(&local, &[], None).unwrap();
-        assert!(matches!(utc_p(&u, &[], None).unwrap(), RubyValue::Bool(true)));
+        assert!(matches!(
+            utc_p(&u, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
         // Same instant.
-        assert!(matches!(to_i(&u, &[], None).unwrap(), RubyValue::Int(EPOCH)));
+        assert!(matches!(
+            to_i(&u, &[], None).unwrap(),
+            RubyValue::Int(EPOCH)
+        ));
         // The receiver is untouched.
-        assert!(matches!(utc_p(&local, &[], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            utc_p(&local, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]
     fn weekday_predicates() {
         let t = utc_at(EPOCH); // a Tuesday
-        assert!(matches!(tuesday_p(&t, &[], None).unwrap(), RubyValue::Bool(true)));
-        assert!(matches!(monday_p(&t, &[], None).unwrap(), RubyValue::Bool(false)));
-        assert!(matches!(sunday_p(&t, &[], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            tuesday_p(&t, &[], None).unwrap(),
+            RubyValue::Bool(true)
+        ));
+        assert!(matches!(
+            monday_p(&t, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
+        assert!(matches!(
+            sunday_p(&t, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]
@@ -1673,7 +1820,10 @@ mod tests {
             panic!()
         };
         assert!(secs > EPOCH, "clock is before 2023");
-        assert!(matches!(utc_p(&n, &[], None).unwrap(), RubyValue::Bool(false)));
+        assert!(matches!(
+            utc_p(&n, &[], None).unwrap(),
+            RubyValue::Bool(false)
+        ));
     }
 
     #[test]

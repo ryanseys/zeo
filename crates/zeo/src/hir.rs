@@ -145,7 +145,10 @@ impl Hir {
     /// isn't a `DefMethod` -- the caller already rejects any other statement
     /// shape appearing inside `class << self` (spike scope).
     pub fn set_method_is_class_method(&mut self, id: NodeId) {
-        let HirNode::DefMethod { is_class_method, .. } = &mut self.nodes[id.0 as usize] else {
+        let HirNode::DefMethod {
+            is_class_method, ..
+        } = &mut self.nodes[id.0 as usize]
+        else {
             panic!("set_method_is_class_method: node isn't a DefMethod");
         };
         *is_class_method = true;
@@ -186,7 +189,12 @@ impl Hir {
     /// output.
     pub fn uses_runtime_eval(&self) -> bool {
         self.nodes.iter().any(|node| match node {
-            HirNode::Call { name, receiver, args, .. } => match name.as_str() {
+            HirNode::Call {
+                name,
+                receiver,
+                args,
+                ..
+            } => match name.as_str() {
                 "eval" => receiver.is_none(),
                 "instance_eval" | "class_eval" | "module_eval" => !args.is_empty(),
                 _ => false,
@@ -616,7 +624,10 @@ impl Pattern {
     pub fn for_each_bound_name(&self, visit: &mut impl FnMut(&str)) {
         match self {
             Pattern::Bind(name) => visit(name),
-            Pattern::Value(_) | Pattern::Pin(_) | Pattern::ClassCheck(_) | Pattern::Range { .. } => {}
+            Pattern::Value(_)
+            | Pattern::Pin(_)
+            | Pattern::ClassCheck(_)
+            | Pattern::Range { .. } => {}
             Pattern::Or(pats) => {
                 // No-op in practice -- lowering rejects any binding pattern
                 // inside `|` -- but walking is harmless and keeps this
@@ -630,7 +641,9 @@ impl Pattern {
                 inner.for_each_bound_name(visit);
                 visit(name);
             }
-            Pattern::Array { pre, rest, post, .. } => {
+            Pattern::Array {
+                pre, rest, post, ..
+            } => {
                 for p in pre.iter().chain(post) {
                     p.for_each_bound_name(visit);
                 }
@@ -708,10 +721,16 @@ pub enum MultiTarget {
     Const(String),
     /// An explicit `Foo::BAR` target -- `scope` resolves like
     /// `ConstWrite`'s `Some(class_name)`.
-    ScopedConst { scope: String, name: String },
+    ScopedConst {
+        scope: String,
+        name: String,
+    },
     /// `obj.attr = tmp_name` / `arr[i] = tmp_name` -- see this enum's own
     /// docs above.
-    Call { write_call: NodeId, tmp_name: String },
+    Call {
+        write_call: NodeId,
+        tmp_name: String,
+    },
     /// `(a, b)` -- a nested destructuring group; the value distributed to
     /// this slot is itself further split via `zeo_rt::multi_assign`,
     /// recursively.
@@ -939,7 +958,10 @@ pub enum HirNode {
     /// needs no bigint dependency; codegen emits
     /// `zeo_rt::int_from_u32_digits`. Types as `Int` like `IntegerLit`
     /// (one Ruby Integer class, two payloads).
-    BigIntegerLit { negative: bool, digits: Vec<u32> },
+    BigIntegerLit {
+        negative: bool,
+        digits: Vec<u32>,
+    },
     /// `3r` / `1.5r` (Phase 17.1) -- prism pre-rationalizes the decimal
     /// forms (`1.5r` arrives as numerator 3, denominator 2), so both
     /// components travel as digit strings like `BigIntegerLit`. The
@@ -1250,7 +1272,9 @@ pub enum HirNode {
     /// unconditional labeled Rust `loop { }` with no exit test of its own --
     /// only `break` (or, once Phase 9 exists, an uncaught `raise`) ever ends
     /// it.
-    Loop { body: Vec<NodeId> },
+    Loop {
+        body: Vec<NodeId>,
+    },
     /// `for var in iterable ... end` / `for a, b in pairs ... end`. Unlike
     /// block-based iteration (`each { |x| ... }`), Ruby's `for` does NOT
     /// introduce a new variable scope: `var` and any locals first assigned
@@ -1299,7 +1323,10 @@ pub enum HirNode {
     /// nested-group). See `zeo_rt::multi_assign`'s docs for the exact
     /// leniency rules (missing positions become `nil`; extra values are
     /// silently dropped when there's no splat to catch them).
-    MultiWrite { targets: MultiTargetGroup, value: NodeId },
+    MultiWrite {
+        targets: MultiTargetGroup,
+        value: NodeId,
+    },
     /// `eval("literal ruby source")` -- ONLY the compile-time-constant-string
     /// form (see `parse/mod.rs`'s eval-call-shape recognizer). `body`'s
     /// source was parsed and lowered into THIS SAME arena at lowering time --
@@ -1323,7 +1350,10 @@ pub enum HirNode {
     /// translation of CRuby's loading-box/`cme->def->box` context.
     /// `analyze` descends top-level `BoxScope`s to register their
     /// `ClassDef`s under the box.
-    BoxScope { box_id: u32, body: Vec<NodeId> },
+    BoxScope {
+        box_id: u32,
+        body: Vec<NodeId>,
+    },
     /// The runtime VALUE of a box handle (`box = Ruby::Box.new` binds the
     /// local to this): a `RubyValue::Class` of the box's top-level
     /// surrogate class, so `p box` prints `#<Ruby::Box:N>`, handle equality
@@ -1416,13 +1446,19 @@ pub enum HirNode {
     /// scope (matching real Ruby -- pattern variables behave like ordinary
     /// local assignment regardless of which branch of the enclosing code
     /// ends up reading them afterward).
-    MatchPredicate { subject: NodeId, pattern: Pattern },
+    MatchPredicate {
+        subject: NodeId,
+        pattern: Pattern,
+    },
     /// `expr => pattern` -- the rightward-assignment one-liner: raises
     /// `NoMatchingPatternError` if `pattern` doesn't match (mirrors a
     /// `case/in` with no `else`), otherwise evaluates to `nil` (real Ruby:
     /// this form's value is never used for anything but its binding/raising
     /// side effect).
-    MatchRequired { subject: NodeId, pattern: Pattern },
+    MatchRequired {
+        subject: NodeId,
+        pattern: Pattern,
+    },
     /// `begin body rescue ... else ... ensure ... end` -- also the desugared
     /// form of a method body that's implicitly a `BeginNode` (a `def` with a
     /// bare `rescue`/`ensure` and no explicit `begin`/`end`, confirmed

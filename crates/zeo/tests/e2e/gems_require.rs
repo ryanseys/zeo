@@ -1,12 +1,13 @@
-use crate::support::{run_ruby, run_ruby_project, run_ruby_packages, compile_project, compile_packages};
+use crate::support::{
+    compile_packages, compile_project, run_ruby, run_ruby_packages, run_ruby_project,
+};
 
 #[test]
 fn gem_disclosure_report_records_how_each_library_was_satisfied() {
     // Phase 2b: the report is the honesty anchor for the compatibility claim,
     // so it gets a test that fails when it lies. Runs on the DEFAULT (report-on)
     // path -- the thing --no-report suppresses -- not the harness opt-out.
-    let report =
-        std::env::temp_dir().join(format!("zeo-gems-test-{}.json", std::process::id()));
+    let report = std::env::temp_dir().join(format!("zeo-gems-test-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&report);
     let opts = zeo::CompileOptions {
         gem_report: Some(report.clone()),
@@ -24,7 +25,10 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
     assert!(json.contains(r#""json": {"by": "bundled-gem""#), "{json}");
     assert!(json.contains("serde_json-backed"), "{json}");
     // A faithful pure-Ruby bundled gem: bundled-gem, NOT flagged divergent.
-    assert!(json.contains(r#""optparse": {"by": "bundled-gem""#), "{json}");
+    assert!(
+        json.contains(r#""optparse": {"by": "bundled-gem""#),
+        "{json}"
+    );
     assert!(
         !json[json.find("\"optparse\"").unwrap()..]
             .lines()
@@ -49,7 +53,14 @@ fn gem_compat_classifies_each_locked_gem() {
     let store =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gem_store/store");
     let entries = zeo::gem_compat(&store, &store.join("Gemfile.lock")).unwrap();
-    let outcome = |n: &str| entries.iter().find(|e| e.name == n).unwrap().outcome.clone();
+    let outcome = |n: &str| {
+        entries
+            .iter()
+            .find(|e| e.name == n)
+            .unwrap()
+            .outcome
+            .clone()
+    };
 
     assert_eq!(outcome("purelib"), GemCompatOutcome::Compiled);
     assert!(matches!(
@@ -64,7 +75,12 @@ fn gem_compat_classifies_each_locked_gem() {
     // The no-lockfile mode sweeps the store's specifications/ directly and
     // classifies the same three gems (the broad out-of-the-box sample).
     let swept = zeo::gem_compat_installed(&store).unwrap();
-    let sweep_outcome = |n: &str| swept.iter().find(|e| e.name == n).map(|e| e.outcome.clone());
+    let sweep_outcome = |n: &str| {
+        swept
+            .iter()
+            .find(|e| e.name == n)
+            .map(|e| e.outcome.clone())
+    };
     assert_eq!(sweep_outcome("purelib"), Some(GemCompatOutcome::Compiled));
     assert!(matches!(
         sweep_outcome("nativelib"),
@@ -212,10 +228,7 @@ fn circular_requires_compose_in_rubys_execution_order() {
                 "cb.rb",
                 "puts \"cb start\"\nrequire_relative \"ca\"\nputs \"cb end\"\n",
             ),
-            (
-                "main.rb",
-                "require_relative \"ca\"\nputs \"main done\"\n",
-            ),
+            ("main.rb", "require_relative \"ca\"\nputs \"main done\"\n"),
         ],
         "main.rb",
         &[],
@@ -275,7 +288,10 @@ fn autoload_with_a_dynamic_feature_is_a_clean_compile_error() {
     // isn't the `File.expand_path(..., __dir__)` idiom is a clean rejection
     // (like a non-top-level `require`), not a silently-undefined constant.
     let err = zeo::compile_to_rust("autoload :X, some_method_call").unwrap_err();
-    assert!(err.contains("must resolve at compile time"), "unexpected error: {err}");
+    assert!(
+        err.contains("must resolve at compile time"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -311,10 +327,8 @@ fn non_literal_and_non_top_level_requires_are_clean_compile_errors() {
 
     // Inside begin/rescue -- the optional-dependency idiom is a LOUD
     // compile error under compile-time resolution, never a silent skip.
-    let err = zeo::compile_to_rust(
-        "begin\n  require \"optional_dep\"\nrescue LoadError\nend\n",
-    )
-    .unwrap_err();
+    let err = zeo::compile_to_rust("begin\n  require \"optional_dep\"\nrescue LoadError\nend\n")
+        .unwrap_err();
     assert!(
         err.contains("only supported as a top-level statement"),
         "unexpected error: {err}"
@@ -418,7 +432,6 @@ fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
 }
 
 // ---- Phase 14.3: base64 native-Rust package ----
-
 
 #[test]
 fn base64_package_matches_real_ruby() {
@@ -707,12 +720,10 @@ fn box_globals_are_fully_separate() {
 fn ruby_box_rejections_are_clean_errors() {
     let err = zeo::compile_to_rust("p Ruby::Box.current\n").unwrap_err();
     assert!(err.contains("no compile-time meaning"), "{err}");
-    let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n")
-        .unwrap_err();
+    let err = zeo::compile_to_rust("box = Ruby::Box.new\nx = [box.require(\"f\")]\n").unwrap_err();
     assert!(err.contains("top-level statement"), "{err}");
     let err =
-        zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n")
-            .unwrap_err();
+        zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n").unwrap_err();
     assert!(err.contains("class"), "{err}");
     let err = zeo::compile_to_rust("box = Ruby::Box.new\nbox.eval(1)\n").unwrap_err();
     assert!(err.contains("non-literal"), "{err}");

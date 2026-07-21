@@ -41,8 +41,8 @@
 use crate::{RubyValue, Signal};
 use parking_lot::Mutex as PlMutex;
 use std::cell::RefCell;
-use std::sync::mpsc;
 use std::sync::Arc;
+use std::sync::mpsc;
 
 enum RactorState {
     Running(std::thread::JoinHandle<Result<RubyValue, Signal>>),
@@ -67,8 +67,7 @@ thread_local! {
 /// unshareable/uncopyable arg's message, raised as `RactorError` by codegen.
 pub fn ractor_new(block: RubyValue, args: Vec<RubyValue>) -> Result<RubyValue, String> {
     let body = block.as_proc_unchecked();
-    let crossed: Vec<RubyValue> =
-        args.iter().map(cross_boundary).collect::<Result<_, _>>()?;
+    let crossed: Vec<RubyValue> = args.iter().map(cross_boundary).collect::<Result<_, _>>()?;
     let (tx, rx) = mpsc::channel();
     let handle = std::thread::spawn(move || {
         CURRENT_INCOMING.with(|c| *c.borrow_mut() = Some(rx));
@@ -129,7 +128,9 @@ pub fn ractor_outcome(r: &RRactor) -> Result<RubyValue, Signal> {
             *r.state.lock() = Some(RactorState::Done(outcome.clone()));
             outcome
         }
-        None => panic!("concurrent value/join on the same Ractor isn't supported yet (spike scope)"),
+        None => {
+            panic!("concurrent value/join on the same Ractor isn't supported yet (spike scope)")
+        }
     }
 }
 
@@ -257,7 +258,7 @@ fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), St
             return Err(format!(
                 "can't make shareable object: {}",
                 other.to_display_string()
-            ))
+            ));
         }
     }
     Ok(())
@@ -321,7 +322,10 @@ mod tests {
         let arr = RubyValue::Array(crate::array_new(vec![RubyValue::Int(1)]));
         let crossed = cross_boundary(&arr).unwrap();
         crate::array_set(&arr.as_array_unchecked(), 0, RubyValue::Int(99));
-        assert_eq!(crossed.as_array_unchecked().lock()[0].to_display_string(), "1");
+        assert_eq!(
+            crossed.as_array_unchecked().lock()[0].to_display_string(),
+            "1"
+        );
 
         // A deeply-frozen array crosses by REFERENCE (same storage).
         let frozen = RubyValue::Array(crate::array_new(vec![RubyValue::Int(2)]));
@@ -332,7 +336,9 @@ mod tests {
             &shared.as_array_unchecked()
         ));
 
-        assert!(make_shareable(&RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)))).is_err());
+        assert!(
+            make_shareable(&RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)))).is_err()
+        );
     }
 
     /// Phase 15.2 cycle guards: a self-referential graph used to recurse to
@@ -345,7 +351,10 @@ mod tests {
 
         make_shareable(&v).unwrap();
         assert!(arr.is_frozen());
-        assert!(shareable(&v), "a frozen cycle is shareable (every node frozen)");
+        assert!(
+            shareable(&v),
+            "a frozen cycle is shareable (every node frozen)"
+        );
     }
 
     #[test]

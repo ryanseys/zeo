@@ -19,8 +19,8 @@
 use crate::RubyValue;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The shared storage cell behind every mutable built-in value: the
 /// `Mutex`-guarded payload plus its `.freeze` flag (Phase 13.1), mirroring
@@ -160,9 +160,7 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         // never aliases an Int value, a Rational is always reduced.
         RubyValue::BigInt(b) => HashKey::BigInt((**b).clone()),
         RubyValue::Rational(r) => HashKey::Rational(r.num.clone(), r.den.clone()),
-        RubyValue::Complex(c) => {
-            HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag))))
-        }
+        RubyValue::Complex(c) => HashKey::Complex(Box::new((hash_key(&c.real), hash_key(&c.imag)))),
         RubyValue::Float(f) => HashKey::Float(f.to_bits()),
         RubyValue::Symbol(s) => HashKey::Symbol(*s),
         RubyValue::Str(s) => {
@@ -383,7 +381,7 @@ pub fn array_splat_into(out: &mut Vec<RubyValue>, value: &RubyValue) -> Result<(
                                 crate::builtins::class_name_of(other),
                                 crate::builtins::class_name_of(&bad)
                             ),
-                        ))
+                        ));
                     }
                 }
             } else {
@@ -517,12 +515,16 @@ pub fn hash_enable_compare_by_identity(h: &RHash) {
 
 /// `Hash#keys` -- the ORIGINAL key values, in insertion order.
 pub fn hash_keys(h: &RHash) -> RubyValue {
-    RubyValue::Array(array_new(h.lock().values().map(|(k, _)| k.clone()).collect()))
+    RubyValue::Array(array_new(
+        h.lock().values().map(|(k, _)| k.clone()).collect(),
+    ))
 }
 
 /// `Hash#values`, in insertion order.
 pub fn hash_values(h: &RHash) -> RubyValue {
-    RubyValue::Array(array_new(h.lock().values().map(|(_, v)| v.clone()).collect()))
+    RubyValue::Array(array_new(
+        h.lock().values().map(|(_, v)| v.clone()).collect(),
+    ))
 }
 
 /// Every `(key, value)` pair in insertion order -- the primitive serializers
@@ -602,7 +604,9 @@ pub fn intern_frozen(buf: crate::encoding::StrBuf) -> RStr {
 /// `String#b`, `force_encoding`, IO byte reads, and `\xNN`-bearing literals
 /// build (the byte-level sibling of `string_new`'s UTF-8 text path).
 pub fn string_from_bytes(bytes: Vec<u8>, enc: crate::encoding::EncodingId) -> RStr {
-    Arc::new(Freezable::new(crate::encoding::StrBuf::from_bytes(bytes, enc)))
+    Arc::new(Freezable::new(crate::encoding::StrBuf::from_bytes(
+        bytes, enc,
+    )))
 }
 
 /// Wraps an already-built `StrBuf` (carrying its own encoding) as an `RStr` --
@@ -677,19 +681,35 @@ mod hash_default_tests {
     #[test]
     fn plain_hash_misses_to_nil() {
         let h = hash_new(vec![(RubyValue::Int(1), RubyValue::Int(10))]);
-        assert!(matches!(hash_index(&h, &RubyValue::Int(1)).unwrap(), RubyValue::Int(10)));
-        assert!(matches!(hash_index(&h, &RubyValue::Int(2)).unwrap(), RubyValue::Nil));
+        assert!(matches!(
+            hash_index(&h, &RubyValue::Int(1)).unwrap(),
+            RubyValue::Int(10)
+        ));
+        assert!(matches!(
+            hash_index(&h, &RubyValue::Int(2)).unwrap(),
+            RubyValue::Nil
+        ));
     }
 
     #[test]
     fn default_value_returns_on_miss_without_inserting() {
         let h = hash_new_with_default(RubyValue::Int(0), None);
-        assert!(matches!(hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("x"))).unwrap(), RubyValue::Int(0)));
+        assert!(matches!(
+            hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("x"))).unwrap(),
+            RubyValue::Int(0)
+        ));
         // The default is NOT stored -- a plain default only reads back.
         assert_eq!(hash_len(&h), 0);
         // A present key still wins over the default.
-        hash_set(&h, RubyValue::Symbol(crate::Symbol::intern("y")), RubyValue::Int(5));
-        assert!(matches!(hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("y"))).unwrap(), RubyValue::Int(5)));
+        hash_set(
+            &h,
+            RubyValue::Symbol(crate::Symbol::intern("y")),
+            RubyValue::Int(5),
+        );
+        assert!(matches!(
+            hash_index(&h, &RubyValue::Symbol(crate::Symbol::intern("y"))).unwrap(),
+            RubyValue::Int(5)
+        ));
     }
 }
 

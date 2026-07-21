@@ -9,8 +9,8 @@
 //! Hash so `GC.stat[:count]`-style reads get `nil` rather than crashing --
 //! no fabricated statistics.
 
-use crate::builtins::builtin_methods;
 use crate::RubyValue;
+use crate::builtins::builtin_methods;
 
 builtin_methods! {
     pub(crate) fn lookup_class;
@@ -42,7 +42,10 @@ mod tests {
     fn gc_rows_are_no_ops_that_answer_ruby_shapes() {
         let cls = RubyValue::Class(zeo_abi::GC_CLASS);
         assert!(matches!(gc_start(&cls, &[], None).unwrap(), RubyValue::Nil));
-        assert!(matches!(gc_count(&cls, &[], None).unwrap(), RubyValue::Int(0)));
+        assert!(matches!(
+            gc_count(&cls, &[], None).unwrap(),
+            RubyValue::Int(0)
+        ));
         assert!(matches!(
             gc_enable(&cls, &[], None).unwrap(),
             RubyValue::Bool(false)

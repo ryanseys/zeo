@@ -12,8 +12,8 @@
 
 use quote::quote;
 
-use super::expr::emit_expr;
 use super::Ctx;
+use super::expr::emit_expr;
 use crate::hir::{HirNode, NodeId};
 use proc_macro2::TokenStream;
 

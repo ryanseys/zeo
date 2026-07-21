@@ -154,11 +154,15 @@ mod tests {
 
     #[test]
     fn string_ordering_resolves_through_the_string_spaceship_row() {
-        let r = comparable_send(&s("abc"), "<", &[s("abd")]).unwrap().unwrap();
+        let r = comparable_send(&s("abc"), "<", &[s("abd")])
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
         let r = comparable_send(&s("b"), ">", &[s("a")]).unwrap().unwrap();
         assert!(matches!(r, RubyValue::Bool(true)));
-        let r = comparable_send(&s("m"), "clamp", &[s("a"), s("f")]).unwrap().unwrap();
+        let r = comparable_send(&s("m"), "clamp", &[s("a"), s("f")])
+            .unwrap()
+            .unwrap();
         let RubyValue::Str(clamped) = r else { panic!() };
         assert_eq!(&*clamped.lock().to_utf8_lossy(), "f");
     }
@@ -173,9 +177,13 @@ mod tests {
 
     #[test]
     fn incomparable_ordering_fails_loudly_eq_is_tolerant() {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| comparable_send(&s("a"), "<", &[RubyValue::Int(1)])));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            comparable_send(&s("a"), "<", &[RubyValue::Int(1)])
+        }));
         assert!(r.is_err()); // registry-less: ArgumentError surfaces as a panic
-        let r = comparable_send(&s("a"), "==", &[RubyValue::Int(1)]).unwrap().unwrap();
+        let r = comparable_send(&s("a"), "==", &[RubyValue::Int(1)])
+            .unwrap()
+            .unwrap();
         assert!(matches!(r, RubyValue::Bool(false)));
     }
 
@@ -258,7 +266,9 @@ mod tests {
 
     #[test]
     fn clamp_still_takes_the_two_argument_form() {
-        let out = comparable_send(&int(9), "clamp", &[int(1), int(5)]).unwrap().unwrap();
+        let out = comparable_send(&int(9), "clamp", &[int(1), int(5)])
+            .unwrap()
+            .unwrap();
         assert_eq!(out.inspect_string(), "5");
     }
 

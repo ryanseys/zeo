@@ -156,7 +156,7 @@ pub(crate) fn dynamic_send(
             return Err(crate::dispatch::raise_error(
                 "TypeError",
                 format!("{} is not a symbol nor a string", other.inspect_string()),
-            ))
+            ));
         }
     };
     crate::dispatch::send_value(recv, sym, rest, block)
@@ -193,7 +193,9 @@ mod tests {
     #[test]
     fn eq_row_rejects_wrong_arity_registryless_by_panicking() {
         // No exception factory in unit tests: raise_error panics loudly.
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eq(&RubyValue::Int(1), &[], None)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            eq(&RubyValue::Int(1), &[], None)
+        }));
         assert!(r.is_err());
     }
 }

@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use crate::builtins::{arity, builtin_methods};
-use crate::dispatch::{raise_error, RObj, RubyObject};
-use crate::value::RubyValue;
 use crate::Signal;
+use crate::builtins::{arity, builtin_methods};
+use crate::dispatch::{RObj, RubyObject, raise_error};
+use crate::value::RubyValue;
 use zeo_abi::{ClassId, FILE_STAT_CLASS};
 
 /// A captured `stat(2)` result. `libc::stat` is `Copy` and self-contained, so

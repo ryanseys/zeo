@@ -55,8 +55,8 @@ pub fn catch_break(result: Result<RubyValue, Signal>) -> Result<RubyValue, Signa
 }
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A method activation's "home is still on the stack" flag. A non-lambda
 /// `Proc` constructed while that method runs captures a clone of it (see
