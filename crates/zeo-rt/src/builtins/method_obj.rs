@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use crate::builtins::{arg_error, name_error, type_error};
+use crate::builtins::{arg_error, arity, name_error, type_error};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::signal::Signal;
 use crate::symbol::Symbol;
@@ -289,12 +289,7 @@ fn m_compose_backward(
 /// Shared body of `>>`/`<<`: both sides go through `#call`, so a Method, a
 /// Proc, or any object answering `call` composes uniformly.
 fn compose(recv: &RubyValue, args: &[RubyValue], forward: bool) -> Result<RubyValue, Signal> {
-    if args.len() != 1 {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 1)",
-            args.len()
-        ));
-    }
+    arity!(args, 1);
     let this = recv.clone();
     let other = args[0].clone();
     let call = Symbol::intern("call");
@@ -582,12 +577,7 @@ fn u_bind(
     args: &[RubyValue],
     _b: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    if args.len() != 1 {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 1)",
-            args.len()
-        ));
-    }
+    arity!(args, 1);
     bind_target(recv_unbound(recv), &args[0])
 }
 

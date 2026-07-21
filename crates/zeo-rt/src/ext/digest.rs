@@ -11,7 +11,7 @@
 //! (`digest_length`/`block_length`/`==`/`bubblebabble`/`hexencode`) is built (see
 //! docs/EXTENSIONS.md).
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arity, builtin_methods, type_error};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
@@ -214,12 +214,7 @@ fn base64(bytes: &[u8]) -> String {
 /// string arg is appended, the buffer hashed, and (per CRuby) the object reset
 /// when an arg was supplied.
 fn finalize(recv: &RubyValue, args: &[RubyValue]) -> Result<Vec<u8>, Signal> {
-    if args.len() > 1 {
-        return Err(arg_error!(
-            "wrong number of arguments (given {}, expected 0..1)",
-            args.len()
-        ));
-    }
+    arity!(args, 0..=1);
     let d = digest_of(recv);
     let mut buf = d.buf.lock();
     if let Some(arg) = args.first() {
