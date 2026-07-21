@@ -32,32 +32,20 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// Non-cryptographic entropy for `OpenSSL::Random.random_bytes` -- a
-/// SystemTime-seeded xorshift64*. Documented divergence: this is NOT a CSPRNG
-/// (the real extension draws from OpenSSL's RAND_bytes); it is deterministic
-/// only in that it produces well-distributed bytes, adequate for the
-/// require-past-and-run posture of these ext modules.
-fn fill_random(buf: &mut [u8]) {
-    let mut state = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0x9e37_79b9_7f4a_7c15)
-        | 1;
-    for chunk in buf.chunks_mut(8) {
-        state ^= state >> 12;
-        state ^= state << 25;
-        state ^= state >> 27;
-        let bytes = state.wrapping_mul(0x2545_f491_4f6c_dd1d).to_le_bytes();
-        for (dst, src) in chunk.iter_mut().zip(bytes.iter()) {
-            *dst = *src;
-        }
-    }
+/// OS entropy for `OpenSSL::Random.random_bytes` -- the real extension draws
+/// from OpenSSL's RAND_bytes, so this must be a genuine CSPRNG, not a seeded
+/// generator. `OpenSSL::Random::RandomError` is the CRuby failure surface.
+fn fill_random(buf: &mut [u8]) -> Result<(), Signal> {
+    getrandom::fill(buf).map_err(|e| {
+        raise_error("OpenSSL::Random::RandomError", format!("RAND_bytes: {e}"))
+    })
 }
 
 builtin_methods! {
     pub(crate) fn lookup_class;
 
-    // `OpenSSL::Random.random_bytes(n)` -- n pseudo-random bytes (ASCII-8BIT).
+    // `OpenSSL::Random.random_bytes(n)` -- n cryptographically random bytes
+    // (ASCII-8BIT), drawn from the OS CSPRNG.
     "random_bytes" => fn random_bytes(_recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
@@ -67,7 +55,7 @@ builtin_methods! {
             return Err(raise_error("ArgumentError", "negative string size (or size too big)".to_string()));
         }
         let mut buf = vec![0u8; *n as usize];
-        fill_random(&mut buf);
+        fill_random(&mut buf)?;
         Ok(RubyValue::Str(crate::string_from_bytes(buf, crate::encoding::ASCII_8BIT)))
     }
     // `OpenSSL.fixed_length_secure_compare(a, b)` -- constant-time equality;
