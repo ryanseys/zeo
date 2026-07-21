@@ -45,7 +45,7 @@ fn to_int_for_format(v: &RubyValue) -> Result<num_bigint::BigInt, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -60,7 +60,7 @@ fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Float",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }

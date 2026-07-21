@@ -39,7 +39,7 @@
 //! `FiberError`/`can't copy execution context` messages.
 
 use crate::builtins::enumerable::pack;
-use crate::builtins::{arity, builtin_methods, class_name_of};
+use crate::builtins::{arity, builtin_methods};
 use crate::collections::array_new;
 use crate::dispatch::{raise_error, raise_stop_iteration, send_value};
 use crate::signal::Signal;
@@ -203,7 +203,7 @@ pub(crate) fn enumerator_new(
         Some(other) => {
             return Err(raise_error(
                 "TypeError",
-                format!("can't convert {} into Integer", class_name_of(other)),
+                format!("can't convert {} into Integer", crate::builtins::convert_name_of(other)),
             ))
         }
     };
@@ -748,7 +748,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Integer",
-                        class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }

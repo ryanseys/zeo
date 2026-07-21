@@ -309,7 +309,7 @@ fn exact_abs_rational(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::
         other => {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("can't convert {} into Float", crate::builtins::class_name_of(other)),
+                format!("can't convert {} into Float", crate::builtins::convert_name_of(other)),
             ))
         }
     })

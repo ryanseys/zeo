@@ -57,7 +57,7 @@ fn t_set_name(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> 
         other => {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
             ))
         }
     };

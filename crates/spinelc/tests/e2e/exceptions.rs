@@ -167,6 +167,40 @@ fn raising_a_non_exception_is_a_type_error() {
 }
 
 #[test]
+fn coercion_type_errors_name_nil_true_false_as_literals_not_class_names() {
+    // CRuby renders nil/true/false in a coercion TypeError as those words, not
+    // `NilClass`/`TrueClass`/`FalseClass`; every other object uses its class
+    // name (`Integer`, `Symbol`).
+    let result = run_ruby(
+        r#"
+        def msg
+          yield
+        rescue TypeError => e
+          puts e.message
+        end
+        msg { "" + nil }
+        msg { "" + true }
+        msg { "" + false }
+        msg { "" + 1 }
+        msg { "" + :s }
+        msg { Float(nil) }
+        msg { Integer(true) }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "no implicit conversion of nil into String\n\
+         no implicit conversion of true into String\n\
+         no implicit conversion of false into String\n\
+         no implicit conversion of Integer into String\n\
+         no implicit conversion of Symbol into String\n\
+         can't convert nil into Float\n\
+         can't convert true into Integer\n"
+    );
+}
+
+#[test]
 fn match_predicate_one_liner_is_a_boolean_that_never_raises() {
     let result = run_ruby(
         r#"

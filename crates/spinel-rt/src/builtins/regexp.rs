@@ -250,7 +250,7 @@ builtin_methods! {
             Some(RubyValue::Int(n)) => Ok(crate::lastmatch::last_match_group((*n).max(0) as usize)),
             Some(other) => Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         }
     }
@@ -261,7 +261,7 @@ builtin_methods! {
         let RubyValue::Str(s) = &args[0] else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
@@ -287,7 +287,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into String",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -326,7 +326,7 @@ builtin_methods! {
                     other => {
                         return Err(crate::dispatch::raise_error(
                             "TypeError",
-                            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
                         ))
                     }
                 }
@@ -357,7 +357,7 @@ builtin_methods! {
             other => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                    format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
                 ))
             }
         };

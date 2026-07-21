@@ -518,7 +518,7 @@ pub fn matchdata_offset(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -976,7 +976,7 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signa
         }
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
         )),
     }
 }

@@ -402,7 +402,7 @@ fn cycle(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -875,7 +875,7 @@ fn min_max(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(n_arg)
+                    crate::builtins::convert_name_of(n_arg)
                 ),
             ));
         };
@@ -1031,7 +1031,7 @@ fn min_max_by(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -1273,7 +1273,7 @@ fn tally(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Hash",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }

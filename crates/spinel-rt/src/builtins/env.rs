@@ -74,7 +74,7 @@ fn key(v: &RubyValue, method: &str) -> Result<String, crate::Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into String (in `{method}')",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -264,7 +264,7 @@ builtin_methods! {
             let RubyValue::Hash(h) = a else {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(a)),
+                    format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(a)),
                 ));
             };
             for (k, v) in crate::collections::hash_pairs(h) {
@@ -323,7 +323,7 @@ builtin_methods! {
         let RubyValue::Hash(h) = &args[0] else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         let next = crate::collections::hash_pairs(h);

@@ -94,7 +94,7 @@ pub fn arg_encoding(v: &RubyValue) -> Result<EncodingId, Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into String",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }

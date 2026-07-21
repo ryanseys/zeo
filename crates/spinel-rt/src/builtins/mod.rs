@@ -408,6 +408,20 @@ pub(crate) fn class_name_of(v: &RubyValue) -> String {
         .unwrap_or_else(|| format!("#<Class:{}>", v.class_id().0))
 }
 
+/// The name CRuby uses for `v` in a coercion `TypeError` -- "no implicit
+/// conversion of X into Y" / "can't convert X into Y". CRuby renders `nil`,
+/// `true`, and `false` as those literals rather than their class names
+/// (`NilClass`/`TrueClass`/`FalseClass`); every other object uses its class
+/// name. Use this, not `class_name_of`, when building those messages.
+pub(crate) fn convert_name_of(v: &RubyValue) -> String {
+    match v {
+        RubyValue::Nil => "nil".to_string(),
+        RubyValue::Bool(true) => "true".to_string(),
+        RubyValue::Bool(false) => "false".to_string(),
+        _ => class_name_of(v),
+    }
+}
+
 /// Declares one Ruby class/module's method table: each row is a named
 /// function (unit-testable, a real frame in backtraces) plus one generated
 /// `lookup` match from Ruby method name(s) to it. Aliases share an
@@ -514,7 +528,7 @@ macro_rules! arg_int {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }
@@ -532,7 +546,7 @@ macro_rules! arg_str {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }

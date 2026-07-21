@@ -67,7 +67,7 @@ pub fn eval_value(
             "TypeError",
             format!(
                 "no implicit conversion of {} into String",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }

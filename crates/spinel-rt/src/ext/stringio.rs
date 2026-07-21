@@ -134,7 +134,7 @@ builtin_methods! {
             }
             Some(other) => Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         }
     }
@@ -360,7 +360,7 @@ builtin_methods! {
             Some(RubyValue::Str(s)) => s.lock().bytes().to_vec(),
             Some(other) => return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
             )),
         };
         Ok(RubyValue::Object(Arc::new(RStringIO::with_bytes(bytes))))

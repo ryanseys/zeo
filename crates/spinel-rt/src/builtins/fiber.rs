@@ -100,7 +100,7 @@ fn f_set_storage(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) 
         other => {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(other)),
             ))
         }
     };

@@ -374,7 +374,7 @@ builtin_methods! {
         let RubyValue::Str(s) = &args[0] else {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         let text = s.lock().to_utf8_lossy().into_owned();

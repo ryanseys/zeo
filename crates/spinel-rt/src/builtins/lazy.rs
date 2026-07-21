@@ -157,7 +157,7 @@ fn count_arg(v: &RubyValue, meth: &str) -> Result<i64, Signal> {
         }
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
         )),
     }
 }

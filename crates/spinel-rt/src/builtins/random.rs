@@ -118,7 +118,7 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -229,7 +229,7 @@ fn to_f64(v: &RubyValue) -> Result<f64, Signal> {
         RubyValue::Float(x) => Ok(*x),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Float", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)),
         )),
     }
 }
@@ -269,7 +269,7 @@ crate::builtins::builtin_methods! {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
             return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0]))));
+                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
         };
         Ok(random_bytes(&as_random(recv).state, (*n).max(0) as usize))
     }
@@ -330,7 +330,7 @@ crate::builtins::builtin_methods! {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
             return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0]))));
+                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
         };
         Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
     }
@@ -342,7 +342,7 @@ crate::builtins::builtin_methods! {
         crate::builtins::arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
             return Err(raise_error("TypeError", format!(
-                "no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0]))));
+                "no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0]))));
         };
         Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
     }

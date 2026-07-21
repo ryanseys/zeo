@@ -999,7 +999,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }

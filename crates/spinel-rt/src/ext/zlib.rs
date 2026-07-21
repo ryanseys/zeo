@@ -16,7 +16,7 @@ fn bytes_arg(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
         Some(RubyValue::Str(s)) => Ok(s.lock().bytes().to_vec()),
         Some(other) => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
         )),
     }
 }

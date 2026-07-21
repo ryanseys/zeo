@@ -171,7 +171,7 @@ fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -384,7 +384,7 @@ fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into String",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }

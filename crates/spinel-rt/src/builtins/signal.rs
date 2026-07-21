@@ -134,7 +134,7 @@ builtin_methods! {
             other => {
                 return Err(raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into Integer", class_name_of(other)),
+                    format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
                 ))
             }
         };

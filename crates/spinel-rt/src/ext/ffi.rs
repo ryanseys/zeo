@@ -347,7 +347,7 @@ fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
         )),
     }
 }
@@ -618,7 +618,7 @@ fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
         RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Array", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Array", crate::builtins::convert_name_of(other)),
         )),
     }
 }

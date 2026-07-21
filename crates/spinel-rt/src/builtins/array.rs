@@ -60,7 +60,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         }
@@ -172,7 +172,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -187,7 +187,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -223,7 +223,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         }
@@ -235,7 +235,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -383,7 +383,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Array",
-                        crate::builtins::class_name_of(a)
+                        crate::builtins::convert_name_of(a)
                     ),
                 ));
             };
@@ -403,7 +403,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }
@@ -628,7 +628,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into String",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }
@@ -737,7 +737,7 @@ builtin_methods! {
                 RubyValue::Int(i) => *i,
                 other => return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                    format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
                 )),
             };
             let idx = if i < 0 { i + n } else { i };
@@ -864,7 +864,7 @@ builtin_methods! {
                     "TypeError",
                     format!(
                         "no implicit conversion of {} into Integer",
-                        crate::builtins::class_name_of(other)
+                        crate::builtins::convert_name_of(other)
                     ),
                 ))
             }
@@ -1018,7 +1018,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -1126,7 +1126,7 @@ builtin_methods! {
         let RubyValue::Str(t) = &args[0] else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into String", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         let template = t.lock().to_utf8_lossy().into_owned();
@@ -1239,7 +1239,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };
@@ -1286,7 +1286,7 @@ builtin_methods! {
             Some(RubyValue::Int(v)) => *v,
             Some(other) => return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         };
         let handle = recv_array!(recv);
@@ -1422,7 +1422,7 @@ fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -1439,7 +1439,7 @@ fn set_op_args(args: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, crate::Signal>
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Array",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         })
@@ -1524,7 +1524,7 @@ fn range_index_error(v: &RubyValue) -> crate::Signal {
         "TypeError",
         format!(
             "no implicit conversion of {} into Integer",
-            crate::builtins::class_name_of(v)
+            crate::builtins::convert_name_of(v)
         ),
     )
 }
@@ -1860,7 +1860,7 @@ fn index_only(recv: &RubyValue, key: &RubyValue) -> Result<RubyValue, crate::Sig
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(key)
+                crate::builtins::convert_name_of(key)
             ),
         )),
     }

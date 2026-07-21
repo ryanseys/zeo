@@ -443,7 +443,7 @@ fn io_read_val(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) ->
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -876,7 +876,7 @@ fn io_putc(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Res
         other => {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             ))
         }
     };

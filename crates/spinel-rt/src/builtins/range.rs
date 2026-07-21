@@ -307,7 +307,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         }
@@ -348,7 +348,7 @@ builtin_methods! {
             }
             Some(other) => return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
@@ -407,7 +407,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };

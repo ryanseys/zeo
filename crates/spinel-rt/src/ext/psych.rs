@@ -55,7 +55,7 @@ fn load_text(v: &RubyValue) -> Result<String, Signal> {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => Err(raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
         )),
     }
 }

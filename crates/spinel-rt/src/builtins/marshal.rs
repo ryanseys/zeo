@@ -504,7 +504,7 @@ fn to_bigint(v: &RubyValue) -> Result<BigInt, Signal> {
         RubyValue::BigInt(b) => Ok((**b).clone()),
         other => Err(raise_error(
             "TypeError",
-            format!("can't convert {} into Integer", crate::builtins::class_name_of(other)),
+            format!("can't convert {} into Integer", crate::builtins::convert_name_of(other)),
         )),
     }
 }

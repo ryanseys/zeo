@@ -492,7 +492,7 @@ fn shift(t: &RTime, delta: &RubyValue, sign: i64) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "can't convert {} into an exact number",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -527,7 +527,7 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             "TypeError",
             format!(
                 "can't convert {} into an exact number",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -560,7 +560,7 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         })
@@ -761,7 +761,7 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -819,7 +819,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer (utc_offset)",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         };
@@ -918,7 +918,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer (utc_offset)",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         }
@@ -972,7 +972,7 @@ fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
             "TypeError",
             format!(
                 "no implicit conversion of {} into Integer",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -1161,7 +1161,7 @@ builtin_methods! {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into String",
-                    crate::builtins::class_name_of(&args[0])
+                    crate::builtins::convert_name_of(&args[0])
                 ),
             ));
         };

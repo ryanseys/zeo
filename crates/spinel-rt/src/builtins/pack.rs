@@ -448,7 +448,7 @@ fn next_int(elems: &[RubyValue], idx: &mut usize) -> Result<i64, Signal> {
         RubyValue::BigInt(b) => Ok(num_traits::ToPrimitive::to_i64(&**b).unwrap_or(0)),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
         )),
     }
 }
@@ -472,7 +472,7 @@ fn next_int_bits(elems: &[RubyValue], idx: &mut usize) -> Result<u64, Signal> {
         },
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
         )),
     }
 }
@@ -517,7 +517,7 @@ fn next_str(elems: &[RubyValue], idx: &mut usize) -> Result<Vec<u8>, Signal> {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
-            format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
         )),
     }
 }

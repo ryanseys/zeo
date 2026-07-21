@@ -58,7 +58,7 @@ pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into String (in `{method}')",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -399,7 +399,7 @@ fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
             RubyValue::Int(i) => Ok(i as libc::time_t),
             _ => Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         },
     }
@@ -934,7 +934,7 @@ builtin_methods! {
                 let new = match v {
                     RubyValue::Int(m) => *m as libc::mode_t,
                     other => return Err(raise_error("TypeError",
-                        format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)))),
+                        format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))),
                 };
                 Ok(RubyValue::Int(unsafe { libc::umask(new) } as i64))
             }
@@ -956,7 +956,7 @@ builtin_methods! {
         let RubyValue::Int(mode) = &args[0] else {
             return Err(raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         for p in &args[1..] {

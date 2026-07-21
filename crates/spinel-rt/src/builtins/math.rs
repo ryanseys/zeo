@@ -31,7 +31,7 @@ fn arg_f64(v: &RubyValue) -> Result<f64, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Float",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }

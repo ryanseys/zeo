@@ -49,7 +49,7 @@ builtin_methods! {
             p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
             other => return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Proc", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Proc", crate::builtins::convert_name_of(other)),
             )),
         }
         Ok(args[0].clone())
@@ -217,7 +217,7 @@ builtin_methods! {
             Some(RubyValue::Int(n)) => *n,
             Some(other) => return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
             )),
         };
         let mut out = Vec::new();
@@ -322,7 +322,7 @@ builtin_methods! {
         let RubyValue::Hash(other) = &args[0] else {
             return Err(crate::dispatch::raise_error(
                 "TypeError",
-                format!("no implicit conversion of {} into Hash", crate::builtins::class_name_of(&args[0])),
+                format!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])),
             ));
         };
         let h = recv_hash!(recv);
@@ -580,7 +580,7 @@ fn transform_keys_mapping(args: &[RubyValue]) -> Result<Option<crate::collection
             "TypeError",
             format!(
                 "no implicit conversion of {} into Hash",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -654,7 +654,7 @@ fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate
             "TypeError",
             format!(
                 "no implicit conversion of {} into Hash",
-                crate::builtins::class_name_of(if matches!(a, RubyValue::Hash(_)) { b } else { a }),
+                crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) { b } else { a }),
             ),
         ));
     };
@@ -681,7 +681,7 @@ fn merge_into(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Hash",
-                    crate::builtins::class_name_of(a)
+                    crate::builtins::convert_name_of(a)
                 ),
             ));
         };

@@ -342,7 +342,7 @@ pub fn to_hash_coerce(v: &RubyValue) -> Result<crate::RHash, Signal> {
         "TypeError",
         format!(
             "no implicit conversion of {} into Hash",
-            crate::builtins::class_name_of(v)
+            crate::builtins::convert_name_of(v)
         ),
     ))
 }
@@ -385,7 +385,7 @@ pub fn block_arg_to_proc(
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Proc",
-                    crate::builtins::class_name_of(&other)
+                    crate::builtins::convert_name_of(&other)
                 ),
             ))
         }

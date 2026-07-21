@@ -102,7 +102,7 @@ builtin_methods! {
             Some(other) => {
                 return Err(raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into Float", crate::builtins::class_name_of(other)),
+                    format!("no implicit conversion of {} into Float", crate::builtins::convert_name_of(other)),
                 ));
             }
         };

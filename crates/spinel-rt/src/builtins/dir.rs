@@ -534,7 +534,7 @@ builtin_methods! {
             Some(other) => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into String", crate::builtins::class_name_of(other)),
+                    format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
                 ))
             }
         };

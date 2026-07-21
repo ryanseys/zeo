@@ -99,7 +99,7 @@ builtin_methods! {
             other => {
                 return Err(crate::dispatch::raise_error(
                     "TypeError",
-                    format!("no implicit conversion of {} into Integer", crate::builtins::class_name_of(other)),
+                    format!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)),
                 ))
             }
         }
@@ -576,7 +576,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "no implicit conversion of {} into Integer",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
@@ -610,11 +610,7 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Integer",
-                if matches!(other, RubyValue::Nil) {
-                    "nil".to_string()
-                } else {
-                    crate::builtins::class_name_of(other)
-                }
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -692,11 +688,7 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Float",
-                if matches!(other, RubyValue::Nil) {
-                    "nil".to_string()
-                } else {
-                    crate::builtins::class_name_of(other)
-                }
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -754,7 +746,7 @@ pub fn kernel_rational(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "can't convert {} into Rational",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             )),
         }
@@ -906,7 +898,7 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             "TypeError",
             format!(
                 "can't convert {} into Hash",
-                crate::builtins::class_name_of(other)
+                crate::builtins::convert_name_of(other)
             ),
         )),
     }
@@ -1210,7 +1202,7 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
                 "TypeError",
                 format!(
                     "can't convert {} into time interval",
-                    crate::builtins::class_name_of(other)
+                    crate::builtins::convert_name_of(other)
                 ),
             ))
         }
