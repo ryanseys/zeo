@@ -981,11 +981,12 @@ impl RubyValue {
             | RubyValue::Complex(_)
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
-            | RubyValue::Range(..)
-            // Real Ruby classes aren't frozen by default, but the only
-            // mutations (reopening) happen at compile time in this AOT
-            // model -- reporting frozen matches what the value can DO.
-            | RubyValue::Class(_) => true,
+            | RubyValue::Range(..) => true,
+            // Classes and modules are NOT frozen by default -- CRuby reports
+            // `Integer.frozen?` and a plain `class C; end`'s `C.frozen?` both
+            // false. (Explicitly freezing a class isn't tracked in this AOT
+            // model; the default answer is what programs actually read.)
+            RubyValue::Class(_) => false,
             RubyValue::Str(s) => s.is_frozen(),
             RubyValue::Array(a) => a.is_frozen(),
             RubyValue::Hash(h) => h.is_frozen(),

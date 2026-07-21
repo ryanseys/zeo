@@ -855,3 +855,22 @@ fn env_dup_clone_freeze_raise_type_error() {
          \"1\"\n\"3\"\n\"3\"\n\"ENV\"\n"
     );
 }
+
+#[test]
+fn class_frozen_false_hash_delete_block_and_default_record_separator() {
+    // A user class (and a core class) reports frozen? == false. Hash#delete
+    // calls its block when the key is absent. $/ defaults to "\n".
+    let result = run_ruby(
+        r#"
+        class C001; end
+        p C001.frozen?
+        p Integer.frozen?
+        d = { a: 1, b: 2 }
+        p d.delete(:b)
+        p d.delete(:z) { |k| "gone #{k}" }
+        p $/
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\nfalse\n2\n\"gone z\"\n\"\\n\"\n");
+}

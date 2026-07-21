@@ -72,6 +72,13 @@ pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
         .insert((box_id, resolve(box_id, name)), value);
 }
 
+/// The globals that CRuby gives a meaningful default: `$/` (the input record
+/// separator) starts as `"\n"`. The other punctuation globals (`$;`, `$,`, ...)
+/// start nil, which the unset read already answers. Called once at bootstrap.
+pub fn seed_default_globals() {
+    global_set(0, "$/", RubyValue::Str(crate::string_new("\n".to_string())));
+}
+
 /// Whether `name` has ever been assigned in this box -- backs
 /// `defined?($g)`, which answers `"global-variable"` only for an assigned
 /// user global and `nil` for one that was never written (unlike `global_get`,

@@ -387,16 +387,23 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(live_dir(recv)?.pos.load(Ordering::Relaxed) as i64))
     }
-    "pos=" | "seek" => fn dir_h_seek(recv, args, _block) {
+    // `pos=` answers the new position; `seek` answers the Dir itself (so it
+    // chains), the one behavioural difference between the two.
+    "pos=" => fn dir_h_pos_set(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Int(n) = &args[0] else {
             return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
         };
-        let d = live_dir(recv)?;
-        d.pos.store((*n).max(0) as usize, Ordering::Relaxed);
-        // `seek` answers the receiver; `pos=` answers the value -- both callers
-        // are fine with the value here (the corpus uses neither's return).
+        live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
         Ok(args[0].clone())
+    }
+    "seek" => fn dir_h_seek(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Int(n) = &args[0] else {
+            return Err(raise_error("TypeError", "no implicit conversion into Integer".to_string()));
+        };
+        live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
+        Ok(recv.clone())
     }
     "rewind" => fn dir_h_rewind(recv, args, _block) {
         arity!(args, 0);

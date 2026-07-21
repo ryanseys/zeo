@@ -834,3 +834,19 @@ fn integer_bit_slice_negative_start_and_width() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "5\n15\n1\n2\n255\n0\n255\n");
 }
+
+#[test]
+fn rand_float_bound_is_integer_and_digits_radix_messages() {
+    // rand(Float) truncates the bound and draws an Integer (CRuby 4.0.5);
+    // Integer#digits distinguishes a negative radix from a 0/1 radix.
+    let result = run_ruby(
+        r#"
+        p rand(3.5).class
+        p (0...3).include?(rand(3.5))
+        r1 = (begin; 123.digits(0); rescue ArgumentError => e; e.message; end); p r1
+        r2 = (begin; 123.digits(-5); rescue ArgumentError => e; e.message; end); p r2
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Integer\ntrue\n\"invalid radix 0\"\n\"negative radix\"\n");
+}

@@ -748,6 +748,11 @@ builtin_methods! {
             // only radix < 2 is rejected, and the error echoes the raw value.
             Some(v @ (RubyValue::Int(_) | RubyValue::BigInt(_))) => {
                 let b = to_bigint(v);
+                // CRuby distinguishes a NEGATIVE base ("negative radix") from
+                // a 0/1 base ("invalid radix N").
+                if b.is_negative() {
+                    return Err(crate::dispatch::raise_error("ArgumentError", "negative radix".to_string()));
+                }
                 if b < BigInt::from(2) {
                     return Err(crate::dispatch::raise_error(
                         "ArgumentError",

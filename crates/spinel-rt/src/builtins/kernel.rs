@@ -1100,7 +1100,15 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             )
         }
         Some(RubyValue::Float(x)) => {
-            RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64 * x)
+            // CRuby's `Kernel#rand` truncates a Float bound to an Integer and
+            // draws an Integer from `[0, ⌊x⌋)` (`rand(3.5)` -> 0..2). A bound
+            // below 1 truncates to 0, i.e. the plain `[0.0, 1.0)` Float draw.
+            let n = x.trunc();
+            if n >= 1.0 {
+                RubyValue::Int((r % (n as u64)) as i64)
+            } else {
+                RubyValue::Float((r >> 11) as f64 / (1u64 << 53) as f64)
+            }
         }
         Some(RubyValue::Range(lo, hi, exclusive)) => {
             return kernel_rand_range(r, lo.as_deref(), hi.as_deref(), *exclusive);

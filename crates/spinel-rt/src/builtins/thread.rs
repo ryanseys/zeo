@@ -46,6 +46,15 @@ fn t_status(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> R
     Ok(thread_status(&recv.as_thread_unchecked()))
 }
 
+/// `Thread#inspect`/`#to_s` -- `#<Thread:0xADDR STATUS>`, where a finished
+/// thread reports `dead` (not the `false`/`nil` that `#status` answers).
+fn t_inspect(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let t = recv.as_thread_unchecked();
+    let status = if thread_alive(&t) { "run" } else { "dead" };
+    let addr = std::sync::Arc::as_ptr(&t) as usize;
+    Ok(RubyValue::Str(crate::string_new(format!("#<Thread:0x{addr:016x} {status}>"))))
+}
+
 fn t_name(recv: &RubyValue, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     Ok(thread::thread_name(&recv.as_thread_unchecked()))
 }
@@ -166,6 +175,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "thread_variable?" => t_tvar_p,
         "thread_variables" => t_tvars,
         "==" | "eql?" | "equal?" => t_eq,
+        "inspect" | "to_s" => t_inspect,
         _ => return None,
     })
 }
@@ -176,7 +186,7 @@ pub fn lookup_names() -> &'static [&'static str] {
         "join", "value", "kill", "exit", "terminate", "raise", "alive?", "status", "name", "name=",
         "report_on_exception", "report_on_exception=", "[]", "[]=", "key?",
         "keys", "thread_variable_get", "thread_variable_set",
-        "thread_variable?", "thread_variables", "==", "eql?", "equal?",
+        "thread_variable?", "thread_variables", "==", "eql?", "equal?", "inspect", "to_s",
     ]
 }
 

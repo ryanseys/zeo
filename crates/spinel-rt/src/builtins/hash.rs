@@ -99,7 +99,7 @@ builtin_methods! {
         }
         Ok(crate::hash_set(h, args[0].clone(), args[1].clone()))
     }
-    "delete"[1] => fn delete(recv, args, _block) {
+    "delete"[1] => fn delete(recv, args, block) {
         arity!(args, 1);
         let h = recv_hash!(recv);
         if h.is_frozen() {
@@ -108,6 +108,13 @@ builtin_methods! {
                 format!("can't modify frozen Hash: {}", recv.inspect_string()),
                 &[("receiver", recv.clone())],
             ));
+        }
+        // A block supplies the return value when the key is ABSENT
+        // (`h.delete(:z) { |k| ... }`), instead of the default nil.
+        if !crate::hash_has_key(h, &args[0]) {
+            if let Some(RubyValue::Proc(p)) = block {
+                return p.call(&[args[0].clone()]);
+            }
         }
         Ok(crate::hash_delete(h, &args[0]))
     }

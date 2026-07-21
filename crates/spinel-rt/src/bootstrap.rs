@@ -63,6 +63,7 @@ pub fn install_core_constants() {
     crate::builtins::process::seed_process();
     crate::builtins::file::seed_file();
     crate::builtins::argf::seed_argf();
+    crate::globals::seed_default_globals();
     seed_ruby_constants();
 }
 
