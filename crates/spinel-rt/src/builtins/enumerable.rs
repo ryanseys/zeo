@@ -212,6 +212,35 @@ pub fn each_values(recv: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
     Ok(items)
 }
 
+/// Invokes a user block from inside a `for_each` driver, routing a user
+/// `break <v>` into `stash` and converting it to the internal early-stop
+/// signal so `for_each` ends the iteration. The Enumerable method then
+/// returns the stashed value (`user_break`) -- CRuby's TAG_BREAK: a `break`
+/// in the block makes the whole iterator call evaluate to that value, rather
+/// than the partial accumulator. Ordinary results and other signals (a raise,
+/// a `Signal::Return`) pass through untouched. Without this, `for_each`'s
+/// blanket `Break` swallow (which exists for internal early-stop like `find`)
+/// would discard the user's break value.
+fn yield_block(
+    blk: &RProc,
+    args: &[RubyValue],
+    stash: &Mutex<Option<RubyValue>>,
+) -> Result<RubyValue, Signal> {
+    match blk.call(args) {
+        Err(Signal::Break(v)) => {
+            *stash.lock() = Some(v);
+            Err(Signal::Break(RubyValue::Nil))
+        }
+        other => other,
+    }
+}
+
+/// The value a user `break` stashed (see [`yield_block`]), if any -- the
+/// early-return an Enumerable method makes before yielding its normal result.
+fn user_break(stash: &Mutex<Option<RubyValue>>) -> Option<RubyValue> {
+    stash.lock().take()
+}
+
 fn reject_args(args: &[RubyValue], method: &str, what: &str) {
     if !args.is_empty() {
         panic!("Enumerable#{method} with {what} isn't supported yet (spike scope)");
@@ -225,11 +254,16 @@ fn map(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result
     let blk = block_or_enum!(recv, "map", args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
     for_each(recv, move |yielded| {
-        let v = blk.call(yielded)?;
+        let v = yield_block(&blk, yielded, &brk2)?;
         out2.lock().push(v);
         Ok(RubyValue::Nil)
     })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
     let items = std::mem::take(&mut *out.lock());
     Ok(RubyValue::Array(array_new(items)))
 }
@@ -249,12 +283,17 @@ fn select(
     let blk = block_or_enum!(recv, method, args, block);
     let out: Arc<Mutex<Vec<RubyValue>>> = Arc::new(Mutex::new(Vec::new()));
     let out2 = out.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
     for_each(recv, move |yielded| {
-        if blk.call(yielded)?.truthy() == keep {
+        if yield_block(&blk, yielded, &brk2)?.truthy() == keep {
             out2.lock().push(pack(yielded));
         }
         Ok(RubyValue::Nil)
     })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
     let items = std::mem::take(&mut *out.lock());
     Ok(RubyValue::Array(array_new(items)))
 }
@@ -419,17 +458,21 @@ fn include(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal> {
 fn count(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Result<RubyValue, Signal> {
     let n = Arc::new(Mutex::new(0i64));
     let n2 = n.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     match (args.len(), block) {
         (0, None) => for_each(recv, move |_| {
             *n2.lock() += 1;
             Ok(RubyValue::Nil)
         })?,
-        (0, Some(RubyValue::Proc(blk))) => for_each(recv, move |yielded| {
-            if blk.call(yielded)?.truthy() {
-                *n2.lock() += 1;
-            }
-            Ok(RubyValue::Nil)
-        })?,
+        (0, Some(RubyValue::Proc(blk))) => {
+            let brk2 = brk.clone();
+            for_each(recv, move |yielded| {
+                if yield_block(&blk, yielded, &brk2)?.truthy() {
+                    *n2.lock() += 1;
+                }
+                Ok(RubyValue::Nil)
+            })?
+        }
         (1, _) => {
             let item = args[0].clone();
             for_each(recv, move |yielded| {
@@ -440,6 +483,9 @@ fn count(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resu
             })?
         }
         _ => panic!("Enumerable#count takes at most one argument"),
+    }
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
     }
     let result = *n.lock();
     Ok(RubyValue::Int(result))
@@ -557,13 +603,18 @@ fn find(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Resul
     let blk = block_or_enum!(recv, "find", &[], block);
     let hit: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
     let hit2 = hit.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
     for_each(recv, move |yielded| {
-        if blk.call(yielded)?.truthy() {
+        if yield_block(&blk, yielded, &brk2)?.truthy() {
             *hit2.lock() = Some(pack(yielded));
             return Err(Signal::Break(RubyValue::Nil));
         }
         Ok(RubyValue::Nil)
     })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
     let found = hit.lock().take();
     match found {
         Some(v) => Ok(v),
@@ -651,6 +702,8 @@ fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
     };
     let acc: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(init));
     let acc2 = acc.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
     for_each(recv, move |yielded| {
         let elem = pack(yielded);
         let mut a = acc2.lock();
@@ -662,7 +715,9 @@ fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
                 // Enumerable machinery.
                 drop(a);
                 let next = match &step {
-                    Step::Block(b) => b.call(&[current, elem])?,
+                    // A user `break` in the block propagates as the reduce
+                    // value (`yield_block`); an operator Symbol step can't break.
+                    Step::Block(b) => yield_block(b, &[current, elem], &brk2)?,
                     Step::Op(op) => send_value(&current, *op, &[elem], None)?,
                 };
                 *acc2.lock() = Some(next);
@@ -672,6 +727,9 @@ fn reduce(recv: &RubyValue, args: &[RubyValue], block: Option<RubyValue>) -> Res
         *a = Some(next);
         Ok(RubyValue::Nil)
     })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
     let result = acc.lock().take().unwrap_or(RubyValue::Nil);
     Ok(result)
 }
@@ -687,6 +745,8 @@ fn each_with_index(
     let blk = block_or_enum!(recv, "each_with_index", args, block);
     let idx = Arc::new(Mutex::new(0i64));
     let idx2 = idx.clone();
+    let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+    let brk2 = brk.clone();
     for_each(recv, move |yielded| {
         let i = {
             let mut n = idx2.lock();
@@ -694,9 +754,12 @@ fn each_with_index(
             *n += 1;
             i
         };
-        blk.call(&[pack(yielded), RubyValue::Int(i)])?;
+        yield_block(&blk, &[pack(yielded), RubyValue::Int(i)], &brk2)?;
         Ok(RubyValue::Nil)
     })?;
+    if let Some(v) = user_break(&brk) {
+        return Ok(v);
+    }
     Ok(recv.clone())
 }
 

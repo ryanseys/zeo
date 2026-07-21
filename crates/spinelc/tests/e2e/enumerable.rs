@@ -497,3 +497,30 @@ fn enumerator_chain_product_and_lazy_size() {
          3\nnil\n2\nInfinity\n3\n"
     );
 }
+
+#[test]
+fn break_with_a_value_makes_the_iterator_call_return_it() {
+    // `break <v>` in a block makes the whole Enumerable call evaluate to <v>
+    // (CRuby TAG_BREAK), not the partial accumulator -- across value-producing
+    // (map/select/reject/reduce/count/find) and self-returning
+    // (each_with_index) iterators. Bare break -> nil.
+    let result = run_ruby(
+        r#"
+        a = [1, 2, 3]
+        p a.map { |x| break 99 if x == 2; x * 10 }
+        p a.select { |x| break :s if x == 2; x.odd? }
+        p a.reject { |x| break 7 if x == 2; false }
+        p a.reduce(0) { |s, x| break 100 if x == 2; s + x }
+        p a.count { |x| break 5 if x == 2; true }
+        p a.find { |x| break(-1) if x == 2; false }
+        p a.each_with_index { |x, i| break i if x == 2 }
+        p a.map { |x| break if x == 2; x }
+        p a.map { |x| x + 1 }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "99\n:s\n7\n100\n5\n-1\n1\nnil\n[2, 3, 4]\n"
+    );
+}
