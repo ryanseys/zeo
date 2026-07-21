@@ -191,7 +191,9 @@ fn write_baseline(path: &Path, rows: &[BenchResult]) {
 fn run_one(zeo_bin: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
     let name = rb.file_stem().unwrap().to_string_lossy().into_owned();
     let expected_path = PathBuf::from(format!("{}.expected", rb.display()));
-    let expected = std::fs::read_to_string(&expected_path)
+    // Bytes, not String: some benchmarks print binary output (bm_ao_render
+    // emits a PPM image), which is not valid UTF-8.
+    let expected = std::fs::read(&expected_path)
         .map_err(|e| format!("reading {}: {e}", expected_path.display()))?;
 
     let bin_path = std::env::temp_dir().join(format!("zeo-bench-{name}"));
@@ -225,12 +227,9 @@ fn run_one(zeo_bin: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
         }
         // Correctness gate on the first run only; repeats time a known-good
         // binary without re-diffing identical output.
-        if i == 0 {
-            let actual = String::from_utf8_lossy(&run.stdout);
-            if actual != expected {
-                let _ = std::fs::remove_file(&bin_path);
-                return Err("output mismatch vs .expected".to_string());
-            }
+        if i == 0 && run.stdout != expected {
+            let _ = std::fs::remove_file(&bin_path);
+            return Err("output mismatch vs .expected".to_string());
         }
         best = Some(best.map_or(secs, |b: f64| b.min(secs)));
     }
