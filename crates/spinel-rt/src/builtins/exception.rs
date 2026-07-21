@@ -92,14 +92,21 @@ impl RubyException {
     }
 
     /// Read one hidden detail slot; `nil` when unset (CRuby's default for an
-    /// unpopulated `#name`/`#key`/`#args`/`#tag`/`#value`/`#receiver`).
+    /// unpopulated `#name`/`#args`/`#tag`/`#value`).
     fn detail(&self, key: &str) -> RubyValue {
+        self.detail_opt(key).unwrap_or(RubyValue::Nil)
+    }
+
+    /// Read one detail slot as `Some(v)` when PRESENT (even if the value is nil)
+    /// vs `None` when never set -- the distinction `#key`/`#receiver` need,
+    /// since CRuby raises ArgumentError for an unset one but a `nil.foo` miss
+    /// genuinely sets `receiver` to nil.
+    fn detail_opt(&self, key: &str) -> Option<RubyValue> {
         self.details
             .lock()
             .iter()
             .find(|(k, _)| *k == key)
             .map(|(_, v)| v.clone())
-            .unwrap_or(RubyValue::Nil)
     }
 
     fn store_ivar(&self, name: &str, v: RubyValue) {
@@ -368,16 +375,23 @@ fn exc_name(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result
 }
 
 /// `NameError#receiver`/`KeyError#receiver` -- the object the failed lookup was
-/// against. CRuby raises `ArgumentError: no receiver is available` when unset,
-/// but every raise site here populates it, so returning the stored value (or
-/// `nil`) matches observed behavior without the rarely-hit error path.
+/// against. CRuby raises `ArgumentError: no receiver is available` when it was
+/// never set (a manually-built `NameError.new("m")`), while a real miss like
+/// `nil.foo` sets it (to nil, here), which still answers nil.
 fn exc_receiver(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    Ok(exc(recv).detail("receiver"))
+    match exc(recv).detail_opt("receiver") {
+        Some(v) => Ok(v),
+        None => Err(crate::dispatch::raise_error("ArgumentError", "no receiver is available".to_string())),
+    }
 }
 
-/// `KeyError#key` -- the key that was not found.
+/// `KeyError#key` -- the key that was not found. `ArgumentError` when unset
+/// (`KeyError.new("m").key`), CRuby's behavior.
 fn exc_key(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
-    Ok(exc(recv).detail("key"))
+    match exc(recv).detail_opt("key") {
+        Some(v) => Ok(v),
+        None => Err(crate::dispatch::raise_error("ArgumentError", "no key is available".to_string())),
+    }
 }
 
 /// `NoMethodError#args` -- the arguments of the failed call, `nil` if the
@@ -420,6 +434,10 @@ fn name_error_initialize(recv: &RObj, args: &[RubyValue], _blk: Option<RubyValue
     // it on any `NameError` is harmless since only `NoMethodError` exposes it.
     if let Some(call_args) = args.get(2) {
         e.set_detail("args", call_args.clone());
+    }
+    // The fourth positional is `NoMethodError`'s `private_call?` flag.
+    if let Some(private_call) = args.get(3) {
+        e.set_detail("private_call", private_call.clone());
     }
     Ok(msg)
 }
