@@ -491,6 +491,80 @@ fn count_capture_groups(pattern: &str) -> usize {
     count
 }
 
+/// Every named capture group's `(name, 1-based index)`, in source order,
+/// INCLUDING duplicates: `(?<a>.)(?<a>.)` yields `[("a", 1), ("a", 2)]`. The
+/// engine's own `capture_names` collapses a repeated name onto a single slot,
+/// so `Regexp#names`/`#named_captures` parse the source to see every position.
+/// Shares `count_capture_groups`'s scanning rules (skip `\(`, char classes, and
+/// non-capturing `(?...)` groups).
+pub(crate) fn named_group_positions(pattern: &str) -> Vec<(String, usize)> {
+    let bytes = pattern.as_bytes();
+    let mut i = 0;
+    let mut count = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    let mut out = Vec::new();
+    while i < bytes.len() {
+        let c = bytes[i];
+        if in_class {
+            match c {
+                b']' if !class_start => in_class = false,
+                b'^' if class_start => {}
+                b'\\' if i + 1 < bytes.len() => {
+                    class_start = false;
+                    i += 2;
+                    continue;
+                }
+                _ => class_start = false,
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'[' => {
+                in_class = true;
+                class_start = true;
+            }
+            b'\\' if i + 1 < bytes.len() => {
+                i += 2;
+                continue;
+            }
+            b'(' => {
+                if bytes.get(i + 1) == Some(&b'?') {
+                    // Named forms `(?<name>`, `(?'name'`, `(?P<name>` capture and
+                    // carry a name; every other `(?...)` neither counts nor names.
+                    let named = if bytes.get(i + 2) == Some(&b'\'') {
+                        Some((i + 3, b'\''))
+                    } else if bytes.get(i + 2) == Some(&b'<')
+                        && !matches!(bytes.get(i + 3), Some(b'=') | Some(b'!'))
+                    {
+                        Some((i + 3, b'>'))
+                    } else if bytes.get(i + 2) == Some(&b'P') && bytes.get(i + 3) == Some(&b'<') {
+                        Some((i + 4, b'>'))
+                    } else {
+                        None
+                    };
+                    if let Some((name_start, delim)) = named {
+                        count += 1;
+                        let mut j = name_start;
+                        while j < bytes.len() && bytes[j] != delim {
+                            j += 1;
+                        }
+                        if let Ok(name) = std::str::from_utf8(&bytes[name_start..j]) {
+                            out.push((name.to_string(), count));
+                        }
+                    }
+                } else {
+                    count += 1; // a plain unnamed capturing group
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
     Arc::new(MatchDataInner {
         haystack: haystack.to_string(),
@@ -877,6 +951,17 @@ fn expand_replacement(template: &str, caps: &Caps, names: &[(String, usize)], ha
             Some('`') => out.push_str(&haystack[..match_start]),
             Some('\'') => out.push_str(&haystack[match_end..]),
             Some('\\') => out.push('\\'),
+            // `\+` -- the text of the HIGHEST-numbered group that participated
+            // (`/(a)(b)?/` on `"a"` -> group 1; on `"ab"` -> group 2). Nothing
+            // if only the whole match participated.
+            Some('+') => {
+                for idx in (1..caps.len()).rev() {
+                    if let Some(g) = caps.str(idx, haystack) {
+                        out.push_str(g);
+                        break;
+                    }
+                }
+            }
             // `\k<name>` -- a named backreference into the match. Only the
             // angle-bracket spelling is a replacement backref (CRuby leaves
             // `\k'name'` literal here); an UNKNOWN group name is an IndexError,

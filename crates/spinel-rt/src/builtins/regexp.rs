@@ -30,7 +30,7 @@ builtin_methods! {
     // helpers String's own rows share.
     "match?" => fn match_p(recv, args, _block) {
         arity!(args, 1..=2);
-        let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Bool(false)) };
+        let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Bool(false)) };
         // An optional start position (char offset, end-relative when negative)
         // anchors the search; a position past the end is simply no match.
         let Some(sub) = crate::builtins::string::match_haystack(&h, args.get(1))? else {
@@ -40,12 +40,12 @@ builtin_methods! {
     }
     "match" => fn match_m(recv, args, _block) {
         arity!(args, 1..=2);
-        let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match(re_of(recv), &h))
     }
     "=~"[1] => fn match_op(recv, args, _block) {
         arity!(args, 1);
-        let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
+        let Some(h) = subject_arg(&args[0])? else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
     // `casefold?` reports the `/i` flag; `fixed_encoding?` is always false
@@ -69,25 +69,40 @@ builtin_methods! {
     // each name to its 1-based capture position(s).
     "names"[0] => fn names_m(recv, args, _block) {
         arity!(args, 0);
-        let out = re_of(recv)
-            .engine
-            .capture_names()
-            .into_iter()
-            .map(|(n, _)| RubyValue::Str(crate::string_new(n)))
-            .collect();
+        // Each distinct name once, in first-appearance order (a name reused by
+        // several groups -- `/(?<a>x)(?<a>z)/` -- lists once, as CRuby does).
+        // Parsed from the source, since the engine collapses repeated names.
+        let mut seen: Vec<String> = Vec::new();
+        for (n, _) in crate::regexp::named_group_positions(&re_of(recv).source) {
+            if !seen.contains(&n) {
+                seen.push(n);
+            }
+        }
+        let out = seen.into_iter().map(|n| RubyValue::Str(crate::string_new(n))).collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "named_captures"[0] => fn named_captures_m(recv, args, _block) {
         arity!(args, 0);
-        let pairs = re_of(recv)
-            .engine
-            .capture_names()
+        // Map each name to the LIST of its 1-based group indices, in
+        // first-appearance order: a name shared by several groups
+        // (`/(?<a>x)(?<a>z)/`) collects all of them (`{"a" => [1, 2]}`), not
+        // just the last -- CRuby's `named_captures`.
+        let mut order: Vec<String> = Vec::new();
+        let mut indices: std::collections::HashMap<String, Vec<RubyValue>> = std::collections::HashMap::new();
+        for (n, i) in crate::regexp::named_group_positions(&re_of(recv).source) {
+            indices
+                .entry(n.clone())
+                .or_insert_with(|| {
+                    order.push(n.clone());
+                    Vec::new()
+                })
+                .push(RubyValue::Int(i as i64));
+        }
+        let pairs = order
             .into_iter()
-            .map(|(n, i)| {
-                (
-                    RubyValue::Str(crate::string_new(n)),
-                    RubyValue::Array(crate::array_new(vec![RubyValue::Int(i as i64)])),
-                )
+            .map(|n| {
+                let idxs = indices.remove(&n).expect("every ordered name has indices");
+                (RubyValue::Str(crate::string_new(n)), RubyValue::Array(crate::array_new(idxs)))
             })
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
@@ -195,6 +210,20 @@ fn str_arg(v: &RubyValue) -> Option<String> {
     match v {
         RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
         _ => None,
+    }
+}
+
+/// The subject of `Regexp#=~`/`#match`/`#match?`: a String matches, `nil`
+/// answers "no match" (never raises), and any other type raises TypeError --
+/// CRuby's rule (`/p/ =~ 5` -> TypeError, not a silent non-match).
+fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
+    match v {
+        RubyValue::Str(s) => Ok(Some(s.lock().to_utf8_lossy().into_owned())),
+        RubyValue::Nil => Ok(None),
+        other => Err(crate::dispatch::raise_error(
+            "TypeError",
+            format!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)),
+        )),
     }
 }
 

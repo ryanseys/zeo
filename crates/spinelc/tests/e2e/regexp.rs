@@ -410,3 +410,33 @@ fn split_named_backref_rindex_and_match_position() {
          false\ntrue\n",
     );
 }
+
+#[test]
+fn named_captures_dup_names_backref_plus_and_nonstring_match() {
+    // named_captures collects ALL indices for a name reused by several groups
+    // (the engine collapses it, so this parses the source); \+ expands to the
+    // highest participating group; Regexp#=~ against a non-String raises
+    // TypeError (nil still answers nil).
+    let result = run_ruby(
+        r##"
+        p /(?<a>x)(?<b>y)/.named_captures
+        p /(?<a>x)(?<a>z)/.named_captures
+        p /(?<a>x)(?<a>z)/.names
+        p "ab".sub(/(a)(b)?/, '\+')
+        p "a.".sub(/(a)(b)?/, '\+')
+        p "1a 2. 3c".gsub(/(\d)([a-z])?/, '<\+>')
+        r = (begin; /p/ =~ 5; rescue TypeError => e; "TE: " + e.message; end); p r
+        p(/l/ =~ "hello")
+        p(/z/ =~ "hello")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "{\"a\" => [1], \"b\" => [2]}\n\
+         {\"a\" => [1, 2]}\n\
+         [\"a\"]\n\
+         \"b\"\n\"a.\"\n\"<a> <2>. <c>\"\n\
+         \"TE: no implicit conversion of Integer into String\"\n2\nnil\n"
+    );
+}
