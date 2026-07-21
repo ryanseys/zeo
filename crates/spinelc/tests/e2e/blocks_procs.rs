@@ -1147,3 +1147,27 @@ fn break_in_a_non_lambda_proc_call_raises_local_jump_error() {
         "9\nbreak from proc-closure / :break\nlive: break from proc-closure\nlive: break from proc-closure\n"
     );
 }
+
+#[test]
+fn a_procs_own_block_param_receives_the_call_site_block() {
+    // A proc/lambda that declares its own `&block` parameter receives the
+    // block passed to its `#call` -- the block rides the closure's third
+    // parameter into the body, where `b.call`/`b.nil?` reflect it. Covers a
+    // Proc-typed receiver (the lambda literal, a fast-path `#call`), a Poly
+    // local (`f`/`g`, the dynamic `Proc#call` builtin), a blockless call
+    // (binds nil), and a passed block that captures an enclosing local.
+    let result = run_ruby(
+        r#"
+        p(->(&b) { b.call(9) }.call { |x| x + 1 })
+        f = ->(&b) { b.nil? ? "none" : b.call(1) }
+        p f.call
+        p(f.call { |x| x * 100 })
+        g = ->(a, &b) { a + b.call(a) }
+        p(g.call(5) { |x| x * 2 })
+        base = 50
+        p(->(&b) { b.call(3) }.call { |x| base + x })
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "10\n\"none\"\n100\n15\n53\n");
+}

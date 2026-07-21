@@ -1070,7 +1070,6 @@ pub fn emit_proc_param_bindings(
     params: &Params,
     args_ident: &proc_macro2::Ident,
     is_lambda: bool,
-    method_body: bool,
 ) -> TokenStream {
     let nreq = params.required.len();
     let nopt = params.optional.len();
@@ -1244,20 +1243,15 @@ pub fn emit_proc_param_bindings(
         }
     });
 
-    // A `&block` parameter (`->(&b) { ... }` / `def obj.m(&b)`). A METHOD-BODY
-    // lambda binds it from the method's call-site block (`__blk`, the closure's
-    // third parameter -- see `emit_proc_or_lambda_value`), so `b.call`/`b.nil?`
-    // reflect the block the method was actually called with. An ordinary
-    // proc/lambda has no such slot -- a block passed to its OWN `.call` isn't
-    // threaded through proc invocation -- so it binds to nil (`b.nil?` true,
-    // matching a blockless `Proc#call`); this also never emits a reference to
-    // an unbound `b`, and a block that IS passed to such a proc surfaces as a
-    // clean runtime NoMethodError on nil rather than compiling to garbage.
-    let block_source = if method_body {
-        quote! { __blk.clone().unwrap_or(spinel_rt::RubyValue::Nil) }
-    } else {
-        quote! { spinel_rt::RubyValue::Nil }
-    };
+    // A `&block` parameter (`->(&b) { ... }` / `def obj.m(&b)`) binds from the
+    // call-site block `__blk` (the closure's third parameter -- see
+    // `emit_proc_or_lambda_value`), so `b.call`/`b.nil?` reflect the block the
+    // proc/method was actually called with. Declaring a `&block` param forces
+    // the block-carrying closure shape (`needs_blk_param`), so `__blk` is
+    // always in scope here -- for an ordinary proc/lambda too, not just a
+    // method body: `->(&b) { b.call(9) }.call { ... }` now threads the block
+    // through. A blockless call binds nil (`b.nil?` true).
+    let block_source = quote! { __blk.clone().unwrap_or(spinel_rt::RubyValue::Nil) };
     let block_let = params.block.iter().flatten().map(|name| {
         let ident = safe_ident(name);
         quote! {
@@ -1521,6 +1515,6 @@ mod tests {
             self_is_dynamic: false,
             runtime_super_params: None,
         };
-        emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda, false).to_string()
+        emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda).to_string()
     }
 }

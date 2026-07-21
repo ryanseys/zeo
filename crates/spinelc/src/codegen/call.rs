@@ -623,6 +623,7 @@ fn try_proc_dispatch(
     recv_id: NodeId,
     name: &str,
     args: &[NodeId],
+    block: Option<NodeId>,
     recv_expr: &TokenStream,
 ) -> Option<TokenStream> {
     if infer(cx, recv_id) != TyKind::Proc || !matches!(name, "call" | "()" | "[]") {
@@ -632,7 +633,17 @@ fn try_proc_dispatch(
         let e = emit_expr(cx, a);
         box_if_object_typed(cx, a, e)
     });
-    Some(quote! { ((#recv_expr).as_proc_unchecked()).call(&[#(#arg_exprs),*])? })
+    // A literal block passed to `#call` rides into the proc's own `&block`
+    // param (`->(&b) { b.call }.call { ... }`); without one, `None` -- exactly
+    // the plain-`#call` behavior.
+    let block_expr = match block {
+        Some(b) => {
+            let p = emit_proc_value(cx, b);
+            quote! { Some(#p) }
+        }
+        None => quote! { None },
+    };
+    Some(quote! { ((#recv_expr).as_proc_unchecked()).call_with_block(&[#(#arg_exprs),*], #block_expr)? })
 }
 
 pub fn emit_new(
@@ -1858,7 +1869,17 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     // as the closure's own third parameter below (CRuby's `invoke_bmethod`
     // specval vs the captured env, `vm.c:1786`).
     let bare_block_use = crate::analyze::scan_bare_block_use_body(&cx.compiler.hir, body);
-    let blk_clone = (bare_block_use && !method_body).then(|| quote! { let __blk = __blk.clone(); });
+
+    // An ordinary proc/lambda that declares its OWN `&block` parameter
+    // (`->(&b) { b.call }`) RECEIVES the call-site block as the closure's third
+    // parameter (`__blk`), so a block handed to its `#call` reaches `&b`. This
+    // is distinct from bare `yield`/`block_given?`, which CAPTURES the enclosing
+    // method's block instead (`blk_clone`, below) -- so a proc that takes its
+    // own block param must NOT also clone in the lexical `__blk` (the param owns
+    // that name here).
+    let takes_own_block = params.block.is_some();
+    let blk_clone =
+        (bare_block_use && !method_body && !takes_own_block).then(|| quote! { let __blk = __blk.clone(); });
 
     // Whether a METHOD-BODY closure must name its call-site block parameter
     // `__blk` (vs `_`): needed if the body uses bare block OR declares a `&blk`
@@ -1876,7 +1897,12 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     // always takes a self parameter (the runtime install rebinds it per call),
     // so it needs the default even when the body itself never mentions `self`.
     let needs_self = block_caps.self_captured;
-    let self_default = (needs_self || method_body).then(|| {
+    // `__self_default` is the closure's stored `self_val`; every shape that
+    // takes a `&self` closure parameter needs it -- a method-body lambda, a
+    // self-capturing block, AND an ordinary proc/lambda promoted to the
+    // block-carrying `with_self_and_block` shape because it declares a `&block`
+    // param (`needs_blk_param`), even when its body never reads `self`.
+    let self_default = (needs_self || method_body || takes_own_block).then(|| {
         let boxed = boxed_implicit_self(cx).expect("boxed_implicit_self is total");
         quote! { let __self_default = #boxed; }
     });
@@ -1935,7 +1961,7 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     let own_locals_prelude = super::hoisting::emit_proc_own_locals_prelude(&proc_cx, &own_only);
     let arity_check = is_lambda.then(|| emit_lambda_arity_check(cx, params, &format_ident!("__args")));
     let param_bindings =
-        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda, method_body);
+        super::params::emit_proc_param_bindings(&proc_cx, params, &format_ident!("__args"), is_lambda);
     // NOT `hoisting::emit_hoisted_body` -- that would re-collect EVERY name
     // this block references (including the genuine captures above) and
     // declare them AGAIN, shadowing the shared `Arc::clone`s just captured
@@ -1965,20 +1991,25 @@ pub(crate) fn emit_proc_or_lambda_value(cx: &Ctx, params: &Params, body: &[NodeI
     // `Proc#parameters` metadata, attached to the constructed proc.
     let proc_params = super::params::proc_parameters(params, is_lambda);
     // Three shapes:
-    // - `with_self_and_block` for a METHOD-BODY lambda -- takes the receiver
-    //   (rebound per call by the runtime install) AND the call-site block
-    //   (`__blk`, bound directly as the closure's third parameter so the body's
-    //   `yield`/`block_given?`/`&blk` codegen finds it). Named `_` when the
-    //   body doesn't actually use that slot, to avoid an unused-binding warning.
+    // - `with_self_and_block` whenever the body must see a CALL-SITE block --
+    //   a METHOD-BODY lambda (the runtime install rebinds the receiver per
+    //   call), OR an ordinary proc/lambda that declares its own `&block` param
+    //   or uses bare block (`->(&b) { b.call }.call { ... }`): the block rides
+    //   in as `__blk`, the closure's third parameter, where the body's
+    //   `yield`/`block_given?`/`&blk` codegen finds it. Each slot is named `_`
+    //   when unused, to avoid an unused-binding warning.
     // - `with_self` when the body mentions `self` (so `instance_exec` can
     //   rebind it), and `with_meta` when it never does (nothing to rebind).
-    let (ctor, closure_params, default_arg) = if method_body {
-        let self_p = if needs_self {
+    let (ctor, closure_params, default_arg) = if method_body || takes_own_block {
+        let self_p = if needs_self || method_body {
             quote! { __self: &spinel_rt::RubyValue }
         } else {
             quote! { _: &spinel_rt::RubyValue }
         };
-        let blk_p = if needs_blk_param {
+        // Name the block slot `__blk` when the body reads it: a method body via
+        // `needs_blk_param` (bare `yield` or a `&blk` param), a non-method proc
+        // via its own `&block` param (`takes_own_block`). `_` otherwise.
+        let blk_p = if needs_blk_param || takes_own_block {
             quote! { __blk: Option<spinel_rt::RubyValue> }
         } else {
             quote! { _: Option<spinel_rt::RubyValue> }
@@ -4253,7 +4284,7 @@ fn dispatch(
         if let Some(tokens) = try_collection_dispatch(cx, recv_id, name, args, recv_expr) {
             return tokens;
         }
-        if let Some(tokens) = try_proc_dispatch(cx, recv_id, name, args, recv_expr) {
+        if let Some(tokens) = try_proc_dispatch(cx, recv_id, name, args, block, recv_expr) {
             return tokens;
         }
         if let Some(tokens) = try_regexp_dispatch(cx, recv_id, name, args, block, recv_expr) {

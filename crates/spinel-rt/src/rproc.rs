@@ -246,6 +246,20 @@ impl RProc {
         self.resolve_home_return(result)
     }
 
+    /// Ordinary `#call` that ALSO forwards a call-site block to the proc's own
+    /// `&block` parameter -- keeps the proc's own lexical `self` (unlike
+    /// `call_with_self_and_block`, which rebinds it for `instance_exec`). This
+    /// is what `->(&b) { b.call(...) }.call { ... }` needs: the block passed to
+    /// `#call` reaches the lambda's `&b`.
+    pub fn call_with_block(
+        &self,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
+        let result = (self.0.f)(&self.0.self_val, args, block);
+        self.resolve_home_return(result)
+    }
+
     /// The block's lexical self -- `Proc#binding`-adjacent reflection, and
     /// what `instance_exec` restores nothing to (it simply doesn't consult it).
     pub fn self_val(&self) -> &RubyValue {

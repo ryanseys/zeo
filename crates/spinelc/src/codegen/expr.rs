@@ -843,15 +843,12 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         HirNode::Next(v) => emit_next(cx, *v),
         HirNode::Redo => emit_redo(cx),
         HirNode::MultiWrite { targets, value } => {
-            // Sub-expression fallback (rare) -- see `stmt.rs` for the
-            // primary, statement-position case, which is what makes the
-            // assigned locals visible to LATER statements. Nested in its own
-            // block here, so that visibility doesn't matter; yields `nil`,
-            // the same simplification `LocalWrite`'s own sub-expression
-            // fallback already makes above (real Ruby returns the RHS array
-            // here), not a new gap this introduces.
-            let write = super::loops::emit_multi_write(cx, targets, *value);
-            quote! { { #write spinel_rt::RubyValue::Nil } }
+            // Sub-expression form (`r = (x, y = rhs)`, `(a, b = pair)[0]`) --
+            // see `stmt.rs` for the primary, statement-position case, which is
+            // what makes the assigned locals visible to LATER statements
+            // (nested in its own block here, so that visibility doesn't
+            // matter). Yields the raw RHS verbatim, as real Ruby does.
+            super::loops::emit_multi_write_value(cx, targets, *value)
         }
         HirNode::Call {
             receiver,

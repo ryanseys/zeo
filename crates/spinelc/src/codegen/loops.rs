@@ -392,3 +392,35 @@ pub fn emit_multi_write(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> 
     };
     emit_multi_target_group(cx, targets, value_expr)
 }
+
+/// Sub-expression form of a multiple assignment: `result = (x, y = rhs)` or
+/// `(a, b = pair)[0]`. Same destructuring as `emit_multi_write`, but the whole
+/// expression YIELDS the raw right-hand side verbatim -- CRuby's rule, verified
+/// against ruby 4.0.5: `(a, b = 5)` -> `5`, `(a, b = 1, 2)` -> `[1, 2]`,
+/// `(a, b = arr)` -> `arr` (the array itself, not a fresh destructured copy).
+/// The RHS is evaluated exactly once and is already a `RubyValue` in both
+/// branches -- the `Array` branch calls `as_array_unchecked` on it, the scalar
+/// branch feeds it to `block_auto_splat`, which takes `Vec<RubyValue>`.
+pub fn emit_multi_write_value(cx: &Ctx, targets: &MultiTargetGroup, value: NodeId) -> TokenStream {
+    let value_expr = {
+        let e = emit_expr(cx, value);
+        super::expr::box_if_object_typed(cx, value, e)
+    };
+    let coerced = if infer(cx, value) == TyKind::Array {
+        quote! { __rhs.clone() }
+    } else {
+        quote! {
+            spinel_rt::RubyValue::Array(spinel_rt::array_new(
+                spinel_rt::block_auto_splat(vec![__rhs.clone()])?
+            ))
+        }
+    };
+    let group = emit_multi_target_group(cx, targets, coerced);
+    quote! {
+        {
+            let __rhs = #value_expr;
+            #group
+            __rhs
+        }
+    }
+}

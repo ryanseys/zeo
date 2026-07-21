@@ -17,9 +17,12 @@ fn recv_proc(recv: &RubyValue) -> &crate::RProc {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "call" | "()" | "[]" | "yield" | "===" => fn call(recv, args, _block) {
+    "call" | "()" | "[]" | "yield" | "===" => fn call(recv, args, block) {
         let p = recv_proc(recv);
-        match p.call(args) {
+        // Forward the call-site block to the proc's own `&block` param
+        // (`->(&b) { b.call }.call { ... }`); `None` when no block, exactly
+        // like a plain `#call`.
+        match p.call_with_block(args, block) {
             // A `break` inside a non-lambda proc invoked via `#call` has no
             // iterator to unwind to, so CRuby raises LocalJumpError (`#reason`
             // `:break`). An iterator yielding to a block reaches `RProc::call`
