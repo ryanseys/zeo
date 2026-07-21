@@ -1,4 +1,4 @@
-//! `cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline]`
+//! `cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume]`
 //!
 //! The performance governor for the structural work: compiles every
 //! `bench/bm_*.rb` with `zeo -o` (so generated programs link the RELEASE
@@ -13,7 +13,14 @@
 //! changes (preemption checkpoints, dispatch changes, engine swaps) report
 //! the printed delta table at their phase gate; intentional shifts are
 //! banked by committing `--update-baseline`'s diff.
+//!
+//! Interruption-safe: `--update-baseline` REWRITES `baseline.tsv` after
+//! every completed benchmark (not once at the end), so a stopped run keeps
+//! everything it finished; `--resume` then skips the benchmarks already in
+//! the file and fills in the rest. Progress lines are flushed per line so
+//! a piped/backgrounded run streams instead of block-buffering.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
@@ -28,6 +35,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut filter: Option<String> = None;
     let mut runs: usize = 3;
     let mut update_baseline = false;
+    let mut resume = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -39,11 +47,15 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     .unwrap_or_else(|| usage("--runs takes a positive integer"))
             }
             "--update-baseline" => update_baseline = true,
+            "--resume" => resume = true,
             other => usage(&format!("unknown flag {other}")),
         }
     }
     if runs == 0 {
         usage("--runs takes a positive integer");
+    }
+    if resume && !update_baseline {
+        usage("--resume only makes sense with --update-baseline");
     }
 
     // Release zeo binary: the compiler itself is not what's being measured,
@@ -63,6 +75,20 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let baseline_path = root.join("bench/baseline.tsv");
     let baseline = read_baseline(&baseline_path);
 
+    // With --resume, rows already recorded are carried forward verbatim and
+    // their benchmarks skipped; a fresh --update-baseline starts empty.
+    let mut recorded: Vec<BenchResult> = if resume {
+        baseline
+            .iter()
+            .map(|(name, secs)| BenchResult {
+                name: name.clone(),
+                secs: *secs,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let mut results: Vec<BenchResult> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     for rb in bench_programs(root) {
@@ -72,6 +98,10 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 continue;
             }
         }
+        if resume && recorded.iter().any(|r| r.name == name) {
+            progress(&format!("{name:<28} (resumed from baseline)"));
+            continue;
+        }
         match run_one(&zeo_bin, &rb, runs) {
             Ok(secs) => {
                 let delta = baseline
@@ -79,11 +109,20 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                     .find(|(n, _)| *n == name)
                     .map(|(_, base)| format!("{:+6.1}% vs {base:.3}s", (secs / base - 1.0) * 100.0))
                     .unwrap_or_else(|| "(no baseline)".to_string());
-                println!("{name:<28} {secs:>8.3}s  {delta}");
-                results.push(BenchResult { name, secs });
+                progress(&format!("{name:<28} {secs:>8.3}s  {delta}"));
+                results.push(BenchResult {
+                    name: name.clone(),
+                    secs,
+                });
+                // Persist after EVERY benchmark so an interrupted run keeps
+                // its completed rows (see module docs).
+                if update_baseline {
+                    recorded.push(BenchResult { name, secs });
+                    write_baseline(&baseline_path, &recorded);
+                }
             }
             Err(msg) => {
-                println!("{name:<28} FAIL  {msg}");
+                progress(&format!("{name:<28} FAIL  {msg}"));
                 failures.push(name);
             }
         }
@@ -97,7 +136,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    if results.is_empty() {
+    if results.is_empty() && recorded.is_empty() {
         println!("no benchmarks matched");
         return ExitCode::FAILURE;
     }
@@ -123,15 +162,29 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 
     if update_baseline {
-        let mut out = String::from("# bench/baseline.tsv -- xtask bench --update-baseline\n");
-        for r in &results {
-            out.push_str(&format!("{}\t{:.3}\n", r.name, r.secs));
-        }
-        std::fs::write(&baseline_path, out)
-            .unwrap_or_else(|e| panic!("writing {}: {e}", baseline_path.display()));
         println!("baseline updated: {}", baseline_path.display());
     }
     ExitCode::SUCCESS
+}
+
+/// A progress line the caller sees IMMEDIATELY, even piped/backgrounded:
+/// stdout through a pipe is block-buffered, so flush per line.
+fn progress(line: &str) {
+    println!("{line}");
+    let _ = std::io::stdout().flush();
+}
+
+/// Rewrite the whole baseline (sorted by name for a stable, reviewable
+/// diff). Called per-benchmark; the file is small, so a full rewrite is
+/// simpler and safer than append bookkeeping.
+fn write_baseline(path: &Path, rows: &[BenchResult]) {
+    let mut sorted: Vec<&BenchResult> = rows.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut out = String::from("# bench/baseline.tsv -- xtask bench --update-baseline\n");
+    for r in sorted {
+        out.push_str(&format!("{}\t{:.3}\n", r.name, r.secs));
+    }
+    std::fs::write(path, out).unwrap_or_else(|e| panic!("writing {}: {e}", path.display()));
 }
 
 /// Compile, verify against `.expected`, and time (min of `runs`).
@@ -214,7 +267,7 @@ fn read_baseline(path: &Path) -> Vec<(String, f64)> {
 fn usage(msg: &str) -> ! {
     eprintln!("xtask bench: {msg}");
     eprintln!(
-        "usage: cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline]"
+        "usage: cargo run -p xtask -- bench [--filter <substr>] [--runs N] [--update-baseline] [--resume]"
     );
     std::process::exit(2);
 }
