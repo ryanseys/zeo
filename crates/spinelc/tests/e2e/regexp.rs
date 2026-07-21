@@ -440,3 +440,26 @@ fn named_captures_dup_names_backref_plus_and_nonstring_match() {
          \"TE: no implicit conversion of Integer into String\"\n2\nnil\n"
     );
 }
+
+#[test]
+fn posix_bracket_validation_and_regexp_error_messages() {
+    // An unknown POSIX class name is a RegexpError (invalid POSIX bracket type),
+    // while valid ones compile; an unterminated char class reports CRuby's
+    // message shape, not the engine's raw multiline parse error.
+    let result = run_ruby(
+        r##"
+        p "Hi 12".scan(/[[:alpha:]]+/)
+        r = (begin; Regexp.new("[[:bogus:]]"); "ok"; rescue RegexpError => e; e.message; end); p r
+        r2 = (begin; Regexp.new("[invalid"); "ok"; rescue RegexpError => e; e.message; end); p r2
+        p Regexp.new("hello").match?("say hello")
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[\"Hi\"]\n\
+         \"invalid POSIX bracket type: /[[:bogus:]]/\"\n\
+         \"unterminated character class: /[invalid/\"\n\
+         true\n"
+    );
+}

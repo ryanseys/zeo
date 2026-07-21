@@ -328,7 +328,74 @@ fn build_fancy(translated: &str, ignore_case: bool, extended: bool, multiline: b
     fancy_regex::Regex::new(&format!("(?{flags}){translated}")).map_err(|e| e.to_string())
 }
 
+/// The POSIX bracket class names Onigmo/CRuby accept inside `[[:name:]]`. An
+/// unknown one is a `RegexpError` at compile time, not a silent literal set.
+const POSIX_CLASSES: &[&str] = &[
+    "alpha", "alnum", "blank", "cntrl", "digit", "graph", "lower", "print", "punct", "space",
+    "upper", "xdigit", "word", "ascii",
+];
+
+/// Reject a `[[:bogus:]]` with an unknown POSIX class name, matching CRuby's
+/// `invalid POSIX bracket type: /<source>/`. Only the `[:name:]` form INSIDE a
+/// character class is a POSIX class; a bare `[:name:]` is an ordinary set.
+fn validate_posix_classes(source: &str) -> Result<(), String> {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    let mut in_class = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        if !in_class {
+            if c == b'[' {
+                in_class = true;
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'[' && bytes.get(i + 1) == Some(&b':') {
+            let start = i + 2;
+            let mut j = start;
+            while j + 1 < bytes.len() && !(bytes[j] == b':' && bytes[j + 1] == b']') {
+                j += 1;
+            }
+            if j + 1 < bytes.len() {
+                let name = source[start..j].strip_prefix('^').unwrap_or(&source[start..j]);
+                if !POSIX_CLASSES.contains(&name) {
+                    return Err(format!("invalid POSIX bracket type: /{source}/"));
+                }
+                i = j + 2;
+                continue;
+            }
+        }
+        if c == b']' {
+            in_class = false;
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// Rewrite a regex-engine compile error into CRuby's own `RegexpError` message
+/// shape (`<reason>: /<source>/`) for the common cases; otherwise keep the
+/// engine's text. CRuby names the offending construct and echoes the pattern.
+fn cruby_regex_error(source: &str, raw: &str) -> String {
+    let reason = if raw.contains("unclosed character class") {
+        "unterminated character class"
+    } else if raw.contains("unclosed group") || raw.contains("unclosed") && raw.contains("(") {
+        "end pattern with unmatched parenthesis"
+    } else if raw.contains("unopened group") || raw.contains("unmatched") && raw.contains(")") {
+        "unmatched close parenthesis"
+    } else {
+        return raw.to_string();
+    };
+    format!("{reason}: /{source}/")
+}
+
 pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bool) -> Result<RRegexp, String> {
+    validate_posix_classes(source)?;
     let translated = translate_ruby_escapes(source);
     let engine = if needs_fancy(&translated) {
         match build_fancy(&translated, ignore_case, extended, multiline) {
@@ -342,7 +409,7 @@ pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bo
                 let _ = e;
                 Engine::Unmatchable
             }
-            Err(e) => return Err(e),
+            Err(e) => return Err(cruby_regex_error(source, &e)),
         }
     } else {
         match regex::RegexBuilder::new(&translated)
@@ -357,7 +424,7 @@ pub fn regexp_new(source: &str, ignore_case: bool, extended: bool, multiline: bo
             // (e.g. a construct only its parser flags): fall back to fancy.
             Err(fast_err) => Engine::Fancy(
                 build_fancy(&translated, ignore_case, extended, multiline)
-                    .map_err(|_| fast_err.to_string())?,
+                    .map_err(|_| cruby_regex_error(source, &fast_err.to_string()))?,
             ),
         }
     };
