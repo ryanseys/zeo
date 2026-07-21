@@ -310,8 +310,13 @@ builtin_methods! {
     // `values_at(*keys)`: the values for `keys` in order (the hash's default
     // for a missing key, `nil` by default).
     "values_at" => fn values_at(recv, args, _block) {
+        // Each key goes through `[]`, so a missing key yields the hash's
+        // DEFAULT (`Hash.new(0).values_at(:x) == [0]`), not a bare nil.
         let h = recv_hash!(recv);
-        let out = args.iter().map(|k| crate::hash_get(h, k)).collect();
+        let mut out = Vec::with_capacity(args.len());
+        for k in args {
+            out.push(crate::hash_index(h, k)?);
+        }
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     // `assoc(key)` / `rassoc(value)`: the `[key, value]` pair matched by key

@@ -1029,3 +1029,19 @@ fn array_index_and_size_error_messages_match_cruby() {
          ArgumentError: attempt to take negative size\n"
     );
 }
+
+#[test]
+fn symbol_to_proc_is_lambda_and_hash_values_at_uses_default() {
+    // :name.to_proc.lambda? is true (CRuby). Hash#values_at routes each key
+    // through [], so a missing key yields the hash's default, not bare nil.
+    let result = run_ruby(
+        r#"
+        p :upcase.to_proc.lambda?
+        p ["x", "y"].map(&:upcase)
+        p Hash.new(0).values_at(:x, :y)
+        p({ a: 1 }.values_at(:a, :z))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\n[\"X\", \"Y\"]\n[0, 0]\n[1, nil]\n");
+}
