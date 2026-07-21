@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **127 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `1ef8efd`
+Suite `spinel` — **131 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `ff43c31`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1789,7 +1789,7 @@ false
 false
 false
 nil
-2
+1
 false
 false
 false
@@ -2055,14 +2055,11 @@ uncaught exception: uninitialized constant OpenSSL (NameError)
 - source: `/Users/ryanseys/dev/spinel/test/hash_dig.rb`
 - expected stdout: `/Users/ryanseys/dev/spinel/test/hash_dig.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-expected-an-integer-got-05c6` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-integer-does-not-have-dig-method-typeerror-ee2a` (cluster `?`)
 
 stderr:
 ```
-
-thread '<unnamed>' (100445318) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
-expected an Integer, got b
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+uncaught exception: Integer does not have #dig method (TypeError)
 ```
 
 diff:
@@ -2144,11 +2141,8 @@ nil
 first difference at line 1
 --- expected (0 lines)
 
---- actual (4 lines)
-
-thread '<unnamed>' (100445318) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
-expected an Integer, got b
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+--- actual (1 lines)
+uncaught exception: Integer does not have #dig method (TypeError)
 ```
 
 ---
@@ -2728,34 +2722,6 @@ first difference at line 14
 
 ---
 
-## `issue_2884` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_2884.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2884.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (5 lines)
-true
-false
-2
-nil
-[1, 1, 2]
-
---- actual (5 lines)
-true
-false
-2
-nil
-[1, 2]
-```
-
----
-
 ## `issue_2962` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/issue_2962.rb`
@@ -2820,38 +2786,10 @@ true
 
 --- actual (5 lines)
 C
-5089653620613155510
+-8795378791832623740
 S
 P
 false
-```
-
----
-
-## `issue_2983` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_2983.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2983.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-TypeError
-2
-3
-nil
-7
-
---- actual (5 lines)
-0
-2
-3
-nil
-7
 ```
 
 ---
@@ -2950,30 +2888,6 @@ FrozenError
 [1, 2]
 ["x", "y"]
 FrozenError
-```
-
----
-
-## `issue_3014` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3014.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3014.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (3 lines)
-false
-true
-true
-
---- actual (3 lines)
-false
-false
-true
 ```
 
 ---
@@ -3402,6 +3316,173 @@ false
 false
 true
 true
+```
+
+---
+
+## `issue_3135` — FAIL_COMPILE
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3135.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3135.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+
+stderr:
+```
+spinelc: cannot load such file -- ostruct
+```
+
+---
+
+## `issue_3155` — FAIL_COMPILE
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3155.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3155.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+
+stderr:
+```
+spinelc: cannot load such file -- ostruct
+```
+
+---
+
+## `issue_3163` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3163.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3163.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (6 lines)
+true
+true
+true
+false
+false
+false
+
+--- actual (6 lines)
+false
+false
+false
+true
+false
+false
+```
+
+---
+
+## `issue_3179` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3179.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3179.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:A` (cluster `P`)
+
+stderr:
+```
+uncaught exception: uninitialized constant A (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (5 lines)
+"a:5"
+"b:9"
+"A 1"
+"C 2 3"
+"none"
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant A (NameError)
+```
+
+---
+
+## `issue_3180` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3180.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3180.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:User` (cluster `P`)
+
+stderr:
+```
+uncaught exception: uninitialized constant User (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (2 lines)
+"Alice"
+"Alice"
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant User (NameError)
+```
+
+---
+
+## `issue_3193` — FAIL_COMPILE
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3193.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3193.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+
+stderr:
+```
+spinelc: cannot load such file -- ostruct
+```
+
+---
+
+## `issue_3194` — FAIL_COMPILE
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3194.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3194.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+
+stderr:
+```
+spinelc: cannot load such file -- ostruct
+```
+
+---
+
+## `issue_3197` — FAIL_COMPILE
+
+- source: `/Users/ryanseys/dev/spinel/test/issue_3197.rb`
+- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3197.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+
+stderr:
+```
+spinelc: cannot load such file -- ostruct
 ```
 
 ---
@@ -4172,7 +4253,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (100510031) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (100829519) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4246,7 +4327,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (100510031) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (100829519) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5816,36 +5897,6 @@ first difference at line 1
 []
 [5, 6, 7]
 [1, 2, 3]
-```
-
----
-
-## `uniq_user_eql_hash` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/uniq_user_eql_hash.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/uniq_user_eql_hash.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-1
-2
-[1]
-2
-1
-false
-
---- actual (6 lines)
-2
-3
-[1, 1]
-2
-1
-false
 ```
 
 ---

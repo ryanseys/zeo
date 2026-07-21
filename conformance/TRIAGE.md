@@ -6,6 +6,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
+| ? | auto-cannot-load-such-file-ostruct-0485 | 5 | issue_3193, issue_3194, issue_3197 | cannot load such file -- ostruct |
 | g | arity-panic | 4 | bundle_tiny_string, issue_3057, str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
 | P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
 | ? | auto-index-too-small-for-array-minimum-indexerror-4878 | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
@@ -16,15 +17,17 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-can-coerce-complex-into-float-typeerror-9cc0 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
 | ? | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
 | ? | auto-error-unrecognized-escape-sequence-regexperror-2794 | 1 | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
-| ? | auto-expected-an-integer-got-05c6 | 1 | hash_dig | expected an Integer, got b |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
+| ? | auto-integer-does-not-have-dig-method-typeerror-ee2a | 1 | hash_dig | uncaught exception: Integer does not have #dig method (TypeError) |
 | ? | auto-no-receiver-is-available-argumenterror-234c | 1 | issue_3119 | uncaught exception: no receiver is available (ArgumentError) |
 | ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
+| P | missing-const:A | 1 | issue_3179 | uncaught exception: uninitialized constant A (NameError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |
 | P | missing-const:M::C | 1 | constant_path | uncaught exception: uninitialized constant M::C (NameError) |
 | P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL (NameError) |
 | P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameError) |
+| P | missing-const:User | 1 | issue_3180 | uncaught exception: uninitialized constant User (NameError) |
 | P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil (NoMethodError) |
 | P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil (NoMethodError) |
 | P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil (NoMethodError) |

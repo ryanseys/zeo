@@ -1,24 +1,25 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2075/2231 passing (93.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `1ef8efd`
+Suite `spinel` — **2135/2295 passing (93.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `ff43c31`
 
 | verdict | count |
 |---|---|
-| PASS | 2075 |
-| FAIL_OUTPUT | 127 |
-| FAIL_COMPILE | 0 |
+| PASS | 2135 |
+| FAIL_OUTPUT | 126 |
+| FAIL_COMPILE | 5 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
 | TIMEOUT_RUN | 0 |
 | ORACLE_FAIL | 0 |
 | SKIP | 29 |
-| **TOTAL** | **2231** |
+| **TOTAL** | **2295** |
 
 ## Top failure categories
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
+| 5 | auto-cannot-load-such-file-ostruct-0485 | ? | issue_3193 | cannot load such file -- ostruct |
 | 4 | arity-panic | g | bundle_tiny_string | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
 | 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
 | 2 | auto-index-too-small-for-array-minimum-indexerror-4878 | ? | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
@@ -28,7 +29,6 @@ Suite `spinel` — **2075/2231 passing (93.0%)** — oracle `ruby 4.0.5 (2026-05
 | 2 | missing-method:length | P | param_lengthlike_body_widen | uncaught exception: undefined method 'length' for nil (NoMethodError) |
 | 1 | auto-can-coerce-complex-into-float-typeerror-9cc0 | ? | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
 | 1 | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | ? | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
-| 1 | auto-error-unrecognized-escape-sequence-regexperror-2794 | ? | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 
 ## Skipped tests
 
