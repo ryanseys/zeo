@@ -41,6 +41,12 @@ paste = "1"
 num-bigint = "0.5"
 num-integer = "0.1"
 num-traits = "0.2"
+# Time zone resolution (local offset / DST / abbreviation for an instant),
+# pure Rust over the system zoneinfo -- replaces the unsafe libc
+# timegm/localtime_r/gmtime_r calls the Time builtin used to make. The civil
+# <-> epoch arithmetic itself is done in-tree (Howard Hinnant's algorithm),
+# so jiff is consulted ONLY for the OS-dependent local timezone.
+jiff = "0.2"
 # String Unicode surface: `unicode_normalize`/`unicode_normalized?` (the
 # NFC/NFD/NFKC/NFKD algorithms + their derived tables) and grapheme-cluster
 # segmentation (`grapheme_clusters`/`each_grapheme_cluster`, UAX #29). Both

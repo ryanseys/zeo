@@ -155,9 +155,26 @@ fn recv_time(recv: &RubyValue) -> &RTime {
     }
 }
 
+/// A broken-down civil time, mirroring the `libc::tm` fields the renderers and
+/// accessors read (so every consumer of `Civil` is unchanged): `tm_year` is
+/// years since 1900, `tm_mon` is 0-based, `tm_wday` is 0=Sunday, `tm_yday` is
+/// 0-based, `tm_isdst` is > 0 when DST is in effect.
+#[derive(Default)]
+struct Tm {
+    tm_year: i32,
+    tm_mon: i32,
+    tm_mday: i32,
+    tm_hour: i32,
+    tm_min: i32,
+    tm_sec: i32,
+    tm_wday: i32,
+    tm_yday: i32,
+    tm_isdst: i32,
+}
+
 /// The broken-down civil fields of an instant, in the Time's own zone.
 struct Civil {
-    tm: libc::tm,
+    tm: Tm,
     /// The zone offset actually in effect at this instant (DST-resolved for
     /// a local Time).
     offset: i32,
@@ -165,39 +182,83 @@ struct Civil {
     zone: String,
 }
 
-/// Break `t` into civil fields. A UTC/fixed-offset Time shifts the epoch
-/// seconds and reads them with `gmtime_r`; a local one asks `localtime_r`,
-/// which is what resolves DST and names the zone.
+/// Break `t` into civil fields in the Time's own zone. A UTC/fixed-offset Time
+/// shifts the epoch by its baked-in offset; a local one asks jiff for the zone
+/// offset/DST/abbreviation in effect at this instant (the only OS-dependent
+/// step). Either way the shifted instant is broken down with pure integer date
+/// math, so the two paths agree field-for-field.
 fn civil(t: &RTime) -> Civil {
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    match t.offset() {
-        Some(off) => {
-            let shifted = t.sec() + off as i64;
-            // SAFETY: `shifted` is a valid time_t and `tm` a valid out-param.
-            unsafe { libc::gmtime_r(&shifted, &mut tm) };
-            let zone = if off == 0 { "UTC".to_string() } else { String::new() };
-            Civil { tm, offset: off, zone }
-        }
-        None => {
-            let secs = t.sec();
-            // `localtime_r` initializes the zone state from TZ itself on
-            // both glibc and macOS, so no explicit `tzset` is needed (and
-            // it is the reentrant reader, unlike `localtime`).
-            // SAFETY: valid time_t in, valid out-param.
-            unsafe { libc::localtime_r(&secs, &mut tm) };
-            let offset = tm.tm_gmtoff as i32;
-            // SAFETY: `tm_zone` points into libc's static zone strings after
-            // localtime_r; valid for the process lifetime, NUL-terminated.
-            let zone = if tm.tm_zone.is_null() {
-                String::new()
-            } else {
-                unsafe { std::ffi::CStr::from_ptr(tm.tm_zone) }
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            Civil { tm, offset, zone }
-        }
+    let secs = t.sec();
+    let (offset, isdst, zone) = match t.offset() {
+        Some(off) => (off, 0, if off == 0 { "UTC".to_string() } else { String::new() }),
+        None => local_zone(secs),
+    };
+    let mut tm = broken_down(secs + offset as i64);
+    tm.tm_isdst = isdst;
+    Civil { tm, offset, zone }
+}
+
+/// The system local zone's `(offset east of UTC, isdst flag, abbreviation)` at
+/// a UTC instant. Falls back to UTC for instants outside jiff's representable
+/// range (years beyond ±9999), where a local zone is undefined anyway.
+fn local_zone(secs: i64) -> (i32, i32, String) {
+    let Ok(ts) = jiff::Timestamp::from_second(secs) else {
+        return (0, 0, "UTC".to_string());
+    };
+    let tz = jiff::tz::TimeZone::system();
+    let info = tz.to_offset_info(ts);
+    let isdst = i32::from(info.dst().is_dst());
+    (info.offset().seconds(), isdst, info.abbreviation().to_string())
+}
+
+/// Break epoch seconds into UTC civil fields via Howard Hinnant's days<->civil
+/// algorithm (proleptic Gregorian, no leap seconds -- exactly what `gmtime`
+/// computes). Pure integer arithmetic.
+fn broken_down(secs: i64) -> Tm {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    // 1970-01-01 (day 0) was a Thursday, which is 4 in the 0=Sunday numbering.
+    let wday = (days + 4).rem_euclid(7);
+    let yday = days - days_from_civil(year, 1, 1);
+    Tm {
+        tm_year: (year - 1900) as i32,
+        tm_mon: (month - 1) as i32,
+        tm_mday: day as i32,
+        tm_hour: (rem / 3600) as i32,
+        tm_min: (rem % 3600 / 60) as i32,
+        tm_sec: (rem % 60) as i32,
+        tm_wday: wday as i32,
+        tm_yday: yday as i32,
+        tm_isdst: 0,
     }
+}
+
+/// Days since 1970-01-01 for a proleptic-Gregorian `y/m/d` (`m` in 1..=12);
+/// Hinnant's `days_from_civil`. Linear in `d`, so an out-of-range day still
+/// yields the correct running day count (the caller's normalization rule).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146097 + doe - 719468
+}
+
+/// Inverse of [`days_from_civil`]: the `(year, month, day)` for a
+/// days-since-epoch count.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// `+hhmm`/`-hhmm` -- strftime's `%z` and `to_s`'s trailing offset.
@@ -287,92 +348,102 @@ fn strftime(t: &RTime, fmt: &str) -> String {
             out.push(ch);
             continue;
         }
-        // Flags, then the directive. `:` flags only precede `z` (`%:z` etc.).
+        // Flags, then an optional field WIDTH, then the directive. `:` flags
+        // only precede `z` (`%:z` etc.); `^`/`#` upcase/swapcase the result.
         let mut pad: Option<char> = None;
         let mut colons = 0usize;
+        let (mut upcase, mut swapcase) = (false, false);
         while let Some(&f) = chars.peek() {
             match f {
-                '-' | '0' | '_' => {
-                    pad = Some(f);
-                    chars.next();
-                }
-                ':' => {
-                    colons += 1;
-                    chars.next();
-                }
+                '-' | '0' | '_' => pad = Some(f),
+                '^' => upcase = true,
+                '#' => swapcase = true,
+                ':' => colons += 1,
                 _ => break,
             }
+            chars.next();
+        }
+        let mut width: Option<usize> = None;
+        while let Some(d) = chars.peek().and_then(|c| c.to_digit(10)) {
+            width = Some(width.unwrap_or(0) * 10 + d as usize);
+            chars.next();
         }
         let Some(d) = chars.next() else {
             out.push('%');
             break;
         };
         // `num` applies the flag to a numeric directive: `-` drops padding,
-        // `_` pads with spaces, otherwise zero-padded to `width`.
-        let num = |v: i64, width: usize| -> String {
+        // `_` pads with spaces, otherwise zero-padded to `width` (an explicit
+        // `%<n>X` width overrides the directive's default).
+        let num = |v: i64, default_width: usize| -> String {
+            let w = width.unwrap_or(default_width);
             match pad {
                 Some('-') => v.to_string(),
-                Some('_') => format!("{:>width$}", v, width = width),
-                _ => format!("{:0width$}", v, width = width),
+                Some('_') => format!("{:>w$}", v, w = w),
+                _ => format!("{:0w$}", v, w = w),
             }
         };
-        match d {
-            'Y' => out.push_str(&(tm.tm_year as i64 + 1900).to_string()),
-            'y' => out.push_str(&num((tm.tm_year as i64 + 1900) % 100, 2)),
-            'C' => out.push_str(&num((tm.tm_year as i64 + 1900) / 100, 2)),
-            'm' => out.push_str(&num(tm.tm_mon as i64 + 1, 2)),
-            'd' => out.push_str(&num(tm.tm_mday as i64, 2)),
-            'e' => out.push_str(&format!("{:>2}", tm.tm_mday)),
-            'j' => out.push_str(&num(tm.tm_yday as i64 + 1, 3)),
-            'H' => out.push_str(&num(tm.tm_hour as i64, 2)),
-            'k' => out.push_str(&format!("{:>2}", tm.tm_hour)),
-            'I' => {
-                let h12 = match tm.tm_hour % 12 {
-                    0 => 12,
-                    h => h,
-                };
-                out.push_str(&num(h12 as i64, 2));
+        // `%N`/`%L`'s fractional seconds to `digits` places: the 9-digit
+        // nanosecond string, truncated or right-zero-padded to width.
+        let frac = |digits: usize| -> String {
+            let nine = format!("{:09}", t.nsec());
+            if digits <= 9 {
+                nine[..digits].to_string()
+            } else {
+                format!("{nine}{}", "0".repeat(digits - 9))
             }
-            'l' => {
-                let h12 = match tm.tm_hour % 12 {
-                    0 => 12,
-                    h => h,
-                };
-                out.push_str(&format!("{:>2}", h12));
-            }
-            'M' => out.push_str(&num(tm.tm_min as i64, 2)),
-            'S' => out.push_str(&num(tm.tm_sec as i64, 2)),
-            'L' => out.push_str(&format!("{:03}", t.nsec() / 1_000_000)),
-            'N' => out.push_str(&format!("{:09}", t.nsec())),
-            'z' if colons > 0 => out.push_str(&offset_str_colon(c.offset, colons)),
-            'z' => out.push_str(&offset_str(c.offset, false)),
-            'Z' => out.push_str(&c.zone),
-            'a' => out.push_str(&DAY_NAMES[tm.tm_wday as usize][..3]),
-            'A' => out.push_str(DAY_NAMES[tm.tm_wday as usize]),
-            'b' | 'h' => out.push_str(&MONTH_NAMES[tm.tm_mon as usize][..3]),
-            'B' => out.push_str(MONTH_NAMES[tm.tm_mon as usize]),
-            'p' => out.push_str(if tm.tm_hour < 12 { "AM" } else { "PM" }),
-            'P' => out.push_str(if tm.tm_hour < 12 { "am" } else { "pm" }),
-            'u' => out.push_str(&(if tm.tm_wday == 0 { 7 } else { tm.tm_wday as i64 }).to_string()),
-            'w' => out.push_str(&(tm.tm_wday as i64).to_string()),
-            's' => out.push_str(&t.sec().to_string()),
+        };
+        let mut piece = match d {
+            'Y' => num(tm.tm_year as i64 + 1900, 1),
+            'y' => num((tm.tm_year as i64 + 1900) % 100, 2),
+            'C' => num((tm.tm_year as i64 + 1900) / 100, 2),
+            'm' => num(tm.tm_mon as i64 + 1, 2),
+            'd' => num(tm.tm_mday as i64, 2),
+            'e' => format!("{:>2}", tm.tm_mday),
+            'j' => num(tm.tm_yday as i64 + 1, 3),
+            'H' => num(tm.tm_hour as i64, 2),
+            'k' => format!("{:>2}", tm.tm_hour),
+            'I' => num(if tm.tm_hour % 12 == 0 { 12 } else { (tm.tm_hour % 12) as i64 }, 2),
+            'l' => format!("{:>2}", if tm.tm_hour % 12 == 0 { 12 } else { tm.tm_hour % 12 }),
+            'M' => num(tm.tm_min as i64, 2),
+            'S' => num(tm.tm_sec as i64, 2),
+            'L' => frac(width.unwrap_or(3)),
+            'N' => frac(width.unwrap_or(9)),
+            'z' if colons > 0 => offset_str_colon(c.offset, colons),
+            'z' => offset_str(c.offset, false),
+            'Z' => c.zone.clone(),
+            'a' => DAY_NAMES[tm.tm_wday as usize][..3].to_string(),
+            'A' => DAY_NAMES[tm.tm_wday as usize].to_string(),
+            'b' | 'h' => MONTH_NAMES[tm.tm_mon as usize][..3].to_string(),
+            'B' => MONTH_NAMES[tm.tm_mon as usize].to_string(),
+            'p' => (if tm.tm_hour < 12 { "AM" } else { "PM" }).to_string(),
+            'P' => (if tm.tm_hour < 12 { "am" } else { "pm" }).to_string(),
+            'u' => (if tm.tm_wday == 0 { 7 } else { tm.tm_wday as i64 }).to_string(),
+            'w' => (tm.tm_wday as i64).to_string(),
+            's' => t.sec().to_string(),
             // The compound directives, in terms of the above.
-            'F' => out.push_str(&strftime(t, "%Y-%m-%d")),
-            'T' | 'X' => out.push_str(&strftime(t, "%H:%M:%S")),
-            'D' | 'x' => out.push_str(&strftime(t, "%m/%d/%y")),
-            'R' => out.push_str(&strftime(t, "%H:%M")),
-            'r' => out.push_str(&strftime(t, "%I:%M:%S %p")),
-            'c' => out.push_str(&strftime(t, "%a %b %e %H:%M:%S %Y")),
-            'n' => out.push('\n'),
-            't' => out.push('\t'),
-            '%' => out.push('%'),
+            'F' => strftime(t, "%Y-%m-%d"),
+            'T' | 'X' => strftime(t, "%H:%M:%S"),
+            'D' | 'x' => strftime(t, "%m/%d/%y"),
+            'R' => strftime(t, "%H:%M"),
+            'r' => strftime(t, "%I:%M:%S %p"),
+            'c' => strftime(t, "%a %b %e %H:%M:%S %Y"),
+            'n' => "\n".to_string(),
+            't' => "\t".to_string(),
+            '%' => "%".to_string(),
             // Unknown: emit verbatim, `%` included (Ruby's own behavior --
             // it does not raise).
-            other => {
-                out.push('%');
-                out.push(other);
-            }
+            other => format!("%{other}"),
+        };
+        if upcase {
+            piece = piece.to_uppercase();
+        } else if swapcase {
+            piece = piece
+                .chars()
+                .map(|c| if c.is_uppercase() { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+                .collect();
         }
+        out.push_str(&piece);
     }
     out
 }
@@ -561,21 +632,21 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
     }
 }
 
-/// `Time.utc(y, mo, d, h, mi, s)` -- civil fields to epoch seconds, via
-/// libc's `timegm` (the UTC inverse of `gmtime`).
+/// `Time.utc(y, mo, d, h, mi, s)` -- civil fields to epoch seconds, the UTC
+/// inverse of `broken_down`. Out-of-range fields normalize (an over-large
+/// month rolls into the year; day/hour/min/sec overflow just accumulate as
+/// seconds), matching `timegm` -- Ruby itself raises instead, a pre-existing
+/// documented divergence (the TODO on `time_utc`).
 fn civil_to_epoch_utc(parts: &[i64]) -> i64 {
     let get = |i: usize, dflt: i64| parts.get(i).copied().unwrap_or(dflt);
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    tm.tm_year = (get(0, 1970) - 1900) as libc::c_int;
-    tm.tm_mon = (get(1, 1) - 1) as libc::c_int;
-    tm.tm_mday = get(2, 1) as libc::c_int;
-    tm.tm_hour = get(3, 0) as libc::c_int;
-    tm.tm_min = get(4, 0) as libc::c_int;
-    tm.tm_sec = get(5, 0) as libc::c_int;
-    // SAFETY: `tm` is fully initialized above; `timegm` reads it and
-    // normalizes out-of-range fields (Ruby raises for those instead -- see
-    // the TODO on `time_utc`).
-    unsafe { libc::timegm(&mut tm) as i64 }
+    let (mut year, month) = (get(0, 1970), get(1, 1));
+    // Normalize an out-of-range month into the year so `days_from_civil` sees
+    // `m` in 1..=12; the day/time overflow needs no pre-normalization because
+    // the epoch is just a running second count.
+    year += (month - 1).div_euclid(12);
+    let month = (month - 1).rem_euclid(12) + 1;
+    let days = days_from_civil(year, month, get(2, 1));
+    days * 86_400 + get(3, 0) * 3600 + get(4, 0) * 60 + get(5, 0)
 }
 
 builtin_methods! {
