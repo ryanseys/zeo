@@ -57,6 +57,166 @@ pub fn is_times_fast_path(
         && name == "times"
         && receiver.is_some_and(|r| matches!(compiler.hir[r], HirNode::IntegerLit(_)))
 }
+
+/// `.times`'s sibling: `(1..9).each { }` on a LITERAL range whose bounds are
+/// both Int literals -- the other call shape that fuses to a native counted
+/// loop (no `Proc` allocated). Beginless/endless ranges keep the generic
+/// path (an endless `each` never terminates by counting up).
+pub fn is_range_each_fast_path(
+    compiler: &Compiler,
+    receiver: Option<NodeId>,
+    name: &str,
+    kwargs_empty: bool,
+) -> bool {
+    kwargs_empty
+        && name == "each"
+        && receiver.is_some_and(|r| match compiler.hir[r] {
+            HirNode::RangeLit {
+                start: Some(s),
+                end: Some(e),
+                ..
+            } => {
+                matches!(compiler.hir[s], HirNode::IntegerLit(_))
+                    && matches!(compiler.hir[e], HirNode::IntegerLit(_))
+            }
+            _ => false,
+        })
+}
+
+/// Either inline-splice shape -- what the escaping-block scans
+/// (`captures`/`hoisting`/`exceptions`) ask: a block NOT matching one of
+/// these becomes a real, heap-allocated `Proc`.
+pub fn is_inline_block_fast_path(
+    compiler: &Compiler,
+    receiver: Option<NodeId>,
+    name: &str,
+    kwargs_empty: bool,
+) -> bool {
+    is_times_fast_path(compiler, receiver, name, kwargs_empty)
+        || is_range_each_fast_path(compiler, receiver, name, kwargs_empty)
+}
+
+/// The one native counted-loop splice behind both `n.times { }` and
+/// `(a..b).each { }`: iterate `__i` from `start` to `stop`
+/// (`inclusive` decides `>` vs `>=`), binding the block's first required
+/// param as a fresh `Int` each iteration, and evaluate to `result` (times:
+/// the receiver Int; range each: the receiver range). The body is spliced
+/// into this Rust scope -- no closure or `Proc` object is ever allocated --
+/// sharing `codegen::loops`' redo-wrapping so `break`/`next`/`redo` work
+/// exactly as in `while`/`until`/`for`.
+#[allow(clippy::too_many_arguments)]
+fn emit_counted_block_splice(
+    cx: &Ctx,
+    block_id: NodeId,
+    start: i64,
+    stop: i64,
+    inclusive: bool,
+    label_stem: &str,
+    result: TokenStream,
+) -> TokenStream {
+    let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
+        panic!("the inline splice's argument must be a block");
+    };
+    let outer = super::loops::fresh_label(cx, label_stem);
+    let redo = super::loops::fresh_label(cx, &format!("{label_stem}_body"));
+    // This inlined block's OWN param/block-locals that a NESTED
+    // escaping block captures (e.g.
+    // `arr.each { 3.times { |i| store << ->{ i } } }`). Since the
+    // spliced body shares this Rust scope rather than being a
+    // closure, its param would otherwise be a plain per-iteration
+    // `let` that a `move` closure can't share -- so cell-wrap exactly
+    // those names into `Arc<Mutex<RubyValue>>` (fresh per iteration,
+    // matching Ruby's per-iteration block-param binding), register
+    // them as `captured_locals` so the body's own reads/writes route
+    // through the cell, and let the nested closure `Arc::clone` them
+    // -- the identical treatment a real block param gets via
+    // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
+    // this, the nested block would fresh-declare the name and read
+    // `nil` (the case the old nested-capture guard rejected outright).
+    let nested_captured: std::collections::HashSet<String> =
+        super::captures::collect_escaping_captures(cx.compiler, body, params, cx.current_class)
+            .locals;
+    let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
+    if !nested_captured.is_empty() {
+        loop_cx
+            .captured_locals
+            .to_mut()
+            .extend(nested_captured.iter().cloned());
+    }
+    // The counter param IS an `Int` by construction (bound as
+    // `RubyValue::Int(__i)` below) -- tell inference so body reads
+    // take the typed fast paths: an untyped index in `a[i] = ...`
+    // forced 32M dynamic sends in bm_loops_times (~100x slower than
+    // C). A cell-wrapped (nested-captured) param stays untyped, its
+    // reads route through the Arc<Mutex> cell; and either way any
+    // stale OUTER type under the same name must not leak in. Same
+    // for block-locals, which rebind as plain `RubyValue` nil.
+    if let Some(p) = params.required.first() {
+        if nested_captured.contains(p) {
+            loop_cx.local_types.to_mut().remove(p);
+        } else {
+            loop_cx
+                .local_types
+                .to_mut()
+                .insert(p.clone(), crate::types::TyKind::Int);
+        }
+    }
+    for name in &params.block_locals {
+        loop_cx.local_types.to_mut().remove(name);
+    }
+    let bind = params.required.first().map(|p| {
+        let ident = safe_ident(p);
+        // `mut`: a block param is an ordinary reassignable local.
+        let plain = quote! { #[allow(unused_mut)] let mut #ident = zeo_rt::RubyValue::Int(__i); };
+        if nested_captured.contains(p) {
+            quote! {
+                #plain
+                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+            }
+        } else {
+            plain
+        }
+    });
+    // `3.times { |i; n| ... }` -- block-locals get a fresh `nil` per
+    // iteration here, exactly as `emit_proc_param_bindings` does for
+    // a real Proc. Inside the loop, not outside: the reset-every-
+    // invocation semantics is the whole point of the declaration. A
+    // block-local a nested escaping block captures is cell-wrapped for
+    // the same reason as the param above.
+    let block_locals = params.block_locals.iter().map(|name| {
+        let ident = safe_ident(name);
+        if nested_captured.contains(name) {
+            quote! {
+                let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                    ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
+            }
+        } else {
+            quote! {
+                #[allow(unused_variables, unused_mut)]
+                let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
+            }
+        }
+    });
+    let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
+    let done = if inclusive {
+        quote! { __i > #stop }
+    } else {
+        quote! { __i >= #stop }
+    };
+    quote! {
+        {
+            let mut __i: i64 = #start;
+            #outer: loop {
+                if #done { break #outer #result; }
+                #bind
+                #(#block_locals)*
+                #inner
+                __i += 1;
+            }
+        }
+    }
+}
 /// Finishes a dynamic-dispatch (`send_value`) emission: `catch_break`
 /// wraps the call ONLY when the call site itself carries a block -- a
 /// `Signal::Break` can only ever target a block attached to THIS call, so
@@ -1801,110 +1961,56 @@ fn dispatch(
     {
         if let HirNode::IntegerLit(n) = &cx.compiler.hir[recv_id] {
             let n = *n;
-            let HirNode::Block { params, body } = &cx.compiler.hir[block_id] else {
-                panic!("`times`'s argument must be a block");
-            };
-            let outer = super::loops::fresh_label(cx, "times");
-            let redo = super::loops::fresh_label(cx, "times_body");
-            // This inlined block's OWN param/block-locals that a NESTED
-            // escaping block captures (e.g.
-            // `arr.each { 3.times { |i| store << ->{ i } } }`). Since the
-            // `.times` body shares this Rust scope rather than being a
-            // closure, its param would otherwise be a plain per-iteration
-            // `let` that a `move` closure can't share -- so cell-wrap exactly
-            // those names into `Arc<Mutex<RubyValue>>` (fresh per iteration,
-            // matching Ruby's per-iteration block-param binding), register
-            // them as `captured_locals` so the body's own reads/writes route
-            // through the cell, and let the nested closure `Arc::clone` them
-            // -- the identical treatment a real block param gets via
-            // `emit_proc_or_lambda_value`'s `nested_param_wraps`. Without
-            // this, the nested block would fresh-declare the name and read
-            // `nil` (the case the old nested-capture guard rejected outright).
-            let nested_captured: std::collections::HashSet<String> =
-                super::captures::collect_escaping_captures(
-                    cx.compiler,
-                    body,
-                    params,
-                    cx.current_class,
-                )
-                .locals;
-            let mut loop_cx = cx.in_loop(redo.clone(), outer.clone());
-            if !nested_captured.is_empty() {
-                loop_cx
-                    .captured_locals
-                    .to_mut()
-                    .extend(nested_captured.iter().cloned());
-            }
-            // The counter param IS an `Int` by construction (bound as
-            // `RubyValue::Int(__i)` below) -- tell inference so body reads
-            // take the typed fast paths: an untyped index in `a[i] = ...`
-            // forced 32M dynamic sends in bm_loops_times (~100x slower than
-            // C). A cell-wrapped (nested-captured) param stays untyped, its
-            // reads route through the Arc<Mutex> cell; and either way any
-            // stale OUTER type under the same name must not leak in. Same
-            // for block-locals, which rebind as plain `RubyValue` nil.
-            if let Some(p) = params.required.first() {
-                if nested_captured.contains(p) {
-                    loop_cx.local_types.to_mut().remove(p);
-                } else {
-                    loop_cx
-                        .local_types
-                        .to_mut()
-                        .insert(p.clone(), crate::types::TyKind::Int);
+            // `Integer#times` evaluates to its receiver (MRI), not nil --
+            // matters in expression position (`x = 5.times {}`).
+            return emit_counted_block_splice(
+                cx,
+                block_id,
+                0,
+                n,
+                false,
+                "times",
+                quote! { zeo_rt::RubyValue::Int(#n) },
+            );
+        }
+    }
+
+    // `(a..b).each { |i| }` on a LITERAL Int-bounded range: the same native
+    // counted loop `.times` fuses to (the generic path allocates a real
+    // Proc and dynamic-dispatches every yield -- bm_range_each spent 65s
+    // there). `.each` answers the receiver range. `i64::MAX`-inclusive is
+    // excluded: the `__i += 1` after the final iteration would overflow.
+    if let Some(block_id) =
+        block.filter(|_| is_range_each_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
+    {
+        if let HirNode::RangeLit {
+            start: Some(s),
+            end: Some(e),
+            exclusive,
+        } = &cx.compiler.hir[recv_id]
+        {
+            if let (HirNode::IntegerLit(s), HirNode::IntegerLit(e)) =
+                (&cx.compiler.hir[*s], &cx.compiler.hir[*e])
+            {
+                let (s, e, exclusive) = (*s, *e, *exclusive);
+                if exclusive || e < i64::MAX {
+                    return emit_counted_block_splice(
+                        cx,
+                        block_id,
+                        s,
+                        e,
+                        !exclusive,
+                        "range_each",
+                        quote! {
+                            zeo_rt::RubyValue::Range(
+                                Some(Box::new(zeo_rt::RubyValue::Int(#s))),
+                                Some(Box::new(zeo_rt::RubyValue::Int(#e))),
+                                #exclusive,
+                            )
+                        },
+                    );
                 }
             }
-            for name in &params.block_locals {
-                loop_cx.local_types.to_mut().remove(name);
-            }
-            let bind = params.required.first().map(|p| {
-                let ident = safe_ident(p);
-                // `mut`: a block param is an ordinary reassignable local.
-                let plain = quote! { #[allow(unused_mut)] let mut #ident = zeo_rt::RubyValue::Int(__i); };
-                if nested_captured.contains(p) {
-                    quote! {
-                        #plain
-                        let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                            ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
-                    }
-                } else {
-                    plain
-                }
-            });
-            // `3.times { |i; n| ... }` -- block-locals get a fresh `nil` per
-            // iteration here, exactly as `emit_proc_param_bindings` does for
-            // a real Proc. Inside the loop, not outside: the reset-every-
-            // invocation semantics is the whole point of the declaration. A
-            // block-local a nested escaping block captures is cell-wrapped for
-            // the same reason as the param above.
-            let block_locals = params.block_locals.iter().map(|name| {
-                let ident = safe_ident(name);
-                if nested_captured.contains(name) {
-                    quote! {
-                        let #ident: ::std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                            ::std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(zeo_rt::RubyValue::Nil));
-                    }
-                } else {
-                    quote! {
-                        #[allow(unused_variables, unused_mut)]
-                        let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Nil;
-                    }
-                }
-            });
-            let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
-            return quote! {
-                {
-                    let mut __i: i64 = 0;
-                    #outer: loop {
-                        // `Integer#times` evaluates to its receiver (MRI), not
-                        // nil -- matters in expression position (`x = 5.times {}`).
-                        if __i >= #n { break #outer zeo_rt::RubyValue::Int(#n); }
-                        #bind
-                        #(#block_locals)*
-                        #inner
-                        __i += 1;
-                    }
-                }
-            };
         }
     }
 

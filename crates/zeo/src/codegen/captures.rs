@@ -10,7 +10,7 @@
 //! (`Arc<parking_lot::Mutex<RubyValue>>`) storage class instead of a plain hoisted `let
 //! mut`?
 
-use super::call::is_times_fast_path;
+use super::call::is_inline_block_fast_path;
 use crate::compiler::Compiler;
 use crate::hir::{ArrayElem, HirNode, NodeId, Params, StrPart};
 use std::collections::HashSet;
@@ -149,7 +149,7 @@ fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
-                if !is_times_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
+                if !is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
                     return true;
                 }
                 // Still inline (`.times`) -- keep looking inside it (and in
@@ -854,7 +854,7 @@ fn walk(
                 let HirNode::Block { params, body } = &compiler.hir[*b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
-                let is_inline = is_times_fast_path(compiler, *receiver, name, kwargs.is_empty());
+                let is_inline = is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty());
                 // A real escaping block nested inside another escaping block
                 // (Proc-within-Proc, e.g. `Thread.new { m.synchronize { } }`,
                 // Phase 13.5's canonical idiom) COMPOSES through this walk
