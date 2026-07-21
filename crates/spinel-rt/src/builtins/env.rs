@@ -67,13 +67,13 @@ pub fn seed_env() {
 
 /// An argument that must be an environment-variable NAME. Real Ruby raises
 /// TypeError for a non-String here (`ENV[:PATH]` is a TypeError, not nil).
-fn key(v: &RubyValue, method: &str) -> Result<String, crate::Signal> {
+fn key(v: &RubyValue) -> Result<String, crate::Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => Err(crate::dispatch::raise_error(
             "TypeError",
             format!(
-                "no implicit conversion of {} into String (in `{method}')",
+                "no implicit conversion of {} into String",
                 crate::builtins::convert_name_of(other)
             ),
         )),
@@ -110,12 +110,12 @@ builtin_methods! {
 
     "[]" => fn env_get(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let k = key(&args[0], "[]")?;
+        let k = key(&args[0])?;
         Ok(std::env::var(&k).map_or(RubyValue::Nil, str_val))
     }
     "[]=" | "store" => fn env_set(_recv, args, _block) {
         crate::builtins::arity!(args, 2);
-        let k = key(&args[0], "[]=")?;
+        let k = key(&args[0])?;
         match &args[1] {
             // `ENV["X"] = nil` DELETES the variable (real Ruby).
             RubyValue::Nil => {
@@ -124,7 +124,7 @@ builtin_methods! {
                 Ok(RubyValue::Nil)
             }
             v => {
-                let s = key(v, "[]=")?;
+                let s = key(v)?;
                 // SAFETY: `set_var` is unsafe since Rust 2024 because it
                 // races with concurrent `getenv` in OTHER threads (a libc
                 // hazard, not a Rust one). A Ruby program mutating ENV from
@@ -137,7 +137,7 @@ builtin_methods! {
     }
     "fetch" => fn env_fetch(_recv, args, block) {
         crate::builtins::arity!(args, 1..=2);
-        let k = key(&args[0], "fetch")?;
+        let k = key(&args[0])?;
         if let Ok(v) = std::env::var(&k) {
             return Ok(str_val(v));
         }
@@ -155,12 +155,12 @@ builtin_methods! {
     }
     "key?" | "has_key?" | "include?" | "member?" => fn env_key_p(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let k = key(&args[0], "key?")?;
+        let k = key(&args[0])?;
         Ok(RubyValue::Bool(std::env::var(&k).is_ok()))
     }
     "delete" => fn env_delete(_recv, args, block) {
         crate::builtins::arity!(args, 1);
-        let k = key(&args[0], "delete")?;
+        let k = key(&args[0])?;
         match std::env::var(&k) {
             Ok(v) => {
                 // SAFETY: same libc-level race note as `set_var` above.
@@ -176,7 +176,7 @@ builtin_methods! {
     }
     "key" => fn env_key_for_value(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let want = key(&args[0], "key")?;
+        let want = key(&args[0])?;
         Ok(pairs()
             .into_iter()
             .find(|(_, v)| *v == want)
@@ -268,12 +268,12 @@ builtin_methods! {
                 ));
             };
             for (k, v) in crate::collections::hash_pairs(h) {
-                let ks = key(&k, "update")?;
+                let ks = key(&k)?;
                 let vs = match (&block, std::env::var(&ks)) {
                     (Some(RubyValue::Proc(p)), Ok(old)) => {
-                        key(&p.call(&[str_val(ks.clone()), str_val(old), v.clone()])?, "update")?
+                        key(&p.call(&[str_val(ks.clone()), str_val(old), v.clone()])?)?
                     }
-                    _ => key(&v, "update")?,
+                    _ => key(&v)?,
                 };
                 unsafe { std::env::set_var(&ks, &vs) };
             }
@@ -331,8 +331,8 @@ builtin_methods! {
             unsafe { std::env::remove_var(&k) };
         }
         for (k, v) in next {
-            let ks = key(&k, "replace")?;
-            let vs = key(&v, "replace")?;
+            let ks = key(&k)?;
+            let vs = key(&v)?;
             unsafe { std::env::set_var(&ks, &vs) };
         }
         Ok(recv.clone())

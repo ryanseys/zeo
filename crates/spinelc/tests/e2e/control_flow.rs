@@ -821,3 +821,31 @@ fn defined_yield_reflects_block_presence_at_runtime() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "nil\n\"yield\"\nnil\n\"yield\"\n");
 }
+
+#[test]
+fn defined_classifies_calls_assignments_and_keyword_literals() {
+    // A method call answers "method" only if the receiver responds; a bare
+    // undefined name is nil. Assignments answer "assignment". nil/true/false
+    // answer their own name.
+    let result = run_ruby(
+        r#"
+        def foo; end
+        p defined?(foo)
+        p defined?(undefined_zzz)
+        p defined?(1 + 2)
+        p defined?(1.nope_zzz)
+        p defined?(x = 2)
+        p defined?(@iv = 3)
+        p defined?(nil)
+        p defined?(true)
+        p defined?(false)
+        p defined?(puts)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"method\"\nnil\n\"method\"\nnil\n\"assignment\"\n\"assignment\"\n\
+         \"nil\"\n\"true\"\n\"false\"\n\"method\"\n"
+    );
+}

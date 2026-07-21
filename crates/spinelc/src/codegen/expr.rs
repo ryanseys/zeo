@@ -192,6 +192,34 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    // `defined?(a_method_call)` answers `"method"` only when the receiver
+    // actually responds to it, else `nil` -- CRuby evaluates the receiver and
+    // probes it (a bare undefined name like `defined?(missing_thing)` is a
+    // no-receiver call and answers nil, not "method"). An implicit-self call
+    // includes private methods (`defined?(puts)`); an explicit receiver checks
+    // its public surface. `New`/`SuperCall`/etc. keep the static "method".
+    if let HirNode::Call { receiver, name, .. } = &cx.compiler.hir[id] {
+        let receiver = *receiver;
+        let name = name.clone();
+        let (recv, include_all) = match receiver {
+            None => (
+                super::call::boxed_implicit_self(cx).expect("every context has an implicit self"),
+                quote! { true },
+            ),
+            Some(rid) => {
+                let e = emit_expr(cx, rid);
+                (box_if_object_typed(cx, rid, e), quote! { false })
+            }
+        };
+        let name = name.as_str();
+        return quote! {
+            if spinel_rt::responds_to_value(&#recv, spinel_rt::Symbol::intern(#name), #include_all) {
+                spinel_rt::RubyValue::Str(spinel_rt::string_new("method".to_string()))
+            } else {
+                spinel_rt::RubyValue::Nil
+            }
+        };
+    }
     let classification: Option<&str> = match &cx.compiler.hir[id] {
         HirNode::LocalRead(name) => {
             if cx.local_types.contains_key(name) {
@@ -231,7 +259,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // classification here, this needs no further check at all.
         HirNode::SelfRef => Some("self"),
         HirNode::New { .. }
-        | HirNode::Call { .. }
         | HirNode::SuperCall { .. }
         | HirNode::Ffi(_)
         | HirNode::Eval(_)
@@ -241,14 +268,17 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::BoxHandle(_)
         | HirNode::BlockGiven
         | HirNode::Raise(..) => Some("method"),
+        // The keyword literals answer their own name (`defined?(nil) == "nil"`),
+        // like `defined?(self) == "self"`, not the generic "expression".
+        HirNode::NilLit => Some("nil"),
+        HirNode::BoolLit(true) => Some("true"),
+        HirNode::BoolLit(false) => Some("false"),
         HirNode::IntegerLit(_)
         | HirNode::BigIntegerLit { .. }
         | HirNode::RationalLit { .. }
         | HirNode::ImaginaryLit(_)
         | HirNode::FloatLit(_)
         | HirNode::SymbolLit(_)
-        | HirNode::NilLit
-        | HirNode::BoolLit(_)
         | HirNode::StringLit(_)
         | HirNode::RegexpLit(..)
         | HirNode::ArrayLit(_)
@@ -263,24 +293,24 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::MatchPredicate { .. }
         | HirNode::MatchRequired { .. }
         | HirNode::Begin { .. }
-        | HirNode::LocalWrite(..)
-        | HirNode::IvarWrite(..)
-        | HirNode::ClassVarWrite(..)
-        | HirNode::GlobalWrite(..)
-        | HirNode::ConstWrite { .. }
         | HirNode::ConstReadOrNil(..)
         | HirNode::PreExec(_)
         | HirNode::Seq(_)
         | HirNode::While { .. }
         | HirNode::Loop { .. }
         | HirNode::For { .. }
-        | HirNode::MultiWrite { .. }
-        | HirNode::Lambda { .. }
-        // Narrower than real CRuby, which returns the distinct string
-        // "yield" here (only when a block was actually given) -- a
-        // documented approximation, same posture as this function's other
-        // narrowings (see the module docs above).
-        | HirNode::Yield(_) => Some("expression"),
+        | HirNode::Lambda { .. } => Some("expression"),
+        // Every assignment form answers "assignment" -- the argument is never
+        // evaluated, so an undefined operand doesn't matter (`defined?(x = 2)`,
+        // `defined?(@iv += 1)`, `defined?(a, b = 1, 2)`).
+        HirNode::LocalWrite(..)
+        | HirNode::IvarWrite(..)
+        | HirNode::ClassVarWrite(..)
+        | HirNode::GlobalWrite(..)
+        | HirNode::ConstWrite { .. }
+        | HirNode::MultiWrite { .. } => Some("assignment"),
+        // Handled by the early returns at the top of this function.
+        HirNode::Call { .. } | HirNode::Yield(_) => unreachable!("defined? Call/Yield handled above"),
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
         HirNode::AliasGlobal(..) => Some("expression"),
         HirNode::Block { .. }
