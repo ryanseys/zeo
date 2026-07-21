@@ -214,13 +214,24 @@ fn run_one(zeo_bin: &Path, rb: &Path, runs: usize) -> Result<f64, String> {
         ));
     }
 
+    // Repeat budget: every benchmark gets its first (correctness-gated) run;
+    // repeats happen only while total time spent on THIS benchmark is under
+    // the budget. Fast benches keep full best-of-N noise rejection; a
+    // minutes-long bench times once instead of tripling the suite's wall
+    // time (its longer runtime already averages out scheduler noise).
+    const REPEAT_BUDGET_SECS: f64 = 30.0;
+    let mut spent = 0.0f64;
     let mut best: Option<f64> = None;
     for i in 0..runs {
+        if i > 0 && spent >= REPEAT_BUDGET_SECS {
+            break;
+        }
         let started = Instant::now();
         let run = Command::new(&bin_path)
             .output()
             .map_err(|e| format!("running compiled binary: {e}"))?;
         let secs = started.elapsed().as_secs_f64();
+        spent += secs;
         if !run.status.success() {
             let _ = std::fs::remove_file(&bin_path);
             return Err(format!("exited {:?}", run.status.code()));
