@@ -2,19 +2,19 @@
 # frozen_string_literal: true
 
 # Differential method-coverage between `ruby` (the oracle on PATH) and
-# `spinelc -e`. For each core class we take a representative sample instance,
+# `zeo -e`. For each core class we take a representative sample instance,
 # ask Ruby for the full public method surface it responds to, then run the same
-# `respond_to?` probe through spinelc and report every method Ruby has that
-# spinelc is missing (or errors on).
+# `respond_to?` probe through zeo and report every method Ruby has that
+# zeo is missing (or errors on).
 #
 # Usage:
 #   ruby tools/method_coverage.rb [Class ...]     # default: all classes below
-#   SPINELC=path/to/spinelc ruby tools/method_coverage.rb String
+#   ZEO=path/to/zeo ruby tools/method_coverage.rb String
 #
-# One compiled spinelc program per class (not per method), so a full sweep is
+# One compiled zeo program per class (not per method), so a full sweep is
 # ~a dozen rustc builds, not thousands.
 
-SPINELC = ENV.fetch("SPINELC", "target/debug/spinelc")
+ZEO = ENV.fetch("ZEO", "target/debug/zeo")
 
 # class name => a literal expression evaluating to a representative instance.
 SAMPLES = {
@@ -71,17 +71,17 @@ targets.each do |cls|
   program = probe_program(sample, names)
 
   ruby_res, = probe_results(["ruby", "-e"], program)
-  spin_res, spin_ok, spin_out = probe_results([SPINELC, "-e"], program)
+  spin_res, spin_ok, spin_out = probe_results([ZEO, "-e"], program)
 
   unless spin_ok && !spin_res.empty?
-    puts "#{cls}: spinelc failed to run the probe (compile error or crash):"
+    puts "#{cls}: zeo failed to run the probe (compile error or crash):"
     puts spin_out.lines.first(6).map { |l| "    #{l}" }.join
     puts
     next
   end
 
   missing = names.select { |m| ruby_res[m] == "true" && spin_res[m] != "true" }
-  puts "== #{cls} == #{names.size} public methods, #{missing.size} missing in spinelc"
+  puts "== #{cls} == #{names.size} public methods, #{missing.size} missing in zeo"
   unless missing.empty?
     missing.each_slice(6) { |row| puts "    #{row.join(', ')}" }
   end

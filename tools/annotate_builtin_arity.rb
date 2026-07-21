@@ -24,7 +24,7 @@ FILES = {
   "enumerable.rs" => Enumerable
 }.freeze
 
-BASE = "crates/spinel-rt/src/builtins/"
+BASE = "crates/zeo-rt/src/builtins/"
 
 # The names portion of a row: literals (each optionally already `[n]`) up to
 # `=> fn`. Capture 1 is exactly that portion, so only it is rewritten.

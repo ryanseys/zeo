@@ -1,10 +1,10 @@
 //! `cargo xtask gem-compat <Gemfile.lock> [--gem-path <dir>]` -- the
 //! out-of-the-box gem-compatibility matrix.
 //!
-//! Reuses spinel's own Phase-3 store provider (`spinelc::gem_compat`) to
+//! Reuses zeo's own Phase-3 store provider (`zeo::gem_compat`) to
 //! classify every gem a `Gemfile.lock` locked against an installed RubyGems
-//! store: pure Ruby (compiled), satisfied by a spinel built-in (with the
-//! version divergence noted), or a native gem spinel can't provide (with the
+//! store: pure Ruby (compiled), satisfied by a zeo built-in (with the
+//! version divergence noted), or a native gem zeo can't provide (with the
 //! detected layout). Prints a per-gem table plus the headline resolvability
 //! number, and writes `conformance/gem-compat.{tsv,md}` -- the same shape
 //! `stdlib-status` uses to measure stdlib coverage.
@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use spinelc::{GemCompatEntry, GemCompatOutcome};
+use zeo::{GemCompatEntry, GemCompatOutcome};
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
     let mut lockfile: Option<PathBuf> = None;
@@ -61,8 +61,8 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         None => "(entire installed store)".to_string(),
     };
     let result = match &lockfile {
-        Some(p) => spinelc::gem_compat(&store, p),
-        None => spinelc::gem_compat_installed(&store),
+        Some(p) => zeo::gem_compat(&store, p),
+        None => zeo::gem_compat_installed(&store),
     };
     let entries = match result {
         Ok(e) => e,
@@ -146,12 +146,12 @@ fn write_artifacts(
         counts.usable_pct(),
     ));
     md.push_str(
-        "- `pure-ruby` = spinel resolves the gem and would attempt to compile it; this is a \
+        "- `pure-ruby` = zeo resolves the gem and would attempt to compile it; this is a \
          static classification, NOT a verified compile.\n\n",
     );
     md.push_str("| status | count |\n|---|---|\n");
     md.push_str(&format!("| pure-ruby (resolvable) | {} |\n", counts.compiled));
-    md.push_str(&format!("| built-in (spinel provides) | {} |\n", counts.builtin));
+    md.push_str(&format!("| built-in (zeo provides) | {} |\n", counts.builtin));
     md.push_str(&format!("| native (unsupported) | {} |\n", counts.native));
     md.push_str(&format!("| external source (git/path) | {} |\n", counts.external));
     md.push_str(&format!("| skipped | {} |\n\n", counts.skipped));
@@ -197,7 +197,7 @@ impl Counts {
         c
     }
     /// Gems drawn from the RubyGems store (the denominator -- git/path and
-    /// skipped default gems aren't spinel's to compile or reject).
+    /// skipped default gems aren't zeo's to compile or reject).
     fn store_gems(&self) -> usize {
         self.compiled + self.builtin + self.native
     }
@@ -228,7 +228,7 @@ fn print_summary(entries: &[GemCompatEntry]) {
         c.skipped,
     );
     eprintln!(
-        "gem-compat: note -- `pure-ruby` is a static classification (spinel would attempt to \
+        "gem-compat: note -- `pure-ruby` is a static classification (zeo would attempt to \
          compile it), not a verified compile."
     );
 }

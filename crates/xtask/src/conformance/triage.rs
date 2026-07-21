@@ -61,11 +61,11 @@ pub struct Triage {
 ///
 /// Panic output looks like:
 /// ```text
-/// thread 'main' panicked at crates/spinelc/src/codegen/call.rs:1299:21:
+/// thread 'main' panicked at crates/zeo/src/codegen/call.rs:1299:21:
 /// dynamic dispatch of `foo` with keyword arguments isn't supported yet ...
 /// note: run with `RUST_BACKTRACE=1` ...
 /// ```
-/// Clean rejections look like `spinelc: <message>`.
+/// Clean rejections look like `zeo: <message>`.
 pub fn classify(stderr: &str) -> Triage {
     let message = extract_message(stderr);
     // High-value patterns get a bucket keyed on the SPECIFIC missing name, so
@@ -147,7 +147,7 @@ fn specific_bucket(message: &str) -> Option<(&'static str, String)> {
 
 /// The salient one-line failure message from a stage's stderr -- the Rust
 /// PANIC body (not the useless `note: run with RUST_BACKTRACE=1` trailer), a
-/// clean `spinelc: <msg>` rejection, or the last non-empty line. Public so the
+/// clean `zeo: <msg>` rejection, or the last non-empty line. Public so the
 /// scoreboard shows the SAME actionable text triage clusters on, instead of
 /// whatever line happened to be last.
 pub fn extract_message(stderr: &str) -> String {
@@ -163,9 +163,9 @@ pub fn extract_message(stderr: &str) -> String {
             return body.join(" ");
         }
     }
-    // Then a clean `spinelc: <message>` rejection.
-    if let Some(line) = lines.iter().rev().find(|l| l.starts_with("spinelc: ")) {
-        return line["spinelc: ".len()..].to_owned();
+    // Then a clean `zeo: <message>` rejection.
+    if let Some(line) = lines.iter().rev().find(|l| l.starts_with("zeo: ")) {
+        return line["zeo: ".len()..].to_owned();
     }
     // Otherwise the last meaningful line -- skipping the `note: run with
     // RUST_BACKTRACE=1` trailer, which is noise on its own (e.g. an allocation
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn classifies_panic() {
-        let stderr = "thread 'main' panicked at crates/spinelc/src/codegen/call.rs:1305:17:\n\
+        let stderr = "thread 'main' panicked at crates/zeo/src/codegen/call.rs:1305:17:\n\
                       `super(**h)` (double-splat into super) isn't supported yet (spike scope)\n\
                       note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace";
         let t = classify(stderr);
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn classifies_clean_rejection() {
-        let t = classify("spinelc: only plain required parameters are supported in a method definition (spike scope)");
+        let t = classify("zeo: only plain required parameters are supported in a method definition (spike scope)");
         assert_eq!(t.cluster, "a");
         assert_eq!(t.bucket, "param-shapes");
     }
@@ -249,8 +249,8 @@ mod tests {
     fn auto_bucket_is_stable() {
         // The same NORMALIZED message (identifiers and digits collapse) yields
         // the same bucket regardless of the specific names/numbers.
-        let a = classify("spinelc: something entirely novel happened with `x` at 42");
-        let b = classify("spinelc: something entirely novel happened with `y` at 7");
+        let a = classify("zeo: something entirely novel happened with `x` at 42");
+        let b = classify("zeo: something entirely novel happened with `y` at 7");
         assert_eq!(a.bucket, b.bucket);
         assert!(a.bucket.starts_with("auto-"));
     }

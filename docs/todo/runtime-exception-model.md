@@ -8,7 +8,7 @@ shape further.
 > was already banked by the interim step.** The per-program "exception prelude"
 > (the `ruby_class!` blocks and the exception/StopIteration factories) has moved
 > OUT of codegen into the prebuilt runtime: generated `main()` calls
-> `spinel_rt::ClassRegistry::with_core()` (`codegen/mod.rs`), bootstrap classes
+> `zeo_rt::ClassRegistry::with_core()` (`codegen/mod.rs`), bootstrap classes
 > are filtered out of emission, and the runtime constructs exceptions by name
 > (`ClassRegistry::construct_exception`). `puts 1` is now ~74 lines, not 2,296, so
 > the "81% of every program is exception machinery / recompiled per program"
@@ -23,7 +23,7 @@ shape further.
 
 ## The problem
 
-`EXCEPTION_PRELUDE` (`crates/spinelc/src/parse/mod.rs:44`) is 27 Ruby exception
+`EXCEPTION_PRELUDE` (`crates/zeo/src/parse/mod.rs:44`) is 27 Ruby exception
 classes parsed into every program's HIR (`parse/mod.rs:141-144`). In Ruby source
 24 of them are empty (`class TypeError < StandardError; end`), but they are not
 empty once generated: `analyze::mro::materialize` copies every inherited method
@@ -45,12 +45,12 @@ once per program — 453 times per `cargo test`, ~1,819 per cold conformance run
 
 ## The target
 
-Move the hierarchy into `spinel-rt` as runtime data: a `(id, name, parent)` table
+Move the hierarchy into `zeo-rt` as runtime data: a `(id, name, parent)` table
 plus native impls for the only three methods that carry behaviour
 (`Exception#initialize`/`#message`/`#to_s`, and `StopIteration#__set_result`/`#result`).
 `install_exception_factory` (`dispatch.rs:642`) and
 `install_stop_iteration_factory` (`dispatch.rs:666`) both disappear — they exist
-only because `spinel-rt` cannot construct or touch the fields of a struct that
+only because `zeo-rt` cannot construct or touch the fields of a struct that
 lives in the generated crate (`dispatch.rs:634`).
 
 Beyond build time, this unblocks things that are structurally impossible today:
@@ -68,12 +68,12 @@ The blockers are in the object model, not the prelude.
    (`codegen/call.rs:920-1080`). `emit_super_arg_bindings` binds the *parent's*
    parameter names as Rust `let`s and splices the parent's HIR body inline. So
    `class MyError < StandardError; def initialize(x); super("got #{x}"); end`
-   requires `Exception#initialize`'s body to exist as spinelc HIR. Move the
+   requires `Exception#initialize`'s body to exist as zeo HIR. Move the
    prelude out and there is nothing to splice. Needs either a real runtime
-   `super` channel, or prelude method HIR retained in spinelc even after the
+   `super` channel, or prelude method HIR retained in zeo even after the
    classes move.
 
-2. **Ivars are typed struct fields, not a map** (`spinel-rt/src/lib.rs:176`:
+2. **Ivars are typed struct fields, not a map** (`zeo-rt/src/lib.rs:176`:
    `pub $ivar: parking_lot::Mutex<RubyValue>`). `@message` exists on `MyError`
    only because `collect_ivars` walked the *inlined* parent body. A runtime
    exception object needs a name-keyed ivar map first. This is the same
@@ -103,24 +103,24 @@ The blockers are in the object model, not the prelude.
    regardless of where the implementation lives — `codegen/mod.rs:503`
    (`.expect("the exception prelude always defines Exception")`),
    `exceptions.rs:227` (panics on an unknown rescue class), `expr.rs:855`. A
-   `ClassInfo`-shaped stub table, like `spinel_abi::BUILTINS`, is needed either way.
+   `ClassInfo`-shaped stub table, like `zeo_abi::BUILTINS`, is needed either way.
 
 ## Known warts to fix while in here
 
 - **`Math::DomainError`'s id floats.** It is registered after the user-class loop
   (`analyze/mod.rs:132-149`), so it lands at 62 with no user classes and 64 with
   two. Every other bootstrap class has a stable id (prelude is 35..61, builtins
-  1..34, `Object` 0). It belongs in `spinel-abi` with the rest, under the same
+  1..34, `Object` 0). It belongs in `zeo-abi` with the rest, under the same
   `debug_assert_eq!(id, b.id)` contiguity contract as `compiler.rs:260-264`.
 - **The exception factory emits an arm per bootstrap Exception descendant (28),
-  but `spinel-rt`'s 151 `raise_error` sites name only 13 distinct classes** —
+  but `zeo-rt`'s 151 `raise_error` sites name only 13 distinct classes** —
   `TypeError`(74), `ArgumentError`(37), `ZeroDivisionError`(7), `IndexError`(6),
   `RangeError`(5), `NoMethodError`(4), `FloatDomainError`(3), `FiberError`(3),
   `RegexpError`(2), `Math::DomainError`(2), `LocalJumpError`(2), `NameError`(1),
   `KeyError`(1). 15 arms are dead code.
 - **`run_initialize` panics** on arity mismatch (`dispatch.rs:589-606`) rather
   than raising `ArgumentError` — there is no `ArgumentError` channel from
-  `spinel-rt` that doesn't route through the generated factory.
+  `zeo-rt` that doesn't route through the generated factory.
 
 ## Interim step taken instead
 

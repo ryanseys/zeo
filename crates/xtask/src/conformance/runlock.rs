@@ -17,7 +17,7 @@ impl RunLock {
     /// to start can't both win, and reclaims the lock if its recorded owner is
     /// gone.
     pub fn acquire(target_dir: &Path) -> Result<RunLock, String> {
-        let path = target_dir.join("spinelc-conformance.lock");
+        let path = target_dir.join("zeo-conformance.lock");
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }

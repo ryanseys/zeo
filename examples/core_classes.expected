@@ -99,7 +99,7 @@ Object
 true
 "set"
 "default"
-"computed:SPINEL_ABSENT"
+"computed:ZEO_ABSENT"
 nil
 "set"
 false

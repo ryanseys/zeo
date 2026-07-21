@@ -85,7 +85,7 @@ puts o.to_s
 # (`Dir.mktmpdir`/`Dir.tmpdir` are stdlib's tmpdir.rb, not core -- built by
 # hand here so the example needs no require. The pid keeps concurrent runs
 # from colliding.)
-root = File.join(ENV.fetch("TMPDIR", "/tmp"), "spinel_core_classes_#{Process.pid}")
+root = File.join(ENV.fetch("TMPDIR", "/tmp"), "zeo_core_classes_#{Process.pid}")
 Dir.mkdir(root)
 begin
   Dir.chdir(root) do
@@ -174,15 +174,15 @@ end
 
 # --- ENV: an Object with Hash-shaped methods, not a Hash -------------------
 p ENV.class
-ENV["SPINEL_EXAMPLE"] = "set"
-p ENV["SPINEL_EXAMPLE"]
-p ENV.key?("SPINEL_EXAMPLE")
-p ENV.fetch("SPINEL_EXAMPLE")
-p ENV.fetch("SPINEL_ABSENT", "default")
-p ENV.fetch("SPINEL_ABSENT") { |k| "computed:#{k}" }
-p ENV["SPINEL_ABSENT"]
-p ENV.delete("SPINEL_EXAMPLE")
-p ENV.key?("SPINEL_EXAMPLE")
+ENV["ZEO_EXAMPLE"] = "set"
+p ENV["ZEO_EXAMPLE"]
+p ENV.key?("ZEO_EXAMPLE")
+p ENV.fetch("ZEO_EXAMPLE")
+p ENV.fetch("ZEO_ABSENT", "default")
+p ENV.fetch("ZEO_ABSENT") { |k| "computed:#{k}" }
+p ENV["ZEO_ABSENT"]
+p ENV.delete("ZEO_EXAMPLE")
+p ENV.key?("ZEO_EXAMPLE")
 p ENV.to_h.class
 p ENV.keys.class
 

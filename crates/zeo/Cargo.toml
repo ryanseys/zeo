@@ -1,0 +1,21 @@
+[package]
+name = "zeo"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeo-abi = { path = "../zeo-abi" }
+ruby-prism = "1.9.0"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "parsing"] }
+prettyplease = "0.2"
+
+[lib]
+name = "zeo"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zeo"
+path = "src/main.rs"

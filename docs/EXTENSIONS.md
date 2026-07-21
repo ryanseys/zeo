@@ -1,19 +1,19 @@
 # Extensions (`ext/`)
 
-spinel-rs mirrors CRuby's `ext/` model: an extension is an in-tree module that a
+zeo-rs mirrors CRuby's `ext/` model: an extension is an in-tree module that a
 `require` activates. Each one is behind **two independent gates**:
 
 1. **Ruby require gate** — its constant is invisible until its `require` fires
    (the ABI `feature` field). Referencing it un-`require`d is a `NameError`,
    exactly as in CRuby.
-2. **Cargo feature** — `ext-<name>` in `crates/spinel-rt/Cargo.toml`. Its Rust
+2. **Cargo feature** — `ext-<name>` in `crates/zeo-rt/Cargo.toml`. Its Rust
    code compiles in only when the feature is on. `default` = `ext-all`, so an
    out-of-the-box build has every extension and `require`ing one just works.
    Slim a binary with `--no-default-features --features ext-json,ext-stringio,…`.
 
 **Implementation status.** Some extensions carry real, oracle-matched methods;
 others are **scaffolded** — a couple of core methods, with the rest `todo!()` as
-a compile-visible, greppable marker (`rg 'todo!' crates/spinel-rt/src/ext`).
+a compile-visible, greppable marker (`rg 'todo!' crates/zeo-rt/src/ext`).
 Scaffolding still lets `require` succeed and the constant resolve, so downstream
 code compiles *past* the `require`; only the unbuilt method call panics.
 
@@ -53,8 +53,8 @@ builtin-reopen mechanism (adding instance methods to a required builtin):
 
 ## FFI — the real `ffi` gem, AOT-compiled (#204)
 
-spinel implements the **real `ffi` gem API**, not a custom DSL, so a program
-using it runs identically under CRuby+ffi and spinel (the north star). `require
+zeo implements the **real `ffi` gem API**, not a custom DSL, so a program
+using it runs identically under CRuby+ffi and zeo (the north star). `require
 "ffi"` is a native no-op; `extend FFI::Library` marks a module; `ffi_lib` and
 `attach_function` are recognized at **compile time** and emit a fn-local
 `extern "C"` declaration with `#[link(name = ..)]` plus a wrapper method that
@@ -104,18 +104,18 @@ can't reach without linking libffi — tracked, not silently degraded.
 
 ## Adding an extension
 
-See the checklist at the top of `crates/spinel-rt/src/ext/mod.rs`. In brief:
+See the checklist at the top of `crates/zeo-rt/src/ext/mod.rs`. In brief:
 
 1. **ABI row** — a `ClassId` const + `BUILTINS` row with `feature:
-   Some("<require-name>")` in `crates/spinel-abi/src/lib.rs` (ids are
+   Some("<require-name>")` in `crates/zeo-abi/src/lib.rs` (ids are
    append-only, contiguous).
-2. **Module** — `crates/spinel-rt/src/ext/<name>.rs` with `builtin_methods! {
+2. **Module** — `crates/zeo-rt/src/ext/<name>.rs` with `builtin_methods! {
    pub(crate) fn lookup; … }` (instance methods) and/or `pub(crate) fn
    lookup_class;` (class/module methods). Mirror `base64.rs` (module) or
    `stringio.rs` (class with instances).
 3. **Dispatch arms** — cfg-gated arms in `builtins/mod.rs`'s `class_method_table`
    / `class_table` / `class_table_names`.
-4. **Cargo feature** — `ext-<name>` in `spinel-rt/Cargo.toml`, added to
+4. **Cargo feature** — `ext-<name>` in `zeo-rt/Cargo.toml`, added to
    `ext-all` (with `dep:` entries if it needs an optional crate).
 5. **Module declaration** — cfg-gated `pub(crate) mod <name>;` in `ext/mod.rs`.
 6. **Require aliases** — if the `require` has sub-spellings (`cgi/util`,

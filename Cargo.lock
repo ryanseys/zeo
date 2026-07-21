@@ -884,18 +884,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "spinel-abi"
+name = "zeo-abi"
 version = "0.1.0"
 
 [[package]]
-name = "spinel-fiber"
+name = "zeo-fiber"
 version = "0.1.0"
 dependencies = [
  "corosensei",
 ]
 
 [[package]]
-name = "spinel-rt"
+name = "zeo-rt"
 version = "0.1.0"
 dependencies = [
  "digest",
@@ -916,22 +916,22 @@ dependencies = [
  "serde_json",
  "sha1",
  "sha2",
- "spinel-abi",
- "spinel-fiber",
+ "zeo-abi",
+ "zeo-fiber",
  "unicode-normalization",
  "unicode-segmentation",
  "yaml-rust2",
 ]
 
 [[package]]
-name = "spinelc"
+name = "zeo"
 version = "0.1.0"
 dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
  "ruby-prism",
- "spinel-abi",
+ "zeo-abi",
  "syn 2.0.118",
 ]
 
@@ -1148,7 +1148,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "spinelc",
+ "zeo",
 ]
 
 [[package]]

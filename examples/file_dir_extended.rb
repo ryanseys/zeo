@@ -1,4 +1,4 @@
-base = "/tmp/spinel_w1i_example"
+base = "/tmp/zeo_w1i_example"
 
 # Start clean without external requires: remove any leftover entries.
 if Dir.exist?(base)

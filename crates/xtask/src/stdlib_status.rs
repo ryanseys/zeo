@@ -1,6 +1,6 @@
 //! `cargo run -p xtask -- stdlib-status [<lib-dir>]`: sweeps every `*.rb`
-//! under a Ruby stdlib `lib` directory and records whether `spinelc` can
-//! COMPILE it -- Ruby -> Rust codegen only (via `spinelc -S`; no `rustc`, no
+//! under a Ruby stdlib `lib` directory and records whether `zeo` can
+//! COMPILE it -- Ruby -> Rust codegen only (via `zeo -S`; no `rustc`, no
 //! execution), the fast first-cut triage of how much real stdlib the compiler
 //! accepts today.
 //!
@@ -31,16 +31,16 @@ use crate::conformance::exec::run_with_timeout;
 /// against a pathological compiler hang so one bad file can't stall the sweep.
 const COMPILE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The classification of one stdlib file against `spinelc -S`.
+/// The classification of one stdlib file against `zeo -S`.
 enum Status {
     /// Ruby -> Rust codegen succeeded (rustc/runtime NOT exercised).
     Pass,
-    /// A clean `spinelc` rejection or compiler panic; the string is the
+    /// A clean `zeo` rejection or compiler panic; the string is the
     /// aggregated failure reason (see `reason_bucket`).
     Fail(String),
     /// The compiler didn't finish within `COMPILE_TIMEOUT`.
     Timeout,
-    /// The harness itself couldn't run `spinelc` on this file.
+    /// The harness itself couldn't run `zeo` on this file.
     HarnessError(String),
 }
 
@@ -80,20 +80,20 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // `spinelc -S` is the classifier; build it once up front so the parallel
+    // `zeo -S` is the classifier; build it once up front so the parallel
     // invocations below don't race each other into cargo.
-    eprintln!("stdlib-status: building spinelc...");
+    eprintln!("stdlib-status: building zeo...");
     let built = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "spinelc"])
+        .args(["build", "--quiet", "-p", "zeo"])
         .current_dir(root)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
     if !built {
-        eprintln!("stdlib-status: `cargo build -p spinelc` failed");
+        eprintln!("stdlib-status: `cargo build -p zeo` failed");
         return ExitCode::FAILURE;
     }
-    let spinelc = root.join("target").join("debug").join("spinelc");
+    let zeo = root.join("target").join("debug").join("zeo");
 
     let mut files = Vec::new();
     collect_rb(&lib_dir, &mut files);
@@ -119,7 +119,7 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
                 let Some(file) = queue.lock().unwrap().pop_front() else {
                     break;
                 };
-                let status = classify(&spinelc, &lib_dir, &file);
+                let status = classify(&zeo, &lib_dir, &file);
                 let rel = file
                     .strip_prefix(&lib_dir)
                     .unwrap_or(&file)
@@ -149,12 +149,12 @@ pub fn main(root: &Path, args: &[String]) -> ExitCode {
     }
 }
 
-/// Compiles one file with `spinelc <file> -I <lib-dir> -S` (codegen only) and
+/// Compiles one file with `zeo <file> -I <lib-dir> -S` (codegen only) and
 /// maps the outcome to a [`Status`]. Exit 0 = codegen succeeded; a non-zero
 /// exit (a clean rejection or a compiler panic) = a failure, bucketed by its
 /// message.
-fn classify(spinelc: &Path, lib_dir: &Path, file: &Path) -> Status {
-    let mut cmd = Command::new(spinelc);
+fn classify(zeo: &Path, lib_dir: &Path, file: &Path) -> Status {
+    let mut cmd = Command::new(zeo);
     cmd.arg(file).arg("-I").arg(lib_dir).arg("-S");
     match run_with_timeout(cmd, None, COMPILE_TIMEOUT) {
         Err(e) => Status::HarnessError(e),
@@ -164,16 +164,16 @@ fn classify(spinelc: &Path, lib_dir: &Path, file: &Path) -> Status {
     }
 }
 
-/// Distills `spinelc`'s stderr into a short, aggregatable reason. A CLI-level
-/// rejection is reported as `spinelc: <path>: <message>`; a compiler panic puts
+/// Distills `zeo`'s stderr into a short, aggregatable reason. A CLI-level
+/// rejection is reported as `zeo: <path>: <message>`; a compiler panic puts
 /// its message on the line after `panicked at <loc>`. Either way we keep the
 /// message head (trimming the file-specific detail after ` -- `) so the same
 /// class of rejection buckets together across files.
 fn reason_bucket(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-    if let Some(l) = lines.iter().find(|l| l.starts_with("spinelc: ")) {
-        return normalize_reason(l.strip_prefix("spinelc: ").unwrap());
+    if let Some(l) = lines.iter().find(|l| l.starts_with("zeo: ")) {
+        return normalize_reason(l.strip_prefix("zeo: ").unwrap());
     }
     if let Some(i) = lines.iter().position(|l| l.contains("panicked at")) {
         let msg = lines.get(i + 1).copied().unwrap_or(lines[i]);
@@ -183,7 +183,7 @@ fn reason_bucket(stderr: &[u8]) -> String {
 }
 
 fn normalize_reason(msg: &str) -> String {
-    // Peel off any leading `<path>.rb: ` segments: spinelc reports a
+    // Peel off any leading `<path>.rb: ` segments: zeo reports a
     // required-file failure as `<main.rb>: <required-abs-path>.rb: <message>`,
     // and those absolute paths are machine-specific -- keep only the message so
     // the same rejection buckets together (and the committed artifact stays
@@ -267,7 +267,7 @@ fn write_artifacts(
     let mut md = String::new();
     md.push_str("# stdlib compile status\n\n");
     md.push_str(
-        "`cargo run -p xtask -- stdlib-status` -- whether `spinelc` can compile \
+        "`cargo run -p xtask -- stdlib-status` -- whether `zeo` can compile \
          (Ruby -> Rust codegen only, no `rustc`/runtime) each `.rb` in the \
          installed Ruby stdlib `lib`, dropped in via `-I` (no bespoke flag).\n\n",
     );

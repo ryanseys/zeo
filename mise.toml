@@ -1,5 +1,5 @@
 # The conformance oracle. `ruby` must resolve to exactly this version: the
-# suite diffs spinel's stdout+stderr against real CRuby, so the interpreter
+# suite diffs zeo's stdout+stderr against real CRuby, so the interpreter
 # version IS the definition of correct. A sweep run against a different ruby
 # produces a scoreboard that looks authoritative and is not.
 #

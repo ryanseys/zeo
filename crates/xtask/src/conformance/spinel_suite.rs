@@ -1,4 +1,4 @@
-//! Adapter for the C spinel project's golden corpus (`~/dev/spinel/test`),
+//! Adapter for the C zeo project's golden corpus (`~/dev/zeo/test`),
 //! encoding the conventions of its Makefile's `RUN_ONE_TEST` recipe:
 //!
 //! - `test/*.rb` (top level only) are the tests; subdirectories other than

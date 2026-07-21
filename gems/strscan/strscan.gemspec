@@ -1,5 +1,5 @@
 # The Ruby half of `strscan`. Its native half is the statically linked
-# `ext-strscan` module in spinel-rt, joined to this gem by name -- the same
+# `ext-strscan` module in zeo-rt, joined to this gem by name -- the same
 # split CRuby makes between rubylibdir (.rb) and archdir (.so).
 Gem::Specification.new do |s|
   s.name = "strscan"

@@ -1,5 +1,5 @@
 # `require` behaviors that follow from CRuby's load.c, in the two places
-# spinel's compile-time resolver used to reject outright.
+# zeo's compile-time resolver used to reject outright.
 
 # 1. A `require` of a feature the runtime already provides natively works from
 #    ANY position -- inside a conditional, a method body, or a value position.

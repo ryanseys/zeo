@@ -7,7 +7,7 @@
   ]
 }
 ---
-name: spinel
+name: zeo
 tags:
 - aot
 - ruby
@@ -16,7 +16,7 @@ got: line one
 got: line two
 key
 value
-name%3Dspinel+rs%26v%3D1
+name%3Dzeo+rs%26v%3D1
 &lt;b&gt;bold &amp; &#39;quoted&#39;&lt;/b&gt;
 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
 5d41402abc4b2a76b9719d911017c592

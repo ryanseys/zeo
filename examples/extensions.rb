@@ -16,7 +16,7 @@ puts JSON.parse('{"x":[1,2,3],"y":"hi"}').inspect
 puts JSON.pretty_generate({ "k" => [1, 2] })
 
 # --- yaml / psych (yaml-rust2 load + Psych-style dump) ---
-print YAML.dump({ "name" => "spinel", "tags" => ["aot", "ruby"] })
+print YAML.dump({ "name" => "zeo", "tags" => ["aot", "ruby"] })
 puts YAML.load("port: 8080\nhosts:\n- a\n- b").inspect
 
 # --- stringio (in-memory IO buffer) ---
@@ -33,7 +33,7 @@ sc.skip(/\s*=\s*/)
 puts sc.scan(/\w+/)
 
 # --- cgi (url/html escaping) ---
-puts CGI.escape("name=spinel rs&v=1")
+puts CGI.escape("name=zeo rs&v=1")
 puts CGI.escapeHTML("<b>bold & 'quoted'</b>")
 
 # --- digest (RustCrypto hashing) ---

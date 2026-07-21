@@ -1,5 +1,5 @@
 //! The per-test pipeline (compile -> run -> expect) and the worker pool that
-//! drives it. `spinelc` runs as a subprocess -- many scope rejections are
+//! drives it. `zeo` runs as a subprocess -- many scope rejections are
 //! `panic!`s that can't be caught or timed out in-process, and their stderr
 //! is exactly what triage consumes.
 
@@ -16,20 +16,20 @@ use super::suite::{Expectation, TestCase, TestResult, Verdict};
 use super::triage;
 use super::util::{normalize_crlf, sanitize_id, tail_lines};
 
-/// The marker `spinelc::build` puts in its error when the *generated* Rust
-/// failed to compile -- always a spinelc bug, never a scope gap.
+/// The marker `zeo::build` puts in its error when the *generated* Rust
+/// failed to compile -- always a zeo bug, never a scope gap.
 const RUSTC_FAILURE_MARKER: &str = "rustc failed compiling the generated program";
 
 pub struct Runner {
-    pub spinelc: PathBuf,
+    pub zeo: PathBuf,
     pub bin_dir: PathBuf,
     pub diff_dir: PathBuf,
     pub compile_timeout: Duration,
     pub run_timeout: Duration,
-    /// Set `SPINELC_MSPEC_STUBS` when compiling (the rubyspec suite): spec files
-    /// `require_relative '../spec_helper'`, which spinelc no-ops under this flag.
+    /// Set `ZEO_MSPEC_STUBS` when compiling (the rubyspec suite): spec files
+    /// `require_relative '../spec_helper'`, which zeo no-ops under this flag.
     pub mspec_stubs: bool,
-    /// Force the DEBUG runtime (`SPINELC_RUNTIME_PROFILE=debug`) instead of the
+    /// Force the DEBUG runtime (`ZEO_RUNTIME_PROFILE=debug`) instead of the
     /// default release one -- see `prebuild` and the `--debug-runtime` flag.
     pub debug_runtime: bool,
 }
@@ -148,11 +148,11 @@ impl Runner {
 
         // -- compile --------------------------------------------------------
         let bin_path = self.bin_dir.join(sanitize_id(&case.id));
-        let mut cmd = Command::new(&self.spinelc);
+        let mut cmd = Command::new(&self.zeo);
         cmd.arg(&case.source).arg("-o").arg(&bin_path).env("RUST_BACKTRACE", "0");
         // The conformance suite knows substitutions happen (it exercises them
         // on purpose) -- suppress the Phase-2b disclosure record and its
-        // warnings so N thousand cases don't each drop a `spinel-gems.json`.
+        // warnings so N thousand cases don't each drop a `zeo-gems.json`.
         cmd.arg("--no-report");
         // Two runtime modes, trading cache disk for compile speed:
         //
@@ -170,13 +170,13 @@ impl Runner {
         //    dynamically (616K binaries, ~1.3GB cache) and keeps symbolicated
         //    runtime panics, at the ~20x slower per-program link.
         if self.debug_runtime {
-            cmd.env("SPINELC_LINK_DYNAMIC", "1").env("SPINELC_RUNTIME_PROFILE", "debug");
+            cmd.env("ZEO_LINK_DYNAMIC", "1").env("ZEO_RUNTIME_PROFILE", "debug");
         }
         if self.mspec_stubs {
-            cmd.env("SPINELC_MSPEC_STUBS", "1");
+            cmd.env("ZEO_MSPEC_STUBS", "1");
         }
-            // No `SPINELC_ASSUME_BUILT` needed: `prebuild` above already built
-            // `spinel-rt`, so each subprocess's `ensure_runtime_built` is a cheap
+            // No `ZEO_ASSUME_BUILT` needed: `prebuild` above already built
+            // `zeo-rt`, so each subprocess's `ensure_runtime_built` is a cheap
             // existence check and `build_binary` itself only links -- neither runs
             // cargo, so there's no build-lock to contend on.
         let compile = match run_with_timeout(cmd, None, self.compile_timeout) {
@@ -191,9 +191,9 @@ impl Runner {
             return result;
         }
 
-        // A `CompileFail` case passes when spinelc rejects it -- but if
-        // spinel-rs's wider dynamic-dispatch scope legitimately compiles a
-        // program C-spinel's analyzer rejects, run it against the live
+        // A `CompileFail` case passes when zeo rejects it -- but if
+        // zeo-rs's wider dynamic-dispatch scope legitimately compiles a
+        // program C-zeo's analyzer rejects, run it against the live
         // oracle instead of failing: matching real ruby is strictly better
         // than rejecting.
         if matches!(case.expectation, Expectation::CompileFail) && !compile.success() {
@@ -434,33 +434,33 @@ fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> Test
     result
 }
 
-/// One `cargo build` up front so N parallel `spinelc` invocations don't race
-/// each other into cargo (spinelc's own build.rs checks rlib freshness
+/// One `cargo build` up front so N parallel `zeo` invocations don't race
+/// each other into cargo (zeo's own build.rs checks rlib freshness
 /// per-process anyway).
 ///
-/// `spinelc` itself is the compiler binary and is always built debug (fast to
+/// `zeo` itself is the compiler binary and is always built debug (fast to
 /// rebuild, never linked into a case). The RUNTIME is what every case links, so
 /// it is built in the profile the cases will link: release by default (each
 /// per-program link is ~12x faster against the optimized runtime), or debug when
 /// `--debug-runtime` asked for a symbolicated runtime.
 pub fn prebuild(workspace_root: &Path, release_runtime: bool) -> Result<(), String> {
     let status = Command::new("cargo")
-        .args(["build", "--quiet", "-p", "spinelc"])
+        .args(["build", "--quiet", "-p", "zeo"])
         .current_dir(workspace_root)
         .status()
         .map_err(|e| format!("running cargo build: {e}"))?;
-    status.success().then_some(()).ok_or_else(|| "cargo build -p spinelc failed".to_owned())?;
+    status.success().then_some(()).ok_or_else(|| "cargo build -p zeo failed".to_owned())?;
 
     // Prebuild BOTH runtime variants -- the lean (parser-free) default AND the
     // prism-backed `eval-vm` one -- so a sweep never stalls building prism
     // mid-run when it first reaches an `eval` program. That keeps every
-    // per-program `ensure_runtime_built` in the spinelc subprocesses the cheap
+    // per-program `ensure_runtime_built` in the zeo subprocesses the cheap
     // existence check this runner is built around (see the caller notes below).
     // `build_runtime` (not `ensure_runtime_built`) so a STALE runtime is rebuilt:
     // the existence-checked path would skip an out-of-date artifact. Routed
-    // through spinelc's own builder so the eval variant's separate target dir
+    // through zeo's own builder so the eval variant's separate target dir
     // stays a single source of truth rather than a path duplicated here.
-    use spinelc::build::{build_runtime, Profile, Runtime};
+    use zeo::build::{build_runtime, Profile, Runtime};
     let profile = if release_runtime { Profile::Release } else { Profile::Debug };
     build_runtime(profile, Runtime::Lean)?;
     build_runtime(profile, Runtime::Eval)

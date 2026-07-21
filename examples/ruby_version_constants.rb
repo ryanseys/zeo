@@ -1,8 +1,8 @@
-# RUBY_* version/build constants and the File::SEPARATOR family that spinel
+# RUBY_* version/build constants and the File::SEPARATOR family that zeo
 # shares with its ruby 4.0.5 oracle. The platform/revision are machine- and
 # build-specific, so this checks the STABLE shared values exactly and the
 # dynamic ones structurally, keeping the golden output portable across build
-# hosts AND identical between spinel and the oracle.
+# hosts AND identical between zeo and the oracle.
 #
 # The ENGINE-IDENTITY constants (RUBY_ENGINE, RUBY_ENGINE_VERSION,
 # RUBY_DESCRIPTION) mirror CRuby's own ("ruby", RUBY_VERSION, version.c's

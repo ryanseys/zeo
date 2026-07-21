@@ -1,6 +1,6 @@
 # A gem can have BOTH a native half and a Ruby half, joined by name -- the
 # normal shape in Ruby, where digest, json, socket and strscan all ship C
-# alongside lib/*.rb. spinel splits them by toolchain (Rust in spinel-rt,
+# alongside lib/*.rb. zeo splits them by toolchain (Rust in zeo-rt,
 # Ruby under gems/) exactly as CRuby splits them by install destination
 # (archdir vs rubylibdir), and the Ruby half pulls its native half in with
 # `require "<name>.so"` -- CRuby's own loader idiom.

@@ -1,6 +1,6 @@
 # Real `ffi` gem API, AOT-compiled (#204): `attach_function` emits a
 # compile-time `extern "C"` + `#[link]`; the program runs identically under
-# CRuby+ffi and spinel.
+# CRuby+ffi and zeo.
 require "ffi"
 
 module LibC

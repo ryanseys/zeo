@@ -1,7 +1,7 @@
 # ConditionVariable — thread coordination paired with a Mutex.
 
 cv = ConditionVariable.new
-# (Class#name is `Thread::ConditionVariable` upstream; spinel simplifies the
+# (Class#name is `Thread::ConditionVariable` upstream; zeo simplifies the
 # nested `Thread::*` sync classes to top-level, exactly as it does for Mutex.)
 p cv.class.name.include?("ConditionVariable")   # true
 

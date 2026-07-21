@@ -17,7 +17,7 @@ puts $?.success?
 puts $?.exitstatus
 
 # Interpolation uses the normal string path; a `;` forces the shell.
-name = "spinel"
+name = "zeo"
 print `echo hi #{name}`
 print `echo a; echo b`
 puts $?.exited?

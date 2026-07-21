@@ -1,8 +1,8 @@
 //! Per-test result stamps under `target/conformance/<suite>/stamps/`, so warm
 //! runs replay cached verdicts in seconds and `triage`/`--update-scoreboard`
 //! never re-execute anything. A stamp is invalidated by any change to the
-//! test's inputs (source + sidecars + args), the toolchain (spinelc binary,
-//! spinel-rt rlib), or the oracle's `ruby -v`.
+//! test's inputs (source + sidecars + args), the toolchain (zeo binary,
+//! zeo-rt rlib), or the oracle's `ruby -v`.
 //!
 //! Format: one `key<TAB>escaped-value` pair per line -- trivially diffable,
 //! no serde dependency.
@@ -14,7 +14,7 @@ use super::util::{escape_line, fnv1a64, sanitize_id, unescape_line};
 
 pub struct StampStore {
     dir: PathBuf,
-    /// Combined toolchain fingerprint (spinelc + rlib mtime/len + ruby -v).
+    /// Combined toolchain fingerprint (zeo + rlib mtime/len + ruby -v).
     toolchain: String,
 }
 
@@ -22,10 +22,10 @@ impl StampStore {
     pub fn new(dir: PathBuf, workspace_root: &Path, ruby_version: &str) -> Result<Self, String> {
         std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
         let mut toolchain = String::new();
-        for rel in ["target/debug/spinelc", "target/debug/libspinel_rt.rlib"] {
+        for rel in ["target/debug/zeo", "target/debug/libzeo_rt.rlib"] {
             let p = workspace_root.join(rel);
             let meta = std::fs::metadata(&p)
-                .map_err(|e| format!("stat {} (build spinelc first): {e}", p.display()))?;
+                .map_err(|e| format!("stat {} (build zeo first): {e}", p.display()))?;
             let mtime = meta
                 .modified()
                 .ok()

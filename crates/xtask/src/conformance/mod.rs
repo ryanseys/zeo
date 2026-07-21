@@ -1,6 +1,6 @@
 //! `cargo run -p xtask -- conformance <run|triage|show|oracle-verify>`:
 //! the conformance harness that compiles and runs external Ruby test corpora
-//! (first: the C spinel project's golden corpus) against spinel-rs, diffing
+//! (first: the C zeo project's golden corpus) against zeo-rs, diffing
 //! output against committed snapshots or the live `ruby` oracle, and ranking
 //! failures into gap buckets that drive the implementation roadmap.
 
@@ -11,7 +11,7 @@ mod rubyspec_suite;
 mod runner;
 mod scoreboard;
 mod skiplist;
-mod spinel_suite;
+mod zeo_suite;
 mod stamps;
 mod suite;
 mod triage;
@@ -26,7 +26,7 @@ use suite::{TestCase, TestResult, Verdict};
 struct Opts {
     command: String,
     /// `--suite <name>` pins the run to one suite; `None` means "every suite"
-    /// for `run` and defaults to `spinel` for the single-suite subcommands
+    /// for `run` and defaults to `zeo` for the single-suite subcommands
     /// (triage/show/oracle-verify).
     suite: Option<String>,
     dir: Option<PathBuf>,
@@ -55,7 +55,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         suite: None,
         dir: None,
         filters: Vec::new(),
-        // Leave headroom below the core count: each worker runs a full `spinelc`
+        // Leave headroom below the core count: each worker runs a full `zeo`
         // subprocess whose `rustc` + multithreaded `lld` link already spawn several
         // threads, so `ncpu` workers on `ncpu` cores oversubscribe and inflate every
         // per-compile wall-clock (a single clean compile is ~1.5s but climbs to 4-6s
@@ -108,9 +108,9 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
             "--bucket" => opts.bucket = Some(value("--bucket")?),
             "--suite" => {
                 let s = value("--suite")?;
-                if s != "spinel" && s != "rubyspec" {
+                if s != "zeo" && s != "rubyspec" {
                     return Err(format!(
-                        "unknown suite {s:?} (expected `spinel` or `rubyspec`)"
+                        "unknown suite {s:?} (expected `zeo` or `rubyspec`)"
                     ));
                 }
                 opts.suite = Some(s);
@@ -125,7 +125,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
 }
 
 const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
-  run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
+  run           [--suite zeo|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
                 [--timeout SECS] [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
                 [--debug-runtime]  (link cases against the debug runtime -- slower\n\
@@ -134,10 +134,10 @@ const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
   triage        [--suite NAME] [--top N] [--bucket NAME]\n\
   show <id>     [--suite NAME]\n\
   oracle-verify [--suite NAME] [--dir PATH]\n\
-  clean-cache   remove the compiled-program cache (target/spinelc-bin-cache)\n\
+  clean-cache   remove the compiled-program cache (target/zeo-bin-cache)\n\
   --help, -h    show this message\n\
-run with no --suite exercises every suite (spinel, then rubyspec); each suite's\n\
-corpus comes from --dir, else its $ENV (SPINEL_TEST_DIR / RUBYSPEC_DIR), else its\n\
+run with no --suite exercises every suite (zeo, then rubyspec); each suite's\n\
+corpus comes from --dir, else its $ENV (ZEO_TEST_DIR / RUBYSPEC_DIR), else its\n\
 conventional ~/dev path -- a suite whose corpus is absent is skipped.";
 
 pub fn main(root: &Path, args: &[String]) -> ExitCode {
@@ -183,17 +183,17 @@ fn make_suite(name: &str, root: &Path) -> Box<dyn suite::Suite> {
         "rubyspec" => Box::new(rubyspec_suite::RubySpecSuite {
             repo_root: root.to_path_buf(),
         }),
-        _ => Box::new(spinel_suite::SpinelSuite),
+        _ => Box::new(zeo_suite::SpinelSuite),
     }
 }
 
 /// The suites a `run` targets: the one named by `--suite`, else every suite.
-/// Order matters -- `spinel` (the core corpus) runs first.
+/// Order matters -- `zeo` (the core corpus) runs first.
 fn selected_suites(opts: &Opts) -> Vec<&'static str> {
     match opts.suite.as_deref() {
         Some("rubyspec") => vec!["rubyspec"],
-        Some(_) => vec!["spinel"],
-        None => vec!["spinel", "rubyspec"],
+        Some(_) => vec!["zeo"],
+        None => vec!["zeo", "rubyspec"],
     }
 }
 
@@ -256,7 +256,7 @@ fn open_session(
     )?;
     let stamps = stamps::StampStore::new(work_dir.join("stamps"), root, &oracle.ruby_version)?;
     let runner = runner::Runner {
-        spinelc: root.join("target/debug/spinelc"),
+        zeo: root.join("target/debug/zeo"),
         bin_dir: work_dir.join("bin"),
         diff_dir: work_dir.join("diffs"),
         compile_timeout: opts.compile_timeout,
@@ -278,11 +278,11 @@ fn open_session(
 }
 
 /// Open the single suite the non-`run` subcommands operate on: the one named by
-/// `--suite`, else `spinel`.
+/// `--suite`, else `zeo`.
 fn open_single(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, String> {
     let name = match opts.suite.as_deref() {
         Some("rubyspec") => "rubyspec",
-        _ => "spinel",
+        _ => "zeo",
     };
     let suite = make_suite(name, root);
     let corpus = resolve_corpus(opts, suite.as_ref(), false)?
@@ -291,7 +291,7 @@ fn open_single(root: &Path, opts: &Opts, prebuild: bool) -> Result<Session, Stri
 }
 
 /// The workspace target directory (honoring `CARGO_TARGET_DIR`, else
-/// `<root>/target`) -- matches how `spinelc`'s `build` module locates it, so the
+/// `<root>/target`) -- matches how `zeo`'s `build` module locates it, so the
 /// run lock and the cache both land where `build_binary` expects.
 fn target_dir(root: &Path) -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR")
@@ -299,13 +299,13 @@ fn target_dir(root: &Path) -> PathBuf {
         .unwrap_or_else(|| root.join("target"))
 }
 
-/// Remove the compiled-program cache (`target/spinelc-bin-cache`), reclaiming
+/// Remove the compiled-program cache (`target/zeo-bin-cache`), reclaiming
 /// disk. Fully regenerable, so this is always safe between runs; the old
 /// automatic mid-build sweep was removed because a `remove_dir_all` in the build
 /// hot path could delete a generation a sibling process was still writing into.
 fn cmd_clean_cache(root: &Path, _opts: &Opts) -> Result<ExitCode, String> {
-    // Mirrors `spinelc::build`'s `cache_dir` -- kept in sync by name.
-    let cache = target_dir(root).join("spinelc-bin-cache");
+    // Mirrors `zeo::build`'s `cache_dir` -- kept in sync by name.
+    let cache = target_dir(root).join("zeo-bin-cache");
     let Ok(entries) = std::fs::read_dir(&cache) else {
         println!("nothing to clean: {} does not exist", cache.display());
         return Ok(ExitCode::SUCCESS);
@@ -368,7 +368,7 @@ fn cmd_run(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
         );
     }
 
-    // Prebuild (spinelc + spinel-rt) once, before the first suite that actually
+    // Prebuild (zeo + zeo-rt) once, before the first suite that actually
     // runs; later suites reuse the built artifacts.
     let mut prebuilt = false;
     for (i, &name) in suites.iter().enumerate() {
@@ -508,8 +508,8 @@ fn run_one_suite(
 
     // The slowest tests by wall time -- surfaces a single pathological compile
     // or run that stalls a worker while the rest fly by (the "bursty" feel).
-    // `compile` is `spinelc` + `rustc`; `run` is the compiled program. A high
-    // `compile` points at a program spinelc generates a lot of Rust for; a high
+    // `compile` is `zeo` + `rustc`; `run` is the compiled program. A high
+    // `compile` points at a program zeo generates a lot of Rust for; a high
     // `run` at a genuinely slow (or nearly-hanging) program.
     let mut by_time: Vec<&TestResult> = results.iter().collect();
     by_time.sort_by_key(|r| std::cmp::Reverse(r.compile_ms + r.run_ms));
@@ -566,7 +566,7 @@ fn run_one_suite(
             &case_meta,
             &runner.diff_dir,
         )?;
-        let prefix = if suite_name == "spinel" { "" } else { suite_name };
+        let prefix = if suite_name == "zeo" { "" } else { suite_name };
         let sep = if prefix.is_empty() { "" } else { "-" };
         println!(
             "\nwrote conformance/{p}{s}scoreboard.tsv, {p}{s}SCOREBOARD.md, {p}{s}TRIAGE.md, {p}{s}FAILURES.md",
@@ -664,7 +664,7 @@ fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
             }
         }
         suite::Expectation::Snapshot { stdout: None, .. } => println!("expected: (live oracle)"),
-        suite::Expectation::CompileFail => println!("expected: (spinelc must reject)"),
+        suite::Expectation::CompileFail => println!("expected: (zeo must reject)"),
         suite::Expectation::SelfReport => println!("expected: (self-reported)"),
     }
     println!("verdict:  {} (stage: {})", r.verdict.as_str(), r.stage);
@@ -700,7 +700,7 @@ fn cmd_oracle_verify(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
             nondet += 1;
             println!("NONDETERMINISTIC {}", case.id);
             println!(
-                "  skiplist line:\nspinel\t{}\tnondeterministic oracle output (oracle-verify)",
+                "  skiplist line:\nzeo\t{}\tnondeterministic oracle output (oracle-verify)",
                 case.id
             );
         }

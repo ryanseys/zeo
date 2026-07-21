@@ -6,7 +6,7 @@ macOS, 12 cores), not estimated.
 
 ## Executive summary
 
-A full conformance run (`cargo run -p xtask conformance run --dir …/spinel/test`,
+A full conformance run (`cargo run -p xtask conformance run --dir …/zeo/test`,
 1968 tests) takes **19m31s**. Essentially all of that is **per-program `rustc`**:
 the compiler itself (parse → analyze → codegen) is 0.14s per program, the Ruby
 oracle is not in the hot path, and running the compiled binaries is negligible
@@ -44,22 +44,22 @@ tests pass; the conformance subset's PASS/FAIL verdicts are unchanged.
 
 ## The pipeline (per test)
 
-`spinelc <src> -o <bin>` runs as a subprocess per case (harness: 12 workers,
-`crates/xtask/src/conformance/runner.rs:106-127`). Inside, `spinelc` invokes **one
-`rustc`** (`crates/spinelc/src/build.rs:177`) against the prebuilt `spinel-rt`
-dylib — not a throwaway Cargo project. `spinel-rt` is built **once** up front
-(`runner.rs:316`), then reused for every test via `--extern spinel_rt=<lib>` and
+`zeo <src> -o <bin>` runs as a subprocess per case (harness: 12 workers,
+`crates/xtask/src/conformance/runner.rs:106-127`). Inside, `zeo` invokes **one
+`rustc`** (`crates/zeo/src/build.rs:177`) against the prebuilt `zeo-rt`
+dylib — not a throwaway Cargo project. `zeo-rt` is built **once** up front
+(`runner.rs:316`), then reused for every test via `--extern zeo_rt=<lib>` and
 `-L dependency=target/debug/deps`.
 
 The Ruby oracle is **not** in the hot path: all 1962 top-level tests ship
 `.expected` snapshots, so `ruby` runs only for the (≈0) snapshot-less cases, and
 its results are content-addressed and cached. Comparing output is a disk read.
 
-So per test: `spinelc` (fast) → `rustc` (slow) → run binary (fast) → compare.
+So per test: `zeo` (fast) → `rustc` (slow) → run binary (fast) → compare.
 
 ## Where the time goes (measured)
 
-Aggregated from the 1968 result stamps (`target/conformance/spinel/stamps`):
+Aggregated from the 1968 result stamps (`target/conformance/zeo/stamps`):
 
 - **compile_ms: total 14,097s of CPU, mean 7,163 ms/program, max 24,479 ms.**
 - **run_ms: total 79s, mean 40 ms.** Running the binaries is negligible.
@@ -69,7 +69,7 @@ Rust):
 
 | stage | time |
 |---|---|
-| spinelc parse + analyze + codegen (in-process) | **0.14 s** |
+| zeo parse + analyze + codegen (in-process) | **0.14 s** |
 | rustc, default macOS linker, dynamic link | **7–8 s** |
 | rustc, **`lld` linker**, dynamic link | **~3.0 s** |
 | rustc CPU only (user + sys) | ~2.0 s |
@@ -79,13 +79,13 @@ Rust):
 ### Cost 1 — code volume: the exception prelude
 
 Every generated program embeds the identical built-in exception hierarchy
-(`EXCEPTION_PRELUDE`, `crates/spinelc/src/parse/mod.rs:44-173`), spliced into every
+(`EXCEPTION_PRELUDE`, `crates/zeo/src/parse/mod.rs:44-173`), spliced into every
 program's HIR. Although 24 of ~28 classes are empty in Ruby (`class TypeError <
 StandardError; end`), they are not empty once generated: `analyze::mro::materialize`
 copies every inherited method onto each subclass and `collect_ivars` flattens
 inherited ivars, so each class emits full `initialize`/`message`/`to_s`/`inspect`/
 `full_message`/`backtrace` bodies plus dispatch trampolines as a
-`spinel_rt::ruby_class!` invocation.
+`zeo_rt::ruby_class!` invocation.
 
 Measured on the current `puts 1` output (8,671 lines):
 
@@ -106,7 +106,7 @@ A *one-line* program that merely links the runtime still costs **5.9s** with the
 default linker, of which only ~0.7s is CPU. The rest is:
 
 - the default macOS linker (`ld`) linking against the **20 MB
-  `libspinel_rt.dylib`**,
+  `libzeo_rt.dylib`**,
 - `rustc` reading the 47 MB rlib / 20 MB dylib metadata at startup,
 - macOS ad-hoc codesigning + Gatekeeper of every output binary.
 
@@ -132,12 +132,12 @@ saturation is CPU-bound prelude codegen, which only Step 3 removes.**
 
 ## Why every development run is cold (the multiplier)
 
-- The binary cache generation key = `fnv1a64(linkage + spinel-rt lib len:mtime)`
+- The binary cache generation key = `fnv1a64(linkage + zeo-rt lib len:mtime)`
   (`build.rs:325-336`).
-- The stamp toolchain fingerprint = spinelc + rlib mtime/len + `ruby -v`
+- The stamp toolchain fingerprint = zeo + rlib mtime/len + `ruby -v`
   (`crates/xtask/src/conformance/stamps.rs:25-37`).
 
-So **any rebuild of `spinelc` or `spinel-rt` invalidates the entire binary cache
+So **any rebuild of `zeo` or `zeo-rt` invalidates the entire binary cache
 and all 1968 stamps at once**, and the whole corpus recompiles cold. This is
 correct — a compiler/runtime change can change any result — but it means that
 during active development every run pays the full 19.5 minutes. Warm re-runs with
@@ -164,11 +164,11 @@ no toolchain change replay from stamps in seconds; that path already works.
 Add `-C link-arg=-fuse-ld=lld` to the `rustc` invocation in `build.rs` when linking
 dynamically (the harness path), detecting lld once and falling back silently to the
 default linker if it is absent. Measured 7–8s → ~3s per program; projected corpus
-wall time ~19.5 min → **~8 min**. Files: `crates/spinelc/src/build.rs`.
+wall time ~19.5 min → **~8 min**. Files: `crates/zeo/src/build.rs`.
 
 ### Step 2 — slim the harness runtime (investigated, NOT worth it)
 
-The idea: build `spinel-rt` for the harness with only the `ext-*` features the
+The idea: build `zeo-rt` for the harness with only the `ext-*` features the
 corpus needs (measured union: `json`, `base64`, `stringio`, `openssl`). Measured
 the actual payoff before implementing:
 
@@ -189,7 +189,7 @@ alternates between `cargo test` (default features) and `conformance run` (slim) 
 a net loss. The real runtime weight is the always-on deps, and making those
 optional is a much larger, correctness-sensitive change, not a quick win.
 
-### Step 3 — move the exception machinery into `spinel-rt` (staged)
+### Step 3 — move the exception machinery into `zeo-rt` (staged)
 
 The structural fix, done in three independently-verifiable stages so each can be
 measured and shipped on its own.
@@ -197,13 +197,13 @@ measured and shipped on its own.
 **Stage A — move the exception factory to the runtime (DONE, measured).** Every
 generated program used to install a ~1,130-line closure mapping each raisable
 exception class name to an inline `emit_boxed_new` constructor, because
-`spinel-rt` "could not construct exception objects itself." But each `ruby_class!`
+`zeo-rt` "could not construct exception objects itself." But each `ruby_class!`
 already registers a `__construct` `ConstructorFn`, and the registry already stores
 each class's fully-qualified name — so the runtime can construct by name directly.
 `ClassRegistry` gained a `by_name` index and a `construct_exception(name, msg)`
 method; `raise_error`, `coerce_raise_arg`, and `raise_stop_iteration` now call it,
-and codegen stops emitting the factory. Files: `crates/spinel-rt/src/dispatch.rs`,
-`crates/spinelc/src/codegen/mod.rs`.
+and codegen stops emitting the factory. Files: `crates/zeo-rt/src/dispatch.rs`,
+`crates/zeo/src/codegen/mod.rs`.
 
 Measured on the `a*` subset (cold, `-j 12`, verdicts identical to baseline):
 
@@ -226,26 +226,26 @@ any user class, so its id is a fixed function of the prelude alone (verified: id
 108 whether the program has 0 or 3 user classes; previously 108 vs 111). That is
 the property Stage C needs — a precompiled prelude can only agree with codegen on
 which id each class is if those ids don't depend on user code. (A stronger version
-records the ids in `spinel-abi` under the contiguity assert; deferred as a
+records the ids in `zeo-abi` under the contiguity assert; deferred as a
 robustness guard to land with Stage C's regeneration path.) File:
-`crates/spinelc/src/analyze/mod.rs`.
+`crates/zeo/src/analyze/mod.rs`.
 
-**Stage C — hand-written native prelude in `spinel-rt` (DONE, measured).** The
+**Stage C — hand-written native prelude in `zeo-rt` (DONE, measured).** The
 built-in exception hierarchy is now written once, natively, in the runtime:
 
-- `spinel-abi` gains `EXCEPTION_PRELUDE_CLASSES`, the shared source of truth for
+- `zeo-abi` gains `EXCEPTION_PRELUDE_CLASSES`, the shared source of truth for
   the 46 classes' ids (63–108, contiguous, asserted), names, and superclass links.
-- `spinel-rt`'s `crate::prelude` defines one native `RubyException` type (name-keyed
+- `zeo-rt`'s `crate::prelude` defines one native `RubyException` type (name-keyed
   ivars, real frozen/dup/reflection) backing every exception class, plus
   `register_prelude(&mut ClassRegistry)` which installs all 46 with linearized
   ancestors, a shared `ConstructorFn`, and the six shared `Exception` methods
   (`initialize`/`message`/`to_s`/`backtrace`/`full_message`/`inspect`) + StopIteration's
   two. `ConstructorFn` gained a leading `ClassId` so one constructor backs all.
-- `spinelc` stops emitting the prelude entirely: `is_bootstrap` now excludes those
-  classes from all three emission loops, `main` calls `spinel_rt::register_prelude`,
+- `zeo` stops emitting the prelude entirely: `is_bootstrap` now excludes those
+  classes from all three emission loops, `main` calls `zeo_rt::register_prelude`,
   a bootstrap class's `New`/raise routes through `construct_by_class_id` (its
   static type is now `Poly`, no struct named), and `analyze` asserts its assigned
-  ids match `spinel-abi`. The prelude HIR stays for name resolution, `super`
+  ids match `zeo-abi`. The prelude HIR stays for name resolution, `super`
   inlining, and materializing user subclasses — so `class MyError < StandardError`
   is unchanged.
 
@@ -259,7 +259,7 @@ the remaining 587 lines were *fixed builtin registration* — the identical
 `__registry.register(...)` calls for `Integer`/`Array`/`Kernel`/… in every
 program. Moved into a runtime `register_builtins(&mut ClassRegistry)` that installs
 the always-on builtins with their **default** ancestors (derived from
-`spinel_abi::default_builtin_ancestors`, which replicates the compiler's own
+`zeo_abi::default_builtin_ancestors`, which replicates the compiler's own
 linearization from the same abi edges). Full CRuby parity is preserved: a program
 that reopens a builtin to change its hierarchy (`class Array; include M; end`)
 emits a targeted **override** `register` that lands after `register_builtins` and
@@ -267,14 +267,14 @@ replaces the entry — and codegen emits it *only* when the ancestors actually
 differ from the default (method reopens, which don't change ancestors, cost
 nothing). Require-gated extensions stay per-program so an un-`require`d one stays
 invisible. **`puts 1` is now 83 lines** (from 8,671 — a **99% reduction**). Files:
-`crates/spinel-abi/src/lib.rs`, `crates/spinel-rt/src/prelude.rs`,
-`crates/spinelc/src/codegen/mod.rs`.
+`crates/zeo-abi/src/lib.rs`, `crates/zeo-rt/src/prelude.rs`,
+`crates/zeo/src/codegen/mod.rs`.
 
 Files for Stage C:
-`crates/spinel-abi/src/lib.rs`, `crates/spinel-rt/src/prelude.rs`,
-`crates/spinel-rt/src/dispatch.rs`, `crates/spinelc/src/codegen/mod.rs`,
-`crates/spinelc/src/types.rs`, `crates/spinelc/src/codegen/call.rs`,
-`crates/spinelc/src/analyze/mod.rs`.
+`crates/zeo-abi/src/lib.rs`, `crates/zeo-rt/src/prelude.rs`,
+`crates/zeo-rt/src/dispatch.rs`, `crates/zeo/src/codegen/mod.rs`,
+`crates/zeo/src/types.rs`, `crates/zeo/src/codegen/call.rs`,
+`crates/zeo/src/analyze/mod.rs`.
 
 The native prelude also unblocks the object-model work the deferred doc lists
 (`Exception#cause`, `Ractor` deep-copy, name-keyed `instance_variable_set` on
@@ -305,7 +305,7 @@ runner now prints:
 - **Inline per-test timing** — each verdict line carries `(c:<compile>ms
   r:<run>ms)`, so a single slow case stands out in the stream instead of just
   making the run feel "bursty" (fast cache hits interleaved with cold `rustc`
-  compiles). `compile` is `spinelc` + `rustc`; `run` is the compiled program.
+  compiles). `compile` is `zeo` + `rustc`; `run` is the compiled program.
 - **A "top 15 slowest tests" table** at the end (total / compile / run), to pick
   out a pathological program — a large generated file (high `compile`) or a
   nearly-hanging run (high `run`).
@@ -338,7 +338,7 @@ fresh:
 
 - **"Compiles used to be sub-1s, now 3-5s" was the binary cache, not a
   regression.** A cache *hit* is **0.036 s** (`build_binary` hard-links a prior
-  build). Any `spinel-rt`/`spinelc` rebuild invalidates the whole generation (see
+  build). Any `zeo-rt`/`zeo` rebuild invalidates the whole generation (see
   "Why every development run is cold" above), so during active development every
   program is a *cold* compile. A cold compile was always ~1.5 s on an idle
   machine; the 3-5 s the developer saw was that **× 12-worker saturation**.
@@ -347,7 +347,7 @@ fresh:
 
 ## The runtime is ~100× larger than matz's Spinel — why
 
-matz's C `~/dev/spinel` runtime is a **~590 KB** static archive; ours was a
+matz's C `~/dev/zeo` runtime is a **~590 KB** static archive; ours was a
 **24 MB dylib / 56 MB rlib**. Two structural reasons, both now partly addressed:
 
 1. **No build-profile tuning** (the now-corrected "No `[profile.*]`" line): the
@@ -364,9 +364,9 @@ erased).
 
 ## Shipped changes
 
-**Dev-runtime profile diet** (`Cargo.toml`). `[profile.dev.package.spinel-rt]
+**Dev-runtime profile diet** (`Cargo.toml`). `[profile.dev.package.zeo-rt]
 debug = "line-tables-only"` + `[profile.dev.package."*"] opt-level = 1`. Shrank
-the debug **rlib 56 → 22 MB, dylib 24 → 17 MB**; `spinel-rt` rebuilds are faster;
+the debug **rlib 56 → 22 MB, dylib 24 → 17 MB**; `zeo-rt` rebuilds are faster;
 panic line numbers survive (only lldb step-through of the runtime is lost). It did
 **not** speed a single cold compile much — at no contention that cost is rustc's
 frontend, not the link — but it shrinks the link input under saturation and feeds
@@ -386,8 +386,8 @@ Dynamic-only scoping.)
 New `[profile.release]` (`strip="symbols"`, `lto="thin"`, `codegen-units=1` — NOT
 `panic="abort"`, which `may`/fiber unwinding requires) and a new orthogonal
 `Profile` axis (`Debug`/`Release`) threaded through `build.rs`. Only *intent*
-selects it: `-e`/e2e-harness/conformance default `Debug`; `spinelc foo.rb -o app`
-defaults `Release`. Overridable per-invocation with `SPINELC_RUNTIME_PROFILE`.
+selects it: `-e`/e2e-harness/conformance default `Debug`; `zeo foo.rb -o app`
+defaults `Release`. Overridable per-invocation with `ZEO_RUNTIME_PROFILE`.
 Result: **shipped binary 9.8 MB → 5.5 MB and optimized**; the stripped 12 MB
 release rlib also links far faster, so steady-state `-o` is **~0.2 s** (first
 `-o` pays a one-time ~32 s release build).
@@ -395,7 +395,7 @@ release rlib also links far faster, so steady-state `-o` is **~0.2 s** (first
 ## Conformance on the release runtime — STATIC only
 
 `cargo xtask conformance run` now links every case against the **release** runtime
-by default (prebuild builds `spinel-rt --release`), for **~20× faster cold
+by default (prebuild builds `zeo-rt --release`), for **~20× faster cold
 compiles** (~0.16 s vs ~3.3 s). `--debug-runtime` opts back to the dynamic debug
 runtime (symbolicated panics, small cache).
 
@@ -414,7 +414,7 @@ Enumerator slice compiles with **0 `FAIL_RUSTC`** across 109 cases.
 
 > A clean *dynamic*-release runtime (small cache + fast) would need the optimized
 > dylib to keep exporting those asm symbols — either preventing `-dead_strip` from
-> removing them, or stopping `spinel-rt` from leaking the `generator` generic
+> removing them, or stopping `zeo-rt` from leaking the `generator` generic
 > downstream. Left as an open follow-up.
 
 ## DRY pass
@@ -430,18 +430,18 @@ complexity and read *worse* than the explicit code. Not every dedup is a win.
 ## Done: parser out of the default runtime (matz's model)
 
 `ruby-prism` (a C library, via bindgen/cc) is no longer in the default runtime.
-The default (`cargo build -p spinel-rt`, `default = ["ext-all"]`) is now
-parser-free, and `spinelc` picks a runtime **variant** per program:
+The default (`cargo build -p zeo-rt`, `default = ["ext-all"]`) is now
+parser-free, and `zeo` picks a runtime **variant** per program:
 
 - The compiler statically decides whether a program can reach the runtime eval VM
   (`Hir::uses_runtime_eval`, surfaced as `CompileOutput::needs_eval_vm`). Only two
-  builtins funnel into `spinel_rt::eval_value`/`eval_string` (the sole prism
+  builtins funnel into `zeo_rt::eval_value`/`eval_string` (the sole prism
   users): dynamic `Kernel#eval` and string-form `instance_eval`. A **literal**
   `eval("...")` the inline path accepts is already spliced as `HirNode::Eval`
   (no runtime parser); a block-form `instance_eval { }` runs a real block. Both
   stay lean.
 - `build::Runtime::{Lean, Eval}` is a third build axis beside `Linkage`/`Profile`.
-  `Eval` is `default + eval-vm`, built into its OWN `target/spinel-rt-eval/`
+  `Eval` is `default + eval-vm`, built into its OWN `target/zeo-rt-eval/`
   (a `--target-dir` redirect) so the two feature sets coexist instead of
   clobbering each other in one `target/<profile>/` — the crux that had blocked
   this. The conformance prebuild warms both variants so no sweep stalls building

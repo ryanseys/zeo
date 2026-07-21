@@ -10,13 +10,13 @@
 //! puts MSpecLite.summary_line
 //! ```
 //!
-//! spinelc is invoked with `SPINELC_MSPEC_STUBS=1` (set by the runner for this
+//! zeo is invoked with `ZEO_MSPEC_STUBS=1` (set by the runner for this
 //! suite) so the spec's own `require_relative '../spec_helper'` -- which pulls
 //! in the real `mspec` framework -- collapses to a no-op. The driver runs every
 //! `describe`/`it` as the spec is required and prints the summary the runner
 //! parses (`Expectation::SelfReport`). A clean run (0 failures, 0 errors) is a
 //! PASS; ruby/spec's assertions already encode CRuby's behavior, so no separate
-//! oracle diff is needed. Specs spinelc can't compile surface as `FAIL_COMPILE`
+//! oracle diff is needed. Specs zeo can't compile surface as `FAIL_COMPILE`
 //! -- exactly the language-feature gaps this suite exists to track.
 
 use std::path::{Path, PathBuf};
@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use super::suite::{home, Expectation, Suite, TestCase};
 
 pub struct RubySpecSuite {
-    /// The spinel-rs repo root, so the driver can `require_relative` the shim.
+    /// The zeo-rs repo root, so the driver can `require_relative` the shim.
     pub repo_root: PathBuf,
 }
 

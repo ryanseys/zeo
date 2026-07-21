@@ -1,19 +1,19 @@
 //! `cargo run -p xtask -- <command>`: the project's build/test automation,
-//! mirroring spinel's `make test` / `make regen-expected` without pulling in
+//! mirroring zeo's `make test` / `make regen-expected` without pulling in
 //! a task-runner crate -- the Rust community's usual way to add custom
 //! project automation without extra dependencies.
 //!
-//! - `xtask test`: compiles each `examples/*.rb` via `spinelc`, runs the
+//! - `xtask test`: compiles each `examples/*.rb` via `zeo`, runs the
 //!   resulting binary, and diffs its stdout against `examples/<name>.expected`
-//!   (oracle = real `ruby`, exactly like spinel's own `test/*.rb` +
+//!   (oracle = real `ruby`, exactly like zeo's own `test/*.rb` +
 //!   `.rb.expected` golden-file discipline).
 //! - `xtask regen`: re-runs real `ruby` over every `examples/*.rb` and
 //!   overwrites the matching `.expected` file (mirrors
-//!   `spinel-regen-expected-from-ruby`).
+//!   `zeo-regen-expected-from-ruby`).
 //! - `xtask conformance <run|triage|show|oracle-verify>`: the external-corpus
 //!   conformance harness (see `conformance/mod.rs`).
 //! - `xtask stdlib-status [<lib-dir>]`: sweeps the installed Ruby stdlib `lib`
-//!   (dropped in via `-I`, no bespoke flag) and records which files `spinelc`
+//!   (dropped in via `-I`, no bespoke flag) and records which files `zeo`
 //!   can compile -- the stdlib progress tracker (see `stdlib_status.rs`).
 
 mod conformance;
@@ -62,17 +62,17 @@ fn regen(root: &Path) -> ExitCode {
 }
 
 fn test(root: &Path) -> ExitCode {
-    let spinelc_manifest = root.join("crates/spinelc/Cargo.toml");
+    let zeo_manifest = root.join("crates/zeo/Cargo.toml");
     let build = Command::new("cargo")
         .args(["build", "--quiet", "--manifest-path"])
-        .arg(&spinelc_manifest)
+        .arg(&zeo_manifest)
         .status()
         .unwrap_or_else(|e| panic!("running cargo build: {e}"));
     if !build.success() {
-        eprintln!("xtask: spinelc failed to build");
+        eprintln!("xtask: zeo failed to build");
         return ExitCode::FAILURE;
     }
-    let spinelc_bin = root.join("target/debug/spinelc");
+    let zeo_bin = root.join("target/debug/zeo");
 
     let mut failures = Vec::new();
     for rb in examples(root) {
@@ -85,8 +85,8 @@ fn test(root: &Path) -> ExitCode {
             )
         });
 
-        let bin_path = std::env::temp_dir().join(format!("spinelrs-xtask-{name}"));
-        let compile = Command::new(&spinelc_bin)
+        let bin_path = std::env::temp_dir().join(format!("zeors-xtask-{name}"));
+        let compile = Command::new(&zeo_bin)
             .arg(&rb)
             .arg("-o")
             .arg(&bin_path)
@@ -100,8 +100,8 @@ fn test(root: &Path) -> ExitCode {
                 Ok(run) => String::from_utf8_lossy(&run.stdout).into_owned(),
                 Err(e) => format!("<failed to run compiled binary: {e}>"),
             },
-            Ok(out) => format!("<spinelc failed: {}>", String::from_utf8_lossy(&out.stderr)),
-            Err(e) => format!("<failed to invoke spinelc: {e}>"),
+            Ok(out) => format!("<zeo failed: {}>", String::from_utf8_lossy(&out.stderr)),
+            Err(e) => format!("<failed to invoke zeo: {e}>"),
         };
         let _ = std::fs::remove_file(&bin_path);
 

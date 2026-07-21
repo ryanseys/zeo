@@ -15,10 +15,10 @@ use super::util::fnv1a64;
 /// Flags passed to EVERY oracle run. `error_highlight` (the source snippet +
 /// caret) and `did_you_mean` (the "Did you mean?" suggestion) are opt-out
 /// default GEMS, not core language semantics -- any user can disable them, and
-/// their output is a per-AST-node presentation layer spinel does not aim to
+/// their output is a per-AST-node presentation layer zeo does not aim to
 /// reproduce byte-for-byte. Disabling them makes the reference the plain core
 /// backtrace (`file:line:in 'ctx': msg (Class)` + `from` frames), which is the
-/// error format spinel actually targets. Recorded in `ruby_version` below so
+/// error format zeo actually targets. Recorded in `ruby_version` below so
 /// changing this set invalidates the oracle cache and every result stamp.
 const ORACLE_FLAGS: &[&str] = &["--disable-error_highlight", "--disable-did_you_mean"];
 

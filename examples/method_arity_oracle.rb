@@ -1,6 +1,6 @@
 # Comprehensive Method#arity / #parameters coverage, byte-diffed against the
 # ruby oracle. Each line prints the code expression next to its result so a
-# spinel-vs-oracle diff points straight at the failing method. Builtin arities
+# zeo-vs-oracle diff points straight at the failing method. Builtin arities
 # are declared per-name at each method's `builtin_methods!` definition site
 # (mirroring CRuby's `rb_define_method` argc), so this is their regression gate.
 

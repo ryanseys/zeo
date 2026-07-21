@@ -92,7 +92,7 @@ puts err { for z in 5; end }
 # NOTE: `"x" * (1 << 60)` is deliberately NOT exercised here. CRuby's guard
 # only covers the length multiplication, so a 1-byte string times 2^60 reaches
 # the allocator and raises NoMemoryError -- which, not being a StandardError,
-# escapes `rescue => e` and kills the program. spinel caps the total size and
+# escapes `rescue => e` and kills the program. zeo caps the total size and
 # raises a catchable ArgumentError instead, so the two cannot share a golden
 # file; the corpus `string_multiply_overflow` pins that behavior separately.
 puts err { "x" * -1 }

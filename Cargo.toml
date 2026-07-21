@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/spinel-abi",
-    "crates/spinelc",
-    "crates/spinel-rt",
-    "crates/spinel-fiber",
+    "crates/zeo",
+    "crates/zeo-abi",
+    "crates/zeo-rt",
+    "crates/zeo-fiber",
     "crates/xtask",
 ]
 
@@ -12,11 +12,11 @@ members = [
 edition = "2021"
 license = "MIT"
 
-# Faster generated-program compiles + faster spinel-rt rebuilds. Every compiled
+# Faster generated-program compiles + faster zeo-rt rebuilds. Every compiled
 # program links the runtime; it is a large, rarely-step-debugged artifact, so trim
 # its debug info. `line-tables-only` keeps panic backtraces and line numbers -- only
 # interactive lldb step-through of the runtime is lost.
-[profile.dev.package.spinel-rt]
+[profile.dev.package.zeo-rt]
 debug = "line-tables-only"
 
 # All third-party dependencies (regex, ruby-prism, num-bigint, may, ...): build them
@@ -27,7 +27,7 @@ debug = "line-tables-only"
 opt-level = 1
 debug = "line-tables-only"
 
-# The runtime a SHIPPED binary links (`spinelc foo.rb -o app` builds spinel-rt in
+# The runtime a SHIPPED binary links (`zeo foo.rb -o app` builds zeo-rt in
 # release and statically links it -- see build.rs's Profile). Optimized and stripped
 # so user binaries are small and fast, instead of embedding the ~10MB unoptimized
 # debug runtime. All behavior-preserving: NOT panic="abort" (the `may` coroutine

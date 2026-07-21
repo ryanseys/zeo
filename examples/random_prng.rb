@@ -1,4 +1,4 @@
-# `Random` -- a seedable PRNG. spinel's generator is xorshift64*, not CRuby's
+# `Random` -- a seedable PRNG. zeo's generator is xorshift64*, not CRuby's
 # MT19937, so raw sequences differ; this example prints only the DETERMINISTIC
 # guarantees that hold for any correct PRNG (reproducibility, ranges, return
 # types), never a raw random value.

@@ -10,13 +10,13 @@ pub struct TestCase {
     /// Stable id used in the scoreboard/skiplist, e.g. `alias_global` or
     /// `analyze_fail/attributes_non_symbol`.
     pub id: String,
-    /// The `.rb` file handed to `spinelc`.
+    /// The `.rb` file handed to `zeo`.
     pub source: PathBuf,
     /// ARGV for both the compiled binary and the oracle.
     pub args: Vec<String>,
     /// File whose bytes are fed to the program's stdin (and the oracle's).
     pub stdin: Option<PathBuf>,
-    /// Working directory for the compiled binary and the oracle -- the spinel
+    /// Working directory for the compiled binary and the oracle -- the zeo
     /// corpus's `.args` files reference repo-root-relative paths.
     pub run_cwd: PathBuf,
     pub expectation: Expectation,
@@ -32,8 +32,8 @@ pub enum Expectation {
         stdout: Option<PathBuf>,
         stderr: Option<PathBuf>,
     },
-    /// `analyze_fail/`: spinelc must reject the program (nonzero exit). The
-    /// C corpus's `.stderr.expected` wording is C-spinel's, not ours, so it
+    /// `analyze_fail/`: zeo must reject the program (nonzero exit). The
+    /// C corpus's `.stderr.expected` wording is C-zeo's, not ours, so it
     /// is not diffed.
     CompileFail,
     /// The program reports its own pass/fail on stdout (the rubyspec suite's
@@ -72,9 +72,9 @@ pub enum Verdict {
     Pass,
     /// Output didn't match the reference.
     FailOutput,
-    /// spinelc rejected the program (a scope gap or compiler bug).
+    /// zeo rejected the program (a scope gap or compiler bug).
     FailCompile,
-    /// spinelc emitted Rust that `rustc` refused -- always a spinelc bug,
+    /// zeo emitted Rust that `rustc` refused -- always a zeo bug,
     /// never a scope gap, so it gets its own verdict.
     FailRustc,
     /// The compiled binary crashed (killed by a signal) where the reference
@@ -84,7 +84,7 @@ pub enum Verdict {
     TimeoutRun,
     Skip,
     /// The oracle `ruby` itself failed or timed out -- neither a pass nor a
-    /// spinel-rs failure; surfaced separately.
+    /// zeo-rs failure; surfaced separately.
     OracleFail,
 }
 
