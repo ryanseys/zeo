@@ -1115,3 +1115,35 @@ fn proc_source_location_is_a_string_integer_pair() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "Array\n2\nString\nInteger\n");
 }
+
+#[test]
+fn break_in_a_non_lambda_proc_call_raises_local_jump_error() {
+    // `break` inside an explicitly created proc invoked via `#call` has no
+    // iterator to unwind to, so CRuby raises LocalJumpError (`#reason`
+    // `:break`) -- even while the creating iterator is still live. A lambda's
+    // `break`, by contrast, just returns from the lambda.
+    let result = run_ruby(
+        r##"
+        p(-> { break 9 }.call)
+        def orphan; proc { break 1 }; end
+        begin
+          orphan.call
+        rescue LocalJumpError => e
+          puts "#{e.message} / #{e.reason.inspect}"
+        end
+        [1, 2].each do |x|
+          pr = proc { break :pb }
+          begin
+            pr.call
+          rescue LocalJumpError => e
+            puts "live: #{e.message}"
+          end
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "9\nbreak from proc-closure / :break\nlive: break from proc-closure\nlive: break from proc-closure\n"
+    );
+}
