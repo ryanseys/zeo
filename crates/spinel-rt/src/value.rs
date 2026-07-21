@@ -289,7 +289,7 @@ impl RubyValue {
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.inspect_with(seen)),
+                        RubyValue::Symbol(s) => format!("{}: {}", crate::builtins::symbol::hash_key(&s.name()), v.inspect_with(seen)),
                         _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()
@@ -403,7 +403,7 @@ impl RubyValue {
                 format!("({})", crate::builtins::rational::rat_to_s(r))
             }
             RubyValue::Complex(c) => crate::builtins::complex::cpx_format(c, true),
-            RubyValue::Symbol(s) => format!(":{}", s.name()),
+            RubyValue::Symbol(s) => crate::builtins::symbol::inspect_name(&s.name()),
             RubyValue::Str(s) => crate::encoding::inspect(&s.lock()),
             RubyValue::Array(a) => {
                 let ptr = container_identity(self).expect("Array is a container");
@@ -432,7 +432,7 @@ impl RubyValue {
                     .lock()
                     .values()
                     .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!("{}: {}", s.name(), v.inspect_with(seen)),
+                        RubyValue::Symbol(s) => format!("{}: {}", crate::builtins::symbol::hash_key(&s.name()), v.inspect_with(seen)),
                         _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
                     })
                     .collect::<Vec<_>>()

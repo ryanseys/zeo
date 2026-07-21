@@ -12,6 +12,88 @@ fn recv_sym(recv: &RubyValue) -> Symbol {
     }
 }
 
+/// Every operator method name that prints as a bare symbol (`:+`, `:<=>`,
+/// `:[]=`, `` :` ``) rather than a quoted one.
+const OPERATOR_NAMES: &[&str] = &[
+    "+", "-", "*", "/", "%", "**", "==", "===", "!=", "=~", "!~", "<", "<=", ">", ">=", "<=>",
+    "<<", ">>", "&", "|", "^", "~", "!", "+@", "-@", "[]", "[]=", "`",
+];
+
+/// Whether a symbol name must be quoted in `inspect` (`:"a b"`) rather than
+/// printed bare (`:abc`). Mirrors CRuby's `rb_str_symname_p`: a name prints
+/// bare when it is an operator method, a plain identifier/constant, an
+/// `@ivar`/`@@cvar`/`$gvar`, or a method name with a single trailing `?`, `!`,
+/// or `=`. Everything else (spaces, leading digits, empty, punctuation) quotes.
+/// Non-ASCII letters count as identifier characters, so `:café` and `:λ` print
+/// bare while `:"😀"` (a non-letter) quotes.
+pub(crate) fn needs_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    if OPERATOR_NAMES.contains(&name) {
+        return false;
+    }
+    // Sigil-prefixed names: an @ivar, @@cvar, or $gvar whose remainder is a
+    // plain identifier prints bare; the bare sigil (`:@`) does not.
+    for sigil in ["@@", "@", "$"] {
+        if let Some(rest) = name.strip_prefix(sigil) {
+            return !is_plain_ident(rest);
+        }
+    }
+    if is_plain_ident(name) {
+        return false;
+    }
+    // A method name may carry one trailing `?`, `!`, or `=` (`foo?`, `baz=`);
+    // the character must be last (`foo?bar` still quotes).
+    if let Some(body) = name
+        .strip_suffix(['?', '!', '='])
+        .filter(|b| !b.is_empty() && is_plain_ident(b))
+    {
+        let _ = body;
+        return false;
+    }
+    true
+}
+
+/// A bare Ruby identifier: an underscore or (Unicode) letter, then underscores
+/// or (Unicode) alphanumerics. Covers locals, methods, constants, and the
+/// remainder after an `@`/`@@`/`$` sigil.
+fn is_plain_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c == '_' || c.is_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_alphanumeric())
+}
+
+/// A symbol's `inspect` form: `:name` when the name prints bare, else `:"..."`
+/// with the name escaped exactly as `String#inspect` would.
+pub(crate) fn inspect_name(name: &str) -> String {
+    if needs_quoting(name) {
+        format!(":{}", quoted_name(name))
+    } else {
+        format!(":{name}")
+    }
+}
+
+/// A symbol name escaped and quoted like a string literal (`a b` -> `"a b"`),
+/// reusing the encoding-aware string inspector so control characters, quotes,
+/// and non-ASCII text match `String#inspect` byte-for-byte.
+pub(crate) fn quoted_name(name: &str) -> String {
+    crate::encoding::inspect(&crate::encoding::StrBuf::from_utf8(name.to_string()))
+}
+
+/// A symbol hash key in the `name:` shorthand: bare when the name prints bare
+/// (`{a: 1}`), otherwise quoted (`{"k space": 2}`).
+pub(crate) fn hash_key(name: &str) -> String {
+    if needs_quoting(name) {
+        quoted_name(name)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Delegates a name-reading Symbol method to the same-named `String` method,
 /// evaluated over the symbol's name (`:foo.start_with?("f")` ==
 /// `"foo".start_with?("f")`).
@@ -59,7 +141,7 @@ builtin_methods! {
     }
     "inspect" => fn inspect(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Str(crate::string_new(format!(":{}", recv_sym(recv).name()))))
+        Ok(RubyValue::Str(crate::string_new(inspect_name(&recv_sym(recv).name()))))
     }
     "length" | "size" => fn length(recv, args, _block) {
         arity!(args, 0);
@@ -174,6 +256,24 @@ mod tests {
         assert_eq!(r.inspect_string(), ":HE");
         let r = succ(&sym("a"), &[], None).unwrap();
         assert_eq!(r.inspect_string(), ":b");
+    }
+
+    #[test]
+    fn inspect_quotes_only_non_bare_names() {
+        // Bare: identifiers, constants, sigils, suffixed methods, operators,
+        // non-ASCII letters.
+        for bare in ["abc", "Foo", "_x9", "@iv", "@@cv", "$g", "foo?", "baz=", "+", "<=>", "[]=", "`", "café", "λ"] {
+            assert!(!needs_quoting(bare), "{bare:?} should print bare");
+            assert_eq!(inspect_name(bare), format!(":{bare}"));
+        }
+        // Quoted: spaces, leading digit, empty, embedded suffix char, bare sigil, emoji.
+        for q in ["a b", "1x", "", "foo?bar", "@", "😀"] {
+            assert!(needs_quoting(q), "{q:?} should quote");
+        }
+        assert_eq!(inspect_name("a b"), ":\"a b\"");
+        assert_eq!(inspect_name(""), ":\"\"");
+        assert_eq!(hash_key("normal"), "normal");
+        assert_eq!(hash_key("k space"), "\"k space\"");
     }
 
     #[test]
