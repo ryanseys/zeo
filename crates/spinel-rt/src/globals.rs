@@ -72,6 +72,15 @@ pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
         .insert((box_id, resolve(box_id, name)), value);
 }
 
+/// Whether `name` has ever been assigned in this box -- backs
+/// `defined?($g)`, which answers `"global-variable"` only for an assigned
+/// user global and `nil` for one that was never written (unlike `global_get`,
+/// which reads any unset global as `nil`). Predefined special globals
+/// (`$!`, `$~`, ...) are handled by the caller and never reach here.
+pub fn global_defined(box_id: u32, name: &str) -> bool {
+    GLOBALS.lock().contains_key(&(box_id, resolve(box_id, name)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

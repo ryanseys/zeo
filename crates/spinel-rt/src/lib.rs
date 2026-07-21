@@ -96,7 +96,7 @@ pub use fiber::{
     fiber_alive, fiber_current, fiber_new, fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
     FiberHandle, FiberResume, FiberYield, RFiber,
 };
-pub use globals::{global_alias, global_get, global_set};
+pub use globals::{global_alias, global_defined, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use builtins::process::last_child_status;
 pub use ractor::{

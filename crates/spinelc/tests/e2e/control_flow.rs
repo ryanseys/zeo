@@ -849,3 +849,30 @@ fn defined_classifies_calls_assignments_and_keyword_literals() {
          \"nil\"\n\"true\"\n\"false\"\n\"method\"\n"
     );
 }
+
+#[test]
+fn defined_globals_and_match_vars_check_definedness_at_runtime() {
+    // A user global is "global-variable" only once assigned; a predefined
+    // special ($~) always is; a match capture only when it participated. An
+    // array literal is defined only if every element is.
+    let result = run_ruby(
+        r#"
+        $set_g = 1
+        p defined?($set_g)
+        p defined?($never_set_g)
+        p defined?($~)
+        p defined?($1)
+        "hi" =~ /(h)/
+        p defined?($1)
+        p defined?($2)
+        p defined?([1, Array])
+        p defined?([Nonexist_zzz, Array])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"global-variable\"\nnil\n\"global-variable\"\nnil\n\
+         \"global-variable\"\nnil\n\"expression\"\nnil\n"
+    );
+}

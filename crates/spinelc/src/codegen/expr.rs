@@ -177,6 +177,38 @@ pub fn emit_symbol_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// documented approximations, not silent wrongness -- getting `defined?`
 /// fully faithful needs real per-instance/per-callsite tracking this spike
 /// doesn't have yet.
+/// Globals CRuby predefines, so `defined?` always answers `"global-variable"`
+/// for them regardless of assignment (`$!`, `$stdout`, `$0`, ...). The
+/// match-data globals (`$~`, `$&`, `$1`, ...) are NOT here -- they lower to
+/// `LastMatchRef` and are defined only when a match participated.
+fn is_predefined_global(name: &str) -> bool {
+    matches!(
+        name,
+        "$!" | "$@"
+            | "$;" | "$," | "$/" | "$\\" | "$." | "$<" | "$>" | "$_" | "$0" | "$*" | "$:"
+            | "$\"" | "$$" | "$?"
+            | "$DEBUG" | "$VERBOSE" | "$FILENAME" | "$PROGRAM_NAME"
+            | "$stdin" | "$stdout" | "$stderr"
+            | "$LOAD_PATH" | "$LOADED_FEATURES"
+    )
+}
+
+/// `defined?` of a literal composed of `nodes` (an array's elements, a hash's
+/// keys+values): `"expression"` only when every node is itself defined, else
+/// `nil`. An empty list is defined.
+fn defined_all_or_nil(cx: &Ctx, nodes: &[NodeId]) -> TokenStream {
+    let expr_str =
+        quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new("expression".to_string())) };
+    if nodes.is_empty() {
+        return expr_str;
+    }
+    let checks = nodes.iter().map(|&n| {
+        let d = emit_defined(cx, n);
+        quote! { !(#d).is_nil() }
+    });
+    quote! { if #(#checks)&&* { #expr_str } else { spinel_rt::RubyValue::Nil } }
+}
+
 fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
     // `defined?(yield)` is decided at RUNTIME: it answers `"yield"` only when
     // the enclosing method actually received a block, else `nil` -- the same
@@ -220,6 +252,57 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
     }
+    let global_var = quote! { spinel_rt::RubyValue::Str(spinel_rt::string_new("global-variable".to_string())) };
+    // `defined?($g)` is `"global-variable"` only if the global has been
+    // assigned (a predefined special like `$!`/`$stdout` always is); a
+    // never-written user global answers nil.
+    if let HirNode::GlobalRead(name) = &cx.compiler.hir[id] {
+        if is_predefined_global(name) {
+            return global_var;
+        }
+        let bx = cx.box_id;
+        return quote! {
+            if spinel_rt::global_defined(#bx, #name) { #global_var } else { spinel_rt::RubyValue::Nil }
+        };
+    }
+    // The match globals: `$~` (the MatchData holder) is always defined; a
+    // capture (`$&`/`$1`/`$'`/`$+`) is defined only when it participated in
+    // the current last match.
+    if let HirNode::LastMatchRef(which) = &cx.compiler.hir[id] {
+        use crate::hir::LastMatch;
+        let present = match which {
+            LastMatch::Data => return global_var,
+            LastMatch::Group(n) => quote! { !spinel_rt::last_match_group(#n).is_nil() },
+            LastMatch::Pre => quote! { !spinel_rt::last_match_pre().is_nil() },
+            LastMatch::Post => quote! { !spinel_rt::last_match_post().is_nil() },
+            LastMatch::LastGroup => quote! { !spinel_rt::last_match_last_group().is_nil() },
+        };
+        return quote! {
+            if #present { #global_var } else { spinel_rt::RubyValue::Nil }
+        };
+    }
+    // An array/hash literal answers "expression" only if EVERY element is
+    // itself defined -- CRuby recurses (`defined?([Missing, Array])` is nil,
+    // `defined?([1, Array])` is "expression"). An empty literal is defined.
+    if let HirNode::ArrayLit(elems) = &cx.compiler.hir[id] {
+        let nodes: Vec<NodeId> = elems
+            .iter()
+            .map(|e| match e {
+                crate::hir::ArrayElem::Single(n) | crate::hir::ArrayElem::Splat(n) => *n,
+            })
+            .collect();
+        return defined_all_or_nil(cx, &nodes);
+    }
+    if let HirNode::HashLit(entries) = &cx.compiler.hir[id] {
+        let mut nodes = Vec::new();
+        for e in entries {
+            match e {
+                crate::hir::KwArg::Pair(k, v) => nodes.extend([*k, *v]),
+                crate::hir::KwArg::DoubleSplat(n) => nodes.push(*n),
+            }
+        }
+        return defined_all_or_nil(cx, &nodes);
+    }
     let classification: Option<&str> = match &cx.compiler.hir[id] {
         HirNode::LocalRead(name) => {
             if cx.local_types.contains_key(name) {
@@ -245,15 +328,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         // approximation of real Ruby, which returns `nil` for a
         // never-assigned global specifically, unlike every OTHER
         // classification here).
-        HirNode::GlobalRead(_) => Some("global-variable"),
-        // `$~`/`$1`/`$&`/... classify as globals, which is what real Ruby
-        // calls them -- with the same never-checked-the-value approximation
-        // as `GlobalRead` right above, and it bites in the same way: real
-        // Ruby answers nil for a group that did not participate
-        // (`defined?($9)` after a one-group match), where this says
-        // "global-variable". Consistent with the rest of this function
-        // rather than singled out.
-        HirNode::LastMatchRef(_) => Some("global-variable"),
         // Real Ruby: `defined?(self)` is always `"self"`, everywhere --
         // confirmed via `ruby -e 'puts defined?(self)'` -- unlike every other
         // classification here, this needs no further check at all.
@@ -281,8 +355,6 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::SymbolLit(_)
         | HirNode::StringLit(_)
         | HirNode::RegexpLit(..)
-        | HirNode::ArrayLit(_)
-        | HirNode::HashLit(_)
         | HirNode::RangeLit { .. }
         | HirNode::And(..)
         | HirNode::Or(..)
@@ -310,7 +382,14 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
         | HirNode::ConstWrite { .. }
         | HirNode::MultiWrite { .. } => Some("assignment"),
         // Handled by the early returns at the top of this function.
-        HirNode::Call { .. } | HirNode::Yield(_) => unreachable!("defined? Call/Yield handled above"),
+        HirNode::Call { .. }
+        | HirNode::Yield(_)
+        | HirNode::GlobalRead(_)
+        | HirNode::LastMatchRef(_)
+        | HirNode::ArrayLit(_)
+        | HirNode::HashLit(_) => {
+            unreachable!("defined? Call/Yield/GlobalRead/LastMatchRef/Array/Hash handled above")
+        }
         HirNode::Break(_) | HirNode::Next(_) | HirNode::Redo | HirNode::Return(_) | HirNode::Retry => None,
         HirNode::AliasGlobal(..) => Some("expression"),
         HirNode::Block { .. }
