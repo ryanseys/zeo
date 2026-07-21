@@ -37,9 +37,10 @@ pub struct RTime {
     num: num_bigint::BigInt,
     den: num_bigint::BigInt,
     /// Seconds east of UTC. `None` means "this Time is in LOCAL time" --
-    /// distinct from `Some(0)` (explicitly UTC), because a local Time's
-    /// offset depends on its own instant (DST), so it can't be baked in at
-    /// construction. `utc?` is `self.offset() == Some(0)`.
+    /// distinct from a fixed offset, because a local Time's offset depends on
+    /// its own instant (DST), so it can't be baked in at construction. The
+    /// sentinel `Some(RTime::UTC)` marks an explicitly-UTC Time (renders
+    /// `UTC`, `utc?` true), as opposed to a numeric `Some(0)` = `+00:00`.
     ///
     /// Interior-mutable because CRuby's `Time#utc`/`#gmtime`/`#localtime`
     /// convert the receiver IN PLACE and answer self (as opposed to the
@@ -50,8 +51,21 @@ pub struct RTime {
 }
 
 impl RTime {
+    /// The sentinel `offset` value marking a UTC-flagged Time, distinct from a
+    /// numeric `+00:00` fixed offset (`Some(0)`): CRuby renders the former as
+    /// `UTC` and the latter as `+0000`, and only the former is `utc?`. It is
+    /// far outside the valid ±86399 offset range, so it can never collide with
+    /// a real offset (and never reaches `offset_str`, guarded by `is_utc`).
+    const UTC: i32 = i32::MAX;
+
     fn offset(&self) -> Option<i32> {
         *self.offset.lock()
+    }
+
+    /// Whether this Time renders in UTC (`Time.utc`, `#utc`, or a `"UTC"`/`"Z"`
+    /// string), as opposed to a fixed numeric offset or system-local.
+    fn is_utc(&self) -> bool {
+        self.offset() == Some(Self::UTC)
     }
 
     /// Whole seconds since the epoch, FLOORED -- so a pre-1970 instant with a
@@ -190,7 +204,9 @@ struct Civil {
 fn civil(t: &RTime) -> Civil {
     let secs = t.sec();
     let (offset, isdst, zone) = match t.offset() {
-        Some(off) => (off, 0, if off == 0 { "UTC".to_string() } else { String::new() }),
+        Some(o) if o == RTime::UTC => (0, 0, "UTC".to_string()),
+        // A fixed numeric offset (including `+00:00`) has no zone NAME.
+        Some(off) => (off, 0, String::new()),
         None => local_zone(secs),
     };
     let mut tm = broken_down(secs + offset as i64);
@@ -306,7 +322,7 @@ fn render(t: &RTime, with_subsec: bool) -> String {
     } else {
         String::new()
     };
-    let tail = if t.offset() == Some(0) {
+    let tail = if t.is_utc() {
         "UTC".to_string()
     } else {
         offset_str(c.offset, with_subsec)
@@ -501,6 +517,11 @@ fn exact_seconds(v: &RubyValue) -> Result<(num_bigint::BigInt, num_bigint::BigIn
             "FloatDomainError",
             RubyValue::Float(*f).to_display_string(),
         )),
+        // `Time.at(another_time)` copies its exact instant.
+        RubyValue::Object(o) if o.as_any().downcast_ref::<RTime>().is_some() => {
+            let t = o.as_any().downcast_ref::<RTime>().unwrap();
+            Ok((t.num.clone(), t.den.clone()))
+        }
         other => Err(raise_error(
             "TypeError",
             format!(
@@ -565,6 +586,97 @@ fn frac_seconds(
     let frac_num = &num - &whole * &den; // [0, den)
     parts.push(whole.to_i64().unwrap_or(0));
     Ok(Some((parts, frac_num, den)))
+}
+
+/// The civil constructors also accept the 10-argument `Time#to_a` order
+/// (sec, min, hour, mday, mon, year, wday, yday, isdst, zone). Normalize that
+/// into the forward (year, mon, mday, hour, min, sec) order; every other arity
+/// passes through unchanged. Returns owned values so the caller borrows a slice.
+fn normalize_civil_args(args: &[RubyValue]) -> Vec<RubyValue> {
+    if args.len() == 10 {
+        vec![
+            args[5].clone(),
+            args[4].clone(),
+            args[3].clone(),
+            args[2].clone(),
+            args[1].clone(),
+            args[0].clone(),
+        ]
+    } else {
+        args.to_vec()
+    }
+}
+
+/// Build a Time from integer civil parts, an exact sub-second, and an optional
+/// fixed offset (`None` = system local, like `Time.local`).
+fn build_civil_time(
+    parts: &[i64],
+    frac_num: num_bigint::BigInt,
+    frac_den: num_bigint::BigInt,
+    offset: Option<i32>,
+) -> RubyValue {
+    let as_utc = civil_to_epoch_utc(parts);
+    let (instant, store) = match offset {
+        // UTC-flagged: the components already ARE UTC, so no shift.
+        Some(o) if o == RTime::UTC => (as_utc, Some(RTime::UTC)),
+        Some(off) => (as_utc - off as i64, Some(off)),
+        None => {
+            let probe = RTime {
+                num: num_bigint::BigInt::from(as_utc),
+                den: num_bigint::BigInt::from(1),
+                offset: parking_lot::Mutex::new(None),
+            };
+            (as_utc - civil(&probe).offset as i64, None)
+        }
+    };
+    time_exact(
+        num_bigint::BigInt::from(instant) * &frac_den + &frac_num,
+        frac_den,
+        store,
+    )
+}
+
+/// `Time.new`'s string form: `"YYYY-MM-DD HH:MM:SS[.frac] [offset]"`, where the
+/// offset is `+HH:MM` / `-HH:MM` / `UTC` / `Z`, or absent (local time). A
+/// missing time part is `no time information`; anything else unparseable is
+/// `can't parse: "..."` -- both CRuby's messages.
+fn parse_time_string(input: &str) -> Result<RubyValue, Signal> {
+    use num_bigint::BigInt;
+    let cant = || raise_error("ArgumentError", format!("can't parse: {input:?}"));
+    let mut tokens = input.trim().split_whitespace();
+    let mut date = tokens.next().ok_or_else(cant)?.split('-');
+    let year: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    let mon: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    let day: i64 = date.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    if date.next().is_some() {
+        return Err(cant());
+    }
+    let Some(time) = tokens.next() else {
+        return Err(raise_error("ArgumentError", "no time information".to_string()));
+    };
+    let (hms, frac_str) = match time.split_once('.') {
+        Some((h, f)) => (h, Some(f)),
+        None => (time, None),
+    };
+    let mut hms = hms.split(':');
+    let hour: i64 = hms.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    let min: i64 = hms.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    let sec: i64 = hms.next().and_then(|x| x.parse().ok()).ok_or_else(cant)?;
+    let (frac_num, frac_den) = match frac_str {
+        Some(f) if !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()) => {
+            (f.parse::<BigInt>().map_err(|_| cant())?, BigInt::from(10).pow(f.len() as u32))
+        }
+        Some(_) => return Err(cant()),
+        None => (BigInt::from(0), BigInt::from(1)),
+    };
+    let offset = match tokens.next() {
+        None => None,
+        // "UTC"/"Z" mark a UTC time (renders `UTC`); a numeric `+00:00` is a
+        // fixed offset (renders `+0000`) and flows through parse_offset.
+        Some("UTC") | Some("Z") => Some(RTime::UTC),
+        Some(z) => Some(parse_offset(z)?),
+    };
+    Ok(build_civil_time(&[year, mon, day, hour, min, sec], frac_num, frac_den, offset))
 }
 
 /// A `utc_offset` in seconds, range-checked as real Ruby does: strictly
@@ -748,14 +860,16 @@ builtin_methods! {
     // before the call. Also unsupported: the string-month form
     // (`Time.utc(2023, "nov", 1)`) and the 10-argument to_a-style form.
     "utc" | "gm" => fn time_utc(_recv, args, _block) {
-        arity!(args, 1..=7);
+        arity!(args, 1..=10);
+        let norm = normalize_civil_args(args);
+        let args = norm.as_slice();
         if let Some((parts, frac_num, frac_den)) = frac_seconds(args)? {
             let epoch = civil_to_epoch_utc(&parts);
-            return Ok(time_exact(num_bigint::BigInt::from(epoch) * &frac_den + &frac_num, frac_den, Some(0)));
+            return Ok(time_exact(num_bigint::BigInt::from(epoch) * &frac_den + &frac_num, frac_den, Some(RTime::UTC)));
         }
         let parts = int_parts(args, 6)?;
         let nsec = subsec_nsec_arg(args.get(6))?;
-        Ok(time_value(civil_to_epoch_utc(&parts), nsec, Some(0)))
+        Ok(time_value(civil_to_epoch_utc(&parts), nsec, Some(RTime::UTC)))
     }
     // `Time.new(y, mo, d, h, mi, s, utc_offset)` -- the 7th argument is the
     // OFFSET, in seconds or as a `"+HH:MM"` String, unlike `Time.utc`'s
@@ -763,6 +877,10 @@ builtin_methods! {
     // TODO(plan P-B): the `in:` keyword form isn't handled.
     "new" => fn time_new(recv, args, _block) {
         arity!(args, 0..=8);
+        // `Time.new("2021-12-25 10:00:00 +09:00")` parses a time string.
+        if let Some(RubyValue::Str(s)) = args.first() {
+            return parse_time_string(&s.lock().to_utf8_lossy());
+        }
         // A trailing `in:` keyword hash supplies the utc_offset (like the 7th
         // positional argument); split it off before reading the components.
         let (args, in_offset) = match args.last() {
@@ -811,7 +929,9 @@ builtin_methods! {
     // hour for civil times inside a DST transition; that edge is a
     // documented approximation, not a silent one.)
     "local" | "mktime" => fn time_local(_recv, args, _block) {
-        arity!(args, 1..=7);
+        arity!(args, 1..=10);
+        let norm = normalize_civil_args(args);
+        let args = norm.as_slice();
         let frac = frac_seconds(args)?;
         let parts = match &frac {
             Some((parts, ..)) => parts.clone(),
@@ -996,7 +1116,7 @@ builtin_methods! {
     }
     "utc?" | "gmt?" => fn utc_p(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Bool(recv_time(recv).offset() == Some(0)))
+        Ok(RubyValue::Bool(recv_time(recv).is_utc()))
     }
     // The MUTATING converters: they change which zone the receiver RENDERS
     // in and answer self, leaving the instant alone. Callers observe the
@@ -1004,7 +1124,7 @@ builtin_methods! {
     // interior-mutable -- see `RTime`.
     "utc" | "gmtime" => fn to_utc_bang(recv, args, _block) {
         arity!(args, 0);
-        *recv_time(recv).offset.lock() = Some(0);
+        *recv_time(recv).offset.lock() = Some(RTime::UTC);
         Ok(recv.clone())
     }
     "localtime" => fn to_local_bang(recv, args, _block) {
@@ -1017,7 +1137,7 @@ builtin_methods! {
     "getutc" | "getgm" => fn getutc(recv, args, _block) {
         arity!(args, 0);
         let t = recv_time(recv);
-        Ok(time_value(t.sec(), t.nsec(), Some(0)))
+        Ok(time_value(t.sec(), t.nsec(), Some(RTime::UTC)))
     }
     "getlocal" => fn getlocal(recv, args, _block) {
         arity!(args, 0..=1);
@@ -1181,10 +1301,12 @@ builtin_methods! {
             s.push('.');
             s.push_str(&format!("{frac:0>width$}", frac = scaled.to_string(), width = digits as usize));
         }
-        match t.offset() {
-            Some(0) => s.push('Z'),
-            Some(off) => s.push_str(&offset_str_colon(off, 1)),
-            None => s.push_str(&offset_str_colon(civil(t).offset, 1)),
+        // A UTC-flagged Time uses `Z`; a fixed numeric offset (including
+        // `+00:00`) and a local Time both spell out the offset.
+        if t.is_utc() {
+            s.push('Z');
+        } else {
+            s.push_str(&offset_str_colon(civil(t).offset, 1));
         }
         Ok(RubyValue::Str(crate::collections::string_new(s)))
     }
@@ -1233,7 +1355,7 @@ mod tests {
     const EPOCH: i64 = 1_700_000_000;
 
     fn utc_at(sec: i64) -> RubyValue {
-        time_value(sec, 0, Some(0))
+        time_value(sec, 0, Some(RTime::UTC))
     }
 
     #[test]
@@ -1434,7 +1556,7 @@ mod tests {
     /// `inspect` shows sub-second digits (trimmed) where `to_s` doesn't.
     #[test]
     fn inspect_shows_trimmed_subseconds_and_to_s_does_not() {
-        let t = time_value(EPOCH, 500_000_000, Some(0));
+        let t = time_value(EPOCH, 500_000_000, Some(RTime::UTC));
         assert_eq!(
             inspect(&t, &[], None).unwrap().to_display_string(),
             "2023-11-14 22:13:20.5 UTC"

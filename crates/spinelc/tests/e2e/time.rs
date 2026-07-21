@@ -151,3 +151,54 @@ fn time_utc_and_local_accept_a_fractional_seconds_field() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "(1/2)\n1\n(1/2)\n");
 }
+
+#[test]
+fn time_at_time_ten_arg_and_string_constructors() {
+    // Time.at(Time) copies the instant; the 10-arg to_a order; the string
+    // form (offset / UTC / local / fractional); and UTC vs a numeric +00:00
+    // (which render differently and disagree on #utc?).
+    let result = run_ruby(
+        r#"
+        p Time.at(Time.at(55)).to_i
+        p Time.at(Time.at(1.5)).nsec
+        p Time.utc(1, 15, 20, 1, 1, 2000, 0, 0, 0, 0).inspect
+        t = Time.new("2021-12-25 10:00:00 +09:00")
+        p t.utc_offset
+        p t.inspect
+        u = Time.new("2021-12-25 10:00:00 UTC")
+        p u.utc?
+        p u.inspect
+        f = Time.new("2021-12-25 10:00:00.5 +00:00")
+        p f.nsec
+        p f.utc?
+        p f.inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "55\n500000000\n\"2000-01-01 20:15:01 UTC\"\n32400\n\
+         \"2021-12-25 10:00:00 +0900\"\ntrue\n\"2021-12-25 10:00:00 UTC\"\n\
+         500000000\nfalse\n\"2021-12-25 10:00:00.5 +0000\"\n"
+    );
+}
+
+#[test]
+fn time_new_rejects_unparseable_strings() {
+    let result = run_ruby(
+        r##"
+        [["garbage", "can't parse"], ["2021-12-25", "no time information"]].each do |s, _|
+          begin
+            Time.new(s)
+          rescue ArgumentError => e
+            puts "#{e.class}: #{e.message}"
+          end
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "ArgumentError: can't parse: \"garbage\"\nArgumentError: no time information\n"
+    );
+}
