@@ -802,3 +802,29 @@ fn respond_to_on_implicit_self_inside_a_class_method() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\ntrue\nfalse\n");
 }
+
+#[test]
+fn generic_object_freeze_clone_and_immutable_unfreeze() {
+    // Object.new instances track frozen state (freeze/frozen?/clone-preserves);
+    // clone(freeze: false) on an always-frozen immediate raises ArgumentError.
+    let result = run_ruby(
+        r#"
+        o = Object.new
+        p o.frozen?
+        o.freeze
+        p o.frozen?
+        p o.clone.frozen?
+        p o.dup.frozen?
+        u = Object.new
+        p u.clone(freeze: true).frozen?
+        p u.clone(freeze: false).frozen?
+        p((nil.clone(freeze: false) rescue $!.class))
+        p((1.clone(freeze: false) rescue $!.class))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "false\ntrue\ntrue\nfalse\ntrue\nfalse\nArgumentError\nArgumentError\n",
+    );
+}

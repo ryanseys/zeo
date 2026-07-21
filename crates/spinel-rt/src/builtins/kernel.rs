@@ -312,6 +312,25 @@ builtin_methods! {
             }
             _ => None,
         };
+        // An immediate (nil/true/false/Integer/Float/Symbol) is permanently
+        // frozen -- `clone(freeze: false)` can't unfreeze it, so CRuby raises
+        // rather than handing back a mutable copy.
+        if freeze == Some(false)
+            && matches!(
+                recv,
+                RubyValue::Nil
+                    | RubyValue::Bool(_)
+                    | RubyValue::Int(_)
+                    | RubyValue::BigInt(_)
+                    | RubyValue::Float(_)
+                    | RubyValue::Symbol(_)
+            )
+        {
+            return Err(crate::dispatch::raise_error(
+                "ArgumentError",
+                format!("can't unfreeze {}", crate::builtins::class_name_of(recv)),
+            ));
+        }
         let copy_frozen = freeze != Some(false);
         let copy = match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(copy_frozen)))?,

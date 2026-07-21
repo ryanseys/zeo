@@ -167,6 +167,10 @@ pub type RObj = Arc<dyn RubyObject>;
 #[derive(Default)]
 pub struct Object {
     ivars: parking_lot::Mutex<std::collections::HashMap<String, RubyValue>>,
+    /// `Object.new.freeze` sets this; `main` never does. A generic Object had
+    /// no frozen slot at all before, so `freeze`/`frozen?`/`clone(freeze:)`
+    /// silently no-op'd (issue_3033).
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 impl Object {
@@ -209,13 +213,12 @@ impl RubyObject for Object {
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
-    // `main` is never frozen and there is no `Object.new` path that could
-    // freeze one; a fixed unfrozen answer keeps the trait total without
-    // pretending at state that can't exist.
     fn is_frozen(&self) -> bool {
-        false
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
     }
-    fn set_frozen(&self) {}
+    fn set_frozen(&self) {
+        self.frozen.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     fn ivar_values(&self) -> Vec<RubyValue> {
         self.ivars.lock().values().cloned().collect()
     }
@@ -243,9 +246,10 @@ impl RubyObject for Object {
         // signals CRuby's `NameError` case.
         self.ivars.lock().remove(name)
     }
-    fn dup_object(&self, _copy_frozen: bool) -> RObj {
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
         Arc::new(Object {
             ivars: parking_lot::Mutex::new(self.ivars.lock().clone()),
+            frozen: std::sync::atomic::AtomicBool::new(copy_frozen && self.is_frozen()),
         })
     }
 }
