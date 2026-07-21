@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **155 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `c0c3642`
+Suite `spinel` — **146 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — spinel-rs `9feb887`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1602,162 +1602,6 @@ uncaught exception: undefined method 'attributes' for class CompileTimePostState
 
 ---
 
-## `complex_component_class` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/complex_component_class.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/complex_component_class.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 11
---- expected (31 lines)
-1+0.0i
-1.0+2i
-(3+4i)
-(3.0+4.0i)
-(0+3.0i)
-(0+4i)
-5
-5.0
-2
-2.5
-2
-3
-5.0
-2.0
-0.5
-25
-25.0
-0.5
-(2+5i)
-(2.0+5i)
-(-4+7i)
-(-4.0+7.0i)
-(0+2i)
-(1.5+2i)
-(2+0.0i)
-(2.0+0.0i)
-(0.0+5i)
-(-3+0.0i)
-(1.0806046117362795+1.682941969615793i)
-(1-2.5i)
-(-1.5-2i)
-
---- actual (31 lines)
-1+0.0i
-1.0+2i
-(3+4i)
-(3.0+4.0i)
-(0+3.0i)
-(0+4i)
-5
-5.0
-2
-2.5
-2.0
-3.0
-5.0
-2.0
-0.5
-25
-25.0
-0.5
-(2+5i)
-(2.0+5i)
-(-4+7i)
-(-4.0+7.0i)
-(0+2i)
-(1.5+2i)
-(2+0.0i)
-(2.0+0.0i)
-(0.0+5i)
-(-3+0.0i)
-(1.0806046117362795+1.682941969615793i)
-(1-2.5i)
-(-1.5-2i)
-```
-
----
-
-## `complex_division` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/complex_division.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/complex_division.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-(Infinity+Infinity*i)
-(10.5+20.5i)
-(-Infinity+Infinity*i)
-(NaN+NaN*i)
-(5+10i)
-divided by 0
-(10+20i)
-"Infinity+NaN*i"
-
---- actual (8 lines)
-(NaN+NaNi)
-(10.5+20.5i)
-(NaN+NaNi)
-(NaN+NaNi)
-(5+10i)
-divided by 0
-(10+20i)
-"NaN+NaNi"
-```
-
----
-
-## `complex_rect_arg_polar` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/complex_rect_arg_polar.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/complex_rect_arg_polar.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 10
---- expected (12 lines)
-(3+4i)
-(3+4i)
-(5+0i)
-(1.5-2.5i)
-1.5707963267948966
-0.0
-3.141592653589793
--1.5707963267948966
-[5.0, 0.9272952180016122]
-[2, 1.5707963267948966]
-[1.25, -2.5]
-[1.25, -2]
-
---- actual (12 lines)
-(3+4i)
-(3+4i)
-(5+0i)
-(1.5-2.5i)
-1.5707963267948966
-0.0
-3.141592653589793
--1.5707963267948966
-[5.0, 0.9272952180016122]
-[2.0, 1.5707963267948966]
-[1.25, -2.5]
-[1.25, -2]
-```
-
----
-
 ## `const_aliased_class_reopen_include` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/const_aliased_class_reopen_include.rb`
@@ -2292,7 +2136,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (99024557) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (99631440) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -2378,7 +2222,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (99024557) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
+thread '<unnamed>' (99631440) panicked at crates/spinel-rt/src/builtins/integer.rs:65:18:
 expected an Integer, got b
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3208,10 +3052,10 @@ true
 
 --- actual (5 lines)
 C
--2690207005043601422
+-6719044441150379110
 S
 P
-true
+false
 ```
 
 ---
@@ -4240,62 +4084,6 @@ uncaught exception: Hash can't be coerced into Integer (TypeError)
 
 ---
 
-## `numeric_tower_remainder` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/numeric_tower_remainder.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/numeric_tower_remainder.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 7
---- expected (19 lines)
-5
-15
-15
-13
-0
-63
-1
-2
-255
-255
-0
-0
-0
-true
-1
-true
-1
-[0.0, 1]
-[0.0, 1]
-
---- actual (19 lines)
-5
-15
-15
-13
-0
-63
-0
-0
-0
-255
-0
-0
-0
-true
-1
-true
-1
-[0.0, 1]
-[0.0, 1]
-```
-
----
-
 ## `object_freeze_module_isa` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/object_freeze_module_isa.rb`
@@ -4941,7 +4729,7 @@ false
 stderr:
 ```
 
-thread '<unnamed>' (99073457) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (99606180) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5015,7 +4803,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (99073457) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (99606180) panicked at crates/spinel-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5114,85 +4902,6 @@ nil
 
 ---
 
-## `regex_match_nonstring` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regex_match_nonstring.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regex_match_nonstring.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-TE: no implicit conversion of Integer into String
-2
-nil
-
---- actual (4 lines)
-no match
-NO RAISE
-2
-nil
-```
-
----
-
-## `regex_posix_class` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regex_posix_class.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regex_posix_class.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 18
---- expected (18 lines)
-["Hi"]
-["1", "2"]
-["ab", "12", "CD"]
-["\t", " ", "\n"]
-["H", "W"]
-["e", "l", "l", "o", "o", "r", "l", "d"]
-["a", "b", "c"]
-["a", "_b"]
-"word"
-"abc"
-["Hi"]
-"1"
-["a", "b", "c"]
-["a", "b", "c", " "]
-["9"]
-[" "]
-["a", "Z", "9", "!"]
-RegexpError: invalid POSIX bracket type: /[[:bogus:]]/
-
---- actual (18 lines)
-["Hi"]
-["1", "2"]
-["ab", "12", "CD"]
-["\t", " ", "\n"]
-["H", "W"]
-["e", "l", "l", "o", "o", "r", "l", "d"]
-["a", "b", "c"]
-["a", "_b"]
-"word"
-"abc"
-["Hi"]
-"1"
-["a", "b", "c"]
-["a", "b", "c", " "]
-["9"]
-[" "]
-["a", "Z", "9", "!"]
-no error
-```
-
----
-
 ## `regexp_brace_zero_lower` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/spinel/test/regexp_brace_zero_lower.rb`
@@ -5239,85 +4948,6 @@ first difference at line 4
 "12-34"
 ""
 ""
-```
-
----
-
-## `regexp_captures_family` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_captures_family.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_captures_family.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 7
---- expected (17 lines)
-[["a", "b"], ["c", "d"]]
-[]
-["1", "3"]
-[["1", "2"], ["3", "4"]]
-[["a", nil]]
-[["1", "a"], ["2", "b"]]
-"b"
-"a."
-"xy"
-"<a> <2>. <c>"
-"a2b4"
-"abc"
-"5.0 16.5"
-["a", "b", "c"]
-["one", "", "two"]
-["a\n", "b"]
-["X", "Y"]
-
---- actual (17 lines)
-[["a", "b"], ["c", "d"]]
-[]
-["1", "3"]
-[["1", "2"], ["3", "4"]]
-[["a", nil]]
-[["1", "a"], ["2", "b"]]
-"\\+"
-"\\+."
-"xy"
-"<\\+> <\\+>. <\\+>"
-"a2b4"
-"abc"
-"5.0 16.5"
-["a", "b", "c"]
-["one", "", "two"]
-["a\n", "b"]
-["X", "Y"]
-```
-
----
-
-## `regexp_error_catchable` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_error_catchable.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_error_catchable.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-caught: RegexpError: unterminated character class: /[invalid/
-after rescue
-true
-
---- actual (6 lines)
-caught: RegexpError: regex parse error:
-    [invalid
-    ^
-error: unclosed character class
-after rescue
-true
 ```
 
 ---
@@ -5502,38 +5132,6 @@ uncaught exception: regex parse error:
     a\Z
      ^^
 error: unrecognized escape sequence (RegexpError)
-```
-
----
-
-## `regexp_names_meta` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_names_meta.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_names_meta.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (7 lines)
-"2026-07"
-["a", "b"]
-{"a" => [1], "b" => [2]}
-{"a" => [1, 2]}
-[]
-{}
-["w"]
-
---- actual (7 lines)
-"2026-07"
-["a", "b"]
-{"a" => [1], "b" => [2]}
-{"a" => [2]}
-[]
-{}
-["w"]
 ```
 
 ---

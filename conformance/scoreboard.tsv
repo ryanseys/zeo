@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=c0c3642
-# PASS=2047 FAIL_OUTPUT=155 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=9feb887
+# PASS=2056 FAIL_OUTPUT=146 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=29 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -416,14 +416,14 @@ compile_time_define_method_int	PASS	-	-
 compile_time_define_method_predicates	FAIL_OUTPUT	expect	missing-method:attributes
 compile_time_define_method_strings	PASS	-	-
 complex_arithmetic	PASS	-	-
-complex_component_class	FAIL_OUTPUT	expect	-
-complex_division	FAIL_OUTPUT	expect	-
+complex_component_class	PASS	-	-
+complex_division	PASS	-	-
 complex_nil_arg_and_nomethod	PASS	-	-
 complex_polar	PASS	-	-
 complex_poly_arith	PASS	-	-
 complex_rational_class	PASS	-	-
 complex_rational_interop	PASS	-	-
-complex_rect_arg_polar	FAIL_OUTPUT	expect	-
+complex_rect_arg_polar	PASS	-	-
 concat_chain_operand_gc_root	PASS	-	-
 concat_print_poly_unbox	PASS	-	-
 cond_poly_truthy	PASS	-	-
@@ -1495,7 +1495,7 @@ numeric_coerce	PASS	-	-
 numeric_conformance_batch2	PASS	-	-
 numeric_edges_wave10	FAIL_OUTPUT	expect	auto-hash-can-be-coerced-into-integer-typeerror-8a63
 numeric_tower_methods	PASS	-	-
-numeric_tower_remainder	FAIL_OUTPUT	expect	-
+numeric_tower_remainder	PASS	-	-
 obj_array_param_accumulator	PASS	-	-
 obj_array_sort_typed	PASS	-	-
 obj_class_dispatch	PASS	-	-
@@ -1809,18 +1809,18 @@ regex_capture_scan_toproc_count	PASS	-	-
 regex_const_freeze	PASS	-	-
 regex_hex_shorthand	PASS	-	-
 regex_local_gsub_split	PASS	-	-
-regex_match_nonstring	FAIL_OUTPUT	expect	-
+regex_match_nonstring	PASS	-	-
 regex_namespaced_const	PASS	-	-
 regex_negated_shorthand_toplevel	PASS	-	-
-regex_posix_class	FAIL_OUTPUT	expect	-
+regex_posix_class	PASS	-	-
 regex_sub_backref	PASS	-	-
 regex_unanchored_class_seq	PASS	-	-
 regexp_alternation_priority	PASS	-	-
 regexp_brace_zero_lower	FAIL_OUTPUT	expect	-
 regexp_capture_ivar_hash	PASS	-	-
-regexp_captures_family	FAIL_OUTPUT	expect	-
+regexp_captures_family	PASS	-	-
 regexp_encoding_introspection	PASS	-	-
-regexp_error_catchable	FAIL_OUTPUT	expect	-
+regexp_error_catchable	PASS	-	-
 regexp_gsub_zero_width	FAIL_OUTPUT	expect	-
 regexp_inline_comment	PASS	-	-
 regexp_inline_options	FAIL_OUTPUT	expect	-
@@ -1831,7 +1831,7 @@ regexp_match_data	PASS	-	-
 regexp_match_p_position	PASS	-	-
 regexp_named_backref	PASS	-	-
 regexp_named_capture_match	PASS	-	-
-regexp_names_meta	FAIL_OUTPUT	expect	-
+regexp_names_meta	PASS	-	-
 regexp_new_literal	PASS	-	-
 regexp_pike_capture_and_bol	FAIL_OUTPUT	expect	-
 regexp_quantifier_alt_loopback	PASS	-	-
