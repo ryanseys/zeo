@@ -5,7 +5,7 @@
 //! many tests they block -- the ordering signal for the implementation plan).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::suite::{TestResult, Verdict};
 
@@ -16,7 +16,25 @@ pub struct RunMeta<'a> {
     pub git_sha: &'a str,
 }
 
-pub fn write_all(dir: &Path, meta: &RunMeta, results: &[TestResult]) -> Result<(), String> {
+/// The reference-material for one test, pulled from its `TestCase` so the
+/// failures document can name the exact `.rb` source and `.expected` snapshot
+/// (or say it's diffed live against the oracle). Keyed by test id.
+pub struct CaseMeta {
+    pub source: PathBuf,
+    pub expected_stdout: Option<PathBuf>,
+    pub expected_stderr: Option<PathBuf>,
+    /// How the reference output is obtained: `snapshot`, `live-oracle`,
+    /// `compile-fail`, or `self-report`.
+    pub reference: &'static str,
+}
+
+pub fn write_all(
+    dir: &Path,
+    meta: &RunMeta,
+    results: &[TestResult],
+    case_meta: &BTreeMap<String, CaseMeta>,
+    diff_dir: &Path,
+) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     // Each suite gets its own committed artifacts so they don't clobber each
     // other; the original `spinel` suite keeps the historical unprefixed names.
@@ -24,6 +42,10 @@ pub fn write_all(dir: &Path, meta: &RunMeta, results: &[TestResult]) -> Result<(
     write(dir.join(format!("{prefix}scoreboard.tsv")), tsv(meta, results))?;
     write(dir.join(format!("{prefix}SCOREBOARD.md")), summary_md(meta, results))?;
     write(dir.join(format!("{prefix}TRIAGE.md")), triage_md(meta, results))?;
+    write(
+        dir.join(format!("{prefix}FAILURES.md")),
+        failures_md(meta, results, case_meta, diff_dir),
+    )?;
     Ok(())
 }
 
@@ -142,6 +164,114 @@ fn triage_md(meta: &RunMeta, results: &[TestResult]) -> String {
     out
 }
 
+/// The full per-failure debug dump: every non-passing test with its `.rb`
+/// source path, the reference it was diffed against (`.expected` snapshot or the
+/// live oracle), verdict/bucket, captured stderr, and the complete
+/// expected-vs-actual diff. This is the document you read to understand a
+/// failure end-to-end without re-running `conformance show <id>` for each one.
+///
+/// The diff bodies come from the per-test `.diff` files the runner already
+/// persists under `diff_dir`; a verdict with no diff file (a compile failure,
+/// a run timeout) still gets its source path, verdict, and stderr.
+fn failures_md(
+    meta: &RunMeta,
+    results: &[TestResult],
+    case_meta: &BTreeMap<String, CaseMeta>,
+    diff_dir: &Path,
+) -> String {
+    let failures: Vec<&TestResult> = results
+        .iter()
+        .filter(|r| !matches!(r.verdict, Verdict::Pass | Verdict::Skip))
+        .collect();
+
+    let mut out = format!(
+        "# Conformance failures — full detail\n\n\
+         Suite `{}` — **{} failing test(s)** — oracle `{}` — spinel-rs `{}`\n\n\
+         Every non-passing test with its source path, the reference it is diffed\n\
+         against, verdict/bucket, captured stderr, and the full expected-vs-actual\n\
+         diff — enough to understand each failure without re-running the harness.\n\
+         Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.\n\n",
+        meta.suite,
+        failures.len(),
+        meta.ruby_version,
+        meta.git_sha,
+    );
+
+    if failures.is_empty() {
+        out.push_str("(no failing tests)\n");
+        return out;
+    }
+
+    for r in &failures {
+        out.push_str(&format!("## `{}` — {}\n\n", r.id, r.verdict.as_str()));
+        if let Some(cm) = case_meta.get(&r.id) {
+            out.push_str(&format!("- source: `{}`\n", cm.source.display()));
+            match cm.reference {
+                "snapshot" => {
+                    if let Some(p) = &cm.expected_stdout {
+                        out.push_str(&format!("- expected stdout: `{}`\n", p.display()));
+                    }
+                    match &cm.expected_stderr {
+                        Some(p) => out.push_str(&format!("- expected stderr: `{}`\n", p.display())),
+                        None => out.push_str("- expected stderr: *(must be empty)*\n"),
+                    }
+                }
+                "live-oracle" => {
+                    out.push_str(&format!("- reference: live oracle `{}`\n", meta.ruby_version))
+                }
+                "compile-fail" => {
+                    out.push_str("- reference: spinelc must reject the program (compile-fail)\n")
+                }
+                "self-report" => {
+                    out.push_str("- reference: self-reported pass/fail (mspec_lite summary)\n")
+                }
+                _ => {}
+            }
+        }
+        out.push_str(&format!(
+            "- verdict: {} (stage `{}`) · bucket `{}` (cluster `{}`)\n\n",
+            r.verdict.as_str(),
+            r.stage,
+            r.bucket,
+            r.cluster
+        ));
+
+        if !r.stderr_tail.trim().is_empty() {
+            push_fenced(&mut out, "stderr", r.stderr_tail.trim_end());
+        }
+
+        let diff_path = diff_dir.join(format!("{}.diff", super::util::sanitize_id(&r.id)));
+        match std::fs::read_to_string(&diff_path) {
+            Ok(diff) if !diff.trim().is_empty() => push_fenced(&mut out, "diff", diff.trim_end()),
+            _ => {}
+        }
+
+        out.push_str("---\n\n");
+    }
+    out
+}
+
+/// Emit a labelled fenced code block whose fence is guaranteed longer than any
+/// backtick run inside `body`, so arbitrary program output (which can itself
+/// contain backticks) never breaks the block.
+fn push_fenced(out: &mut String, label: &str, body: &str) {
+    let fence = "`".repeat(longest_backtick_run(body).max(2) + 1);
+    out.push_str(&format!("{label}:\n{fence}\n{body}\n{fence}\n\n"));
+}
+
+fn longest_backtick_run(s: &str) -> usize {
+    let (mut max, mut cur) = (0usize, 0usize);
+    for c in s.chars() {
+        if c == '`' {
+            cur += 1;
+            max = max.max(cur);
+        } else {
+            cur = 0;
+        }
+    }
+    max
+}
+
 pub struct BucketStat {
     pub cluster: String,
     pub bucket: String,
@@ -252,4 +382,64 @@ pub fn verdict_counts(results: &[TestResult]) -> Vec<(&'static str, usize)> {
 
 fn write(path: std::path::PathBuf, content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| format!("writing {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn result(id: &str, verdict: Verdict, stderr: &str) -> TestResult {
+        TestResult {
+            id: id.to_owned(),
+            verdict,
+            stage: "expect",
+            bucket: "auto-x".to_owned(),
+            cluster: "?".to_owned(),
+            stderr_tail: stderr.to_owned(),
+            compile_ms: 0,
+            run_ms: 0,
+            cached: false,
+        }
+    }
+
+    #[test]
+    fn fence_outgrows_backtick_runs_in_the_body() {
+        // A body containing a ``` run must be wrapped in a longer (````) fence,
+        // or the block would terminate early and corrupt the document.
+        assert_eq!(longest_backtick_run("a ``` b"), 3);
+        let mut out = String::new();
+        push_fenced(&mut out, "diff", "before ``` after");
+        assert!(out.contains("````\nbefore ``` after\n````"), "{out}");
+    }
+
+    #[test]
+    fn failures_md_embeds_source_reference_and_persisted_diff() {
+        let dir = std::env::temp_dir().join(format!("sb_fail_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("t1.diff"), "=== stdout diff ===\nexpected X, got Y\n").unwrap();
+
+        let meta = RunMeta { suite: "spinel", corpus: 2, ruby_version: "ruby 4.0.5", git_sha: "abc123" };
+        let results = vec![result("t1", Verdict::FailOutput, "boom"), result("p1", Verdict::Pass, "")];
+        let mut case_meta = BTreeMap::new();
+        case_meta.insert(
+            "t1".to_owned(),
+            CaseMeta {
+                source: PathBuf::from("/corpus/t1.rb"),
+                expected_stdout: Some(PathBuf::from("/corpus/t1.rb.expected")),
+                expected_stderr: None,
+                reference: "snapshot",
+            },
+        );
+
+        let md = failures_md(&meta, &results, &case_meta, &dir);
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(md.contains("1 failing test"), "{md}");
+        assert!(md.contains("## `t1` — FAIL_OUTPUT"), "{md}");
+        assert!(md.contains("- source: `/corpus/t1.rb`"), "{md}");
+        assert!(md.contains("- expected stdout: `/corpus/t1.rb.expected`"), "{md}");
+        assert!(md.contains("expected X, got Y"), "{md}");
+        // Passing tests never appear in the failures document.
+        assert!(!md.contains("p1"), "{md}");
+    }
 }

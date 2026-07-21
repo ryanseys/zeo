@@ -1,4 +1,4 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=24eb04b
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=0943181
 # PASS=1971 FAIL_OUTPUT=230 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-

@@ -413,6 +413,10 @@ fn run_one_suite(
     } = open_session(root, opts, suite_name, corpus, prebuild)?;
     let suite_name = suite.name();
     let all_ids: Vec<String> = cases.iter().map(|c| c.id.clone()).collect();
+    // Capture each case's source + reference paths now, before the cases are
+    // consumed by the run, so the failures document can name them for every
+    // test (including ones later filled from stamps in a filtered run).
+    let case_meta = build_case_meta(&cases);
 
     // Stale skiplist entries rot loudly.
     for entry in &skiplist {
@@ -555,16 +559,51 @@ fn run_one_suite(
             ruby_version: &oracle.ruby_version,
             git_sha: &git_sha(root),
         };
-        scoreboard::write_all(&root.join("conformance"), &meta, &all_results)?;
+        scoreboard::write_all(
+            &root.join("conformance"),
+            &meta,
+            &all_results,
+            &case_meta,
+            &runner.diff_dir,
+        )?;
         let prefix = if suite_name == "spinel" { "" } else { suite_name };
         let sep = if prefix.is_empty() { "" } else { "-" };
         println!(
-            "\nwrote conformance/{p}{s}scoreboard.tsv, {p}{s}SCOREBOARD.md, {p}{s}TRIAGE.md",
+            "\nwrote conformance/{p}{s}scoreboard.tsv, {p}{s}SCOREBOARD.md, {p}{s}TRIAGE.md, {p}{s}FAILURES.md",
             p = prefix,
             s = sep
         );
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Index every discovered case by id, recording where its reference output
+/// comes from — the concrete `.expected` snapshot paths, or the mode
+/// (live-oracle / compile-fail / self-report) when there's no snapshot file —
+/// so the failures document can cite exact paths for each test.
+fn build_case_meta(cases: &[TestCase]) -> std::collections::BTreeMap<String, scoreboard::CaseMeta> {
+    cases
+        .iter()
+        .map(|c| {
+            let (expected_stdout, expected_stderr, reference) = match &c.expectation {
+                suite::Expectation::Snapshot { stdout: Some(o), stderr } => {
+                    (Some(o.clone()), stderr.clone(), "snapshot")
+                }
+                suite::Expectation::Snapshot { stdout: None, .. } => (None, None, "live-oracle"),
+                suite::Expectation::CompileFail => (None, None, "compile-fail"),
+                suite::Expectation::SelfReport => (None, None, "self-report"),
+            };
+            (
+                c.id.clone(),
+                scoreboard::CaseMeta {
+                    source: c.source.clone(),
+                    expected_stdout,
+                    expected_stderr,
+                    reference,
+                },
+            )
+        })
+        .collect()
 }
 
 fn cmd_triage(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
@@ -616,6 +655,18 @@ fn cmd_show(root: &Path, opts: &Opts) -> Result<ExitCode, String> {
         .ok_or_else(|| format!("{id:?} isn't in the corpus"))?;
     println!("test:     {id}");
     println!("source:   {}", case.source.display());
+    match &case.expectation {
+        suite::Expectation::Snapshot { stdout: Some(o), stderr } => {
+            println!("expected: {}", o.display());
+            match stderr {
+                Some(e) => println!("exp-err:  {}", e.display()),
+                None => println!("exp-err:  (must be empty)"),
+            }
+        }
+        suite::Expectation::Snapshot { stdout: None, .. } => println!("expected: (live oracle)"),
+        suite::Expectation::CompileFail => println!("expected: (spinelc must reject)"),
+        suite::Expectation::SelfReport => println!("expected: (self-reported)"),
+    }
     println!("verdict:  {} (stage: {})", r.verdict.as_str(), r.stage);
     println!("bucket:   {} (cluster {})", r.bucket, r.cluster);
     println!("timing:   compile {}ms, run {}ms", r.compile_ms, r.run_ms);
