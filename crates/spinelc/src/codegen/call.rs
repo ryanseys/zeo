@@ -2227,6 +2227,27 @@ pub fn emit_call(
             };
             return wrap_dynamic_result(block.is_some() || block_arg.is_some(), call);
         }
+        // `respond_to?` on the IMPLICIT self routes through the same runtime
+        // reflection the explicit-receiver fast path uses, boxing self via
+        // `boxed_implicit_self` -- the class value inside a `def self.x`, the
+        // instance inside an instance method. Without this, a class method's
+        // implicit `respond_to?(:sibling_class_method)` fell through to
+        // instance-method resolution and answered `false` where `self.respond_
+        // to?` answered `true`.
+        if name == "respond_to?" && kwargs.is_empty() && (args.len() == 1 || args.len() == 2) {
+            let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+            let sym_expr = emit_symbol_expr(cx, args[0]);
+            let include_all = match args.get(1) {
+                Some(&a) => {
+                    let e = emit_expr(cx, a);
+                    quote! { (#e).truthy() }
+                }
+                None => quote! { false },
+            };
+            return quote! {
+                spinel_rt::RubyValue::Bool(spinel_rt::responds_to_value(&#recv, #sym_expr, #include_all))
+            };
+        }
         // A no-receiver call to a sibling method on the CURRENT class (`foo(x)`
         // inside a method body, calling another method on the same object) --
         // composes directly onto the existing `self: Arc<Self>` receiver:

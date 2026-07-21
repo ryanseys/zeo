@@ -55,16 +55,20 @@ pub(crate) fn needs_quoting(name: &str) -> bool {
     true
 }
 
-/// A bare Ruby identifier: an underscore or (Unicode) letter, then underscores
-/// or (Unicode) alphanumerics. Covers locals, methods, constants, and the
-/// remainder after an `@`/`@@`/`$` sigil.
+/// A bare Ruby identifier: an underscore, an ASCII letter, or ANY non-ASCII
+/// character to start, then underscores/ASCII-alphanumerics/non-ASCII. Ruby
+/// treats every multibyte character as an identifier character in a symbol
+/// name, so `:café`, `:λ`, and even `:😀` print bare, while ASCII punctuation
+/// (a space, a leading digit) forces quoting.
 fn is_plain_ident(s: &str) -> bool {
+    let is_start = |c: char| c == '_' || c.is_ascii_alphabetic() || !c.is_ascii();
+    let is_cont = |c: char| c == '_' || c.is_ascii_alphanumeric() || !c.is_ascii();
     let mut chars = s.chars();
     match chars.next() {
-        Some(c) if c == '_' || c.is_alphabetic() => {}
+        Some(c) if is_start(c) => {}
         _ => return false,
     }
-    chars.all(|c| c == '_' || c.is_alphanumeric())
+    chars.all(is_cont)
 }
 
 /// A symbol's `inspect` form: `:name` when the name prints bare, else `:"..."`
@@ -273,13 +277,13 @@ mod tests {
     #[test]
     fn inspect_quotes_only_non_bare_names() {
         // Bare: identifiers, constants, sigils, suffixed methods, operators,
-        // non-ASCII letters.
-        for bare in ["abc", "Foo", "_x9", "@iv", "@@cv", "$g", "foo?", "baz=", "+", "<=>", "[]=", "`", "café", "λ"] {
+        // and any non-ASCII characters (letters or symbols like an emoji).
+        for bare in ["abc", "Foo", "_x9", "@iv", "@@cv", "$g", "foo?", "baz=", "+", "<=>", "[]=", "`", "café", "λ", "😀"] {
             assert!(!needs_quoting(bare), "{bare:?} should print bare");
             assert_eq!(inspect_name(bare), format!(":{bare}"));
         }
-        // Quoted: spaces, leading digit, empty, embedded suffix char, bare sigil, emoji.
-        for q in ["a b", "1x", "", "foo?bar", "@", "😀"] {
+        // Quoted: spaces, leading digit, empty, embedded suffix char, bare sigil.
+        for q in ["a b", "1x", "", "foo?bar", "@"] {
             assert!(needs_quoting(q), "{q:?} should quote");
         }
         assert_eq!(inspect_name("a b"), ":\"a b\"");
