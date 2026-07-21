@@ -260,14 +260,15 @@ builtin_methods! {
     // nonexistent answer false), so an inherited `object_id`/`frozen?` answers
     // true too.
     "method_defined?" => fn method_defined(recv, args, _block) {
-        // The optional second `inherit` flag (default true) is accepted; this
-        // runtime always walks ancestors, so `inherit: false` is a documented
-        // approximation rather than an error.
+        // The optional second `inherit` flag (default true): false restricts the
+        // lookup to the receiver's own methods (no ancestor walk).
         arity!(args, 1..=2);
         let name = name_arg(&args[0])?;
-        Ok(RubyValue::Bool(crate::dispatch::method_defined(
+        let inherit = args.get(1).map_or(true, RubyValue::truthy);
+        Ok(RubyValue::Bool(crate::dispatch::method_defined_inherit(
             recv_cid(recv),
             crate::Symbol::intern(&name),
+            inherit,
         )))
     }
     // `instance_methods(inherit=true)` -- public+protected names of the

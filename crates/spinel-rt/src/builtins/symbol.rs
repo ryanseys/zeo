@@ -142,32 +142,32 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "to_s" | "id2name" | "name" => fn to_s(recv, args, _block) {
+    "to_s"[0] | "id2name"[0] | "name"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
     }
-    "to_sym" | "intern" => fn to_sym(recv, args, _block) {
+    "to_sym"[0] | "intern"[0] => fn to_sym(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "encoding" => fn encoding_m(recv, args, _block) {
+    "encoding"[0] => fn encoding_m(recv, args, _block) {
         arity!(args, 0);
         let id = crate::builtins::encoding::computed_encoding_of(&recv_sym(recv).name());
         Ok(crate::builtins::encoding::encoding_value(id))
     }
-    "inspect" => fn inspect(recv, args, _block) {
+    "inspect"[0] => fn inspect(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(inspect_name(&recv_sym(recv).name()))))
     }
-    "length" | "size" => fn length(recv, args, _block) {
+    "length"[0] | "size"[0] => fn length(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_sym(recv).name().chars().count() as i64))
     }
-    "empty?" => fn empty_p(recv, args, _block) {
+    "empty?"[0] => fn empty_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_sym(recv).name().is_empty()))
     }
-    "<=>" => fn spaceship(recv, args, _block) {
+    "<=>"[1] => fn spaceship(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -176,7 +176,7 @@ builtin_methods! {
             recv_sym(recv).name().cmp(&other.name()) as i64
         ))
     }
-    "==" => fn eq(recv, args, _block) {
+    "=="[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
@@ -189,14 +189,14 @@ builtin_methods! {
     }
     // These read the symbol's NAME as a string, so they delegate to the
     // matching `String` method (a Symbol is name-plus-identity).
-    "=~" => fn match_op(recv, args, block) { sym_via_name(recv, "=~", args, block) }
+    "=~"[1] => fn match_op(recv, args, block) { sym_via_name(recv, "=~", args, block) }
     "match" => fn match_m(recv, args, block) { sym_via_name(recv, "match", args, block) }
     "match?" => fn match_p(recv, args, block) { sym_via_name(recv, "match?", args, block) }
     "start_with?" => fn start_with_p(recv, args, block) { sym_via_name(recv, "start_with?", args, block) }
     "end_with?" => fn end_with_p(recv, args, block) { sym_via_name(recv, "end_with?", args, block) }
     // Case-insensitive name comparison. `casecmp` answers -1/0/1 (nil if the
     // argument isn't a Symbol); `casecmp?` answers true/false/nil.
-    "casecmp" => fn casecmp(recv, args, _block) {
+    "casecmp"[1] => fn casecmp(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -207,7 +207,7 @@ builtin_methods! {
             .cmp(&other.name().to_lowercase());
         Ok(RubyValue::Int(ord as i64))
     }
-    "casecmp?" => fn casecmp_p(recv, args, _block) {
+    "casecmp?"[1] => fn casecmp_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Symbol(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -240,13 +240,13 @@ builtin_methods! {
             &crate::builtins::string::swapcase_str(&recv_sym(recv).name()),
         )))
     }
-    "succ" | "next" => fn succ(recv, args, _block) {
+    "succ"[0] | "next"[0] => fn succ(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(Symbol::intern(
             &crate::builtins::string::succ_str(&recv_sym(recv).name()),
         )))
     }
-    "to_proc" => fn to_proc(recv, args, _block) {
+    "to_proc"[0] => fn to_proc(recv, args, _block) {
         arity!(args, 0);
         Ok(symbol_to_proc(recv_sym(recv)))
     }

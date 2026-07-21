@@ -2446,6 +2446,104 @@ fn module_method_defined_accepts_the_inherit_flag() {
 }
 
 #[test]
+fn method_arity_reflects_the_keyword_shape() {
+    // A required keyword adds one fixed mandatory slot; an optional keyword or
+    // keyword-rest with NO required keyword makes the method variadic. An
+    // optional positional or rest is variadic; a block never affects arity.
+    let result = run_ruby(
+        r#"
+        def none; end
+        def two(a, b); end
+        def opt(x, y = 1); end
+        def splat(*xs); end
+        def post_splat(a, *b, c); end
+        def opt_kw(a, b: 1); end
+        def req_kw(a, b:); end
+        def mix_kw(a, b:, c: 1); end
+        def kw_rest(a, **kw); end
+        def req_kw_rest(a, b:, **kw); end
+        def with_blk(a, &blk); end
+        p [method(:none).arity, method(:two).arity, method(:opt).arity,
+           method(:splat).arity, method(:post_splat).arity, method(:opt_kw).arity,
+           method(:req_kw).arity, method(:mix_kw).arity, method(:kw_rest).arity,
+           method(:req_kw_rest).arity, method(:with_blk).arity]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[0, 2, -2, -1, -3, -2, 2, 2, -2, 2, 1]\n");
+}
+
+#[test]
+fn method_arity_for_builtins_and_accessors() {
+    // Builtin-receiver method objects read a dumped CRuby arity table; attr and
+    // struct accessors derive theirs from the accessor shape (reader 0, writer 1).
+    let result = run_ruby(
+        r#"
+        p "hello".method(:upcase).arity
+        p 5.method(:+).arity
+        p [1].method(:size).arity
+        class C; attr_accessor :x; end
+        p C.new.method(:x).arity
+        p C.new.method(:x=).arity
+        S = Struct.new(:a)
+        s = S.new(1)
+        p s.method(:a).arity
+        p s.method(:a=).arity
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "-1\n1\n0\n0\n1\n0\n1\n");
+}
+
+#[test]
+fn module_method_defined_inherit_false_restricts_to_own_methods() {
+    // `inherit: false` reports only methods the receiver defines directly --
+    // its own defs and attr accessors -- skipping the ancestor walk.
+    let result = run_ruby(
+        r#"
+        class Animal; def name; end; attr_accessor :age; end
+        class Dog < Animal; def bark; end; end
+        p Dog.method_defined?(:bark, false)
+        p Dog.method_defined?(:name, false)
+        p Dog.method_defined?(:age=, false)
+        p Animal.method_defined?(:age, false)
+        p Animal.method_defined?(:bark, false)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\nfalse\nfalse\ntrue\nfalse\n");
+}
+
+#[test]
+fn proc_parameters_lambda_keyword_forces_the_reporting_view() {
+    // `parameters(lambda:)` forces the view: true reports plain positionals as
+    // :req, false as :opt, nil follows the receiver. A defaulted positional
+    // stays :opt in every view; a bound method's to_proc keeps the method arity.
+    let result = run_ruby(
+        r#"
+        p proc { |x, y| }.parameters(lambda: true)
+        p ->(x, y) { }.parameters(lambda: false)
+        p proc { |x, y = 1| }.parameters(lambda: true)
+        p proc { |x| }.parameters(lambda: nil)
+        p lambda { _1 }.parameters
+        def greet(name); end
+        gp = method(:greet).to_proc
+        p [gp.arity, gp.lambda?]
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[[:req, :x], [:req, :y]]\n\
+         [[:opt, :x], [:opt, :y]]\n\
+         [[:req, :x], [:opt, :y]]\n\
+         [[:opt, :x]]\n\
+         [[:req, :_1]]\n\
+         [1, true]\n",
+    );
+}
+
+#[test]
 fn proc_parameters_reflect_the_signature() {
     let result = run_ruby(
         r#"

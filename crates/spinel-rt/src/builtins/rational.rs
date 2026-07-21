@@ -359,56 +359,56 @@ fn round_with_precision(r: &RRationalData, n: i64, mode: RoundMode) -> Result<Ru
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "+" => fn add(recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
-    "-" => fn sub(recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
-    "*" => fn mul(recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
-    "/" => fn div(recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
-    "%" | "modulo" => fn modulo(recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
-    "**" => fn pow(recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
-    "-@" => fn neg(recv, args, _block) {
+    "+"[1] => fn add(recv, args, _block) { num_op_row!(args, recv, num_add, "+") }
+    "-"[1] => fn sub(recv, args, _block) { num_op_row!(args, recv, num_sub, "-") }
+    "*"[1] => fn mul(recv, args, _block) { num_op_row!(args, recv, num_mul, "*") }
+    "/"[1] => fn div(recv, args, _block) { num_op_row!(args, recv, num_div, "/") }
+    "%"[1] | "modulo"[1] => fn modulo(recv, args, _block) { num_op_row!(args, recv, num_mod, "%") }
+    "**"[1] => fn pow(recv, args, _block) { num_op_row!(args, recv, num_pow, "**") }
+    "-@"[0] => fn neg(recv, args, _block) {
         arity!(args, 0);
         let r = recv_rational(recv);
         rational_new(-r.num.clone(), r.den.clone())
     }
-    "+@" => fn pos(recv, args, _block) {
+    "+@"[0] => fn pos(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "<=>" => fn spaceship(recv, args, _block) {
+    "<=>"[1] => fn spaceship(recv, args, _block) {
         arity!(args, 1);
         Ok(match crate::builtins::numeric::num_cmp(recv, &args[0]) {
             Some(Some(c)) => RubyValue::Int(c),
             _ => RubyValue::Nil,
         })
     }
-    "==" => fn eq(recv, args, _block) {
+    "=="[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
-    "abs" | "magnitude" => fn abs(recv, args, _block) {
+    "abs"[0] | "magnitude"[0] => fn abs(recv, args, _block) {
         arity!(args, 0);
         let r = recv_rational(recv);
         rational_new(r.num.abs(), r.den.clone())
     }
-    "numerator" => fn numerator(recv, args, _block) {
+    "numerator"[0] => fn numerator(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::builtins::integer::int_value(recv_rational(recv).num.clone()))
     }
-    "denominator" => fn denominator(recv, args, _block) {
+    "denominator"[0] => fn denominator(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::builtins::integer::int_value(recv_rational(recv).den.clone()))
     }
-    "to_f" => fn to_f(recv, args, _block) {
+    "to_f"[0] => fn to_f(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Float(rat_to_f64(recv_rational(recv))))
     }
     // Truncation toward zero (BigInt's `/` truncates).
-    "to_i" | "to_int" => fn to_i(recv, args, _block) {
+    "to_i"[0] | "to_int"[0] => fn to_i(recv, args, _block) {
         arity!(args, 0);
         let r = recv_rational(recv);
         Ok(crate::builtins::integer::int_value(&r.num / &r.den))
     }
-    "to_r" | "rationalize" => fn to_r(recv, args, _block) {
+    "to_r"[0] | "rationalize" => fn to_r(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
@@ -432,19 +432,19 @@ builtin_methods! {
         round_with_precision(recv_rational(recv), precision_arg(pos)?, mode)
     }
     // A Rational is always a finite value.
-    "finite?" => fn finite_p(recv, args, _block) {
+    "finite?"[0] => fn finite_p(recv, args, _block) {
         arity!(args, 0);
         let _ = recv;
         Ok(RubyValue::Bool(true))
     }
-    "infinite?" => fn infinite_p(recv, args, _block) {
+    "infinite?"[0] => fn infinite_p(recv, args, _block) {
         arity!(args, 0);
         let _ = recv;
         Ok(RubyValue::Nil)
     }
     // `coerce(other)`: a Float partner pulls both operands to Float; any
     // other numeric promotes to Rational (`(3/2).coerce(2) == [(2/1), (3/2)]`).
-    "coerce" => fn coerce(recv, args, _block) {
+    "coerce"[1] => fn coerce(recv, args, _block) {
         arity!(args, 1);
         let pair = match &args[0] {
             RubyValue::Float(f) => vec![
@@ -469,7 +469,7 @@ builtin_methods! {
         Ok(RubyValue::Array(crate::array_new(pair)))
     }
     // `div` -- floored integer division (`Rational(7,2).div(2) == 1`).
-    "div" => fn int_div(recv, args, _block) {
+    "div"[1] => fn int_div(recv, args, _block) {
         arity!(args, 1);
         let q = crate::builtins::numeric::num_div(recv, &args[0])
             .ok_or_else(|| crate::dispatch::raise_error(
@@ -488,7 +488,7 @@ builtin_methods! {
         }
     }
     // `n.i` -- the pure-imaginary Complex `0 + n*i`.
-    "i" => fn imaginary(recv, args, _block) {
+    "i"[0] => fn imaginary(recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(RubyValue::Int(0), recv.clone())
     }

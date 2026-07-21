@@ -126,6 +126,18 @@ pub(crate) fn comparable_send(
 /// `respond_to?`'s MRO walk and `instance_methods` reflection.
 pub(crate) const NAMES: &[&str] = &["<", "<=", ">", ">=", "==", "between?", "clamp"];
 
+/// `Method#arity` for a `Comparable` method reached through a mixing-in class's
+/// ancestry (this module is dispatched off the ancestor walk, not `class_table`,
+/// so it declares its arities here). `clamp` is variadic (1-or-2 args / a
+/// Range), so it falls through to the caller's `-1` default.
+pub(crate) fn arity(name: &str) -> Option<i64> {
+    Some(match name {
+        "<" | "<=" | ">" | ">=" | "==" => 1,
+        "between?" => 2,
+        _ => return None,
+    })
+}
+
 /// Name membership for `respond_to?`'s MRO walk (argument counts aren't
 /// its concern -- real `respond_to?` is name-only too).
 pub(crate) fn responds(name: &str) -> bool {

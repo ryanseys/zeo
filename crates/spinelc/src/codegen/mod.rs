@@ -794,12 +794,20 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     }),
                     crate::hir::Visibility::Public => None,
                 };
+                // Bake this method's signature for `Method#arity`/`#parameters`
+                // reflection -- the `own_methods` loop above only covers user
+                // CLASSES, not a reopened builtin (Object, which every top-level
+                // `def` materializes onto). `descriptor_of` keys on (cid, name).
+                let params_entries = param_descriptor_entries(&scope.params);
                 quote! {
                     __registry.define_value_method(
                         spinel_rt::ClassId(#target),
                         #box_id,
                         spinel_rt::Symbol::intern(#key),
                         #tramp,
+                    );
+                    spinel_rt::register_params(
+                        #target, #key, vec![ #(#params_entries),* ],
                     );
                     #mark_vis
                 }

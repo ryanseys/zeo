@@ -37,7 +37,7 @@ builtin_methods! {
     // Two MatchData are equal when they cover the same string with the same
     // group spans (CRuby also checks the regexp; same-string-same-spans is the
     // observable equivalent here).
-    "==" | "eql?" => fn eq(recv, args, _block) {
+    "=="[1] | "eql?"[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::MatchData(other) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -56,25 +56,25 @@ builtin_methods! {
         }
         crate::regexp::matchdata_get(&md, &args[0])
     }
-    "pre_match" => fn pre_match(recv, args, _block) {
+    "pre_match"[0] => fn pre_match(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_pre_match(&recv_md(recv)))
     }
-    "post_match" => fn post_match(recv, args, _block) {
+    "post_match"[0] => fn post_match(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_post_match(&recv_md(recv)))
     }
-    "to_a" => fn to_a(recv, args, _block) {
+    "to_a"[0] => fn to_a(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_a(&recv_md(recv)))
     }
-    "captures" => fn captures(recv, args, _block) {
+    "captures"[0] => fn captures(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `#size`/`#length` -- the number of elements (whole match + every group),
     // i.e. `to_a.length`.
-    "size" | "length" => fn size(recv, args, _block) {
+    "size"[0] | "length"[0] => fn size(recv, args, _block) {
         arity!(args, 0);
         let arr = crate::regexp::matchdata_to_a(&recv_md(recv));
         let n = match &arr {
@@ -115,49 +115,49 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
     }
-    "string" => fn string(recv, args, _block) {
+    "string"[0] => fn string(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_string(&recv_md(recv)))
     }
-    "to_s" => fn to_s(recv, args, _block) {
+    "to_s"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_to_s(&recv_md(recv)))
     }
     // `offset(n)`/`byteoffset(n)` -- the char/byte `[start, end]` of group `n`
     // (index or named-group Symbol/String).
-    "offset" => fn offset(recv, args, _block) {
+    "offset"[1] => fn offset(recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], false)
     }
-    "byteoffset" => fn byteoffset(recv, args, _block) {
+    "byteoffset"[1] => fn byteoffset(recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_offset(&recv_md(recv), &args[0], true)
     }
     // `begin`/`end` are the character start/end of a group; `bytebegin`/`byteend`
     // the byte start/end. Each is one end of the corresponding `offset` pair.
-    "begin" => fn md_begin(recv, args, _block) {
+    "begin"[1] => fn md_begin(recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 0)
     }
-    "end" => fn md_end(recv, args, _block) {
+    "end"[1] => fn md_end(recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], false, 1)
     }
-    "bytebegin" => fn md_bytebegin(recv, args, _block) {
+    "bytebegin"[1] => fn md_bytebegin(recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 0)
     }
-    "byteend" => fn md_byteend(recv, args, _block) {
+    "byteend"[1] => fn md_byteend(recv, args, _block) {
         arity!(args, 1);
         offset_end(&recv_md(recv), &args[0], true, 1)
     }
     // `MatchData#match(n)` -- the n-th group (like `[n]`); `match_length(n)` its
     // character length, or nil when the group didn't participate.
-    "match" => fn md_match(recv, args, _block) {
+    "match"[1] => fn md_match(recv, args, _block) {
         arity!(args, 1);
         crate::regexp::matchdata_get(&recv_md(recv), &args[0])
     }
-    "match_length" => fn md_match_length(recv, args, _block) {
+    "match_length"[1] => fn md_match_length(recv, args, _block) {
         arity!(args, 1);
         Ok(match crate::regexp::matchdata_get(&recv_md(recv), &args[0])? {
             RubyValue::Str(s) => RubyValue::Int(s.lock().char_len() as i64),
@@ -165,14 +165,14 @@ builtin_methods! {
         })
     }
     // `deconstruct` -> the captures array (pattern-matching's array form).
-    "deconstruct" => fn md_deconstruct(recv, args, _block) {
+    "deconstruct"[0] => fn md_deconstruct(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_captures(&recv_md(recv)))
     }
     // `deconstruct_keys(keys)` -> the named captures as a Symbol-keyed Hash; with
     // an Array of keys, only those that name a capture (in the given order); with
     // nil, all of them (pattern-matching's hash form).
-    "deconstruct_keys" => fn md_deconstruct_keys(recv, args, _block) {
+    "deconstruct_keys"[1] => fn md_deconstruct_keys(recv, args, _block) {
         arity!(args, 1);
         let md = recv_md(recv);
         let named: Vec<(String, RubyValue)> = md
@@ -212,7 +212,7 @@ builtin_methods! {
     }
     // `#<MatchData "whole" 1:"a" name:"b" ...>` -- groups labeled by name when
     // named, by 1-based index otherwise.
-    "inspect" => fn md_inspect(recv, args, _block) {
+    "inspect"[0] => fn md_inspect(recv, args, _block) {
         arity!(args, 0);
         let md = recv_md(recv);
         let RubyValue::Array(a) = crate::regexp::matchdata_to_a(&md) else { unreachable!() };
@@ -230,11 +230,11 @@ builtin_methods! {
         s.push('>');
         Ok(RubyValue::Str(crate::string_new(s)))
     }
-    "names" => fn names(recv, args, _block) {
+    "names"[0] => fn names(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_names(&recv_md(recv)))
     }
-    "regexp" => fn regexp(recv, args, _block) {
+    "regexp"[0] => fn regexp(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp::matchdata_regexp(&recv_md(recv)))
     }

@@ -905,25 +905,25 @@ fn find_subslice(haystack: &[char], needle: &[char]) -> Option<usize> {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "length" | "size" => fn length(recv, args, _block) {
+    "length"[0] | "size"[0] => fn length(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::string_len(recv_str!(recv))))
     }
-    "empty?" => fn empty_p(recv, args, _block) {
+    "empty?"[0] => fn empty_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(crate::string_len(recv_str!(recv)) == 0))
     }
     // Byte-level accessors, honoring the string's real encoding (`bytes`
     // yields the raw bytes; `bytesize` counts them, distinct from the
     // char-counting `length`).
-    "bytesize" => fn bytesize(recv, args, _block) {
+    "bytesize"[0] => fn bytesize(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(recv_str!(recv).lock().bytesize() as i64))
     }
     // `String#-@` / `#dedup`: an already-frozen receiver is returned as-is
     // (CRuby #2630); otherwise the content is interned to its immortal
     // frozen twin, so two dedups of equal content are the same object.
-    "-@" | "dedup" => fn dedup(recv, args, _block) {
+    "-@"[0] | "dedup"[0] => fn dedup(recv, args, _block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if s.is_frozen() {
@@ -937,7 +937,7 @@ builtin_methods! {
             crate::encoding::StrBuf::from_bytes(bytes, enc),
         )))
     }
-    "bytes" => fn bytes(recv, args, _block) {
+    "bytes"[0] => fn bytes(recv, args, _block) {
         arity!(args, 0);
         let out = recv_str!(recv)
             .lock()
@@ -947,7 +947,7 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "each_byte" => fn each_byte(recv, args, block) {
+    "each_byte"[0] => fn each_byte(recv, args, block) {
         arity!(args, 0);
         let Some(RubyValue::Proc(p)) = &block else {
             return Err(crate::dispatch::raise_no_block_yield());
@@ -958,7 +958,7 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "getbyte" => fn getbyte(recv, args, _block) {
+    "getbyte"[1] => fn getbyte(recv, args, _block) {
         arity!(args, 1);
         let i = arg_int!(args, 0);
         let s = recv_str!(recv).lock();
@@ -969,7 +969,7 @@ builtin_methods! {
             RubyValue::Nil
         })
     }
-    "setbyte" => fn setbyte(recv, args, _block) {
+    "setbyte"[2] => fn setbyte(recv, args, _block) {
         arity!(args, 2);
         let (i, b) = (arg_int!(args, 0), arg_int!(args, 1));
         let s = recv_str!(recv);
@@ -1096,19 +1096,19 @@ builtin_methods! {
         })
     }
     // --- Encoding surface -------------------------------------------------
-    "encoding" => fn encoding_m(recv, args, _block) {
+    "encoding"[0] => fn encoding_m(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::builtins::encoding::encoding_value(recv_str!(recv).lock().encoding()))
     }
     // `force_encoding` re-TAGS the bytes without touching them; `b` COPIES
     // them under ASCII-8BIT. Both return a value the caller can chain.
-    "force_encoding" => fn force_encoding(recv, args, _block) {
+    "force_encoding"[1] => fn force_encoding(recv, args, _block) {
         arity!(args, 1);
         let id = crate::builtins::encoding::arg_encoding(&args[0])?;
         recv_str!(recv).lock().set_encoding(id);
         Ok(recv.clone())
     }
-    "b" => fn to_binary(recv, args, _block) {
+    "b"[0] => fn to_binary(recv, args, _block) {
         arity!(args, 0);
         let bytes = recv_str!(recv).lock().bytes().to_vec();
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
@@ -1156,15 +1156,15 @@ builtin_methods! {
     // `crypt(salt)`: the platform `crypt(3)` one-way hash (DES/MD5/... per the
     // salt), delegated to libc so the output matches the host Ruby exactly.
     // The result is ASCII-8BIT.
-    "crypt" => fn crypt(recv, args, _block) {
+    "crypt"[1] => fn crypt(recv, args, _block) {
         arity!(args, 1);
         crypt_impl(recv, &args[0])
     }
-    "ascii_only?" => fn ascii_only(recv, args, _block) {
+    "ascii_only?"[0] => fn ascii_only(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_str!(recv).lock().ascii_only()))
     }
-    "valid_encoding?" => fn valid_encoding(recv, args, _block) {
+    "valid_encoding?"[0] => fn valid_encoding(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_str!(recv).lock().valid_encoding()))
     }
@@ -1177,7 +1177,7 @@ builtin_methods! {
     // `unpack`/`unpack1`: deserialize the bytes per a template (see
     // `builtins::pack`). `unpack` answers the whole Array; `unpack1` the
     // first element (nil when empty).
-    "unpack" => fn unpack(recv, args, _block) {
+    "unpack"[-2] => fn unpack(recv, args, _block) {
         let positional = kw_strip(args);
         arity!(positional, 1);
         let template = unpack_template(&positional[0])?;
@@ -1186,7 +1186,7 @@ builtin_methods! {
         let vals = crate::builtins::pack::unpack(&bytes[start..], &template)?;
         Ok(RubyValue::Array(crate::array_new(vals)))
     }
-    "unpack1" => fn unpack1(recv, args, _block) {
+    "unpack1"[-2] => fn unpack1(recv, args, _block) {
         let positional = kw_strip(args);
         arity!(positional, 1);
         let template = unpack_template(&positional[0])?;
@@ -1232,7 +1232,7 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "include?" => fn include_p(recv, args, _block) {
+    "include?"[1] => fn include_p(recv, args, _block) {
         arity!(args, 1);
         let needle = arg_str!(args, 0);
         let found = recv_str!(recv)
@@ -1241,7 +1241,7 @@ builtin_methods! {
             .contains(&*needle.lock().to_utf8_lossy());
         Ok(RubyValue::Bool(found))
     }
-    "+" => fn plus(recv, args, _block) {
+    "+"[1] => fn plus(recv, args, _block) {
         arity!(args, 1);
         let other = arg_str!(args, 0);
         // Read the receiver out and RELEASE its guard before locking `other`.
@@ -1254,7 +1254,7 @@ builtin_methods! {
         Ok(str_value(joined))
     }
     // Mutating append -- returns the receiver (the same object).
-    "<<" | "concat" => fn concat(recv, args, _block) {
+    "<<"[1] | "concat" => fn concat(recv, args, _block) {
         // `<<` is syntactically a single-arg operator; `concat` accepts any
         // number of arguments and appends them left-to-right.
         let s = recv_str!(recv);
@@ -1296,7 +1296,7 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "*" => fn times(recv, args, _block) {
+    "*"[1] => fn times(recv, args, _block) {
         arity!(args, 1);
         let n = arg_int!(args, 0);
         if n < 0 {
@@ -1328,11 +1328,11 @@ builtin_methods! {
             )),
         }
     }
-    "to_s" | "to_str" => fn to_s(recv, args, _block) {
+    "to_s"[0] | "to_str"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "<=>" => fn spaceship(recv, args, _block) {
+    "<=>"[1] => fn spaceship(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(other) = &args[0] else {
             return Ok(RubyValue::Nil);
@@ -1344,7 +1344,7 @@ builtin_methods! {
         };
         Ok(RubyValue::Int(ord as i64))
     }
-    "==" | "eql?" => fn eq(recv, args, _block) {
+    "=="[1] | "eql?"[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
@@ -1379,7 +1379,7 @@ builtin_methods! {
         arity!(args, 0);
         Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end().to_string()))
     }
-    "chars" => fn chars(recv, args, _block) {
+    "chars"[0] => fn chars(recv, args, _block) {
         arity!(args, 0);
         let out = recv_str!(recv)
             .lock()
@@ -1396,7 +1396,7 @@ builtin_methods! {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Array(crate::array_new(lines_from_args(&text, args))))
     }
-    "each_char" => fn each_char(recv, args, block) {
+    "each_char"[0] => fn each_char(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_char", args, block);
         let cs: Vec<char> = recv_str!(recv).lock().chars().collect();
@@ -1408,14 +1408,14 @@ builtin_methods! {
     // `grapheme_clusters`: the string split into extended grapheme clusters
     // (UAX #29) -- a base char plus its combining marks, a regional-indicator
     // flag pair, or a ZWJ emoji sequence each count as one.
-    "grapheme_clusters" => fn grapheme_clusters(recv, args, _block) {
+    "grapheme_clusters"[0] => fn grapheme_clusters(recv, args, _block) {
         arity!(args, 0);
         use unicode_segmentation::UnicodeSegmentation;
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let out = text.graphemes(true).map(|g| str_value(g.to_string())).collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "each_grapheme_cluster" => fn each_grapheme_cluster(recv, args, block) {
+    "each_grapheme_cluster"[0] => fn each_grapheme_cluster(recv, args, block) {
         arity!(args, 0);
         use unicode_segmentation::UnicodeSegmentation;
         let p = block_or_enum!(recv, "each_grapheme_cluster", args, block);
@@ -1532,7 +1532,7 @@ builtin_methods! {
         };
         Ok(str_value(out))
     }
-    "chop" => fn chop(recv, args, _block) {
+    "chop"[0] => fn chop(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let mut cs: Vec<char> = text.chars().collect();
@@ -1543,7 +1543,7 @@ builtin_methods! {
         }
         Ok(str_value(cs.into_iter().collect()))
     }
-    "reverse" => fn reverse(recv, args, _block) {
+    "reverse"[0] => fn reverse(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_wrap(recv_str!(recv).lock().reversed())))
     }
@@ -1567,7 +1567,7 @@ builtin_methods! {
         };
         str_bang_replace(recv, out)
     }
-    "chop!" => fn chop_bang(recv, args, _block) {
+    "chop!"[0] => fn chop_bang(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let mut cs: Vec<char> = text.chars().collect();
@@ -1585,16 +1585,16 @@ builtin_methods! {
     "downcase!" => fn downcase_bang(recv, args, block) { str_bang_via(recv, "downcase", args, block) }
     "capitalize!" => fn capitalize_bang(recv, args, block) { str_bang_via(recv, "capitalize", args, block) }
     "swapcase!" => fn swapcase_bang(recv, args, block) { str_bang_via(recv, "swapcase", args, block) }
-    "reverse!" => fn reverse_bang(recv, args, block) { str_bang_via(recv, "reverse", args, block) }
+    "reverse!"[0] => fn reverse_bang(recv, args, block) { str_bang_via(recv, "reverse", args, block) }
     "strip!" => fn strip_bang(recv, args, block) { str_bang_via(recv, "strip", args, block) }
     "lstrip!" => fn lstrip_bang(recv, args, block) { str_bang_via(recv, "lstrip", args, block) }
     "rstrip!" => fn rstrip_bang(recv, args, block) { str_bang_via(recv, "rstrip", args, block) }
     "sub!" => fn sub_bang(recv, args, block) { str_bang_via(recv, "sub", args, block) }
     "gsub!" => fn gsub_bang(recv, args, block) { str_bang_via(recv, "gsub", args, block) }
-    "tr!" => fn tr_bang(recv, args, block) { str_bang_via(recv, "tr", args, block) }
+    "tr!"[2] => fn tr_bang(recv, args, block) { str_bang_via(recv, "tr", args, block) }
     "delete!" => fn delete_bang(recv, args, block) { str_bang_via(recv, "delete", args, block) }
     "squeeze!" => fn squeeze_bang(recv, args, block) { str_bang_via(recv, "squeeze", args, block) }
-    "succ!" | "next!" => fn succ_bang(recv, args, block) { str_bang_via(recv, "succ", args, block) }
+    "succ!"[0] | "next!"[0] => fn succ_bang(recv, args, block) { str_bang_via(recv, "succ", args, block) }
     // `sum` -- the CRuby checksum: the sum of the byte values, masked to `bits`
     // (default 16) bits. `chr` is the first character as a one-char String.
     "sum" => fn sum(recv, args, _block) {
@@ -1615,13 +1615,13 @@ builtin_methods! {
         };
         Ok(RubyValue::Int(masked))
     }
-    "chr" => fn chr(recv, args, _block) {
+    "chr"[0] => fn chr(recv, args, _block) {
         arity!(args, 0);
         let first: String = recv_str!(recv).lock().to_utf8_lossy().chars().take(1).collect();
         Ok(str_value(first))
     }
     // Empties the string in place (frozen guard); always answers the receiver.
-    "clear" => fn clear(recv, args, _block) {
+    "clear"[0] => fn clear(recv, args, _block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if s.is_frozen() {
@@ -1636,7 +1636,7 @@ builtin_methods! {
     }
     // The integer codepoints of each character (`each_codepoint` is the
     // block/enumerator form over the same values).
-    "codepoints" => fn codepoints(recv, args, _block) {
+    "codepoints"[0] => fn codepoints(recv, args, _block) {
         arity!(args, 0);
         let out = recv_str!(recv)
             .lock()
@@ -1646,7 +1646,7 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "each_codepoint" => fn each_codepoint(recv, args, block) {
+    "each_codepoint"[0] => fn each_codepoint(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_codepoint", args, block);
         for c in recv_str!(recv).lock().to_utf8_lossy().chars() {
@@ -1656,12 +1656,12 @@ builtin_methods! {
     }
     // `[before, sep, after]` around the first (`partition`) / last
     // (`rpartition`) occurrence of a String or Regexp separator.
-    "partition" => fn partition(recv, args, _block) {
+    "partition"[1] => fn partition(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], false)?.to_vec())))
     }
-    "rpartition" => fn rpartition(recv, args, _block) {
+    "rpartition"[1] => fn rpartition(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Array(crate::array_new(str_partition(&text, &args[0], true)?.to_vec())))
@@ -1669,25 +1669,25 @@ builtin_methods! {
     // Prefix/suffix removal -- the non-bang form always returns a new String
     // (a copy when the affix is absent); the bang form mutates and answers
     // `nil` when there was nothing to remove.
-    "delete_prefix" => fn delete_prefix(recv, args, _block) {
+    "delete_prefix"[1] => fn delete_prefix(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         Ok(str_value(text.strip_prefix(&prefix).unwrap_or(&text).to_string()))
     }
-    "delete_prefix!" => fn delete_prefix_bang(recv, args, _block) {
+    "delete_prefix!"[1] => fn delete_prefix_bang(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let prefix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         str_bang_replace(recv, text.strip_prefix(&prefix).unwrap_or(&text).to_string())
     }
-    "delete_suffix" => fn delete_suffix(recv, args, _block) {
+    "delete_suffix"[1] => fn delete_suffix(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         Ok(str_value(text.strip_suffix(&suffix).unwrap_or(&text).to_string()))
     }
-    "delete_suffix!" => fn delete_suffix_bang(recv, args, _block) {
+    "delete_suffix!"[1] => fn delete_suffix_bang(recv, args, _block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let suffix = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
@@ -1695,7 +1695,7 @@ builtin_methods! {
     }
     // `+@`: an unfrozen receiver is returned as-is; a frozen one yields a
     // fresh mutable copy (the mirror of `-@`'s "freeze/dedup").
-    "+@" => fn plus_at(recv, args, _block) {
+    "+@"[0] => fn plus_at(recv, args, _block) {
         arity!(args, 0);
         let s = recv_str!(recv);
         if !s.is_frozen() {
@@ -1912,14 +1912,14 @@ builtin_methods! {
     }
     // `casecmp` is an ASCII case-insensitive `<=>`; `casecmp?` its boolean
     // (Unicode-aware) sibling. A non-String argument answers nil.
-    "casecmp" => fn casecmp(recv, args, _block) {
+    "casecmp"[1] => fn casecmp(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
         let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
         let b = o.lock().to_utf8_lossy().to_lowercase();
         Ok(RubyValue::Int(a.cmp(&b) as i64))
     }
-    "casecmp?" => fn casecmp_p(recv, args, _block) {
+    "casecmp?"[1] => fn casecmp_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Str(o) = &args[0] else { return Ok(RubyValue::Nil) };
         let a = recv_str!(recv).lock().to_utf8_lossy().to_lowercase();
@@ -1929,11 +1929,11 @@ builtin_methods! {
     // `oct`/`hex` parse a leading integer in base 8/16, honoring an explicit
     // `0x`/`0b`/`0o`/`0d` radix prefix and stopping at the first invalid
     // digit (0 when there is none) -- CRuby's lenient rule.
-    "oct" => fn oct(recv, args, _block) {
+    "oct"[0] => fn oct(recv, args, _block) {
         arity!(args, 0);
         Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 8))
     }
-    "hex" => fn hex(recv, args, _block) {
+    "hex"[0] => fn hex(recv, args, _block) {
         arity!(args, 0);
         Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 16))
     }
@@ -2002,7 +2002,7 @@ builtin_methods! {
     }
     // `tr(from, to)` with `a-z` range expansion; a short `to` repeats its
     // last character (CRuby's rule).
-    "tr" => fn tr(recv, args, _block) {
+    "tr"[2] => fn tr(recv, args, _block) {
         arity!(args, 2);
         let from = expand_charset(&arg_str!(args, 0).lock().to_utf8_lossy());
         let to = expand_charset(&arg_str!(args, 1).lock().to_utf8_lossy());
@@ -2023,7 +2023,7 @@ builtin_methods! {
     // collapses to one (`"hello".tr_s("l","r") == "hero"`). Delegating to
     // `tr` then `squeeze(to)` reproduces this: only the `to` characters are
     // squeezed, and an empty `to` (a delete) squeezes nothing.
-    "tr_s" => fn tr_s(recv, args, _block) {
+    "tr_s"[2] => fn tr_s(recv, args, _block) {
         arity!(args, 2);
         let translated = crate::dispatch::send_value(recv, crate::Symbol::intern("tr"), args, None)?;
         crate::dispatch::send_value(
@@ -2033,7 +2033,7 @@ builtin_methods! {
             None,
         )
     }
-    "tr_s!" => fn tr_s_bang(recv, args, block) { str_bang_via(recv, "tr_s", args, block) }
+    "tr_s!"[2] => fn tr_s_bang(recv, args, block) { str_bang_via(recv, "tr_s", args, block) }
     // `delete`/`count` take ONE OR MORE char-set specs; a char is selected
     // only when it satisfies EVERY spec (CRuby's intersection rule), each of
     // which may itself be negated with a leading `^` or use `a-z` ranges.
@@ -2104,7 +2104,7 @@ builtin_methods! {
         Ok(lenient_to_i(&recv_str!(recv).lock().to_utf8_lossy(), base))
     }
     // Lenient like `to_i`: the longest valid leading float, else 0.0.
-    "to_f" => fn to_f(recv, args, _block) {
+    "to_f"[0] => fn to_f(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         // CRuby ignores a single underscore between two digits (`"1_000.5"` ->
@@ -2145,32 +2145,32 @@ builtin_methods! {
     }
     // `to_r` -- the leading rational (`"3/4"`, `"1.5"`, `"12"`); junk with no
     // leading digits is `(0/1)`. Shares the parser with the `Rational` code.
-    "to_r" => fn to_r(recv, args, _block) {
+    "to_r"[0] => fn to_r(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         let (num, den) = crate::builtins::rational::parse_str_to_r(&text);
         crate::builtins::rational::rational_new(num, den)
     }
-    "to_c" => fn to_c(recv, args, _block) {
+    "to_c"[0] => fn to_c(recv, args, _block) {
         arity!(args, 0);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         crate::builtins::complex::parse_str_to_c(&text)
     }
-    "dump" => fn dump(recv, args, _block) {
+    "dump"[0] => fn dump(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(dump_str(&recv_str!(recv).lock())))
     }
-    "undump" => fn undump(recv, args, _block) {
+    "undump"[0] => fn undump(recv, args, _block) {
         arity!(args, 0);
         undump_str(&recv_str!(recv).lock())
     }
-    "to_sym" | "intern" => fn to_sym(recv, args, _block) {
+    "to_sym"[0] | "intern"[0] => fn to_sym(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Symbol(crate::Symbol::intern(
             &recv_str!(recv).lock().to_utf8_lossy(),
         )))
     }
-    "succ" | "next" => fn succ(recv, args, _block) {
+    "succ"[0] | "next"[0] => fn succ(recv, args, _block) {
         arity!(args, 0);
         Ok(str_value(succ_str(&recv_str!(recv).lock().to_utf8_lossy())))
     }
@@ -2214,7 +2214,7 @@ builtin_methods! {
         arity!(args, 1..=2);
         pad(recv, args, Pad::Right)
     }
-    "insert" => fn insert(recv, args, _block) {
+    "insert"[2] => fn insert(recv, args, _block) {
         arity!(args, 2);
         let at = arg_int!(args, 0);
         let addition = arg_str!(args, 1).lock().to_utf8_lossy().into_owned();
@@ -2263,14 +2263,14 @@ builtin_methods! {
         drop(guard);
         Ok(recv.clone())
     }
-    "replace" => fn replace(recv, args, _block) {
+    "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
         let new_text = arg_str!(args, 0).lock().to_utf8_lossy().into_owned();
         recv_str!(recv).lock().replace_utf8(new_text);
         Ok(recv.clone())
     }
     // `Integer#chr`'s inverse -- the first character's codepoint.
-    "ord" => fn ord(recv, args, _block) {
+    "ord"[0] => fn ord(recv, args, _block) {
         arity!(args, 0);
         match recv_str!(recv).lock().chars().next() {
             Some(c) => Ok(RubyValue::Int(c as i64)),
@@ -2281,7 +2281,7 @@ builtin_methods! {
         }
     }
     // `"%s..." % args` -- the shared sprintf engine (`builtins::format`).
-    "%" => fn format_op(recv, args, _block) {
+    "%"[1] => fn format_op(recv, args, _block) {
         arity!(args, 1);
         let format_args = match &args[0] {
             RubyValue::Array(a) => a.lock().clone(),
@@ -2292,7 +2292,7 @@ builtin_methods! {
             &format_args,
         )?))
     }
-    "=~" => fn match_op(recv, args, _block) {
+    "=~"[1] => fn match_op(recv, args, _block) {
         arity!(args, 1);
         match &args[0] {
             RubyValue::Regexp(re) => {
@@ -2328,7 +2328,7 @@ builtin_methods! {
             None => false,
         }))
     }
-    "scan" => fn scan(recv, args, block) {
+    "scan"[1] => fn scan(recv, args, block) {
         arity!(args, 1);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         // The matched substrings, in order. A Regexp defers to the engine; a

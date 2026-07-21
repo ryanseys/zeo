@@ -9,11 +9,11 @@ use crate::RubyValue;
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "===" => fn case_eq(recv, args, _block) {
+    "==="[1] => fn case_eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_case_eq(&args[0])))
     }
-    "encoding" => fn encoding_m(recv, args, _block) {
+    "encoding"[0] => fn encoding_m(recv, args, _block) {
         arity!(args, 0);
         let RubyValue::Regexp(re) = recv else {
             unreachable!("the Regexp table only dispatches on Regexp receivers")
@@ -21,7 +21,7 @@ builtin_methods! {
         let id = crate::builtins::encoding::computed_encoding_of(&re.source);
         Ok(crate::builtins::encoding::encoding_value(id))
     }
-    "source" => fn source_m(recv, args, _block) {
+    "source"[0] => fn source_m(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::regexp_source(re_of(recv)))
     }
@@ -38,14 +38,14 @@ builtin_methods! {
         let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match(re_of(recv), &h))
     }
-    "=~" => fn match_op(recv, args, _block) {
+    "=~"[1] => fn match_op(recv, args, _block) {
         arity!(args, 1);
         let Some(h) = str_arg(&args[0]) else { return Ok(RubyValue::Nil) };
         Ok(crate::regexp_match_index(re_of(recv), &h))
     }
     // `casefold?` reports the `/i` flag; `fixed_encoding?` is always false
     // (spinel regexps are encoding-agnostic over the supported set).
-    "casefold?" => fn casefold_p(recv, args, _block) {
+    "casefold?"[0] => fn casefold_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(re_of(recv).ignore_case))
     }
@@ -55,14 +55,14 @@ builtin_methods! {
     // something other than US-ASCII (`/café/` -> UTF-8 -> true; `/abc/` ->
     // US-ASCII -> false). The flag-forced cases (`/u`, `/n`) are a documented
     // gap: no encoding flag is threaded onto the compiled regexp yet.
-    "fixed_encoding?" => fn fixed_encoding_p(recv, args, _block) {
+    "fixed_encoding?"[0] => fn fixed_encoding_p(recv, args, _block) {
         arity!(args, 0);
         let enc = crate::builtins::encoding::computed_encoding_of(&re_of(recv).source);
         Ok(RubyValue::Bool(enc != crate::encoding::US_ASCII))
     }
     // `names` lists the named capture groups in order; `named_captures` maps
     // each name to its 1-based capture position(s).
-    "names" => fn names_m(recv, args, _block) {
+    "names"[0] => fn names_m(recv, args, _block) {
         arity!(args, 0);
         let out = re_of(recv)
             .engine
@@ -72,7 +72,7 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "named_captures" => fn named_captures_m(recv, args, _block) {
+    "named_captures"[0] => fn named_captures_m(recv, args, _block) {
         arity!(args, 0);
         let pairs = re_of(recv)
             .engine
@@ -89,13 +89,13 @@ builtin_methods! {
     }
     // `#timeout` -- this pattern's per-match timeout; spinel sets none, so
     // it reports the global default (`nil`, "no timeout").
-    "timeout" => fn timeout_m(recv, args, _block) {
+    "timeout"[0] => fn timeout_m(recv, args, _block) {
         arity!(args, 0);
         let _ = re_of(recv);
         Ok(RubyValue::Nil)
     }
     // `#options` -- the `Regexp::` flag bitmask this pattern was built with.
-    "options" => fn options_m(recv, args, _block) {
+    "options"[0] => fn options_m(recv, args, _block) {
         arity!(args, 0);
         let re = re_of(recv);
         let bits = (re.ignore_case as i64) * IGNORECASE
@@ -236,7 +236,7 @@ builtin_methods! {
 
     // `Regexp.timeout` -- the process-wide default match timeout; spinel
     // enforces none, so it is always `nil`.
-    "timeout" => fn timeout_c(_recv, args, _block) {
+    "timeout"[0] => fn timeout_c(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }

@@ -7,7 +7,7 @@ use crate::RubyValue;
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "[]" => fn index(recv, args, _block) {
+    "[]"[1] => fn index(recv, args, _block) {
         arity!(args, 1);
         crate::hash_index(recv_hash!(recv), &args[0])
     }
@@ -30,18 +30,18 @@ builtin_methods! {
             _ => Ok(default),
         }
     }
-    "default=" => fn default_set(recv, args, _block) {
+    "default="[1] => fn default_set(recv, args, _block) {
         arity!(args, 1);
         let mut g = recv_hash!(recv).lock();
         g.default = args[0].clone();
         g.default_proc = None;
         Ok(args[0].clone())
     }
-    "default_proc" => fn default_proc_m(recv, args, _block) {
+    "default_proc"[0] => fn default_proc_m(recv, args, _block) {
         arity!(args, 0);
         Ok(recv_hash!(recv).lock().default_proc.clone().unwrap_or(RubyValue::Nil))
     }
-    "default_proc=" => fn default_proc_set(recv, args, _block) {
+    "default_proc="[1] => fn default_proc_set(recv, args, _block) {
         arity!(args, 1);
         let mut g = recv_hash!(recv).lock();
         match &args[0] {
@@ -56,7 +56,7 @@ builtin_methods! {
     }
     // Switch to identity keying (`equal?`/`object_id` instead of `eql?`/`hash`);
     // re-projects existing entries so keys stay reachable by their own object.
-    "compare_by_identity" => fn compare_by_identity(recv, args, _block) {
+    "compare_by_identity"[0] => fn compare_by_identity(recv, args, _block) {
         arity!(args, 0);
         let h = recv_hash!(recv);
         if h.is_frozen() {
@@ -68,39 +68,39 @@ builtin_methods! {
         crate::hash_enable_compare_by_identity(h);
         Ok(recv.clone())
     }
-    "compare_by_identity?" => fn compare_by_identity_p(recv, args, _block) {
+    "compare_by_identity?"[0] => fn compare_by_identity_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv_hash!(recv).lock().compare_by_identity))
     }
-    "[]=" | "store" => fn index_set(recv, args, _block) {
+    "[]="[2] | "store"[2] => fn index_set(recv, args, _block) {
         arity!(args, 2);
         Ok(crate::hash_set(recv_hash!(recv), args[0].clone(), args[1].clone()))
     }
-    "delete" => fn delete(recv, args, _block) {
+    "delete"[1] => fn delete(recv, args, _block) {
         arity!(args, 1);
         Ok(crate::hash_delete(recv_hash!(recv), &args[0]))
     }
-    "key?" | "has_key?" | "include?" | "member?" => fn key_p(recv, args, _block) {
+    "key?"[1] | "has_key?"[1] | "include?"[1] | "member?"[1] => fn key_p(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(crate::hash_has_key(recv_hash!(recv), &args[0])))
     }
-    "keys" => fn keys(recv, args, _block) {
+    "keys"[0] => fn keys(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::hash_keys(recv_hash!(recv)))
     }
-    "values" => fn values(recv, args, _block) {
+    "values"[0] => fn values(recv, args, _block) {
         arity!(args, 0);
         Ok(crate::hash_values(recv_hash!(recv)))
     }
-    "length" | "size" => fn length(recv, args, _block) {
+    "length"[0] | "size"[0] => fn length(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::hash_len(recv_hash!(recv))))
     }
-    "empty?" => fn empty_p(recv, args, _block) {
+    "empty?"[0] => fn empty_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(crate::hash_len(recv_hash!(recv)) == 0))
     }
-    "==" => fn eq(recv, args, _block) {
+    "=="[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(recv.rb_eq(&args[0])))
     }
@@ -155,7 +155,7 @@ builtin_methods! {
         merge_into(recv, args, &block)?;
         Ok(recv.clone())
     }
-    "to_a" => fn to_a(recv, args, _block) {
+    "to_a"[0] => fn to_a(recv, args, _block) {
         arity!(args, 0);
         let out = recv_hash!(recv)
             .lock()
@@ -241,7 +241,7 @@ builtin_methods! {
     }
     // `compact` drops nil-valued entries into a new Hash; `compact!` does it
     // in place, answering nil when there was nothing to drop.
-    "compact" => fn compact(recv, args, _block) {
+    "compact"[0] => fn compact(recv, args, _block) {
         arity!(args, 0);
         let pairs = recv_hash!(recv)
             .lock()
@@ -251,7 +251,7 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    "compact!" => fn compact_bang(recv, args, _block) {
+    "compact!"[0] => fn compact_bang(recv, args, _block) {
         arity!(args, 0);
         let h = recv_hash!(recv);
         let nil_keys: Vec<RubyValue> = h
@@ -277,7 +277,7 @@ builtin_methods! {
     }
     // `assoc(key)` / `rassoc(value)`: the `[key, value]` pair matched by key
     // (resp. value), or nil.
-    "assoc" => fn assoc(recv, args, _block) {
+    "assoc"[1] => fn assoc(recv, args, _block) {
         arity!(args, 1);
         for (k, v) in recv_hash!(recv).lock().values() {
             if k.rb_eq(&args[0]) {
@@ -286,7 +286,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "rassoc" => fn rassoc(recv, args, _block) {
+    "rassoc"[1] => fn rassoc(recv, args, _block) {
         arity!(args, 1);
         for (k, v) in recv_hash!(recv).lock().values() {
             if v.rb_eq(&args[0]) {
@@ -297,7 +297,7 @@ builtin_methods! {
     }
     // `shift`: removes and returns the first `[key, value]` pair (insertion
     // order), or nil on an empty hash.
-    "shift" => fn shift(recv, args, _block) {
+    "shift"[0] => fn shift(recv, args, _block) {
         arity!(args, 0);
         let h = recv_hash!(recv);
         let first = h.lock().values().next().map(|(k, v)| (k.clone(), v.clone()));
@@ -311,13 +311,13 @@ builtin_methods! {
     }
     // `deconstruct_keys(keys)`: a Hash pattern matches against the hash
     // itself, so this just answers the receiver (the `keys` hint is ignored).
-    "deconstruct_keys" => fn deconstruct_keys(recv, args, _block) {
+    "deconstruct_keys"[1] => fn deconstruct_keys(recv, args, _block) {
         arity!(args, 1);
         Ok(recv.clone())
     }
     // `replace(other)`: swaps this hash's contents for `other`'s, answering
     // the receiver.
-    "replace" => fn replace(recv, args, _block) {
+    "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Hash(other) = &args[0] else {
             return Err(crate::dispatch::raise_error(
@@ -338,19 +338,19 @@ builtin_methods! {
     // Subset/superset by key AND value: `a <= b` iff every pair of `a` is in
     // `b`; `<` additionally requires `a` to be strictly smaller. `>`/`>=` are
     // the mirror.
-    "<=" => fn subset_eq(recv, args, _block) {
+    "<="[1] => fn subset_eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(hash_subset(recv, &args[0], false)?))
     }
-    "<" => fn subset(recv, args, _block) {
+    "<"[1] => fn subset(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(hash_subset(recv, &args[0], true)?))
     }
-    ">=" => fn superset_eq(recv, args, _block) {
+    ">="[1] => fn superset_eq(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(hash_subset(&args[0], recv, false)?))
     }
-    ">" => fn superset(recv, args, _block) {
+    ">"[1] => fn superset(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(hash_subset(&args[0], recv, true)?))
     }
@@ -358,25 +358,25 @@ builtin_methods! {
     // block accepts; `reject!`/`delete_if` drop them. The `!`-suffixed forms
     // answer nil when nothing changed; `keep_if`/`delete_if` always answer
     // the receiver.
-    "select!" | "filter!" => fn select_bang(recv, args, block) {
+    "select!"[0] | "filter!"[0] => fn select_bang(recv, args, block) {
         arity!(args, 0);
         hash_filter_bang(recv, args, block, true, true)
     }
-    "keep_if" => fn keep_if(recv, args, block) {
+    "keep_if"[0] => fn keep_if(recv, args, block) {
         arity!(args, 0);
         hash_filter_bang(recv, args, block, true, false)
     }
-    "reject!" => fn reject_bang(recv, args, block) {
+    "reject!"[0] => fn reject_bang(recv, args, block) {
         arity!(args, 0);
         hash_filter_bang(recv, args, block, false, true)
     }
-    "delete_if" => fn delete_if(recv, args, block) {
+    "delete_if"[0] => fn delete_if(recv, args, block) {
         arity!(args, 0);
         hash_filter_bang(recv, args, block, false, false)
     }
     // `transform_values!` rewrites each value in place through the block,
     // keeping keys and order; answers the receiver.
-    "transform_values!" => fn transform_values_bang(recv, args, block) {
+    "transform_values!"[0] => fn transform_values_bang(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "transform_values!", args, block);
         let h = recv_hash!(recv);
@@ -391,7 +391,7 @@ builtin_methods! {
     // Blockless `to_h` on a Hash is identity; with a block each entry is
     // re-mapped, the block seeing the two RAW yielded values (`{ |k, v| }`).
     // `to_hash` is the implicit-conversion protocol and never takes a block.
-    "to_h" | "to_hash" => fn to_h(recv, args, block) {
+    "to_h"[0] | "to_hash"[0] => fn to_h(recv, args, block) {
         arity!(args, 0);
         let Some(blk) = block else {
             return Ok(recv.clone());
@@ -413,7 +413,7 @@ builtin_methods! {
         )?;
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    "invert" => fn invert(recv, args, _block) {
+    "invert"[0] => fn invert(recv, args, _block) {
         arity!(args, 0);
         let pairs = recv_hash!(recv)
             .lock()
@@ -422,7 +422,7 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Hash(crate::hash_new(pairs)))
     }
-    "key" => fn key(recv, args, _block) {
+    "key"[1] => fn key(recv, args, _block) {
         arity!(args, 1);
         for (k, v) in recv_hash!(recv).lock().values() {
             if v.rb_eq(&args[0]) {
@@ -431,7 +431,7 @@ builtin_methods! {
         }
         Ok(RubyValue::Nil)
     }
-    "value?" | "has_value?" => fn value_p(recv, args, _block) {
+    "value?"[1] | "has_value?"[1] => fn value_p(recv, args, _block) {
         arity!(args, 1);
         let found = recv_hash!(recv)
             .lock()
@@ -439,7 +439,7 @@ builtin_methods! {
             .any(|(_, v)| v.rb_eq(&args[0]));
         Ok(RubyValue::Bool(found))
     }
-    "each_key" => fn each_key(recv, args, block) {
+    "each_key"[0] => fn each_key(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_key", args, block);
         let keys: Vec<RubyValue> =
@@ -449,7 +449,7 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "each_value" => fn each_value(recv, args, block) {
+    "each_value"[0] => fn each_value(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each_value", args, block);
         let vals: Vec<RubyValue> =
@@ -461,15 +461,15 @@ builtin_methods! {
     }
     // Hash-returning select/reject (Enumerable's array-returning forms
     // are shadowed by these, real Ruby's rule).
-    "select" | "filter" => fn select(recv, args, block) {
+    "select"[0] | "filter"[0] => fn select(recv, args, block) {
         arity!(args, 0);
         hash_filter(recv, args, block, true)
     }
-    "reject" => fn reject(recv, args, block) {
+    "reject"[0] => fn reject(recv, args, block) {
         arity!(args, 0);
         hash_filter(recv, args, block, false)
     }
-    "transform_values" => fn transform_values(recv, args, block) {
+    "transform_values"[0] => fn transform_values(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "transform_values", args, block);
         let pairs: Vec<(RubyValue, RubyValue)> =
@@ -529,7 +529,7 @@ builtin_methods! {
     // `to_proc` yields a lambda that looks a key up in this hash (`h.to_proc`
     // is `->(k) { h[k] }`); the hash is captured by identity, so later
     // mutations are visible through the proc.
-    "to_proc" => fn to_proc(recv, args, _block) {
+    "to_proc"[0] => fn to_proc(recv, args, _block) {
         arity!(args, 0);
         let h = recv_hash!(recv).clone();
         let p = crate::RProc::with_meta(
@@ -545,16 +545,16 @@ builtin_methods! {
     // `rehash` recomputes key digests after in-place key mutation. Spinel
     // hashes digest each key on lookup, so nothing is cached to rebuild --
     // it is a self-returning no-op here.
-    "rehash" => fn rehash(recv, args, _block) {
+    "rehash"[0] => fn rehash(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "clear" => fn clear(recv, args, _block) {
+    "clear"[0] => fn clear(recv, args, _block) {
         arity!(args, 0);
         recv_hash!(recv).lock().clear();
         Ok(recv.clone())
     }
-    "each" | "each_pair" => fn each(recv, args, block) {
+    "each"[0] | "each_pair"[0] => fn each(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         let pairs: Vec<(RubyValue, RubyValue)> =
@@ -744,7 +744,7 @@ builtin_methods! {
     // `Hash[]` class constructor -- distinct from the INSTANCE `Hash#[]` (key
     // lookup). Three shapes: a single Hash to copy, a single Array of `[k, v]`
     // pairs, or an even-length flat `k1, v1, k2, v2, ...` list.
-    "[]" => fn hash_bracket(_recv, args, _block) {
+    "[]"[1] => fn hash_bracket(_recv, args, _block) {
         if args.len() == 1 {
             match &args[0] {
                 RubyValue::Hash(h) => {

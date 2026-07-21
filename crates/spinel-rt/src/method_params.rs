@@ -40,7 +40,7 @@ impl ParamKind {
     }
 }
 
-type Descriptor = Vec<(ParamKind, Option<String>)>;
+pub type Descriptor = Vec<(ParamKind, Option<String>)>;
 
 static PARAMS: LazyLock<Mutex<HashMap<(u32, Symbol), Descriptor>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -55,13 +55,17 @@ pub fn register_params(cid: u32, name: &str, entries: Descriptor) {
 /// an inherited method resolves against the ancestor that defined it (matching
 /// dispatch). `None` when no user `def` registered it (a builtin, or absent).
 fn descriptor_of(class: ClassId, name: Symbol) -> Option<Descriptor> {
-    let map = PARAMS.lock();
-    for &anc in crate::dispatch::ancestors_of_value(class) {
-        if let Some(d) = map.get(&(anc.0, name)) {
-            return Some(d.clone());
+    {
+        let map = PARAMS.lock();
+        for &anc in crate::dispatch::ancestors_of_value(class) {
+            if let Some(d) = map.get(&(anc.0, name)) {
+                return Some(d.clone());
+            }
         }
     }
-    None
+    // Struct/Data member accessors are dispatched dynamically, with no
+    // `register_params` descriptor -- derive their shape from the struct meta.
+    crate::builtins::rstruct::accessor_params(class, name)
 }
 
 /// `Method#arity`: CRuby's signed count -- the number of mandatory parameters
@@ -71,19 +75,36 @@ fn descriptor_of(class: ClassId, name: Symbol) -> Option<Descriptor> {
 /// the sign). `None` for a method with no registered descriptor (a builtin),
 /// letting the caller fall back to its `-1` catch-all.
 pub fn arity(class: ClassId, name: Symbol) -> Option<i64> {
-    let d = descriptor_of(class, name)?;
-    let mandatory = d
+    if let Some(d) = descriptor_of(class, name) {
+        return Some(arity_of(&d));
+    }
+    // A builtin (C-defined) method has no `Params` descriptor -- its arity is
+    // the argc declared at its `builtin_methods!` definition site. Walk the
+    // receiver's ancestry so an inherited builtin resolves against its owner.
+    let n = name.name();
+    let n = n.as_str();
+    crate::dispatch::ancestors_of_value(class)
         .iter()
-        .filter(|(k, _)| matches!(k, ParamKind::Req | ParamKind::KeyReq))
-        .count() as i64;
-    // A required keyword contributes at most one to the mandatory count, no
-    // matter how many there are (CRuby: `def f(a:, b:)` has arity 1).
-    let req_kw = d.iter().filter(|(k, _)| *k == ParamKind::KeyReq).count() as i64;
-    let mandatory = mandatory - req_kw + i64::from(req_kw > 0);
-    let variadic = d
+        .find_map(|&anc| crate::builtins::class_arity_table(anc).and_then(|f| f(n)))
+}
+
+/// CRuby's signed arity for one descriptor. Required positionals (a post arg is
+/// emitted as a trailing `Req`, so it counts here too) form the mandatory base.
+/// An optional positional or a rest makes the method variadic. Keywords act as
+/// one unit: ANY required keyword adds a single mandatory slot (the keyword hash
+/// is required) and keeps the arity fixed; otherwise an optional keyword or a
+/// keyword-rest makes it variadic. A block parameter never affects arity.
+pub(crate) fn arity_of(d: &[(ParamKind, Option<String>)]) -> i64 {
+    let mut mandatory = d.iter().filter(|(k, _)| *k == ParamKind::Req).count() as i64;
+    let mut variadic = d
         .iter()
-        .any(|(k, _)| matches!(k, ParamKind::Opt | ParamKind::Rest | ParamKind::KeyRest));
-    Some(if variadic { -(mandatory + 1) } else { mandatory })
+        .any(|(k, _)| matches!(k, ParamKind::Opt | ParamKind::Rest));
+    if d.iter().any(|(k, _)| *k == ParamKind::KeyReq) {
+        mandatory += 1;
+    } else if d.iter().any(|(k, _)| matches!(k, ParamKind::Key | ParamKind::KeyRest)) {
+        variadic = true;
+    }
+    if variadic { -(mandatory + 1) } else { mandatory }
 }
 
 /// `Method#parameters`: the array of `[kind, name]` pairs (an anonymous

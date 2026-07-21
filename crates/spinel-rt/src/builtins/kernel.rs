@@ -221,7 +221,7 @@ builtin_methods! {
             _ => recv as *const _ as i64,
         }))
     }
-    "nil?" => fn nil_p(recv, args, _block) {
+    "nil?"[0] => fn nil_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(recv.is_nil()))
     }
@@ -335,11 +335,11 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(crate::value_hash_code(recv)))
     }
-    "to_s" => fn to_s(recv, args, _block) {
+    "to_s"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv.to_display_string())))
     }
-    "inspect" => fn inspect(recv, args, _block) {
+    "inspect"[0] => fn inspect(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv.inspect_string())))
     }

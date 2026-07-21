@@ -160,6 +160,23 @@ pub(crate) fn responds(name: &str) -> bool {
     NAMES.contains(&name)
 }
 
+/// `Method#arity` for an `Enumerable` method reached through a mixing-in class's
+/// ancestry (dispatched off the ancestor walk, not `class_table`). Only the
+/// fixed-arity methods are listed; every other `Enumerable` method is variadic
+/// in CRuby, so it falls through to the caller's `-1` default. Oracle-derived
+/// (`Enumerable.instance_method(name).arity`).
+pub(crate) fn arity(name: &str) -> Option<i64> {
+    Some(match name {
+        "map" | "collect" | "select" | "filter" | "find_all" | "reject" | "sort"
+        | "sort_by" | "minmax" | "group_by" | "partition" | "flat_map"
+        | "collect_concat" | "filter_map" | "take_while" | "drop_while" | "uniq"
+        | "chunk_while" | "slice_when" | "minmax_by" | "chunk" | "lazy" | "compact" => 0,
+        "include?" | "member?" | "each_slice" | "each_cons" | "each_with_object"
+        | "take" | "drop" | "grep" | "grep_v" => 1,
+        _ => return None,
+    })
+}
+
 /// CRuby's `rb_enum_values_pack` rule -- see the module docs. Shared
 /// with `enumerator`'s with_index/with_object wrappers (Phase 17.2).
 pub(crate) fn pack(args: &[RubyValue]) -> RubyValue {

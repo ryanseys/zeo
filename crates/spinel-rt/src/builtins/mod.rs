@@ -149,6 +149,79 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
     })
 }
 
+/// `class_table`'s arity twin: ClassId -> the instance-method arity table
+/// (`<lookup>_arity`, generated beside every `builtin_methods!` `lookup`).
+/// `Method#arity` consults this for a builtin-receiver method object, walking
+/// the receiver's ancestry so an inherited builtin resolves against its owner.
+pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> {
+    Some(match id {
+        spinel_abi::INTEGER_CLASS => integer::lookup_arity,
+        spinel_abi::FLOAT_CLASS => float::lookup_arity,
+        spinel_abi::NUMERIC_CLASS => numeric::lookup_arity,
+        spinel_abi::RATIONAL_CLASS => rational::lookup_arity,
+        spinel_abi::COMPLEX_CLASS => complex::lookup_arity,
+        spinel_abi::STRING_CLASS => string::lookup_arity,
+        spinel_abi::SYMBOL_CLASS => symbol::lookup_arity,
+        spinel_abi::ARRAY_CLASS => array::lookup_arity,
+        spinel_abi::HASH_CLASS => hash::lookup_arity,
+        spinel_abi::RANGE_CLASS => range::lookup_arity,
+        spinel_abi::PROC_CLASS => rproc::lookup_arity,
+        spinel_abi::REGEXP_CLASS => regexp::lookup_arity,
+        spinel_abi::MATCH_DATA_CLASS => matchdata::lookup_arity,
+        spinel_abi::CLASS_CLASS => class_module::lookup_class_arity,
+        spinel_abi::MODULE_CLASS => class_module::lookup_module_arity,
+        spinel_abi::NIL_CLASS => object::lookup_nil_arity,
+        spinel_abi::TRUE_CLASS | spinel_abi::FALSE_CLASS => object::lookup_bool_arity,
+        // Comparable/Enumerable are modules dispatched off the ancestor walk
+        // (no `class_table` row), so their arities live in hand-rolled fns.
+        spinel_abi::COMPARABLE_CLASS => comparable::arity,
+        spinel_abi::ENUMERABLE_CLASS => enumerable::arity,
+        spinel_abi::KERNEL_CLASS => kernel::lookup_arity,
+        spinel_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
+        spinel_abi::ENUMERATOR_CLASS
+        | spinel_abi::ENUMERATOR_CHAIN_CLASS
+        | spinel_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup_arity,
+        spinel_abi::YIELDER_CLASS => enumerator::lookup_yielder_arity,
+        spinel_abi::IO_CLASS | spinel_abi::FILE_CLASS => io::lookup_arity,
+        spinel_abi::FILE_STAT_CLASS => stat::lookup_arity,
+        spinel_abi::DIR_CLASS => dir::lookup_arity,
+        spinel_abi::ARGF_CLASS => argf::lookup_arity,
+        spinel_abi::METHOD_CLASS => method_obj::lookup_arity,
+        spinel_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
+        spinel_abi::FIBER_CLASS => fiber::lookup_arity,
+        spinel_abi::THREAD_CLASS => thread::lookup_arity,
+        spinel_abi::RANDOM_CLASS => random::lookup_arity,
+        spinel_abi::TIME_CLASS => time::lookup_arity,
+        spinel_abi::PROCESS_STATUS_CLASS => process::lookup_status_arity,
+        spinel_abi::ENCODING_CLASS => encoding::lookup_arity,
+        spinel_abi::SET_CLASS => set::lookup_arity,
+        spinel_abi::STRUCT_CLASS => rstruct::lookup_arity,
+        spinel_abi::DATA_CLASS => rstruct::lookup_data_arity,
+        spinel_abi::LAZY_CLASS => lazy::lookup_arity,
+        spinel_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_arity,
+        spinel_abi::QUEUE_CLASS | spinel_abi::SIZED_QUEUE_CLASS => queue::lookup_arity,
+        spinel_abi::MUTEX_CLASS => mutex::lookup_arity,
+        #[cfg(feature = "ext-stringio")]
+        spinel_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_arity,
+        #[cfg(feature = "ext-monitor")]
+        spinel_abi::MONITOR_CLASS => crate::ext::monitor::lookup_arity,
+        #[cfg(feature = "ext-strscan")]
+        spinel_abi::STRING_SCANNER_CLASS => crate::ext::strscan::lookup_arity,
+        #[cfg(feature = "ext-digest")]
+        spinel_abi::DIGEST_MD5_CLASS
+        | spinel_abi::DIGEST_SHA1_CLASS
+        | spinel_abi::DIGEST_SHA256_CLASS
+        | spinel_abi::DIGEST_SHA512_CLASS => crate::ext::digest::lookup_arity,
+        #[cfg(feature = "ext-date")]
+        spinel_abi::DATE_CLASS | spinel_abi::DATETIME_CLASS => crate::ext::date::lookup_arity,
+        #[cfg(feature = "ext-socket")]
+        spinel_abi::SOCKET_CLASS => crate::ext::socket::lookup_arity,
+        #[cfg(feature = "ext-ffi")]
+        spinel_abi::FFI_POINTER_CLASS | spinel_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup_arity,
+        _ => return None,
+    })
+}
+
 /// The static ClassId -> CLASS-METHOD table map -- `class_table`'s
 /// counterpart for methods invoked on the class/module VALUE itself
 /// (`File.read`, `Time.now`, `Dir.pwd`, `Math.sqrt`), as opposed to on an
@@ -430,7 +503,7 @@ pub(crate) fn convert_name_of(v: &RubyValue) -> String {
 macro_rules! builtin_methods {
     (
         $lookup_vis:vis fn $lookup:ident;
-        $( $($mname:literal)|+ => fn $fname:ident($recv:tt, $args:tt, $block:tt) $body:block )*
+        $( $($mname:literal $([$arity:literal])?)|+ => fn $fname:ident($recv:tt, $args:tt, $block:tt) $body:block )*
     ) => {
         $(
             pub(crate) fn $fname(
@@ -454,6 +527,24 @@ macro_rules! builtin_methods {
             #[allow(dead_code)]
             $lookup_vis fn [<$lookup _names>]() -> &'static [&'static str] {
                 &[ $( $($mname),+ ),* ]
+            }
+            /// `Method#arity` for each method this table defines -- CRuby's
+            /// per-method argc, DECLARED at the definition site as an optional
+            /// `[n]` after each NAME literal (per-name, since aliases can differ:
+            /// `Array#<<` is 1 but `#push` is -1). Mirrors `rb_define_method`'s
+            /// argc column; an un-annotated name defaults to `-1`, CRuby's
+            /// variadic-cfunc arity. `None` when this table does not define
+            /// `name`.
+            #[allow(dead_code)]
+            $lookup_vis fn [<$lookup _arity>](name: &str) -> Option<i64> {
+                match name {
+                    $( $( $mname => Some({
+                        let _a: i64 = -1;
+                        $( let _a: i64 = $arity; )?
+                        _a
+                    }), )+ )*
+                    _ => None,
+                }
             }
         }
     };

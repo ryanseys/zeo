@@ -254,14 +254,14 @@ fn strongly_connected_components(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "add" | "<<" => fn add(recv, args, _block) {
+    "add"[1] | "<<"[1] => fn add(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         set_of(recv).insert(args[0].clone());
         Ok(recv.clone())
     }
     // `add?`: nil if the element was already present, else self (post-add).
-    "add?" => fn add_p(recv, args, _block) {
+    "add?"[1] => fn add_p(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         if set_of(recv).insert(args[0].clone()) {
@@ -270,18 +270,18 @@ builtin_methods! {
             Ok(RubyValue::Nil)
         }
     }
-    "include?" | "member?" | "===" | "contain?" => fn include_p(recv, args, _block) {
+    "include?"[1] | "member?"[1] | "==="[1] | "contain?" => fn include_p(recv, args, _block) {
         arity!(args, 1);
         Ok(RubyValue::Bool(set_of(recv).contains(&args[0])))
     }
-    "delete" => fn delete(recv, args, _block) {
+    "delete"[1] => fn delete(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         crate::hash_delete(&set_of(recv).hash, &args[0]);
         Ok(recv.clone())
     }
     // `delete?`: self if the element was present and removed, else nil.
-    "delete?" => fn delete_p(recv, args, _block) {
+    "delete?"[1] => fn delete_p(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -294,7 +294,7 @@ builtin_methods! {
     }
     // `subtract(enum)` -- removes every element of `enum`, returning self
     // (the in-place counterpart of `-`).
-    "subtract" => fn subtract(recv, args, _block) {
+    "subtract"[1] => fn subtract(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -305,7 +305,7 @@ builtin_methods! {
     }
     // `replace(enum)` -- discards the current members and re-seeds from
     // `enum`, returning self.
-    "replace" => fn replace(recv, args, _block) {
+    "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
         check_frozen(recv)?;
         let elements = arg_elements(&args[0])?;
@@ -313,7 +313,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // `flatten` -- a NEW Set with every nested Set expanded recursively.
-    "flatten" => fn flatten(recv, args, _block) {
+    "flatten"[0] => fn flatten(recv, args, _block) {
         arity!(args, 0);
         let mut out = Vec::new();
         flatten_into(set_of(recv), &mut out);
@@ -321,7 +321,7 @@ builtin_methods! {
     }
     // `flatten!` -- flattens in place; self if it held any nested Set, else
     // nil (nothing to flatten).
-    "flatten!" => fn flatten_bang(recv, args, _block) {
+    "flatten!"[0] => fn flatten_bang(recv, args, _block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let s = set_of(recv);
@@ -335,7 +335,7 @@ builtin_methods! {
     }
     // `map!`/`collect!` -- replaces each element with the block's result,
     // in place, returning self (dedup applies to the mapped values).
-    "map!" | "collect!" => fn map_bang(recv, args, block) {
+    "map!"[0] | "collect!"[0] => fn map_bang(recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "map!", args, block);
@@ -349,7 +349,7 @@ builtin_methods! {
     }
     // `select!`/`filter!` -- keep the elements the block likes; self if any
     // were dropped, else nil.
-    "select!" | "filter!" => fn select_bang(recv, args, block) {
+    "select!"[0] | "filter!"[0] => fn select_bang(recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "select!", args, block);
@@ -357,7 +357,7 @@ builtin_methods! {
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `keep_if` -- like `select!` but always returns self.
-    "keep_if" => fn keep_if(recv, args, block) {
+    "keep_if"[0] => fn keep_if(recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "keep_if", args, block);
@@ -366,7 +366,7 @@ builtin_methods! {
     }
     // `reject!` -- drop the elements the block likes; self if any were
     // dropped, else nil.
-    "reject!" => fn reject_bang(recv, args, block) {
+    "reject!"[0] => fn reject_bang(recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "reject!", args, block);
@@ -374,7 +374,7 @@ builtin_methods! {
         Ok(if changed { recv.clone() } else { RubyValue::Nil })
     }
     // `delete_if` -- like `reject!` but always returns self.
-    "delete_if" => fn delete_if(recv, args, block) {
+    "delete_if"[0] => fn delete_if(recv, args, block) {
         arity!(args, 0);
         check_frozen(recv)?;
         let p = block_or_enum!(recv, "delete_if", args, block);
@@ -382,7 +382,7 @@ builtin_methods! {
         Ok(recv.clone())
     }
     // `classify { |o| key }` -- a `Hash{ key => Set }` grouping by block value.
-    "classify" => fn classify(recv, args, block) {
+    "classify"[0] => fn classify(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "classify", args, block);
         Ok(RubyValue::Hash(classify_groups(recv, &p)?))
@@ -390,7 +390,7 @@ builtin_methods! {
     // `divide` -- partition into a Set of Sets. A one-arg block groups by its
     // value (`classify`'s values); a two-arg block treats `block.call(u,v)` as
     // a directed edge and returns the strongly-connected components.
-    "divide" => fn divide(recv, args, block) {
+    "divide"[0] => fn divide(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "divide", args, block);
         if p.arity() == 2 {
@@ -415,7 +415,7 @@ builtin_methods! {
             Ok(set_from(values))
         }
     }
-    "each" => fn each(recv, args, block) {
+    "each"[0] => fn each(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         for e in set_of(recv).elements() {
@@ -423,22 +423,22 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "size" | "length" => fn size(recv, args, _block) {
+    "size"[0] | "length"[0] => fn size(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(set_of(recv).len() as i64))
     }
     // `Set#reset` rebuilds the internal index after elements have been mutated
     // in place. This Set keys elements structurally, so there is nothing to
     // re-index; it answers self, matching CRuby's return.
-    "reset" => fn reset(recv, args, _block) {
+    "reset"[0] => fn reset(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "empty?" => fn empty_p(recv, args, _block) {
+    "empty?"[0] => fn empty_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(set_of(recv).len() == 0))
     }
-    "to_a" => fn to_a(recv, args, _block) {
+    "to_a"[0] => fn to_a(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(set_of(recv).elements())))
     }
@@ -452,7 +452,7 @@ builtin_methods! {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "clear" => fn clear(recv, args, _block) {
+    "clear"[0] => fn clear(recv, args, _block) {
         arity!(args, 0);
         check_frozen(recv)?;
         set_of(recv).hash.lock().clear();
@@ -468,13 +468,13 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "|" | "union" | "+" | "merge_new" => fn union(recv, args, _block) {
+    "|"[1] | "union"[1] | "+"[1] | "merge_new" => fn union(recv, args, _block) {
         arity!(args, 1);
         let mut out = set_of(recv).elements();
         out.extend(arg_elements(&args[0])?);
         Ok(set_from(out))
     }
-    "&" | "intersection" => fn intersection(recv, args, _block) {
+    "&"[1] | "intersection"[1] => fn intersection(recv, args, _block) {
         arity!(args, 1);
         let other = set_from(arg_elements(&args[0])?);
         let keep: Vec<RubyValue> = set_of(recv)
@@ -484,7 +484,7 @@ builtin_methods! {
             .collect();
         Ok(set_from(keep))
     }
-    "-" | "difference" => fn difference(recv, args, _block) {
+    "-"[1] | "difference"[1] => fn difference(recv, args, _block) {
         arity!(args, 1);
         let other = set_from(arg_elements(&args[0])?);
         let keep: Vec<RubyValue> = set_of(recv)
@@ -494,7 +494,7 @@ builtin_methods! {
             .collect();
         Ok(set_from(keep))
     }
-    "^" => fn symmetric_difference(recv, args, _block) {
+    "^"[1] => fn symmetric_difference(recv, args, _block) {
         arity!(args, 1);
         let recv_elems = set_of(recv).elements();
         let recv_set = set_from(recv_elems.clone());
@@ -509,7 +509,7 @@ builtin_methods! {
         }
         Ok(set_from(out))
     }
-    "==" => fn eq(recv, args, _block) {
+    "=="[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
             return Ok(RubyValue::Bool(false));
@@ -521,48 +521,48 @@ builtin_methods! {
         let other = set_of(&args[0]);
         Ok(RubyValue::Bool(a.len() == other.len() && a.elements().iter().all(|e| other.contains(e))))
     }
-    "subset?" | "<=" => fn subset_p(recv, args, _block) {
+    "subset?"[1] | "<="[1] => fn subset_p(recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let a = set_of(recv);
         Ok(RubyValue::Bool(a.elements().iter().all(|e| set_of(&other).contains(e))))
     }
-    "proper_subset?" | "<" => fn proper_subset_p(recv, args, _block) {
+    "proper_subset?"[1] | "<"[1] => fn proper_subset_p(recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let a = set_of(recv);
         let os = set_of(&other);
         Ok(RubyValue::Bool(a.len() < os.len() && a.elements().iter().all(|e| os.contains(e))))
     }
-    "superset?" | ">=" => fn superset_p(recv, args, _block) {
+    "superset?"[1] | ">="[1] => fn superset_p(recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let os = set_of(&other);
         let a = set_of(recv);
         Ok(RubyValue::Bool(os.elements().iter().all(|e| a.contains(e))))
     }
-    "proper_superset?" | ">" => fn proper_superset_p(recv, args, _block) {
+    "proper_superset?"[1] | ">"[1] => fn proper_superset_p(recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
         let os = set_of(&other);
         let a = set_of(recv);
         Ok(RubyValue::Bool(a.len() > os.len() && os.elements().iter().all(|e| a.contains(e))))
     }
-    "disjoint?" => fn disjoint_p(recv, args, _block) {
+    "disjoint?"[1] => fn disjoint_p(recv, args, _block) {
         arity!(args, 1);
         let a = set_of(recv);
         Ok(RubyValue::Bool(arg_elements(&args[0])?.iter().all(|e| !a.contains(e))))
     }
-    "intersect?" => fn intersect_p(recv, args, _block) {
+    "intersect?"[1] => fn intersect_p(recv, args, _block) {
         arity!(args, 1);
         let a = set_of(recv);
         Ok(RubyValue::Bool(arg_elements(&args[0])?.iter().any(|e| a.contains(e))))
     }
-    "dup" | "clone" => fn dup(recv, args, _block) {
+    "dup"[0] | "clone" => fn dup(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Object(set_of(recv).dup_object(false)))
     }
-    "inspect" | "to_s" => fn inspect(recv, args, _block) {
+    "inspect"[0] | "to_s"[0] => fn inspect(recv, args, _block) {
         arity!(args, 0);
         let parts: Vec<String> =
             set_of(recv).elements().iter().map(|e| e.inspect_string()).collect();

@@ -109,7 +109,7 @@ builtin_methods! {
     //
     // The test is on the END only, matching CRuby: a BEGINLESS range isn't
     // caught here and instead fails in `each`, which cannot start.
-    "to_a" | "entries" => fn to_a(recv, args, _block) {
+    "to_a"[0] | "entries"[0] => fn to_a(recv, args, _block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         let unbounded = match end {
@@ -127,7 +127,7 @@ builtin_methods! {
             .expect("Enumerable implements to_a")
     }
 
-    "each" => fn each(recv, args, block) {
+    "each"[0] => fn each(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -206,7 +206,7 @@ builtin_methods! {
     // find-any for a Numeric comparator result (`0` hits, negative searches
     // low, positive high; `nil` on no hit). Binary search on the bounds -- no
     // materialization, so a huge range is fine.
-    "bsearch" => fn bsearch(recv, args, block) {
+    "bsearch"[0] => fn bsearch(recv, args, block) {
         arity!(args, 0);
         let p = crate::builtins::need_block!(block);
         let (start, end, exclusive) = range_parts(recv);
@@ -248,7 +248,7 @@ builtin_methods! {
     // in real Ruby only for non-linear element types (String ranges walk
     // succ) -- for the numeric/comparable cases this spike supports the
     // cover check is the faithful behavior for all four names.
-    "===" | "cover?" | "include?" | "member?" => fn case_eq(recv, args, _block) {
+    "==="[1] | "cover?"[1] | "include?"[1] | "member?"[1] => fn case_eq(recv, args, _block) {
         arity!(args, 1);
         let (start, end, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(crate::value::range_covers(
@@ -258,7 +258,7 @@ builtin_methods! {
     // `overlap?(other)` -- do two ranges share at least one element? False
     // when either range lies wholly beyond the other's end (CRuby range.c's
     // empty-region test); a beginless/endless bound never bounds that side.
-    "overlap?" => fn overlap_p(recv, args, _block) {
+    "overlap?"[1] => fn overlap_p(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Range(ob, oe, ox) = &args[0] else {
             return Err(crate::dispatch::raise_error(
@@ -312,7 +312,7 @@ builtin_methods! {
             )),
         }
     }
-    "size" => fn size(recv, args, _block) {
+    "size"[0] => fn size(recv, args, _block) {
         arity!(args, 0);
         let (start, end, exclusive) = range_parts(recv);
         // The begin must be an Integer (CRuby iterates from it via `succ`).
@@ -354,7 +354,7 @@ builtin_methods! {
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
     // `step(n)`: the blockless form returns an Enumerator (Phase 17.2).
-    "step" | "%" => fn step(recv, args, block) {
+    "step" | "%"[1] => fn step(recv, args, block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "step", args, block);
         let (start, end, exclusive) = range_parts(recv);
@@ -435,12 +435,12 @@ builtin_methods! {
         }
         Ok(recv.clone())
     }
-    "exclude_end?" => fn exclude_end_p(recv, args, _block) {
+    "exclude_end?"[0] => fn exclude_end_p(recv, args, _block) {
         arity!(args, 0);
         let (_, _, exclusive) = range_parts(recv);
         Ok(RubyValue::Bool(exclusive))
     }
-    "begin" | "first" => fn begin_m(recv, args, _block) {
+    "begin"[0] | "first" => fn begin_m(recv, args, _block) {
         // `first` with an argument is Enumerable's n-form; only the 0-arg
         // endpoint accessor lives here. Falling through on arity would be
         // wrong (Enumerable#first(n) IS reachable next in the chain), so:
@@ -459,7 +459,7 @@ builtin_methods! {
         let (start, _, _) = range_parts(recv);
         Ok(start.cloned().unwrap_or(RubyValue::Nil))
     }
-    "end" => fn end_m(recv, args, _block) {
+    "end"[0] => fn end_m(recv, args, _block) {
         arity!(args, 0);
         let (_, end, _) = range_parts(recv);
         Ok(end.cloned().unwrap_or(RubyValue::Nil))

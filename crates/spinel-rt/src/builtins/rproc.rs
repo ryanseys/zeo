@@ -67,12 +67,30 @@ builtin_methods! {
     // array, matching CRuby.
     "parameters" => fn parameters(recv, args, _block) {
         crate::builtins::arity!(args, 0..=1);
-        let rows: Vec<RubyValue> = recv_proc(recv)
+        let p = recv_proc(recv);
+        // `parameters(lambda:)` forces the reporting view (#2693): true reports
+        // plain positionals as :req, false as :opt, nil/absent follows the
+        // receiver's own lambda-ness. Kinds are stored canonically (lambda
+        // style), so a proc-view report demotes every mandatory positional
+        // (:req -> :opt); rest/opt/keyword/block kinds never change.
+        let lambda_view = match args.first() {
+            Some(RubyValue::Hash(h)) => h
+                .lock()
+                .values()
+                .find_map(|(k, v)| match k {
+                    RubyValue::Symbol(s) if s.name() == "lambda" && !v.is_nil() => Some(v.truthy()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| p.is_lambda()),
+            _ => p.is_lambda(),
+        };
+        let rows: Vec<RubyValue> = p
             .parameters()
             .iter()
-            .map(|p| {
-                let mut entry = vec![RubyValue::Symbol(crate::Symbol::intern(p.kind))];
-                if let Some(name) = p.name {
+            .map(|pm| {
+                let kind = if pm.kind == "req" && !lambda_view { "opt" } else { pm.kind };
+                let mut entry = vec![RubyValue::Symbol(crate::Symbol::intern(kind))];
+                if let Some(name) = pm.name {
                     entry.push(RubyValue::Symbol(name));
                 }
                 RubyValue::Array(crate::array_new(entry))

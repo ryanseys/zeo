@@ -1161,6 +1161,19 @@ pub fn method_defined(recv_class: ClassId, name: Symbol) -> bool {
         && instance_method_visibility(recv_class, name) != Some(MethodVisibility::Private)
 }
 
+/// `Module#method_defined?(name, inherit)` -- with `inherit` false the lookup is
+/// restricted to methods `recv_class` defines DIRECTLY (its own `def`s and attr
+/// accessors), skipping the ancestor walk. A private own method still answers
+/// false, matching the inherit-true contract.
+pub fn method_defined_inherit(recv_class: ClassId, name: Symbol, inherit: bool) -> bool {
+    if inherit {
+        return method_defined(recv_class, name);
+    }
+    let Some(r) = REGISTRY.get() else { return false };
+    r.defines_own(recv_class, name)
+        && r.own_method_visibility(recv_class, name) != Some(MethodVisibility::Private)
+}
+
 pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool {
     let n = name.name();
     let n = n.as_str();

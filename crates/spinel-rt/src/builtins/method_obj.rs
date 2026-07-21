@@ -282,6 +282,13 @@ fn m_curry(recv: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>) -> Res
     crate::dispatch::send_value(&proc, Symbol::intern("curry"), args, None)
 }
 
+/// `Method#arity` twin of `lookup` -- this hand-rolled table declares no
+/// per-method argc, so every method it defines reports CRuby's
+/// variadic-cfunc default (`-1`).
+pub fn lookup_arity(name: &str) -> Option<i64> {
+    lookup(name).map(|_| -1)
+}
+
 pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "call" | "()" | "[]" | "===" => m_call,
@@ -388,6 +395,13 @@ fn bind_target(um: &RUnboundMethod, obj: &RubyValue) -> Result<RubyValue, Signal
         ));
     }
     Ok(RubyValue::Object(Arc::new(RMethod { recv: obj.clone(), name: um.name })))
+}
+
+/// `Method#arity` twin of `lookup_unbound` -- this hand-rolled table declares no
+/// per-method argc, so every method it defines reports CRuby's
+/// variadic-cfunc default (`-1`).
+pub fn lookup_unbound_arity(name: &str) -> Option<i64> {
+    lookup_unbound(name).map(|_| -1)
 }
 
 pub fn lookup_unbound(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {

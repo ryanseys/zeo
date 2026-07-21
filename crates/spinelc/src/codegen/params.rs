@@ -931,10 +931,13 @@ pub(super) fn proc_arity(params: &Params, is_lambda: bool) -> i32 {
 }
 
 /// `Proc#parameters` metadata: emits `vec![spinel_rt::ProcParamMeta::new(...)]`
-/// in CRuby's order and kinds. A proc reports required positionals as `:opt`, a
-/// lambda as `:req`; a parenthesized destructuring slot (named `__destr_<i>`
-/// internally) reports its kind with no name, matching CRuby.
-pub(super) fn proc_parameters(params: &Params, is_lambda: bool) -> TokenStream {
+/// in CRuby's order and kinds. Kinds are stored CANONICALLY (lambda-style): a
+/// plain required positional is `:req` regardless of the receiver's lambda-ness.
+/// The runtime remaps leading requireds to `:opt` for a proc-view report (see
+/// `builtins::rproc::parameters`), which also lets `#parameters(lambda:)` force
+/// either view. A parenthesized destructuring slot (`__destr_<i>`) reports no
+/// name; `is_lambda` no longer affects the stored kinds.
+pub(super) fn proc_parameters(params: &Params, _is_lambda: bool) -> TokenStream {
     fn mk(kind: &str, name: Option<&str>) -> TokenStream {
         let name_tok = match name {
             Some(n) => quote! { Some(#n) },
@@ -946,10 +949,9 @@ pub(super) fn proc_parameters(params: &Params, is_lambda: bool) -> TokenStream {
     fn visible(n: &str) -> Option<&str> {
         (!n.starts_with("__destr")).then_some(n)
     }
-    let positional = if is_lambda { "req" } else { "opt" };
     let mut items: Vec<TokenStream> = Vec::new();
     for r in &params.required {
-        items.push(mk(positional, visible(r)));
+        items.push(mk("req", visible(r)));
     }
     for (o, _) in &params.optional {
         items.push(mk("opt", visible(o)));
@@ -960,7 +962,7 @@ pub(super) fn proc_parameters(params: &Params, is_lambda: bool) -> TokenStream {
         items.push(mk("rest", Some(anon_name(rest.as_deref(), "*"))));
     }
     for p in &params.post {
-        items.push(mk(positional, visible(p)));
+        items.push(mk("req", visible(p)));
     }
     for kw in &params.keywords {
         match kw {

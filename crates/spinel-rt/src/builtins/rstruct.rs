@@ -93,6 +93,27 @@ pub fn is_struct_class(class_id: ClassId) -> bool {
     meta_of(class_id).is_some()
 }
 
+/// The parameter shape of a struct/data member accessor `name` on `class_id`,
+/// for `Method#arity`/`#parameters` (these accessors are dispatched dynamically,
+/// so no `register_params` descriptor exists). A reader (`:x`) takes no args; a
+/// writer (`:x=`, structs only) takes one required `value`. `None` when `name`
+/// is not a member accessor of this class.
+pub fn accessor_params(class_id: ClassId, name: Symbol) -> Option<crate::method_params::Descriptor> {
+    use crate::method_params::ParamKind;
+    let meta = meta_of(class_id)?;
+    let n = name.name();
+    if let Some(base) = n.strip_suffix('=') {
+        if !meta.is_data && meta.members.iter().any(|m| m.name() == base) {
+            return Some(vec![(ParamKind::Req, Some("value".to_string()))]);
+        }
+        return None;
+    }
+    meta.members
+        .iter()
+        .any(|m| m.name() == n)
+        .then(Vec::new)
+}
+
 // ---------------------------------------------------------------------------
 // The instance
 // ---------------------------------------------------------------------------

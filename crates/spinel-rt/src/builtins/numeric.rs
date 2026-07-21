@@ -297,19 +297,19 @@ pub(crate) fn num_mul_or_panic(a: &RubyValue, b: &RubyValue) -> Result<RubyValue
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "zero?" => fn zero_p(recv, args, _block) {
+    "zero?"[0] => fn zero_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(num_eq(recv, &RubyValue::Int(0)).unwrap_or(false)))
     }
-    "positive?" => fn positive_p(recv, args, _block) {
+    "positive?"[0] => fn positive_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(1)))))
     }
-    "negative?" => fn negative_p(recv, args, _block) {
+    "negative?"[0] => fn negative_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(num_cmp(recv, &RubyValue::Int(0)), Some(Some(-1)))))
     }
-    "nonzero?" => fn nonzero_p(recv, args, _block) {
+    "nonzero?"[0] => fn nonzero_p(recv, args, _block) {
         arity!(args, 0);
         Ok(if num_eq(recv, &RubyValue::Int(0)).unwrap_or(false) {
             RubyValue::Nil
@@ -317,33 +317,33 @@ builtin_methods! {
             recv.clone()
         })
     }
-    "integer?" => fn integer_p(recv, args, _block) {
+    "integer?"[0] => fn integer_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(matches!(recv, RubyValue::Int(_) | RubyValue::BigInt(_))))
     }
-    "real?" => fn real_p(recv, args, _block) {
+    "real?"[0] => fn real_p(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Bool(!matches!(recv, RubyValue::Complex(_))))
     }
-    "real" => fn real(recv, args, _block) {
+    "real"[0] => fn real(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "imag" | "imaginary" => fn imag(_recv, args, _block) {
+    "imag"[0] | "imaginary"[0] => fn imag(_recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Int(0))
     }
-    "to_c" => fn to_c(recv, args, _block) {
+    "to_c"[0] => fn to_c(recv, args, _block) {
         arity!(args, 0);
         crate::builtins::complex::complex_new(recv.clone(), RubyValue::Int(0))
     }
     // A real number's cartesian view is `[self, 0]`.
-    "rect" | "rectangular" => fn rect(recv, args, _block) {
+    "rect"[0] | "rectangular"[0] => fn rect(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Array(crate::array_new(vec![recv.clone(), RubyValue::Int(0)])))
     }
     // Polar view: magnitude `|self|`, angle `0` (non-negative) or `pi` (negative).
-    "polar" => fn polar(recv, args, _block) {
+    "polar"[0] => fn polar(recv, args, _block) {
         arity!(args, 0);
         let magnitude =
             crate::dispatch::send_value(recv, crate::Symbol::intern("abs"), &[], None)?;
@@ -354,15 +354,15 @@ builtin_methods! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![magnitude, angle])))
     }
-    "abs2" => fn abs2(recv, args, _block) {
+    "abs2"[0] => fn abs2(recv, args, _block) {
         arity!(args, 0);
         num_mul(recv, recv).expect("numeric receiver")
     }
-    "conj" | "conjugate" => fn conj(recv, args, _block) {
+    "conj"[0] | "conjugate"[0] => fn conj(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
     }
-    "angle" | "arg" | "phase" => fn arg(recv, args, _block) {
+    "angle"[0] | "arg"[0] | "phase"[0] => fn arg(recv, args, _block) {
         arity!(args, 0);
         // 0 for non-negative reals, pi for negative (a Float in real Ruby
         // only for the negative case; 0 stays Integer).
@@ -372,7 +372,7 @@ builtin_methods! {
             RubyValue::Int(0)
         })
     }
-    "divmod" => fn divmod(recv, args, _block) {
+    "divmod"[1] => fn divmod(recv, args, _block) {
         arity!(args, 1);
         let q = num_div(recv, &args[0])
             .ok_or_else(|| coercion_error(recv, &args[0]))??;
@@ -392,7 +392,7 @@ builtin_methods! {
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
     }
-    "fdiv" => fn fdiv(recv, args, _block) {
+    "fdiv"[1] => fn fdiv(recv, args, _block) {
         arity!(args, 1);
         if lane(&args[0]).is_none() || matches!(args[0], RubyValue::Complex(_)) {
             return Err(coercion_error(recv, &args[0]));
@@ -401,11 +401,11 @@ builtin_methods! {
             num_to_f64_unchecked(recv) / num_to_f64_unchecked(&args[0]),
         ))
     }
-    "quo" => fn quo(recv, args, _block) {
+    "quo"[1] => fn quo(recv, args, _block) {
         arity!(args, 1);
         num_quo(recv, &args[0]).ok_or_else(|| coercion_error(recv, &args[0]))?
     }
-    "remainder" => fn remainder(recv, args, _block) {
+    "remainder"[1] => fn remainder(recv, args, _block) {
         arity!(args, 1);
         // a - b*(a/b).truncate -- the truncated-division counterpart of %
         // (sign follows the DIVIDEND). BigInt's own `/` truncates.
