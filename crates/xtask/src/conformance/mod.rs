@@ -42,11 +42,6 @@ struct Opts {
     top: usize,
     bucket: Option<String>,
     test_id: Option<String>,
-    /// Link the compiled cases against the DEBUG runtime instead of the default
-    /// release one. The release runtime makes each per-program link ~12x faster
-    /// (the whole reason conformance defaults to it); flip this on only to
-    /// symbolicate a runtime panic while debugging.
-    debug_runtime: bool,
 }
 
 fn parse_opts(args: &[String]) -> Result<Opts, String> {
@@ -56,7 +51,7 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         dir: None,
         filters: Vec::new(),
         // Leave headroom below the core count: each worker runs a full `zeo`
-        // subprocess whose `rustc` + multithreaded `lld` link already spawn several
+        // subprocess whose `rustc` + link step already spawn several
         // threads, so `ncpu` workers on `ncpu` cores oversubscribe and inflate every
         // per-compile wall-clock (a single clean compile is ~1.5s but climbs to 4-6s
         // under `ncpu` workers). `ncpu - 2` keeps the box busy without the thrash and
@@ -72,7 +67,6 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
         top: 30,
         bucket: None,
         test_id: None,
-        debug_runtime: false,
     };
     let mut iter = args[1..].iter();
     while let Some(arg) = iter.next() {
@@ -97,7 +91,6 @@ fn parse_opts(args: &[String]) -> Result<Opts, String> {
                 )
             }
             "--force" => opts.force = true,
-            "--debug-runtime" => opts.debug_runtime = true,
             "--fail-fast" => opts.fail_fast = true,
             "--update-scoreboard" => opts.update_scoreboard = true,
             "--force-skiplist" => opts.force_skiplist = true,
@@ -128,9 +121,6 @@ const USAGE: &str = "usage: cargo run -p xtask -- conformance <command>\n\
   run           [--suite spinel|rubyspec] [--dir PATH] [--filter GLOB]... [-j N]\n\
                 [--timeout SECS] [--compile-timeout SECS] [--force] [--fail-fast]\n\
                 [--show-diffs N] [--update-scoreboard] [--force-skiplist]\n\
-                [--debug-runtime]  (link cases against the debug runtime -- slower\n\
-                                    compiles, but symbolicated runtime panics;\n\
-                                    default links the release runtime)\n\
   triage        [--suite NAME] [--top N] [--bucket NAME]\n\
   show <id>     [--suite NAME]\n\
   oracle-verify [--suite NAME] [--dir PATH]\n\
@@ -240,9 +230,10 @@ fn open_session(
     if prebuild {
         // Conformance links every case against the RELEASE runtime by default:
         // the optimized runtime makes each per-program link ~12x faster, which
-        // dominates a multi-thousand-case run. `--debug-runtime` opts back to
-        // the debug runtime for symbolicating a panic.
-        runner::prebuild(root, !opts.debug_runtime)?;
+        // dominates a multi-thousand-case run. `ZEO_RUNTIME_PROFILE=debug` in
+        // the environment opts back to the debug runtime for symbolicating a
+        // panic.
+        runner::prebuild(root)?;
     }
     let oracle = oracle::Oracle::new(
         root.join("target/conformance/oracle"),
@@ -259,7 +250,6 @@ fn open_session(
         // The rubyspec driver's `require_relative '../spec_helper'` (real mspec)
         // must collapse to a no-op -- the mspec_lite shim supplies the DSL.
         mspec_stubs: suite_name == "rubyspec",
-        debug_runtime: opts.debug_runtime,
     };
     let skiplist = skiplist::load(&root.join("conformance/skiplist.tsv"))?;
     Ok(Session {
@@ -294,10 +284,12 @@ fn target_dir(root: &Path) -> PathBuf {
         .unwrap_or_else(|| root.join("target"))
 }
 
-/// Remove the compiled-program cache (`target/zeo-bin-cache`), reclaiming
-/// disk. Fully regenerable, so this is always safe between runs; the old
-/// automatic mid-build sweep was removed because a `remove_dir_all` in the build
-/// hot path could delete a generation a sibling process was still writing into.
+/// Remove the ENTIRE compiled-program cache (`target/zeo-bin-cache`),
+/// reclaiming disk. Fully regenerable, so this is always safe between runs.
+/// Stale generations are also swept automatically at prebuild time
+/// (`zeo::build::sweep_stale_cache_generations`); sweeping never happens in the
+/// build hot path itself, where a `remove_dir_all` could delete a generation a
+/// sibling process was still writing into.
 fn cmd_clean_cache(root: &Path, _opts: &Opts) -> Result<ExitCode, String> {
     // Mirrors `zeo::build`'s `cache_dir` -- kept in sync by name.
     let cache = target_dir(root).join("zeo-bin-cache");

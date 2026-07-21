@@ -33,6 +33,38 @@ enum Source {
     Eval(String),
 }
 
+const HELP: &str = "\
+zeo -- compile Ruby to a native binary
+
+usage: zeo (<input.rb> | -e <code>) [options]
+
+modes:
+  <input.rb>            compile the file to a native binary (default output:
+                        the input path with its extension stripped)
+  -e <code>             compile and run an inline program immediately,
+                        forwarding stdout/stderr and the exit status
+                        (repeatable; snippets are joined with newlines);
+                        with -o, write the binary instead of running it
+
+options:
+  -o <output>           where to write the compiled binary
+  -S                    print the generated Rust source and exit (no build)
+  -I <dir>              add a `require` search root, like ruby's -I
+                        (repeatable; `-I<dir>` also accepted)
+  --packages <dir>      an extra gem directory, searched before the default
+                        project-local/bundled ones (repeatable)
+  --gem-path <dir>      the external gem store; requires --lockfile
+  --lockfile <path>     the Gemfile.lock resolving --gem-path versions
+  --no-report           suppress the `zeo-gems.json` disclosure record
+  --nowarn <slug>       suppress a disclosure warning category
+                        (repeatable; `--nowarn=<slug>` also accepted)
+  -h, --help            show this message
+
+environment:
+  ZEO_RUNTIME_PROFILE   `debug` or `release` -- override the runtime profile
+                        (default: debug for -e, release for -o compiles)
+";
+
 fn parse_args() -> Result<Args, String> {
     let mut input = None;
     let mut eval: Option<String> = None;
@@ -90,6 +122,10 @@ fn parse_args() -> Result<Args, String> {
             "--lockfile" => {
                 lockfile = Some(PathBuf::from(iter.next().ok_or("--lockfile requires a path")?));
             }
+            "--help" | "-h" => {
+                print!("{HELP}");
+                std::process::exit(0);
+            }
             other => {
                 // Attached `-I<dir>` (ruby's own spelling, no space).
                 if let Some(dir) = other.strip_prefix("-I").filter(|d| !d.is_empty()) {
@@ -109,9 +145,13 @@ fn parse_args() -> Result<Args, String> {
         (Some(_), Some(_)) => return Err("cannot combine -e with a file argument".to_string()),
         (Some(code), None) => Source::Eval(code),
         (None, Some(path)) => Source::File(path),
-        (None, None) => return Err(
-            "usage: zeo (<input.rb> | -e <code>) [-I <dir>]... [--packages <dir>]... [--gem-path <dir> --lockfile <Gemfile.lock>] [-o <output>] [-S] [--no-report] [--nowarn <slug>]...".to_string(),
-        ),
+        // Bare `zeo` shows the full help like `--help`, but exits nonzero:
+        // an invocation that compiled nothing must not look like success to a
+        // caller that expected an artifact.
+        (None, None) => {
+            print!("{HELP}");
+            std::process::exit(1);
+        }
     };
     // The gem store is an opt-in PAIR -- one without the other can't resolve.
     if gem_path.is_some() != lockfile.is_some() {
@@ -201,23 +241,25 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    use zeo::build::{build_binary, ensure_runtime_built, Linkage, Profile, Runtime};
+    use zeo::build::{build_binary, ensure_runtime_built, Profile, Runtime};
 
     // Which runtime variant this program's binary links: the lean, parser-free
     // default, or the prism-backed `eval-vm` one iff the compiler saw a runtime
     // eval site. The single mapping point for both build paths below.
     let runtime = Runtime::for_eval(compiled.needs_eval_vm);
 
-    // `-e`: compile to a throwaway binary, run it, and exit with ITS status
-    // (stdout/stderr stream straight through) -- the differential-harness path.
-    // Run-once, so it DEFAULTS to the fast-to-build `Debug` runtime; a harness
-    // that compiles thousands of programs can flip this to `Release` via
-    // `ZEO_RUNTIME_PROFILE` for a ~12x faster per-program link.
-    if matches!(args.source, Source::Eval(_)) {
+    // `-e` without `-o`: compile to a throwaway binary, run it, and exit with
+    // ITS status (stdout/stderr stream straight through) -- the
+    // differential-harness path. Run-once, so it DEFAULTS to the fast-to-build
+    // `Debug` runtime; a harness that compiles thousands of programs can flip
+    // this to `Release` via `ZEO_RUNTIME_PROFILE` for a ~12x faster
+    // per-program link. With `-o`, `-e` produces an artifact like the file
+    // mode below instead of running.
+    if matches!(args.source, Source::Eval(_)) && args.output.is_none() {
         let profile = Profile::from_env_or(Profile::Debug);
         ensure_runtime_built(profile, runtime)?;
         let bin = std::env::temp_dir().join(format!("zeo-e-{}", std::process::id()));
-        build_binary(&compiled.rust_source, &bin, Linkage::from_env(), profile, runtime)?;
+        build_binary(&compiled.rust_source, &bin, profile, runtime)?;
         let status = std::process::Command::new(&bin)
             .status()
             .map_err(|e| format!("running compiled program: {e}"))?;
@@ -228,7 +270,7 @@ fn run() -> Result<(), String> {
     let output = args.output.unwrap_or_else(|| {
         let mut p = match &args.source {
             Source::File(path) => path.clone(),
-            Source::Eval(_) => unreachable!("handled above"),
+            Source::Eval(_) => unreachable!("-e without -o is handled above"),
         };
         p.set_extension("");
         p
@@ -240,7 +282,7 @@ fn run() -> Result<(), String> {
     // `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
     let profile = Profile::from_env_or(Profile::Release);
     ensure_runtime_built(profile, runtime)?;
-    build_binary(&compiled.rust_source, &output, Linkage::from_env(), profile, runtime)
+    build_binary(&compiled.rust_source, &output, profile, runtime)
 }
 
 fn main() -> ExitCode {

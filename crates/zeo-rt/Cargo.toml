@@ -4,13 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 
-# `dylib` alongside the default `rlib` so generated programs can link the
-# runtime dynamically (`-C prefer-dynamic`) instead of each statically slurping
-# a 31MB rlib. The `rlib` stays because the workspace's own crates link it
-# normally.
-[lib]
-crate-type = ["rlib", "dylib"]
-
 [dependencies]
 zeo-abi = { path = "../zeo-abi" }
 # Runtime string `eval` (#97 stage 2): the SAME parser the compiler uses,

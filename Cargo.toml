@@ -33,7 +33,14 @@ debug = "line-tables-only"
 # debug runtime. All behavior-preserving: NOT panic="abort" (the `may` coroutine
 # scheduler, catch_break/fiber unwinding, and deliberate divide-by-zero panics as a
 # control path all require panic=unwind).
+#
+# NO `lto`: with profile LTO on, cargo builds the release rlibs as bitcode-only
+# objects (deferring codegen to the final cargo link), but generated programs
+# link those rlibs through a bare `rustc` call (`build_binary`) with no LTO
+# step -- Apple's `ld` then feeds the bitcode to its own libLTO, which breaks
+# whenever its LLVM lags rustc's ("could not parse bitcode object file",
+# rustc 1.97/LLVM 22 vs Apple libLTO LLVM 21). `codegen-units = 1` already
+# provides whole-crate optimization.
 [profile.release]
 strip = "symbols"
-lto = "thin"
 codegen-units = 1

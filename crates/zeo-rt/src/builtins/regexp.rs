@@ -204,15 +204,6 @@ fn re_of(recv: &RubyValue) -> &crate::RRegexp {
     re
 }
 
-/// A match subject as a `String` -- `nil` and other non-strings simply don't
-/// match (`re.match?(nil)` is `false` in Ruby, not a TypeError).
-fn str_arg(v: &RubyValue) -> Option<String> {
-    match v {
-        RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
-        _ => None,
-    }
-}
-
 /// The subject of `Regexp#=~`/`#match`/`#match?`: a String matches, `nil`
 /// answers "no match" (never raises), and any other type raises TypeError --
 /// CRuby's rule (`/p/ =~ 5` -> TypeError, not a silent non-match).

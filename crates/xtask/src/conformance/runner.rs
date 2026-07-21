@@ -29,9 +29,6 @@ pub struct Runner {
     /// Set `ZEO_MSPEC_STUBS` when compiling (the rubyspec suite): spec files
     /// `require_relative '../spec_helper'`, which zeo no-ops under this flag.
     pub mspec_stubs: bool,
-    /// Force the DEBUG runtime (`ZEO_RUNTIME_PROFILE=debug`) instead of the
-    /// default release one -- see `prebuild` and the `--debug-runtime` flag.
-    pub debug_runtime: bool,
 }
 
 impl Runner {
@@ -154,24 +151,12 @@ impl Runner {
         // on purpose) -- suppress the Phase-2b disclosure record and its
         // warnings so N thousand cases don't each drop a `zeo-gems.json`.
         cmd.arg("--no-report");
-        // Two runtime modes, trading cache disk for compile speed:
-        //
-        //  - DEFAULT (release, STATIC): the `-o` path's own defaults (Static +
-        //    Release). The optimized runtime makes each per-program link ~20x
-        //    faster (a cold case ~0.16s vs ~3.3s), which dominates a multi-thousand
-        //    case run. It MUST link statically: the optimized dylib dead-strips the
-        //    `may`/generator coroutine crate's asm symbols (`swap_registers`), so a
-        //    dynamic link fails for any Enumerator/Fiber/Thread program; static
-        //    linking resolves them from the rlib. Cost: ~5.5MB per binary, so the
-        //    compiled-program cache is ~11GB for the full suite (vs ~1.3GB dynamic)
-        //    -- reclaim between runs with `conformance clean-cache`.
-        //
-        //  - `--debug-runtime` (debug, DYNAMIC): the debug runtime links fine
-        //    dynamically (616K binaries, ~1.3GB cache) and keeps symbolicated
-        //    runtime panics, at the ~20x slower per-program link.
-        if self.debug_runtime {
-            cmd.env("ZEO_LINK_DYNAMIC", "1").env("ZEO_RUNTIME_PROFILE", "debug");
-        }
+        // Cases link statically against the release runtime -- zeo's own `-o`
+        // defaults. The optimized runtime makes each per-program link ~20x
+        // faster (a cold case ~0.16s vs ~3.3s), which dominates a
+        // multi-thousand case run. A developer chasing a runtime panic can set
+        // `ZEO_RUNTIME_PROFILE=debug` in the environment: spawned `Command`s
+        // inherit it, so it reaches `prebuild` and every zeo subprocess alike.
         if self.mspec_stubs {
             cmd.env("ZEO_MSPEC_STUBS", "1");
         }
@@ -441,9 +426,9 @@ fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> Test
 /// `zeo` itself is the compiler binary and is always built debug (fast to
 /// rebuild, never linked into a case). The RUNTIME is what every case links, so
 /// it is built in the profile the cases will link: release by default (each
-/// per-program link is ~12x faster against the optimized runtime), or debug when
-/// `--debug-runtime` asked for a symbolicated runtime.
-pub fn prebuild(workspace_root: &Path, release_runtime: bool) -> Result<(), String> {
+/// per-program link is ~12x faster against the optimized runtime), or debug
+/// when `ZEO_RUNTIME_PROFILE=debug` is set for a symbolicated runtime.
+pub fn prebuild(workspace_root: &Path) -> Result<(), String> {
     let status = Command::new("cargo")
         .args(["build", "--quiet", "-p", "zeo"])
         .current_dir(workspace_root)
@@ -460,10 +445,15 @@ pub fn prebuild(workspace_root: &Path, release_runtime: bool) -> Result<(), Stri
     // the existence-checked path would skip an out-of-date artifact. Routed
     // through zeo's own builder so the eval variant's separate target dir
     // stays a single source of truth rather than a path duplicated here.
-    use zeo::build::{build_runtime, Profile, Runtime};
-    let profile = if release_runtime { Profile::Release } else { Profile::Debug };
+    use zeo::build::{build_runtime, sweep_stale_cache_generations, Profile, Runtime};
+    let profile = Profile::from_env_or(Profile::Release);
     build_runtime(profile, Runtime::Lean)?;
-    build_runtime(profile, Runtime::Eval)
+    build_runtime(profile, Runtime::Eval)?;
+    // With the runtimes freshly built, reclaim cache generations no current
+    // artifact can produce -- safe here because the run lock is held and no
+    // workers have spawned yet.
+    sweep_stale_cache_generations();
+    Ok(())
 }
 
 /// A compact duration for the inline ETA: `45s`, `3m12s`, `1h04m`.

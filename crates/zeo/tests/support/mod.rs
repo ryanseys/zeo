@@ -52,13 +52,7 @@ pub fn run_ruby_packages(
     let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
     zeo::build::ensure_runtime_built(zeo::build::Profile::Debug, runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(
-        rust_source,
-        &bin,
-        zeo::build::Linkage::Dynamic,
-        zeo::build::Profile::Debug,
-        runtime,
-    )
+    zeo::build::build_binary(rust_source, &bin, zeo::build::Profile::Debug, runtime)
         .unwrap_or_else(|e| {
             panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
         });
@@ -163,7 +157,7 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
     let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
     zeo::build::ensure_runtime_built(zeo::build::Profile::Debug, runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(rust_source, &bin, zeo::build::Linkage::Dynamic, zeo::build::Profile::Debug, runtime).unwrap_or_else(|e| {
+    zeo::build::build_binary(rust_source, &bin, zeo::build::Profile::Debug, runtime).unwrap_or_else(|e| {
         panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
     });
 
