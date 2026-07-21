@@ -12,6 +12,16 @@ use super::exec::run_with_timeout;
 use super::suite::TestCase;
 use super::util::fnv1a64;
 
+/// Flags passed to EVERY oracle run. `error_highlight` (the source snippet +
+/// caret) and `did_you_mean` (the "Did you mean?" suggestion) are opt-out
+/// default GEMS, not core language semantics -- any user can disable them, and
+/// their output is a per-AST-node presentation layer spinel does not aim to
+/// reproduce byte-for-byte. Disabling them makes the reference the plain core
+/// backtrace (`file:line:in 'ctx': msg (Class)` + `from` frames), which is the
+/// error format spinel actually targets. Recorded in `ruby_version` below so
+/// changing this set invalidates the oracle cache and every result stamp.
+const ORACLE_FLAGS: &[&str] = &["--disable-error_highlight", "--disable-did_you_mean"];
+
 pub struct OracleOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -36,10 +46,10 @@ impl Oracle {
             .arg("-v")
             .output()
             .map_err(|e| format!("running `{} -v`: {e}", ruby.display()))?;
-        let ruby_version = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-        if !version_matches(&ruby_version, &required) {
+        let reported = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        if !version_matches(&reported, &required) {
             return Err(format!(
-                "conformance oracle is ruby {required}, but `{}` is:\n  {ruby_version}\n\n\
+                "conformance oracle is ruby {required}, but `{}` is:\n  {reported}\n\n\
                  The suite diffs against real CRuby, so the wrong interpreter yields a\n\
                  scoreboard that looks authoritative and is not. Fix with one of:\n  \
                  mise install ruby@{required}   (then re-run)\n  \
@@ -47,6 +57,11 @@ impl Oracle {
                 ruby.display()
             ));
         }
+        // The oracle IDENTITY is the interpreter PLUS the flags it runs under:
+        // both feed the cache key and the stamp fingerprint (each keys on
+        // `ruby_version`), so adding/removing an `ORACLE_FLAGS` entry forces an
+        // honest re-run instead of replaying references built under the old set.
+        let ruby_version = format!("{reported} [{}]", ORACLE_FLAGS.join(" "));
         std::fs::create_dir_all(&cache_dir)
             .map_err(|e| format!("creating {}: {e}", cache_dir.display()))?;
         Ok(Oracle {
@@ -105,7 +120,8 @@ impl Oracle {
         }
 
         let mut cmd = Command::new(&self.ruby);
-        cmd.arg(&case.source)
+        cmd.args(ORACLE_FLAGS)
+            .arg(&case.source)
             .args(&case.args)
             .current_dir(&case.run_cwd);
         // A nonzero exit is a valid reference (the program may legitimately
