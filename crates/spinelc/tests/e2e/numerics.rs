@@ -758,3 +758,30 @@ fn float_to_s_uses_fixed_for_fractional_16_digit_values() {
          9.007199254740992e+15\n1.0e+15\n1.0e+16\n"
     );
 }
+
+#[test]
+fn endless_and_beginless_range_max_min_raise_rather_than_hang() {
+    // `#max` on an endless range and `#min` on a beginless range have no
+    // answer -- CRuby raises RangeError instead of iterating (which would loop
+    // forever). `(1..).min` still returns the begin (an endless range has a
+    // minimum). Regression: these used to hang the program.
+    let result = run_ruby(
+        r#"
+        def t; yield; rescue RangeError => e; e.message; end
+        puts t { (1..).max }
+        puts t { (1...).max }
+        puts t { (1.0..).max }
+        puts t { (..5).min }
+        puts((1..).min)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "cannot get the maximum of endless range\n\
+         cannot get the maximum of endless range\n\
+         cannot get the maximum of endless range\n\
+         cannot get the minimum of beginless range\n\
+         1\n"
+    );
+}

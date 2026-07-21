@@ -56,7 +56,9 @@ pub struct StructMeta {
     /// `Data.define` -> immutable (frozen, readers only, no `each`/`[]=`).
     pub is_data: bool,
     /// `Struct.new(..., keyword_init: true)` -- construct by keyword only.
-    pub keyword_init: bool,
+    /// `None` when never specified (so `keyword_init?` answers `nil`, as CRuby
+    /// does), `Some(true)`/`Some(false)` when the option was passed explicitly.
+    pub keyword_init: Option<bool>,
 }
 
 impl StructMeta {
@@ -300,8 +302,13 @@ fn struct_equal(recv: &RubyValue, other: &RubyValue) -> bool {
     if me.class_id != them.class_id {
         return false;
     }
-    let a = me.slots.lock();
-    let b = them.slots.lock();
+    // Clone each slot vec (releasing its lock at the end of the statement)
+    // rather than hold both guards at once: `s == s` aliases the SAME
+    // `StructInstance`, so locking `them.slots` while `me.slots` is still
+    // held would deadlock (parking_lot's Mutex is not reentrant). Comparing
+    // the cloned values keeps a NaN member making `s == s` false, as CRuby.
+    let a = me.slots.lock().clone();
+    let b = them.slots.lock().clone();
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.rb_eq(y))
 }
 
@@ -541,7 +548,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
     // Keyword construction: a plain Struct only when declared `keyword_init:`;
     // Data when the sole arg is a keyword hash (else positional).
     let kw_hash = match args.last() {
-        Some(RubyValue::Hash(h)) if (meta.keyword_init || is_data) && args.len() == 1 => Some(h),
+        Some(RubyValue::Hash(h)) if (meta.keyword_init == Some(true) || is_data) && args.len() == 1 => Some(h),
         _ => None,
     };
 
@@ -582,7 +589,7 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
 
     // Positional. A plain Struct nil-fills a short arg list; keyword_init and
     // Data require exact arity.
-    if meta.keyword_init && !args.is_empty() {
+    if meta.keyword_init == Some(true) && !args.is_empty() {
         return Err(raise_error(
             "ArgumentError",
             format!("wrong number of arguments (given {}, expected 0)", args.len()),
@@ -643,10 +650,10 @@ pub fn struct_construct(
 fn parse_members(
     args: &[RubyValue],
     is_data: bool,
-) -> Result<(Option<String>, Vec<Symbol>, bool), Signal> {
+) -> Result<(Option<String>, Vec<Symbol>, Option<bool>), Signal> {
     let mut rest = args;
     let mut name = None;
-    let mut keyword_init = false;
+    let mut keyword_init = None;
 
     // `Struct.new("Name", :a, :b)` -- an optional leading String class name.
     if !is_data {
@@ -659,7 +666,7 @@ fn parse_members(
             for (k, v) in h.lock().values() {
                 if let RubyValue::Symbol(s) = k {
                     if s.name() == "keyword_init" {
-                        keyword_init = v.truthy();
+                        keyword_init = Some(v.truthy());
                         continue;
                     }
                 }
@@ -823,5 +830,10 @@ fn class_keyword_init(recv: &RubyValue, _args: &[RubyValue], _block: Option<Ruby
         unreachable!("struct class method on a non-class receiver")
     };
     let meta = meta_of(*cid).expect("struct class has meta");
-    Ok(RubyValue::Bool(meta.keyword_init))
+    // Tri-state, matching CRuby: `nil` when `keyword_init:` was never given,
+    // otherwise the boolean it was set to.
+    Ok(match meta.keyword_init {
+        Some(b) => RubyValue::Bool(b),
+        None => RubyValue::Nil,
+    })
 }

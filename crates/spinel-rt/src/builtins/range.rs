@@ -470,21 +470,49 @@ builtin_methods! {
     // already correct (and whose exclusive-`max` differs by type).
     "min" => fn range_min(recv, args, block) {
         let (start, end, _) = range_parts(recv);
-        let is_float = matches!(start, Some(RubyValue::Float(_)))
-            || matches!(end, Some(RubyValue::Float(_)));
-        if args.is_empty() && block.is_none() && is_float {
-            // The begin, or nil for an empty range (begin > end).
-            return Ok(match (start, end) {
-                (Some(s), Some(e)) if s.rb_cmp(e).is_some_and(|c| c > 0) => RubyValue::Nil,
-                (Some(s), _) => s.clone(),
-                _ => RubyValue::Nil,
-            });
+        // A beginless range has no minimum -- CRuby raises rather than iterate
+        // (which a bare `enumerable_send` would attempt endlessly). Holds
+        // regardless of arg/block (verified against ruby 4.0.5).
+        if start.is_none() {
+            return Err(crate::dispatch::raise_error(
+                "RangeError",
+                "cannot get the minimum of beginless range".to_string(),
+            ));
+        }
+        if args.is_empty() && block.is_none() {
+            // The minimum of an ascending range with no block is its begin. An
+            // ENDLESS range has one (returned here without iterating, which
+            // would loop forever); a Float-bounded range returns the begin, or
+            // nil for an empty range (begin > end).
+            if let Some(s) = start {
+                if end.is_none() {
+                    return Ok(s.clone());
+                }
+            }
+            let is_float = matches!(start, Some(RubyValue::Float(_)))
+                || matches!(end, Some(RubyValue::Float(_)));
+            if is_float {
+                return Ok(match (start, end) {
+                    (Some(s), Some(e)) if s.rb_cmp(e).is_some_and(|c| c > 0) => RubyValue::Nil,
+                    (Some(s), _) => s.clone(),
+                    _ => RubyValue::Nil,
+                });
+            }
         }
         crate::builtins::enumerable::enumerable_send(recv, "min", args, block)
             .expect("Enumerable implements min")
     }
     "max" => fn range_max(recv, args, block) {
         let (start, end, exclusive) = range_parts(recv);
+        // An endless range has no maximum -- CRuby raises before iterating
+        // (which would loop forever). Holds regardless of arg/block (verified
+        // against ruby 4.0.5, including a Float begin: `(1.0..).max`).
+        if end.is_none() {
+            return Err(crate::dispatch::raise_error(
+                "RangeError",
+                "cannot get the maximum of endless range".to_string(),
+            ));
+        }
         let is_float = matches!(start, Some(RubyValue::Float(_)))
             || matches!(end, Some(RubyValue::Float(_)));
         if args.is_empty() && block.is_none() && is_float {
