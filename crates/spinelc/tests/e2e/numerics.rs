@@ -814,3 +814,23 @@ fn complex_component_class_abs_and_division() {
          \"divided by 0\"\n\"Infinity+NaN*i\"\n"
     );
 }
+
+#[test]
+fn integer_bit_slice_negative_start_and_width() {
+    // Integer#[start, len]: a negative start shifts left (5[-1,3] == 2), a
+    // negative len keeps the whole shifted value with no mask (5[2,-1] == 1,
+    // 255[0,-5] == 255), a zero len selects nothing, and a positive len masks.
+    let result = run_ruby(
+        r#"
+        p 0b1011010[1, 3]
+        p 255[0, 4]
+        p 5[2, -1]
+        p 5[-1, 3]
+        p 255[0, -5]
+        p 7[0, 0]
+        p(-1[60, 8])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n15\n1\n2\n255\n0\n255\n");
+}

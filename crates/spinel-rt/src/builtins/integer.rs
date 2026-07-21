@@ -311,28 +311,33 @@ fn int_bit_ref(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Signal
         (to_bigint(&args[0]), Some(BigInt::one()))
     };
 
-    // A bit position below 0 doesn't exist; a non-positive field width
-    // selects nothing. Both answer 0 (CRuby).
-    if shift.is_negative() || matches!(&width, Some(w) if !w.is_positive()) {
-        return Ok(RubyValue::Int(0));
-    }
-    let Some(shift) = shift.to_usize() else {
-        // Shifted past every bit: 0 for non-negative, all-ones (endless
-        // range) is unrepresentable but only reached for absurd inputs.
-        return Ok(RubyValue::Int(if val.is_negative() && width.is_none() {
-            -1
-        } else {
-            0
-        }));
+    // A NEGATIVE start shifts the other way (`n[-k, len]` == `(n << k)[0, len]`);
+    // a non-negative start shifts right. (Absurdly-large left shifts, which
+    // don't fit `usize`, are clamped rather than allowed to OOM.)
+    let shifted = if shift.is_negative() {
+        &val << (-&shift).to_usize().unwrap_or(0)
+    } else {
+        match shift.to_usize() {
+            Some(s) => &val >> s,
+            None => {
+                // Shifted right past every bit: all-ones for a negative endless
+                // range, else 0.
+                return Ok(RubyValue::Int(if val.is_negative() && width.is_none() { -1 } else { 0 }));
+            }
+        }
     };
-    let shifted = val >> shift;
+    // Width `None` (endless range) or NEGATIVE keeps the whole shifted value;
+    // a POSITIVE width masks to that many low bits; ZERO selects nothing --
+    // all CRuby's rules (`5[2, -1] == 1`, `5[2, 0] == 0`).
     match width {
         None => Ok(int_value(shifted)),
-        Some(w) => {
+        Some(w) if w.is_negative() => Ok(int_value(shifted)),
+        Some(w) if w.is_positive() => {
             let bits = w.to_usize().unwrap_or(usize::MAX);
             let mask = (BigInt::one() << bits) - 1;
             Ok(int_value(shifted & mask))
         }
+        Some(_) => Ok(RubyValue::Int(0)),
     }
 }
 
