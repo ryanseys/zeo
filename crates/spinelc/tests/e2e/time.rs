@@ -136,3 +136,18 @@ fn time_at_honors_the_in_keyword_offset() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "32400\n-18000\n3600\n");
 }
+
+#[test]
+fn time_utc_and_local_accept_a_fractional_seconds_field() {
+    // A Rational/Float seconds field splits into the integer second plus an
+    // EXACT sub-second (Time stores a rational epoch, so #subsec is exact).
+    let result = run_ruby(
+        r#"
+        p Time.utc(2020, 1, 1, 0, 0, Rational(3, 2)).subsec
+        p Time.utc(2020, 1, 1, 0, 0, Rational(3, 2)).sec
+        p Time.utc(2020, 1, 1, 0, 0, 2.5).subsec
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "(1/2)\n1\n(1/2)\n");
+}

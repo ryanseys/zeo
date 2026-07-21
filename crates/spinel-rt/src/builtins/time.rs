@@ -545,6 +545,28 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
         .collect()
 }
 
+/// When `Time.utc`/`gm`/`local`'s seconds field (index 5) is fractional
+/// (a Rational or finite Float), split it into the integer civil components
+/// (with the seconds floored) and the exact sub-second `(num, den)`. Returns
+/// `None` for a plain integer/absent seconds field, so the caller keeps its
+/// existing integer path untouched.
+fn frac_seconds(
+    args: &[RubyValue],
+) -> Result<Option<(Vec<i64>, num_bigint::BigInt, num_bigint::BigInt)>, Signal> {
+    use num_integer::Integer;
+    use num_traits::ToPrimitive;
+    let (num, den) = match args.get(5) {
+        Some(RubyValue::Rational(_)) => crate::builtins::rational::as_ratio(&args[5]),
+        Some(RubyValue::Float(f)) if f.is_finite() => crate::builtins::float::float_exact_parts(*f),
+        _ => return Ok(None),
+    };
+    let mut parts = int_parts(&args[..5], 5)?;
+    let whole = num.div_floor(&den);
+    let frac_num = &num - &whole * &den; // [0, den)
+    parts.push(whole.to_i64().unwrap_or(0));
+    Ok(Some((parts, frac_num, den)))
+}
+
 /// A `utc_offset` in seconds, range-checked as real Ruby does: strictly
 /// within a day either way (`Time.new(.., 86400)` is an ArgumentError, and
 /// `86399` is fine) -- oracle-verified.
@@ -727,6 +749,10 @@ builtin_methods! {
     // (`Time.utc(2023, "nov", 1)`) and the 10-argument to_a-style form.
     "utc" | "gm" => fn time_utc(_recv, args, _block) {
         arity!(args, 1..=7);
+        if let Some((parts, frac_num, frac_den)) = frac_seconds(args)? {
+            let epoch = civil_to_epoch_utc(&parts);
+            return Ok(time_exact(num_bigint::BigInt::from(epoch) * &frac_den + &frac_num, frac_den, Some(0)));
+        }
         let parts = int_parts(args, 6)?;
         let nsec = subsec_nsec_arg(args.get(6))?;
         Ok(time_value(civil_to_epoch_utc(&parts), nsec, Some(0)))
@@ -786,12 +812,25 @@ builtin_methods! {
     // documented approximation, not a silent one.)
     "local" | "mktime" => fn time_local(_recv, args, _block) {
         arity!(args, 1..=7);
-        let parts = int_parts(args, 6)?;
-        let nsec = subsec_nsec_arg(args.get(6))?;
+        let frac = frac_seconds(args)?;
+        let parts = match &frac {
+            Some((parts, ..)) => parts.clone(),
+            None => int_parts(args, 6)?,
+        };
         let as_utc = civil_to_epoch_utc(&parts);
         let probe = RTime { num: num_bigint::BigInt::from(as_utc), den: num_bigint::BigInt::from(1), offset: parking_lot::Mutex::new(None) };
         let off = civil(&probe).offset as i64;
-        Ok(time_value(as_utc - off, nsec, None))
+        match frac {
+            Some((_, frac_num, frac_den)) => Ok(time_exact(
+                num_bigint::BigInt::from(as_utc - off) * &frac_den + &frac_num,
+                frac_den,
+                None,
+            )),
+            None => {
+                let nsec = subsec_nsec_arg(args.get(6))?;
+                Ok(time_value(as_utc - off, nsec, None))
+            }
+        }
     }
 }
 
