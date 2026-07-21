@@ -80,9 +80,9 @@ pub type BuiltinMethodFn =
 
 /// The static ClassId -> method-table map. A plain match (rustc compiles it
 /// to a jump table); `None` for user classes and for builtins with no table
-/// yet. `Enumerable`/`Comparable` are NOT here -- their implementations
-/// predate the table shape (`enumerable_send`/`comparable_send`) and are
-/// special-cased as ancestors inside the MRO walk itself.
+/// yet. `Enumerable`/`Comparable` are ordinary rows here too -- the MRO
+/// walk reaches them as ancestors of Array/Hash/Range and of any user class
+/// that `include`s them, exactly like every other builtin module.
 pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMethodFn>> {
     Some(match id {
         zeo_abi::INTEGER_CLASS => integer::lookup,
@@ -104,6 +104,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool,
         zeo_abi::KERNEL_CLASS => kernel::lookup,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
+        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup,
+        zeo_abi::COMPARABLE_CLASS => comparable::lookup,
         zeo_abi::ENUMERATOR_CLASS
         | zeo_abi::ENUMERATOR_CHAIN_CLASS
         | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup,
@@ -177,10 +179,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::MODULE_CLASS => class_module::lookup_module_arity,
         zeo_abi::NIL_CLASS => object::lookup_nil_arity,
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_arity,
-        // Comparable/Enumerable are modules dispatched off the ancestor walk
-        // (no `class_table` row), so their arities live in hand-rolled fns.
-        zeo_abi::COMPARABLE_CLASS => comparable::arity,
-        zeo_abi::ENUMERABLE_CLASS => enumerable::arity,
+        zeo_abi::COMPARABLE_CLASS => comparable::lookup_arity,
+        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_arity,
         zeo_abi::KERNEL_CLASS => kernel::lookup_arity,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
         zeo_abi::ENUMERATOR_CLASS
@@ -366,8 +366,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::CONDITION_VARIABLE_CLASS => condition_variable::lookup_names(),
         zeo_abi::QUEUE_CLASS | zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_names(),
         zeo_abi::MUTEX_CLASS => mutex::lookup_names(),
-        zeo_abi::ENUMERABLE_CLASS => enumerable::NAMES,
-        zeo_abi::COMPARABLE_CLASS => comparable::NAMES,
+        zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
+        zeo_abi::COMPARABLE_CLASS => comparable::lookup_names(),
         zeo_abi::MATH_CLASS => math::NAMES,
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
@@ -808,7 +808,7 @@ mod tests {
         assert!(class_table(STRING_CLASS).is_some());
         assert!(class_table(KERNEL_CLASS).is_some());
         assert!(class_table(BASIC_OBJECT_CLASS).is_some());
-        assert!(class_table(ENUMERABLE_CLASS).is_none()); // special-cased in the walk
+        assert!(class_table(ENUMERABLE_CLASS).is_some());
         assert!(class_table(ClassId(999)).is_none());
     }
 }

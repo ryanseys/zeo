@@ -10,7 +10,7 @@
 //! hand-ported, because that part IS Ruby-specific.
 //!
 //! `Time` includes `Comparable` (see the ABI table), so `<`/`between?`/
-//! `clamp` all fall out of the existing `comparable_send` driver once `<=>`
+//! `clamp` all fall out of the `comparable` method table once `<=>`
 //! exists -- only `<=>` is defined here.
 
 use std::sync::Arc;

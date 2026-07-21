@@ -5,12 +5,17 @@
 //! that retired the `&RObj`-only version and made `"abc" < "abd"` resolve
 //! String(no `<`) -> Comparable -> `String#<=>`.
 //!
+//! Dispatched like any other builtin module: `class_table`/
+//! `class_arity_table` map `COMPARABLE_CLASS` to this table's generated
+//! `lookup`/`lookup_arity`, and the MRO walk finds it as an ordinary
+//! ancestor hit.
+//!
 //! Real Ruby raises `ArgumentError: comparison of X with Y failed` when
 //! `<=>` answers nil; with the Phase 17.1 exception factory that is now a
 //! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 
-use crate::builtins::{arg_error, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::{RubyValue, Signal, Symbol};
 
 /// The receiver's own `<=>`, reduced to a sign -- `Ok(None)` is Ruby's
@@ -33,55 +38,56 @@ fn cmp_or_fail(recv: &RubyValue, other: &RubyValue) -> Result<i64, Signal> {
     }
 }
 
-/// The Comparable method surface -- `None` when `name` isn't a Comparable
-/// method at all (the MRO walk continues past this ancestor).
-/// `Comparable#==` deliberately treats an incomparable pair as `false`
-/// (real Ruby's one nil-tolerant Comparable method).
-pub(crate) fn comparable_send(
-    recv: &RubyValue,
-    name: &str,
-    args: &[RubyValue],
-) -> Option<Result<RubyValue, Signal>> {
-    let result = match (name, args.len()) {
-        ("<", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o < 0)),
-        ("<=", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o <= 0)),
-        (">", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o > 0)),
-        (">=", 1) => cmp_or_fail(recv, &args[0]).map(|o| RubyValue::Bool(o >= 0)),
-        // Identity wins first (CRuby's `x == y` short-circuit); otherwise
-        // equal iff `<=>` is 0. A `nil` result is `false`; a non-numeric
-        // result raises (via `cmp`'s `rb_cmpint`).
-        ("==", 1) => match (recv, &args[0]) {
+builtin_methods! {
+    pub(crate) fn lookup;
+
+    "<"[1] => fn lt(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? < 0))
+    }
+    "<="[1] => fn le(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? <= 0))
+    }
+    ">"[1] => fn gt(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? > 0))
+    }
+    ">="[1] => fn ge(recv, args, _block) {
+        arity!(args, 1);
+        Ok(RubyValue::Bool(cmp_or_fail(recv, &args[0])? >= 0))
+    }
+    // Identity wins first (CRuby's `x == y` short-circuit); otherwise equal
+    // iff `<=>` is 0. `Comparable#==` deliberately treats an incomparable
+    // pair (`<=>` answering nil) as `false` -- real Ruby's one nil-tolerant
+    // Comparable method; a non-numeric result raises (via `cmp`'s
+    // `rb_cmpint`).
+    "=="[1] => fn eq(recv, args, _block) {
+        arity!(args, 1);
+        match (recv, &args[0]) {
             (RubyValue::Object(a), RubyValue::Object(b)) if std::sync::Arc::ptr_eq(a, b) => {
                 Ok(RubyValue::Bool(true))
             }
-            _ => cmp(recv, &args[0]).map(|o| RubyValue::Bool(o == Some(0))),
-        },
-        ("between?", 2) => (|| {
-            let lo = cmp_or_fail(recv, &args[0])?;
-            let hi = cmp_or_fail(recv, &args[1])?;
-            Ok(RubyValue::Bool(lo >= 0 && hi <= 0))
-        })(),
-        // A `nil` bound is open on that side (`5.clamp(1, nil)` -> 5),
-        // mirroring the beginless/endless range form below. Two present
-        // bounds must be ordered (CRuby rejects a reversed pair).
-        ("clamp", 2) => (|| {
-            let (lo, hi) = (&args[0], &args[1]);
-            if !lo.is_nil() && !hi.is_nil() && cmp_or_fail(lo, hi)? > 0 {
-                return Err(arg_error!(
-                    "min argument must be less than or equal to max argument"
-                ));
-            }
-            if !lo.is_nil() && cmp_or_fail(recv, lo)? < 0 {
-                return Ok(lo.clone());
-            }
-            if !hi.is_nil() && cmp_or_fail(recv, hi)? > 0 {
-                return Ok(hi.clone());
-            }
-            Ok(recv.clone())
-        })(),
-        // `clamp(range)` -- either bound may be absent (beginless/endless);
-        // an exclusive range is CRuby's ArgumentError.
-        ("clamp", 1) => (|| {
+            _ => Ok(RubyValue::Bool(cmp(recv, &args[0])? == Some(0))),
+        }
+    }
+    "between?"[2] => fn between_p(recv, args, _block) {
+        arity!(args, 2);
+        let lo = cmp_or_fail(recv, &args[0])?;
+        let hi = cmp_or_fail(recv, &args[1])?;
+        Ok(RubyValue::Bool(lo >= 0 && hi <= 0))
+    }
+    // `clamp(lo, hi)` or `clamp(range)`. In the two-argument form a `nil`
+    // bound is open on that side (`5.clamp(1, nil)` -> 5), mirroring the
+    // beginless/endless range form; an exclusive bounded range is CRuby's
+    // ArgumentError. Two present bounds must be ordered (CRuby rejects a
+    // reversed pair).
+    "clamp" => fn clamp(recv, args, _block) {
+        arity!(args, 1..=2);
+        let (lo, hi): (Option<RubyValue>, Option<RubyValue>) = if args.len() == 2 {
+            let open = |v: &RubyValue| if v.is_nil() { None } else { Some(v.clone()) };
+            (open(&args[0]), open(&args[1]))
+        } else {
             let RubyValue::Range(lo, hi, exclusive) = &args[0] else {
                 return Err(type_error!(
                     "wrong argument type {} (expected Range)",
@@ -91,55 +97,42 @@ pub(crate) fn comparable_send(
             if *exclusive && hi.is_some() {
                 return Err(arg_error!("cannot clamp with an exclusive range"));
             }
-            if let (Some(lo), Some(hi)) = (lo.as_deref(), hi.as_deref()) {
-                if cmp_or_fail(lo, hi)? > 0 {
-                    return Err(arg_error!(
-                        "min argument must be less than or equal to max argument"
-                    ));
-                }
+            (lo.as_deref().cloned(), hi.as_deref().cloned())
+        };
+        if let (Some(lo), Some(hi)) = (&lo, &hi) {
+            if cmp_or_fail(lo, hi)? > 0 {
+                return Err(arg_error!(
+                    "min argument must be less than or equal to max argument"
+                ));
             }
-            if let Some(lo) = lo.as_deref() {
-                if cmp_or_fail(recv, lo)? < 0 {
-                    return Ok(lo.clone());
-                }
+        }
+        if let Some(lo) = &lo {
+            if cmp_or_fail(recv, lo)? < 0 {
+                return Ok(lo.clone());
             }
-            if let Some(hi) = hi.as_deref() {
-                if cmp_or_fail(recv, hi)? > 0 {
-                    return Ok(hi.clone());
-                }
+        }
+        if let Some(hi) = &hi {
+            if cmp_or_fail(recv, hi)? > 0 {
+                return Ok(hi.clone());
             }
-            Ok(recv.clone())
-        })(),
-        _ => return None,
-    };
-    Some(result)
-}
-
-/// Every method `Comparable` mixes in -- the single source of truth for both
-/// `respond_to?`'s MRO walk and `instance_methods` reflection.
-pub(crate) const NAMES: &[&str] = &["<", "<=", ">", ">=", "==", "between?", "clamp"];
-
-/// `Method#arity` for a `Comparable` method reached through a mixing-in class's
-/// ancestry (this module is dispatched off the ancestor walk, not `class_table`,
-/// so it declares its arities here). `clamp` is variadic (1-or-2 args / a
-/// Range), so it falls through to the caller's `-1` default.
-pub(crate) fn arity(name: &str) -> Option<i64> {
-    Some(match name {
-        "<" | "<=" | ">" | ">=" | "==" => 1,
-        "between?" => 2,
-        _ => return None,
-    })
-}
-
-/// Name membership for `respond_to?`'s MRO walk (argument counts aren't
-/// its concern -- real `respond_to?` is name-only too).
-pub(crate) fn responds(name: &str) -> bool {
-    NAMES.contains(&name)
+        }
+        Ok(recv.clone())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The old pre-table dispatcher's shape, kept as a test-local helper so
+    /// the coverage below reads unchanged: `None` = not a Comparable method.
+    fn comparable_send(
+        recv: &RubyValue,
+        name: &str,
+        args: &[RubyValue],
+    ) -> Option<Result<RubyValue, Signal>> {
+        lookup(name).map(|f| f(recv, args, None))
+    }
 
     fn s(v: &str) -> RubyValue {
         RubyValue::Str(crate::string_new(v.to_string()))
@@ -183,8 +176,8 @@ mod tests {
     #[test]
     fn non_comparable_names_fall_through() {
         assert!(comparable_send(&s("a"), "upcase", &[]).is_none());
-        assert!(responds("between?"));
-        assert!(!responds("upcase"));
+        assert!(lookup("between?").is_some());
+        assert!(lookup("upcase").is_none());
     }
 
     fn int(v: i64) -> RubyValue {
@@ -265,11 +258,12 @@ mod tests {
         assert_eq!(out.inspect_string(), "5");
     }
 
-    /// `clamp` is a name Comparable answers to (respond_to?'s MRO walk).
+    /// `clamp` is a name Comparable answers to (`respond_to?`'s MRO walk
+    /// resolves it through this same generated `lookup`).
     #[test]
     fn responds_lists_clamp() {
-        assert!(responds("clamp"));
-        assert!(responds("between?"));
-        assert!(!responds("nope"));
+        assert!(lookup("clamp").is_some());
+        assert!(lookup("between?").is_some());
+        assert!(lookup("nope").is_none());
     }
 }

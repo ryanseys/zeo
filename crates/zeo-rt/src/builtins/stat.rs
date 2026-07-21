@@ -6,7 +6,7 @@
 //! as it is now).
 //!
 //! `File::Stat` includes `Comparable` (ordered by `mtime`), so `<`/`between?`/
-//! `clamp` fall out of the existing `comparable_send` driver once `<=>` exists.
+//! `clamp` fall out of the `comparable` method table once `<=>` exists.
 
 use std::sync::Arc;
 

@@ -176,11 +176,10 @@ impl Object {
     pub const CLASS_ID: ClassId = ClassId(0);
 }
 
-/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- consulted by
-/// `send`'s Enumerable fallback (an Object whose registered ancestors
-/// contain this id dispatches unresolved Enumerable-method names to
-/// `crate::enumerable`). Like every id above, re-exported from the shared
-/// `zeo-abi` numbering.
+/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- an ordinary
+/// `class_table` row (`builtins::enumerable`'s generated `lookup`), reached
+/// by the MRO walk for any receiver whose ancestors contain this id. Like
+/// every id above, re-exported from the shared `zeo-abi` numbering.
 pub use zeo_abi::ENUMERABLE_CLASS;
 /// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
 /// models as a `RubyValue` variant rather than a generated `ruby_class!`
@@ -1236,31 +1235,17 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
                 return true;
             }
         }
-        match anc {
-            ENUMERABLE_CLASS => {
-                if crate::builtins::enumerable::responds(n) {
-                    return true;
+        if let Some(table) = crate::builtins::class_table(anc) {
+            if table(n).is_some() {
+                // Hidden builtin privates (Kernel's print family,
+                // BasicObject's `initialize`) are reachable via
+                // implicit self / `send` / `super` -- all through the
+                // table -- but `respond_to?`'s default ignores privates,
+                // so they answer false unless `include_all`.
+                if !include_all && is_hidden_builtin_private(n) {
+                    continue;
                 }
-            }
-            COMPARABLE_CLASS => {
-                if crate::builtins::comparable::responds(n) {
-                    return true;
-                }
-            }
-            _ => {
-                if let Some(table) = crate::builtins::class_table(anc) {
-                    if table(n).is_some() {
-                        // Hidden builtin privates (Kernel's print family,
-                        // BasicObject's `initialize`) are reachable via
-                        // implicit self / `send` / `super` -- all through the
-                        // table -- but `respond_to?`'s default ignores privates,
-                        // so they answer false unless `include_all`.
-                        if !include_all && is_hidden_builtin_private(n) {
-                            continue;
-                        }
-                        return true;
-                    }
-                }
+                return true;
             }
         }
     }
@@ -1292,15 +1277,9 @@ pub fn method_owner(recv_class: ClassId, name: Symbol) -> Option<ClassId> {
                 return Some(anc);
             }
         }
-        match anc {
-            ENUMERABLE_CLASS if crate::builtins::enumerable::responds(n) => return Some(anc),
-            COMPARABLE_CLASS if crate::builtins::comparable::responds(n) => return Some(anc),
-            _ => {
-                if let Some(table) = crate::builtins::class_table(anc) {
-                    if table(n).is_some() {
-                        return Some(anc);
-                    }
-                }
+        if let Some(table) = crate::builtins::class_table(anc) {
+            if table(n).is_some() {
+                return Some(anc);
             }
         }
     }
@@ -2236,30 +2215,19 @@ pub fn send_value_in(
     // derived first. Per ancestor: user reopens (Phase 16.3's value
     // methods) beat that ancestor's builtin table -- real Ruby's placement
     // rule (a `class Numeric; def foo` reopen is found on `5`, but a
-    // builtin `Integer#foo` row would beat it). `Enumerable`/`Comparable`
-    // dispatch through their dedicated drivers (`enumerable_send` drives
-    // the receiver's own `each`, `comparable_send` its `<=>`); everything
-    // else -- including the Kernel universals and BasicObject's `==` --
-    // is an ordinary table hit. The old hand-ordered ladder (reopen probe,
-    // universal arms, curated tables, `to_s`-after-tables hack, hardcoded
-    // Array|Hash|Range Enumerable set) dissolved into this one loop.
+    // builtin `Integer#foo` row would beat it). Everything -- including
+    // the Kernel universals, BasicObject's `==`, and the
+    // `Enumerable`/`Comparable` module tables (whose rows drive the
+    // receiver's own `each`/`<=>`) -- is an ordinary `class_table` hit.
+    // The old hand-ordered ladder (reopen probe, universal arms, curated
+    // tables, `to_s`-after-tables hack, hardcoded Array|Hash|Range
+    // Enumerable set, dedicated Enumerable/Comparable driver arms)
+    // dissolved into this one loop.
     for &anc in ancestors_of_value(recv.class_id()) {
         if let Some(f) = value_method(anc, box_id, name) {
             return f(recv, args, block);
         }
         match anc {
-            ENUMERABLE_CLASS => {
-                if let Some(r) =
-                    crate::builtins::enumerable::enumerable_send(recv, n, args, block.clone())
-                {
-                    return r;
-                }
-            }
-            COMPARABLE_CLASS => {
-                if let Some(r) = crate::builtins::comparable::comparable_send(recv, n, args) {
-                    return r;
-                }
-            }
             // `Math`'s module functions become private instance methods when
             // `Math` is mixed in (`include Math` -> `sqrt(x)`), reached here as
             // an ancestor of the receiver. Same `math_call` probe the class-
@@ -2349,10 +2317,10 @@ pub fn send_in(
 
     // The SAME MRO walk `send_value` runs (Phase 17.1), over a boxed
     // handle: Kernel's universals, BasicObject's `==`, and the
-    // Enumerable/Comparable drivers all resolve as real ancestor methods
-    // -- which also fixes a fidelity bug: `method_missing` used to fire
-    // BEFORE the Enumerable/Comparable fallbacks, but real Ruby finds a
-    // real (module) method first, always.
+    // Enumerable/Comparable module tables all resolve as real ancestor
+    // methods -- which also fixes a fidelity bug: `method_missing` used to
+    // fire BEFORE the Enumerable/Comparable fallbacks, but real Ruby finds
+    // a real (module) method first, always.
     let n = name.name();
     let n = n.as_str();
     // Value-subclass payload bridge (D3): `class Stack < Array` carries a
@@ -2366,18 +2334,6 @@ pub fn send_in(
             return f(&boxed, args, block);
         }
         match anc {
-            ENUMERABLE_CLASS => {
-                if let Some(r) =
-                    crate::builtins::enumerable::enumerable_send(&boxed, n, args, block.clone())
-                {
-                    return r;
-                }
-            }
-            COMPARABLE_CLASS => {
-                if let Some(r) = crate::builtins::comparable::comparable_send(&boxed, n, args) {
-                    return r;
-                }
-            }
             // `include Math` -> its module functions as private instance
             // methods (see the same arm in `send_value_in`).
             MATH_CLASS => {

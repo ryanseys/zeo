@@ -336,12 +336,12 @@ fn module_own_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
 
 /// The `MethodImpl` a BUILTIN module (`Comparable`/`Enumerable`/`Math`, or any
 /// module with a hardcoded `class_table`) defines for `name`. These don't live
-/// in the registry -- their bodies are the special `comparable_send`/
-/// `enumerable_send`/`math_call` dispatchers or a static method table -- so
-/// each is wrapped in a `Dynamic` closure that re-dispatches by name. This is
-/// what lets `obj.extend(Comparable)` install `clamp`/`between?` etc.
+/// in the registry -- their bodies are static method-table rows (or, for
+/// `Math`, the pre-table `math_call` dispatcher) -- so each is wrapped in a
+/// `Dynamic` closure that re-dispatches by name. This is what lets
+/// `obj.extend(Comparable)` install `clamp`/`between?` etc.
 fn builtin_module_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> {
-    use zeo_abi::{COMPARABLE_CLASS, ENUMERABLE_CLASS, MATH_CLASS};
+    use zeo_abi::MATH_CLASS;
     let miss = move || {
         raise_error(
             "NoMethodError",
@@ -349,31 +349,6 @@ fn builtin_module_method_impl(mid: ClassId, name: Symbol) -> Option<MethodImpl> 
         )
     };
     match mid {
-        COMPARABLE_CLASS if crate::builtins::comparable::NAMES.contains(&name.name().as_str()) => {
-            Some(MethodImpl::Dynamic(std::sync::Arc::new(
-                move |recv: &RObj, args: &[RubyValue], _b| {
-                    crate::builtins::comparable::comparable_send(
-                        &RubyValue::Object(recv.clone()),
-                        &name.name(),
-                        args,
-                    )
-                    .unwrap_or_else(|| Err(miss()))
-                },
-            )))
-        }
-        ENUMERABLE_CLASS if crate::builtins::enumerable::NAMES.contains(&name.name().as_str()) => {
-            Some(MethodImpl::Dynamic(std::sync::Arc::new(
-                move |recv: &RObj, args: &[RubyValue], b| {
-                    crate::builtins::enumerable::enumerable_send(
-                        &RubyValue::Object(recv.clone()),
-                        &name.name(),
-                        args,
-                        b,
-                    )
-                    .unwrap_or_else(|| Err(miss()))
-                },
-            )))
-        }
         MATH_CLASS => Some(MethodImpl::Dynamic(std::sync::Arc::new(
             move |_recv: &RObj, args: &[RubyValue], _b| {
                 crate::builtins::math::math_call(&name.name(), args).unwrap_or_else(|| Err(miss()))

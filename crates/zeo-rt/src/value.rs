@@ -934,7 +934,7 @@ impl RubyValue {
     /// `nil` (incomparable). Native Int/Float/String fast paths (CRuby's
     /// OPTIMIZED_CMP), then a user-defined `<=>` on an `Object` receiver;
     /// anything else is incomparable. Consumed by `Enumerable#min`/`#max`
-    /// and `comparable::comparable_send` (and Phase 17.1's `sort` family).
+    /// and `comparable`'s table rows (and Phase 17.1's `sort` family).
     pub fn rb_cmp(&self, other: &RubyValue) -> Option<i64> {
         // Every numeric pair orders through the ONE tower matrix (Phase
         // 17.1): exact Int/Bignum/Rational lanes, Float promotion,
