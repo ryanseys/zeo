@@ -498,10 +498,13 @@ fn next_int(elems: &[RubyValue], idx: &mut usize) -> Result<i64, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n),
         RubyValue::BigInt(b) => Ok(num_traits::ToPrimitive::to_i64(&**b).unwrap_or(0)),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        // The `to_int` protocol: Floats truncate (via Float#to_int), ducks
+        // convert, nil raises the generic "of nil into Integer".
+        other => match crate::builtins::convert::to_int(other)? {
+            RubyValue::Int(n) => Ok(n),
+            RubyValue::BigInt(b) => Ok(num_traits::ToPrimitive::to_i64(&*b).unwrap_or(0)),
+            _ => unreachable!("to_int post-checks its answer"),
+        },
     }
 }
 
@@ -522,10 +525,11 @@ fn next_int_bits(elems: &[RubyValue], idx: &mut usize) -> Result<u64, Signal> {
             RubyValue::BigInt(b) => Ok(low_u64(&b)),
             _ => unreachable!("float_to_integer yields only Int/BigInt"),
         },
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        other => match crate::builtins::convert::to_int(other)? {
+            RubyValue::Int(n) => Ok(n as u64),
+            RubyValue::BigInt(b) => Ok(low_u64(&b)),
+            _ => unreachable!("to_int post-checks its answer"),
+        },
     }
 }
 
@@ -544,9 +548,11 @@ fn next_float(elems: &[RubyValue], idx: &mut usize) -> Result<f64, Signal> {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
             Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
         }
+        // CRuby's Float coercion shape here is "can't convert X into Float"
+        // (oracle: `["x"].pack("f")`).
         other => Err(type_error!(
-            "no implicit conversion to float from {}",
-            crate::builtins::class_name_of(other)
+            "can't convert {} into Float",
+            crate::builtins::convert_name_of(other)
         )),
     }
 }
@@ -571,10 +577,13 @@ fn next_str(elems: &[RubyValue], idx: &mut usize) -> Result<Vec<u8>, Signal> {
     *idx += 1;
     match v {
         RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
+        // A nil packs as an empty string (`[nil].pack("a2")` is "\0\0" --
+        // oracle-verified); anything else through the `to_str` protocol.
+        RubyValue::Nil => Ok(Vec::new()),
+        other => Ok(crate::builtins::convert::to_rstr(other)?
+            .lock()
+            .bytes()
+            .to_vec()),
     }
 }
 

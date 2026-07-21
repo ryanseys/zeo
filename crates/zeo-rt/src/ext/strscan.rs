@@ -211,9 +211,7 @@ builtin_methods! {
     }
     "peek" => fn peek(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
-        };
+        let n = &crate::builtins::convert::to_index(&args[0])?;
         let st = sc_of(recv).state.lock();
         let end = (st.pos + (*n).max(0) as usize).min(st.string.len());
         Ok(str_val(&st.string[st.pos..end]))
@@ -234,9 +232,7 @@ builtin_methods! {
     }
     "pos=" => fn set_pos(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
-        };
+        let n = &crate::builtins::convert::to_index(&args[0])?;
         sc_of(recv).state.lock().pos = (*n).max(0) as usize;
         Ok(args[0].clone())
     }
@@ -373,9 +369,7 @@ builtin_methods! {
 
     "new" => fn new_m(_recv, args, _block) {
         arity!(args, 1..=2); // (string[, opts]) -- opts ignored
-        let RubyValue::Str(s) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])));
-        };
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let text = s.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Object(Arc::new(RStringScanner::new(text))))
     }

@@ -114,10 +114,11 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
                 BigInt::from_f64(x.trunc()).ok_or_else(|| float_domain_error!("{x}"))?;
             Ok((scramble_bigint(&truncated), int_value(truncated)))
         }
-        Some(other) => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        Some(other) => match crate::builtins::convert::to_int(other)? {
+            RubyValue::Int(n) => Ok((scramble(n as u64), RubyValue::Int(n))),
+            RubyValue::BigInt(b) => Ok((scramble_bigint(&b), RubyValue::BigInt(b))),
+            _ => unreachable!("to_int post-checks its answer"),
+        },
     }
 }
 
@@ -218,10 +219,18 @@ fn to_f64(v: &RubyValue) -> Result<f64, Signal> {
     match v {
         RubyValue::Int(n) => Ok(*n as f64),
         RubyValue::Float(x) => Ok(*x),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Float",
-            crate::builtins::convert_name_of(other)
-        )),
+        // CRuby's rand converts an unknown bound via `to_int` (oracle:
+        // `rand("x")` is "no implicit conversion of String into Integer").
+        other => Ok(crate::builtins::convert::to_index(other)? as f64),
+    }
+}
+
+/// A byte-count argument (`bytes`/`urandom`): the `to_int` protocol with
+/// the generic "of nil into Integer" nil shape (oracle-verified).
+fn bytes_count(v: &RubyValue) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Nil => Err(type_error!("no implicit conversion of nil into Integer")),
+        v => crate::builtins::convert::to_index(v),
     }
 }
 
@@ -258,9 +267,7 @@ crate::builtins::builtin_methods! {
     }
     "bytes" => fn bytes(recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
-        };
+        let n = &bytes_count(&args[0])?;
         if *n < 0 {
             return Err(arg_error!("negative string size (or size too big)"));
         }
@@ -321,9 +328,7 @@ crate::builtins::builtin_methods! {
     }
     "bytes" => fn bytes_c(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
-        };
+        let n = &bytes_count(&args[0])?;
         if *n < 0 {
             return Err(arg_error!("negative string size (or size too big)"));
         }
@@ -335,9 +340,7 @@ crate::builtins::builtin_methods! {
     // result's bytesize to match, both of which this satisfies.
     "urandom" => fn urandom_c(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
-        };
+        let n = &bytes_count(&args[0])?;
         Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
     }
     // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),

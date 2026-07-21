@@ -246,9 +246,7 @@ builtin_methods! {
     }
     "strftime" => fn strftime(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Str(fmt) = &args[0] else {
-            return Err(type_error!("no implicit conversion into String"));
-        };
+        let fmt = &crate::builtins::convert::to_rstr(&args[0])?;
         let fmt = fmt.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(string_new(date_strftime(date_of(recv).jdn, &fmt))))
     }
@@ -312,14 +310,23 @@ builtin_methods! {
 /// `Date.new`'s civil components, defaulting like CRuby (`Date.new` == the
 /// Julian-calendar epoch, but the common call passes all three).
 fn civil_args(args: &[RubyValue]) -> Result<(i64, i64, i64), Signal> {
-    let int_at = |i: usize, default: i64| -> Result<i64, Signal> {
+    // NOT the generic implicit-conversion protocol: the date library takes
+    // any numeric (a Float truncates) and rejects the rest with its own
+    // "invalid year (not numeric)" TypeError shape (oracle-verified; even
+    // `to_int` ducks are rejected).
+    let int_at = |i: usize, default: i64, name: &str| -> Result<i64, Signal> {
         match args.get(i) {
             None => Ok(default),
             Some(RubyValue::Int(v)) => Ok(*v),
-            Some(_) => Err(type_error!("no implicit conversion into Integer")),
+            Some(RubyValue::Float(f)) => Ok(f.trunc() as i64),
+            Some(_) => Err(type_error!("invalid {name} (not numeric)")),
         }
     };
-    Ok((int_at(0, -4712)?, int_at(1, 1)?, int_at(2, 1)?))
+    Ok((
+        int_at(0, -4712, "year")?,
+        int_at(1, 1, "month")?,
+        int_at(2, 1, "day")?,
+    ))
 }
 
 builtin_methods! {
@@ -335,7 +342,8 @@ builtin_methods! {
         let jdn = match args.first() {
             None => 0,
             Some(RubyValue::Int(n)) => *n,
-            Some(_) => return Err(type_error!("no implicit conversion into Integer")),
+            Some(RubyValue::Float(f)) => f.trunc() as i64,
+            Some(_) => return Err(type_error!("invalid jd (not numeric)")),
         };
         Ok(RubyValue::Object(RDate::new(jdn, class_of(recv))))
     }
@@ -352,24 +360,28 @@ builtin_methods! {
     }
     "parse" => fn parse(recv, args, _block) {
         arity!(args, 1..=2);
-        let RubyValue::Str(s) = &args[0] else {
-            return Err(type_error!("no implicit conversion into String"));
-        };
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let text = s.lock().to_utf8_lossy().into_owned();
         let (y, m, d) = parse_date(&text)?;
         Ok(RubyValue::Object(RDate::new(civil_to_jdn(y, m, d), class_of(recv))))
     }
     "valid_date?" | "valid_civil?" => fn valid_date(_recv, args, _block) {
         arity!(args, 3..=4);
-        let (y, m, d) = civil_args(args)?;
+        // A non-numeric component answers false rather than raising
+        // (oracle: `Date.valid_date?(2020, nil, 1)` is false).
+        let Ok((y, m, d)) = civil_args(args) else {
+            return Ok(RubyValue::Bool(false));
+        };
         // Round-trips only for a real calendar date.
         let jdn = civil_to_jdn(y, m, d);
         Ok(RubyValue::Bool(jdn_to_civil(jdn) == (y, m, d)))
     }
     "leap?" => fn leap_c(_recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(y) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
+        let y = &match &args[0] {
+            RubyValue::Int(n) => *n,
+            RubyValue::Float(f) => f.trunc() as i64,
+            _ => return Err(type_error!("invalid year (not numeric)")),
         };
         Ok(RubyValue::Bool(y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)))
     }

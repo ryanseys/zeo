@@ -353,19 +353,7 @@ pub fn block_auto_splat(args: Vec<RubyValue>) -> Result<Vec<RubyValue>, Signal> 
 /// from it -- `take(**opts_object)` is the idiom. Codegen routes every
 /// double-splat call-site argument through this.
 pub fn to_hash_coerce(v: &RubyValue) -> Result<crate::RHash, Signal> {
-    if let RubyValue::Hash(h) = v {
-        return Ok(h.clone());
-    }
-    let to_hash = crate::Symbol::intern("to_hash");
-    if crate::dispatch::responds_to(v.class_id(), to_hash, false) {
-        if let RubyValue::Hash(h) = crate::dispatch::send_value(v, to_hash, &[], None)? {
-            return Ok(h);
-        }
-    }
-    Err(type_error!(
-        "no implicit conversion of {} into Hash",
-        crate::builtins::convert_name_of(v)
-    ))
+    crate::builtins::convert::to_rhash(v)
 }
 
 /// The `&expr` block-argument conversion (CRuby's `Proc()` coercion at a

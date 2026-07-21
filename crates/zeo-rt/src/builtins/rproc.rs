@@ -5,8 +5,8 @@
 //! default would be silent wrongness.
 
 use crate::RubyValue;
+use crate::builtins::arg_error;
 use crate::builtins::builtin_methods;
-use crate::builtins::{arg_error, type_error};
 
 fn recv_proc(recv: &RubyValue) -> &crate::RProc {
     match recv {
@@ -111,15 +111,15 @@ builtin_methods! {
         crate::builtins::arity!(args, 0..=1);
         let p = recv_proc(recv).clone();
         let n = match args.first() {
-            Some(RubyValue::Int(n)) => *n,
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other))),
+            // An explicit nil arity is accepted as absent (CRuby's
+            // proc_curry); anything else through the `to_int` protocol.
             // A negative (optional/rest) arity has no fixed slot count to
             // curry toward -- CRuby uses `-arity - 1`, the required count.
-            None => {
+            None | Some(RubyValue::Nil) => {
                 let a = p.arity();
                 if a < 0 { (-a - 1) as i64 } else { a as i64 }
             }
+            Some(v) => crate::builtins::convert::to_index(v)?,
         };
         Ok(curried(p, Vec::new(), n as usize))
     }

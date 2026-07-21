@@ -3,7 +3,6 @@
 //! %b %e %g %c %%`, flags `- + 0 space`, width, precision. `%<name>s`-style
 //! hash references and `%*d` star-widths are Tier B.
 
-use crate::builtins::type_error;
 use crate::{RubyValue, Signal};
 
 #[derive(Default)]
@@ -54,27 +53,24 @@ fn arg_error(msg: String) -> Signal {
     crate::dispatch::raise_error("ArgumentError", msg)
 }
 
+/// `%d`-family conversion: CRuby's `rb_Integer` (`"%d" % "12"` parses,
+/// `"%d" % "x"` is `invalid value for Integer(): "x"`, `to_int` ducks
+/// convert, nil is "can't convert nil into Integer" -- oracle-verified).
 fn to_int_for_format(v: &RubyValue) -> Result<num_bigint::BigInt, Signal> {
-    match v {
-        RubyValue::Int(_) | RubyValue::BigInt(_) => Ok(crate::builtins::integer::to_bigint(v)),
-        RubyValue::Float(f) => Ok(num_bigint::BigInt::from(f.trunc() as i128)),
-        RubyValue::Rational(r) => Ok(&r.num / &r.den),
-        other => Err(type_error!(
-            "can't convert {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+    match crate::builtins::kernel::kernel_integer(std::slice::from_ref(v))? {
+        n @ (RubyValue::Int(_) | RubyValue::BigInt(_)) => {
+            Ok(crate::builtins::integer::to_bigint(&n))
+        }
+        _ => unreachable!("kernel_integer answers an Integer"),
     }
 }
 
+/// `%f`-family conversion: CRuby's `rb_Float` (`"%f" % "x"` is
+/// `invalid value for Float(): "x"` -- oracle-verified).
 fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
-    match v {
-        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
-            Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
-        }
-        other => Err(type_error!(
-            "can't convert {} into Float",
-            crate::builtins::convert_name_of(other)
-        )),
+    match crate::builtins::kernel::kernel_float(std::slice::from_ref(v))? {
+        RubyValue::Float(f) => Ok(f),
+        _ => unreachable!("kernel_float answers a Float"),
     }
 }
 

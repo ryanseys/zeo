@@ -4,7 +4,7 @@
 
 use crate::RubyValue;
 use crate::builtins::{
-    arg_error, arg_int, arity, block_or_enum, builtin_methods, frozen_error, index_error,
+    arg_error, arg_int, arity, block_or_enum, builtin_methods, convert, frozen_error, index_error,
     recv_array, type_error,
 };
 
@@ -28,10 +28,6 @@ builtin_methods! {
             )));
         }
         match &args[0] {
-            RubyValue::Int(_) => {
-                let i = arg_int!(args, 0);
-                Ok(crate::array_get(recv_array!(recv), i))
-            }
             // `arr[1..3]` -- Range slicing.
             RubyValue::Range(start, end, exclusive) => {
                 let s = match start.as_deref() {
@@ -59,8 +55,10 @@ builtin_methods! {
                     items[s as usize..=e as usize].to_vec()
                 })))
             }
-            other => Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other))),
+            other => {
+                let i = convert::to_index(other)?;
+                Ok(crate::array_get(recv_array!(recv), i))
+            }
         }
     }
     "[]=" => fn index_set(recv, args, _block) {
@@ -78,14 +76,18 @@ builtin_methods! {
         if let RubyValue::Range(s, e, exclusive) = &args[0] {
             let n = crate::array_len(recv_array!(recv));
             let start = match s.as_deref() {
-                Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    if v < 0 { v + n } else { v }
+                }
                 None => 0,
-                _ => return Err(type_error!("no implicit conversion of Range into Integer")),
             };
             let end = match e.as_deref() {
-                Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    if v < 0 { v + n } else { v }
+                }
                 None => n - 1,
-                _ => return Err(type_error!("no implicit conversion of Range into Integer")),
             };
             let len = (end - start + if *exclusive { 0 } else { 1 }).max(0);
             array_splice(recv_array!(recv), start, len, &args[1])?;
@@ -125,13 +127,14 @@ builtin_methods! {
         // count is caught here so it carries Array's own message ("negative
         // array size"), distinct from Enumerable's generic one.
         if !args.is_empty() {
-            if let Some(RubyValue::Int(n)) = args.first() {
-                if *n < 0 {
-                    return Err(arg_error!("negative array size"));
-                }
+            let n = convert::to_index(&args[0])?;
+            if n < 0 {
+                return Err(arg_error!("negative array size"));
             }
-            return crate::builtins::enumerable::enumerable_send(recv, "first", args, None)
-                .expect("Enumerable implements first(n)");
+            return crate::builtins::enumerable::enumerable_send(
+                recv, "first", &[RubyValue::Int(n)], None,
+            )
+            .expect("Enumerable implements first(n)");
         }
         Ok(crate::array_get(recv_array!(recv), 0))
     }
@@ -153,20 +156,14 @@ builtin_methods! {
     }
     "+"[1] => fn plus(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Array",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rary(&args[0])?;
         let mut out = recv_array!(recv).lock().clone();
         out.extend(other.lock().iter().cloned());
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     "-"[1] => fn minus(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Array",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rary(&args[0])?;
         let exclude = other.lock().clone();
         let out = recv_array!(recv)
             .lock()
@@ -176,32 +173,27 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    // `arr * n` repeats; `arr * "sep"` joins (real Ruby's dual form).
+    // `arr * n` repeats; `arr * "sep"` joins (real Ruby's dual form --
+    // CRuby probes `to_str` first, then falls through to the count).
     "*"[1] => fn times(recv, args, _block) {
         arity!(args, 1);
-        match &args[0] {
-            RubyValue::Int(n) => {
-                if *n < 0 {
-                    return Err(arg_error!("negative argument"));
-                }
-                let base = recv_array!(recv).lock().clone();
-                let mut out = Vec::with_capacity(base.len() * *n as usize);
-                for _ in 0..*n {
-                    out.extend(base.iter().cloned());
-                }
-                Ok(RubyValue::Array(crate::array_new(out)))
-            }
-            RubyValue::Str(_) => join(recv, args, None),
-            other => Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other))),
+        if let Some(sep) = convert::check_to_str(&args[0])? {
+            return join(recv, &[sep], None);
         }
+        let n = convert::to_index(&args[0])?;
+        if n < 0 {
+            return Err(arg_error!("negative argument"));
+        }
+        let base = recv_array!(recv).lock().clone();
+        let mut out = Vec::with_capacity(base.len() * n as usize);
+        for _ in 0..n {
+            out.extend(base.iter().cloned());
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
     }
     "&"[1] => fn intersect(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Array",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rary(&args[0])?;
         let keep = other.lock().clone();
         let mut out: Vec<RubyValue> = Vec::new();
         for e in recv_array!(recv).lock().iter() {
@@ -341,10 +333,7 @@ builtin_methods! {
         // #548 infinite-growth bug -- `[1,2].concat(a,a)` is 6 elements, not 8).
         let mut extension = Vec::new();
         for a in args {
-            let RubyValue::Array(other) = a else {
-                return Err(type_error!("no implicit conversion of {} into Array",
-                        crate::builtins::convert_name_of(a)));
-            };
+            let other = &convert::to_rary(a)?;
             extension.extend(other.lock().clone());
         }
         recv_array!(recv).lock().extend(extension);
@@ -354,12 +343,8 @@ builtin_methods! {
     "flatten" => fn flatten(recv, args, _block) {
         arity!(args, 0..=1);
         let depth = match args.first() {
-            Some(RubyValue::Int(d)) => *d,
             None | Some(RubyValue::Nil) => -1,
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)))
-            }
+            Some(_) => arg_int!(args, 0),
         };
         fn go(items: &[RubyValue], depth: i64, out: &mut Vec<RubyValue>) {
             for e in items {
@@ -442,9 +427,7 @@ builtin_methods! {
         // element order (leftmost varies slowest).
         let mut lists: Vec<Vec<RubyValue>> = vec![recv_array!(recv).lock().clone()];
         for a in args {
-            let RubyValue::Array(other) = a else {
-                return Err(type_error!("no implicit conversion of {} into Array", a.inspect_string()));
-            };
+            let other = &convert::to_rary(a)?;
             lists.push(other.lock().clone());
         }
         let mut out: Vec<RubyValue> = vec![RubyValue::Array(crate::array_new(Vec::new()))];
@@ -480,9 +463,7 @@ builtin_methods! {
         }
         let mut cols: Vec<Vec<RubyValue>> = Vec::new();
         for (ri, row) in rows.iter().enumerate() {
-            let RubyValue::Array(r) = row else {
-                return Err(type_error!("no implicit conversion of {} into Array", row.inspect_string()));
-            };
+            let r = &convert::to_rary(row)?;
             let r = r.lock().clone();
             if ri == 0 {
                 cols = vec![Vec::with_capacity(rows.len()); r.len()];
@@ -562,12 +543,8 @@ builtin_methods! {
     "join" => fn join(recv, args, _block) {
         arity!(args, 0..=1);
         let sep = match args.first() {
-            Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
             None | Some(RubyValue::Nil) => String::new(),
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(other)))
-            }
+            Some(other) => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
         };
         let elems = recv_array!(recv).lock().clone();
         Ok(RubyValue::Str(crate::string_new(join_recursive(&elems, &sep))))
@@ -656,10 +633,7 @@ builtin_methods! {
         let n = items.len() as i64;
         let mut out = Vec::with_capacity(args.len());
         for arg in args {
-            let i = match arg {
-                RubyValue::Int(i) => *i,
-                other => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
-            };
+            let i = convert::to_index(arg)?;
             let idx = if i < 0 { i + n } else { i };
             if (0..n).contains(&idx) {
                 out.push(items[idx as usize].clone());
@@ -730,12 +704,16 @@ builtin_methods! {
     }
     "zip" => fn zip(recv, args, block) {
         let base = recv_array!(recv).lock().clone();
+        // CRuby's `take_items`: each source through `rb_check_array_type`
+        // (`to_ary` ducks accepted); a non-convertible source raises the
+        // respond-to-:each shape (the `each` fallback iteration itself is a
+        // documented gap).
         let others: Vec<Vec<RubyValue>> = args
             .iter()
-            .map(|a| match a {
-                RubyValue::Array(x) => Ok(x.lock().clone()),
-                other => Err(type_error!("wrong argument type {} (must respond to :each)",
-                        crate::builtins::class_name_of(other))),
+            .map(|a| match convert::check_to_ary(a)? {
+                Some(RubyValue::Array(x)) => Ok(x.lock().clone()),
+                _ => Err(type_error!("wrong argument type {} (must respond to :each)",
+                        crate::builtins::class_name_of(a))),
             })
             .collect::<Result<_, _>>()?;
         let out = base
@@ -763,12 +741,8 @@ builtin_methods! {
     "rotate" => fn rotate(recv, args, _block) {
         arity!(args, 0..=1);
         let by = match args.first() {
-            Some(RubyValue::Int(n)) => *n,
             None => 1,
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)))
-            }
+            Some(_) => arg_int!(args, 0),
         };
         let mut out = recv_array!(recv).lock().clone();
         if !out.is_empty() {
@@ -802,28 +776,29 @@ builtin_methods! {
         let mut out = Vec::new();
         for a in args {
             match a {
-                RubyValue::Int(i) => out.push(at(*i)),
                 RubyValue::Range(start, end, exclusive) => {
                     let s = match start.as_deref() {
-                        Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
+                        Some(v) => {
+                            let v = convert::to_index(v)?;
+                            if v < 0 { v + n } else { v }
+                        }
                         None => 0,
-                        _ => return Err(range_index_error(a)),
                     };
                     // An endless range stops at the array's end -- it names
                     // no index past it, unlike a bounded one.
                     let e = match end.as_deref() {
-                        Some(RubyValue::Int(v)) => {
-                            let v = if *v < 0 { v + n } else { *v };
+                        Some(v) => {
+                            let v = convert::to_index(v)?;
+                            let v = if v < 0 { v + n } else { v };
                             if *exclusive { v - 1 } else { v }
                         }
                         None => n - 1,
-                        _ => return Err(range_index_error(a)),
                     };
                     for i in s..=e {
                         out.push(at(i));
                     }
                 }
-                other => return Err(range_index_error(other)),
+                other => out.push(at(convert::to_index(other)?)),
             }
         }
         Ok(RubyValue::Array(crate::array_new(out)))
@@ -858,33 +833,37 @@ builtin_methods! {
         // or a `start[, length]` pair.
         let (start, end) = if let Some(RubyValue::Range(rs, re, exclusive)) = span.first() {
             let start = match rs.as_deref() {
-                Some(RubyValue::Int(v)) => if *v < 0 { v + cur_len } else { *v },
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    if v < 0 { v + cur_len } else { v }
+                }
                 None => 0,
-                _ => return Err(range_index_error(rs.as_deref().unwrap())),
             };
             let end = match re.as_deref() {
-                Some(RubyValue::Int(v)) => {
-                    let v = if *v < 0 { v + cur_len } else { *v };
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    let v = if v < 0 { v + cur_len } else { v };
                     if *exclusive { v } else { v + 1 }
                 }
                 None => cur_len,
-                _ => return Err(range_index_error(re.as_deref().unwrap())),
             };
             (start.max(0), end)
         } else {
+            // A nil `start`/`length` is treated as absent (CRuby's rule:
+            // `[1, 2].fill(0, nil)` fills from 0, no TypeError).
             let start = match span.first() {
+                None | Some(RubyValue::Nil) => 0,
                 Some(v) => {
-                    let s = int_arg(v)?;
+                    let s = convert::to_index(v)?;
                     if s < 0 { s + cur_len } else { s }
                 }
-                None => 0,
             };
             if start < 0 {
                 return Err(index_error!("index {} too small for array; minimum: {}", start - cur_len, -cur_len));
             }
             let end = match span.get(1) {
-                Some(v) => start + int_arg(v)?.max(0),
-                None => cur_len,
+                None | Some(RubyValue::Nil) => cur_len,
+                Some(v) => start + convert::to_index(v)?.max(0),
             };
             (start, end)
         };
@@ -911,10 +890,7 @@ builtin_methods! {
     }
     "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Array",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rary(&args[0])?;
         let new_items = other.lock().clone();
         *recv_array!(recv).lock() = new_items;
         Ok(recv.clone())
@@ -981,17 +957,20 @@ builtin_methods! {
     "sample" => fn sample(recv, args, _block) {
         arity!(args, 0..=1);
         let mut items = recv_array!(recv).lock().clone();
-        if matches!(args.first(), Some(RubyValue::Int(n)) if *n < 0) {
-            return Err(arg_error!("negative sample number"));
-        }
-        let Some(n) = count_arg(args)? else {
+        let Some(v) = args.first() else {
             return Ok(if items.is_empty() {
                 RubyValue::Nil
             } else {
                 items[(crate::builtins::kernel::prng_next() % items.len() as u64) as usize].clone()
             });
         };
-        let take = n.min(items.len());
+        // `sample`'s own negative message, checked AFTER conversion (so
+        // `sample(-2.9)` truncates first, then complains) -- oracle shape.
+        let n = convert::to_index(v)?;
+        if n < 0 {
+            return Err(arg_error!("negative sample number"));
+        }
+        let take = (n as usize).min(items.len());
         for i in 0..take {
             let j = i + (crate::builtins::kernel::prng_next() as usize % (items.len() - i));
             items.swap(i, j);
@@ -1013,9 +992,7 @@ builtin_methods! {
     // `builtins::pack`). ASCII-8BIT unless the template is all `U` (UTF-8).
     "pack"[-2] => fn pack(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Str(t) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])));
-        };
+        let t = crate::builtins::arg_str!(args, 0);
         let template = t.lock().to_utf8_lossy().into_owned();
         let elems = recv_array!(recv).lock().clone();
         let bytes = crate::builtins::pack::pack(&elems, &template)?;
@@ -1121,10 +1098,7 @@ builtin_methods! {
     // same `rb_eq` membership as `&`/`intersection`, no result array built).
     "intersect?"[1] => fn intersect_p(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Array(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Array",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rary(&args[0])?;
         let mine = recv_array!(recv).lock().clone();
         let theirs = other.lock().clone();
         Ok(RubyValue::Bool(
@@ -1165,8 +1139,7 @@ builtin_methods! {
         check_frozen(recv_array!(recv), recv)?;
         let n = match args.first() {
             None => 1,
-            Some(RubyValue::Int(v)) => *v,
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            Some(_) => arg_int!(args, 0),
         };
         let handle = recv_array!(recv);
         let mut items = handle.lock().clone();
@@ -1289,33 +1262,11 @@ builtin_methods! {
     }
 }
 
-/// The optional COUNT argument of `pop(n)`/`shift(n)`: `None` when absent
-/// (the answer-one-element form), else the count. A negative one is
-/// CRuby's "negative array size" ArgumentError.
-/// An Integer argument (`fill`'s start/length), raising CRuby's exact
-/// TypeError for a non-Integer.
-fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
-    match v {
-        RubyValue::Int(n) => Ok(*n),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
-}
-
 /// Coerces every argument of a variadic set op (`union`/`intersection`/
-/// `difference`) to its element vector, raising CRuby's TypeError for a
-/// non-Array argument.
+/// `difference`) to its element vector through the `to_ary` protocol.
 fn set_op_args(args: &[RubyValue]) -> Result<Vec<Vec<RubyValue>>, crate::Signal> {
     args.iter()
-        .map(|a| match a {
-            RubyValue::Array(o) => Ok(o.lock().clone()),
-            other => Err(type_error!(
-                "no implicit conversion of {} into Array",
-                crate::builtins::convert_name_of(other)
-            )),
-        })
+        .map(|a| Ok(convert::to_rary(a)?.lock().clone()))
         .collect()
 }
 
@@ -1373,26 +1324,19 @@ fn values_eql(a: &RubyValue, b: &RubyValue) -> bool {
     crate::collections::hash_key(a) == crate::collections::hash_key(b)
 }
 
+/// The optional COUNT argument of `pop(n)`/`shift(n)`/`last(n)`: `None` when
+/// absent (the answer-one-element form), else the count through the
+/// `to_int` protocol. A negative one is CRuby's "negative array size"
+/// ArgumentError (checked after conversion, so `pop(-2.9)` truncates first).
 fn count_arg(args: &[RubyValue]) -> Result<Option<usize>, crate::Signal> {
     let Some(v) = args.first() else {
         return Ok(None);
     };
-    let RubyValue::Int(n) = v else {
-        return Err(range_index_error(v));
-    };
-    if *n < 0 {
+    let n = convert::to_index(v)?;
+    if n < 0 {
         return Err(arg_error!("negative array size"));
     }
-    Ok(Some(*n as usize))
-}
-
-/// CRuby's TypeError for a `values_at` argument that is neither an index
-/// nor a range of them.
-fn range_index_error(v: &RubyValue) -> crate::Signal {
-    type_error!(
-        "no implicit conversion of {} into Integer",
-        crate::builtins::convert_name_of(v)
-    )
+    Ok(Some(n as usize))
 }
 
 /// The INDEX of the first element the block answers truthy for, in
@@ -1703,15 +1647,13 @@ fn splice_elems(value: &RubyValue) -> Result<Vec<RubyValue>, crate::Signal> {
     Ok(vec![value.clone()])
 }
 
-/// `index_only` -- `dig`'s per-level `[]` (Int index).
+/// `index_only` -- `dig`'s per-level `[]` (an index through the `to_int`
+/// protocol, as CRuby's `rb_ary_at` converts it).
 fn index_only(recv: &RubyValue, key: &RubyValue) -> Result<RubyValue, crate::Signal> {
-    match (recv, key) {
-        (RubyValue::Array(a), RubyValue::Int(i)) => Ok(crate::array_get(a, *i)),
-        _ => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(key)
-        )),
-    }
+    let RubyValue::Array(a) = recv else {
+        unreachable!("Array#dig dispatched on a non-Array receiver");
+    };
+    Ok(crate::array_get(a, convert::to_index(key)?))
 }
 
 /// `sort`/`sort!`'s comparator: the block when given, `rb_cmp` otherwise

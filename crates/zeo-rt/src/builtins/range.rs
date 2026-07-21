@@ -329,7 +329,8 @@ builtin_methods! {
         let (start, end, exclusive) = range_parts(recv);
         match args.first() {
             None => Ok(end.cloned().unwrap_or(RubyValue::Nil)),
-            Some(RubyValue::Int(n)) => {
+            Some(v) => {
+                let n = crate::builtins::convert::to_index(v)?;
                 // Materialize (Enumerable to_a) and take the tail --
                 // `last(n)` INCLUDES an exclusive end's predecessor set.
                 let _ = (start, exclusive);
@@ -337,12 +338,10 @@ builtin_methods! {
                     .expect("Enumerable implements to_a")?;
                 let RubyValue::Array(all) = all else { unreachable!() };
                 let items = all.lock().clone();
-                let n = (*n).max(0) as usize;
+                let n = n.max(0) as usize;
                 let skip = items.len().saturating_sub(n);
                 Ok(RubyValue::Array(crate::array_new(items[skip..].to_vec())))
             }
-            Some(other) => Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other))),
         }
     }
     "size"[0] => fn size(recv, args, _block) {
@@ -420,9 +419,12 @@ builtin_methods! {
         let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
             panic!("Range#step on a non-Integer range isn't supported (spike scope)");
         };
+        // NOT an implicit-conversion site: CRuby's Range#step raises the
+        // numeric-tower coerce shape here (oracle: `(1..5).step("x")` is
+        // "String can't be coerced into Integer").
         let RubyValue::Int(by) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(&args[0])));
+            return Err(type_error!("{} can't be coerced into Integer",
+                    crate::builtins::class_name_of(&args[0])));
         };
         if *by == 0 {
             return Err(arg_error!("step can't be 0"));

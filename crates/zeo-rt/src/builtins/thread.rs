@@ -92,13 +92,12 @@ fn t_set_name(
 ) -> Result<RubyValue, Signal> {
     let name = match &args[0] {
         RubyValue::Nil => None,
-        RubyValue::Str(s) => Some(s.lock().to_utf8_lossy().into_owned()),
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        other => Some(
+            crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
+        ),
     };
     thread::thread_set_name(&recv.as_thread_unchecked(), name);
     Ok(args[0].clone())

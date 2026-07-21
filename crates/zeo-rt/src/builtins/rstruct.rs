@@ -217,13 +217,6 @@ fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
     let meta = meta_of(inst.class_id).expect("struct instance has meta");
     let n = meta.members.len();
     match key {
-        RubyValue::Int(i) => {
-            let idx = if *i < 0 { *i + n as i64 } else { *i };
-            if idx < 0 || idx as usize >= n {
-                return Err(index_error!("offset {i} too large for struct(size:{n})"));
-            }
-            Ok(idx as usize)
-        }
         RubyValue::Symbol(s) => meta
             .index_of(*s)
             .ok_or_else(|| name_error!("no member '{}' in struct", s.name())),
@@ -232,10 +225,14 @@ fn member_index(recv: &RubyValue, key: &RubyValue) -> Result<usize, Signal> {
             meta.index_of(Symbol::intern(&name))
                 .ok_or_else(|| name_error!("no member '{name}' in struct"))
         }
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            class_name(other.class_id()).unwrap_or_default()
-        )),
+        other => {
+            let i = crate::builtins::convert::to_index(other)?;
+            let idx = if i < 0 { i + n as i64 } else { i };
+            if idx < 0 || idx as usize >= n {
+                return Err(index_error!("offset {i} too large for struct(size:{n})"));
+            }
+            Ok(idx as usize)
+        }
     }
 }
 

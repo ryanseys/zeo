@@ -356,13 +356,10 @@ fn write_float_m(
 
 /// A String's bytes, for a `put_string`/`write_bytes` argument.
 fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .bytes()
+        .to_vec())
 }
 
 fn bytes_to_str(bytes: Vec<u8>) -> RubyValue {
@@ -639,13 +636,11 @@ fn write_float_array(
 }
 
 fn array_elems(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
-    match v {
-        RubyValue::Array(a) => Ok(a.lock().iter().cloned().collect()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Array",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rary(v)?
+        .lock()
+        .iter()
+        .cloned()
+        .collect())
 }
 
 // ---- FFI::Pointer class methods ----

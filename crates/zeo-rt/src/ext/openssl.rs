@@ -4,19 +4,16 @@
 //! bytes and the constant-time comparison helpers. The `Cipher`/`PKey`/`SSL`
 //! surface still needs an FFI or rustls backend (see docs/EXTENSIONS.md).
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal};
 
-/// The bytes of a String argument, else CRuby's `no implicit conversion` error.
+/// The bytes of a String argument, through the `to_str` protocol.
 fn str_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .bytes()
+        .to_vec())
 }
 
 /// A constant-time byte-equality check: always visits every byte of the
@@ -47,9 +44,7 @@ builtin_methods! {
     // (ASCII-8BIT), drawn from the OS CSPRNG.
     "random_bytes" => fn random_bytes(_recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
-        };
+        let n = &crate::builtins::convert::to_index(&args[0])?;
         if *n < 0 {
             return Err(arg_error!("negative string size (or size too big)"));
         }

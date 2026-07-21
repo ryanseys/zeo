@@ -9,7 +9,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::builtins::{arg_error, arity, builtin_methods, class_name_of, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods, class_name_of};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
 
@@ -125,13 +125,7 @@ builtin_methods! {
     // truncates toward zero; a non-numeric argument is a TypeError.
     "signame" => fn signame(_recv, args, _block) {
         arity!(args, 1);
-        let no = match &args[0] {
-            RubyValue::Int(i) => *i as i32,
-            RubyValue::Float(f) => *f as i32,
-            other => {
-                return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))
-            }
-        };
+        let no = crate::builtins::convert::to_index(&args[0])? as i32;
         match name_from_signo(no) {
             Some(name) => Ok(RubyValue::Str(string_new(name.to_string()))),
             None => Ok(RubyValue::Nil),

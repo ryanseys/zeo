@@ -121,12 +121,9 @@ fn f_set_storage(
             }
             out
         }
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Hash",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        // NOT an implicit-conversion site: CRuby's fiber storage requires a
+        // literal Hash ("storage must be a hash", oracle-verified).
+        _ => return Err(type_error!("storage must be a hash")),
     };
     fiber::fiber_set_storage(&handle, pairs);
     Ok(args[0].clone())

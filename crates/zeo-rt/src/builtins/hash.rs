@@ -3,7 +3,7 @@
 
 use crate::RubyValue;
 use crate::builtins::{
-    arg_error, arity, block_or_enum, builtin_methods, frozen_error, recv_hash, type_error,
+    arg_error, arity, block_or_enum, builtin_methods, convert, frozen_error, recv_hash, type_error,
 };
 
 /// CRuby's `rb_hash_modify` guard: a frozen Hash raises before any in-place
@@ -62,7 +62,26 @@ builtin_methods! {
         match &args[0] {
             RubyValue::Nil => g.default_proc = None,
             p @ RubyValue::Proc(_) => g.default_proc = Some(p.clone()),
-            other => return Err(type_error!("no implicit conversion of {} into Proc", crate::builtins::convert_name_of(other))),
+            // CRuby probes `to_proc` and, failing that (or a lying answer),
+            // raises its own shape: "wrong default_proc type X (expected
+            // Proc)" -- NOT the generic implicit-conversion TypeError.
+            other => {
+                let to_proc = crate::Symbol::intern("to_proc");
+                let ducked = if crate::dispatch::responds_to_value(other, to_proc, true) {
+                    Some(crate::dispatch::send_value(other, to_proc, &[], None)?)
+                } else {
+                    None
+                };
+                match ducked {
+                    Some(p @ RubyValue::Proc(_)) => g.default_proc = Some(p),
+                    _ => {
+                        return Err(type_error!(
+                            "wrong default_proc type {} (expected Proc)",
+                            crate::builtins::class_name_of(other)
+                        ))
+                    }
+                }
+            }
         }
         Ok(args[0].clone())
     }
@@ -240,8 +259,7 @@ builtin_methods! {
         arity!(args, 0..=1);
         let depth = match args.first() {
             None => 1,
-            Some(RubyValue::Int(n)) => *n,
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            Some(_) => crate::builtins::arg_int!(args, 0),
         };
         let mut out = Vec::new();
         for (k, v) in recv_hash!(recv).lock().values() {
@@ -348,9 +366,7 @@ builtin_methods! {
     "replace"[1] => fn replace(recv, args, _block) {
         guard_hash_frozen(recv)?;
         arity!(args, 1);
-        let RubyValue::Hash(other) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])));
-        };
+        let other = &convert::to_rhash(&args[0])?;
         let h = recv_hash!(recv);
         let old_keys: Vec<RubyValue> = h.lock().values().map(|(k, _)| k.clone()).collect();
         for k in &old_keys {
@@ -606,12 +622,9 @@ fn transform_keys_mapping(
     args: &[RubyValue],
 ) -> Result<Option<crate::collections::RHash>, crate::Signal> {
     match args.first() {
-        Some(RubyValue::Hash(h)) => Ok(Some(h.clone())),
-        None | Some(RubyValue::Nil) => Ok(None),
-        Some(other) => Err(type_error!(
-            "no implicit conversion of {} into Hash",
-            crate::builtins::convert_name_of(other)
-        )),
+        None => Ok(None),
+        // Strict: an explicit nil raises too (CRuby's rb_to_hash_type).
+        Some(v) => Ok(Some(convert::to_rhash(v)?)),
     }
 }
 
@@ -681,16 +694,10 @@ fn hash_filter_bang(
 /// `a <= b` (and, with `proper`, `a < b`): every pair of `a` appears in `b`
 /// with an equal value. A non-Hash `b` is a TypeError, matching CRuby.
 fn hash_subset(a: &RubyValue, b: &RubyValue, proper: bool) -> Result<bool, crate::Signal> {
-    let (RubyValue::Hash(small), RubyValue::Hash(big)) = (a, b) else {
-        return Err(type_error!(
-            "no implicit conversion of {} into Hash",
-            crate::builtins::convert_name_of(if matches!(a, RubyValue::Hash(_)) {
-                b
-            } else {
-                a
-            }),
-        ));
-    };
+    // One side is always the (Hash) receiver; the other converts through the
+    // `to_hash` protocol (`{} > 1` names Integer -- oracle-verified).
+    let small = &convert::to_rhash(a)?;
+    let big = &convert::to_rhash(b)?;
     if proper && crate::hash_len(small) >= crate::hash_len(big) {
         return Ok(false);
     }
@@ -710,12 +717,7 @@ fn merge_into(
         unreachable!("Hash table row dispatched on a non-Hash receiver");
     };
     for a in args {
-        let RubyValue::Hash(other) = a else {
-            return Err(type_error!(
-                "no implicit conversion of {} into Hash",
-                crate::builtins::convert_name_of(a)
-            ));
-        };
+        let other = &convert::to_rhash(a)?;
         let pairs: Vec<(RubyValue, RubyValue)> = other.lock().values().cloned().collect();
         for (k, v) in pairs {
             let value = match block {

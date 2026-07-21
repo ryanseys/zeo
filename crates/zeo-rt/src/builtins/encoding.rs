@@ -10,7 +10,7 @@
 
 use std::sync::{Arc, LazyLock};
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::dispatch::{RObj, RubyObject};
 use crate::encoding::{self, EncodingId};
 use crate::{RubyValue, Signal};
@@ -90,10 +90,13 @@ pub fn arg_encoding(v: &RubyValue) -> Result<EncodingId, Signal> {
             resolve_name(&name)
         }
         RubyValue::Symbol(s) => resolve_name(&s.name()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
+        other => {
+            let name = crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned();
+            resolve_name(&name)
+        }
     }
 }
 

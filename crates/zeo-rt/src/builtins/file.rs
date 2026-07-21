@@ -40,22 +40,25 @@ pub fn raise_errno(e: &std::io::Error, syscall: &str, path: &str) -> Signal {
     raise_error(class, format!("{desc} @ {syscall} - {path}"))
 }
 
-/// A path argument. Real Ruby accepts a String or anything with `to_path`;
-/// a non-String without it is a TypeError.
-pub fn path_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
+/// A path argument -- CRuby's `rb_get_path`: a String, else the `to_path`
+/// answer (when the method exists), with the survivor going through the
+/// `to_str` protocol. A lying `to_path` therefore reports its ANSWER's
+/// class ("no implicit conversion of Integer into String" for `to_path`
+/// giving 1 -- oracle-verified, no method-name suffix).
+pub fn path_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
     match v {
         RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
         other => {
             let to_path = crate::Symbol::intern("to_path");
-            if crate::dispatch::responds_to(other.class_id(), to_path, false) {
-                if let RubyValue::Str(s) = crate::dispatch::send_value(other, to_path, &[], None)? {
-                    return Ok(s.lock().to_utf8_lossy().into_owned());
-                }
-            }
-            Err(type_error!(
-                "no implicit conversion of {} into String (in `{method}')",
-                crate::builtins::convert_name_of(other)
-            ))
+            let candidate = if crate::dispatch::responds_to(other.class_id(), to_path, false) {
+                crate::dispatch::send_value(other, to_path, &[], None)?
+            } else {
+                other.clone()
+            };
+            Ok(crate::builtins::convert::to_rstr(&candidate)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned())
         }
     }
 }
@@ -411,12 +414,14 @@ fn time_secs(v: &RubyValue) -> Result<libc::time_t, Signal> {
     match v {
         RubyValue::Int(i) => Ok(*i as libc::time_t),
         RubyValue::Float(f) => Ok(*f as libc::time_t),
-        // A Time (or anything Integer-ish) answers via `to_i`.
+        // A Time (or anything Integer-ish) answers via `to_i`. NOT the
+        // generic implicit-conversion shape: CRuby says "can't convert X
+        // into time" (oracle: `File.utime("x", ...)`).
         other => {
             match crate::dispatch::send_value(other, crate::Symbol::intern("to_i"), &[], None)? {
                 RubyValue::Int(i) => Ok(i as libc::time_t),
                 _ => Err(type_error!(
-                    "no implicit conversion of {} into Integer",
+                    "can't convert {} into time",
                     crate::builtins::convert_name_of(other)
                 )),
             }
@@ -663,8 +668,11 @@ builtin_methods! {
     "truncate" => fn file_truncate(_recv, args, _block) {
         arity!(args, 2);
         let path = path_arg(&args[0], "truncate")?;
-        let RubyValue::Int(len) = &args[1] else {
-            return Err(type_error!("no implicit conversion into Integer"));
+        let len = &match &args[1] {
+            RubyValue::Nil => {
+                return Err(type_error!("no implicit conversion from nil"));
+            }
+            v => crate::builtins::convert::to_index(v)?,
         };
         let f = std::fs::OpenOptions::new().write(true).open(&path)
             .map_err(|e| raise_errno(&e, "truncate", &path))?;
@@ -926,8 +934,10 @@ builtin_methods! {
         }
         let path = path_arg(&args[0], "mkfifo")?;
         let mode: libc::mode_t = match args.get(1) {
-            Some(RubyValue::Int(m)) => *m as libc::mode_t,
-            Some(_) => return Err(type_error!("no implicit conversion into Integer")),
+            Some(RubyValue::Nil) => {
+                return Err(type_error!("no implicit conversion of nil into Integer"));
+            }
+            Some(v) => crate::builtins::convert::to_index(v)? as libc::mode_t,
             None => 0o666,
         };
         let c = std::ffi::CString::new(path.clone())
@@ -975,8 +985,10 @@ builtin_methods! {
         match args.first() {
             Some(v) => {
                 let new = match v {
-                    RubyValue::Int(m) => *m as libc::mode_t,
-                    other => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+                    RubyValue::Nil => {
+                        return Err(type_error!("no implicit conversion of nil into Integer"));
+                    }
+                    v => crate::builtins::convert::to_index(v)? as libc::mode_t,
                 };
                 Ok(RubyValue::Int(unsafe { libc::umask(new) } as i64))
             }
@@ -995,8 +1007,11 @@ builtin_methods! {
         if args.is_empty() {
             return Err(arg_error!("wrong number of arguments (given 0, expected 1+)"));
         }
-        let RubyValue::Int(mode) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(&args[0])));
+        let mode = &match &args[0] {
+            RubyValue::Nil => {
+                return Err(type_error!("no implicit conversion of nil into Integer"));
+            }
+            v => crate::builtins::convert::to_index(v)?,
         };
         for p in &args[1..] {
             let path = path_arg(p, "chmod")?;

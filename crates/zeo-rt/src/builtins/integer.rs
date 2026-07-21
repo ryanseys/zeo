@@ -977,10 +977,10 @@ builtin_methods! {
                 }
                 num_bigint::BigInt::from_f64(f.trunc()).unwrap_or_default()
             }
-            other => {
-                return Err(type_error!("no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)))
-            }
+            other => match crate::builtins::convert::to_int(other)? {
+                v @ (RubyValue::Int(_) | RubyValue::BigInt(_)) => to_bigint(&v),
+                _ => unreachable!("to_int post-checks its answer"),
+            },
         };
         if n.is_negative() {
             return Err(crate::dispatch::raise_error(

@@ -746,12 +746,10 @@ builtin_methods! {
         arity!(args, 0..=1);
         let e = recv_enum(recv);
         let offset = match args.first() {
-            None => 0,
-            Some(RubyValue::Int(n)) => *n,
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)))
-            }
+            // An explicit nil offset is accepted as absent (oracle:
+            // `with_index(nil)` starts at 0).
+            None | Some(RubyValue::Nil) => 0,
+            Some(other) => crate::builtins::convert::to_index(other)?,
         };
         match block {
             Some(b) => drive_with_index(e, b, offset),

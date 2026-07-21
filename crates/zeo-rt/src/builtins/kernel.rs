@@ -101,8 +101,11 @@ builtin_methods! {
                     crate::builtins::io::write_str(&out, &c.to_string())?;
                 }
             }
+            // NUM2CHR: the low byte of the `to_int` conversion (`putc 2.5`
+            // truncates; no `to_str` duck here -- oracle-verified).
             other => {
-                return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other)))
+                let byte = (crate::builtins::convert::to_index(other)? & 0xff) as u8;
+                crate::builtins::io::write_str(&out, &(byte as char).to_string())?;
             }
         }
         Ok(args[0].clone())
@@ -569,14 +572,8 @@ fn copy_with_hook(original: &RubyValue, copy: RubyValue) -> Result<RubyValue, Si
 pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=2);
     let base = match args.get(1) {
-        Some(RubyValue::Int(b)) => Some(*b as u32),
-        Some(other) => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
         None => None,
+        Some(v) => Some(crate::builtins::convert::to_index(v)? as u32),
     };
     // A base only makes sense for a String argument -- CRuby raises rather than
     // silently ignoring it for an Integer/Float/etc. (#2515).
@@ -603,10 +600,15 @@ pub fn kernel_integer(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             parse_integer_strict(&text, base)
                 .ok_or_else(|| arg_error!("invalid value for Integer(): {:?}", text))
         }
-        other => Err(type_error!(
-            "can't convert {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        // A `to_int` duck converts (CRuby tries to_int, then to_i); the
+        // rest keep Kernel#Integer's own "can't convert" shape.
+        other => match crate::builtins::convert::check_to_int(other)? {
+            Some(n) => Ok(n),
+            None => Err(type_error!(
+                "can't convert {} into Integer",
+                crate::builtins::convert_name_of(other)
+            )),
+        },
     }
 }
 
@@ -1109,7 +1111,10 @@ fn kernel_rand_range(
         }
         _ => {
             let (Some(a), Some(b)) = (num_to_f64(lo), num_to_f64(hi)) else {
-                return Err(type_error!("no implicit conversion into Float"));
+                // A Range whose endpoints aren't numeric: CRuby names the
+                // Range in the generic to_int shape (oracle: `rand("a".."b")`
+                // is "no implicit conversion of Range into Integer").
+                return Err(type_error!("no implicit conversion of Range into Integer"));
             };
             if b < a || (b == a && exclusive) {
                 return Ok(RubyValue::Nil);

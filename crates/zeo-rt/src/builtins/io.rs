@@ -514,16 +514,10 @@ fn io_read_val(
     }
     let n = match args.first() {
         None | Some(RubyValue::Nil) => None,
-        Some(RubyValue::Int(i)) if *i >= 0 => Some(*i as usize),
-        Some(RubyValue::Int(_)) => {
-            return Err(arg_error!("negative length"));
-        }
-        Some(other) => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        Some(v) => match convert::to_index(v)? {
+            i if i >= 0 => Some(i as usize),
+            i => return Err(arg_error!("negative length {i} given")),
+        },
     };
     with_file(recv, |f, path| {
         use std::io::Read;
@@ -568,18 +562,10 @@ fn io_seek(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let off = match args.first() {
-        Some(RubyValue::Int(i)) => *i,
-        _ => {
-            return Err(type_error!("no implicit conversion into Integer"));
-        }
-    };
+    let off = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
     let whence = match args.get(1) {
         None => 0,
-        Some(RubyValue::Int(w)) => *w,
-        Some(_) => {
-            return Err(type_error!("no implicit conversion into Integer"));
-        }
+        Some(w) => whence_of(w)?,
     };
     with_file(recv, |f, path| {
         use std::io::Seek;
@@ -826,9 +812,7 @@ fn io_lineno_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::Int(n) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let n = convert::to_index(args.first().unwrap_or(&RubyValue::Nil))?;
     if let Some(io) = as_rio(recv) {
         io.lineno.store(n, std::sync::atomic::Ordering::Relaxed);
     }
@@ -931,19 +915,44 @@ fn io_readbyte(
 }
 
 use crate::builtins::{
-    arg_error, eof_error, io_error, local_jump_error, not_impl_error, type_error,
+    arg_error, convert, eof_error, io_error, local_jump_error, not_impl_error, type_error,
 };
 use std::sync::atomic::Ordering::Relaxed;
 
-/// An integer argument (for `pread`/`pwrite` counts and offsets).
-fn int_of(v: &RubyValue, what: &str) -> Result<i64, Signal> {
+/// An integer argument (`pread`/`pwrite` counts, `fcntl`/`chmod` operands)
+/// through the `to_int` protocol -- unlike the offset sites, a nil here is
+/// the generic "of nil into Integer" (oracle-verified).
+fn int_of(v: &RubyValue) -> Result<i64, Signal> {
     match v {
-        RubyValue::Int(i) => Ok(*i),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer ({what})",
-            crate::builtins::convert_name_of(other)
-        )),
+        RubyValue::Nil => Err(type_error!("no implicit conversion of nil into Integer")),
+        v => convert::to_index(v),
     }
+}
+
+/// A byte-offset argument (`seek`/`sysseek`/`pos=`/`truncate`, `pread`'s
+/// offset): CRuby's NUM2OFFT, whose nil TypeError is the bare
+/// "no implicit conversion from nil" (no "to integer" -- oracle-verified).
+fn offset_of(v: &RubyValue) -> Result<i64, Signal> {
+    match v {
+        RubyValue::Nil => Err(type_error!("no implicit conversion from nil")),
+        v => convert::to_index(v),
+    }
+}
+
+/// `seek`/`sysseek`'s whence: the SET/CUR/END symbols map to their
+/// constants (CRuby's interpret_seek_whence); anything else -- unknown
+/// symbols included -- goes through NUM2LONG (oracle: `seek(0, :BAD)` is
+/// "no implicit conversion of Symbol into Integer").
+fn whence_of(v: &RubyValue) -> Result<i64, Signal> {
+    if let RubyValue::Symbol(s) = v {
+        match s.name().as_str() {
+            "SET" => return Ok(0),
+            "CUR" => return Ok(1),
+            "END" => return Ok(2),
+            _ => {}
+        }
+    }
+    convert::to_index(v)
 }
 
 /// `#binmode` -- record binary mode (a no-op on Unix behaviourally); answers self.
@@ -1034,20 +1043,17 @@ fn io_advise(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=3);
+    // Not a conversion site: CRuby's io_advise requires a bare Symbol
+    // ("advice must be a Symbol", oracle-verified).
     let kind = match &args[0] {
         RubyValue::Symbol(s) => s.name().to_string(),
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Symbol",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        _ => return Err(type_error!("advice must be a Symbol")),
     };
     if !matches!(
         kind.as_str(),
         "normal" | "sequential" | "random" | "willneed" | "dontneed" | "noreuse"
     ) {
-        return Err(not_impl_error!("unsupported advice: {kind}"));
+        return Err(not_impl_error!("Unsupported advice: :{kind}"));
     }
     let _ = recv;
     Ok(RubyValue::Nil)
@@ -1083,10 +1089,17 @@ fn io_ungetbyte(
         }
         RubyValue::Nil => {}
         other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
+            let s = convert::to_rstr(other)?;
+            for b in s
+                .lock()
+                .to_utf8_lossy()
+                .into_owned()
+                .into_bytes()
+                .into_iter()
+                .rev()
+            {
+                ug.push(b);
+            }
         }
     }
     Ok(RubyValue::Nil)
@@ -1101,8 +1114,8 @@ fn io_pread(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 2..=3);
-    let count = int_of(&args[0], "pread")?.max(0) as usize;
-    let offset = int_of(&args[1], "pread")?.max(0) as u64;
+    let count = int_of(&args[0])?.max(0) as usize;
+    let offset = offset_of(&args[1])?.max(0) as u64;
     let data = with_file(recv, |f, path| {
         use std::os::unix::fs::FileExt;
         let mut buf = vec![0u8; count];
@@ -1137,7 +1150,7 @@ fn io_pwrite(
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned().into_bytes(),
         other => other.to_display_string().into_bytes(),
     };
-    let offset = int_of(&args[1], "pwrite")?.max(0) as u64;
+    let offset = offset_of(&args[1])?.max(0) as u64;
     with_file(recv, |f, path| {
         use std::os::unix::fs::FileExt;
         let n = f
@@ -1357,7 +1370,6 @@ fn io_putc(
         ));
     };
     let s = match arg {
-        RubyValue::Int(i) => ((*i as u8) as char).to_string(),
         RubyValue::Str(s) => s
             .lock()
             .to_utf8_lossy()
@@ -1365,12 +1377,9 @@ fn io_putc(
             .next()
             .map(|c| c.to_string())
             .unwrap_or_default(),
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        // NUM2CHR: the argument's low byte (`putc 2.5` truncates; a
+        // `to_str` duck does NOT apply here -- oracle-verified).
+        other => ((convert::to_index(other)? as u8) as char).to_string(),
     };
     write_str(recv_io(recv)?, &s)?;
     Ok(arg.clone())
@@ -1382,9 +1391,7 @@ fn io_pos_set(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::Int(n) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let n = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
     with_file(recv, |f, path| {
         use std::io::Seek;
         f.seek(std::io::SeekFrom::Start(n.max(0) as u64))
@@ -1427,18 +1434,10 @@ fn io_sysseek(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let off = match args.first() {
-        Some(RubyValue::Int(i)) => *i,
-        _ => {
-            return Err(type_error!("no implicit conversion into Integer"));
-        }
-    };
+    let off = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
     let whence = match args.get(1) {
         None => 0,
-        Some(RubyValue::Int(w)) => *w,
-        Some(_) => {
-            return Err(type_error!("no implicit conversion into Integer"));
-        }
+        Some(w) => whence_of(w)?,
     };
     with_file(recv, |f, path| {
         use std::io::Seek;
@@ -1462,9 +1461,7 @@ fn io_flock(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     use std::os::fd::AsRawFd;
-    let RubyValue::Int(op) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let op = convert::to_index(args.first().unwrap_or(&RubyValue::Nil))?;
     with_file(recv, |f, path| {
         // SAFETY: `f` owns a valid fd for the call's duration.
         if unsafe { libc::flock(f.as_raw_fd(), op as libc::c_int) } != 0 {
@@ -1498,9 +1495,9 @@ fn io_fcntl(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 1..=2);
-    let cmd = int_of(&args[0], "fcntl")? as libc::c_int;
+    let cmd = int_of(&args[0])? as libc::c_int;
     let arg = match args.get(1) {
-        Some(v) => int_of(v, "fcntl")? as libc::c_int,
+        Some(v) => int_of(v)? as libc::c_int,
         None => 0,
     };
     use std::os::fd::AsRawFd;
@@ -1566,9 +1563,7 @@ fn io_truncate(
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    let RubyValue::Int(len) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let len = offset_of(args.first().unwrap_or(&RubyValue::Nil))?;
     with_file(recv, |f, path| {
         f.set_len(len.max(0) as u64)
             .map_err(|e| crate::builtins::file::raise_errno(&e, "truncate", path))?;
@@ -1583,9 +1578,7 @@ fn io_chmod(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     use std::os::fd::AsRawFd;
-    let RubyValue::Int(mode) = args.first().cloned().unwrap_or(RubyValue::Nil) else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let mode = int_of(args.first().unwrap_or(&RubyValue::Nil))?;
     with_file(recv, |f, path| {
         // SAFETY: `f` owns a valid fd for the call's duration.
         if unsafe { libc::fchmod(f.as_raw_fd(), mode as libc::mode_t) } != 0 {
@@ -1896,9 +1889,7 @@ fn io_class_new(
 ) -> Result<RubyValue, Signal> {
     use std::os::fd::FromRawFd;
     crate::builtins::arity!(args, 1..=2);
-    let RubyValue::Int(fd) = &args[0] else {
-        return Err(type_error!("no implicit conversion into Integer"));
-    };
+    let fd = &convert::to_index(&args[0])?;
     // SAFETY: the caller vouches the fd is a valid open descriptor to adopt.
     let io = pipe_value(unsafe { std::fs::File::from_raw_fd(*fd as libc::c_int) });
     let Some(RubyValue::Proc(p)) = block else {

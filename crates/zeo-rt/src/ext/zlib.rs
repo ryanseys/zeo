@@ -6,17 +6,16 @@
 //! `Zlib.gzip` uses a fixed mtime of 0 (a documented divergence from CRuby's
 //! current-time default) so its output is deterministic.
 
-use crate::builtins::{arity, builtin_methods, runtime_error, type_error};
+use crate::builtins::{arity, builtin_methods, runtime_error};
 use crate::{RubyValue, Signal};
 
 fn bytes_arg(v: Option<&RubyValue>) -> Result<Vec<u8>, Signal> {
     match v {
         None | Some(RubyValue::Nil) => Ok(Vec::new()),
-        Some(RubyValue::Str(s)) => Ok(s.lock().bytes().to_vec()),
-        Some(other) => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
+        Some(other) => Ok(crate::builtins::convert::to_rstr(other)?
+            .lock()
+            .bytes()
+            .to_vec()),
     }
 }
 

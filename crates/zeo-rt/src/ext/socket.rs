@@ -117,7 +117,7 @@ fn port_of(v: &RubyValue) -> Result<u16, Signal> {
             .trim()
             .parse::<u16>()
             .map_err(|_| raise_error("SocketError", "getaddrinfo: unknown service".to_string())),
-        _ => Err(type_error!("no implicit conversion into Integer")),
+        other => Ok(crate::builtins::convert::to_index(other)? as u16),
     }
 }
 

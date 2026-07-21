@@ -15,7 +15,7 @@
 //! makes `take`/`first`/`take_while` terminate an infinite source).
 
 use crate::builtins::enumerator::{enumerator_for, pull_next};
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RProc, RubyValue, Signal, array_new};
 use std::collections::HashSet;
@@ -156,14 +156,11 @@ fn need_block(block: Option<RubyValue>, meth: &str) -> Result<RProc, Signal> {
 }
 
 fn count_arg(v: &RubyValue, meth: &str) -> Result<i64, Signal> {
-    match v {
-        RubyValue::Int(n) if *n >= 0 => Ok(*n),
-        RubyValue::Int(_) => Err(arg_error!("attempt to {meth} negative size")),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+    let n = crate::builtins::convert::to_index(v)?;
+    if n < 0 {
+        return Err(arg_error!("attempt to {meth} negative size"));
     }
+    Ok(n)
 }
 
 #[derive(PartialEq, Eq)]

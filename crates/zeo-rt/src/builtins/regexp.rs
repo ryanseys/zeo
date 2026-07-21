@@ -4,7 +4,7 @@
 //! String's, sharing `crate::regexp`'s helpers with the static paths.
 
 use crate::RubyValue;
-use crate::builtins::{arity, builtin_methods, regexp_error, type_error};
+use crate::builtins::{arity, builtin_methods, regexp_error};
 
 builtin_methods! {
     pub(crate) fn lookup;
@@ -209,11 +209,12 @@ fn re_of(recv: &RubyValue) -> &crate::RRegexp {
 /// CRuby's rule (`/p/ =~ 5` -> TypeError, not a silent non-match).
 fn subject_arg(v: &RubyValue) -> Result<Option<String>, crate::Signal> {
     match v {
-        RubyValue::Str(s) => Ok(Some(s.lock().to_utf8_lossy().into_owned())),
         RubyValue::Nil => Ok(None),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
+        other => Ok(Some(
+            crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
         )),
     }
 }
@@ -272,17 +273,16 @@ builtin_methods! {
         arity!(args, 0..=1);
         match args.first() {
             None => Ok(crate::lastmatch::last_match()),
-            Some(RubyValue::Int(n)) => Ok(crate::lastmatch::last_match_group((*n).max(0) as usize)),
-            Some(other) => Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            Some(v) => Ok(crate::lastmatch::last_match_group(
+                crate::builtins::convert::to_index(v)?.max(0) as usize,
+            )),
         }
     }
 
     // `Regexp.escape(str)` / `.quote(str)`: a source-safe literal of `str`.
     "escape" | "quote" => fn escape_m(_recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Str(s) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(&args[0])));
-        };
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let escaped = escape_regexp_source(&s.lock().to_utf8_lossy());
         Ok(RubyValue::Str(crate::string_new(escaped)))
     }
@@ -301,10 +301,7 @@ builtin_methods! {
                 .map(RubyValue::Regexp)
                 .map_err(|e| regexp_error!("{e}"));
         }
-        let RubyValue::Str(s) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let s = &crate::builtins::convert::to_rstr(&args[0])?;
         let source = s.lock().to_utf8_lossy().into_owned();
         let (ignore_case, extended, multiline) = match args.get(1) {
             None | Some(RubyValue::Nil) | Some(RubyValue::Bool(false)) => (false, false, false),
@@ -334,11 +331,9 @@ builtin_methods! {
             for item in &items {
                 match item {
                     RubyValue::Regexp(re) => parts.push(regexp_to_s_string(re)),
-                    RubyValue::Str(s) => {
-                        parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
-                    }
                     other => {
-                        return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
+                        let s = crate::builtins::convert::to_rstr(other)?;
+                        parts.push(escape_regexp_source(&s.lock().to_utf8_lossy()))
                     }
                 }
             }
@@ -364,10 +359,10 @@ builtin_methods! {
         arity!(args, 1..=2);
         let source = match &args[0] {
             RubyValue::Regexp(re) => re.source.clone(),
-            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
-            other => {
-                return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
-            }
+            other => crate::builtins::convert::to_rstr(other)?
+                .lock()
+                .to_utf8_lossy()
+                .into_owned(),
         };
         Ok(RubyValue::Bool(!has_backreference(&source)))
     }

@@ -22,7 +22,6 @@
 //! increment; a local ASSIGNED inside an eval is visible to later statements
 //! of the SAME eval, held in `Env::locals`.
 
-use crate::builtins::type_error;
 // Feature-split imports: the interpreter (`mod imp`, eval-vm on) raises
 // NameError for unresolved constants; the feature-off stub raises
 // NotImplementedError. Each import exists only where its arm compiles, or
@@ -61,21 +60,17 @@ pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyVa
 /// coercion here means every caller -- `Kernel#eval`, `instance_eval`,
 /// `class_eval` -- shares one definition of "what counts as evalable source".
 pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
-    match &src {
-        RubyValue::Str(s) => {
-            let code = s.lock().to_utf8_lossy().into_owned();
-            eval_string(&code, self_val, box_id)
-        }
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    let code = crate::builtins::convert::to_rstr(&src)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned();
+    eval_string(&code, self_val, box_id)
 }
 
 #[cfg(feature = "eval-vm")]
 mod imp {
     use super::*;
+    use crate::builtins::type_error;
     use ruby_prism::{Node, NodeList, StatementsNode};
     use std::collections::HashMap;
 

@@ -13,7 +13,7 @@ use std::os::unix::process::ExitStatusExt;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::dispatch::{RObj, RubyObject, raise_error};
 use crate::{RubyValue, Signal};
 use zeo_abi::{ClassId, PROCESS_STATUS_CLASS, PROCESS_TMS_CLASS};
@@ -181,15 +181,9 @@ fn clock_in_unit(secs: f64, unit: Option<&RubyValue>) -> Result<RubyValue, crate
     }
 }
 
-/// Coerce an argument to an `i64`, raising CRuby's TypeError otherwise.
+/// Coerce an argument to an `i64` through the `to_int` protocol.
 fn int_arg(v: &RubyValue) -> Result<i64, crate::Signal> {
-    match v {
-        RubyValue::Int(i) => Ok(*i),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    crate::builtins::convert::to_index(v)
 }
 
 /// Installs the `Process` clock constants -- called once from generated
@@ -499,13 +493,10 @@ fn needs_shell(cmd: &str) -> bool {
 }
 
 fn cmd_str(v: &RubyValue) -> Result<String, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned())
 }
 
 /// Build the `Command` for a `system`/backtick argument list. A single string

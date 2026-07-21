@@ -38,21 +38,10 @@ pub fn complex_new(real: RubyValue, imag: RubyValue) -> Result<RubyValue, Signal
         let bad = if is_component(&real) { &imag } else { &real };
         return Err(type_error!(
             "can't convert {} into Complex",
-            convert_name(bad)
+            crate::builtins::convert_name_of(bad)
         ));
     }
     Ok(RubyValue::Complex(Arc::new(RComplexData { real, imag })))
-}
-
-/// The name a "can't convert X into Y" TypeError uses -- CRuby prints the
-/// value for `nil`/`true`/`false`, otherwise the class name.
-fn convert_name(v: &RubyValue) -> String {
-    match v {
-        RubyValue::Nil => "nil".to_string(),
-        RubyValue::Bool(true) => "true".to_string(),
-        RubyValue::Bool(false) => "false".to_string(),
-        _ => crate::builtins::class_name_of(v).to_string(),
-    }
 }
 
 /// `String#to_c`'s lenient parse (CRuby complex.c `read_comp`, non-strict):

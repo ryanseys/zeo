@@ -299,10 +299,10 @@ fn precision_arg(args: &[RubyValue]) -> Result<i64, Signal> {
     match args.first() {
         None => Ok(0),
         Some(RubyValue::Int(n)) => Ok(*n),
-        Some(other) => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        // NOT an implicit-conversion site: CRuby's Rational rounding family
+        // requires a literal Integer -- even a `to_int` duck raises
+        // "not an integer" (oracle-verified).
+        Some(_) => Err(type_error!("not an integer")),
     }
 }
 

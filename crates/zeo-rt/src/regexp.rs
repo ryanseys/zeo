@@ -16,7 +16,7 @@
 //! the same cheap-clone-shared-identity value semantics every other
 //! `RubyValue` payload uses, with no interior mutability to guard.
 
-use crate::builtins::{index_error, type_error};
+use crate::builtins::index_error;
 use crate::collections::{array_new, hash_new, string_new};
 use crate::{RProc, RubyValue, Signal};
 use std::sync::Arc;
@@ -689,15 +689,9 @@ pub fn matchdata_offset(
     byte_mode: bool,
 ) -> Result<RubyValue, crate::Signal> {
     let idx = match key {
-        RubyValue::Int(n) => *n,
         RubyValue::Symbol(s) => name_group_index(md, &s.name())?,
         RubyValue::Str(s) => name_group_index(md, &s.lock().to_utf8_lossy())?,
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
-        }
+        other => crate::builtins::convert::to_index(other)?,
     };
     let span = md
         .groups
@@ -1231,7 +1225,6 @@ pub fn matchdata_group_by_name(m: &RMatchData, name: &str) -> Result<RubyValue, 
 /// accessors).
 pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signal> {
     match key {
-        RubyValue::Int(i) => Ok(matchdata_group(m, *i)),
         RubyValue::Symbol(s) => matchdata_group_by_name(m, &s.name()),
         RubyValue::Str(s) => matchdata_group_by_name(m, &s.lock().to_utf8_lossy()),
         // `md[range]` slices the group array, like `to_a[range]`.
@@ -1245,9 +1238,9 @@ pub fn matchdata_get(m: &RMatchData, key: &RubyValue) -> Result<RubyValue, Signa
             )
             .unwrap_or(RubyValue::Nil))
         }
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
+        other => Ok(matchdata_group(
+            m,
+            crate::builtins::convert::to_index(other)?,
         )),
     }
 }

@@ -6,8 +6,8 @@
 //! plan.
 
 use crate::builtins::{
-    arg_error, arg_int, arg_str, arity, block_or_enum, builtin_methods, index_error, range_error,
-    recv_str, regexp_error, type_error,
+    arg_error, arg_int, arg_str, arity, block_or_enum, builtin_methods, convert, index_error,
+    range_error, recv_str, regexp_error, type_error,
 };
 use crate::{RubyValue, Signal};
 
@@ -516,7 +516,7 @@ fn byte_offset_arg(arg: Option<&RubyValue>, len: usize) -> Result<Option<usize>,
     match arg {
         None => Ok(Some(0)),
         Some(v) => {
-            let p = int_arg(v)?;
+            let p = convert::to_index(v)?;
             let p = if p < 0 { p + len as i64 } else { p };
             Ok(if p < 0 || p > len as i64 {
                 None
@@ -819,13 +819,11 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
         ));
     }
     let val = args.last().unwrap();
-    let RubyValue::Str(repl) = val else {
-        return Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(val)
-        ));
-    };
-    let repl_chars: Vec<char> = repl.lock().to_utf8_lossy().chars().collect();
+    // The replacement's `to_str` conversion happens at CRuby's exact point in
+    // each index shape: AFTER the index converts but BEFORE its bounds check
+    // (Int/start-length/Range forms), yet only after a Regexp/substring index
+    // has actually matched. `None` here means "not yet converted".
+    let mut repl: Option<crate::collections::RStr> = None;
 
     let mut chars: Vec<char> = handle.lock().char_vec();
     let n = chars.len() as i64;
@@ -854,6 +852,7 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
         (text[..bstart].chars().count(), text[..bend].chars().count())
     } else if args.len() == 3 {
         let (i, len) = (arg_int!(args, 0), arg_int!(args, 1));
+        repl = Some(convert::to_rstr(val)?);
         let start = norm(i);
         if start < 0 || start > n {
             return Err(index_err(format!("index {i} out of string")));
@@ -864,30 +863,22 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
         (start as usize, (start + len).min(n) as usize)
     } else {
         match &args[0] {
-            RubyValue::Int(i) => {
-                let start = norm(*i);
-                if start < 0 || start > n {
-                    return Err(index_err(format!("index {i} out of string")));
-                }
-                (start as usize, (start + 1).min(n) as usize)
-            }
             RubyValue::Range(s, e, exclusive) => {
                 let start = match s.as_deref() {
-                    Some(RubyValue::Int(v)) => norm(*v),
+                    Some(v) => norm(convert::to_index(v)?),
                     None => 0,
-                    _ => return Err(index_err("string not matched".to_string())),
                 };
                 if start < 0 || start > n {
                     return Err(range_error!("{} out of range", args[0].to_display_string()));
                 }
                 let end = match e.as_deref() {
-                    Some(RubyValue::Int(v)) => {
-                        let v = norm(*v);
+                    Some(v) => {
+                        let v = norm(convert::to_index(v)?);
                         if *exclusive { v } else { v + 1 }
                     }
                     None => n,
-                    _ => return Err(index_err("string not matched".to_string())),
                 };
+                repl = Some(convert::to_rstr(val)?);
                 (start as usize, end.clamp(start, n) as usize)
             }
             RubyValue::Str(sub) => {
@@ -898,14 +889,22 @@ fn index_set_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Sig
                 }
             }
             other => {
-                return Err(type_error!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ));
+                let i = convert::to_index(other)?;
+                repl = Some(convert::to_rstr(val)?);
+                let start = norm(i);
+                if start < 0 || start > n {
+                    return Err(index_err(format!("index {i} out of string")));
+                }
+                (start as usize, (start + 1).min(n) as usize)
             }
         }
     };
 
+    let repl = match repl {
+        Some(r) => r,
+        None => convert::to_rstr(val)?,
+    };
+    let repl_chars: Vec<char> = repl.lock().to_utf8_lossy().chars().collect();
     chars.splice(start..end, repl_chars);
     handle.lock().replace_utf8(chars.into_iter().collect());
     Ok(val.clone())
@@ -922,12 +921,7 @@ fn crypt_impl(recv: &RubyValue, salt_arg: &RubyValue) -> Result<RubyValue, Signa
     if key.contains(&0) {
         return Err(arg_error!("string contains null byte"));
     }
-    let RubyValue::Str(salt) = salt_arg else {
-        return Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(salt_arg)
-        ));
-    };
+    let salt = &convert::to_rstr(salt_arg)?;
     let salt = salt.lock().bytes().to_vec();
     if salt.len() < 2 || salt[0] == 0 || salt[1] == 0 {
         return Err(arg_error!("salt too short (need >=2 bytes)"));
@@ -967,10 +961,13 @@ fn normalize_form(text: &str, form: Option<&RubyValue>) -> Result<String, Signal
         None => "nfc".to_string(),
         Some(RubyValue::Symbol(s)) => s.name().to_string(),
         Some(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
+        // CRuby's lib/unicode_normalize rejects any other argument as an
+        // unknown form (`"a".unicode_normalize(1)` is ArgumentError, not
+        // TypeError -- oracle-verified).
         Some(other) => {
-            return Err(type_error!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
+            return Err(arg_error!(
+                "Invalid normalization form {}.",
+                other.to_display_string()
             ));
         }
     };
@@ -1126,7 +1123,7 @@ builtin_methods! {
         }
         let len = match args.get(1) {
             Some(v) => {
-                let l = int_arg(v)?;
+                let l = convert::to_index(v)?;
                 if l < 0 {
                     return Ok(RubyValue::Nil);
                 }
@@ -1364,18 +1361,19 @@ builtin_methods! {
         }
         for arg in args {
             let addition = match arg {
-                RubyValue::Str(other) => other.lock().to_utf8_lossy().into_owned(),
-                // `str << 65` appends the CODEPOINT's character.
+                // `str << 65` appends the CODEPOINT's character (a Float
+                // does NOT truncate here -- it goes through `to_str` and
+                // fails, CRuby's rule).
                 RubyValue::Int(i) => match u32::try_from(*i).ok().and_then(char::from_u32) {
                     Some(c) => c.to_string(),
                     None => {
                         return Err(range_error!("{i} out of char range"))
                     }
                 },
-                other => {
-                    return Err(type_error!("no implicit conversion of {} into String",
-                            crate::builtins::convert_name_of(other)))
+                RubyValue::BigInt(_) => {
+                    return Err(range_error!("bignum out of char range"))
                 }
+                other => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
             };
             s.lock().push_str(&addition);
         }
@@ -1541,13 +1539,26 @@ builtin_methods! {
     "split" => fn split(recv, args, block) {
         arity!(args, 0..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        // An explicit nil limit RAISES in CRuby (`NUM2LONG(nil)`), unlike the
+        // nil separator, which selects awk mode.
         let limit = match args.get(1) {
-            Some(RubyValue::Int(n)) => *n,
-            Some(RubyValue::Nil) | None => 0,
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            None => 0,
+            Some(v) => convert::to_index(v)?,
         };
-        let result = match args.first() {
-            None | Some(RubyValue::Nil) => str_array(awk_split(&text, limit)),
+        // Separator: nil/absent = awk mode; Regexp as-is; anything else
+        // through the `to_str` probe (CRuby's get_pat_quoted), a
+        // non-convertible one raising the expected-Regexp shape.
+        let sep_arg = match args.first() {
+            None | Some(RubyValue::Nil) => None,
+            Some(re @ RubyValue::Regexp(_)) => Some(re.clone()),
+            Some(other) => match convert::check_to_str(other)? {
+                Some(s) => Some(s),
+                None => return Err(type_error!("wrong argument type {} (expected Regexp)",
+                        crate::builtins::class_name_of(other))),
+            },
+        };
+        let result = match &sep_arg {
+            None => str_array(awk_split(&text, limit)),
             Some(RubyValue::Str(sep)) => {
                 let sep = sep.lock().to_utf8_lossy().into_owned();
                 let parts: Vec<String> = if sep == " " {
@@ -1582,8 +1593,7 @@ builtin_methods! {
                 str_array(parts)
             }
             Some(RubyValue::Regexp(re)) => crate::regexp_split(re, &text, limit),
-            Some(other) => return Err(type_error!("wrong argument type {} (expected Regexp)",
-                    crate::builtins::class_name_of(other))),
+            Some(_) => unreachable!("split separator normalized to Str/Regexp above"),
         };
         // The block form yields each field and answers the RECEIVER, not the
         // array (CRuby's `rb_str_split_m`).
@@ -1702,8 +1712,7 @@ builtin_methods! {
         arity!(args, 0..=1);
         let bits = match args.first() {
             None => 16,
-            Some(RubyValue::Int(n)) => *n,
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer", crate::builtins::convert_name_of(other))),
+            Some(_) => arg_int!(args, 0),
         };
         let total: i64 = recv_str!(recv).lock().bytes().iter().map(|&b| b as i64).sum();
         let masked = if (1..64).contains(&bits) {
@@ -1819,26 +1828,37 @@ builtin_methods! {
             ));
         }
         let total = s.lock().bytesize() as i64;
-        let (start, len, repl) = match args {
-            [RubyValue::Range(begin, end, exclusive), RubyValue::Str(r)] => {
-                let start = match begin.as_deref() {
-                    Some(RubyValue::Int(v)) => if *v < 0 { v + total } else { *v },
-                    None => 0,
-                    _ => return Err(type_error!("no implicit conversion into Integer")),
-                };
-                let end_i = match end.as_deref() {
-                    Some(RubyValue::Int(v)) => { let v = if *v < 0 { v + total } else { *v }; if *exclusive { v } else { v + 1 } }
-                    None => total,
-                    _ => return Err(type_error!("no implicit conversion into Integer")),
-                };
-                (start, (end_i - start).max(0), r.clone())
-            }
-            [idx, length, RubyValue::Str(r)] => {
-                let start = match idx { RubyValue::Int(v) => if *v < 0 { v + total } else { *v }, _ => return Err(type_error!("no implicit conversion into Integer")) };
-                let len = match length { RubyValue::Int(v) => *v, _ => return Err(type_error!("no implicit conversion into Integer")) };
-                (start, len, r.clone())
-            }
-            _ => return Err(type_error!("wrong arguments for bytesplice")),
+        // CRuby's discrimination: 2 args -- or 3 with a non-Integer first --
+        // is the Range form (a non-Range first argument raises the
+        // expected-Range shape); otherwise (index, length, str), both
+        // NUM2LONG. The replacement converts via `to_str` in every form.
+        let is_range_form = args.len() == 2
+            || !matches!(&args[0], RubyValue::Int(_) | RubyValue::BigInt(_));
+        let (start, len, repl) = if is_range_form {
+            let RubyValue::Range(begin, end, exclusive) = &args[0] else {
+                return Err(type_error!("wrong argument type {} (expected Range)",
+                        crate::builtins::class_name_of(&args[0])));
+            };
+            let start = match begin.as_deref() {
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    if v < 0 { v + total } else { v }
+                }
+                None => 0,
+            };
+            let end_i = match end.as_deref() {
+                Some(v) => {
+                    let v = convert::to_index(v)?;
+                    let v = if v < 0 { v + total } else { v };
+                    if *exclusive { v } else { v + 1 }
+                }
+                None => total,
+            };
+            (start, (end_i - start).max(0), convert::to_rstr(&args[1])?)
+        } else {
+            let start = convert::to_index(&args[0])?;
+            let start = if start < 0 { start + total } else { start };
+            (start, convert::to_index(&args[1])?, convert::to_rstr(&args[2])?)
         };
         if start < 0 || start > total || len < 0 {
             return Err(index_error!("index {start} out of string"));
@@ -1859,7 +1879,7 @@ builtin_methods! {
         let clen = text.chars().count() as i64;
         let start_char = match args.get(1) {
             Some(v) => {
-                let mut p = int_arg(v)?;
+                let mut p = convert::to_index(v)?;
                 if p < 0 {
                     p += clen;
                 }
@@ -1876,8 +1896,12 @@ builtin_methods! {
             .map(|(b, _)| b)
             .unwrap_or(text.len());
         match &args[0] {
-            RubyValue::Str(needle) => {
-                let needle = needle.lock().to_utf8_lossy().into_owned();
+            RubyValue::Regexp(re) => match crate::regexp_match_index(re, &text[byte_start..]) {
+                RubyValue::Int(i) => Ok(RubyValue::Int(i + start_char as i64)),
+                other => Ok(other),
+            },
+            other => {
+                let needle = convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned();
                 Ok(match text[byte_start..].find(&needle) {
                     Some(byte_pos) => {
                         RubyValue::Int(text[..byte_start + byte_pos].chars().count() as i64)
@@ -1885,12 +1909,6 @@ builtin_methods! {
                     None => RubyValue::Nil,
                 })
             }
-            RubyValue::Regexp(re) => match crate::regexp_match_index(re, &text[byte_start..]) {
-                RubyValue::Int(i) => Ok(RubyValue::Int(i + start_char as i64)),
-                other => Ok(other),
-            },
-            other => Err(type_error!("no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(other))),
         }
     }
     // `rindex(str_or_regexp[, pos])`: the CHAR index of the LAST match whose
@@ -1902,7 +1920,7 @@ builtin_methods! {
         let clen = text.chars().count() as i64;
         let before = match args.get(1) {
             Some(v) => {
-                let p = int_arg(v)?;
+                let p = convert::to_index(v)?;
                 let p = if p < 0 { p + clen } else { p };
                 if p < 0 {
                     return Ok(RubyValue::Nil);
@@ -1913,8 +1931,8 @@ builtin_methods! {
         };
         match &args[0] {
             RubyValue::Regexp(re) => Ok(crate::regexp_rindex(re, &text, before)),
-            RubyValue::Str(needle) => {
-                let needle = needle.lock().to_utf8_lossy().into_owned();
+            other => {
+                let needle = convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned();
                 // Search only within the prefix up to (and including a needle
                 // starting at) `before`.
                 let cutoff = before.map_or(text.len(), |p| {
@@ -1925,8 +1943,6 @@ builtin_methods! {
                     None => RubyValue::Nil,
                 })
             }
-            other => Err(type_error!("no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(other))),
         }
     }
     // The `[]`/`slice` forms: Int, (Int, Int), Range, String -- all
@@ -1951,7 +1967,6 @@ builtin_methods! {
             return Ok(wrap(s.char_substr(start, len)));
         }
         match &args[0] {
-            RubyValue::Int(i) => Ok(wrap(s.char_at(*i))),
             RubyValue::Range(start, end, exclusive) => {
                 let start_i = match start.as_deref() {
                     Some(RubyValue::Int(v)) => if *v < 0 { v + n } else { *v },
@@ -1976,8 +1991,7 @@ builtin_methods! {
                     RubyValue::Nil
                 })
             }
-            other => Err(type_error!("no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other))),
+            other => Ok(wrap(s.char_at(convert::to_index(other)?))),
         }
     }
     // `[]=`: index assignment across the same shapes as `[]`/`slice` --
@@ -2036,11 +2050,6 @@ builtin_methods! {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
             match a {
-                RubyValue::Str(prefix) => {
-                    if text.starts_with(&*prefix.lock().to_utf8_lossy()) {
-                        return Ok(RubyValue::Bool(true));
-                    }
-                }
                 // A Regexp prefix matches only when it matches anchored at the
                 // start; CRuby sets `$~` to the match (nil on no start-match).
                 RubyValue::Regexp(re) => {
@@ -2051,8 +2060,10 @@ builtin_methods! {
                     crate::lastmatch::set_last_match(None);
                 }
                 other => {
-                    return Err(type_error!("no implicit conversion of {} into String",
-                            crate::builtins::convert_name_of(other)));
+                    let prefix = convert::to_rstr(other)?;
+                    if text.starts_with(&*prefix.lock().to_utf8_lossy()) {
+                        return Ok(RubyValue::Bool(true));
+                    }
                 }
             }
         }
@@ -2061,10 +2072,7 @@ builtin_methods! {
     "end_with?" => fn end_with_p(recv, args, _block) {
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
         for a in args {
-            let RubyValue::Str(suffix) = a else {
-                return Err(type_error!("no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(a)));
-            };
+            let suffix = &convert::to_rstr(a)?;
             if text.ends_with(&*suffix.lock().to_utf8_lossy()) {
                 return Ok(RubyValue::Bool(true));
             }
@@ -2159,20 +2167,17 @@ builtin_methods! {
     "to_i" => fn to_i(recv, args, _block) {
         arity!(args, 0..=1);
         let base = match args.first() {
-            // Base 0 auto-detects from the literal's prefix (`0x`/`0b`/`0o`/a
-            // bare leading `0` = octal), via the prefix-aware lenient parser.
-            Some(RubyValue::Int(0)) => {
-                return Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 0));
-            }
-            Some(RubyValue::Int(b)) if (2..=36).contains(b) => *b as u32,
-            Some(RubyValue::Int(b)) => {
-                return Err(arg_error!("invalid radix {b}"))
-            }
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into Integer",
-                        crate::builtins::convert_name_of(other)))
-            }
             None => 10,
+            Some(v) => match convert::to_index(v)? {
+                // Base 0 auto-detects from the literal's prefix (`0x`/`0b`/
+                // `0o`/a bare leading `0` = octal), via the prefix-aware
+                // lenient parser.
+                0 => {
+                    return Ok(parse_int_lenient(&recv_str!(recv).lock().to_utf8_lossy(), 0));
+                }
+                b @ 2..=36 => b as u32,
+                b => return Err(arg_error!("invalid radix {b}")),
+            },
         };
         Ok(lenient_to_i(&recv_str!(recv).lock().to_utf8_lossy(), base))
     }
@@ -2314,13 +2319,7 @@ builtin_methods! {
         guard_str_frozen(recv)?;
         let mut prefix = String::new();
         for a in args {
-            match a {
-                RubyValue::Str(s) => prefix.push_str(&s.lock().to_utf8_lossy()),
-                other => {
-                    return Err(type_error!("no implicit conversion of {} into String",
-                            crate::builtins::convert_name_of(other)))
-                }
-            }
+            prefix.push_str(&convert::to_rstr(a)?.lock().to_utf8_lossy());
         }
         let handle = recv_str!(recv);
         let mut guard = handle.lock();
@@ -2539,27 +2538,10 @@ fn parse_encode_opts(
     Ok(opts)
 }
 
-/// The template argument of `unpack`/`unpack1` as a `String`.
+/// The template argument of `unpack`/`unpack1` as a `String` (through the
+/// `to_str` protocol).
 fn unpack_template(v: &RubyValue) -> Result<String, Signal> {
-    match v {
-        RubyValue::Str(t) => Ok(t.lock().to_utf8_lossy().into_owned()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
-}
-
-/// An Integer argument (a position/limit), raising CRuby's exact TypeError
-/// for a non-Integer.
-fn int_arg(v: &RubyValue) -> Result<i64, Signal> {
-    match v {
-        RubyValue::Int(n) => Ok(*n),
-        other => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(convert::to_rstr(v)?.lock().to_utf8_lossy().into_owned())
 }
 
 /// The byte offset of the `char_idx`-th character (the string's byte length
@@ -2597,7 +2579,7 @@ pub(crate) fn match_haystack(
         return Ok(Some(text.to_string()));
     };
     let clen = text.chars().count() as i64;
-    let start = match int_arg(v)? {
+    let start = match convert::to_index(v)? {
         p if p < 0 => p + clen,
         p => p,
     };
@@ -2621,13 +2603,7 @@ fn charset_specs(
     }
     args.iter()
         .map(|a| {
-            let RubyValue::Str(s) = a else {
-                return Err(type_error!(
-                    "no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(a)
-                ));
-            };
-            let spec = s.lock().to_utf8_lossy().into_owned();
+            let spec = convert::to_rstr(a)?.lock().to_utf8_lossy().into_owned();
             let (negated, body) = match spec.strip_prefix('^') {
                 Some(rest) if !rest.is_empty() => (true, rest.to_string()),
                 _ => (false, spec),
@@ -2767,7 +2743,6 @@ fn sub_gsub(
     block: Option<RubyValue>,
     global: bool,
 ) -> Result<RubyValue, Signal> {
-    let label = if global { "gsub" } else { "sub" };
     let text = match recv {
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => unreachable!("String table row dispatched on a non-String receiver"),
@@ -2781,16 +2756,24 @@ fn sub_gsub(
     } else {
         crate::builtins::arity!(args, 2);
     }
-    match (&args[0], block_proc) {
-        (RubyValue::Regexp(re), None) => match &args[1] {
-            RubyValue::Str(replacement) => {
-                let replacement = replacement.lock().to_utf8_lossy().into_owned();
-                if global {
-                    crate::regexp_gsub(re, &text, &replacement)
-                } else {
-                    crate::regexp_sub(re, &text, &replacement)
-                }
+    // Pattern: a Regexp as-is; anything else through the `to_str` probe (a
+    // literal pattern); a non-convertible pattern is CRuby's
+    // "wrong argument type X (expected Regexp)" (oracle-verified, no
+    // method-name suffix).
+    let pattern_arg = match &args[0] {
+        re @ RubyValue::Regexp(_) => re.clone(),
+        other => match convert::check_to_str(other)? {
+            Some(s) => s,
+            None => {
+                return Err(type_error!(
+                    "wrong argument type {} (expected Regexp)",
+                    crate::builtins::class_name_of(other)
+                ));
             }
+        },
+    };
+    match (&pattern_arg, block_proc) {
+        (RubyValue::Regexp(re), None) => match &args[1] {
             // A Hash replacement maps each matched substring to `hash[match]`
             // (a missing key stringifies to ""), exactly a block that looks the
             // match up -- so it rides the existing block-substitution path.
@@ -2804,10 +2787,14 @@ fn sub_gsub(
                     crate::regexp_sub_block(re, &text, &p)
                 }
             }
-            other => Err(type_error!(
-                "no implicit conversion of {} into String",
-                crate::builtins::convert_name_of(other)
-            )),
+            other => {
+                let replacement = convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned();
+                if global {
+                    crate::regexp_gsub(re, &text, &replacement)
+                } else {
+                    crate::regexp_sub(re, &text, &replacement)
+                }
+            }
         },
         (RubyValue::Regexp(re), Some(p)) => {
             if global {
@@ -2822,17 +2809,11 @@ fn sub_gsub(
             // always the pattern itself; a Hash replacement looks that up (a
             // missing key stringifies to ""), a String replacement is literal.
             let replacement = match &args[1] {
-                RubyValue::Str(replacement) => replacement.lock().to_utf8_lossy().into_owned(),
                 RubyValue::Hash(h) => {
                     let key = RubyValue::Str(crate::string_new(pattern.clone()));
                     crate::hash_get(h, &key).to_display_string()
                 }
-                other => {
-                    return Err(type_error!(
-                        "no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(other)
-                    ));
-                }
+                other => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
             };
             Ok(RubyValue::Str(crate::string_new(if global {
                 text.replace(&pattern, &replacement)
@@ -2862,10 +2843,7 @@ fn sub_gsub(
             out.push_str(rest);
             Ok(RubyValue::Str(crate::string_new(out)))
         }
-        (other, _) => Err(type_error!(
-            "wrong argument type {} (expected Regexp) for String#{label}",
-            crate::builtins::class_name_of(other)
-        )),
+        (_, _) => unreachable!("sub/gsub pattern normalized to Str/Regexp above"),
     }
 }
 
@@ -2880,21 +2858,16 @@ fn pad(recv: &RubyValue, args: &[RubyValue], kind: Pad) -> Result<RubyValue, Sig
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
         _ => unreachable!("String table row dispatched on a non-String receiver"),
     };
-    let RubyValue::Int(width) = &args[0] else {
-        return Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(&args[0])
-        ));
-    };
+    let width = convert::to_index(&args[0])?;
     let fill = match args.get(1) {
-        Some(RubyValue::Str(f)) => f.lock().to_utf8_lossy().into_owned(),
-        _ => " ".to_string(),
+        None => " ".to_string(),
+        Some(f) => convert::to_rstr(f)?.lock().to_utf8_lossy().into_owned(),
     };
     if fill.is_empty() {
         return Err(arg_error!("zero width padding"));
     }
     let len = text.chars().count() as i64;
-    let total = (*width - len).max(0) as usize;
+    let total = (width - len).max(0) as usize;
     let fill_n = |n: usize| -> String { fill.chars().cycle().take(n).collect() };
     let out = match kind {
         Pad::Left => format!("{text}{}", fill_n(total)),
@@ -2941,13 +2914,7 @@ fn kw_unpack_offset(args: &[RubyValue], len: usize) -> Result<usize, Signal> {
     let v = crate::collections::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("offset")));
     let off = match v {
         RubyValue::Nil => return Ok(0),
-        RubyValue::Int(n) => n,
-        other => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(&other)
-            ));
-        }
+        other => convert::to_index(&other)?,
     };
     if off < 0 {
         return Err(arg_error!("offset can't be negative"));
@@ -2977,13 +2944,10 @@ builtin_methods! {
         arity!(positional, 0..=1);
         let (bytes, enc) = match positional.first() {
             None => (Vec::new(), crate::encoding::ASCII_8BIT),
-            Some(RubyValue::Str(s)) => {
+            Some(v) => {
+                let s = convert::to_rstr(v)?;
                 let s = s.lock();
                 (s.bytes().to_vec(), s.encoding())
-            }
-            Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into String",
-                        crate::builtins::convert_name_of(other)))
             }
         };
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc_override.unwrap_or(enc))))

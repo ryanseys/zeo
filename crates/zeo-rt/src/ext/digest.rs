@@ -11,7 +11,7 @@
 //! (`digest_length`/`block_length`/`==`/`bubblebabble`/`hexencode`) is built (see
 //! docs/EXTENSIONS.md).
 
-use crate::builtins::{arity, builtin_methods, type_error};
+use crate::builtins::{arity, builtin_methods};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{ClassId, RubyValue, Signal, string_new};
 use digest::Digest as _;
@@ -171,13 +171,10 @@ fn algo_of_class(recv: &RubyValue) -> Algo {
 }
 
 fn in_bytes(v: &RubyValue) -> Result<Vec<u8>, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().bytes().to_vec()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .bytes()
+        .to_vec())
 }
 
 fn hex(bytes: &[u8]) -> String {

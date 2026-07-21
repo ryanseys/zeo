@@ -413,17 +413,13 @@ builtin_methods! {
     // chains), the one behavioural difference between the two.
     "pos=" => fn dir_h_pos_set(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
-        };
-        live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
+        let n = crate::builtins::convert::to_index(&args[0])?;
+        live_dir(recv)?.pos.store(n.max(0) as usize, Ordering::Relaxed);
         Ok(args[0].clone())
     }
     "seek" => fn dir_h_seek(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Int(n) = &args[0] else {
-            return Err(type_error!("no implicit conversion into Integer"));
-        };
+        let n = &crate::builtins::convert::to_index(&args[0])?;
         live_dir(recv)?.pos.store((*n).max(0) as usize, Ordering::Relaxed);
         Ok(recv.clone())
     }
@@ -578,8 +574,11 @@ builtin_methods! {
                     a.get(1).map(|v| v.to_display_string()).unwrap_or_default(),
                 )
             }
+            // NOT an implicit-conversion site: CRuby's Dir.mktmpdir rejects
+            // a non-String/Array prefix with its own ArgumentError
+            // ("unexpected prefix: 1", oracle-verified).
             Some(other) => {
-                return Err(type_error!("no implicit conversion of {} into String", crate::builtins::convert_name_of(other)))
+                return Err(arg_error!("unexpected prefix: {}", other.inspect_string()))
             }
         };
         let parent = match args.get(1) {

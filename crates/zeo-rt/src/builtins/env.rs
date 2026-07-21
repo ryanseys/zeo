@@ -69,13 +69,10 @@ pub fn seed_env() {
 /// An argument that must be an environment-variable NAME. Real Ruby raises
 /// TypeError for a non-String here (`ENV[:PATH]` is a TypeError, not nil).
 fn key(v: &RubyValue) -> Result<String, crate::Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned())
 }
 
 fn str_val(s: String) -> RubyValue {
@@ -256,9 +253,7 @@ builtin_methods! {
     // (key, old, new). Answers ENV.
     "update" | "merge!" => fn env_update(recv, args, block) {
         for a in args {
-            let RubyValue::Hash(h) = a else {
-                return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(a)));
-            };
+            let h = &crate::builtins::convert::to_rhash(a)?;
             for (k, v) in crate::collections::hash_pairs(h) {
                 let ks = key(&k)?;
                 let vs = match (&block, std::env::var(&ks)) {
@@ -312,9 +307,7 @@ builtin_methods! {
     // `ENV.replace(hash)` -- make the environment exactly `hash`.
     "replace" => fn env_replace(recv, args, _block) {
         crate::builtins::arity!(args, 1);
-        let RubyValue::Hash(h) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into Hash", crate::builtins::convert_name_of(&args[0])));
-        };
+        let h = &crate::builtins::convert::to_rhash(&args[0])?;
         let next = crate::collections::hash_pairs(h);
         for (k, _) in pairs() {
             unsafe { std::env::remove_var(&k) };

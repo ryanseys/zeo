@@ -308,13 +308,8 @@ fn min_max(
     // ascending for `min`, descending for `max` (CRuby's nsmallest/
     // nlargest). Collect-then-sort (not a bounded heap): honest for the
     // corpus's enumerable sizes.
-    if let Some(n_arg) = args.first() {
-        let RubyValue::Int(n) = n_arg else {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(n_arg)
-            ));
-        };
+    if let Some(n_arg) = args.first().filter(|v| !matches!(v, RubyValue::Nil)) {
+        let n = &crate::builtins::convert::to_index(n_arg)?;
         if *n < 0 {
             return Err(arg_error!("negative size ({n})"));
         }
@@ -413,17 +408,12 @@ fn min_max_by(
     // ArgumentError; no count answers the single best element.
     let count = match args.first() {
         None | Some(RubyValue::Nil) => None,
-        Some(RubyValue::Int(n)) => {
-            if *n < 0 {
+        Some(v) => {
+            let n = crate::builtins::convert::to_index(v)?;
+            if n < 0 {
                 return Err(arg_error!("negative size ({n})"));
             }
-            Some(*n as usize)
-        }
-        Some(other) => {
-            return Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            ));
+            Some(n as usize)
         }
     };
     let blk = block_or_enum!(recv, name, &[], block);
@@ -487,9 +477,7 @@ fn slice_size(args: &[RubyValue], method: &str) -> Result<usize, Signal> {
 }
 
 fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyValue, Signal> {
-    let Some(RubyValue::Int(n)) = args.first() else {
-        panic!("Enumerable#take/drop takes one Integer argument");
-    };
+    let n = &crate::builtins::convert::to_index(args.first().unwrap_or(&RubyValue::Nil))?;
     if *n < 0 {
         // CRuby names the actual method: `drop(-1)` says "drop", not "take".
         let verb = if take { "take" } else { "drop" };
@@ -884,10 +872,7 @@ builtin_methods! {
                 Ok(result)
             }
             1 => {
-                let RubyValue::Int(n) = &args[0] else {
-                    panic!("Enumerable#first: no implicit conversion into Integer");
-                };
-                let n = *n;
+                let n = crate::builtins::convert::to_index(&args[0])?;
                 if n < 0 {
                     // Generic Enumerable#first(n<0) -- an Enumerator (`cycle.first`),
                     // Set, etc. Array and Range override with their own messages
@@ -1296,13 +1281,7 @@ builtin_methods! {
         // hash.
         let counts = match args.first() {
             None => crate::hash_new(Vec::new()),
-            Some(RubyValue::Hash(h)) => h.clone(),
-            Some(other) => {
-                return Err(type_error!(
-                    "no implicit conversion of {} into Hash",
-                    crate::builtins::convert_name_of(other)
-                ));
-            }
+            Some(v) => crate::builtins::convert::to_rhash(v)?,
         };
         let items = collect_packed(recv)?;
         for e in items {
@@ -1492,13 +1471,7 @@ builtin_methods! {
     "cycle" => fn cycle(recv, args, block) {
         let times = match args.first() {
             None | Some(RubyValue::Nil) => None,
-            Some(RubyValue::Int(n)) => Some(*n),
-            Some(other) => {
-                return Err(type_error!(
-                    "no implicit conversion of {} into Integer",
-                    crate::builtins::convert_name_of(other)
-                ));
-            }
+            Some(v) => Some(crate::builtins::convert::to_index(v)?),
         };
         let p = block_or_enum!(recv, "cycle", args, block);
         let RubyValue::Array(all) = to_a(recv, &[], None)? else {

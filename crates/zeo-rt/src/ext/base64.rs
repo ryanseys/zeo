@@ -15,21 +15,20 @@
 //! divergence retained from the port: decoded non-UTF-8 bytes are lossily
 //! replaced (this runtime's default `Str` is UTF-8; CRuby returns BINARY).
 
-use crate::builtins::{arg_error, arity, builtin_methods, type_error};
+use crate::builtins::{arg_error, arity, builtin_methods};
 use crate::{RubyValue, Signal, string_new};
 
 const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// A `String` argument, or a `TypeError` (the raise the native crate couldn't do).
-fn str_arg(v: &RubyValue, method: &str) -> Result<String, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(type_error!(
-            "Base64.{method}: no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+fn str_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
+    // CRuby's message has no method prefix (base64 is plain Ruby over
+    // `String#unpack1`/`Array#pack` -- oracle-verified).
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned())
 }
 
 builtin_methods! {

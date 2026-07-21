@@ -19,7 +19,7 @@
 //! built; the `parse`/`parse_stream` node-tree API (`Psych::Nodes::*`) raises
 //! NotImplementedError (not modelled).
 
-use crate::builtins::{arity, builtin_methods, not_impl_error, type_error};
+use crate::builtins::{arity, builtin_methods, not_impl_error};
 use crate::collections::{array_new, hash_new, hash_pairs};
 use crate::dispatch::raise_error;
 use crate::{RubyValue, Signal, string_new};
@@ -53,13 +53,10 @@ fn parse_real(s: &str) -> f64 {
 }
 
 fn load_text(v: &RubyValue) -> Result<String, Signal> {
-    match v {
-        RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
-        other => Err(type_error!(
-            "no implicit conversion of {} into String",
-            crate::builtins::convert_name_of(other)
-        )),
-    }
+    Ok(crate::builtins::convert::to_rstr(v)?
+        .lock()
+        .to_utf8_lossy()
+        .into_owned())
 }
 
 // ---- dump (hand-rolled Psych block style) -------------------------------

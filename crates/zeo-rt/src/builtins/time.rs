@@ -602,10 +602,9 @@ fn int_parts(args: &[RubyValue], take: usize) -> Result<Vec<i64>, Signal> {
                 t.parse::<i64>()
                     .map_err(|_| arg_error!("argument out of range: {t:?}"))
             }
-            other => Err(type_error!(
-                "no implicit conversion of {} into Integer",
-                crate::builtins::convert_name_of(other)
-            )),
+            // Floats truncate, `to_int` ducks convert. (CRuby treats a nil
+            // component as absent-with-default; here it raises -- noted gap.)
+            other => crate::builtins::convert::to_index(other),
         })
         .collect()
 }
@@ -822,9 +821,12 @@ fn subsec_nsec_arg(v: Option<&RubyValue>) -> Result<u32, Signal> {
             }
             Ok((usec * 1000.0) as u32)
         }
+        // NOT the generic implicit-conversion shape: CRuby's time argument
+        // check says "can't convert X into an exact number" (class-named --
+        // `Time.at(0, nil)` spells NilClass; oracle-verified).
         Some(other) => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
+            "can't convert {} into an exact number",
+            crate::builtins::class_name_of(other)
         )),
     }
 }
@@ -877,7 +879,7 @@ builtin_methods! {
             None => None,
             Some(RubyValue::Int(off)) => Some(check_offset(*off)?),
             Some(RubyValue::Str(s)) => Some(parse_offset(&s.lock().to_utf8_lossy())?),
-            Some(other) => return Err(type_error!("no implicit conversion of {} into Integer (utc_offset)",
+            Some(other) => return Err(type_error!("can't convert {} into an exact number",
                     crate::builtins::convert_name_of(other))),
         };
         let (base_num, base_den) = exact_seconds(&args[0])?;
@@ -967,7 +969,7 @@ builtin_methods! {
                 let off = parse_offset(&s.lock().to_utf8_lossy())?;
                 Ok(time_value(as_utc - off as i64, 0, Some(off)))
             }
-            Some(other) => Err(type_error!("no implicit conversion of {} into Integer (utc_offset)",
+            Some(other) => Err(type_error!("can't convert {} into an exact number",
                     crate::builtins::convert_name_of(other))),
         }
     }
@@ -1015,12 +1017,9 @@ enum Rounding {
 /// count of decimal places.
 fn round_ndigits(args: &[RubyValue]) -> Result<u32, Signal> {
     match args.first() {
-        None => Ok(0),
-        Some(RubyValue::Int(n)) => Ok((*n).max(0) as u32),
-        Some(other) => Err(type_error!(
-            "no implicit conversion of {} into Integer",
-            crate::builtins::convert_name_of(other)
-        )),
+        // An explicit nil precision is accepted as absent (oracle-verified).
+        None | Some(RubyValue::Nil) => Ok(0),
+        Some(v) => Ok(crate::builtins::convert::to_index(v)?.max(0) as u32),
     }
 }
 
@@ -1202,10 +1201,7 @@ builtin_methods! {
     }
     "strftime"[1] => fn strftime_row(recv, args, _block) {
         arity!(args, 1);
-        let RubyValue::Str(f) = &args[0] else {
-            return Err(type_error!("no implicit conversion of {} into String",
-                    crate::builtins::convert_name_of(&args[0])));
-        };
+        let f = &crate::builtins::convert::to_rstr(&args[0])?;
         let fmt = f.lock().to_utf8_lossy().into_owned();
         Ok(RubyValue::Str(crate::collections::string_new(strftime(recv_time(recv), &fmt))))
     }
