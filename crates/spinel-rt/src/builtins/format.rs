@@ -68,6 +68,18 @@ fn to_f64_for_format(v: &RubyValue) -> Result<f64, Signal> {
 
 /// Renders one directive into its head/body split (before width padding).
 fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
+    // Non-finite floats print with Ruby's casing (`Inf`/`-Inf`/`NaN`) across
+    // every float conversion, where Rust's formatter lowercases (`inf`). NaN
+    // carries no sign; ±Infinity does.
+    if matches!(spec.conv, 'f' | 'e' | 'E' | 'g' | 'G' | 'a' | 'A') {
+        let f = to_f64_for_format(arg)?;
+        if !f.is_finite() {
+            return Ok(Rendered {
+                head: sign_prefix(spec, f.is_sign_negative() && !f.is_nan()),
+                body: if f.is_nan() { "NaN".to_string() } else { "Inf".to_string() },
+            });
+        }
+    }
     Ok(match spec.conv {
         's' => {
             let mut s = arg.to_display_string();

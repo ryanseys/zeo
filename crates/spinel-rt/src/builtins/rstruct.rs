@@ -250,7 +250,8 @@ fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let slots = inst.slots.lock().clone();
     let mut parts = Vec::with_capacity(meta.members.len());
     for (m, v) in meta.members.iter().zip(slots.iter()) {
-        parts.push(format!("{}={}", m.name(), inspect_slot(v)?));
+        let label = crate::builtins::symbol::struct_member_label(&m.name());
+        parts.push(format!("{label}={}", inspect_slot(v)?));
     }
     let kind = if meta.is_data { "data" } else { "struct" };
     // An anonymous struct/data shows no name (`#<struct x=1>`); a named one

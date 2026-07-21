@@ -2893,3 +2893,33 @@ fn top_level_alias_and_undef_target_object() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "hi\nhi\nfalse\nNameError\n");
 }
+
+#[test]
+fn unknown_and_missing_keywords_collect_all_names_with_no_method_suffix() {
+    // CRuby reports every offending keyword (singular/plural) with no
+    // `(in 'method')` suffix, for both direct calls and **hash forwarding.
+    let result = run_ruby(
+        r#"
+        def take(a:); a; end
+        def two(a:, b:); [a, b]; end
+        def rest(a:, **opts); [a, opts]; end
+        def try
+          yield
+        rescue ArgumentError => e
+          puts e.message
+        end
+        try { take(**{a: 1, b: 2}) }
+        try { two(**{a: 1, b: 2, c: 3, d: 4}) }
+        try { two(**{a: 1}) }
+        p rest(a: 1, x: 9, y: 8)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "unknown keyword: :b\n\
+         unknown keywords: :c, :d\n\
+         missing keyword: :b\n\
+         [1, {x: 9, y: 8}]\n"
+    );
+}

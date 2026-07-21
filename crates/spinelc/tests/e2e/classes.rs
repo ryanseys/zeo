@@ -1914,3 +1914,23 @@ fn value_subclass_conversions_demote_but_mutators_rewrap() {
         "String\nString\nArray\nHash\nA\nH\nA\nS\nString\nArray\n[\"bbb\", \"aaa\"]\n"
     );
 }
+
+#[test]
+fn struct_inspect_labels_non_identifier_members_as_symbols() {
+    // A Struct/Data member whose name isn't a plain identifier prints with a
+    // leading colon in inspect (`:verbose?=`), while a plain one stays bare.
+    let result = run_ruby(
+        r#"
+        S = Struct.new(:verbose?, :name)
+        p S.new(true, "x").inspect
+        D = Data.define(:ok?, :count)
+        p D.new(ok?: false, count: 3).inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"#<struct S :verbose?=true, name=\\\"x\\\">\"\n\
+         \"#<data D :ok?=false, count=3>\"\n"
+    );
+}

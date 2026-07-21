@@ -294,20 +294,20 @@ pub fn bind_dynamic_kwargs<'a>(
             _ => None,
         })
     };
+    let mut missing = Vec::new();
     for name in required {
         match lookup(name) {
             Some(v) => req_values.push(v),
-            None => {
-                return Err(raise_error(
-                    "ArgumentError",
-                    format!("missing keyword: :{name} (in `{method}')"),
-                ))
-            }
+            None => missing.push(name.to_string()),
         }
+    }
+    if !missing.is_empty() {
+        return Err(kw_names_error("missing", &missing));
     }
     for name in optional {
         opt_values.push(lookup(name));
     }
+    let mut unknown = Vec::new();
     for (k, v) in &pairs {
         if let RubyValue::Symbol(s) = k {
             let n = s.name();
@@ -318,10 +318,8 @@ pub fn bind_dynamic_kwargs<'a>(
                 rest_pairs.push((*s, v.clone()));
                 continue;
             }
-            return Err(raise_error(
-                "ArgumentError",
-                format!("unknown keyword: :{n} (in `{method}')"),
-            ));
+            unknown.push(n.to_string());
+            continue;
         }
         // A non-Symbol key in the trailing hash: without kwrest it can't
         // bind anywhere -- real Ruby treats the hash as positional then,
@@ -334,7 +332,23 @@ pub fn bind_dynamic_kwargs<'a>(
             ));
         }
     }
+    if !unknown.is_empty() {
+        return Err(kw_names_error("unknown", &unknown));
+    }
     Ok((positional, req_values, opt_values, rest_pairs))
+}
+
+/// CRuby's keyword-error wording: `missing keyword: :a` / `unknown keywords:
+/// :c, :d` -- singular or plural by count, each name a `:sym`, no `(in ...)`
+/// suffix. `kind` is `"missing"` or `"unknown"`.
+fn kw_names_error(kind: &str, names: &[String]) -> Signal {
+    let plural = if names.len() == 1 { "" } else { "s" };
+    let list = names
+        .iter()
+        .map(|n| format!(":{n}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    raise_error("ArgumentError", format!("{kind} keyword{plural}: {list}"))
 }
 
 /// The top-level `self` -- CRuby's `main`, a plain `Object` instance.

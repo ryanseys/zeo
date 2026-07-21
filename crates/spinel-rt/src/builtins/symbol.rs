@@ -94,6 +94,18 @@ pub(crate) fn hash_key(name: &str) -> String {
     }
 }
 
+/// A Struct/Data member label in `#<struct ...>` inspect: bare when the name is
+/// a plain local-variable identifier (`name=`), otherwise the member's symbol
+/// literal (`:verbose?=`, `:+=`). This is stricter than `inspect_name`'s bare
+/// rule -- an operator or `?`/`!`-suffixed member still takes the leading colon.
+pub(crate) fn struct_member_label(name: &str) -> String {
+    if is_plain_ident(name) {
+        name.to_string()
+    } else {
+        inspect_name(name)
+    }
+}
+
 /// Delegates a name-reading Symbol method to the same-named `String` method,
 /// evaluated over the symbol's name (`:foo.start_with?("f")` ==
 /// `"foo".start_with?("f")`).

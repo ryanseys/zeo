@@ -693,3 +693,18 @@ fn float_numerator_denominator_on_non_finite() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "Infinity\n1\nNaN\n-Infinity\n1\n2\n");
 }
+
+#[test]
+fn format_prints_nonfinite_floats_with_ruby_casing() {
+    // %f/%e/%g print Inf/-Inf/NaN (Ruby's casing), not C's lowercase inf.
+    let result = run_ruby(
+        r#"
+        puts format("%.3f", Float::INFINITY)
+        puts format("%f", -Float::INFINITY)
+        puts format("%.2f", Float::NAN)
+        puts format("%e", Float::INFINITY)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Inf\n-Inf\nNaN\nInf\n");
+}
