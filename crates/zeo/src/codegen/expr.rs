@@ -51,7 +51,7 @@ pub fn infer(cx: &Ctx, id: NodeId) -> TyKind {
             return TyKind::Poly;
         }
         if let Some(cid) = cx.current_class {
-            // Inside a reopened BUILTIN class's method (Phase 16.3), `self`
+            // Inside a reopened BUILTIN class's method, `self`
             // is the receiver VALUE (the free function's `__self:
             // RubyValue` parameter), so it types as the builtin's own
             // static kind (`TyKind::Str` inside `class String`) -- NOT
@@ -555,7 +555,7 @@ fn emit_case_when(
     match subject {
         Some(s) => {
             let subject_expr = emit_expr(cx, s);
-            // Boxed if Object-typed (Phase 16.1): `case w when Widget` --
+            // Boxed if Object-typed: `case w when Widget` --
             // an unboxed `Arc<Concrete>` subject can't feed `rb_case_eq`'s
             // `&RubyValue` (unexercised before class candidates existed:
             // they were a compile-time rejection).
@@ -569,7 +569,7 @@ fn emit_case_when(
 pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
     match &cx.compiler.hir[id] {
         HirNode::IntegerLit(v) => quote! { zeo_rt::RubyValue::Int(#v) },
-        // The bignum/rational/imaginary literals (Phase 17.1) -- digits
+        // The bignum/rational/imaginary literals -- digits
         // baked as array literals, assembled by the runtime at the use
         // site (no compile-time bigint dependency, no string parsing).
         HirNode::BigIntegerLit { negative, digits } => {
@@ -930,7 +930,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             quote! { zeo_rt::last_child_status() }
         }
         HirNode::GlobalRead(name) => {
-            // Globals are per-box tables (Phase 18) -- the statement's own
+            // Globals are per-box tables -- the statement's own
             // defining box picks the table, no fallback layer (the CRuby
             // box model, verified in the plan's research contract).
             let bx = cx.box_id;
@@ -1048,7 +1048,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // symbol `extern "C"` (fn-locally, `#[link]`ed), marshal each argument,
         // call it, wrap the result. See `emit_ffi_call`.
         HirNode::Ffi(call) => emit_ffi_call(cx, call),
-        // The `Eval` emit shape with the box switched (Phase 18): the body
+        // The `Eval` emit shape with the box switched: the body
         // resolves classes/constants/globals against `box_id` -- the AOT
         // loading-box context.
         HirNode::BoxScope { box_id, body } => {
@@ -1625,7 +1625,7 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         let key = ident.to_string();
         return quote! { zeo_rt::ivar_set_dyn(&zeo_rt::main_object(), #key, #value)?; };
     }
-    // The `.freeze` guard (Phase 13.1) -- checked at the top of every ivar
+    // The `.freeze` guard -- checked at the top of every ivar
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
     // The message interpolates the receiver's real `#<Class:0xaddr @ivar=...>`
     // inspect (`default_object_repr`), built ONLY on the raise path (the
@@ -1705,7 +1705,7 @@ pub(super) fn const_owner_id(cx: &Ctx, scope: Option<&str>, name: &str) -> u32 {
 pub(super) fn const_owner_id_opt(cx: &Ctx, scope: Option<&str>, name: &str) -> Option<u32> {
     let owner_class = match scope {
         Some(class_name) => cx.resolve_class(class_name)?,
-        // A bare constant at a BOX's top level (Phase 18) is owned by the
+        // A bare constant at a BOX's top level is owned by the
         // box's surrogate -- readable externally as `box::CONST`, invisible
         // to other boxes; `Object` (the shared id-0 root) stays the owner
         // only for the root program.

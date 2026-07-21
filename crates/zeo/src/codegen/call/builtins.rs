@@ -32,7 +32,7 @@ pub(super) fn try_collection_dispatch(
     let ty = infer(cx, recv_id);
     let tokens = match (ty, name, args.len()) {
         // Only for a statically-Int index -- Range/other index shapes
-        // fall through to the dynamic rows (Phase 17.1).
+        // fall through to the dynamic rows.
         (TyKind::Array, "[]", 1) if infer(cx, args[0]) == TyKind::Int => {
             let idx = emit_expr(cx, args[0]);
             quote! { zeo_rt::array_get(&(#recv_expr).as_array_unchecked(), (#idx).as_int_unchecked()) }
@@ -99,7 +99,7 @@ pub(super) fn try_collection_dispatch(
         }
         (TyKind::Hash, "[]", 1) => {
             let key = emit_expr(cx, args[0]);
-            // Boxed if Object-typed (Phase 16.2): an object KEY reaches the
+            // Boxed if Object-typed: an object KEY reaches the
             // `HashKey` projection (which now dispatches a user `hash`).
             let key = crate::codegen::expr::box_if_object_typed(cx, args[0], key);
             quote! { zeo_rt::hash_index(&(#recv_expr).as_hash_unchecked(), &(#key))? }
@@ -149,7 +149,7 @@ pub(super) fn try_collection_dispatch(
     Some(tokens)
 }
 /// `Regexp`/`MatchData` built-in methods, and `String`'s methods that take a
-/// `Regexp` pattern argument (Phase 12.7) -- mirrors `try_collection_dispatch`'s
+/// `Regexp` pattern argument -- mirrors `try_collection_dispatch`'s
 /// shape (a `None` return falls through to ordinary Path 1/Path 2 dispatch),
 /// kept as its own function since `gsub`/`sub`'s block form needs the call
 /// site's own `block`, which `try_collection_dispatch` was never threaded to

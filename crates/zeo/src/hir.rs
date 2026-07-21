@@ -23,7 +23,7 @@ pub struct NodeId(u32);
 pub struct Hir {
     nodes: Vec<HirNode>,
     /// Provenance of every `require`/`require_relative`/`load` SPLICE
-    /// INSTANCE grafted into this arena, in splice order (Phase 14.1) --
+    /// INSTANCE grafted into this arena, in splice order --
     /// the main file itself is NOT recorded (matching CRuby, where the main
     /// script never enters `$LOADED_FEATURES`). Deliberately per-instance,
     /// not per-canonical-file: `load` re-splices the same file fresh, and
@@ -44,13 +44,13 @@ pub struct Hir {
     pub activated_features: std::collections::HashSet<String>,
     /// How many of the root `Program`'s leading statements came from the
     /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
-    /// `parse_and_lower_with` (Phase 15.1). `analyze` marks the classes
+    /// `parse_and_lower_with`. `analyze` marks the classes
     /// those statements register as `is_bootstrap` -- the AOT analogue of
     /// CRuby's "defined before any user program runs" set, which stays
     /// visible inside every `Ruby::Box` (see `Compiler::resolve_class`'s
     /// bootstrap fallback).
     pub builtin_exceptions_len: usize,
-    /// How many `Ruby::Box`es the loader allocated (Phase 18) -- box ids
+    /// How many `Ruby::Box`es the loader allocated -- box ids
     /// run 1..=boxes (0 is the root program). `analyze` creates one
     /// top-level surrogate `ClassInfo` per id.
     pub boxes: u32,
@@ -962,7 +962,7 @@ pub enum HirNode {
         negative: bool,
         digits: Vec<u32>,
     },
-    /// `3r` / `1.5r` (Phase 17.1) -- prism pre-rationalizes the decimal
+    /// `3r` / `1.5r` -- prism pre-rationalizes the decimal
     /// forms (`1.5r` arrives as numerator 3, denominator 2), so both
     /// components travel as digit strings like `BigIntegerLit`. The
     /// denominator is positive and non-zero by syntax.
@@ -971,7 +971,7 @@ pub enum HirNode {
         num_digits: Vec<u32>,
         den_digits: Vec<u32>,
     },
-    /// `4i` / `2.0i` / `3ri` (Phase 17.1) -- an imaginary literal wrapping
+    /// `4i` / `2.0i` / `3ri` -- an imaginary literal wrapping
     /// its lowered inner numeric literal compositionally
     /// (`Complex(0, inner)`).
     ImaginaryLit(NodeId),
@@ -1341,7 +1341,7 @@ pub enum HirNode {
     /// The body of a synthesized `attach_function` wrapper (#204): marshal args,
     /// call the C symbol, wrap the result. See `FfiCall`.
     Ffi(FfiCall),
-    /// A `Ruby::Box` context switch (Phase 18): the universal wrapper every
+    /// A `Ruby::Box` context switch: the universal wrapper every
     /// box-scoped splice lowers into -- a `box.require`d file's statements,
     /// a `box.eval` body, and a `box::X` external-access expression all
     /// carry their statically-known box id here. Emits exactly like `Eval`
@@ -1423,7 +1423,7 @@ pub enum HirNode {
     /// this node encoding it structurally -- mirrors `Yield`'s "let codegen,
     /// which already has full type-inference machinery, decide" posture.
     /// Bare `raise` (re-raise, zero args) needs a currently-handled
-    /// exception context that doesn't exist until `rescue` does (Phase 9) --
+    /// exception context that doesn't exist until `rescue` does --
     /// a clean rejection until then, not a silent no-op.
     Raise(Vec<NodeId>, RaiseCause),
     /// `case subject; in PATTERN [if/unless GUARD] ... [else ...] end` --

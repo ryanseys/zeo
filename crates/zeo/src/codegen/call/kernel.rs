@@ -81,7 +81,7 @@ pub(super) fn emit_universal_implicit_form(
     }
     None
 }
-/// The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg),
+/// The Kernel FUNCTIONS: the print family (multi-arg),
 /// conversions, rand/srand, throw, sleep, exit/abort -- consulted after
 /// sibling method resolution (a user `def puts`/`def Integer` wins,
 /// real Ruby's rule). Capitalized-name conversion calls WITH arguments

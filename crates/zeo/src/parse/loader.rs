@@ -66,7 +66,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-// Per-FILE `box = Ruby::Box.new` handle bindings (Phase 18), as a stack --
+// Per-FILE `box = Ruby::Box.new` handle bindings, as a stack --
 // one frame per file currently being lowered (recognition happens during
 // that file's own lowering, BEFORE its rename pass, so original local
 // names are the right key; frames never leak across files). A thread-local
@@ -185,11 +185,11 @@ pub(super) struct Loader {
     /// cycle is the one shape with no natural termination (require's dedup
     /// terminates require cycles), so it's detected here and rejected.
     splicing: Vec<PathBuf>,
-    /// External-store gems zeo can't provide, `name -> reason` (Phase 3):
+    /// External-store gems zeo can't provide, `name -> reason`:
     /// a `require` of one fails with the store's precise reason (which native
     /// layout, why) instead of the generic "cannot load such file".
     store_exclusions: HashMap<String, String>,
-    /// How each `require`d library was satisfied (Phase 2b), in require order.
+    /// How each `require`d library was satisfied, in require order.
     /// A LOG of what resolution did, not a property of the program -- it used
     /// to hang off `Hir`, which made the IR depend on the gem reporter for
     /// bookkeeping no consumer of the arena ever reads.
@@ -244,7 +244,7 @@ pub(super) fn lower_main_file(
         store_exclusions: HashMap::new(),
         gem_records: Vec::new(),
     };
-    // The external gem store (Phase 3): a `--gem-path` + `--lockfile` pair adds
+    // The external gem store: a `--gem-path` + `--lockfile` pair adds
     // the pure-Ruby gems zeo can compile as extra roots, and records a
     // disclosure for every gem it satisfies natively or can't provide. Store
     // gems are APPENDED, so a bundled zeo gem of the same name shadows them
@@ -294,7 +294,7 @@ pub(super) fn lower_main_file(
 }
 
 impl Loader {
-    /// Records how one `require`d library was satisfied (Phase 2b), deduped by
+    /// Records how one `require`d library was satisfied, deduped by
     /// name (first-wins): a bundled gem's user-facing `.rb` is recorded before
     /// its internal `.so` require, so the entry point wins.
     fn record_gem(&mut self, record: crate::gem_report::GemRecord) {
@@ -345,7 +345,7 @@ impl Loader {
                 }
                 // `box.require "f"` / `box.require_relative` / `box.load`
                 // / `box.eval "src"` at top-level statement position
-                // (Phase 18): resolve like the receiver-less forms, splice
+                //: resolve like the receiver-less forms, splice
                 // with the BOX's id, wrap in one BoxScope. Statement-
                 // position `box.eval` may define classes (real Ruby's
                 // Box#eval compiles a top-level iseq); expression-position
@@ -606,7 +606,7 @@ impl Loader {
         if name != "load" {
             // Insert BEFORE lowering (CRuby's loading-table rule): a
             // circular require splices nothing and continues, in exactly
-            // Ruby's execution order. Keyed per BOX (Phase 18): the same
+            // Ruby's execution order. Keyed per BOX: the same
             // file `box.require`d into two boxes re-executes in each --
             // real Ruby's per-box loaded-features tables.
             if !self.required.insert((current_box, canonical.clone())) {

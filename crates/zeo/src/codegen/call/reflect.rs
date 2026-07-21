@@ -11,7 +11,7 @@ use crate::codegen::constfold::{class_const_in, value_const_defined_in};
 use crate::hir::{HirNode, KwArg, NodeId};
 use proc_macro2::TokenStream;
 
-/// Whether ANY reopened builtin defines `name` (Phase 16.3) -- the
+/// Whether ANY reopened builtin defines `name` -- the
 /// Poly-receiver side of the universal arms' override check in `dispatch`:
 /// a Poly value might turn out AT RUNTIME to be an instance of a reopened
 /// builtin, so a universal method it overrides anywhere must route

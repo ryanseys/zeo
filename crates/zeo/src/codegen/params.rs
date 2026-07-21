@@ -275,7 +275,7 @@ pub fn emit_call_args(
 
 /// How `emit_call_args_to` spells the actual invocation once the argument
 /// list is built -- ordinary Path-1 method syntax, or a builtin-reopen FREE
-/// FUNCTION (Phase 16.3), whose receiver `RubyValue` is passed as the
+/// FUNCTION, whose receiver `RubyValue` is passed as the
 /// generated `__self` first argument instead of a method receiver.
 pub enum Callee {
     Method(TokenStream),
@@ -802,7 +802,7 @@ pub enum RecvMode {
     Drop,
 }
 
-/// The Path 2 trampoline for a BUILTIN-REOPEN method (Phase 16.3) or a user
+/// The Path 2 trampoline for a BUILTIN-REOPEN method or a user
 /// CLASS method -- the `ValueMethodFn`-shaped counterpart of
 /// `emit_dynamic_trampoline` above (same arity checking, same
 /// keyword-parameter scope-cut), minus the `RObj` downcast. See `RecvMode`

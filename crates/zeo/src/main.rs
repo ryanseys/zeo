@@ -20,7 +20,7 @@ struct Args {
     /// `--nowarn=<slug>`: suppress a disclosure warning category (repeatable).
     nowarn: std::collections::HashSet<String>,
     /// `--gem-path <dir>` + `--lockfile <Gemfile.lock>`: the external gem store
-    /// (Phase 3). Explicit opt-in, must be given together.
+    ///. Explicit opt-in, must be given together.
     gem_path: Option<PathBuf>,
     lockfile: Option<PathBuf>,
 }
@@ -115,7 +115,7 @@ fn parse_args() -> Result<Args, String> {
             "--nowarn" => {
                 nowarn.insert(iter.next().ok_or("--nowarn requires a slug")?);
             }
-            // The external gem store (Phase 3).
+            // The external gem store.
             "--gem-path" => {
                 gem_path = Some(PathBuf::from(
                     iter.next().ok_or("--gem-path requires a directory")?,

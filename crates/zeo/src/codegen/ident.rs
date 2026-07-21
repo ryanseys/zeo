@@ -89,7 +89,7 @@ const RUST_PRELUDE_COLLISIONS: &[&str] = &[
 /// user class defining `def +(other)`/`def <=>(other)` panicked at codegen
 /// time with a raw `proc_macro2` "not a valid Ident" error, meaning
 /// user-defined operator overloading -- long claimed to "work for free"
-/// once operators became ordinary Calls (Phase 1) -- never actually worked
+/// once operators became ordinary Calls -- never actually worked
 /// for the DEFINING side, only ever exercised via native `Int`/`Float` fast
 /// paths that bypass `safe_ident` entirely. Both the `impl` block's method
 /// definition (`codegen::mod::emit_class`) and a call site's general
@@ -219,7 +219,7 @@ fn escape_special_suffix(name: &str) -> Option<String> {
 /// previously ~11 call sites each derived it from `ClassInfo.name`
 /// independently). A top-level class keeps the plain `safe_ident(name)`
 /// (generated code for flat programs stays byte-identical); a NESTED class
-/// (Phase 15.3) mangles to `__c<id>_<leaf>` -- the `ClassId` makes it
+/// mangles to `__c<id>_<leaf>` -- the `ClassId` makes it
 /// collision-free by construction (two `Widget`s in different namespaces,
 /// or a namespace path whose `_`-join would be ambiguous, can never
 /// collide), the leaf keeps it readable, and the `__` prefix can't collide
@@ -245,7 +245,7 @@ pub(super) fn class_ident(
     // support: its methods live in a reopen-style container too, and a
     // bare `pub mod Object` would shadow `zeo_rt::Object`.
     if compiler.value_backed(cid) {
-        // A per-box OVERLAY (Phase 18) gets its own container module --
+        // A per-box OVERLAY gets its own container module --
         // `__bm_b2_String` -- so a root reopen and any number of box
         // overlays of the same builtin coexist.
         // A qualified builtin name (`Enumerator::Yielder`, `File::Stat`) has
@@ -273,7 +273,7 @@ pub(super) fn class_ident(
         }
         return proc_macro2::Ident::new(&format!("__bm_{}", flat), proc_macro2::Span::call_site());
     }
-    // A class DEFINED IN a box (Phase 18): `__b<box>_<leaf>` -- the box id
+    // A class DEFINED IN a box: `__b<box>_<leaf>` -- the box id
     // disambiguates it from a same-named main-program class (the ClassId
     // isn't needed: one box defines each top-level name at most once, and
     // nested classes already took the `__c<id>_` arm above).

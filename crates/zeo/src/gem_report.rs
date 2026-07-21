@@ -30,7 +30,7 @@ pub struct GemRecord {
 }
 
 /// The mechanism that satisfied a require. `Excluded` is reserved for the
-/// external gem store (Phase 3), where a native gem zeo has no ext for is a
+/// external gem store, where a native gem zeo has no ext for is a
 /// first-class, recorded outcome rather than a hard in-tree compile error.
 #[derive(Clone, Debug)]
 pub enum SatisfiedBy {

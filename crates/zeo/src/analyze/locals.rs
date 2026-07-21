@@ -12,7 +12,7 @@
 //! on it (including a branch that never touches it at all, which "agrees"
 //! with the pre-branch type by definition) -- any disagreement widens to
 //! `Poly`, since which branch actually ran isn't known at compile time.
-//! Loops (Phase 4) will reuse the same join, treating "loop body ran zero
+//! Loops will reuse the same join, treating "loop body ran zero
 //! times" as one more branch to agree with.
 
 use crate::compiler::{ClassId, Compiler};

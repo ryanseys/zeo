@@ -9,7 +9,7 @@ use crate::hir::{Hir, NodeId, Params, Visibility};
 use crate::types::TyKind;
 use std::collections::HashMap;
 
-/// The SHARED compiler/runtime class numbering (Phase 15.1): `ClassId` and
+/// The SHARED compiler/runtime class numbering: `ClassId` and
 /// every reserved builtin id are re-exported from `zeo-abi`, the
 /// zero-dependency leaf crate both `zeo` and `zeo-rt` consume -- the
 /// two numbering schemes this file and `zeo_rt::dispatch` used to
@@ -244,7 +244,7 @@ pub struct Compiler {
     pub hir: Hir,
     pub classes: Vec<ClassInfo>,
     pub scopes: Vec<Scope>,
-    /// Each box's TOP-LEVEL SURROGATE (Phase 18): a module-shaped
+    /// Each box's TOP-LEVEL SURROGATE: a module-shaped
     /// `ClassInfo` named `#<Ruby::Box:N>` that owns the box's top-level
     /// constants and doubles as the handle's runtime `RubyValue::Class`
     /// payload. Created by `analyze` (one per box id the loader
@@ -330,13 +330,13 @@ impl Compiler {
         compiler
     }
 
-    /// THE name-resolution primitive (Phase 15.1) -- every "which class does
+    /// THE name-resolution primitive -- every "which class does
     /// this name/path mean HERE" question goes through this one function,
     /// keyed by the full resolution context real Ruby uses: the lexical
     /// cref chain (innermost scope LAST -- `cref_of`'s order), and the box
     /// the referencing code is defined in (always `0` until Phase 18).
     ///
-    /// `path` may be a multi-segment constant path (Phase 15.3):
+    /// `path` may be a multi-segment constant path:
     /// `"Store::Errors::NotFound"` resolves its FIRST segment through the
     /// full unqualified rule below, then descends the remaining segments as
     /// direct namespace children only (no lexical/bootstrap fallback past
@@ -368,7 +368,7 @@ impl Compiler {
             // 0 even when `box_id` differs).
             cur = self.class_in_scope(Some(cur), seg, self.class(cur).box_id)?;
         }
-        // A per-box builtin-reopen OVERLAY (Phase 18) is a patch container,
+        // A per-box builtin-reopen OVERLAY is a patch container,
         // never a distinct class: as a resolved NAME it collapses to the
         // root builtin (`box::String == String` stays true; instances keep
         // the root's identity). Reopen-merge detection deliberately uses

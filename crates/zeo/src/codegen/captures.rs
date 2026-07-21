@@ -1,4 +1,4 @@
-//! Free-variable/`self` capture analysis for escaping blocks (Phase 6). See
+//! Free-variable/`self` capture analysis for escaping blocks. See
 //! `codegen::call::is_times_fast_path`'s docs: there is no genuine "escape
 //! analysis" decision procedure here -- a block escapes (becomes a real,
 //! heap-allocated `Proc`) iff it's NOT the `.times` inline fast path, which

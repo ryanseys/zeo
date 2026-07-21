@@ -45,7 +45,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let mut pre_exec = Vec::new();
     // Everything that must be registered right after the built-in exceptions
     // and before any user class -- `Math::DomainError` and the per-box
-    // surrogates (Phase 18) -- so the exceptions keep the FIXED id block
+    // surrogates -- so the exceptions keep the FIXED id block
     // `zeo-abi` reserves for them (63..108) regardless of box or user-class
     // count. The box surrogates used to be created before the whole analyze
     // pass, which stole those ids the moment a program allocated a box. See
@@ -91,7 +91,7 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
                 }
             }
         } else if let HirNode::BoxScope { box_id, body } = &compiler.hir[stmt] {
-            // A top-level box splice (Phase 18): its `ClassDef`s register
+            // A top-level box splice: its `ClassDef`s register
             // under the BOX (real Ruby: a class defined in a box is a
             // distinct class object); everything else stays in the
             // BoxScope for ordinary emission under the box context.
@@ -264,13 +264,13 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
 /// exceptions and before any user class, so those exceptions keep their fixed
 /// `zeo-abi` id block (63..109):
 ///
-/// 1. `Math::DomainError` (Phase 17.1) -- the one exception class nested under a
+/// 1. `Math::DomainError` -- the one exception class nested under a
 ///    BUILTIN module, registered programmatically (`BUILTIN_EXCEPTIONS_RB` is
 ///    ordinary Ruby source and `module Math` reopens are rejected). Bootstrap
 ///    like the other exception classes. `Math` is always present and
 ///    `StandardError` is already registered. It must land at id 108, immediately
 ///    after the last built-in exception class.
-/// 2. One top-level surrogate per allocated box (Phase 18) -- created here (not
+/// 2. One top-level surrogate per allocated box -- created here (not
 ///    before the whole pass) so a handle-only box (`box = Ruby::Box.new`) still
 ///    has its `BoxHandle`'s ClassId, WITHOUT stealing the exception ids. Boxes
 ///    thus start after `Math::DomainError`; their ids are looked up, never baked,
@@ -400,7 +400,7 @@ fn register_class(
         // `Foo` -- an ordinary definition in the enclosing lexical scope.
         None => (cref.last().copied(), name.clone(), false),
     };
-    // Reopening a BUILTIN class (Phase 16.3): `class String ... end` at the
+    // Reopening a BUILTIN class: `class String ... end` at the
     // top level ATTACHES to the existing builtin `ClassInfo` -- its methods
     // dispatch as value methods on the `RubyValue` itself (see
     // `codegen::mod::emit_builtin_reopen`), its `@@cvar`/`CONST` body
@@ -416,7 +416,7 @@ fn register_class(
     // need re-materialization onto every includer, including the Rust-
     // backed builtin fallbacks).
     let existing = compiler.class_in_scope(lexical_parent, &leaf, box_id);
-    // A top-level `class String ... end` INSIDE a box (Phase 18) with no
+    // A top-level `class String ... end` INSIDE a box with no
     // same-box definition to attach to: when the name reaches a builtin
     // through the bootstrap fallback, this is a PER-BOX builtin reopen --
     // an OVERLAY `ClassInfo` whose methods register as value methods under
@@ -648,7 +648,7 @@ fn register_class(
                     register_method(compiler, class_id, class_id, name, params, body, visibility)?;
                 add_own_method(compiler, class_id, sid, is_class_method);
             }
-            // A nested `class`/`module` definition (Phase 15.3) --
+            // A nested `class`/`module` definition --
             // registered recursively under this class's own cref; the
             // `ClassDef` node itself never lands in `class_body_stmts`
             // (nested classes are ordinary `ClassInfo`s emitted from the

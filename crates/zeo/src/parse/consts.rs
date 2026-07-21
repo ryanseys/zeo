@@ -13,7 +13,7 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
     Ok(String::from_utf8_lossy(cr.name().as_slice()).into_owned())
 }
 
-/// A constant PATH wherever a class/module is being NAMED (Phase 15.3):
+/// A constant PATH wherever a class/module is being NAMED:
 /// definitions (`class Store::Item`), superclasses, include/extend/prepend
 /// targets, `.new` receivers, `rescue` lists, and pattern constants.
 /// Produces the joined `"A::B::C"` form `Compiler::resolve_class` takes
@@ -61,7 +61,7 @@ pub(crate) fn constant_path_scope_and_name(
 }
 
 /// `box::A::B` -- a constant path rooted at a LOCAL bound to a box handle
-/// (Phase 18). Returns the box id plus the path INSIDE the box (`"A::B"`).
+///. Returns the box id plus the path INSIDE the box (`"A::B"`).
 pub(crate) fn box_rooted_path(node: &Node<'_>) -> Option<(u32, String)> {
     let cp = node.as_constant_path_node()?;
     let name = cp.name()?;

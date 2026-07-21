@@ -49,7 +49,7 @@ pub(super) fn emit_safe_call(
                 // `&.` doesn't accept a block yet (spike scope,
                 // unrelated to Phase 6 -- narrower than real Ruby, matches
                 // this call's existing kwargs restriction). `send_value`
-                // (Phase 14.4) handles Object AND builtin receivers
+                // handles Object AND builtin receivers
                 // uniformly, so the old non-Object panic is gone.
                 zeo_rt::send_value_in(#__bx, &__safe_recv, #name_expr, &[#(#arg_exprs),*], None)?
             }

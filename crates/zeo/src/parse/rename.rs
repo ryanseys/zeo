@@ -1,5 +1,5 @@
 //! Per-splice-instance local-variable isolation for `require`/`load`
-//! (Phase 14.1). Real Ruby gives every loaded file its OWN top-level local
+//!. Real Ruby gives every loaded file its OWN top-level local
 //! scope (each file is compiled as its own iseq with its own local table --
 //! `vm_set_top_stack` sizes the frame per-iseq; verified empirically that
 //! locals leak in NEITHER direction between files), but the HIR splice

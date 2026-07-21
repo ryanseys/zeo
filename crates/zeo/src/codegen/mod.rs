@@ -198,7 +198,7 @@ struct Ctx<'a> {
 impl<'a> Ctx<'a> {
     /// Resolves a class/module NAME as seen from the code currently being
     /// emitted -- the one funnel every codegen name-resolution site goes
-    /// through (Phase 15.1), keyed by the lexical cref chain (derived from
+    /// through, keyed by the lexical cref chain (derived from
     /// `defining_class`'s `lexical_parent` links, so there's no separate
     /// context field to thread) and this context's box. See
     /// `Compiler::resolve_class` for the resolution order.
@@ -209,7 +209,7 @@ impl<'a> Ctx<'a> {
 
     /// The lexical scope chain enclosing the current code, outermost first
     /// (`resolve_class` walks it back-to-front, i.e. innermost-outward) --
-    /// `Compiler::cref_of`'s rule (Phase 15.3), which also honors the
+    /// `Compiler::cref_of`'s rule, which also honors the
     /// qualified-definition cut (see `ClassInfo::qualified_def`). Empty at
     /// the top level.
     fn cref_chain(&self) -> Vec<ClassId> {
@@ -225,7 +225,7 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// A child context for a `BoxScope` body (Phase 18): everything inside
+    /// A child context for a `BoxScope` body: everything inside
     /// resolves classes/constants/globals against the box -- the AOT
     /// translation of CRuby's loading-box context.
     fn in_box(&self, box_id: u32) -> Ctx<'a> {
@@ -438,7 +438,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         })
         .map(|(idx, _)| emit_class_methods(compiler, ClassId(idx as u32)));
 
-    // A REOPENED builtin class (Phase 16.3): one `pub mod __bm_<Name>`
+    // A REOPENED builtin class: one `pub mod __bm_<Name>`
     // container per builtin that gained any methods, holding its instance
     // methods as free functions (`__self: RubyValue` receiver) and its
     // `def self.x` class methods together (which is why the builtin case is
@@ -482,7 +482,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
         let register = if class.is_module {
             // A module has no generated struct/`__register`, but it
-            // still needs a registry entry (Phase 16.1) so its
+            // still needs a registry entry so its
             // first-class value answers `name`/`.class`/`ancestors`
             // and `puts M` prints its name. No constructor: `M.new`
             // is a real NoMethodError (see `send_value`'s Class arm).
@@ -741,12 +741,12 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         let name = compiler.fq_name(ClassId(id));
         let is_module = class.is_module;
         let ancestor_ids = class.ancestors.iter().map(|a| a.0);
-        // A per-box OVERLAY (Phase 18) never registers a class entry of
+        // A per-box OVERLAY never registers a class entry of
         // its own -- instances keep the ROOT builtin's identity -- but
         // its methods/body statements below still run (registered on
         // the root's entry, keyed by the box).
         let is_overlay = class.builtin_overlay.is_some();
-        // A REOPENED builtin (Phase 16.3): each of its methods (own or
+        // A REOPENED builtin: each of its methods (own or
         // module-included, all already materialized) registers as a
         // value method so `send_value` dispatches it FIRST -- see
         // `ValueMethodFn`'s docs for the precedence contract. Its
@@ -773,7 +773,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             let ci = compiler.class(ClassId(id));
             let box_id = ci.box_id;
             // A per-box OVERLAY's methods register on the ROOT
-            // builtin's entry, keyed by the overlay's box (Phase 18).
+            // builtin's entry, keyed by the overlay's box.
             let target = ci.builtin_overlay.map_or(id, |root| root.0);
             // A PRIVATE `def` (every top-level def, and an explicit
             // `private def x`) is recorded so `respond_to?` skips it; a
@@ -1149,7 +1149,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     }
 }
 
-/// The generated container for a REOPENED builtin class (Phase 16.3) -- a
+/// The generated container for a REOPENED builtin class -- a
 /// `pub mod __bm_<Name>` (see `ident::class_ident`'s builtin mangling for
 /// why not a bare `pub mod String`) holding the reopen's instance methods
 /// as FREE FUNCTIONS (`__self: RubyValue` first parameter -- a builtin has
@@ -1308,7 +1308,7 @@ fn emit_exception_deltas(
     Some((container, regs))
 }
 
-/// One reopened-builtin INSTANCE method (Phase 16.3) -- the free-function
+/// One reopened-builtin INSTANCE method -- the free-function
 /// counterpart of `emit_class`'s per-method emission: same params
 /// machinery, same hoisting, same `Signal::Return` catch rule; the receiver
 /// is the `__self: RubyValue` first parameter (`Ctx::self_ident` points at
@@ -1383,7 +1383,7 @@ fn emit_builtin_method_fn(
 fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);
-    // The registry's Ruby-visible name (Phase 16.1): fully qualified, so
+    // The registry's Ruby-visible name: fully qualified, so
     // `puts Store::Item` and NoMethodError messages print the real path.
     let fq_name = compiler.fq_name(cid);
     let parent = ci.parent.unwrap_or(OBJECT_CLASS);

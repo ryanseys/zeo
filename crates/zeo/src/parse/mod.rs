@@ -382,7 +382,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         // which also handles `0xff`/`0b101`/`1_000` uniformly, unlike the
         // old source-text `parse::<i64>()`. Values that fit stay the
         // ordinary `IntegerLit(i64)`; anything bigger is a bignum literal
-        // (Phase 17.1).
+        //.
         let value = int.value();
         let (negative, digits) = value.to_u32_digits();
         return Ok(hir.push(match assemble_i64(negative, digits) {
@@ -855,7 +855,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
         }));
     }
     if let Some(cp) = node.as_constant_path_node() {
-        // `box::X` (Phase 18): an external access into the box -- the
+        // `box::X`: an external access into the box -- the
         // ordinary bare-name lowering, wrapped in the box's scope.
         // A single segment lowers as a bare `ClassRef` (codegen's class-
         // or-constant rule under the box); deeper paths as the qualified
@@ -1383,7 +1383,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     r.as_constant_read_node().is_some() || r.as_constant_path_node().is_some()
                 })
             {
-                // `box::Widget.new(...)` (Phase 18): the ordinary static
+                // `box::Widget.new(...)`: the ordinary static
                 // `New`, resolved inside the box.
                 let box_ctx = box_rooted_path(&recv);
                 let class_name = match &box_ctx {
@@ -1391,7 +1391,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     None => constant_path_name(&recv)?,
                 };
                 // `Enumerator.new { |y| ... }` joins the block-keeping set
-                // (Phase 17.2): it falls through to the generic `Call`
+                //: it falls through to the generic `Call`
                 // lowering so the block reaches the runtime allocator via
                 // the dynamic Class#new arm. `Proc.new { ... }` is in the
                 // set for the same reason -- its block IS the value it

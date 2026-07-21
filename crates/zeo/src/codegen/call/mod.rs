@@ -288,7 +288,7 @@ pub fn emit_call(
         // time panic, not a dynamic `method_missing` fallback (the class is
         // known, so an undefined method here is provably an error).
         if let Some(cid) = cx.current_class {
-            // Inside a REOPENED builtin's method (Phase 16.3), `self` is the
+            // Inside a REOPENED builtin's method, `self` is the
             // `__self: RubyValue` parameter: an implicit-self call to a
             // sibling reopen method is a direct free-function call, and any
             // OTHER name (`length` inside `Array#under_limit?` -- a native
@@ -476,7 +476,7 @@ pub fn emit_call(
                 );
             }
         }
-        // The Kernel FUNCTIONS (Phase 17.1): the print family (multi-arg
+        // The Kernel FUNCTIONS: the print family (multi-arg
         // now), conversions, rand/srand, throw, sleep, exit/abort --
         // checked AFTER sibling method resolution (a user `def puts`/`def
         // Integer` wins, real Ruby's rule; the old intercept-first
@@ -510,7 +510,7 @@ pub fn emit_call(
             if let Some(cid) = cx.current_class {
                 let slf = &cx.self_ident;
                 // A reopened builtin's (or `Object`'s) `self` is already a
-                // boxed `RubyValue` (Phase 16.3).
+                // boxed `RubyValue`.
                 let boxed = if cx.compiler.value_backed(cid) {
                     quote! { (#slf.clone()) }
                 } else {
@@ -668,7 +668,7 @@ pub fn emit_call(
                         zeo_rt::sized_queue_new((#n).as_int_unchecked())
                     };
                 }
-                // `Ractor.new(*args) { |*params| }` (Phase 13.8) -- block
+                // `Ractor.new(*args) { |*params| }` -- block
                 // ISOLATION is enforced HERE, at compile time (the capture
                 // set is statically known), strictly earlier than CRuby's
                 // own Proc-creation-time `Ractor::IsolationError`. Args
@@ -773,7 +773,7 @@ pub fn emit_call(
             }
             // Path 1 only when the class actually DEFINES a matching class
             // method. Anything else falls through to the generic dynamic path
-            // with the receiver as a first-class Class VALUE (Phase 16.1):
+            // with the receiver as a first-class Class VALUE:
             // `Widget == Widget`, `Widget.name`, `Widget.ancestors` resolve
             // in `send_value`'s Class arm, and a genuinely unknown method is a
             // real runtime NoMethodError ("for class Widget") -- real Ruby's
@@ -994,7 +994,7 @@ fn dispatch(
     }
 
     // `==`/`!=` on an OBJECT receiver with no matching user definition
-    // (Phase 16.2): real Ruby's `Object#==` default (reference identity)
+    //: real Ruby's `Object#==` default (reference identity)
     // and its derived `!=`, via `rb_eq` on boxed operands -- which itself
     // dispatches a user `==` when one exists, so `a != b` correctly
     // negates a user-defined `==` even when no `!=` was written.
@@ -1019,7 +1019,7 @@ fn dispatch(
         }
     }
 
-    // `instance_of?` against a literal class/module constant (Phase 16.1)
+    // `instance_of?` against a literal class/module constant
     // -- EXACT class identity, not ancestry (`w.instance_of?(Object)` is
     // false for a Widget); same static-fold-else-runtime shape as
     // `is_a?`/`kind_of?` above. A non-constant argument falls through to
@@ -1066,13 +1066,13 @@ fn dispatch(
         }
     }
 
-    // `.class` -- universal (Phase 16.1), same override-respecting shape
+    // `.class` -- universal, same override-respecting shape
     // as `freeze`/`dup` below (`class` is an ordinary overridable method
     // in real Ruby). Statically-known receivers fold to a Class literal
     // (still evaluating the receiver for side effects); Poly receivers ask
     // the value at runtime.
     if no_kwargs && name == "class" && args.is_empty() && block.is_none() && block_arg.is_none() {
-        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // `infer_any_class`, not just `TyKind::Object`: a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --
         // instead of taking the universal fast path (a user `String#dup`
@@ -1136,7 +1136,7 @@ fn dispatch(
     // statically-known Object receiver is never nil (only `RubyValue::Nil`
     // is), but its receiver expression still evaluates for side effects.
     if no_kwargs && name == "nil?" && args.is_empty() {
-        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // `infer_any_class`, not just `TyKind::Object`: a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --
         // instead of taking the universal fast path (a user `String#dup`
@@ -1159,7 +1159,7 @@ fn dispatch(
     }
 
     // `.freeze`/`.frozen?` -- universal `Kernel` methods, dispatched over
-    // every receiver representation (Phase 13.1). A user class's OWN
+    // every receiver representation. A user class's OWN
     // `def freeze`/`def frozen?` override wins, matching real Ruby (they're
     // ordinary overridable `Kernel` methods) -- checked via the receiver's
     // materialized method table, falling through to ordinary Path 1
@@ -1178,7 +1178,7 @@ fn dispatch(
         matches!(&cx.compiler.hir[recv_id], crate::hir::HirNode::ClassRef(n) if n == "ENV");
 
     if no_kwargs && (name == "freeze" || name == "frozen?") && args.is_empty() && !recv_is_env {
-        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // `infer_any_class`, not just `TyKind::Object`: a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --
         // instead of taking the universal fast path (a user `String#dup`
@@ -1265,7 +1265,7 @@ fn dispatch(
         }
     }
 
-    // `.dup`/`.clone` -- universal `Kernel` methods (Phase 15.2), same
+    // `.dup`/`.clone` -- universal `Kernel` methods, same
     // override-respecting shape as `freeze`/`frozen?` above (they're
     // ordinary overridable `Kernel` methods in real Ruby). The single
     // semantic difference between the two -- `clone` copies the frozen
@@ -1275,7 +1275,7 @@ fn dispatch(
     // `clone(freeze: false)` keyword form: not supported (kwargs fall
     // through to the ordinary rejection paths).
     if no_kwargs && (name == "dup" || name == "clone") && args.is_empty() && !recv_is_env {
-        // `infer_any_class`, not just `TyKind::Object` (Phase 16.3): a
+        // `infer_any_class`, not just `TyKind::Object`: a
         // REOPENED builtin's override of this universal method must also
         // fall through -- to the builtin free-function arm further down --
         // instead of taking the universal fast path (a user `String#dup`
@@ -1318,7 +1318,7 @@ fn dispatch(
     }
 
     // `Fiber#resume` / `Fiber#alive?` on a statically-known Fiber receiver
-    // (Phase 13.3). `resume`'s error outcomes each become their own
+    //. `resume`'s error outcomes each become their own
     // CRuby-verbatim `FiberError`; an uncaught Ruby signal from inside the
     // fiber's body re-raises HERE, at the resumer -- exactly CRuby's
     // `cont.c:2914` behavior. A Poly-typed receiver falls through to the
@@ -1399,7 +1399,7 @@ fn dispatch(
         }
     }
 
-    // `Thread#join`/`#value` (Phase 13.5): both wait via
+    // `Thread#join`/`#value`: both wait via
     // `zeo_rt::thread_outcome` (a real may yield point); an `Err` is the
     // thread's own uncaught signal, re-raised HERE in the joiner -- CRuby's
     // stored-exception semantics (`thread.c:1195`). `join` returns the
@@ -1426,7 +1426,7 @@ fn dispatch(
         }
     }
 
-    // Ruby `Mutex` (Phase 13.5) -- CRuby-verbatim ThreadError messages come
+    // Ruby `Mutex` -- CRuby-verbatim ThreadError messages come
     // back from the runtime (`Err(&str)`), boxed into real exceptions here.
     // `lock`/`unlock` both return self, matching CRuby.
     if no_kwargs && infer(cx, recv_id) == TyKind::Mutex {
@@ -1507,7 +1507,7 @@ fn dispatch(
         }
     }
 
-    // `Queue` (Phase 13.5): `pop` blocks coroutine-yieldingly; a closed
+    // `Queue`: `pop` blocks coroutine-yieldingly; a closed
     // empty queue pops nil; push to a closed queue raises ClosedQueueError
     // -- all CRuby `thread_sync.c` semantics, verified in the plan addendum.
     if no_kwargs && infer(cx, recv_id) == TyKind::Queue && block.is_none() {
@@ -1576,7 +1576,7 @@ fn dispatch(
         }
     }
 
-    // `Ractor` instance methods (Phase 13.8). NOTE: on a Ractor receiver,
+    // `Ractor` instance methods. NOTE: on a Ractor receiver,
     // `send` is the MESSAGE-passing method (as in real Ruby, where
     // `Ractor#send` shadows `Object#send`) -- this arm must stay ahead of
     // the generic dynamic-dispatch `send` handling further down.
@@ -1734,7 +1734,7 @@ fn dispatch(
     }
 
     // A REOPENED builtin's method on a statically-typed builtin receiver
-    // (Phase 16.3): a direct call to the generated free function (`__bm_
+    //: a direct call to the generated free function (`__bm_
     // String::length(recv, ...)`), checked BEFORE the collection/Proc/
     // Regexp fast paths below because a user redefinition must OVERRIDE the
     // native behavior -- real Ruby's rule, oracle-verified (`class String;
@@ -1794,7 +1794,7 @@ fn dispatch(
     // `for`, so `break`/`next`/`redo` inside a `.times` block work exactly
     // the same way.
     // Blockless `5.times` falls through to the dynamic row, which answers
-    // an Enumerator (Phase 17.2) -- the inline splice below is only for the
+    // an Enumerator -- the inline splice below is only for the
     // block form.
     if let Some(block_id) =
         block.filter(|_| is_times_fast_path(cx.compiler, Some(recv_id), name, no_kwargs))
@@ -2048,7 +2048,7 @@ fn dispatch(
                 // mixed promotion, Bignum/Rational/Complex lanes, user
                 // operator methods, builtin rows -- resolves through
                 // `send_value`'s MRO walk, whose Integer/Float operator
-                // rows drive the same one tower matrix (Phase 17.1). The
+                // rows drive the same one tower matrix. The
                 // old hand-inlined Float/mixed arms are gone: they
                 // duplicated the promotion rules and knew nothing of the
                 // new lanes.
@@ -2169,7 +2169,7 @@ fn dispatch(
             | TyKind::Mutex
             | TyKind::Queue
             | TyKind::Ractor
-            // A class VALUE receiver (Phase 16.1) whose method isn't a
+            // A class VALUE receiver whose method isn't a
             // statically-defined class method (that case returned above):
             // `send_value`'s Class arm handles the reflection set
             // (`name`/`ancestors`/`==`/the registry constructor), and an

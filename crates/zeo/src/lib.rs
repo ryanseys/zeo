@@ -81,7 +81,7 @@ pub fn compile_to_rust(source: &str) -> Result<String, String> {
     compile_to_rust_with(source, &CompileOptions::default()).map(|out| out.rust_source)
 }
 
-/// `compile_to_rust` plus the require-resolution context (Phase 14.1).
+/// `compile_to_rust` plus the require-resolution context.
 pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<CompileOutput, String> {
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,

@@ -43,7 +43,7 @@ pub(super) struct LockedGem {
 }
 
 /// Which lockfile section a gem came from -- a `PATH`/`GIT` gem lives outside
-/// the RubyGems store and is handled differently by the provider (Phase 3).
+/// the RubyGems store and is handled differently by the provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum GemSource {
     /// A RubyGems `GEM` section gem -- found in the store's `specifications/`.

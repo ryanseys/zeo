@@ -20,25 +20,25 @@ pub enum TyKind {
     Hash,
     Range,
     Object(ClassId),
-    /// A first-class class/module VALUE (Phase 16.1): `x = Widget` -- the
+    /// A first-class class/module VALUE: `x = Widget` -- the
     /// payload is the class the value REFERS to (its own class is
     /// `Class`/`Module`). What keeps `x.new(...)`/`x.some_class_method`
     /// on the static Path 1 (see `codegen::call`'s ClassObj interception)
     /// and `.class` results statically foldable.
     ClassObj(ClassId),
-    /// A real `Proc` (Phase 6) -- only ever seeded for a named `&block`
+    /// A real `Proc` -- only ever seeded for a named `&block`
     /// parameter (see `analyze::register_class`'s seeding, mirroring how a
     /// named `*rest`/`**kwrest` param seeds `Array`/`Hash`); nothing else
     /// infers this today.
     Proc,
-    /// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
+    /// A real, `regex`-crate-backed `Regexp` -- see
     /// `hir::HirNode::RegexpLit`'s docs.
     Regexp,
-    /// A `Fiber` handle (Phase 13.3) -- only ever produced by `Fiber.new`
+    /// A `Fiber` handle -- only ever produced by `Fiber.new`
     /// (see the inference arm below), consumed by `codegen::call`'s
     /// `resume`/`alive?` dispatch.
     Fiber,
-    /// `Thread`/`Mutex`/`Queue` (Phase 13.5) and `Ractor` (13.8) -- same
+    /// `Thread`/`Mutex`/`Queue` and `Ractor` (13.8) -- same
     /// only-from-`.new` inference shape as `Fiber`.
     Thread,
     Mutex,
@@ -61,7 +61,7 @@ pub enum TyKind {
 /// the native-arithmetic fast path. Kept here (not codegen) because the
 /// local-type tracker (`analyze::locals`) needs the identical list to
 /// propagate `Int`-ness through a chain like `z = x + y`. `**` is
-/// deliberately ABSENT since the numeric tower landed (Phase 17.1):
+/// deliberately ABSENT since the numeric tower landed:
 /// `2 ** -2` is a Rational -- an Int-Int `**` result types `Poly`.
 /// (Overflow itself is fine: a Bignum result is still `TyKind::Int`, one
 /// Ruby class with two payloads.)
@@ -73,7 +73,7 @@ fn no_locals() -> HashMap<String, TyKind> {
     HashMap::new()
 }
 
-/// Whether a REOPENED builtin class (Phase 16.3) overrides `name` for a
+/// Whether a REOPENED builtin class overrides `name` for a
 /// receiver of static type `recv_ty` -- the guard every builtin-receiver
 /// result-narrowing arm below must consult: `class String; def length;
 /// "long"; end` makes the old `length -> Int` narrowing unsound (the
@@ -112,7 +112,7 @@ fn builtin_override(compiler: &Compiler, recv_ty: TyKind, box_id: u32, name: &st
     {
         return true;
     }
-    // Inside a box, that box's OVERLAY patches (Phase 18) widen static
+    // Inside a box, that box's OVERLAY patches widen static
     // narrowing exactly like a root reopen would -- the patch is invisible
     // to every other box, so only the referencing code's own box checks.
     box_id != 0
@@ -170,14 +170,14 @@ pub fn infer_type_with_locals(
         HirNode::HashLit(_) => TyKind::Hash,
         HirNode::RangeLit { .. } => TyKind::Range,
         // A box-scoped splice types as its last statement, RESOLVED IN THE
-        // BOX (Phase 18) -- what keeps `w = box.eval("Widget.new")`
+        // BOX -- what keeps `w = box.eval("Widget.new")`
         // statically typed as the box's own Widget.
         HirNode::BoxScope { box_id: bx, body } => body.last().map_or(TyKind::Poly, |&s| {
             infer_type_with_locals(compiler, defining, *bx, locals, s)
         }),
         HirNode::BoxHandle(_) => TyKind::Poly,
         // Resolved against the referencing method's own lexical chain
-        // (Phase 15.3) -- `defining` is the AOT def->cref: a bare `Item.new`
+        // -- `defining` is the AOT def->cref: a bare `Item.new`
         // inside `module Store` types as the nested `Store::Item`.
         HirNode::New { class_name, .. } => {
             match compiler.resolve_class(class_name, &compiler.cref_of(defining), box_id) {
@@ -314,7 +314,7 @@ pub fn infer_type_with_locals(
             };
             let recv_ty = infer_type_with_locals(compiler, defining, box_id, locals, *recv);
             // A reopened builtin's `class` override defeats the fold --
-            // see `builtin_override`'s docs (Phase 16.3).
+            // see `builtin_override`'s docs.
             if builtin_override(compiler, recv_ty, box_id, "class") {
                 return TyKind::Poly;
             }

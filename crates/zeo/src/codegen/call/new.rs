@@ -312,7 +312,7 @@ pub fn emit_new_with_arg_tokens(
     }
 }
 /// Binds `initialize`'s REQUIRED + OPTIONAL parameters the way a Path 1
-/// call does (Phase 14.4): required args 1:1, each optional slot
+/// call does: required args 1:1, each optional slot
 /// `Some(expr)` when provided else `None` (the callee's own prologue lazily
 /// evaluates the default). Splat/post/keyword params on `initialize` remain
 /// out of scope, matching `emit_new_with_arg_tokens`'s original posture.

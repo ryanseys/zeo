@@ -1,4 +1,4 @@
-//! `begin`/`rescue`/`else`/`ensure`/`retry` (Phase 9). See the plan's Part 8
+//! `begin`/`rescue`/`else`/`ensure`/`retry`. See the plan's Part 8
 //! for the full design rationale -- translated from zeo's own
 //! `setjmp`/`longjmp`-based C implementation into ordinary `Result`/`?`-based
 //! propagation, since Rust's own exhaustive `match` and straight-line

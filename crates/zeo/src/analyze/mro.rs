@@ -263,7 +263,7 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
         }
     }
 
-    // A reopened BUILTIN class (Phase 16.3) has no generated struct, so
+    // A reopened BUILTIN class has no generated struct, so
     // there is nowhere for an `@ivar` to live -- a clean rejection here
     // (which also catches ivars arriving via an `include`d module) beats a
     // confusing `rustc` failure on the generated free functions. Real Ruby
@@ -466,7 +466,7 @@ fn resolve_consts(compiler: &mut Compiler, main_statements: &[NodeId]) -> Result
 /// `class_id` itself instead of the ancestor that actually owns it.
 fn own_const_names(compiler: &Compiler, class_id: ClassId) -> Vec<String> {
     // Class-reference-vs-constant classification inside this class's bodies
-    // resolves against ITS lexical chain (Phase 15.3): a bare `Item` inside
+    // resolves against ITS lexical chain: a bare `Item` inside
     // `module Store` naming the nested `Store::Item` class must not be
     // misclassified as a value-constant reference.
     let cref = compiler.cref_of(Some(class_id));

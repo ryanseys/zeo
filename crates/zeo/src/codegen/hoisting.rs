@@ -264,7 +264,7 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
             }
             if let Some(b) = block {
                 // An ESCAPING block (anything but the `.times` inline fast
-                // path) is a genuinely separate Ruby scope now (Phase 6) --
+                // path) is a genuinely separate Ruby scope now --
                 // a local first introduced INSIDE one is fresh per
                 // invocation (confirmed against real Ruby: a Proc's own
                 // internal local resets on every separate `.call()`, it
