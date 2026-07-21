@@ -1,5 +1,5 @@
-# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25]" spinel-rs=cc13e39
-# PASS=1942 FAIL_OUTPUT=259 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
+# suite=spinel corpus=2231 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" spinel-rs=24eb04b
+# PASS=1971 FAIL_OUTPUT=230 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=28 TOTAL=2231
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -182,7 +182,7 @@ block_param_call_value_return	PASS	-	-
 block_param_destructure	PASS	-	-
 block_param_distribution	PASS	-	-
 block_param_into_thread	PASS	-	-
-block_param_shadow	FAIL_OUTPUT	expect	-
+block_param_shadow	PASS	-	-
 block_param_sibling_collision	PASS	-	-
 block_splat_param	PASS	-	-
 block_splat_param_iterators	PASS	-	-
@@ -272,7 +272,7 @@ bundle_misc_c_09	FAIL_OUTPUT	expect	missing-method:[]=
 bundle_misc_c_10	PASS	-	-
 bundle_misc_c_17	PASS	-	-
 bundle_misc_c_23	PASS	-	-
-bundle_misc_c_26	FAIL_OUTPUT	expect	-
+bundle_misc_c_26	PASS	-	-
 bundle_misc_c_30	PASS	-	-
 bundle_misc_c_31	PASS	-	-
 bundle_misc_c_33	PASS	-	-
@@ -288,7 +288,7 @@ bundle_string_c	PASS	-	-
 bundle_sym	PASS	-	-
 bundle_tiny_array	PASS	-	-
 bundle_tiny_misc	PASS	-	-
-bundle_tiny_num	FAIL_OUTPUT	expect	auto-can-iterate-from-string-typeerror-987c
+bundle_tiny_num	PASS	-	-
 bundle_tiny_string	FAIL_OUTPUT	expect	arity-panic
 call_and_write	PASS	-	-
 call_arg_int_to_obj_cast	PASS	-	-
@@ -511,7 +511,7 @@ each_cons_map_types	PASS	-	-
 each_cons_with_index_map_no_double_gets	PASS	-	-
 each_entry_reverse_each	PASS	-	-
 each_return_value	PASS	-	-
-each_slice_cons_enumerator	FAIL_OUTPUT	expect	-
+each_slice_cons_enumerator	PASS	-	-
 each_slice_cons_to_a	PASS	-	-
 each_slice_map	PASS	-	-
 each_with_index_enumerator	PASS	-	-
@@ -784,7 +784,7 @@ hash_fetch_block_key_type	PASS	-	-
 hash_fetch_keyerror	PASS	-	-
 hash_fetch_keyerror_message	PASS	-	-
 hash_fetch_values_delete_block_subset	FAIL_OUTPUT	expect	-
-hash_filter_bang_return	FAIL_OUTPUT	expect	-
+hash_filter_bang_return	PASS	-	-
 hash_flatten_depth	FAIL_OUTPUT	expect	-
 hash_flatten_rassoc_compact	PASS	-	-
 hash_float_value_preserved	PASS	-	-
@@ -849,7 +849,7 @@ hash_variant_unify	PASS	-	-
 heterogeneous_tuple_return	PASS	-	-
 i1006	PASS	-	-
 i1007	PASS	-	-
-i1009	FAIL_OUTPUT	expect	auto-parsing-error-at-position-invalid-back-reference-regexperror-60c6
+i1009	PASS	-	-
 i1011	SKIP	-	-
 i1015	PASS	-	-
 i1017	SKIP	-	-
@@ -992,7 +992,7 @@ integer_pow_negative_exponent	PASS	-	-
 integer_rational_complex_ops	PASS	-	-
 integer_shift_float_and_coerce	PASS	-	-
 integer_step_no_limit	PASS	-	-
-integer_times_as_expr	FAIL_OUTPUT	expect	-
+integer_times_as_expr	PASS	-	-
 interp_adjacent_concat	PASS	-	-
 interp_array_container	PASS	-	-
 interp_call_arg_root	PASS	-	-
@@ -1067,7 +1067,7 @@ issue_2906	PASS	-	-
 issue_2909	PASS	-	-
 issue_2910	FAIL_OUTPUT	expect	-
 issue_2911	PASS	-	-
-issue_2912	FAIL_OUTPUT	expect	-
+issue_2912	PASS	-	-
 issue_2913	PASS	-	-
 issue_2915	PASS	-	-
 issue_2916	PASS	-	-
@@ -1152,12 +1152,12 @@ issue_3002	FAIL_OUTPUT	expect	-
 issue_3003	FAIL_OUTPUT	expect	-
 issue_3004	PASS	-	-
 issue_3005	PASS	-	-
-issue_3006	FAIL_OUTPUT	expect	auto-integer-can-be-coerced-into-integer-typeerror-b387
+issue_3006	PASS	-	-
 issue_3007	PASS	-	-
 issue_3008	FAIL_OUTPUT	expect	-
 issue_3009	PASS	-	-
 issue_3010	PASS	-	-
-issue_3011	FAIL_OUTPUT	expect	auto-infinity-floatdomainerror-feb3
+issue_3011	PASS	-	-
 issue_3012	PASS	-	-
 issue_3013	PASS	-	-
 issue_3014	FAIL_OUTPUT	expect	-
@@ -1170,8 +1170,8 @@ issue_3020	PASS	-	-
 issue_3021	FAIL_OUTPUT	expect	-
 issue_3022	PASS	-	-
 issue_3023	PASS	-	-
-issue_3024	FAIL_OUTPUT	expect	auto-uncaught-signal-escaped-the-top-level-break-00b3
-issue_3024b	FAIL_OUTPUT	expect	auto-uncaught-signal-escaped-the-top-level-break-00b3
+issue_3024	FAIL_OUTPUT	expect	-
+issue_3024b	FAIL_OUTPUT	expect	-
 issue_3026	PASS	-	-
 issue_3027	PASS	-	-
 issue_3028	PASS	-	-
@@ -1205,13 +1205,13 @@ issue_3054	PASS	-	-
 issue_3055	PASS	-	-
 issue_3056	PASS	-	-
 issue_3057	FAIL_OUTPUT	expect	arity-panic
-issue_3058	FAIL_OUTPUT	expect	auto-invalid-argument-argumenterror-cf9c
+issue_3058	PASS	-	-
 issue_3059	PASS	-	-
 issue_3060	PASS	-	-
 issue_3061	FAIL_OUTPUT	expect	-
 issue_3062	PASS	-	-
 issue_3063	PASS	-	-
-issue_3064	FAIL_OUTPUT	expect	auto-can-iterate-from-string-typeerror-987c
+issue_3064	PASS	-	-
 issue_3065	TIMEOUT_RUN	run	-
 issue_3066	PASS	-	-
 issue_3067	PASS	-	-
@@ -1356,7 +1356,7 @@ match_tilde_pre_post	PASS	-	-
 matchdata_gsub_named_backref	FAIL_OUTPUT	expect	-
 matchdata_index_eq	PASS	-	-
 matchdata_methods	PASS	-	-
-matchdata_named_groups	FAIL_OUTPUT	expect	auto-undefined-group-name-reference-nope-123c
+matchdata_named_groups	PASS	-	-
 matchdata_value_varargs_symstr	PASS	-	-
 matchdata_values_at_byteoffset	PASS	-	-
 matchdata_values_at_named	PASS	-	-
@@ -1532,9 +1532,9 @@ open_class_object	PASS	-	-
 or_write_ivar_poly_setter	PASS	-	-
 p_as_expression	PASS	-	-
 p_bignum	PASS	-	-
-pack_base64	FAIL_OUTPUT	expect	-
+pack_base64	PASS	-	-
 pack_endian_modifiers	PASS	-	-
-pack_float_directives	FAIL_OUTPUT	expect	auto-no-implicit-conversion-of-float-into-integer-typeerror-0627
+pack_float_directives	PASS	-	-
 pack_utf8	PASS	-	-
 param_body_array_hash_inference	PASS	-	-
 param_body_hash_inference	FAIL_OUTPUT	expect	missing-method:[]
@@ -1805,7 +1805,7 @@ reduce_numeric_promotion	PASS	-	-
 reduce_seed_kinds	PASS	-	-
 regex	PASS	-	-
 regex_backref_oob_nil	PASS	-	-
-regex_capture_scan_toproc_count	FAIL_OUTPUT	expect	-
+regex_capture_scan_toproc_count	PASS	-	-
 regex_const_freeze	PASS	-	-
 regex_hex_shorthand	PASS	-	-
 regex_local_gsub_split	PASS	-	-
@@ -1819,7 +1819,7 @@ regexp_alternation_priority	PASS	-	-
 regexp_brace_zero_lower	FAIL_OUTPUT	expect	-
 regexp_capture_ivar_hash	PASS	-	-
 regexp_captures_family	FAIL_OUTPUT	expect	-
-regexp_encoding_introspection	FAIL_OUTPUT	expect	auto-parsing-error-at-position-invalid-character-class-regexperror-db37
+regexp_encoding_introspection	PASS	-	-
 regexp_error_catchable	FAIL_OUTPUT	expect	-
 regexp_gsub_zero_width	FAIL_OUTPUT	expect	-
 regexp_inline_comment	PASS	-	-
@@ -2019,7 +2019,7 @@ string_range_each_inspect	PASS	-	-
 string_range_to_a	PASS	-	-
 string_replace_prepend_insert_clear	PASS	-	-
 string_rpartition_regex	FAIL_OUTPUT	expect	-
-string_scan_literal	FAIL_OUTPUT	expect	auto-wrong-argument-type-string-expected-regexp-typeerror-4d95
+string_scan_literal	PASS	-	-
 string_scrub	FAIL_OUTPUT	expect	-
 string_search_binary	PASS	-	-
 string_search_slice	PASS	-	-
@@ -2116,14 +2116,14 @@ thread_sized_queue	PASS	-	-
 thread_value_through_container	PASS	-	-
 three_level_array_outer_index	PASS	-	-
 time_asctime	PASS	-	-
-time_at_in_offset	FAIL_OUTPUT	expect	auto-can-convert-hash-into-an-exact-number-typeerror-6187
-time_at_kinds_string_ctor	FAIL_OUTPUT	expect	auto-can-convert-time-into-an-exact-number-typeerror-0b64
+time_at_in_offset	PASS	-	-
+time_at_kinds_string_ctor	PASS	-	-
 time_at_subsec	PASS	-	-
 time_at_unit_form	PASS	-	-
 time_between_clamp	PASS	-	-
 time_compare_nontime	PASS	-	-
 time_deconstruct_keys	PASS	-	-
-time_fractional_seconds	FAIL_OUTPUT	expect	auto-no-implicit-conversion-of-rational-into-integer-typeerror-8b67
+time_fractional_seconds	PASS	-	-
 time_interpolation	PASS	-	-
 time_localtime_gmtime	PASS	-	-
 time_mktime_local_utc	PASS	-	-
@@ -2133,10 +2133,10 @@ time_plus_rational	PASS	-	-
 time_predicates_getgm	PASS	-	-
 time_respond_to	PASS	-	-
 time_round_floor_ceil	PASS	-	-
-time_strftime_directives	FAIL_OUTPUT	expect	-
+time_strftime_directives	PASS	-	-
 time_strftime_epoch_zone	PASS	-	-
 time_strftime_long_format	PASS	-	-
-time_strftime_z_minimal	FAIL_OUTPUT	expect	auto-can-convert-hash-into-an-exact-number-typeerror-6187
+time_strftime_z_minimal	PASS	-	-
 time_subsec_offset_family	PASS	-	-
 time_subsec_utc	PASS	-	-
 time_to_a_to_r	PASS	-	-
@@ -2184,13 +2184,13 @@ value_type_hash_id	PASS	-	-
 value_type_identity	FAIL_OUTPUT	expect	-
 value_type_interp_to_s	PASS	-	-
 value_type_tuple_gc_scan	PASS	-	-
-valued_break	FAIL_OUTPUT	expect	-
+valued_break	PASS	-	-
 valued_break_deep	PASS	-	-
-valued_break_ensure	FAIL_OUTPUT	expect	-
-valued_break_proc	FAIL_OUTPUT	expect	auto-uncaught-signal-escaped-the-top-level-break-00b3
-valued_break_recv	FAIL_OUTPUT	expect	-
-valued_break_tail	FAIL_OUTPUT	expect	-
-valued_break_yield	FAIL_OUTPUT	expect	-
+valued_break_ensure	PASS	-	-
+valued_break_proc	PASS	-	-
+valued_break_recv	PASS	-	-
+valued_break_tail	PASS	-	-
+valued_break_yield	PASS	-	-
 values_at	PASS	-	-
 virtual_dispatch_void_override	PASS	-	-
 virtual_dispatch_void_override_empty_base	PASS	-	-
