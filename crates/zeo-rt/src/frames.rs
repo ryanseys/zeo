@@ -12,12 +12,11 @@
 //!
 //! Frame text is baked at compile time (`&'static str` file names and
 //! `'Class#method'` labels from the span tables), so a push is two words +
-//! a `u32` into a coroutine-local `Vec` and the common no-raise path never
+//! a `u32` into a thread-local `Vec` and the common no-raise path never
 //! formats anything. Backtraces are FORMATTED at capture (raise) time.
 //!
-//! Coroutine-local (the same `may` TLS every execution-context stack here
-//! uses -- see `signal::HOME_STACK`): each green thread gets its own
-//! stack, so a raise in one `Thread` never sees another's frames. Fibers
+//! Thread-local, and each Ruby `Thread` is its own OS thread -- a raise in
+//! one `Thread` never sees another's frames, by construction. Fibers
 //! currently share their owner thread's stack (the ec-swap covers `$!`
 //! only) -- a documented approximation, same boundary `signal` has.
 
@@ -31,17 +30,10 @@ pub struct Frame {
     pub method: &'static str,
 }
 
-// Plain per-OS-thread TLS, NOT `may::coroutine_local!` (whose per-access
-// cost through the coroutine registry made a recursion-heavy benchmark 6x
-// slower -- a frame push/pop pair runs on EVERY method call). Each Ruby
-// `Thread` body swaps in a fresh stack on entry (`swap_stack` from
-// `thread::thread_new`'s wrapper), so a spawned thread's raises capture
-// its own frames. Known, temporary narrowing while threads are `may`
-// coroutines multiplexed on worker OS threads: a thread that YIELDS
-// mid-call leaves its frames beneath whichever coroutine runs next on the
-// same worker, so a backtrace captured exactly there can include a parked
-// sibling's frames below its own. The OS-thread migration (plan P3)
-// makes this per-thread by construction.
+// A frame push/pop pair runs on EVERY method call -- plain TLS keeps it
+// two words + a u32 with no registry lookup. Each Ruby `Thread` is its own
+// OS thread with its own (fresh) slot; the body's `swap_stack` in
+// `thread::thread_new` is a belt-and-suspenders empty<->empty exchange.
 std::thread_local!(static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) });
 
 /// Install `new` as this execution context's frame stack, returning the

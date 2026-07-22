@@ -17,16 +17,9 @@
 //! documented lowering-time rejection (see `parse/mod.rs`'s `raise`
 //! recognizer).
 //!
-//! **Storage is `may` COROUTINE-local, not `thread_local!`**:
-//! `$!`/rescue-nesting is per-EXECUTION-CONTEXT state, and once multiple
-//! Ruby `Thread`s (may coroutines) multiplex onto one OS worker -- the
-//! default GVL mode -- a `thread_local!` slot would be silently SHARED
-//! between them (thread A's rescue body would leak its exception into
-//! thread B's bare `raise`), and a `--no-gvl` coroutine migrating workers
-//! would lose its stack mid-rescue entirely: exactly `may`'s documented
-//! TLS-in-coroutine hazard, and the reason Part 9's original "leave it
-//! thread-local" call was explicitly flagged for revisiting here. CLS
-//! travels with the coroutine, so both cases are correct by construction.
+//! **Storage is `thread_local!`**: `$!`/rescue-nesting is per-EXECUTION-
+//! CONTEXT state, and every Ruby `Thread` is its own OS thread, so plain
+//! TLS is exactly per-context.
 //!
 //! `Fiber` needs one more twist (also this phase): CRuby gives each fiber
 //! its OWN execution context (`fiber->cont.saved_ec.errinfo` -- rescue

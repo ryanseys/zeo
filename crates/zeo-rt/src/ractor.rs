@@ -1,6 +1,6 @@
-//! `Ractor` -- real OS threads (`std::thread::spawn`, NOT may
-//! coroutines: a Ractor's whole point is genuine parallelism regardless of
-//! the GVL-emulating scheduler config) sharing the SAME global heap.
+//! `Ractor` -- real OS threads (`std::thread::spawn`; a Ractor never
+//! attaches to the process Gvl, so even the `ZEO_GVL=1` fidelity mode
+//! keeps Ractors genuinely parallel) sharing the SAME global heap.
 //! CRuby's real Ractors already share classes, methods, and the Symbol
 //! table process-wide -- and this runtime's class registry/Symbol interner
 //! are already global (`OnceLock`/`LazyLock`, Part 9) -- so no separate

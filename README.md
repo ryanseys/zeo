@@ -47,8 +47,10 @@ foo.rb ──prism──▶ HIR arena ──analyze──▶ typed classes/MRO �
   (which also serves `define_method`, singletons, and runtime-minted classes).
 - **A real runtime** (`zeo-rt`): CRuby-faithful numeric tower
   (Integer/Bignum/Rational/Complex), encodings as bytes + interpretation,
-  Fibers on real stack-switching coroutines, threads, exceptions as `Result`
-  propagation — `#![forbid(unsafe_code)]` outside the FFI/syscall shims.
+  Fibers on real stack-switching coroutines, **truly parallel threads**
+  (real OS threads, no GVL by default — `ZEO_GVL=1` opts into CRuby-style
+  serialized scheduling), exceptions as `Result` propagation —
+  `#![forbid(unsafe_code)]` outside the FFI/syscall shims.
 
 ## Building from source
 
@@ -75,8 +77,8 @@ $ cargo run -p xtask -- bench                     # golden-output benchmarks
 ## Status
 
 Experimental and moving fast. The large structural pieces in flight are
-tracked in `docs/` (object-model completion, OS-thread GVL, the always-linked
-eval VM, Onigmo-backed regex, Ruby::Box isolation). Issues and contributions
+tracked in `docs/` (object-model completion, the always-linked eval VM,
+Onigmo-backed regex, Ruby::Box isolation). Issues and contributions
 welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License

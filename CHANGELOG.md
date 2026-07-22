@@ -7,7 +7,19 @@ All notable changes are documented here, following
 ## [Unreleased]
 
 Pre-release development: the open-source-readiness and CRuby-compatibility
-push. Highlights so far: dual MIT/Apache-2.0 licensing, edition 2024
+push.
+
+**Threads are real OS threads, truly parallel by default.** The former
+cooperative coroutine scheduler (`may`) is gone: every `Thread.new` is an
+8MiB OS thread, busy loops are killable/raisable (interruption checkpoints
+at loop back-edges, method prologues, and block exits), `sleep` — including
+`sleep` with no duration — is genuinely interruptible, and the main thread
+is a first-class `Thread#raise` target. `ZEO_GVL=1` opts into CRuby-style
+serialized scheduling (a FIFO global lock with 100ms timer preemption).
+The retired `--no-gvl` and `ZEO_THREADS` scheduler knobs are now silently
+ignored.
+
+Other highlights so far: dual MIT/Apache-2.0 licensing, edition 2024
 workspace with enforced lints, OS-CSPRNG SecureRandom, vendored
 conformance corpus + benchmark suite with self-contained CI, typed
 error-constructor macros, the rb_convert_type implicit-conversion

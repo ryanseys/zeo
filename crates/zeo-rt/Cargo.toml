@@ -28,7 +28,6 @@ fancy-regex.workspace = true
 # library, never linking a system libonig.
 onig.workspace = true
 zeo-fiber.workspace = true
-may.workspace = true
 # OS entropy for `OpenSSL::Random`/`SecureRandom` -- the real extension draws
 # from a CSPRNG, so we must too (getrandom(2)/SecRandomCopyBytes underneath).
 getrandom.workspace = true

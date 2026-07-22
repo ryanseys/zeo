@@ -1,18 +1,12 @@
-//! `Thread`/`Mutex`/`Queue` -- thin Ruby-visible wrappers over
-//! `may`'s green coroutines and sync primitives. A Ruby `Thread` is a `may`
-//! coroutine, so under the default single scheduler worker (see `exec.rs`)
-//! genuine parallelism is structurally impossible -- CRuby's GVL reality --
-//! while `--no-gvl`/`ZEO_THREADS=N` gives real OS parallelism over the
-//! same code, memory-safe via Part 9's `Arc`/`parking_lot::Mutex`
-//! foundation.
-//!
-//! **Documented divergence from CRuby: scheduling is COOPERATIVE.** CRuby's
-//! GVL preempts pure-Ruby threads on a timer (~100ms quantum); a `may`
-//! coroutine only yields at blocking points (`join`/`value`, a contended
-//! Ruby `Mutex`, an empty `Queue#pop`). A busy-loop thread that never
-//! touches a synchronization point starves its siblings here, where CRuby
-//! would interleave them. Well-SYNCHRONIZED programs -- the only kind whose
-//! output order is even deterministic enough to test -- behave identically.
+//! `Thread`/`Mutex`/`Queue` -- Ruby's threading surface over REAL OS
+//! threads (8MiB stacks, one per `Thread.new`), truly parallel by default:
+//! per-object `Arc`/`parking_lot::Mutex` state (Part 9) carries memory
+//! safety, and per-builtin-op atomicity matches the granularity CRuby's
+//! GVL actually guarantees for its C-implemented methods. `ZEO_GVL=1`
+//! arms the opt-in serialized scheduling mode (see `gvl`). Asynchronous
+//! interrupts (`#kill`/`#raise`) deliver at `check_ints` checkpoints --
+//! loop back-edges, method prologues, block exits, and every blocking
+//! primitive here.
 //!
 //! Error contract (verified against CRuby `thread.c`/`thread_sync.c`, see
 //! the plan's Part 11 addendum): an uncaught exception inside a Thread is
@@ -92,10 +86,9 @@ pub struct ThreadData {
     is_main: bool,
     /// A pending `Thread#kill`/`#raise`, taken at the next checkpoint.
     interrupt: PlMutex<Option<InterruptKind>>,
-    /// The OS-thread mode's scheduling ctx for this thread, registered by
-    /// its first interruptible sleep -- lets `#kill`/`#raise` wake exactly
-    /// this sleeper instead of waiting out the timeout. `None` under the
-    /// may mode (whose blocking waits poll on a 2ms cadence instead).
+    /// This thread's scheduling ctx, registered by its first interruptible
+    /// sleep -- lets `#kill`/`#raise` wake exactly this sleeper instead of
+    /// waiting out the timeout.
     ctx: PlMutex<Option<std::sync::Arc<crate::gvl::ThreadCtx>>>,
     /// Set by `#kill`; makes the thread's outcome a silent `nil` no matter what
     /// the unwinding exception was (so even a `rescue Exception` can't keep a
@@ -197,13 +190,7 @@ pub fn thread_main() -> RubyValue {
     RubyValue::Thread(main_thread())
 }
 
-/// `Thread.pass` -- give up the current quantum; nil. Inside a coroutine
-/// that is may's own yield; on a plain OS thread (main) a brief real sleep,
-/// so freshly spawned coroutines genuinely get scheduler time before the
-/// caller proceeds -- CRuby's `Thread.pass` likewise cedes the caller's
-/// quantum, which is what the `Thread.new ...; Thread.pass; t.raise` idiom
-/// relies on for the target to reach its blocking point (and its own
-/// `begin`) before the interrupt lands.
+/// `Thread.pass` -- give up the current quantum; nil.
 pub fn thread_pass() -> RubyValue {
     // Armed Gvl: rejoin the back of the FIFO queue (a real handoff);
     // parallel: a plain OS yield is all "pass" can mean.
@@ -418,17 +405,16 @@ pub fn thread_variable_keys(t: &RThread) -> Vec<RubyValue> {
         .collect()
 }
 
-/// Blocks (a real `may` yield point) until the thread finishes, then
-/// returns its stored outcome -- `Err(Signal)` re-raises in the CALLER,
-/// CRuby's `thread_join` semantics. A Rust PANIC inside the thread
-/// propagates here with its original payload (same whole-process posture
-/// as every other runtime panic). `join` and `value` share this; only what
-/// the codegen arm does with the `Ok` differs (`join` -> the thread
-/// itself, `value` -> the block's result).
+/// Blocks until the thread finishes, then returns its stored outcome --
+/// `Err(Signal)` re-raises in the CALLER, CRuby's `thread_join` semantics.
+/// A Rust PANIC inside the thread propagates here with its original
+/// payload (same whole-process posture as every other runtime panic).
+/// `join` and `value` share this; only what the codegen arm does with the
+/// `Ok` differs (`join` -> the thread itself, `value` -> the block's
+/// result).
 pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
-    // Take the handle OUT of the lock before joining: holding a
-    // parking_lot guard across a may yield point would block the whole
-    // worker thread, not just this coroutine.
+    // Take the handle OUT of the lock before joining: a concurrent joiner
+    // must be able to lock the state slot while we block in join.
     let taken = t.state.lock().take();
     match taken {
         Some(ThreadState::Running(handle)) => {
@@ -761,14 +747,6 @@ mod tests {
         assert!(!mutex_locked(m));
     }
 
-    // The next four tests pin the load-bearing assumptions of the staged
-    // OS-thread migration: during the flag-staged window, generated code
-    // runs on BARE OS THREADS while `may` is still linked, so (a) `may`'s
-    // coroutine-local storage must fall back to a fresh per-OS-thread slot
-    // outside any coroutine, and (b) its sync primitives must park and wake
-    // plain threads. If any of these fail, the migration must be a single
-    // cutover instead of a flag-staged one.
-
     /// `execution_id` (the Mutex-ownership key) is a thread-local read:
     /// stable within one OS thread, distinct across OS threads.
     #[test]
@@ -799,9 +777,9 @@ mod tests {
         assert!(matches!(popper.join().unwrap(), Ok(RubyValue::Int(7))));
     }
 
-    /// A contended Ruby `Mutex` (the may mpmc token channel) blocks a bare
-    /// OS thread until the owning THREAD unlocks, and ownership (keyed by
-    /// per-thread execution id) transfers to the waiter.
+    /// A contended Ruby `Mutex` blocks a bare OS thread until the owning
+    /// THREAD unlocks, and ownership (keyed by per-thread execution id)
+    /// transfers to the waiter.
     #[test]
     fn mutex_token_hands_off_across_bare_os_threads() {
         let m_val = mutex_new();

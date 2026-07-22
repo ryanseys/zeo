@@ -70,8 +70,8 @@ pub enum RubyValue {
     /// `Enumerator.new { |y| y << 1 }`, wrapping the each-block currently
     /// being driven (`y << v` / `y.yield v` forward to it).
     Yielder(RProc),
-    /// A `Thread` -- a `may` green coroutine; see
-    /// `thread`'s module docs for the cooperative-scheduling divergence.
+    /// A `Thread` -- a real OS thread, truly parallel by default; see
+    /// `thread`'s module docs.
     Thread(RThread),
     /// A Ruby `Mutex` -- non-reentrant, per-execution-context
     /// owned, like CRuby's.
