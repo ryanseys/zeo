@@ -69,7 +69,10 @@ pub fn method_new(recv: &RubyValue, name_arg: &RubyValue) -> Result<RubyValue, S
     // :clock_gettime)` -- the timeout gem's `GET_TIME`), which only the
     // value-aware probe sees (it mirrors `send_value_in`'s class-receiver
     // dispatch order, singletons included).
-    if !crate::dispatch::responds_to_value(recv, name, true) {
+    // `respond_to_missing?` counts: `obj.method(:dyn)` succeeds when the
+    // hook admits `:dyn`, returning a Method that dispatches through
+    // `method_missing` at call time -- CRuby's `rb_obj_method`.
+    if !crate::dispatch::responds_to_or_missing(recv, name, true)? {
         // CRuby's phrasing names the receiver's CLASS, not the receiver
         // ("undefined method 'nope' for class 'String'").
         return Err(name_error!(

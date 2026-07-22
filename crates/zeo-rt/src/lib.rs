@@ -72,9 +72,10 @@ pub use dispatch::{
     install_class_registry, instance_variable_get, instance_variable_set, instance_variables, is_a,
     ivar_defined, ivar_get_dyn, ivar_name_arg, ivar_set_dyn, main_object, make_name_error,
     method_name_symbol, raise_error, raise_error_details, raise_method_missing,
-    raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to, responds_to_value,
-    run_initialize, send, send_in, send_super_class_from, send_super_from, send_value,
-    send_value_in, send_value_public_in, stamp_backtrace, validate_aliases,
+    raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to,
+    responds_to_or_missing, responds_to_value, run_initialize, send, send_in,
+    send_super_class_from, send_super_from, send_value, send_value_in, send_value_public_in,
+    stamp_backtrace, validate_aliases,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value};

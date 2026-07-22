@@ -269,8 +269,11 @@ fn emit_defined(cx: &Ctx, id: NodeId) -> TokenStream {
             }
         };
         let name = name.as_str();
+        // `defined?` consults `respond_to_missing?` too (a method_missing
+        // method answers "method"), but SWALLOWS a raise from it (returning
+        // nil) -- `unwrap_or(false)`, not `?`, keeps that exception-safety.
         return quote! {
-            if zeo_rt::responds_to_value(&#recv, zeo_rt::Symbol::intern(#name), #include_all) {
+            if zeo_rt::responds_to_or_missing(&#recv, zeo_rt::Symbol::intern(#name), #include_all).unwrap_or(false) {
                 zeo_rt::RubyValue::Str(zeo_rt::string_new("method".to_string()))
             } else {
                 zeo_rt::RubyValue::Nil

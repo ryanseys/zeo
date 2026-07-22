@@ -56,6 +56,26 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Nil)
     }
+    // The root `method_missing` (CRuby's `rb_method_missing`,
+    // `vm_eval.c`): what a user override's `super` reaches -- raises the
+    // real NoMethodError for the ORIGINAL call, whose name arrives as the
+    // first argument (the send-miss fallback prepends it) with the call's
+    // own arguments after it. Hidden-private, like `initialize`.
+    "method_missing" => fn bo_method_missing(recv, args, _block) {
+        let Some((name, rest)) = args.split_first() else {
+            return Err(arg_error!("no id given"));
+        };
+        let n = match name {
+            RubyValue::Symbol(s) => s.name().to_string(),
+            other => other.try_display_string()?,
+        };
+        Err(crate::dispatch::raise_method_missing(
+            recv,
+            &n,
+            rest,
+            crate::dispatch::MissingReason::NoEntry,
+        ))
+    }
     // ONLY `__send__` belongs here. CRuby puts `send` and `public_send` on
     // KERNEL (`vm_eval.c:2961`, `:2963`), which a `BasicObject` subclass never
     // sees -- so `BO.new.send(:x)` must raise while `BO.new.__send__(:x)`

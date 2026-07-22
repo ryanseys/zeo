@@ -437,7 +437,7 @@ pub fn emit_call(
                 None => quote! { false },
             };
             return quote! {
-                zeo_rt::RubyValue::Bool(zeo_rt::responds_to_value(&#recv, #sym_expr, #include_all))
+                zeo_rt::RubyValue::Bool(zeo_rt::responds_to_or_missing(&#recv, #sym_expr, #include_all)?)
             };
         }
         // A no-receiver call to a sibling method on the CURRENT class (`foo(x)`
@@ -1325,7 +1325,7 @@ fn dispatch(
         // program pays only one predictable atomic here.
         let boxed_recv = super::expr::box_if_object_typed(cx, recv_id, recv_expr.clone());
         return quote! {
-            zeo_rt::RubyValue::Bool(zeo_rt::responds_to_value(&#boxed_recv, #sym_expr, #include_all))
+            zeo_rt::RubyValue::Bool(zeo_rt::responds_to_or_missing(&#boxed_recv, #sym_expr, #include_all)?)
         };
     }
 

@@ -1275,6 +1275,48 @@ pub fn responds_to_value(recv: &RubyValue, name: Symbol, include_all: bool) -> b
     responds_to(recv.class_id(), name, include_all)
 }
 
+/// `respond_to?`'s FULL protocol (CRuby's `rb_obj_respond_to`): the plain
+/// value-aware walk, then -- on a miss -- the receiver's USER-DEFINED
+/// `respond_to_missing?(name, include_all)` hook (never the builtin
+/// default row, which only exists for an override's `super` to reach).
+/// Fallible because the hook is user code whose raise must propagate.
+/// Wired at the `respond_to?` surfaces (codegen's two folds + the Kernel
+/// row); internal duck-type probes (convert protocol, `Array#zip`'s
+/// `:each` check, ...) keep the plain bool walk -- CRuby's own internal
+/// probes are a mix, and the hook firing there is not oracle-pinned.
+pub fn responds_to_or_missing(
+    recv: &RubyValue,
+    name: Symbol,
+    include_all: bool,
+) -> Result<bool, Signal> {
+    if responds_to_value(recv, name, include_all) {
+        return Ok(true);
+    }
+    let rtm = Symbol::intern("respond_to_missing?");
+    let args = [RubyValue::Symbol(name), RubyValue::Bool(include_all)];
+    let id = recv.class_id();
+    if let RubyValue::Object(o) = recv {
+        if crate::runtime_meta::is_live() {
+            if let Some(m) = crate::runtime_meta::resolve_dynamic(o, id, rtm) {
+                return Ok(m.call(o, &args, None)?.truthy());
+            }
+        }
+        if let Some(f) = registry().lookup_mro(id, rtm) {
+            return Ok(f.call(o, &args, None)?.truthy());
+        }
+    } else {
+        // A builtin-value receiver's hook can only come from a reopen
+        // (`class Integer; def respond_to_missing?...`) -- the value-method
+        // probe per ancestor.
+        for &anc in ancestors_of_value(id) {
+            if let Some(f) = value_method(anc, 0, rtm) {
+                return Ok(f(recv, &args, None)?.truthy());
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// CRuby's `rb_obj_dig` (object.c): recurse `cur.dig(rest)` after a container's
 /// own first-level lookup. A nil short-circuits to nil; an intermediate that
 /// doesn't respond to `dig` raises TypeError -- which is why
@@ -1512,7 +1554,18 @@ impl VisFilter {
 fn is_hidden_builtin_private(name: &str) -> bool {
     matches!(
         name,
-        "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`" | "raise" | "fail"
+        "initialize"
+            | "puts"
+            | "print"
+            | "p"
+            | "pp"
+            | "warn"
+            | "system"
+            | "`"
+            | "raise"
+            | "fail"
+            | "method_missing"
+            | "respond_to_missing?"
     )
 }
 

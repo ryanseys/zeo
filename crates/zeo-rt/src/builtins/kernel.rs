@@ -492,14 +492,18 @@ builtin_methods! {
             }
         };
         let include_all = args.get(1).is_some_and(|v| v.truthy());
-        // A per-object singleton method (#97 F3) answers first -- it's keyed by
-        // object identity, invisible to the class-ancestry walk below.
-        if crate::runtime_meta::is_live()
-            && crate::runtime_meta::object_has_singleton_method(recv, sym)
-        {
-            return Ok(RubyValue::Bool(true));
-        }
-        Ok(RubyValue::Bool(crate::dispatch::responds_to(recv.class_id(), sym, include_all)))
+        // The full protocol (`responds_to_or_missing`): per-object
+        // singletons, the value-aware walk, then the receiver's
+        // `respond_to_missing?` hook on a miss.
+        Ok(RubyValue::Bool(crate::dispatch::responds_to_or_missing(
+            recv, sym, include_all)?))
+    }
+    // `Object#respond_to_missing?` default: false for every name -- what a
+    // user override's `super` reaches (CRuby's
+    // `rb_obj_respond_to_missing`). Hidden-private, like `initialize`.
+    "respond_to_missing?" => fn respond_to_missing_default(_recv, args, _block) {
+        arity!(args, 1..=2);
+        Ok(RubyValue::Bool(false))
     }
     // Universal named-ivar reflection over ANY receiver (an `Object`'s or a
     // class object's ivars; a builtin/immediate exposes none). Registering
