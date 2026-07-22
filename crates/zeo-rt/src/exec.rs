@@ -28,6 +28,19 @@
 
 use crate::{RubyValue, Signal};
 
+/// The execution-local storage every per-Ruby-thread cell declares through
+/// -- one macro, five cells (the proc-home stack, the `$!` handling stack,
+/// the execution id, `Thread.current`, the catch-tag stack). Currently
+/// may's coroutine-local (per coroutine; per-OS-thread fallback outside
+/// one, probe-verified in `thread`'s tests); the OS-thread migration flips
+/// THIS definition to `std::thread_local!` and every cell moves together.
+macro_rules! exec_local {
+    ($(#[$attr:meta])* static $name:ident: $ty:ty = $init:expr $(;)?) => {
+        may::coroutine_local!($(#[$attr])* static $name: $ty = $init);
+    };
+}
+pub(crate) use exec_local;
+
 /// The per-coroutine stack size, in MACHINE WORDS, not bytes -- confirmed
 /// against the actual implementation (may's `set_stack_size` value flows
 /// into generator's `Stack::new`, which multiplies by

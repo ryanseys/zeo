@@ -39,7 +39,7 @@
 use crate::RubyValue;
 use std::cell::RefCell;
 
-may::coroutine_local! {
+crate::exec::exec_local! {
     static HANDLING: RefCell<Vec<RubyValue>> = RefCell::new(Vec::new())
 }
 

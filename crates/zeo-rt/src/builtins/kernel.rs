@@ -1266,7 +1266,7 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 // it so an unmatched tag becomes an `UncaughtThrowError` AT THE THROW (as in
 // CRuby), rather than a `Signal::Throw` leaking past every `rescue` to the top
 // level. Coroutine-local: each `Thread`/`Fiber` unwinds its own catch frames.
-may::coroutine_local!(static CATCH_TAGS: std::cell::RefCell<Vec<RubyValue>> = std::cell::RefCell::new(Vec::new()));
+crate::exec::exec_local!(static CATCH_TAGS: std::cell::RefCell<Vec<RubyValue>> = std::cell::RefCell::new(Vec::new()));
 
 /// `Kernel#catch(tag) { ... }` / `Kernel#throw(tag[, value])`.
 pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signal> {

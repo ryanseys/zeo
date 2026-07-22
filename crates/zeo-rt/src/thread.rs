@@ -61,7 +61,7 @@ enum InterruptKind {
 /// CRuby's `ec_serial` analogue, backing `Mutex` ownership.
 fn execution_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    may::coroutine_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
+    crate::exec::exec_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
     ID.with(|id| *id)
 }
 
@@ -179,7 +179,7 @@ fn main_thread() -> RThread {
         .clone()
 }
 
-may::coroutine_local!(static CURRENT: PlMutex<Option<RThread>> = PlMutex::new(None));
+crate::exec::exec_local!(static CURRENT: PlMutex<Option<RThread>> = PlMutex::new(None));
 
 /// `Thread.current` -- the running thread's object, or the main thread's when
 /// called outside any spawned coroutine.
