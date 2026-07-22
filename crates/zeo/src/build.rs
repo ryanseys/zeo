@@ -300,6 +300,19 @@ impl Profile {
             Profile::Release => b"release;",
         }
     }
+
+    /// Extra `rustc` flags for the GENERATED crate itself. Release optimizes
+    /// the generated code, not just the linked runtime rlib: the generated
+    /// main is where typed fast paths (inline Int arithmetic, direct calls)
+    /// live, and at `-O0` those and every cross-crate `#[inline]` hint
+    /// (`FrameGuard::push`, `set_line`) stay unoptimized calls. Debug keeps
+    /// `-O0` for compile speed.
+    fn rustc_flags(self) -> &'static [&'static str] {
+        match self {
+            Profile::Debug => &[],
+            Profile::Release => &["-C", "opt-level=2"],
+        }
+    }
 }
 
 /// Which `zeo-rt` VARIANT a generated program links -- orthogonal to
@@ -423,6 +436,7 @@ pub fn build_binary(
         .arg(format!("zeo_rt={}", runtime_lib.display()))
         .arg("-L")
         .arg(format!("dependency={}", deps_dir.display()));
+    cmd.args(profile.rustc_flags());
     let status = cmd.status().map_err(|e| format!("running rustc: {e}"))?;
 
     if !status.success() {
@@ -557,6 +571,12 @@ fn generation_hash(profile: Profile, runtime: Runtime) -> Result<u64, String> {
     // them; the tags make the intent explicit and collision-proof.
     let mut generation = fnv1a64_with(0xcbf2_9ce4_8422_2325, profile.tag());
     generation = fnv1a64_with(generation, runtime.tag());
+    // The generated crate's own rustc flags are part of the generation: a
+    // binary built at a different opt-level is a different artifact, and
+    // serving a stale one would silently undo (or fake) the optimization.
+    for flag in profile.rustc_flags() {
+        generation = fnv1a64_with(generation, flag.as_bytes());
+    }
     let name = "zeo-rt";
     let lib = rlib_for(name, profile, runtime)?;
     let meta = std::fs::metadata(&lib).map_err(|e| format!("stat {}: {e}", lib.display()))?;

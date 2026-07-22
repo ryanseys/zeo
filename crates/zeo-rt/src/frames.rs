@@ -57,6 +57,10 @@ pub fn swap_stack(new: Vec<Frame>) -> Vec<Frame> {
 pub struct FrameGuard(());
 
 impl FrameGuard {
+    // `#[inline]` on push/drop: these run on EVERY method call from the
+    // generated crate, which is a separate rustc invocation -- without the
+    // hint (and an optimized generated build) each is a cross-crate call.
+    #[inline]
     pub fn push(file: &'static str, method: &'static str, line: u32) -> FrameGuard {
         FRAMES.with(|f| f.borrow_mut().push(Frame { file, line, method }));
         FrameGuard(())
@@ -64,6 +68,7 @@ impl FrameGuard {
 }
 
 impl Drop for FrameGuard {
+    #[inline]
     fn drop(&mut self) {
         FRAMES.with(|f| {
             f.borrow_mut().pop();
