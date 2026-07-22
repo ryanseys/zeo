@@ -153,6 +153,16 @@ pub(crate) fn value_identity(a: &RubyValue, b: &RubyValue) -> bool {
         (RubyValue::Yielder(x), RubyValue::Yielder(y)) => x.ptr_eq(y),
         (RubyValue::Regexp(x), RubyValue::Regexp(y)) => Arc::ptr_eq(x, y),
         (RubyValue::MatchData(x), RubyValue::MatchData(y)) => Arc::ptr_eq(x, y),
+        // Bignum/Rational/Complex are Arc-backed, so a reused binding aliases
+        // itself (`c.equal?(c)` is true) while two distinct allocations differ,
+        // matching CRuby's heap-object identity.
+        (RubyValue::BigInt(x), RubyValue::BigInt(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Rational(x), RubyValue::Rational(y)) => Arc::ptr_eq(x, y),
+        (RubyValue::Complex(x), RubyValue::Complex(y)) => Arc::ptr_eq(x, y),
+        // `Range` is an inline value type with no stable shared pointer, so
+        // identity falls back to structure -- `g.equal?(g)` holds; the rare
+        // `(1..2).equal?(1..2)` reads true rather than false (documented).
+        (RubyValue::Range(..), RubyValue::Range(..)) => a.rb_eq(b),
         (RubyValue::Object(x), RubyValue::Object(y)) => {
             // The same fat-pointer identity `container_identity` uses.
             std::ptr::addr_eq(Arc::as_ptr(x), Arc::as_ptr(y))
