@@ -126,6 +126,11 @@ fn seed_from(arg: Option<&RubyValue>) -> Result<(u64, RubyValue), Signal> {
 /// positive Integer -> Integer `[0,n)`; a positive Float -> Float `[0,x)`; a
 /// Range -> a value within it. A non-positive Integer/Float bound is an
 /// ArgumentError (CRuby: `invalid argument - <n>`), NOT a silent 0.
+/// `Random#rand`'s domain error for a non-finite Float bound or endpoint.
+fn edom() -> Signal {
+    raise_error("Errno::EDOM", "Numerical argument out of domain".to_string())
+}
+
 fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue, Signal> {
     let invalid = |v: &RubyValue| arg_error!("invalid argument - {}", v.to_display_string());
     match bound {
@@ -137,8 +142,18 @@ fn rand_with(state: &Mutex<u64>, bound: Option<&RubyValue>) -> Result<RubyValue,
             Ok(RubyValue::Int((next_u64(state) % (*n as u64)) as i64))
         }
         Some(RubyValue::Float(x)) => {
-            if *x <= 0.0 {
+            // Unlike `Kernel#rand` (FloatDomainError), `Random#rand`/`Random.rand`
+            // raise Errno::EDOM for a non-finite Float bound.
+            if !x.is_finite() {
+                return Err(edom());
+            }
+            if *x < 0.0 {
                 return Err(invalid(bound.unwrap()));
+            }
+            // `rand(0.0)` behaves like the no-argument draw ([0.0, 1.0) unit
+            // float), same as `rand(0)`; only a negative bound is invalid.
+            if *x == 0.0 {
+                return Ok(RubyValue::Float(to_unit_float(next_u64(state))));
             }
             Ok(RubyValue::Float(to_unit_float(next_u64(state)) * x))
         }
@@ -205,6 +220,9 @@ fn rand_range(
         _ => {
             let a = to_f64(lo)?;
             let b = to_f64(hi)?;
+            if !a.is_finite() || !b.is_finite() {
+                return Err(edom());
+            }
             if b < a || (b == a && exclusive) {
                 return Err(invalid());
             }
