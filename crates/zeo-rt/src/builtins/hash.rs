@@ -47,6 +47,7 @@ builtin_methods! {
     }
     "default="[1] => fn default_set(recv, args, _block) {
         arity!(args, 1);
+        guard_hash_frozen(recv)?;
         let mut g = recv_hash!(recv).lock();
         g.default = args[0].clone();
         g.default_proc = None;
@@ -294,6 +295,8 @@ builtin_methods! {
     }
     "compact!"[0] => fn compact_bang(recv, args, _block) {
         arity!(args, 0);
+        // CRuby's modify check runs before the nothing-to-do nil answer.
+        guard_hash_frozen(recv)?;
         let h = recv_hash!(recv);
         let nil_keys: Vec<RubyValue> = h
             .lock()
@@ -345,6 +348,7 @@ builtin_methods! {
     // order), or nil on an empty hash.
     "shift"[0] => fn shift(recv, args, _block) {
         arity!(args, 0);
+        guard_hash_frozen(recv)?;
         let h = recv_hash!(recv);
         let first = h.lock().values().next().map(|(k, v)| (k.clone(), v.clone()));
         match first {
@@ -425,6 +429,9 @@ builtin_methods! {
     "transform_values!"[0] => fn transform_values_bang(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "transform_values!", args, block);
+        // After the enumerator return -- CRuby's own order (frozen raises
+        // only once a block makes this a real mutation).
+        guard_hash_frozen(recv)?;
         let h = recv_hash!(recv);
         let pairs: Vec<(RubyValue, RubyValue)> =
             h.lock().values().map(|(k, v)| (k.clone(), v.clone())).collect();
@@ -560,6 +567,7 @@ builtin_methods! {
         if mapping.is_none() && blk.is_none() {
             return Ok(crate::builtins::enumerator::enumerator_for(recv, "transform_keys!", args));
         }
+        guard_hash_frozen(recv)?;
         let h = recv_hash!(recv);
         let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
         let mut out = Vec::with_capacity(pairs.len());

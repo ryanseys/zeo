@@ -111,6 +111,7 @@ builtin_methods! {
         // the parser only ever emits it with one argument, so one row
         // serves both.
         let arr = recv_array!(recv);
+        check_frozen(arr, recv)?;
         for a in args {
             crate::array_push(arr, a.clone());
         }
@@ -325,6 +326,7 @@ builtin_methods! {
     }
     "unshift" | "prepend" => fn unshift(recv, args, _block) {
         let handle = recv_array!(recv);
+        check_frozen(handle, recv)?;
         let mut guard = handle.lock();
         for (i, a) in args.iter().enumerate() {
             guard.insert(i, a.clone());
@@ -394,6 +396,7 @@ builtin_methods! {
     "uniq!"[0] => fn uniq_bang(recv, args, _block) {
         arity!(args, 0);
         let h = recv_array!(recv);
+        check_frozen(h, recv)?;
         let mut out: Vec<RubyValue> = Vec::new();
         let before = h.lock().len();
         for e in h.lock().iter() {
@@ -897,6 +900,7 @@ builtin_methods! {
     }
     "replace"[1] => fn replace(recv, args, _block) {
         arity!(args, 1);
+        check_frozen(recv_array!(recv), recv)?;
         let other = &convert::to_rary(&args[0])?;
         let new_items = other.lock().clone();
         *recv_array!(recv).lock() = new_items;

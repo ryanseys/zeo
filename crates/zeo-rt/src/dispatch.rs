@@ -403,13 +403,7 @@ pub fn ivar_get_dyn(recv: &RubyValue, name: &str) -> RubyValue {
 pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyValue, Signal> {
     match recv {
         RubyValue::Object(o) => {
-            if o.is_frozen() {
-                let cls = crate::builtins::class_name_of(recv);
-                return Err(frozen_error!(
-                    "can't modify frozen {cls}: {}",
-                    recv.inspect_string()
-                ));
-            }
+            crate::builtins::check_frozen(recv)?;
             o.ivar_set_named(name, v.clone());
             Ok(v)
         }
@@ -1057,26 +1051,14 @@ pub fn instance_variable_set(
     let name = ivar_name_arg(name_arg)?;
     match recv {
         RubyValue::Object(o) => {
-            if o.is_frozen() {
-                let cls = crate::builtins::class_name_of(recv);
-                return Err(frozen_error!(
-                    "can't modify frozen {cls}: {}",
-                    recv.inspect_string()
-                ));
-            }
+            crate::builtins::check_frozen(recv)?;
             o.ivar_set_named(&name, v.clone());
         }
         RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone())?,
         // A frozen builtin (immediates always; a frozen Str/Array/Hash)
         // raises like CRuby; an UNFROZEN builtin keeps the documented
         // no-generic-ivar-storage no-op.
-        other if other.is_frozen() => {
-            return Err(frozen_error!(
-                "can't modify frozen {}: {}",
-                crate::builtins::class_name_of(recv),
-                recv.inspect_string()
-            ));
-        }
+        other if other.is_frozen() => crate::builtins::check_frozen(other)?,
         _ => {}
     }
     Ok(v)
@@ -1092,13 +1074,7 @@ pub fn remove_instance_variable(
     let name = ivar_name_arg(name_arg)?;
     match recv {
         RubyValue::Object(o) => {
-            if o.is_frozen() {
-                let cls = crate::builtins::class_name_of(recv);
-                return Err(frozen_error!(
-                    "can't modify frozen {cls}: {}",
-                    recv.inspect_string()
-                ));
-            }
+            crate::builtins::check_frozen(recv)?;
             match o.ivar_remove_named(&name) {
                 Some(v) => Ok(v),
                 None => Err(name_error!("instance variable @{name} not defined")),

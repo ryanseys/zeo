@@ -1089,6 +1089,10 @@ builtin_methods! {
         if idx < 0 || idx >= len {
             return Err(index_error!("index {i} out of string"));
         }
+        // AFTER the index conversion and range check -- CRuby's
+        // `rb_str_setbyte` order (a frozen receiver still reports
+        // TypeError/IndexError for bad arguments first, oracle-verified).
+        guard_str_frozen(recv)?;
         s.lock().setbyte(idx as usize, (b & 0xff) as u8);
         Ok(args[1].clone())
     }

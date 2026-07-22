@@ -500,6 +500,27 @@ pub(crate) fn class_name_of(v: &RubyValue) -> String {
         .unwrap_or_else(|| format!("#<Class:{}>", v.class_id().0))
 }
 
+/// CRuby's `rb_check_frozen` over any VALUE receiver: the standard
+/// `can't modify frozen <Class>: <inspect>` FrozenError (with the receiver
+/// detail attached, backing `FrozenError#receiver`), raised BEFORE the
+/// caller mutates anything. The value-level counterpart to the per-file
+/// collection guards (`guard_str_frozen`/`guard_hash_frozen`/array's
+/// `check_frozen`), which keep their handle-shaped signatures.
+pub(crate) fn check_frozen(recv: &RubyValue) -> Result<(), crate::Signal> {
+    if recv.is_frozen() {
+        return Err(crate::dispatch::raise_error_details(
+            "FrozenError",
+            format!(
+                "can't modify frozen {}: {}",
+                class_name_of(recv),
+                recv.inspect_string()
+            ),
+            &[("receiver", recv.clone())],
+        ));
+    }
+    Ok(())
+}
+
 /// The name CRuby uses for `v` in a coercion `TypeError` -- "no implicit
 /// conversion of X into Y" / "can't convert X into Y". CRuby renders `nil`,
 /// `true`, and `false` as those literals rather than their class names

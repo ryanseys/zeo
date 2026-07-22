@@ -24,7 +24,7 @@
 //! method therefore takes the write lock without deadlocking against a read
 //! lock held across its own execution.
 
-use crate::builtins::{arg_error, frozen_error, runtime_error, type_error};
+use crate::builtins::{arg_error, runtime_error, type_error};
 use crate::dispatch::{
     ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
     registry_lookup_cloned, send_super_from,
@@ -264,13 +264,7 @@ pub fn runtime_define_singleton_method(
         RubyValue::Object(o) => {
             // CRuby's rb_check_frozen on the singleton's attachee: a frozen
             // object refuses new singleton methods.
-            if o.is_frozen() {
-                return Err(frozen_error!(
-                    "can't modify frozen {}: {}",
-                    crate::builtins::class_name_of(recv),
-                    recv.inspect_string()
-                ));
-            }
+            crate::builtins::check_frozen(recv)?;
             let key = obj_identity(o);
             let m = dynamic_from_proc(SINGLETON_DEFINING, name, body);
             {
@@ -306,13 +300,7 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
     };
     // CRuby's rb_check_frozen: a frozen object refuses `extend` (its
     // singleton table is what would change).
-    if o.is_frozen() {
-        return Err(frozen_error!(
-            "can't modify frozen {}: {}",
-            crate::builtins::class_name_of(recv),
-            recv.inspect_string()
-        ));
-    }
+    crate::builtins::check_frozen(recv)?;
     let mut names =
         crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::NotPrivate, false);
     // A runtime module (`Module.new` + `define_method`) keeps its methods in the
