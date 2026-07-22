@@ -1763,6 +1763,7 @@ pub fn call_singleton_super_target(
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let recv = RubyValue::Class(recv_class);
+    let method_name = name.to_string();
     if module_instance {
         if let Some(f) = value_method(target, 0, name) {
             return f(&recv, args, block);
@@ -1781,14 +1782,14 @@ pub fn call_singleton_super_target(
             return f(&recv, args, block);
         }
         if let Some(f) =
-            crate::builtins::class_method_table(target).and_then(|t| t(name.name().as_str()))
+            crate::builtins::class_method_table(target).and_then(|t| t(&method_name))
         {
             return f(&recv, args, block);
         }
     }
     Err(raise_method_missing(
         &recv,
-        &name.to_string(),
+        &method_name,
         args,
         MissingReason::Super,
     ))

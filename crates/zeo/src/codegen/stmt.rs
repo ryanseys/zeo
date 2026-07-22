@@ -6,8 +6,8 @@
 //! method/closure body (`wrap_ok: true`), whose block becomes the literal
 //! body of a `-> Result<RubyValue, Signal>` function and so needs its tail
 //! wrapped in `Ok(...)`; or a body spliced in as a plain `RubyValue`-typed
-//! *value* inside some other expression (`wrap_ok: false` -- today only
-//! `super`-inlining, later also `if`/`case` arms), which must stay a bare
+//! *value* inside some other expression (`wrap_ok: false` -- `if`/ternary/
+//! `case` arms, loop bodies, rescue arms), which must stay a bare
 //! `RubyValue` so it composes like any other `emit_expr` fragment.
 
 use quote::quote;

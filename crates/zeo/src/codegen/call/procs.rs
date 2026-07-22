@@ -240,10 +240,12 @@ pub(crate) fn emit_proc_or_lambda_value(
     // The block's own backtrace frame, pushed per invocation: CRuby labels
     // blocks LEXICALLY -- `block in Class#m`, `block (2 levels) in ...` for
     // nesting -- with the block's own source file/line regardless of where
-    // the proc is later called. Span-less bodies (prelude) push nothing.
+    // the proc is later called. Fully span-less bodies (prelude) push
+    // nothing; the first LOCATED statement keeps the predicate aligned with
+    // `stamp_line` (see `scope_frame_guard`).
     let frame_guard = match body
-        .first()
-        .and_then(|&n| crate::codegen::source_location(cx.compiler, n))
+        .iter()
+        .find_map(|&n| crate::codegen::source_location(cx.compiler, n))
     {
         Some((file, line)) => {
             let base = crate::codegen::enclosing_frame_label(cx);

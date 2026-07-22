@@ -348,9 +348,13 @@ pub(crate) fn source_location(
 /// The backtrace-frame push for one method scope: `Class#method` /
 /// `Class.method` labels (CRuby's shapes), the `def` keyword's line as the
 /// initial line (what a prologue-raised arity error reports,
-/// oracle-verified), the first body statement's as fallback. Empty tokens
-/// for a span-less scope (the exception prelude) -- CRuby shows no frames
-/// for internal methods either.
+/// oracle-verified), the first LOCATED body statement's as fallback. The
+/// fallback scans the whole body, not just its head, so the predicate
+/// matches `stamp_line`'s exactly: any statement that will stamp a line
+/// has a frame of this scope to stamp INTO (a head-synthetic body would
+/// otherwise stamp the caller's frame). Empty tokens only for a fully
+/// span-less scope (the exception prelude) -- CRuby shows no frames for
+/// internal methods either, and such a body never stamps.
 fn scope_frame_guard(
     compiler: &Compiler,
     scope: &crate::compiler::Scope,
@@ -362,8 +366,8 @@ fn scope_frame_guard(
         .or_else(|| {
             scope
                 .body
-                .first()
-                .and_then(|&n| source_location(compiler, n))
+                .iter()
+                .find_map(|&n| source_location(compiler, n))
         });
     let Some((file, line)) = loc else {
         return quote! {};
@@ -1265,8 +1269,13 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let body = hoisting::emit_hoisted_body(&cx, stmts, true);
     // A class body executes under its own backtrace frame -- CRuby's
     // `<class:Foo>` (raise-in-class-body shows it, then `<main>` at the
-    // `class` keyword's line). Span-less bodies (prelude) skip it.
-    let frame = match stmts.first().and_then(|&n| source_location(compiler, n)) {
+    // `class` keyword's line). Fully span-less bodies (prelude) skip it;
+    // scanning for the first LOCATED statement keeps the predicate aligned
+    // with `stamp_line` (see `scope_frame_guard`).
+    let frame = match stmts
+        .iter()
+        .find_map(|&n| source_location(compiler, n))
+    {
         Some((file, line)) => {
             let label = format!("<class:{}>", compiler.fq_name(cid));
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
