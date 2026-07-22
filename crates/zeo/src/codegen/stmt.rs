@@ -22,11 +22,42 @@ pub fn emit_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStream {
         return tail_nil(wrap_ok);
     }
     let last = body.len() - 1;
+    let mut prev_line = None;
     let stmts = body
         .iter()
         .enumerate()
-        .map(|(i, &stmt)| emit_statement(cx, stmt, i == last, wrap_ok));
+        .map(|(i, &stmt)| {
+            let tokens = emit_statement(cx, stmt, i == last, wrap_ok);
+            stamp_line(cx, stmt, &mut prev_line, tokens, i == last)
+        })
+        .collect::<Vec<_>>();
     quote! { #(#stmts)* }
+}
+
+/// Prepend a `zeo_rt::set_line` stamp when this statement's source line
+/// differs from the previous statement's -- what keeps the current
+/// backtrace frame's line tracking execution (CRuby's per-frame PC line,
+/// at statement granularity). A TAIL expression keeps its value by
+/// wrapping in a block. Synthetic statements stamp nothing.
+fn stamp_line(
+    cx: &Ctx,
+    stmt: NodeId,
+    prev_line: &mut Option<u32>,
+    tokens: TokenStream,
+    is_tail: bool,
+) -> TokenStream {
+    let Some((_, line)) = crate::codegen::source_location(cx.compiler, stmt) else {
+        return tokens;
+    };
+    if *prev_line == Some(line) {
+        return tokens;
+    }
+    *prev_line = Some(line);
+    if is_tail {
+        quote! { { zeo_rt::set_line(#line); #tokens } }
+    } else {
+        quote! { zeo_rt::set_line(#line); #tokens }
+    }
 }
 
 /// `emit_body(.., false)` whose VALUE is always a boxed `RubyValue` -- for
@@ -39,7 +70,14 @@ pub fn emit_body_boxed(cx: &Ctx, body: &[NodeId]) -> TokenStream {
         return tail_nil(false);
     }
     let (init, last) = body.split_at(body.len() - 1);
-    let init_stmts = init.iter().map(|&s| emit_statement(cx, s, false, false));
+    let mut prev_line = None;
+    let init_stmts = init
+        .iter()
+        .map(|&s| {
+            let tokens = emit_statement(cx, s, false, false);
+            stamp_line(cx, s, &mut prev_line, tokens, false)
+        })
+        .collect::<Vec<_>>();
     let tail_id = last[0];
     let tail = emit_statement(cx, tail_id, true, false);
     // A tail assignment appends its own trailing-nil value (already a
@@ -48,6 +86,7 @@ pub fn emit_body_boxed(cx: &Ctx, body: &[NodeId]) -> TokenStream {
         HirNode::LocalWrite(..) | HirNode::MultiWrite { .. } => tail,
         _ => super::expr::box_if_object_typed(cx, tail_id, tail),
     };
+    let tail = stamp_line(cx, tail_id, &mut prev_line, tail, true);
     quote! { #(#init_stmts)* #tail }
 }
 

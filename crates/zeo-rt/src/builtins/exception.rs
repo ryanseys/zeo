@@ -65,6 +65,12 @@ pub struct RubyException {
     /// A `&'static str` key keeps it a tiny fixed-shape map, not a full ivar
     /// table.
     details: Mutex<Vec<(&'static str, RubyValue)>>,
+    /// The hidden backtrace slot -- `None` until this exception is RAISED
+    /// (CRuby: `Exception.new.backtrace` is nil), then the formatted frame
+    /// lines captured once at first raise ([`attach_backtrace`]; a re-raise
+    /// keeps the original). An explicit `raise exc, msg, backtrace` /
+    /// `#set_backtrace` overwrites it.
+    backtrace: Mutex<Option<Vec<String>>>,
     ivars: Mutex<Vec<(String, RubyValue)>>,
 }
 
@@ -77,6 +83,7 @@ impl RubyException {
             res: Mutex::new(RubyValue::Nil),
             cause: Mutex::new(RubyValue::Nil),
             details: Mutex::new(Vec::new()),
+            backtrace: Mutex::new(None),
             ivars: Mutex::new(Vec::new()),
         })
     }
@@ -163,6 +170,9 @@ impl RubyObject for RubyException {
             res: Mutex::new(self.res.lock().clone()),
             cause: Mutex::new(self.cause.lock().clone()),
             details: Mutex::new(self.details.lock().clone()),
+            // The copy keeps the original's stamped backtrace (CRuby's
+            // `init_copy` copies the whole object, backtrace included).
+            backtrace: Mutex::new(self.backtrace.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
     }
@@ -294,13 +304,40 @@ fn exc_message(
     send(recv, Symbol::intern("to_s"), &[], None)
 }
 
-/// `def backtrace; []; end`
+/// `Exception#set_backtrace(lines)` -- an Array of Strings / one String
+/// installs a custom backtrace; nil CLEARS the slot (so `#backtrace`
+/// answers nil again). Returns the argument, CRuby's contract.
+fn exc_set_backtrace(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    if matches!(args[0], RubyValue::Nil) {
+        *exc(recv).backtrace.lock() = None;
+        return Ok(RubyValue::Nil);
+    }
+    apply_custom_backtrace(&RubyValue::Object(recv.clone()), &args[0])?;
+    Ok(args[0].clone())
+}
+
+/// `Exception#backtrace` -- the formatted frame lines stamped at raise
+/// time ([`attach_backtrace`]), or nil for a never-raised exception
+/// (CRuby's contract).
 fn exc_backtrace(
-    _recv: &RObj,
+    recv: &RObj,
     _args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    Ok(RubyValue::Array(array_new(Vec::new())))
+    match exc(recv).backtrace.lock().as_ref() {
+        Some(lines) => Ok(RubyValue::Array(array_new(
+            lines
+                .iter()
+                .map(|l| RubyValue::Str(crate::string_new(l.clone())))
+                .collect(),
+        ))),
+        None => Ok(RubyValue::Nil),
+    }
 }
 
 /// `def cause; <cause slot>; end` -- the exception that was being handled when
@@ -340,6 +377,110 @@ pub fn attach_cause(exc_value: &RubyValue) {
     if matches!(*slot, RubyValue::Nil) {
         *slot = current;
     }
+}
+
+/// Stamp the CURRENT frame stack onto `exc_value`'s hidden backtrace slot
+/// at raise time -- once: a re-raise (or a raise of an exception whose
+/// backtrace was set explicitly) keeps what it has, CRuby's rule. A no-op
+/// for a non-exception operand. Called wherever `attach_cause` is (the
+/// runtime raise channel and codegen's raise emission).
+pub fn attach_backtrace(exc_value: &RubyValue) {
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return;
+    };
+    let mut slot = e.backtrace.lock();
+    if slot.is_none() {
+        *slot = Some(crate::frames::capture_backtrace());
+    }
+}
+
+/// `Exception#set_backtrace(lines)` / `raise exc, msg, backtrace`'s storage
+/// half: overwrite the slot with the given formatted lines.
+pub fn set_backtrace_lines(exc_value: &RubyValue, lines: Vec<String>) {
+    let RubyValue::Object(o) = exc_value else {
+        return;
+    };
+    let Some(e) = downcast_robj::<RubyException>(o) else {
+        return;
+    };
+    *e.backtrace.lock() = Some(lines);
+}
+
+/// `raise Class, msg, backtrace` -- the third argument installs a CUSTOM
+/// backtrace: an Array of Strings (used verbatim), a single String (a
+/// one-line backtrace), or nil (no-op: the raise stamps the real stack).
+/// Anything else is CRuby's TypeError.
+pub fn apply_custom_backtrace(exc_value: &RubyValue, bt: &RubyValue) -> Result<(), Signal> {
+    match bt {
+        RubyValue::Nil => Ok(()),
+        RubyValue::Str(s) => {
+            set_backtrace_lines(exc_value, vec![s.lock().to_utf8_lossy().into_owned()]);
+            Ok(())
+        }
+        RubyValue::Array(a) => {
+            let mut lines = Vec::new();
+            for v in a.lock().iter() {
+                match v {
+                    RubyValue::Str(s) => lines.push(s.lock().to_utf8_lossy().into_owned()),
+                    _ => {
+                        return Err(type_error!("backtrace must be an Array of String"));
+                    }
+                }
+            }
+            set_backtrace_lines(exc_value, lines);
+            Ok(())
+        }
+        _ => Err(type_error!(
+            "backtrace must be an Array of String or a single String"
+        )),
+    }
+}
+
+/// The top-level uncaught-exception report, CRuby's exact shape:
+///
+/// ```text
+/// file.rb:2:in 'Object#inner': boom (RuntimeError)
+///         from file.rb:3:in 'Object#outer'
+///         from file.rb:5:in '<main>'
+/// ```
+///
+/// (the continuation indent is one TAB). The innermost frame heads the
+/// message line; a frame-less exception (a custom empty backtrace)
+/// degrades to the bare `msg (Class)` form. A raising user `message`
+/// contributes an empty message rather than a crash.
+pub fn report_uncaught(exc_value: &RubyValue) {
+    let msg = crate::dispatch::send(
+        &exc_value.as_object_unchecked(),
+        crate::Symbol::intern("message"),
+        &[],
+        None,
+    )
+    .and_then(|v| v.try_display_string())
+    .unwrap_or_default();
+    let cls = crate::builtins::class_name_of(exc_value);
+    match backtrace_lines(exc_value) {
+        Some(lines) if !lines.is_empty() => {
+            eprintln!("{}: {} ({})", lines[0], msg, cls);
+            for l in &lines[1..] {
+                eprintln!("\tfrom {l}");
+            }
+        }
+        _ => eprintln!("{msg} ({cls})"),
+    }
+}
+
+/// The raised exception's formatted backtrace lines (`None` = never
+/// raised) -- what the top-level uncaught reporter renders.
+pub fn backtrace_lines(exc_value: &RubyValue) -> Option<Vec<String>> {
+    let RubyValue::Object(o) = exc_value else {
+        return None;
+    };
+    let e = downcast_robj::<RubyException>(o)?;
+    let slot = e.backtrace.lock();
+    slot.clone()
 }
 
 /// `raise ..., cause: <value>` -- install an EXPLICIT cause.
@@ -729,7 +870,21 @@ fn exc_full_message(
     let name = class_name(e.class_id).unwrap_or_default();
     // Dynamic `to_s` (honors a subclass override), matching `#message`/`#inspect`.
     let msg = send(recv, Symbol::intern("to_s"), &[], None)?.to_display_string();
-    Ok(RubyValue::Str(string_new(format!("{name}: {msg}"))))
+    // The uncaught-report shape (`file:line:in 'frame': msg (Class)` +
+    // tab-indented `from` lines, trailing newline) when a backtrace was
+    // stamped -- always the PLAIN rendering (the `highlight:` bold/reverse
+    // escapes aren't modeled; the conformance oracle disables highlighting
+    // too). A backtrace-less exception keeps the bare `Class: msg` form.
+    match e.backtrace.lock().as_ref() {
+        Some(lines) if !lines.is_empty() => {
+            let mut out = format!("{}: {msg} ({name})\n", lines[0]);
+            for l in &lines[1..] {
+                out.push_str(&format!("\tfrom {l}\n"));
+            }
+            Ok(RubyValue::Str(string_new(out)))
+        }
+        _ => Ok(RubyValue::Str(string_new(format!("{name}: {msg}")))),
+    }
 }
 
 /// The exception `inspect`: empty message -> the class name; a message with a
@@ -882,6 +1037,7 @@ pub fn register_exception_subclass(
     registry.define_method_own(id, Symbol::intern("eql?"), exc_eql);
     registry.define_method_own(id, Symbol::intern("exception"), exc_exception);
     registry.define_method_own(id, Symbol::intern("backtrace"), exc_backtrace);
+    registry.define_method_own(id, Symbol::intern("set_backtrace"), exc_set_backtrace);
     registry.define_method_own(id, Symbol::intern("cause"), exc_cause);
     registry.define_method_own(id, Symbol::intern("full_message"), exc_full_message);
     registry.define_method_own(id, Symbol::intern("detailed_message"), exc_detailed_message);

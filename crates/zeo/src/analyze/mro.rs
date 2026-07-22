@@ -155,10 +155,14 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
             continue;
         };
         let scope = compiler.scope(sid);
-        let (params, body, visibility) =
-            (scope.params.clone(), scope.body.clone(), scope.visibility);
+        let (def_node, params, body, visibility) = (
+            scope.def_node,
+            scope.params.clone(),
+            scope.body.clone(),
+            scope.visibility,
+        );
         let new_sid = super::register_method(
-            compiler, class_id, class_id, new_name, params, body, visibility,
+            compiler, class_id, class_id, new_name, def_node, params, body, visibility,
         )?;
         super::add_own_method(compiler, class_id, new_sid, false);
     }
@@ -220,14 +224,16 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body, visibility, native_default) = (
+                let (def_node, params, body, visibility, native_default) = (
+                    scope.def_node,
                     scope.params.clone(),
                     scope.body.clone(),
                     scope.visibility,
                     scope.native_default,
                 );
-                let new_id =
-                    register_method(compiler, class_id, anc_id, name, params, body, visibility)?;
+                let new_id = register_method(
+                    compiler, class_id, anc_id, name, def_node, params, body, visibility,
+                )?;
                 // A pristine exception body stays pristine when inherited: the
                 // subclass's copy is served by `register_exceptions` too, so
                 // codegen skips it. A reopen/override body (`native_default ==
@@ -329,10 +335,15 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 materialized.push(sid); // this class's own definition -- reuse verbatim
             } else {
                 let scope = compiler.scope(sid);
-                let (params, body, visibility) =
-                    (scope.params.clone(), scope.body.clone(), scope.visibility);
-                let new_id =
-                    register_method(compiler, class_id, cid, name, params, body, visibility)?;
+                let (def_node, params, body, visibility) = (
+                    scope.def_node,
+                    scope.params.clone(),
+                    scope.body.clone(),
+                    scope.visibility,
+                );
+                let new_id = register_method(
+                    compiler, class_id, cid, name, def_node, params, body, visibility,
+                )?;
                 materialized.push(new_id);
             }
         }
@@ -343,10 +354,15 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                     continue;
                 }
                 let scope = compiler.scope(sid);
-                let (params, body, visibility) =
-                    (scope.params.clone(), scope.body.clone(), scope.visibility);
-                let new_id =
-                    register_method(compiler, class_id, m, name, params, body, visibility)?;
+                let (def_node, params, body, visibility) = (
+                    scope.def_node,
+                    scope.params.clone(),
+                    scope.body.clone(),
+                    scope.visibility,
+                );
+                let new_id = register_method(
+                    compiler, class_id, m, name, def_node, params, body, visibility,
+                )?;
                 materialized.push(new_id);
             }
         }

@@ -1290,15 +1290,20 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
         }
         [one] => emit_raise_value(cx, *one, None),
         [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
-        // `raise Class, msg, backtrace` -- the third argument ASSIGNS the
-        // exception's custom backtrace in real Ruby. zeo has no backtrace
-        // representation yet, so the expression is evaluated (for its side
-        // effects, e.g. `caller(1)`) and dropped -- a documented divergence
-        // the frame-tracking work retires.
+        // `raise Class, msg, backtrace` -- the third argument installs the
+        // exception's CUSTOM backtrace (an Array of Strings, one String, or
+        // nil for the real stack), which the raise-time stamp then leaves
+        // alone (`attach_backtrace` only fills an empty slot).
         [class_arg, msg_arg, bt_arg] => {
             let exc = emit_raise_value(cx, *class_arg, Some(*msg_arg));
             let bt = emit_expr(cx, *bt_arg);
-            quote! { { let __exc = #exc; let _ = #bt; __exc } }
+            quote! {
+                {
+                    let __exc = #exc;
+                    zeo_rt::apply_custom_backtrace(&__exc, &(#bt))?;
+                    __exc
+                }
+            }
         }
         _ => unreachable!("lowering rejects `raise`/`fail` with more than 3 arguments"),
     };
@@ -1321,6 +1326,7 @@ pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCau
                 {
                     let __exc = #exc;
                     zeo_rt::set_explicit_cause(&__exc, #cause_expr)?;
+                    zeo_rt::attach_backtrace(&__exc);
                     return Err(zeo_rt::Signal::Raise(__exc));
                 }
             }
@@ -1462,16 +1468,24 @@ pub(super) fn emit_boxed_new(
         .unwrap_or_else(|| {
             panic!("internal error: unknown class `{class_name}` in emit_boxed_new")
         });
+    // Every `emit_boxed_new` product is an exception codegen constructs AT
+    // its raise site, so the backtrace stamp happens here once instead of
+    // at each of the ~27 `Signal::Raise(#err)` emission sites
+    // (attach-if-unset, so the user-`raise` path stamping again is a
+    // harmless no-op). Cause chaining deliberately does NOT happen here --
+    // it is `raise`'s own semantics (`raise_with_cause` at the raise
+    // statement), and `cause: nil` suppression depends on that separation.
+    //
     // A NATIVE-BACKED class (exception or value-builtin subclass, D3) has no
     // generated struct to `new_handle` -- `emit_new_with_arg_tokens` already
-    // returns a fully-boxed `RubyValue` built by the runtime, so hand it back
-    // directly.
+    // returns a fully-boxed `RubyValue` built by the runtime.
     if cx.compiler.is_native_backed(cid) {
-        return super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+        let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
+        return quote! { zeo_rt::stamp_backtrace(#ctor) };
     }
     let class_ident = super::ident::class_ident(cx.compiler, cid);
     let ctor = super::call::emit_new_with_arg_tokens(cx, class_name, arg_exprs);
-    quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor)) }
+    quote! { zeo_rt::stamp_backtrace(zeo_rt::RubyValue::Object(#class_ident::new_handle(#ctor))) }
 }
 
 /// The boxed `NameError: uninitialized constant <name>` value, for a constant

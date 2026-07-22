@@ -212,6 +212,13 @@ pub struct Scope {
     /// need to be distinct once mixins/plain inheritance-without-override
     /// exist.
     pub defining_class: ClassId,
+    /// The `HirNode::DefMethod` this scope was registered from -- its span
+    /// gives the `def` keyword's source line, which is what a backtrace
+    /// frame shows until the first statement stamps a line (and what an
+    /// arity error raised in the prologue reports, CRuby's attribution).
+    /// `None` for synthesized scopes (aliases keep their source's node;
+    /// the exception prelude has no spans at all).
+    pub def_node: Option<NodeId>,
     pub params: Params,
     pub body: Vec<NodeId>,
     /// Per-local static type, computed once by `analyze::locals::infer_locals`

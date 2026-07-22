@@ -249,6 +249,7 @@ fn process_top_stmt(
                 OBJECT_CLASS,
                 OBJECT_CLASS,
                 name,
+                Some(stmt),
                 params,
                 body,
                 crate::hir::Visibility::Private,
@@ -803,8 +804,16 @@ fn register_class(
                         compiler.class(class_id).name
                     ));
                 }
-                let sid =
-                    register_method(compiler, class_id, class_id, name, params, body, visibility)?;
+                let sid = register_method(
+                    compiler,
+                    class_id,
+                    class_id,
+                    name,
+                    Some(stmt),
+                    params,
+                    body,
+                    visibility,
+                )?;
                 add_own_method(compiler, class_id, sid, is_class_method);
             }
             // A nested `class`/`module` definition --
@@ -952,11 +961,13 @@ fn resolve_module_target(
 /// `defining_class` is whichever class/module's HIR body `params`/`body`
 /// actually came from -- equal to `owner` for an ordinary own-body method,
 /// an ancestor otherwise (see `compiler::Scope::defining_class`'s docs).
+#[allow(clippy::too_many_arguments)] // one fact per parameter; a bundle struct would just rename them
 fn register_method(
     compiler: &mut Compiler,
     owner: ClassId,
     defining_class: ClassId,
     name: String,
+    def_node: Option<NodeId>,
     params: Params,
     body: Vec<NodeId>,
     visibility: Visibility,
@@ -991,6 +1002,7 @@ fn register_method(
         name,
         class: Some(owner),
         defining_class,
+        def_node,
         params,
         body,
         local_types,

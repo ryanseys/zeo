@@ -52,7 +52,9 @@ fn uncaught_raise_with_no_rescue_anywhere_exits_with_the_message() {
     let result = run_ruby("raise \"boom\"\n");
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("uncaught exception: boom"),
+        result
+            .stderr
+            .contains("-e:1:in '<main>': boom (RuntimeError)"),
         "stderr: {}",
         result.stderr
     );
@@ -68,7 +70,7 @@ fn uncaught_exceptions_still_exit_nonzero_through_the_coroutine_boundary() {
     assert!(
         result
             .stderr
-            .contains("uncaught exception: through the boundary"),
+            .contains("-e:1:in '<main>': through the boundary (RuntimeError)"),
         "stderr: {}",
         result.stderr
     );
@@ -152,7 +154,7 @@ fn an_uncaught_no_method_error_exits_via_the_ordinary_top_level_handler() {
     assert!(
         result
             .stderr
-            .contains("uncaught exception: undefined method 'missing'"),
+            .contains("in '<main>': undefined method 'missing'"),
         "stderr: {}",
         result.stderr
     );

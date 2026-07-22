@@ -279,20 +279,54 @@ builtin_methods! {
         Ok(recv.clone())
     }
     "caller" => fn caller_m(_recv, args, _block) {
-        // AOT builds keep no runtime call-stack frames, so `caller` is always an
-        // empty Array (never `nil`). The optional `(start, length)` / Range
-        // window is honored trivially -- every window over zero frames is empty.
-        // The arguments are still accepted (and were already evaluated for their
-        // side effects at the call site), matching CRuby's contract shape.
+        // The formatted frames above the calling frame (this builtin has no
+        // frame of its own, so `start = 1` -- the default -- skips exactly
+        // the caller). `caller(0)` includes the caller itself; a `start`
+        // past the top answers nil (not [] -- oracle-verified); an optional
+        // `length` truncates. The Range form is served by the same window.
         arity!(args, 0..=2);
-        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+        let all = crate::frames::caller_lines(0);
+        let (start, length) = match (args.first(), args.get(1)) {
+            (None, _) => (1usize, None),
+            (Some(RubyValue::Int(s)), len) => {
+                let length = match len {
+                    Some(RubyValue::Int(l)) => Some((*l).max(0) as usize),
+                    _ => None,
+                };
+                ((*s).max(0) as usize, length)
+            }
+            (Some(RubyValue::Range(s, e, excl)), _) => {
+                let lo = match s.as_deref() {
+                    Some(RubyValue::Int(v)) => (*v).max(0) as usize,
+                    _ => 0,
+                };
+                let hi = match e.as_deref() {
+                    Some(RubyValue::Int(v)) => Some(((*v).max(0) as usize).saturating_add(usize::from(!*excl))),
+                    _ => None,
+                };
+                (lo, hi.map(|h| h.saturating_sub(lo)))
+            }
+            _ => (1, None),
+        };
+        if start > all.len() {
+            return Ok(RubyValue::Nil);
+        }
+        let mut window: Vec<RubyValue> = all[start..]
+            .iter()
+            .map(|l| RubyValue::Str(crate::string_new(l.clone())))
+            .collect();
+        if let Some(l) = length {
+            window.truncate(l);
+        }
+        Ok(RubyValue::Array(crate::array_new(window)))
     }
     "caller_locations" => fn caller_locations_m(_recv, args, _block) {
-        // Same no-frames reality as `caller`: an empty Array (not `nil`), so the
-        // `caller_locations(..)&.first` guard idiom and `.each`/`.map` iteration
-        // stay safe.
+        // Location OBJECTS (`#path`/`#lineno`/`#label`) aren't modeled yet;
+        // the same formatted strings as `caller` keep the
+        // `caller_locations(..)&.first` and iteration idioms working -- a
+        // documented narrowing.
         arity!(args, 0..=2);
-        Ok(RubyValue::Array(crate::array_new(Vec::new())))
+        crate::builtins::kernel::lookup("caller").expect("caller row exists")(_recv, args, _block)
     }
     // The private `Kernel` conversion and formatting functions, as real methods
     // so they resolve through EVERY dispatch path -- a splat call (`format(*a)`),

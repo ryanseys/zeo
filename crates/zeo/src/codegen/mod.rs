@@ -148,6 +148,12 @@ struct Ctx<'a> {
     /// see `HirNode::Return`'s docs for why a literal Rust `return` stops
     /// being correct exactly at this boundary.
     in_real_proc: bool,
+    /// How many real-Proc closure bodies enclose this position -- 0 in a
+    /// method/main body, 1 inside `{ ... }`, 2 inside a block in a block.
+    /// Drives the backtrace frame label CRuby gives lexically nested
+    /// blocks: `block in X`, `block (2 levels) in X`, ... (see
+    /// `frames`-related emission in `emit_proc_or_lambda_value`).
+    block_depth: u32,
     /// Whether `self_ident` names a `RubyValue` whose concrete class isn't
     /// statically known, rather than an `Arc<Concrete>`/`self`. True exactly
     /// inside an escaping Proc that captured `self`: such a block's receiver
@@ -291,6 +297,7 @@ impl<'a> Ctx<'a> {
             self_is_dynamic: needs_self_capture || self.self_is_dynamic,
             captured_locals: shadow(self.captured_locals.clone()),
             local_types,
+            block_depth: self.block_depth + 1,
             ..self.clone()
         }
     }
@@ -318,6 +325,79 @@ fn wrap_method_return(needs_return_catch: bool, inner: TokenStream) -> TokenStre
     } else {
         inner
     }
+}
+
+/// The `(file name, 1-based line)` of `node`'s span start -- `None` for a
+/// synthetic node (the exception prelude, `eval` bodies). Backing for
+/// backtrace-frame emission: the file string is baked into the binary and
+/// the line count is a compile-time scan of the registered source.
+pub(crate) fn source_location(
+    compiler: &Compiler,
+    node: crate::hir::NodeId,
+) -> Option<(String, u32)> {
+    let span = compiler.hir.span(node)?;
+    let file = compiler.hir.files.get(span.file.0 as usize)?;
+    let upto = (span.start as usize).min(file.source.len());
+    let line = 1 + file.source.as_bytes()[..upto]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count() as u32;
+    Some((file.name.clone(), line))
+}
+
+/// The backtrace-frame push for one method scope: `Class#method` /
+/// `Class.method` labels (CRuby's shapes), the `def` keyword's line as the
+/// initial line (what a prologue-raised arity error reports,
+/// oracle-verified), the first body statement's as fallback. Empty tokens
+/// for a span-less scope (the exception prelude) -- CRuby shows no frames
+/// for internal methods either.
+fn scope_frame_guard(
+    compiler: &Compiler,
+    scope: &crate::compiler::Scope,
+    class_method: bool,
+) -> TokenStream {
+    let loc = scope
+        .def_node
+        .and_then(|n| source_location(compiler, n))
+        .or_else(|| {
+            scope
+                .body
+                .first()
+                .and_then(|&n| source_location(compiler, n))
+        });
+    let Some((file, line)) = loc else {
+        return quote! {};
+    };
+    let sep = if class_method { "." } else { "#" };
+    let label = format!(
+        "{}{sep}{}",
+        compiler.fq_name(scope.defining_class),
+        scope.name
+    );
+    quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+}
+
+/// The frame label of the scope ENCLOSING the current emission position --
+/// what a block nested here is labeled under (`block in <this>`): a
+/// method (`Class#m` / `Class.m`), a class body (`<class:Foo>`), or
+/// `<main>`. Mirrors CRuby's lexical block-frame naming.
+fn enclosing_frame_label(cx: &Ctx) -> String {
+    if let Some(m) = &cx.current_method {
+        let def = cx
+            .defining_class
+            .or(cx.current_class)
+            .or(cx.class_self)
+            .unwrap_or(OBJECT_CLASS);
+        let fq = cx.compiler.fq_name(def);
+        if cx.current_class.is_none() && cx.class_self.is_some() {
+            return format!("{fq}.{m}");
+        }
+        return format!("{fq}#{m}");
+    }
+    if let Some(c) = cx.class_self.or(cx.current_class) {
+        return format!("<class:{}>", cx.compiler.fq_name(c));
+    }
+    "<main>".to_string()
 }
 
 /// The `zeo_rt::register_params` entries for one method's `Params`, in
@@ -1020,8 +1100,18 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         in_real_proc: false,
         self_is_dynamic: false,
         runtime_super_params: None,
+        block_depth: 0,
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
+    // The top level's own backtrace frame -- CRuby's `<main>` (its file is
+    // the main script; statement emission stamps the line as it goes).
+    let main_frame = match compiler.hir.files.first() {
+        Some(f) => {
+            let file = &f.name;
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, "<main>", 0); }
+        }
+        None => quote! {},
+    };
 
     // User-module method bridges (see `emit_user_module_bridges`): their value-
     // method registrations run LAST, after every module's own
@@ -1086,6 +1176,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     // `?`), builtins before user classes -- the same
                     // "before every top-level statement" order the old
                     // in-`main()` splice had.
+                    #main_frame
                     #validate_aliases
                     #(#builtin_class_bodies)*
                     #(#user_class_bodies)*
@@ -1097,13 +1188,10 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             zeo_rt::run_at_exit();
             if let Err(__signal) = __result {
                 match __signal {
-                    // An uncaught `raise` gets a real, Ruby-flavored message --
-                    // calling the exception's own `message` dynamically
-                    // (Path 2), exactly as real Ruby's default top-level
-                    // handler does, suffixed with the class name in CRuby's
-                    // `"msg (ClassName)"` form. (The file:line prefix, the
-                    // backtrace, the source snippet and Did-you-mean are still
-                    // to come -- they need source spans threaded through HIR.)
+                    // An uncaught `raise` renders CRuby's full report
+                    // (`file:line:in 'frame': msg (Class)` + tab-indented
+                    // `from` lines) from the backtrace stamped at raise
+                    // time -- see `zeo_rt::report_uncaught`.
                     //
                     // An uncaught `SystemExit` is not an error at all: it is
                     // how `exit`/`abort` terminate, so the process just exits
@@ -1113,16 +1201,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                         if let Some(__code) = zeo_rt::system_exit_status(&__exc) {
                             std::process::exit(__code);
                         }
-                        let __msg = zeo_rt::send(
-                            &__exc.as_object_unchecked(),
-                            zeo_rt::Symbol::intern("message"),
-                            &[],
-                            None,
-                        )
-                        .and_then(|v| v.try_display_string())
-                        .unwrap_or_default();
-                        let __cls = zeo_rt::class_name_of_value(&__exc);
-                        eprintln!("uncaught exception: {} ({})", __msg, __cls);
+                        zeo_rt::report_uncaught(&__exc);
                         std::process::exit(1);
                     }
                     __other => {
@@ -1175,6 +1254,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         in_real_proc: false,
         self_is_dynamic: false,
         runtime_super_params: None,
+        block_depth: 0,
     };
     // Hoist the class body's own locals and emit its statements as a scoped
     // block that evaluates to `Result` -- `?` propagates a raised Signal into
@@ -1183,7 +1263,17 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     // `wrap_ok` tail is discarded by `?;` -- class-body statements run for
     // effect; `main_body` supplies the program's tail.
     let body = hoisting::emit_hoisted_body(&cx, stmts, true);
-    quote! { { #body }?; }
+    // A class body executes under its own backtrace frame -- CRuby's
+    // `<class:Foo>` (raise-in-class-body shows it, then `<main>` at the
+    // `class` keyword's line). Span-less bodies (prelude) skip it.
+    let frame = match stmts.first().and_then(|&n| source_location(compiler, n)) {
+        Some((file, line)) => {
+            let label = format!("<class:{}>", compiler.fq_name(cid));
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+        }
+        None => quote! {},
+    };
+    quote! { { #frame #body }?; }
 }
 
 /// Class methods (`def self.x`, `extend`) -- see `ClassInfo::class_methods`'s
@@ -1276,6 +1366,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         in_real_proc: false,
         self_is_dynamic: false,
         runtime_super_params: None,
+        block_depth: 0,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1297,9 +1388,11 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     let needs_return_catch = captures::body_contains_begin(compiler, &scope.body)
         || captures::body_contains_escaping_block(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
+    let frame = scope_frame_guard(compiler, scope, true);
     quote! {
         #[allow(unused_variables)]
         pub fn #method_ident(#sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+            #frame
             #body_tokens
         }
     }
@@ -1511,6 +1604,7 @@ fn emit_builtin_method_fn(
         // has storage now (`dispatch::Object`).
         self_is_dynamic: true,
         runtime_super_params: None,
+        block_depth: 0,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1525,12 +1619,14 @@ fn emit_builtin_method_fn(
     let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
         || captures::body_contains_begin(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
+    let frame = scope_frame_guard(compiler, scope, false);
     // `allow(unused_variables)`: a reopen method that never references
     // `self` leaves `__self` unread -- unlike a real `self` receiver
     // parameter, which rustc never warns about.
     quote! {
         #[allow(unused_variables)]
         pub fn #method_ident(__self: zeo_rt::RubyValue #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+            #frame
             #body_tokens
         }
     }
@@ -1581,6 +1677,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             in_real_proc: false,
             self_is_dynamic: false,
             runtime_super_params: None,
+            block_depth: 0,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);
         let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1606,8 +1703,10 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
             || captures::body_contains_begin(compiler, &scope.body);
         let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
+        let frame = scope_frame_guard(compiler, scope, false);
         quote! {
             def #method_ident(self: std::sync::Arc<Self> #sig_params) {
+                #frame
                 #body_tokens
             }
         }

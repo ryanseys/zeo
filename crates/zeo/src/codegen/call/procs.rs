@@ -237,6 +237,24 @@ pub(crate) fn emit_proc_or_lambda_value(
     // with brand-new empty cells. `own_locals_prelude` already handles the
     // one case that genuinely needs a fresh declaration.
     let body_tokens = crate::codegen::stmt::emit_body(&proc_cx, body, true);
+    // The block's own backtrace frame, pushed per invocation: CRuby labels
+    // blocks LEXICALLY -- `block in Class#m`, `block (2 levels) in ...` for
+    // nesting -- with the block's own source file/line regardless of where
+    // the proc is later called. Span-less bodies (prelude) push nothing.
+    let frame_guard = match body
+        .first()
+        .and_then(|&n| crate::codegen::source_location(cx.compiler, n))
+    {
+        Some((file, line)) => {
+            let base = crate::codegen::enclosing_frame_label(cx);
+            let label = match proc_cx.block_depth {
+                1 => format!("block in {base}"),
+                n => format!("block ({n} levels) in {base}"),
+            };
+            quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
+        }
+        None => quote! {},
+    };
     let redo_label = crate::codegen::loops::fresh_label(cx, "proc_redo");
 
     // A lambda folds `Return`/`Break` into a normal `Ok` return (it's a
@@ -307,6 +325,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             #blk_clone
             #self_default
             zeo_rt::RubyValue::Proc(#ctor(move |#closure_params| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
+                #frame_guard
                 #redo_label: loop {
                     let __result: Result<zeo_rt::RubyValue, zeo_rt::Signal> = (|| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
                         #arity_check

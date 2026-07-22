@@ -20,6 +20,7 @@ mod exec;
 mod ext;
 pub mod ffi;
 mod fiber;
+mod frames;
 mod globals;
 mod handling;
 mod lastmatch;
@@ -40,7 +41,8 @@ pub use builtins::complex::{RComplex, RComplexData, complex_from_literal, comple
 pub use builtins::enumerable::each_values;
 pub use builtins::enumerator::{EnumeratorData, REnumerator};
 pub use builtins::exception::{
-    register_exception_subclass, register_exceptions, set_explicit_cause,
+    apply_custom_backtrace, attach_backtrace, backtrace_lines, register_exception_subclass,
+    register_exceptions, report_uncaught, set_backtrace_lines, set_explicit_cause,
 };
 pub use builtins::format::sprintf;
 pub use builtins::kernel::{
@@ -70,7 +72,7 @@ pub use dispatch::{
     method_name_symbol, raise_error, raise_error_details, raise_method_missing,
     raise_no_block_yield, raise_stop_iteration, raise_with_cause, responds_to, responds_to_value,
     run_initialize, send, send_in, send_super_class_from, send_super_from, send_value,
-    send_value_in, send_value_public_in, validate_aliases,
+    send_value_in, send_value_public_in, stamp_backtrace, validate_aliases,
 };
 pub use encoding::{EncodingId, StrBuf};
 pub use eval_vm::{eval_string, eval_value};
@@ -92,6 +94,7 @@ pub use fiber::{
     FiberHandle, FiberResume, FiberYield, RFiber, fiber_alive, fiber_current, fiber_new,
     fiber_raise, fiber_resume, fiber_transfer, fiber_yield,
 };
+pub use frames::{FrameGuard, caller_lines, capture_backtrace, set_line};
 pub use globals::{global_alias, global_defined, global_get, global_set};
 pub use handling::{current_exception, pop_handling, push_handling};
 pub use ractor::{

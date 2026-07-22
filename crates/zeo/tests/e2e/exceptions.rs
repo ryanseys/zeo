@@ -229,7 +229,7 @@ fn case_in_with_no_matching_arm_and_no_else_raises() {
     assert!(
         result
             .stderr
-            .contains("uncaught exception: no matching pattern"),
+            .contains("in '<main>': no matching pattern (NoMatchingPatternError)"),
         "stderr: {}",
         result.stderr
     );
@@ -2224,9 +2224,11 @@ fn method_of_an_unknown_name_raises_name_error_at_construction() {
 
 #[test]
 fn exception_backtrace_full_message_and_inspect() {
-    // backtrace is an empty array (zeo does not track per-exception
-    // backtraces); inspect renders "#<Class: msg>" (or the bare class name
-    // when the message is empty); full_message is "Class: msg".
+    // backtrace carries the real stamped frames; full_message renders the
+    // uncaught-report shape from them; inspect renders "#<Class: msg>" (or
+    // the bare class name when the message is empty). Expected output is
+    // verbatim ruby 4.0.5 (the harness compiles as `-e`, same as the
+    // oracle's own `-e` labeling).
     let result = run_ruby(
         r#"
         begin
@@ -2242,7 +2244,7 @@ fn exception_backtrace_full_message_and_inspect() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(
         result.stdout,
-        "[]\n\"#<ArgumentError: bad>\"\nArgumentError: bad\n\"StandardError\"\n"
+        "[\"-e:3:in '<main>'\"]\n\"#<ArgumentError: bad>\"\n-e:3:in '<main>': bad (ArgumentError)\n\"StandardError\"\n"
     );
 }
 
@@ -3151,5 +3153,60 @@ fn raising_to_s_and_inspect_propagate_catchably_through_every_display_consumer()
          interp2: RuntimeError: to_s boom\n\
          regexp interp: RuntimeError: to_s boom\n\
          end\n"
+    );
+}
+
+#[test]
+fn backtrace_frames_match_cruby_across_definition_kinds() {
+    // The comprehensive frame battery, all verbatim ruby 4.0.5 (invoked as
+    // `-e`, the same label this harness compiles under): method labels
+    // (Object#m / Foo#m / Foo.cm / M.modfun / M#mixed), lexical block
+    // frames (`block in ...`), caller windows (0-start, past-the-top nil,
+    // (start, length)), re-raise preserving the original stack, custom
+    // backtraces (`raise cls, msg, array`, set_backtrace, nil clears,
+    // never-raised nil), proc frames through Proc#call, send transparency,
+    // and full_message's report shape. Known divergences excluded and
+    // catalogued: no C-method frames (`Array#each` rows), arity errors
+    // attribute to the call site rather than the callee's def line.
+    let result = run_ruby(
+        "def plain; raise \"x\"; rescue => e; puts e.backtrace.first; end\nplain\nclass Foo\n  def m; raise \"x\"; rescue => e; puts e.backtrace.first; end\n  def self.cm; raise \"x\"; rescue => e; puts e.backtrace.first; end\nend\nFoo.new.m\nFoo.cm\nmodule M\n  def self.modfun; raise \"x\"; rescue => e; puts e.backtrace.first; end\n  def mixed; raise \"x\"; rescue => e; puts e.backtrace.first; end\nend\nM.modfun\nclass Bar; include M; end\nBar.new.mixed\ndef with_block\n  [1].each { raise \"x\" }\nrescue => e\n  puts e.backtrace[0]\nend\nwith_block\ndef nested_blocks\n  [1].each do\n    [2].each do\n      raise \"x\"\n    end\n  end\nrescue => e\n  puts e.backtrace[0]\nend\nnested_blocks\ndef c_inner\n  puts caller.inspect\n  puts caller(0).first\n  puts caller(2).inspect\n  puts caller(1, 1).inspect\n  puts caller(9).inspect\nend\ndef c_mid; c_inner; end\nc_mid\ndef rr_inner; raise \"orig\"; end\ndef rr_outer\n  rr_inner\nrescue => e\n  raise\nend\nbegin\n  rr_outer\nrescue => e\n  puts e.backtrace.first(3).inspect\nend\nbegin\n  raise RuntimeError, \"custom\", [\"fake.rb:1:in 'x'\", \"fake.rb:2:in 'y'\"]\nrescue => e\n  puts e.backtrace.inspect\nend\ne2 = RuntimeError.new(\"sb\")\ne2.set_backtrace(\"one_line\")\nputs e2.backtrace.inspect\ne2.set_backtrace(nil)\nputs e2.backtrace.inspect\nputs RuntimeError.new(\"never\").backtrace.inspect\ndef proc_caller(p) = p.call\npr = proc { raise \"in proc\" }\nbegin\n  proc_caller(pr)\nrescue => e\n  puts e.backtrace.first(3).inspect\nend\ndef sent; raise \"via send\"; end\nbegin\n  send(:sent)\nrescue => e\n  puts e.backtrace.first(2).inspect\nend\nbegin\n  raise ArgumentError, \"fm\"\nrescue => e\n  puts e.full_message(highlight: false)\nend\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "-e:1:in 'Object#plain'\n\
+         -e:4:in 'Foo#m'\n\
+         -e:5:in 'Foo.cm'\n\
+         -e:10:in 'M.modfun'\n\
+         -e:11:in 'M#mixed'\n\
+         -e:17:in 'block in Object#with_block'\n\
+         -e:25:in 'block (2 levels) in Object#nested_blocks'\n\
+         [\"-e:39:in 'Object#c_mid'\", \"-e:40:in '<main>'\"]\n\
+         -e:34:in 'Object#c_inner'\n\
+         [\"-e:40:in '<main>'\"]\n\
+         [\"-e:39:in 'Object#c_mid'\"]\n\
+         nil\n\
+         [\"-e:41:in 'Object#rr_inner'\", \"-e:43:in 'Object#rr_outer'\", \"-e:48:in '<main>'\"]\n\
+         [\"fake.rb:1:in 'x'\", \"fake.rb:2:in 'y'\"]\n\
+         [\"one_line\"]\n\
+         nil\n\
+         nil\n\
+         [\"-e:64:in 'block in <main>'\", \"-e:63:in 'Object#proc_caller'\", \"-e:66:in '<main>'\"]\n\
+         [\"-e:70:in 'Object#sent'\", \"-e:72:in '<main>'\"]\n\
+         -e:77:in '<main>': fm (ArgumentError)\n"
+    );
+}
+
+#[test]
+fn uncaught_exception_report_matches_cruby_shape() {
+    // The top-level report: innermost frame heads the message line, outer
+    // frames follow tab-indented -- verbatim ruby 4.0.5 (as `-e`).
+    let result = run_ruby("def inner; raise \"boom\"; end\ndef outer; inner; end\nouter\n");
+    assert!(!result.status.success());
+    assert_eq!(
+        result.stderr,
+        "-e:1:in 'Object#inner': boom (RuntimeError)\n\
+         \tfrom -e:2:in 'Object#outer'\n\
+         \tfrom -e:3:in '<main>'\n"
     );
 }

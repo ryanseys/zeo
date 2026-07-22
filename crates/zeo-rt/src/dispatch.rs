@@ -2086,6 +2086,7 @@ pub fn raise_error(class_name: &str, msg: String) -> Signal {
         Some(reg) => {
             let exc = reg.construct_exception(class_name, msg);
             crate::builtins::exception::attach_cause(&exc);
+            crate::builtins::exception::attach_backtrace(&exc);
             Signal::Raise(exc)
         }
         None => panic!("{class_name}: {msg}"),
@@ -2110,6 +2111,7 @@ pub fn raise_error_details(
                 crate::builtins::exception::set_exception_detail(&exc, slot, value.clone());
             }
             crate::builtins::exception::attach_cause(&exc);
+            crate::builtins::exception::attach_backtrace(&exc);
             Signal::Raise(exc)
         }
         None => panic!("{class_name}: {msg}"),
@@ -2284,6 +2286,16 @@ pub fn raise_method_missing(
 /// bare re-raise or a non-exception operand (see `attach_cause`).
 pub fn raise_with_cause(exc: RubyValue) -> RubyValue {
     crate::builtins::exception::attach_cause(&exc);
+    crate::builtins::exception::attach_backtrace(&exc);
+    exc
+}
+
+/// The backtrace stamp ALONE -- for codegen's internal error constructors
+/// (`emit_boxed_new`), which run at their raise sites but must NOT chain a
+/// cause (that is `raise`'s job, and an explicit `cause: nil` SUPPRESSES
+/// chaining precisely by never calling `raise_with_cause`).
+pub fn stamp_backtrace(exc: RubyValue) -> RubyValue {
+    crate::builtins::exception::attach_backtrace(&exc);
     exc
 }
 
@@ -2325,6 +2337,7 @@ pub fn raise_stop_iteration(result: RubyValue) -> Signal {
             )
             .expect("StopIteration#__set_result can't signal");
             crate::builtins::exception::attach_cause(&exc);
+            crate::builtins::exception::attach_backtrace(&exc);
             Signal::Raise(exc)
         }
         None => panic!("StopIteration: iteration reached an end"),

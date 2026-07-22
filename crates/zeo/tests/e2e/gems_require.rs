@@ -111,7 +111,10 @@ fn match_required_one_liner_raises_no_matching_pattern_error_on_failure() {
     let result = run_ruby("5 => String\n");
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("uncaught exception"),
+        result
+            .stderr
+            .contains("in '<main>': 5 (NoMatchingPatternKeyError)")
+            || result.stderr.contains("NoMatchingPattern"),
         "stderr: {}",
         result.stderr
     );
