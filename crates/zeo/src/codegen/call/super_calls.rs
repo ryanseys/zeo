@@ -125,7 +125,7 @@ pub fn emit_super_inline(
             own_pool(cx.compiler, anc)
                 .iter()
                 .find(|&&s| cx.compiler.scope(s).name == mname)
-                .map(|&sid| (anc, sid))
+                .map(|&sid| (anc, sid, false))
         }),
         // The `extend M` shape from the note above: resolve against the
         // SINGLETON-class chain, which the compiler can reconstruct exactly
@@ -161,7 +161,7 @@ pub fn emit_super_inline(
     // lowers every branch eagerly), and it cannot see methods a compile-time
     // scan misses -- an included module's, or one registered at runtime. Hand
     // off to the runtime walk, which finds those and raises correctly if not.
-    let Some((new_defining_class, sid)) = found else {
+    let Some((new_defining_class, sid, target_is_module_instance)) = found else {
         return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
     };
 
@@ -175,6 +175,39 @@ pub fn emit_super_inline(
     // exception parent's own method (`!native_default`) still splices below --
     // its HIR body runs correctly against the dynamic-self receiver.
     if cx.compiler.scope(sid).native_default {
+        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+    }
+
+    // M5 staging flag: `ZEO_SUPER=runtime` dispatches even a compile-time-
+    // resolvable `super` through the runtime MRO walk (`send_super_from` /
+    // the class-method channel) instead of splicing the parent's HIR at the
+    // call site. The `extend M` singleton-chain shape keeps its COMPILE-TIME
+    // resolution (sibling extends interleave in an order the runtime
+    // registry doesn't record) and dispatches the resolved target's
+    // registered row directly. Used to verify the mechanisms agree
+    // suite-wide before the splice is deleted; `inline` (or unset) keeps
+    // the splice.
+    if std::env::var("ZEO_SUPER").as_deref() == Ok("runtime") {
+        if extend_shape {
+            let target_id = new_defining_class.0;
+            let recv_id = receiver_class.0;
+            let (pushes, block_expr) =
+                emit_runtime_super_args(cx, &current_params, args, kwargs, zsuper, block);
+            return quote! {
+                {
+                    let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
+                    #(#pushes)*
+                    zeo_rt::call_singleton_super_target(
+                        zeo_rt::ClassId(#target_id),
+                        #target_is_module_instance,
+                        zeo_rt::ClassId(#recv_id),
+                        zeo_rt::Symbol::intern(#mname),
+                        &__super_args,
+                        #block_expr,
+                    )?
+                }
+            };
+        }
         return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
     }
 
@@ -290,7 +323,7 @@ fn extended_singleton_super(
     receiver_class: crate::compiler::ClassId,
     defining_class: crate::compiler::ClassId,
     mname: &str,
-) -> Option<(crate::compiler::ClassId, crate::compiler::ScopeId)> {
+) -> Option<(crate::compiler::ClassId, crate::compiler::ScopeId, bool)> {
     // `(class, instance_pool)`: a chain entry resolves `mname` against its
     // instance methods (an extended module) or its `def self.x` pool (a
     // class standing in for its own metaclass).
@@ -326,7 +359,7 @@ fn extended_singleton_super(
         };
         pool.iter()
             .find(|&&s| cx.compiler.scope(s).name == mname)
-            .map(|&sid| (anc, sid))
+            .map(|&sid| (anc, sid, instance_pool))
     })
 }
 
@@ -352,6 +385,30 @@ fn emit_runtime_super(
     zsuper: bool,
     block: Option<NodeId>,
 ) -> TokenStream {
+    let def_id = cx.defining_class.expect("`super` outside a method").0;
+    let (pushes, block_expr) =
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+    // A CLASS-method `super` (`current_class` deliberately `None` there --
+    // see `emit_super_inline`) has a class-object receiver, which
+    // `send_super_from`'s object channel can't take: dispatch through the
+    // class-method channel, which walks the receiver class's singleton
+    // chain as the runtime knows it.
+    if cx.current_class.is_none() {
+        let recv_id = cx.class_self.expect("`super` outside a method").0;
+        return quote! {
+            {
+                let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
+                #(#pushes)*
+                zeo_rt::send_super_class_from(
+                    zeo_rt::ClassId(#recv_id),
+                    zeo_rt::ClassId(#def_id),
+                    zeo_rt::Symbol::intern(#mname),
+                    &__super_args,
+                    #block_expr,
+                )?
+            }
+        };
+    }
     // `send_super_from` takes a boxed `RubyValue`. An exception-backed self is
     // already one, but a plain generated-struct self is an `Arc<Concrete>` --
     // so box through the same helper an implicit-self call uses rather than
@@ -362,9 +419,6 @@ fn emit_runtime_super(
         let slf = &cx.self_ident;
         quote! { zeo_rt::RubyValue::clone(&#slf) }
     });
-    let def_id = cx.defining_class.expect("`super` outside a method").0;
-    let (pushes, block_expr) =
-        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
     quote! {
         {
             let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
@@ -476,6 +530,49 @@ fn emit_runtime_super_args(
             let id = safe_ident(name);
             pushes.push(quote! { __super_args.push(#id.clone()); });
         }
+        // Bare `super` forwards the current method's KEYWORD arguments too
+        // (CRuby's zsuper takes everything) -- appended as one trailing
+        // Hash, the same G2 convention the explicit path uses. A `**kwrest`
+        // merges at its position (last, matching binding order).
+        if !current_params.keywords.is_empty()
+            || matches!(&current_params.keyword_rest, Some(Some(_)))
+        {
+            let mut kw_pushes: Vec<TokenStream> = Vec::new();
+            for kw in &current_params.keywords {
+                let key = match kw {
+                    crate::hir::KeywordParam::Required(n)
+                    | crate::hir::KeywordParam::Optional(n, _) => n,
+                };
+                let id = safe_ident(key);
+                kw_pushes.push(quote! {
+                    zeo_rt::hash_set(
+                        &__kw,
+                        zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#key)),
+                        #id.clone(),
+                    );
+                });
+            }
+            if let Some(Some(krest)) = &current_params.keyword_rest {
+                let id = safe_ident(krest);
+                kw_pushes.push(quote! {
+                    for (__k, __v) in (#id).as_hash_unchecked().lock().values().cloned().collect::<Vec<_>>() {
+                        zeo_rt::hash_set(&__kw, __k, __v);
+                    }
+                });
+            }
+            pushes.push(quote! {
+                {
+                    let __kw = zeo_rt::hash_new(vec![]);
+                    #(#kw_pushes)*
+                    // An empty `**kwrest` (and no keywords) forwards
+                    // NOTHING -- a trailing empty Hash would bind as a
+                    // positional in the parent.
+                    if zeo_rt::hash_len(&__kw) > 0 {
+                        __super_args.push(zeo_rt::RubyValue::Hash(__kw));
+                    }
+                }
+            });
+        }
     } else {
         for &a in args {
             let e = emit_expr(cx, a);
@@ -499,6 +596,12 @@ fn emit_runtime_super_args(
             let proc_value = super::procs::emit_proc_value(cx, b);
             quote! { Some(#proc_value) }
         }
+        // No literal block: real Ruby forwards the CURRENT method's block
+        // (the splice saw `__blk` in scope for free; the runtime dispatch
+        // must pass it explicitly). Inside a real Proc the method's `__blk`
+        // isn't in scope -- `None` keeps that shape compiling, matching the
+        // splice's own reach.
+        None if !cx.in_real_proc => quote! { __blk.clone() },
         None => quote! { None },
     };
     (pushes, block_expr)

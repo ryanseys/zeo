@@ -177,6 +177,13 @@ impl Hir {
         NodeId((self.nodes.len() - 1) as u32)
     }
 
+    /// Every node in the arena, in push order -- for whole-program scans
+    /// that don't care about tree structure (e.g. codegen's
+    /// super-reachability analysis; `const_is_assigned` is the precedent).
+    pub fn all_nodes(&self) -> &[HirNode] {
+        &self.nodes
+    }
+
     /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.spans[id.0 as usize].known()

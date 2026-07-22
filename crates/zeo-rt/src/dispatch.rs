@@ -540,6 +540,17 @@ struct ClassEntry {
     /// `(0, name)` -- the AOT translation of CRuby's `cme->def->box`
     /// stamping, root reopens visible everywhere.
     value_methods: HashMap<(u32, Symbol), ValueMethodFn>,
+    /// This class's OWN method implementations -- what `super` resolution
+    /// walks. `methods` above is the FLATTENED instance-dispatch set (an
+    /// entry's winner can be a prepended module's or an ancestor's copy),
+    /// which is exactly wrong for `super`: resuming an MRO walk needs each
+    /// position's own contribution, or a prepended method's `super` finds
+    /// itself again. Filled three ways: `promote_own_impl` (the common
+    /// case -- the flattened winner IS the own def), `define_method_own`
+    /// (native exception sets), and `define_super_target_value` (a
+    /// dynamic-self bridge for an own def shadowed in its own class's
+    /// flattened table).
+    own_impls: HashMap<Symbol, MethodImpl>,
     /// The names in `methods`/`value_methods` that Ruby considers PRIVATE
     /// (`private def x`, and every top-level `def` -- which is a private
     /// method of Object). Dispatch itself ignores this (an implicit-self
@@ -647,6 +658,7 @@ impl ClassRegistry {
                 is_module,
                 ancestors,
                 methods: HashMap::new(),
+                own_impls: HashMap::new(),
                 value_methods: HashMap::new(),
                 private_methods: HashSet::new(),
                 protected_methods: HashSet::new(),
@@ -848,6 +860,56 @@ impl ClassRegistry {
             .expect("class must be registered before defining methods on it")
             .methods
             .insert(name, MethodImpl::from_fn(f));
+    }
+
+    /// `define_method` that ALSO records the row as this class's own
+    /// `super` target -- the native exception method sets use this (every
+    /// exception id carries the natives, so a `super` walk finds them at
+    /// the first ancestor, behaviorally identical to CRuby finding them on
+    /// `Exception`).
+    pub fn define_method_own(&mut self, id: ClassId, name: Symbol, f: MethodFn) {
+        let e = self
+            .entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining methods on it");
+        e.methods.insert(name, MethodImpl::from_fn(f));
+        e.own_impls.insert(name, MethodImpl::from_fn(f));
+    }
+
+    /// Copies the flattened `methods` row for `name` into `own_impls` --
+    /// emitted by codegen for each method a class defines DIRECTLY whose
+    /// flattened winner is that own definition (everything except a
+    /// prepend-shadowed own def), after all registration/delta rows landed.
+    pub fn promote_own_impl(&mut self, id: ClassId, name: Symbol) {
+        if let Some(e) = self.entries.get_mut(&id.0) {
+            if let Some(m) = e.methods.get(&name).cloned() {
+                e.own_impls.insert(name, m);
+            }
+        }
+    }
+
+    /// Registers a dynamic-self free function as an own `super` target --
+    /// the bridge shape for an own def SHADOWED in its own class's
+    /// flattened table (its body exists only as a `RubyValue`-self fn).
+    pub fn define_super_target_value(&mut self, id: ClassId, name: Symbol, f: ValueMethodFn) {
+        let e = self
+            .entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining methods on it");
+        e.own_impls.insert(
+            name,
+            MethodImpl::Dynamic(Arc::new(
+                move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+                    f(&RubyValue::Object(recv.clone()), args, block)
+                },
+            )),
+        );
+    }
+
+    /// This class's OWN contribution to an MRO walk -- see
+    /// `ClassEntry::own_impls`.
+    fn super_target(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
+        self.entries.get(&id.0)?.own_impls.get(&name)
     }
 
     fn lookup(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
@@ -1592,26 +1654,27 @@ pub fn send_super_from(
         .map_or(0, |p| p + 1);
     let method_name = name.to_string();
     for &anc in &ancestors[start..] {
-        // A runtime-defined ancestor's own method lives in the overlay, not the
-        // frozen registry -- so `super` from a `Class.new(parent)` override into
-        // `parent`'s (also runtime-defined) method is found here, mirroring
-        // `walk_runtime_class`'s per-ancestor overlay-then-registry order.
+        // Each position contributes its OWN definitions only -- never the
+        // flattened `methods` table, whose winner at a position can be a
+        // PREPENDED module's copy sitting BEFORE this position in the MRO
+        // (probing it made a prepended method's `super` find itself,
+        // recursing forever). Per position, most-derived source first:
+        // a runtime-defined own method (the overlay), the registered own
+        // implementation (`own_impls`), a user module's bridge / builtin
+        // reopen (`value_methods` on that id), then the ancestor's native
+        // builtin table (`BasicObject#initialize` is the one every `super`
+        // chain bottoms out on).
         if crate::runtime_meta::is_live() {
             if let Some(m) = crate::runtime_meta::overlay_own_method(anc, name) {
                 return m.call(&obj, args, block);
             }
         }
-        if let Some(f) = registry().lookup(anc, name) {
-            return f.call(&obj, args, block);
+        if let Some(m) = registry().super_target(anc, name) {
+            return m.call(&obj, args, block);
         }
-        // Then the BUILTIN table for that ancestor, exactly as the ordinary
-        // send path does (`send_in`). Materialization copies a builtin into a
-        // user subclass's registry entry, which is why `super` already reached
-        // `Array#size` from a subclass -- but a method no user class ever
-        // subclassed toward is only ever in the table, and `BasicObject#
-        // initialize` is the one every `super` chain bottoms out on. Without
-        // this the ordinary `include SomeMixin` + `super` idiom raised
-        // "no superclass method 'initialize'" where CRuby succeeds.
+        if let Some(f) = value_method(anc, 0, name) {
+            return f(recv, args, block);
+        }
         if let Some(f) = crate::builtins::class_table(anc).and_then(|t| t(&method_name)) {
             return f(recv, args, block);
         }
@@ -1619,6 +1682,113 @@ pub fn send_super_from(
     Err(raise_method_missing(
         recv,
         &method_name,
+        args,
+        MissingReason::Super,
+    ))
+}
+
+/// `super` inside a CLASS method (`def self.x`) -- the class-method channel
+/// `send_super_from` (object receivers only) can't serve. Walks the
+/// receiver class's ancestry resuming AFTER `defining_class`, probing per
+/// ancestor: a runtime-defined class method (overlay), the registered
+/// flattened `class_methods` table (each ancestor's table is resolution
+/// from ITS OWN viewpoint -- own `def self.x`, extends, and
+/// inherited-from-above copies in the right priority, so the first
+/// non-module ancestor's winner IS the correct super target), then that
+/// ancestor's builtin class-method table. `include`d modules never join a
+/// singleton chain, so module ancestors are skipped. A `defining_class`
+/// missing from the chain (a `super` inside an `extend`ed module's method)
+/// starts right past the receiver's own entry -- the nearest runtime
+/// approximation of "after the extended module" (sibling extends of the
+/// same receiver are not modeled at runtime; the registry records no
+/// per-class extends list).
+pub fn send_super_class_from(
+    recv_class: ClassId,
+    defining_class: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let recv = RubyValue::Class(recv_class);
+    let ancestors = ancestors_of_value(recv_class);
+    let start = ancestors
+        .iter()
+        .position(|&a| a == defining_class)
+        .map_or(1, |p| p + 1);
+    let method_name = name.to_string();
+    for &anc in &ancestors[start..] {
+        if registry().entries.get(&anc.0).is_some_and(|e| e.is_module) {
+            continue;
+        }
+        if crate::runtime_meta::is_live() {
+            if let Some(p) = crate::runtime_meta::overlay_class_method(anc, name) {
+                return p.call_with_self_and_block(&recv, args, block);
+            }
+        }
+        if let Some(f) = registry()
+            .entries
+            .get(&anc.0)
+            .and_then(|e| e.class_methods.get(&name).copied())
+        {
+            return f(&recv, args, block);
+        }
+        if let Some(f) =
+            crate::builtins::class_method_table(anc).and_then(|lookup| lookup(&method_name))
+        {
+            return f(&recv, args, block);
+        }
+    }
+    Err(raise_method_missing(
+        &recv,
+        &method_name,
+        args,
+        MissingReason::Super,
+    ))
+}
+
+/// Dispatch a `super` whose target the COMPILER resolved against the
+/// receiver's singleton chain (the `extend M` shape -- sibling extends
+/// interleave in an order only the compile-time chain knows; the runtime
+/// registry records no per-class extends list). The target is either a
+/// module's instance method serving as a class method (`module_instance`,
+/// reached through the module's own value-method bridge) or an ancestor's
+/// own `def self.x` (its registered `class_methods` row / builtin table).
+/// `self` stays the RECEIVER class object throughout, like every `super`.
+pub fn call_singleton_super_target(
+    target: ClassId,
+    module_instance: bool,
+    recv_class: ClassId,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let recv = RubyValue::Class(recv_class);
+    if module_instance {
+        if let Some(f) = value_method(target, 0, name) {
+            return f(&recv, args, block);
+        }
+    } else {
+        if crate::runtime_meta::is_live() {
+            if let Some(p) = crate::runtime_meta::overlay_class_method(target, name) {
+                return p.call_with_self_and_block(&recv, args, block);
+            }
+        }
+        if let Some(f) = registry()
+            .entries
+            .get(&target.0)
+            .and_then(|e| e.class_methods.get(&name).copied())
+        {
+            return f(&recv, args, block);
+        }
+        if let Some(f) =
+            crate::builtins::class_method_table(target).and_then(|t| t(name.name().as_str()))
+        {
+            return f(&recv, args, block);
+        }
+    }
+    Err(raise_method_missing(
+        &recv,
+        &name.to_string(),
         args,
         MissingReason::Super,
     ))

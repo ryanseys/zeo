@@ -720,6 +720,139 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         }
     }
 
+    // Own-`super`-target rows (see `ClassEntry::own_impls`): a `super` walk
+    // needs each MRO position's OWN contribution, and generated structs are
+    // distinct Rust types -- an ancestor's registered trampoline downcasts
+    // to ITS concrete struct and cannot take a subclass receiver. So every
+    // own method whose NAME is super-reachable (some same-named method
+    // somewhere contains a `super`, `scan_contains_super`) gets a
+    // DYNAMIC-SELF bridge fn -- the user-module-bridge shape, correct for
+    // any receiver -- registered as that class's own `super` target. The
+    // narrowing keeps the second compilation of a body limited to the
+    // handful of names `super` can actually reach. NATIVE-backed classes
+    // (exception/value subclasses) instead PROMOTE their delta rows: those
+    // trampolines downcast to the SHARED native payload type
+    // (`RubyException`/`ValueSubclass`), which every subclass instance is.
+    // Modules need nothing here -- their own methods are already registered
+    // as value methods on their own id (`emit_user_module_bridges`), which
+    // the `super` walk probes per position.
+    let mut super_reachable: std::collections::HashSet<&str> = compiler
+        .scopes
+        .iter()
+        .filter(|scope| {
+            scope
+                .body
+                .iter()
+                .any(|&n| crate::analyze::scan_contains_super(&compiler.hir, n))
+        })
+        .map(|scope| scope.name.as_str())
+        .collect();
+    // RUNTIME-defined methods with a `super` in their body reach targets by
+    // NAME through the method-frame walk, so their names count as
+    // super-reachable too. Two shapes, both scanned over the whole arena
+    // (attribution is local -- the name is an argument of the same node):
+    // a `def` in expression position (`Class.new { def g; super; end }`,
+    // `HirNode::DefMethod`), and the `class << obj` / `def obj.m` desugar
+    // (a `define_singleton_method` call carrying a `SymbolLit` name and a
+    // method-body Lambda). The generic Call arm over-approximates
+    // deliberately (ANY call whose method-body-lambda argument or literal
+    // block contains a `super` marks every SymbolLit argument), covering
+    // `send(:define_method, :m) { super }` and friends -- a spurious bridge
+    // is dead code, a missing one is a wrong NoMethodError.
+    for node in compiler.hir.all_nodes() {
+        match node {
+            crate::hir::HirNode::DefMethod { name, body, .. }
+                if crate::analyze::scan_contains_super_body(&compiler.hir, body) =>
+            {
+                super_reachable.insert(name.as_str());
+            }
+            crate::hir::HirNode::Call { args, block, .. } => {
+                let lambda_super = args.iter().any(|e| {
+                    let (crate::hir::ArrayElem::Single(a) | crate::hir::ArrayElem::Splat(a)) = e;
+                    matches!(
+                        &compiler.hir[*a],
+                        crate::hir::HirNode::Lambda { body, method_body: true, .. }
+                            if crate::analyze::scan_contains_super_body(&compiler.hir, body)
+                    )
+                });
+                let block_super = block.is_some_and(|b| {
+                    matches!(
+                        &compiler.hir[b],
+                        crate::hir::HirNode::Block { body, .. }
+                            if crate::analyze::scan_contains_super_body(&compiler.hir, body)
+                    )
+                });
+                if lambda_super || block_super {
+                    for e in args {
+                        let (crate::hir::ArrayElem::Single(a) | crate::hir::ArrayElem::Splat(a)) =
+                            e;
+                        if let crate::hir::HirNode::SymbolLit(n) = &compiler.hir[*a] {
+                            super_reachable.insert(n.as_str());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut own_bridge_containers: Vec<TokenStream> = Vec::new();
+    for (idx, class) in compiler.classes.iter().enumerate() {
+        if idx == 0 || class.is_builtin || class.is_bootstrap || class.is_module {
+            continue;
+        }
+        let cid = ClassId(idx as u32);
+        let id = idx as u32;
+        let mut bridged: Vec<crate::compiler::ScopeId> = Vec::new();
+        for &sid in &class.own_methods {
+            let name = &compiler.scope(sid).name;
+            if !super_reachable.contains(name.as_str()) {
+                continue;
+            }
+            if compiler.is_native_backed(cid) {
+                registrations.push(quote! {
+                    __registry.promote_own_impl(
+                        zeo_rt::ClassId(#id),
+                        zeo_rt::Symbol::intern(#name),
+                    );
+                });
+            } else {
+                bridged.push(sid);
+            }
+        }
+        if bridged.is_empty() {
+            continue;
+        }
+        let flat = class.name.replace("::", "_");
+        let container = format_ident!("__own_{}_{}", idx, flat);
+        let fns = bridged
+            .iter()
+            .map(|&sid| emit_builtin_method_fn(compiler, cid, sid));
+        own_bridge_containers.push(quote! {
+            #[allow(non_snake_case)]
+            pub mod #container { #[allow(unused_imports)] use super::*; #(#fns)* }
+        });
+        for &sid in &bridged {
+            let scope = compiler.scope(sid);
+            let method_ident = safe_ident(&scope.name);
+            let fn_path = quote! { #container::#method_ident };
+            let tramp = params::emit_value_trampoline(
+                &fn_path,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                params::RecvMode::Pass,
+            );
+            let key = &scope.name;
+            registrations.push(quote! {
+                __registry.define_super_target_value(
+                    zeo_rt::ClassId(#id),
+                    zeo_rt::Symbol::intern(#key),
+                    #tramp,
+                );
+            });
+        }
+    }
+
     // A built-in placeholder has no generated `__register` function to call
     // (see the `classes` filter above) -- it still needs a `ClassRegistry`
     // entry of its own, with the SAME linearized `ancestors` every user
@@ -923,6 +1056,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#builtin_reopens)*
         #(#um_containers)*
         #(#exc_containers)*
+        #(#own_bridge_containers)*
 
         fn main() {
             // A registry pre-populated with the CORE world -- the always-on

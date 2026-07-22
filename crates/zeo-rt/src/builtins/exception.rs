@@ -871,52 +871,54 @@ pub fn register_exception_subclass(
         ancestors,
         Some(exception_construct as ConstructorFn),
     );
-    // Flat dispatch: every class needs the full materialized method set on
-    // its own id (the same shape the compiler emits per generated class).
-    registry.define_method(id, Symbol::intern("initialize"), exc_initialize);
-    registry.define_method(id, Symbol::intern("message"), exc_message);
-    registry.define_method(id, Symbol::intern("to_s"), exc_to_s);
-    registry.define_method(id, Symbol::intern("=="), exc_equal);
-    registry.define_method(id, Symbol::intern("eql?"), exc_eql);
-    registry.define_method(id, Symbol::intern("exception"), exc_exception);
-    registry.define_method(id, Symbol::intern("backtrace"), exc_backtrace);
-    registry.define_method(id, Symbol::intern("cause"), exc_cause);
-    registry.define_method(id, Symbol::intern("full_message"), exc_full_message);
-    registry.define_method(id, Symbol::intern("detailed_message"), exc_detailed_message);
-    registry.define_method(id, Symbol::intern("inspect"), exc_inspect);
+    // Flat dispatch AND own-`super`-target rows in one: every class needs
+    // the full materialized method set on its own id (the same shape the
+    // compiler emits per generated class), and the natives double as the
+    // id's own `super` targets (see `ClassEntry::own_impls`).
+    registry.define_method_own(id, Symbol::intern("initialize"), exc_initialize);
+    registry.define_method_own(id, Symbol::intern("message"), exc_message);
+    registry.define_method_own(id, Symbol::intern("to_s"), exc_to_s);
+    registry.define_method_own(id, Symbol::intern("=="), exc_equal);
+    registry.define_method_own(id, Symbol::intern("eql?"), exc_eql);
+    registry.define_method_own(id, Symbol::intern("exception"), exc_exception);
+    registry.define_method_own(id, Symbol::intern("backtrace"), exc_backtrace);
+    registry.define_method_own(id, Symbol::intern("cause"), exc_cause);
+    registry.define_method_own(id, Symbol::intern("full_message"), exc_full_message);
+    registry.define_method_own(id, Symbol::intern("detailed_message"), exc_detailed_message);
+    registry.define_method_own(id, Symbol::intern("inspect"), exc_inspect);
     // Typed introspection accessors, installed by ancestry so a user subclass
     // of the relevant error inherits them the same way the built-in tree does.
     // `NoMethodError < NameError`, so it picks up `#name`/`#receiver` here and
     // adds `#args` below.
     if is_name_error {
-        registry.define_method(id, Symbol::intern("initialize"), name_error_initialize);
-        registry.define_method(id, Symbol::intern("name"), exc_name);
-        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+        registry.define_method_own(id, Symbol::intern("initialize"), name_error_initialize);
+        registry.define_method_own(id, Symbol::intern("name"), exc_name);
+        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
     }
     if is_no_method_error {
-        registry.define_method(id, Symbol::intern("args"), exc_args);
-        registry.define_method(id, Symbol::intern("private_call?"), exc_private_call);
+        registry.define_method_own(id, Symbol::intern("args"), exc_args);
+        registry.define_method_own(id, Symbol::intern("private_call?"), exc_private_call);
     }
     if is_key_error {
-        registry.define_method(id, Symbol::intern("initialize"), key_error_initialize);
-        registry.define_method(id, Symbol::intern("key"), exc_key);
-        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+        registry.define_method_own(id, Symbol::intern("initialize"), key_error_initialize);
+        registry.define_method_own(id, Symbol::intern("key"), exc_key);
+        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
     }
     if is_frozen_error {
-        registry.define_method(id, Symbol::intern("receiver"), exc_receiver);
+        registry.define_method_own(id, Symbol::intern("receiver"), exc_receiver);
     }
     if is_local_jump {
-        registry.define_method(id, Symbol::intern("reason"), exc_reason);
-        registry.define_method(id, Symbol::intern("exit_value"), exc_exit_value);
+        registry.define_method_own(id, Symbol::intern("reason"), exc_reason);
+        registry.define_method_own(id, Symbol::intern("exit_value"), exc_exit_value);
     }
     if is_system_exit {
-        registry.define_method(id, Symbol::intern("initialize"), system_exit_initialize);
-        registry.define_method(id, Symbol::intern("status"), exc_status);
-        registry.define_method(id, Symbol::intern("success?"), exc_success);
+        registry.define_method_own(id, Symbol::intern("initialize"), system_exit_initialize);
+        registry.define_method_own(id, Symbol::intern("status"), exc_status);
+        registry.define_method_own(id, Symbol::intern("success?"), exc_success);
     }
     if is_uncaught_throw {
-        registry.define_method(id, Symbol::intern("tag"), exc_tag);
-        registry.define_method(id, Symbol::intern("value"), exc_value);
+        registry.define_method_own(id, Symbol::intern("tag"), exc_tag);
+        registry.define_method_own(id, Symbol::intern("value"), exc_value);
     }
     if is_signal_exception {
         // `Interrupt` pins SIGINT and defaults its message to the class name, so
@@ -926,16 +928,16 @@ pub fn register_exception_subclass(
         } else {
             signal_exception_initialize
         };
-        registry.define_method(id, Symbol::intern("initialize"), ctor);
-        registry.define_method(id, Symbol::intern("signo"), exc_signo);
-        registry.define_method(id, Symbol::intern("signm"), exc_signm);
+        registry.define_method_own(id, Symbol::intern("initialize"), ctor);
+        registry.define_method_own(id, Symbol::intern("signo"), exc_signo);
+        registry.define_method_own(id, Symbol::intern("signm"), exc_signm);
     }
     // Class methods, registered per-id (class-method lookup doesn't walk
     // ancestors -- see `dispatch`'s Class-value arm).
     registry.define_class_method(id, Symbol::intern("exception"), exc_class_exception);
     registry.define_class_method(id, Symbol::intern("to_tty?"), exc_class_to_tty);
     if carries_result {
-        registry.define_method(id, Symbol::intern("__set_result"), stop_set_result);
-        registry.define_method(id, Symbol::intern("result"), stop_result);
+        registry.define_method_own(id, Symbol::intern("__set_result"), stop_set_result);
+        registry.define_method_own(id, Symbol::intern("result"), stop_result);
     }
 }
