@@ -43,6 +43,7 @@ impl ClassRegistry {
         let mut registry = ClassRegistry::new();
         register_builtins(&mut registry);
         register_exceptions(&mut registry);
+        crate::builtins::weak::register_weak(&mut registry);
         registry
     }
 }

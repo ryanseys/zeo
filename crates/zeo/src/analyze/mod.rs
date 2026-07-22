@@ -549,6 +549,9 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("Errno::ESRCH", "SystemCallError"),
         ("Errno::EPERM", "SystemCallError"),
         ("Errno::ECONNREFUSED", "SystemCallError"),
+        // `WeakRef::RefError` -- nests under the `WeakRef` builtin, a plain
+        // `StandardError` (matches `zeo-abi::EXCEPTION_CLASSES` exc_id(61)).
+        ("WeakRef::RefError", "StandardError"),
     ] {
         register_class(
             compiler,

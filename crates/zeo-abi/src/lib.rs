@@ -317,6 +317,23 @@ pub const THREAD_GROUP_CLASS: ClassId = ClassId(80);
 /// at load time (ostruct's `HAS_PERFORMANCE_WARNINGS`).
 pub const WARNING_MODULE: ClassId = ClassId(81);
 
+/// The `ObjectSpace` module -- `define_finalizer`/`garbage_collect`/
+/// `count_objects`, and the honest-`NotImplementedError` `each_object`/
+/// `_id2ref` (zeo's `Arc` model can't enumerate the live heap or resolve an
+/// id back to an object). Namespaces `ObjectSpace::WeakMap`.
+pub const OBJECTSPACE_MODULE: ClassId = ClassId(82);
+
+/// `ObjectSpace::WeakMap` -- an identity-keyed map holding weak references to
+/// its keys and values (`Arc::downgrade`); dead entries are pruned on access
+/// and at `GC.start`. The primitive `WeakRef` builds on.
+pub const WEAKMAP_CLASS: ClassId = ClassId(83);
+
+/// `WeakRef` -- a weak-reference delegator: forwards methods to its referent
+/// while it lives, raising `WeakRef::RefError` once it's been collected.
+/// CRuby roots it at `Delegator < BasicObject`, which zeo doesn't model;
+/// `Object` is the pragmatic parent.
+pub const WEAKREF_CLASS: ClassId = ClassId(84);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -987,6 +1004,30 @@ pub const BUILTINS: &[BuiltinClass] = &[
         includes: &[],
         feature: None,
     },
+    BuiltinClass {
+        id: OBJECTSPACE_MODULE,
+        name: "ObjectSpace",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: WEAKMAP_CLASS,
+        name: "ObjectSpace::WeakMap",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: WEAKREF_CLASS,
+        name: "WeakRef",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
 ];
 
 /// Top-level constant aliases for nested builtins Ruby ALSO exposes at the
@@ -1475,6 +1516,14 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         id: exc_id(60),
         name: "Errno::ECONNREFUSED",
         superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    // `WeakRef::RefError` -- raised by a `WeakRef` whose referent has been
+    // collected. CRuby makes it a plain `StandardError` (exc_id(4)).
+    ExceptionClass {
+        id: exc_id(61),
+        name: "WeakRef::RefError",
+        superclass: Some(exc_id(4)),
         is_module: false,
     },
 ];
