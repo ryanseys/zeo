@@ -534,11 +534,20 @@ struct ClassEntry {
     /// the receiver's `class_id()` with no ancestor walk needed (the only
     /// reopenable builtins are leaf value classes; Object/module reopens are
     /// rejected at zeo compile time). Empty for every user class, whose
-    /// methods live in `methods` above. Keyed `(box_id, name)` since Phase
-    /// 18: a builtin reopened INSIDE a `Ruby::Box` registers its methods
-    /// under that box's id, and dispatch probes `(caller's box, name)` then
-    /// `(0, name)` -- the AOT translation of CRuby's `cme->def->box`
-    /// stamping, root reopens visible everywhere.
+    /// methods live in `methods` above. Keyed `(box_id, name)`: a builtin
+    /// reopened INSIDE a `Ruby::Box` registers its methods under that box's
+    /// id, and dispatch probes `(caller's box, name)` then `(0, name)` -- the
+    /// AOT translation of CRuby's `cme->def->box` stamping, root reopens
+    /// visible everywhere.
+    ///
+    /// KNOWN DIVERGENCE (box-only, bundler-irrelevant): this `(box_id, name)`
+    /// dimension covers INSTANCE methods on a reopened builtin. A per-box
+    /// SINGLETON method (`class String; def self.count; end` inside a box) and
+    /// a per-box CLASS VARIABLE / class-ivar on a shared builtin are keyed by
+    /// `ClassId` alone (see `cvars`/`civars`), which for a shared builtin is
+    /// the same id in every box -- so, unlike CRuby, they are not isolated
+    /// per box. Per-box state on distinct USER classes (their own `ClassId`
+    /// per box) and per-box instance-method monkeypatches both work.
     value_methods: HashMap<(u32, Symbol), ValueMethodFn>,
     /// This class's OWN method implementations -- what `super` resolution
     /// walks. `methods` above is the FLATTENED instance-dispatch set (an
