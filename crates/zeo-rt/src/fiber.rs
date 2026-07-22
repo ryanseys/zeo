@@ -79,6 +79,12 @@ pub struct FiberHandle {
     /// `.frozen?` state -- flag-only (freezing a Fiber changes nothing
     /// observable: resuming a frozen fiber is legal in CRuby).
     frozen: AtomicBool,
+    /// A handle minted by `Fiber#dup`/`#clone`: CRuby's shallow copy skips
+    /// the machine stack, so the copy is a real Fiber object with NO
+    /// execution context -- resuming it raises `FiberError: uninitialized
+    /// fiber` (oracle-verified) while the original keeps working. Set only
+    /// at construction, never cleared.
+    uninitialized: bool,
 }
 
 impl FiberHandle {
@@ -133,6 +139,7 @@ fn root_fiber() -> RFiber {
                     storage: parking_lot::Mutex::new(None),
                     entered_by_transfer: AtomicBool::new(false),
                     frozen: AtomicBool::new(false),
+                    uninitialized: false,
                 })
             })
             .clone()
@@ -186,7 +193,25 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         storage: parking_lot::Mutex::new(inherited),
         entered_by_transfer: AtomicBool::new(false),
         frozen: AtomicBool::new(false),
+        uninitialized: false,
     }))
+}
+
+/// `Fiber#dup`/`#clone`'s payload: a fresh handle with NO coroutine behind
+/// it -- see [`FiberHandle::uninitialized`]. Storage is copied (`dup`'s
+/// shallow ivar rule); the frozen flag is the caller's business
+/// (`dup_value`'s `keep_frozen`).
+pub fn dup_uninitialized(src: &FiberHandle) -> RFiber {
+    Arc::new(FiberHandle {
+        id: NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed),
+        owner: std::thread::current().id(),
+        finished: AtomicBool::new(false),
+        handling: parking_lot::Mutex::new(Vec::new()),
+        storage: parking_lot::Mutex::new(src.storage.lock().clone()),
+        entered_by_transfer: AtomicBool::new(false),
+        frozen: AtomicBool::new(false),
+        uninitialized: true,
+    })
 }
 
 /// What a `Fiber#resume` call site does with the outcome -- the error
@@ -200,6 +225,9 @@ pub enum FiberResume {
     RubyError(Signal),
     /// `FiberError: attempt to resume a terminated fiber`.
     Dead,
+    /// `FiberError: uninitialized fiber` -- a `dup`/`clone` copy, which has
+    /// no execution context to enter (see `dup_uninitialized`).
+    Uninitialized,
     /// `FiberError: attempt to resume a resumed fiber (double resume)`
     /// -- its coroutine is checked out of the table but not finished, so it
     /// is somewhere below us on this very thread's resume chain.
@@ -222,6 +250,9 @@ pub fn fiber_resume(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
 /// raises, per CRuby). Sibling-to-sibling transfer between two non-root fibers
 /// is a documented gap (the corpus only transfers to and from root).
 pub fn fiber_transfer(handle: &RFiber, args: Vec<RubyValue>) -> FiberResume {
+    if handle.uninitialized {
+        return FiberResume::Uninitialized;
+    }
     if std::thread::current().id() != handle.owner {
         return FiberResume::CrossThread;
     }
@@ -255,6 +286,9 @@ pub fn fiber_raise(handle: &RFiber, exc: RubyValue) -> FiberResume {
 }
 
 fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
+    if handle.uninitialized {
+        return FiberResume::Uninitialized;
+    }
     if std::thread::current().id() != handle.owner {
         return FiberResume::CrossThread;
     }

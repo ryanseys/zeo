@@ -23,18 +23,20 @@ fn key_sym(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-fn f_resume(
-    recv: &RubyValue,
-    args: &[RubyValue],
-    _blk: Option<RubyValue>,
-) -> Result<RubyValue, Signal> {
-    match fiber_resume(&recv.as_fiber_unchecked(), args.to_vec()) {
+/// One outcome mapping for `resume`/`transfer`/`raise` -- every error
+/// variant becomes its CRuby-verbatim `FiberError` (the same messages the
+/// static Path-1 codegen arm emits).
+fn outcome(result: FiberResume) -> Result<RubyValue, Signal> {
+    match result {
         FiberResume::Value(v) => Ok(v),
         FiberResume::RubyError(sig) => Err(sig),
         FiberResume::Dead => Err(raise_error(
             "FiberError",
             "attempt to resume a terminated fiber".to_string(),
         )),
+        FiberResume::Uninitialized => {
+            Err(raise_error("FiberError", "uninitialized fiber".to_string()))
+        }
         FiberResume::DoubleResume => Err(raise_error(
             "FiberError",
             "attempt to resume a resumed fiber (double resume)".to_string(),
@@ -46,27 +48,20 @@ fn f_resume(
     }
 }
 
+fn f_resume(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    outcome(fiber_resume(&recv.as_fiber_unchecked(), args.to_vec()))
+}
+
 fn f_transfer(
     recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
-    match fiber_transfer(&recv.as_fiber_unchecked(), args.to_vec()) {
-        FiberResume::Value(v) => Ok(v),
-        FiberResume::RubyError(sig) => Err(sig),
-        FiberResume::Dead => Err(raise_error(
-            "FiberError",
-            "attempt to resume a terminated fiber".to_string(),
-        )),
-        FiberResume::DoubleResume => Err(raise_error(
-            "FiberError",
-            "attempt to resume a resumed fiber (double resume)".to_string(),
-        )),
-        FiberResume::CrossThread => Err(raise_error(
-            "FiberError",
-            "fiber called across threads".to_string(),
-        )),
-    }
+    outcome(fiber_transfer(&recv.as_fiber_unchecked(), args.to_vec()))
 }
 
 fn f_alive_p(
@@ -163,22 +158,7 @@ fn f_raise(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let exc = resolve_raise_exc(args)?;
-    match fiber::fiber_raise(&recv.as_fiber_unchecked(), exc) {
-        FiberResume::Value(v) => Ok(v),
-        FiberResume::RubyError(sig) => Err(sig),
-        FiberResume::Dead => Err(raise_error(
-            "FiberError",
-            "attempt to resume a terminated fiber".to_string(),
-        )),
-        FiberResume::DoubleResume => Err(raise_error(
-            "FiberError",
-            "attempt to resume a resumed fiber (double resume)".to_string(),
-        )),
-        FiberResume::CrossThread => Err(raise_error(
-            "FiberError",
-            "fiber called across threads".to_string(),
-        )),
-    }
+    outcome(fiber::fiber_raise(&recv.as_fiber_unchecked(), exc))
 }
 
 // Two Fiber objects are equal iff they are the same fiber (identity).

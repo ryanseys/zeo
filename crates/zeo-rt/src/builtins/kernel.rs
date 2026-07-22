@@ -375,7 +375,7 @@ builtin_methods! {
         arity!(args, 0);
         Ok(match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(false)))?,
-            _ => recv.dup_value(false),
+            _ => recv.dup_value(false)?,
         })
     }
     "clone" => fn clone_m(recv, args, _block) {
@@ -411,7 +411,7 @@ builtin_methods! {
         let copy_frozen = freeze != Some(false);
         let copy = match recv {
             RubyValue::Object(o) => copy_with_hook(recv, RubyValue::Object(o.dup_object(copy_frozen)))?,
-            _ => recv.dup_value(copy_frozen),
+            _ => recv.dup_value(copy_frozen)?,
         };
         if freeze == Some(true) {
             copy.freeze_value()?;

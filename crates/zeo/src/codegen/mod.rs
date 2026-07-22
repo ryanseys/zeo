@@ -1272,10 +1272,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     // `class` keyword's line). Fully span-less bodies (prelude) skip it;
     // scanning for the first LOCATED statement keeps the predicate aligned
     // with `stamp_line` (see `scope_frame_guard`).
-    let frame = match stmts
-        .iter()
-        .find_map(|&n| source_location(compiler, n))
-    {
+    let frame = match stmts.iter().find_map(|&n| source_location(compiler, n)) {
         Some((file, line)) => {
             let label = format!("<class:{}>", compiler.fq_name(cid));
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }

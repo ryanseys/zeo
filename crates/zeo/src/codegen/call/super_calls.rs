@@ -72,11 +72,8 @@ pub fn emit_super(
         cx.defining_class,
         cx.current_method.as_deref(),
     ) else {
-        let err = super::raise::emit_simple_error(
-            cx,
-            "NoMethodError",
-            "super called outside of method",
-        );
+        let err =
+            super::raise::emit_simple_error(cx, "NoMethodError", "super called outside of method");
         return quote! { Err(zeo_rt::Signal::Raise(#err))? };
     };
     // Which pool a `super` search consults, per the note above.

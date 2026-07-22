@@ -1781,9 +1781,7 @@ pub fn call_singleton_super_target(
         {
             return f(&recv, args, block);
         }
-        if let Some(f) =
-            crate::builtins::class_method_table(target).and_then(|t| t(&method_name))
-        {
+        if let Some(f) = crate::builtins::class_method_table(target).and_then(|t| t(&method_name)) {
             return f(&recv, args, block);
         }
     }
@@ -1987,8 +1985,7 @@ pub(crate) fn ancestors_contain(id: ClassId, target: ClassId) -> bool {
 /// `__construct`). Deliberately a direct registry lookup, NOT `send`: a
 /// class with no `initialize` must not trip the `method_missing` fallback.
 /// With no `initialize`, arguments are rejected (real Ruby's
-/// `Object#initialize` takes none) -- a loud panic, spike scope (no
-/// `ArgumentError`-raising channel from this crate).
+/// `Object#initialize` takes none) with a rescuable `ArgumentError`.
 pub fn run_initialize(
     class: ClassId,
     recv: &RObj,

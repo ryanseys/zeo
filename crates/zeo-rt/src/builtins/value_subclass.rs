@@ -107,7 +107,13 @@ impl RubyObject for ValueSubclass {
         // Deep-copy the payload (a fresh collection with the same elements), so
         // `dup`/`clone` yield an independent subclass instance -- CRuby's shallow
         // rule for the wrapped container.
-        let payload = self.payload.lock().dup_value(false);
+        // INFALLIBLE: a value-subclass payload is always Str/Array/Hash,
+        // whose dup arms never raise.
+        let payload = self
+            .payload
+            .lock()
+            .dup_value(false)
+            .expect("value-subclass payloads are copyable collections");
         Arc::new(ValueSubclass {
             class_id: self.class_id,
             root: self.root,

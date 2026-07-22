@@ -386,11 +386,18 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
             outcome
         }
         // Another coroutine is currently INSIDE `handle.join()` for this
-        // same thread. Rare enough (two joiners racing) that the honest
-        // spike answer is a loud failure, not a silent wrong one.
-        None => {
-            panic!("concurrent join/value on the same Thread isn't supported yet (spike scope)")
-        }
+        // same thread (it took the handle; the state slot is empty until it
+        // stores `Done`). CRuby lets every joiner wait and hand each the
+        // same outcome -- poll for the first joiner's stored result, the
+        // same 2ms cadence the queue waits use. (If the target PANICKED,
+        // the first joiner re-threw and the process is already dying;
+        // spinning here briefly is moot.)
+        None => loop {
+            if let Some(ThreadState::Done(outcome)) = &*t.state.lock() {
+                return outcome.clone();
+            }
+            may::coroutine::sleep(std::time::Duration::from_millis(2));
+        },
     }
 }
 

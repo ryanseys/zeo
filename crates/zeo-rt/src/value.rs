@@ -880,9 +880,8 @@ impl RubyValue {
             // materialized method, so inherited/mixed-in definitions
             // resolve too), then `Comparable#==` derived from `<=>` for an
             // `include Comparable` class, else `Object#==`'s default:
-            // reference identity. A user `==` that RAISES inside a
-            // structural comparison is a loud panic (spike scope: `rb_eq`
-            // has no exception channel).
+            // reference identity. A user `==` that RAISES is stashed for
+            // `rb_eq_checked` to surface as a real exception (see below).
             (RubyValue::Object(o), _) => {
                 match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(other)) {
                     Some(Ok(v)) => v.truthy(),
@@ -1117,15 +1116,18 @@ impl RubyValue {
     ///   CRuby's rule.
     /// - `Mutex`: a fresh, unlocked mutex (real Ruby's `Mutex#dup` gives
     ///   exactly that -- allocate + no state ivars).
-    /// - `Thread`/`Queue`/`Ractor`: raise in real Ruby (`TypeError:
-    ///   allocator undefined` / `NoMethodError: initialize_copy`) -- a loud
-    ///   panic here (spike scope: no exception-raising channel from this
-    ///   method). `Fiber#dup` succeeds in real Ruby but would need a copied
-    ///   coroutine we can't build -- rejected loudly rather than aliased
-    ///   silently.
-    pub fn dup_value(&self, copy_frozen: bool) -> RubyValue {
+    /// - `Thread`/`Ractor`: `TypeError: allocator undefined`;
+    ///   `Queue`/`SizedQueue`: `NoMethodError: undefined method
+    ///   'initialize_copy'`; a mid-iteration `Enumerator`: `TypeError:
+    ///   can't copy execution context` -- all real, rescuable raises
+    ///   (messages oracle-verified against ruby 4.0.5).
+    /// - `Fiber`: succeeds, yielding an UNINITIALIZED fiber -- CRuby's
+    ///   shallow copy skips the machine stack, so resuming the copy raises
+    ///   `FiberError: uninitialized fiber` while the original still works
+    ///   (oracle-verified; see `fiber::dup_uninitialized`).
+    pub fn dup_value(&self, copy_frozen: bool) -> Result<RubyValue, crate::Signal> {
         let keep_frozen = copy_frozen && self.is_frozen();
-        match self {
+        Ok(match self {
             RubyValue::Nil
             | RubyValue::Bool(_)
             | RubyValue::Int(_)
@@ -1175,11 +1177,10 @@ impl RubyValue {
                 fresh
             }
             // A never-iterated (or finished) enumerator copies as a fresh
-            // one over the same source; a LIVE iteration can't be copied
-            // (CRuby raises "can't copy execution context").
+            // one over the same source; a LIVE iteration can't be copied.
             RubyValue::Enumerator(e) => {
                 if e.iteration_live() {
-                    panic!("can't copy execution context (an Enumerator mid external iteration; CRuby raises TypeError)");
+                    return Err(type_error!("can't copy execution context"));
                 }
                 let fresh = e.fresh_copy();
                 if keep_frozen {
@@ -1190,11 +1191,31 @@ impl RubyValue {
             // A yielder is just a handle onto the driving block -- the
             // reference copy is indistinguishable (the Proc posture above).
             RubyValue::Yielder(_) => self.clone(),
-            RubyValue::Fiber(_) => panic!("Fiber#dup/clone isn't supported yet (spike scope: the backing coroutine can't be copied)"),
-            RubyValue::Thread(_) => panic!("can't dup/clone a Thread (TypeError: allocator undefined for Thread; spike scope: raised as a panic)"),
-            RubyValue::Queue(_) => panic!("can't dup/clone a Queue (NoMethodError: undefined method 'initialize_copy'; spike scope: raised as a panic)"),
-            RubyValue::Ractor(_) => panic!("can't dup/clone a Ractor (TypeError: allocator undefined for Ractor; spike scope: raised as a panic)"),
-        }
+            RubyValue::Fiber(f) => {
+                let fresh = crate::fiber::dup_uninitialized(f);
+                if keep_frozen {
+                    fresh.set_frozen();
+                }
+                RubyValue::Fiber(fresh)
+            }
+            RubyValue::Thread(_) => {
+                return Err(type_error!("allocator undefined for Thread"));
+            }
+            RubyValue::Queue(q) => {
+                let kind = if crate::thread::queue_is_sized(q) {
+                    "Thread::SizedQueue"
+                } else {
+                    "Thread::Queue"
+                };
+                return Err(crate::dispatch::raise_error(
+                    "NoMethodError",
+                    format!("undefined method 'initialize_copy' for an instance of {kind}"),
+                ));
+            }
+            RubyValue::Ractor(_) => {
+                return Err(type_error!("allocator undefined for Ractor"));
+            }
+        })
     }
 
     /// `case`/`when`'s and `case`/`in`'s value-pattern matching escape hatch
@@ -1518,15 +1539,18 @@ mod tests {
         let s = RubyValue::Str(string_new("abc".to_string()));
         s.freeze_value().unwrap();
 
-        assert!(!s.dup_value(false).is_frozen(), "dup of frozen is unfrozen");
         assert!(
-            s.dup_value(true).is_frozen(),
+            !s.dup_value(false).unwrap().is_frozen(),
+            "dup of frozen is unfrozen"
+        );
+        assert!(
+            s.dup_value(true).unwrap().is_frozen(),
             "clone of frozen stays frozen"
         );
 
         let unfrozen = RubyValue::Str(string_new("abc".to_string()));
         assert!(
-            !unfrozen.dup_value(true).is_frozen(),
+            !unfrozen.dup_value(true).unwrap().is_frozen(),
             "clone of unfrozen stays unfrozen"
         );
     }
@@ -1539,12 +1563,18 @@ mod tests {
     fn freeze_covers_the_handle_kinds_and_queue_refuses() {
         let p = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
         assert!(!p.is_frozen());
-        let d = p.dup_value(false);
+        let d = p.dup_value(false).unwrap();
         p.freeze_value().unwrap();
         assert!(p.is_frozen(), "proc latches");
         assert!(!d.is_frozen(), "earlier dup keeps its own flag");
-        assert!(p.dup_value(true).is_frozen(), "clone copies the flag");
-        assert!(!p.dup_value(false).is_frozen(), "dup drops the flag");
+        assert!(
+            p.dup_value(true).unwrap().is_frozen(),
+            "clone copies the flag"
+        );
+        assert!(
+            !p.dup_value(false).unwrap().is_frozen(),
+            "dup drops the flag"
+        );
 
         let m = crate::mutex_new();
         m.freeze_value().unwrap();
@@ -1566,14 +1596,14 @@ mod tests {
     #[test]
     fn dup_copies_the_top_level_payload() {
         let a = array_new(vec![RubyValue::Int(1)]);
-        let copy = RubyValue::Array(a.clone()).dup_value(false);
+        let copy = RubyValue::Array(a.clone()).dup_value(false).unwrap();
         array_push(&copy.as_array_unchecked(), RubyValue::Int(2));
 
         assert_eq!(a.lock().len(), 1);
         assert_eq!(copy.as_array_unchecked().lock().len(), 2);
 
         let h = hash_new(vec![(sym("a"), RubyValue::Int(1))]);
-        let hcopy = RubyValue::Hash(h.clone()).dup_value(false);
+        let hcopy = RubyValue::Hash(h.clone()).dup_value(false).unwrap();
         hash_set(&hcopy.as_hash_unchecked(), sym("b"), RubyValue::Int(2));
 
         assert_eq!(h.lock().len(), 1);
@@ -1591,7 +1621,7 @@ mod tests {
     fn dup_is_shallow_nested_values_are_shared() {
         let inner = array_new(vec![RubyValue::Int(9)]);
         let outer = array_new(vec![RubyValue::Array(inner.clone())]);
-        let copy = RubyValue::Array(outer).dup_value(false);
+        let copy = RubyValue::Array(outer).dup_value(false).unwrap();
 
         let copied_inner = copy.as_array_unchecked().lock()[0].as_array_unchecked();
         assert!(std::sync::Arc::ptr_eq(&inner, &copied_inner));
@@ -1607,15 +1637,15 @@ mod tests {
             RubyValue::Float(1.5),
             sym("s"),
         ] {
-            assert!(v.dup_value(false).rb_eq(&v));
-            assert!(v.dup_value(true).rb_eq(&v));
+            assert!(v.dup_value(false).unwrap().rb_eq(&v));
+            assert!(v.dup_value(true).unwrap().rb_eq(&v));
         }
         let r = RubyValue::Range(
             Some(Box::new(RubyValue::Int(1))),
             Some(Box::new(RubyValue::Int(3))),
             false,
         );
-        assert_eq!(r.dup_value(false).inspect_string(), "1..3");
+        assert_eq!(r.dup_value(false).unwrap().inspect_string(), "1..3");
     }
 
     /// Element-wise `==` (retiring "conservatively compare
@@ -1692,19 +1722,23 @@ mod tests {
         );
     }
 
-    /// One representative of the rejected tier (Thread/Queue/Ractor/Fiber
-    /// all take the same loud-panic arm; Queue is the only one
-    /// constructible without a running `may`/coroutine context).
+    /// One representative of the raising tier (Thread/Ractor raise
+    /// `allocator undefined`, Queue/SizedQueue `initialize_copy`; Queue is
+    /// the only one constructible without a running `may`/coroutine
+    /// context). Registry-less unit tests see `raise_error`'s loud-panic
+    /// fallback; the rescuable shape is pinned by e2e.
     #[test]
-    #[should_panic(expected = "can't dup/clone a Queue")]
-    fn dup_of_a_queue_panics_loudly() {
-        crate::queue_new().dup_value(false);
+    #[should_panic(
+        expected = "NoMethodError: undefined method 'initialize_copy' for an instance of Thread::Queue"
+    )]
+    fn dup_of_a_queue_raises() {
+        let _ = crate::queue_new().dup_value(false);
     }
 
     #[test]
     fn dup_of_a_mutex_makes_a_fresh_unlocked_mutex() {
         let m = crate::mutex_new();
-        let copy = m.dup_value(false);
+        let copy = m.dup_value(false).unwrap();
         let (RubyValue::Mutex(a), RubyValue::Mutex(b)) = (&m, &copy) else {
             panic!("expected two mutexes")
         };

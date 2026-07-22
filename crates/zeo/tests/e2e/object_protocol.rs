@@ -973,3 +973,42 @@ fn freeze_matrix_covers_the_handle_kinds_and_queue_refuses() {
          true\ntrue\ntrue\nTypeError: cannot freeze #<Thread\nfalse\ntrue\n"
     );
 }
+
+#[test]
+fn dup_and_clone_of_uncopyable_handles_raise_cruby_shapes() {
+    // The former loud-panic tier is real, rescuable raises now -- every
+    // message verbatim from ruby 4.0.5. Fiber is the special one: CRuby's
+    // shallow copy succeeds but skips the machine stack, so the COPY is an
+    // uninitialized fiber (resume raises) while the original still runs.
+    // Concurrent join/value on one Thread hands every joiner the outcome.
+    let result = run_ruby(
+        r#"
+        begin; Thread.current.dup; rescue TypeError => e; puts "thread: #{e.message}"; end
+        begin; Queue.new.clone; rescue NoMethodError => e; puts "queue: #{e.message}"; end
+        begin; SizedQueue.new(1).dup; rescue NoMethodError => e; puts "sq: #{e.message}"; end
+        g = Fiber.new { 42 }.dup
+        begin; g.resume; rescue FiberError => e; puts "fiber: #{e.message}"; end
+        f = Fiber.new { 7 }
+        f.dup
+        puts "orig: #{f.resume}"
+        e = [1, 2].each
+        e.next
+        begin; e.dup; rescue TypeError => ex; puts "enum: #{ex.message}"; end
+        t = Thread.new { sleep 0.05; :done }
+        a = Thread.new { t.value }
+        b = Thread.new { t.value }
+        puts "joins: #{a.value} #{b.value}"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "thread: allocator undefined for Thread\n\
+         queue: undefined method 'initialize_copy' for an instance of Thread::Queue\n\
+         sq: undefined method 'initialize_copy' for an instance of Thread::SizedQueue\n\
+         fiber: uninitialized fiber\n\
+         orig: 7\n\
+         enum: can't copy execution context\n\
+         joins: done done\n"
+    );
+}

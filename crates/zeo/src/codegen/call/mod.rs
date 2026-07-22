@@ -1510,7 +1510,7 @@ fn dispatch(
                         )
                     }
                 }
-                _ => quote! { (#recv_expr).dup_value(#copy_frozen) },
+                _ => quote! { (#recv_expr).dup_value(#copy_frozen)? },
             };
         }
     }
@@ -1532,6 +1532,7 @@ fn dispatch(
                 })
                 .collect();
             let dead = raise::emit_fiber_error(cx, "attempt to resume a terminated fiber");
+            let uninit = raise::emit_fiber_error(cx, "uninitialized fiber");
             let double =
                 raise::emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
             let cross = raise::emit_fiber_error(cx, "fiber called across threads");
@@ -1544,6 +1545,9 @@ fn dispatch(
                     zeo_rt::FiberResume::RubyError(__sig) => return Err(__sig),
                     zeo_rt::FiberResume::Dead => {
                         return Err(zeo_rt::Signal::Raise(#dead))
+                    }
+                    zeo_rt::FiberResume::Uninitialized => {
+                        return Err(zeo_rt::Signal::Raise(#uninit))
                     }
                     zeo_rt::FiberResume::DoubleResume => {
                         return Err(zeo_rt::Signal::Raise(#double))
@@ -1566,6 +1570,7 @@ fn dispatch(
                 })
                 .collect();
             let dead = raise::emit_fiber_error(cx, "attempt to resume a terminated fiber");
+            let uninit = raise::emit_fiber_error(cx, "uninitialized fiber");
             let double =
                 raise::emit_fiber_error(cx, "attempt to resume a resumed fiber (double resume)");
             let cross = raise::emit_fiber_error(cx, "fiber called across threads");
@@ -1578,6 +1583,9 @@ fn dispatch(
                     zeo_rt::FiberResume::RubyError(__sig) => return Err(__sig),
                     zeo_rt::FiberResume::Dead => {
                         return Err(zeo_rt::Signal::Raise(#dead))
+                    }
+                    zeo_rt::FiberResume::Uninitialized => {
+                        return Err(zeo_rt::Signal::Raise(#uninit))
                     }
                     zeo_rt::FiberResume::DoubleResume => {
                         return Err(zeo_rt::Signal::Raise(#double))
