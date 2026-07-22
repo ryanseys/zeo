@@ -1874,3 +1874,107 @@ fn symbol_to_proc_arity_and_io_fcntl() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "-2\n[\"X\", \"Y\"]\nInteger\n");
 }
+
+// --- Binary output fidelity (print/puts/putc/write/<<) ----------------
+//
+// The display pipeline used to promote a BINARY string's high bytes to
+// UTF-8 on the way to the fd (`0xB4` -> `0xC2 0xB4`), corrupting
+// bm_ao_render's and bm_so_mandelbrot's image output byte streams. The
+// whole print family now accumulates and writes RAW bytes; these tests
+// pin the byte streams through a File round-trip (assertions stay ASCII
+// via `bytes`), all outputs oracle-verified.
+
+#[test]
+fn print_of_binary_chr_strings_reaches_the_file_byte_for_byte() {
+    let result = run_ruby(
+        r#"
+        path = "/tmp/zeo_e2e_binprint_#{Process.pid}"
+        File.open(path, "wb") { |f| f.print 180.chr, 0.chr, 255.chr }
+        p File.binread(path).bytes
+        File.delete(path)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[180, 0, 255]\n");
+}
+
+#[test]
+fn puts_of_binary_strings_adds_newlines_without_reencoding() {
+    // The second argument already ends in a newline BYTE -- `puts` must
+    // not double it, and the 0xB5 byte must survive un-promoted.
+    let result = run_ruby(
+        r#"
+        path = "/tmp/zeo_e2e_binputs_#{Process.pid}"
+        File.open(path, "wb") { |f| f.puts 180.chr, (181.chr + "\n") }
+        p File.binread(path).bytes
+        File.delete(path)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[180, 10, 181, 10]\n");
+}
+
+#[test]
+fn putc_writes_one_byte_of_an_integer_and_one_character_of_a_string() {
+    // `0x1B4` truncates to its low byte; a BINARY string contributes its
+    // first BYTE (never a UTF-8 promotion of it).
+    let result = run_ruby(
+        r#"
+        path = "/tmp/zeo_e2e_binputc_#{Process.pid}"
+        File.open(path, "wb") { |f| f.putc 0x1b4; f.putc 180.chr + "xx" }
+        p File.binread(path).bytes
+        File.delete(path)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[180, 180]\n");
+}
+
+#[test]
+fn io_write_sends_raw_bytes_and_answers_the_byte_count() {
+    // 1 binary byte + 2 UTF-8 bytes for "é" + 2 display bytes for 42 = 5;
+    // the count is BYTES, not characters.
+    let result = run_ruby(
+        r#"
+        path = "/tmp/zeo_e2e_binwrite_#{Process.pid}"
+        File.open(path, "wb") { |f| p f.write(180.chr, "é", 42) }
+        p File.binread(path).bytes
+        File.delete(path)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "5\n[180, 195, 169, 52, 50]\n");
+}
+
+#[test]
+fn io_shovel_chains_binary_and_text_arguments_byte_faithfully() {
+    let result = run_ruby(
+        r#"
+        path = "/tmp/zeo_e2e_binshovel_#{Process.pid}"
+        File.open(path, "wb") { |f| f << 180.chr << "a" }
+        p File.binread(path).bytes
+        File.delete(path)
+        p STDOUT.write("")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[180, 97]\n0\n");
+}
+
+#[test]
+fn stdout_receives_a_binary_strings_raw_byte() {
+    // The harness captures stdout lossily, so the RAW 0xB4 byte surfaces
+    // as one U+FFFD replacement char -- while the old promoted output
+    // (0xC2 0xB4) decoded "cleanly" as U+00B4. The replacement char IS
+    // the proof the byte reached the fd untouched; the byte-count return
+    // (1, not 2) pins it from a second angle.
+    let result = run_ruby(
+        r#"
+        n = $stdout.write(180.chr)
+        puts
+        p n
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\u{FFFD}\n1\n");
+}

@@ -1486,7 +1486,9 @@ fn aliasing_a_genuinely_undefined_method_is_a_runtime_name_error() {
     );
     assert!(!result.status.success());
     assert!(
-        result.stderr.contains("undefined method 'undefined_method'"),
+        result
+            .stderr
+            .contains("undefined method 'undefined_method'"),
         "stderr: {}",
         result.stderr
     );

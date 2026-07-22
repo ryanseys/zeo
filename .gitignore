@@ -7,3 +7,6 @@ conformance/gem-compat.md
 
 # Local scratch: full rubygems name list, a resource for finding gems to test
 conformance/gemlist.txt
+
+# Generated per-compile gem-disclosure records (zeo CLI)
+zeo-gems.json

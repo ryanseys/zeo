@@ -35,25 +35,40 @@ FFI corpus port findings (2026-07-21, from the spinel-intrinsic -> real
 ffi gem test port; 25/29 pass): Proc -> C-function-pointer marshaling
 unimplemented (parse/ffi.rs resolves `callback` tags to plain `:pointer`);
 `:varargs` missing from `ffi_type_of`; binary `Digest#digest` bytes get
-UTF-8-transcoded through concat/pack/Base64 (zeo-rt string-encoding bug,
-likely affects other binary-data tests); `OpenSSL::Random` implemented in
-ext/openssl.rs but never registered in zeo-abi.
+UTF-8-transcoded through concat/pack/Base64 (the CONCAT and OUTPUT legs
+are fixed -- `StrBuf::push_buf` byte concat + raw-byte print family; the
+pack/Base64/format legs still funnel through lossy text and need the same
+treatment -- re-probe the digest tests when touching them);
+`OpenSSL::Random` implemented in ext/openssl.rs but never registered in
+zeo-abi.
 
 # Benchmark-suite gaps (same probe discipline)
 
-Three of the 58 vendored benchmarks fail; `bench/baseline.tsv` records the
-other 55. Each is a real bug, not a harness artifact:
+One of the 58 vendored benchmarks still fails:
 
 | benchmark | failure | blocker |
 |---|---|---|
-| bm_ao_render | compiler PANIC | nested escaping block capturing its enclosing BLOCK's local (documented spike-scope limit in codegen/call/procs.rs:104 -- but it must become a diagnostic, and the capture shape must land for real programs) |
 | bm_linked_list | runtime stack overflow | deep recursion overflows the `may` coroutine's 2MB stack (`coroutine ... has overflowed its stack, size=2097152`); the OS-thread + GVL migration (plan P3, 8MiB stacks) resolves it structurally |
-| bm_so_mandelbrot | output mismatch | genuine divergence in the generated program's output (binary PBM differs from the oracle at line 3) -- miscompilation or runtime arithmetic bug; triage by diffing intermediate rows |
 
-Also: `bm_life`'s RUBY-oracle timing leg fails (`ruby bench/bm_life.rb`
-exits 1 while the compiled zeo binary matches `.expected`) -- triage
-whether the benchmark depends on something environment-specific or the
-`.expected` was recorded from a different oracle state.
+Closed 2026-07-21:
+
+- bm_ao_render (ex compiler PANIC): the nested-Proc guard ran BEFORE the
+  capture-cell machinery classified a deeper block's own local -- now it
+  panics only for a name nobody in the subtree assigns (a genuine read of
+  an enclosing block's plain per-invocation `let`). Output byte-identical
+  to `.expected` after the byte-output fix below.
+- bm_so_mandelbrot + bm_ao_render output mismatches (one root cause): the
+  print family accumulated through the lossy DISPLAY text, promoting
+  BINARY high bytes to UTF-8 (`0xB4` -> `0xC2 0xB4`) on the way to the fd.
+  print/puts/putc/`IO#write`/`#<<` now accumulate and write RAW bytes
+  (`io::display_bytes`/`write_bytes`/`write_value`), and `String#+`/`<<`/
+  `*` concatenate raw bytes under CRuby's encoding-compatibility rule
+  (`StrBuf::push_buf`; incompatible pairs raise
+  `Encoding::CompatibilityError` with CRuby's message). Both benchmarks
+  now byte-identical to `.expected`.
+- bm_life "oracle exits 1": NOT reproducible -- `ruby bench/bm_life.rb`
+  exits 0 across repeated runs and matches `.expected`, as does the zeo
+  binary. Transient environment artifact, closed without action.
 
 Perf root causes found (2026-07-21):
 

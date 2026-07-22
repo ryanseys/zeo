@@ -542,3 +542,103 @@ fn awk_split_limits_and_gsub_block_backref() {
          \"x10\"\n",
     );
 }
+
+// --- Concatenation under encoding compatibility -----------------------
+//
+// `+`/`<<`/`*` used to funnel through the lossy display text, promoting a
+// BINARY string's high bytes to UTF-8 (`0xB5` -> `0xC2 0xB5`) -- the bug
+// that corrupted digest/pack bytes through concatenation. They now do raw
+// byte concatenation under CRuby's compatibility rule (`StrBuf::push_buf`).
+// All outputs oracle-verified.
+
+#[test]
+fn string_plus_concatenates_raw_bytes_under_the_compatibility_rule() {
+    let result = run_ruby(
+        r#"
+        s = 181.chr + "\n"
+        p s.encoding
+        p s.bytes
+        a = "x".encode("US-ASCII")
+        p (a + "y").encoding
+        p ("y" + a).encoding
+        p ("abc" + 200.chr).encoding
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "#<Encoding:BINARY (ASCII-8BIT)>\n[181, 10]\n#<Encoding:US-ASCII>\n\
+         #<Encoding:UTF-8>\n#<Encoding:BINARY (ASCII-8BIT)>\n"
+    );
+}
+
+#[test]
+fn string_shovel_appends_bytes_and_codepoints_in_the_receivers_encoding() {
+    // `"".b << 181` is the single raw byte 0xB5; a UTF-8 receiver encodes
+    // the codepoint (an emoji is 4 bytes); a binary append composes.
+    let result = run_ruby(
+        r#"
+        b = "".b
+        b << 181
+        p b.bytes
+        u = +"xy"
+        u << 0x1F600
+        p u.bytesize
+        c = 180.chr
+        c << 5.chr
+        p c.bytes
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[181]\n6\n[180, 5]\n");
+}
+
+#[test]
+fn string_times_repeats_raw_bytes_keeping_the_encoding() {
+    let result = run_ruby(
+        r#"
+        r = 180.chr * 3
+        p r.bytes
+        p r.encoding
+        p ("ab" * 2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[180, 180, 180]\n#<Encoding:BINARY (ASCII-8BIT)>\n\"abab\"\n"
+    );
+}
+
+#[test]
+fn incompatible_concatenation_raises_the_compatibility_error() {
+    // Two differently-encoded NON-7-bit strings; CRuby's exact message,
+    // receiver's encoding first in its `inspect` form. `<<` past 255 on a
+    // byte-encoded receiver is the RangeError, not a promotion.
+    let result = run_ruby(
+        r#"
+        begin
+          "é".b + "é"
+        rescue Encoding::CompatibilityError => e
+          puts "plus: #{e.message}"
+        end
+        begin
+          ("é".b) << "é"
+        rescue Encoding::CompatibilityError => e
+          puts "shovel: #{e.message}"
+        end
+        begin
+          "".b << 0x1F600
+        rescue RangeError => e
+          puts "range: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "plus: incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8\n\
+         shovel: incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8\n\
+         range: 128512 out of char range\n"
+    );
+}
