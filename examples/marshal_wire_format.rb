@@ -55,3 +55,9 @@ class Version
 end
 puts wire(Version.new(258))
 p rt(Version.new(65535)).n
+
+# `C`: a subclass of a value builtin marshals the inherited body inline.
+class Tag < String; end
+puts wire(Tag.new("v1"))
+t = rt(Tag.new("v1"))
+puts "#{t.class} #{t.upcase}"

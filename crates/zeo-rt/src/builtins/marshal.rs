@@ -5,13 +5,14 @@
 //! Supported tags mirror CRuby's `marshal.c`: `0`/`T`/`F` (nil/bool), `i`
 //! (fixnum), `l` (bignum), `f` (float), `:`/`;` (symbol + link), `"` (string),
 //! `[`/`{` (array/hash), `/` (regexp), `c`/`m` (class/module reference), `o`
-//! (plain object + ivars), `S` (Struct), `U` (`marshal_dump`/`marshal_load`),
-//! `u` (`_dump`/`_load`), and the `I` ivar-wrapper that carries a string's or
-//! regexp's encoding (`E => true` UTF-8, `E => false` US-ASCII, `encoding =>
-//! "<name>"` otherwise; ASCII-8BIT strings carry no wrapper). Rational/Complex
-//! keep their own `U` fast paths so they load without a Ruby-level
-//! `marshal_load`. Not yet handled: `C` (builtin subclass) and `e` (extended),
-//! which need runtime builtin-subclass values.
+//! (plain object + ivars), `S` (Struct), `C` (value-builtin subclass), `U`
+//! (`marshal_dump`/`marshal_load`), `u` (`_dump`/`_load`), and the `I`
+//! ivar-wrapper that carries a string's or regexp's encoding (`E => true`
+//! UTF-8, `E => false` US-ASCII, `encoding => "<name>"` otherwise; ASCII-8BIT
+//! strings carry no wrapper) plus any user ivars on a `C` body.
+//! Rational/Complex keep their own `U` fast paths so they load without a
+//! Ruby-level `marshal_load`. Not yet handled: `e` (a singleton-extended
+//! object), which needs a runtime `extend` on the loaded instance.
 
 use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::collections::{
@@ -60,27 +61,28 @@ builtin_methods! {
     }
 }
 
-/// An instance variable carried by an `I`-wrapper. Only ever an encoding, since
-/// this runtime's strings/regexps store no user ivars (plain objects write
-/// their ivars inline under the `o` tag instead).
-enum EncIvar {
+/// An instance variable carried by an `I`-wrapper: a string/regexp encoding, or
+/// (for a `C` builtin-subclass body) a plain user instance variable.
+enum Iv {
     /// `E => true` (UTF-8) or `E => false` (US-ASCII).
-    Bool(bool),
+    EncBool(bool),
     /// `encoding => "<name>"` for any other encoding.
-    Name(&'static str),
+    EncName(&'static str),
+    /// A user instance variable (`@x => value`), name `@`-prefixed as stored.
+    Named(String, RubyValue),
 }
 
 /// The `I`-wrapper ivar for a string/regexp of encoding `enc`, or `None` for
 /// ASCII-8BIT (which CRuby writes bare, with no wrapper).
-fn encoding_ivar(enc: EncodingId) -> Option<EncIvar> {
+fn encoding_ivar(enc: EncodingId) -> Option<Iv> {
     if enc == UTF_8 {
-        Some(EncIvar::Bool(true))
+        Some(Iv::EncBool(true))
     } else if enc == US_ASCII {
-        Some(EncIvar::Bool(false))
+        Some(Iv::EncBool(false))
     } else if enc == ASCII_8BIT {
         None
     } else {
-        Some(EncIvar::Name(enc.name()))
+        Some(Iv::EncName(enc.name()))
     }
 }
 
@@ -127,7 +129,7 @@ impl Writer {
                 if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
-                let ivars: Vec<EncIvar> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+                let ivars: Vec<Iv> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
                 if !ivars.is_empty() {
                     self.out.push(b'I');
                 }
@@ -135,7 +137,7 @@ impl Writer {
                 self.out.push(b'"');
                 let bytes = rs.lock().bytes().to_vec();
                 self.write_bytes(&bytes);
-                self.write_ivars(&ivars);
+                self.write_ivars(&ivars)?;
             }
             RubyValue::Regexp(re) => {
                 if self.check_link(ptr_of(v)) {
@@ -149,7 +151,7 @@ impl Writer {
                 } else {
                     UTF_8
                 };
-                let ivars: Vec<EncIvar> = encoding_ivar(enc).into_iter().collect();
+                let ivars: Vec<Iv> = encoding_ivar(enc).into_iter().collect();
                 if !ivars.is_empty() {
                     self.out.push(b'I');
                 }
@@ -157,7 +159,7 @@ impl Writer {
                 self.out.push(b'/');
                 self.write_bytes(re.source.as_bytes());
                 self.out.push(regexp_options(re));
-                self.write_ivars(&ivars);
+                self.write_ivars(&ivars)?;
             }
             RubyValue::Array(a) => {
                 if self.check_link(ptr_of(v)) {
@@ -219,8 +221,8 @@ impl Writer {
     }
 
     /// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
-    /// -> `U`, else `_dump` -> `u`, else a Struct -> `S`, else a plain `o` with
-    /// inline ivars.
+    /// -> `U`, else `_dump` -> `u`, else a Struct -> `S`, else a value-builtin
+    /// subclass -> `C`, else a plain `o` with inline ivars.
     fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {
         let cid = o.class_id();
         let name = class_name(cid).unwrap_or_default();
@@ -245,7 +247,7 @@ impl Writer {
             let RubyValue::Str(rs) = &result else {
                 return Err(type_error!("_dump() must return string"));
             };
-            let ivars: Vec<EncIvar> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+            let ivars: Vec<Iv> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
             if !ivars.is_empty() {
                 self.out.push(b'I');
             }
@@ -253,7 +255,7 @@ impl Writer {
             self.write_symbol(&name);
             let bytes = rs.lock().bytes().to_vec();
             self.write_bytes(&bytes);
-            self.write_ivars(&ivars);
+            self.write_ivars(&ivars)?;
             return Ok(());
         }
 
@@ -272,6 +274,31 @@ impl Writer {
             return Ok(());
         }
 
+        // A value-builtin subclass (`class Tag < String`) -> `C`: the class
+        // symbol then the inherited builtin's body inline, `I`-wrapped for the
+        // string encoding and any user ivars.
+        if let Some(payload) = o.builtin_payload() {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            let mut ivars: Vec<Iv> = Vec::new();
+            if let RubyValue::Str(rs) = &payload {
+                ivars.extend(encoding_ivar(rs.lock().encoding()));
+            }
+            for (iname, ival) in o.ivar_pairs() {
+                ivars.push(Iv::Named(iname, ival));
+            }
+            if !ivars.is_empty() {
+                self.out.push(b'I');
+            }
+            self.register_link(ptr_of(v));
+            self.out.push(b'C');
+            self.write_symbol(&name);
+            self.write_builtin_body(&payload)?;
+            self.write_ivars(&ivars)?;
+            return Ok(());
+        }
+
         if self.check_link(ptr_of(v)) {
             return Ok(());
         }
@@ -283,6 +310,44 @@ impl Writer {
         for (iname, ival) in ivars {
             self.write_symbol(&iname);
             self.write(&ival)?;
+        }
+        Ok(())
+    }
+
+    /// Write a value-builtin subclass's inherited body INLINE (no `I`-wrapper,
+    /// no separate link -- the `C` object owns the link): the string bytes,
+    /// array elements, or hash pairs of the wrapped payload.
+    fn write_builtin_body(&mut self, payload: &RubyValue) -> Result<(), Signal> {
+        match payload {
+            RubyValue::Str(rs) => {
+                self.out.push(b'"');
+                let bytes = rs.lock().bytes().to_vec();
+                self.write_bytes(&bytes);
+            }
+            RubyValue::Array(a) => {
+                self.out.push(b'[');
+                let len = array_len(a);
+                self.write_long(len);
+                for i in 0..len {
+                    let e = array_get(a, i);
+                    self.write(&e)?;
+                }
+            }
+            RubyValue::Hash(h) => {
+                self.out.push(b'{');
+                let pairs = hash_pairs(h);
+                self.write_long(pairs.len() as i64);
+                for (k, val) in pairs {
+                    self.write(&k)?;
+                    self.write(&val)?;
+                }
+            }
+            other => {
+                return Err(type_error!(
+                    "can't dump {} subclass payload",
+                    crate::builtins::class_name_of(other)
+                ));
+            }
         }
         Ok(())
     }
@@ -319,24 +384,30 @@ impl Writer {
     }
 
     /// The ivar list of an `I`-wrapper: a length then symbol/value pairs. `E`
-    /// takes a bare bool; `encoding` takes a linkable name string.
-    fn write_ivars(&mut self, ivars: &[EncIvar]) {
+    /// takes a bare bool; `encoding` takes a linkable name string; a user ivar
+    /// takes a recursively-marshaled value.
+    fn write_ivars(&mut self, ivars: &[Iv]) -> Result<(), Signal> {
         if ivars.is_empty() {
-            return;
+            return Ok(());
         }
         self.write_long(ivars.len() as i64);
         for iv in ivars {
             match iv {
-                EncIvar::Bool(b) => {
+                Iv::EncBool(b) => {
                     self.write_symbol("E");
                     self.out.push(if *b { b'T' } else { b'F' });
                 }
-                EncIvar::Name(n) => {
+                Iv::EncName(n) => {
                     self.write_symbol("encoding");
                     self.write_encoding_name(n);
                 }
+                Iv::Named(name, val) => {
+                    self.write_symbol(name);
+                    self.write(val)?;
+                }
             }
         }
+        Ok(())
     }
 
     /// The `encoding => "<name>"` value: a bare (`"`) string that joins the
@@ -523,6 +594,7 @@ impl Reader<'_> {
             b'l' => self.read_bignum(),
             b'c' => self.read_class_ref(),
             b'm' => self.read_class_ref(),
+            b'C' => self.read_subclass(),
             b'S' => self.read_struct(),
             b'U' => self.read_user_marshal(),
             b'u' => self.read_userdef(false),
@@ -622,6 +694,50 @@ impl Reader<'_> {
         }
         let v = crate::builtins::rstruct::struct_construct(cid, &values, None)?;
         self.objects[idx] = v.clone();
+        Ok(v)
+    }
+
+    /// `C`: a value-builtin subclass. The class symbol then its inherited
+    /// builtin body INLINE (a `"`/`[`/`{` tag), read into a fresh payload of the
+    /// subclass's root kind and seated -- the payload shares the `C` object's
+    /// link, so the body is NOT read as a separate object.
+    fn read_subclass(&mut self) -> Result<RubyValue, Signal> {
+        let idx = self.objects.len();
+        self.objects.push(RubyValue::Nil);
+        let cls = self.read_symbol_name()?;
+        let cid =
+            class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
+        let body_tag = self.byte()?;
+        let payload = match body_tag {
+            b'"' => RubyValue::Str(string_from_bytes(self.read_bytes()?, ASCII_8BIT)),
+            b'[' => RubyValue::Array(array_new(Vec::new())),
+            b'{' => RubyValue::Hash(hash_new(Vec::new())),
+            other => return Err(arg_error!("bad subclass body (0x{other:x})")),
+        };
+        let obj = crate::builtins::value_subclass::marshal_alloc(cid, payload.clone())
+            .ok_or_else(|| type_error!("{cls} is not a subclass of a marshalable builtin"))?;
+        let v = RubyValue::Object(obj);
+        self.objects[idx] = v.clone();
+        // Fill the collection payloads now that the subclass is linkable (so a
+        // self-referential element resolves to `@idx`).
+        match (body_tag, &payload) {
+            (b'[', RubyValue::Array(arr)) => {
+                let len = self.read_long()?;
+                for _ in 0..len {
+                    let e = self.read()?;
+                    array_push(arr, e);
+                }
+            }
+            (b'{', RubyValue::Hash(h)) => {
+                let n = self.read_long()?;
+                for _ in 0..n {
+                    let k = self.read()?;
+                    let val = self.read()?;
+                    hash_set(h, k, val);
+                }
+            }
+            _ => {}
+        }
         Ok(v)
     }
 
@@ -812,11 +928,18 @@ fn truthy(v: &RubyValue) -> bool {
     !matches!(v, RubyValue::Nil | RubyValue::Bool(false))
 }
 
-/// Retag a string's encoding in place; a no-op for any other value (a regexp's
+/// Retag a string's encoding in place -- for a bare string or a string-rooted
+/// value-subclass payload (`C`). A no-op for any other value (a regexp's
 /// encoding isn't stored, and other types carry no `E` ivar).
 fn set_string_encoding(v: &RubyValue, enc: EncodingId) {
-    if let RubyValue::Str(s) = v {
-        s.lock().set_encoding(enc);
+    match v {
+        RubyValue::Str(s) => s.lock().set_encoding(enc),
+        RubyValue::Object(o) => {
+            if let Some(RubyValue::Str(s)) = o.builtin_payload() {
+                s.lock().set_encoding(enc);
+            }
+        }
+        _ => {}
     }
 }
 

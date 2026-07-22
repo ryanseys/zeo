@@ -139,6 +139,15 @@ pub fn is_payload_root(id: ClassId) -> bool {
     matches!(id, ARRAY_CLASS | STRING_CLASS | HASH_CLASS)
 }
 
+/// Allocate a value-subclass instance of `class_id` directly around `payload`,
+/// bypassing `initialize` -- `Marshal.load`'s `C`-tag path, which seats the
+/// deserialized builtin body itself. `None` when `class_id` isn't a value
+/// subclass (no payload root in its ancestry).
+pub fn marshal_alloc(class_id: ClassId, payload: RubyValue) -> Option<RObj> {
+    let root = value_root_of(class_id)?;
+    Some(ValueSubclass::alloc(class_id, root, payload))
+}
+
 /// The payload root a value-subclass id inherits from -- the first payload-root
 /// builtin in its linearized ancestry (so a multi-level `B < A < Array` finds
 /// `Array`). `None` for a non-value-subclass.
