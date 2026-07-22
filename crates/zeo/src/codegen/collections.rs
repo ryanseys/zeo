@@ -198,9 +198,11 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
         StrPart::Interp(n) => {
             let e = emit_expr(cx, *n);
             // Boxed if Object-typed: interpolation reaches
-            // `to_display_string`, which dispatches a user-defined `to_s`.
+            // `try_display_string`, which dispatches a user-defined `to_s`
+            // -- and a RAISING one propagates via `?` (catchable at the
+            // interpolation site, CRuby's rule).
             let e = super::expr::box_if_object_typed(cx, *n, e);
-            quote! { __s.push_str(&(#e).to_display_string()); }
+            quote! { __s.push_str(&(#e).try_display_string()?); }
         }
     });
     quote! {
@@ -229,7 +231,7 @@ fn string_lit_bytes_piece(cx: &Ctx, part: &StrPart) -> TokenStream {
         }
         StrPart::Interp(n) => {
             let e = super::expr::box_if_object_typed(cx, *n, emit_expr(cx, *n));
-            quote! { __b.extend_from_slice((#e).to_display_string().as_bytes()); }
+            quote! { __b.extend_from_slice((#e).try_display_string()?.as_bytes()); }
         }
     }
 }
@@ -258,8 +260,11 @@ pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> Token
                 quote! { __pat.push_str(#s); }
             }
             StrPart::Interp(n) => {
-                let e = emit_expr(cx, *n);
-                quote! { __pat.push_str(&(#e).to_display_string()); }
+                // Boxed if Object-typed, same as string interpolation: the
+                // display protocol dispatches a user `to_s` and needs a
+                // `RubyValue` receiver.
+                let e = box_if_object_typed(cx, *n, emit_expr(cx, *n));
+                quote! { __pat.push_str(&(#e).try_display_string()?); }
             }
         });
         quote! {

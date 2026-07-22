@@ -95,13 +95,15 @@ fn render(spec: &Spec, arg: &RubyValue) -> Result<Rendered, Signal> {
     }
     Ok(match spec.conv {
         's' => {
-            let mut s = arg.to_display_string();
+            // Fallible: `format("%s", obj)` with a raising `to_s`
+            // propagates (catchable, CRuby's rule).
+            let mut s = arg.try_display_string()?;
             if let Some(p) = spec.precision {
                 s = s.chars().take(p).collect();
             }
             Rendered::plain(s)
         }
-        'p' => Rendered::plain(arg.inspect_string()),
+        'p' => Rendered::plain(arg.try_inspect_string()?),
         'd' | 'i' | 'u' => {
             let n = to_int_for_format(arg)?;
             let mut body = n.magnitude().to_string();
@@ -455,7 +457,7 @@ pub fn sprintf(template: &str, args: &[RubyValue]) -> Result<String, Signal> {
                     // `%{name}` is a complete directive: the value as-is (`%s`).
                     chars.next();
                     let name = read_until(&mut chars, '}')?;
-                    out.push_str(&named_get(args, &name)?.to_display_string());
+                    out.push_str(&named_get(args, &name)?.try_display_string()?);
                     continue 'directive;
                 }
                 Some('*') => {

@@ -3034,3 +3034,122 @@ fn frozen_collection_mutator_matrix_matches_cruby() {
          hash shift: FrozenError: can't modify frozen Hash: {k: 1}\n"
     );
 }
+
+#[test]
+fn raising_to_s_and_inspect_propagate_catchably_through_every_display_consumer() {
+    // The fallible-display contract: a user `to_s`/`inspect` that raises
+    // surfaces as a CATCHABLE exception from puts/print/p/warn/format/
+    // interpolation (string and regexp)/Array+Hash to_s -- never a
+    // runtime panic. Partial-output rules are CRuby's own: puts/print/p
+    // flush what rendered before the raise, warn flushes nothing.
+    // Expected output is verbatim ruby 4.0.5.
+    let result = run_ruby(
+        r##"
+        class Boom
+          def to_s
+            raise "to_s boom"
+          end
+          def inspect
+            raise "inspect boom"
+          end
+        end
+        b = Boom.new
+        begin
+          puts b
+        rescue => e
+          puts "puts: #{e.class}: #{e.message}"
+        end
+        begin
+          print b
+        rescue => e
+          puts "print: #{e.class}: #{e.message}"
+        end
+        begin
+          x = "v=#{b}"
+        rescue => e
+          puts "interp: #{e.class}: #{e.message}"
+        end
+        begin
+          p b
+        rescue => e
+          puts "p: #{e.class}: #{e.message}"
+        end
+        begin
+          s = format("%s", b)
+        rescue => e
+          puts "format s: #{e.class}: #{e.message}"
+        end
+        begin
+          s = format("%p", b)
+        rescue => e
+          puts "format p: #{e.class}: #{e.message}"
+        end
+        begin
+          puts [1, b, 2]
+        rescue => e
+          puts "puts arr: #{e.class}: #{e.message}"
+        end
+        begin
+          p [1, b]
+        rescue => e
+          puts "p arr: #{e.class}: #{e.message}"
+        end
+        begin
+          puts({ k: b }.to_s)
+        rescue => e
+          puts "hash to_s: #{e.class}: #{e.message}"
+        end
+        puts "still running"
+        begin
+          p 1, b
+        rescue => e
+          puts "p multi: #{e.class}: #{e.message}"
+        end
+        begin
+          print "x", b
+        rescue => e
+          puts "print multi: #{e.class}: #{e.message}"
+        end
+        puts
+        begin
+          warn "w1", b
+        rescue => e
+          puts "warn multi: #{e.class}: #{e.message}"
+        end
+        begin
+          s = "pat#{b}"
+        rescue => e
+          puts "interp2: #{e.class}: #{e.message}"
+        end
+        begin
+          r = /x#{b}/
+        rescue => e
+          puts "regexp interp: #{e.class}: #{e.message}"
+        end
+        puts "end"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "puts: RuntimeError: to_s boom\n\
+         print: RuntimeError: to_s boom\n\
+         interp: RuntimeError: to_s boom\n\
+         p: RuntimeError: inspect boom\n\
+         format s: RuntimeError: to_s boom\n\
+         format p: RuntimeError: inspect boom\n\
+         1\n\
+         puts arr: RuntimeError: to_s boom\n\
+         p arr: RuntimeError: inspect boom\n\
+         hash to_s: RuntimeError: inspect boom\n\
+         still running\n\
+         1\n\
+         p multi: RuntimeError: inspect boom\n\
+         xprint multi: RuntimeError: to_s boom\n\
+         \n\
+         warn multi: RuntimeError: to_s boom\n\
+         interp2: RuntimeError: to_s boom\n\
+         regexp interp: RuntimeError: to_s boom\n\
+         end\n"
+    );
+}

@@ -190,32 +190,48 @@ pub(crate) fn default_object_repr(
     o: &crate::RObj,
     with_ivars: bool,
     seen: &mut Vec<usize>,
-) -> String {
+) -> Result<String, crate::Signal> {
     let name = crate::dispatch::class_name(o.class_id()).unwrap_or_else(|| "Object".to_string());
     let addr = std::sync::Arc::as_ptr(o) as *const () as usize;
     if !with_ivars {
-        return format!("#<{name}:0x{addr:016x}>");
+        return Ok(format!("#<{name}:0x{addr:016x}>"));
     }
     if seen.contains(&addr) {
-        return format!("#<{name}:0x{addr:016x} ...>");
+        return Ok(format!("#<{name}:0x{addr:016x} ...>"));
     }
     let pairs = o.ivar_pairs();
     if pairs.is_empty() {
-        return format!("#<{name}:0x{addr:016x}>");
+        return Ok(format!("#<{name}:0x{addr:016x}>"));
     }
     seen.push(addr);
     let body = pairs
         .iter()
-        .map(|(n, v)| format!("{n}={}", v.inspect_with(seen)))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .map(|(n, v)| Ok(format!("{n}={}", v.inspect_with(seen)?)))
+        .collect::<Result<Vec<_>, crate::Signal>>();
     seen.pop();
-    format!("#<{name}:0x{addr:016x} {body}>")
+    Ok(format!("#<{name}:0x{addr:016x} {}>", body?.join(", ")))
 }
 
 impl RubyValue {
     /// Mirrors `sp_*_to_s`/CRuby's `Kernel#puts` argument stringification.
+    ///
+    /// INFALLIBLE wrapper over [`Self::try_display_string`] for the paths
+    /// that have no exception channel (the `Debug` impl, error-message
+    /// construction inside builtins): a user `to_s`/`inspect` that RAISES
+    /// mid-render panics here. Every user-reachable display consumer
+    /// (`puts`/`p`/`print`/interpolation/`format`/exception reporting)
+    /// uses the fallible form, so the raise is catchable where Ruby says
+    /// it is.
     pub fn to_display_string(&self) -> String {
+        self.try_display_string().unwrap_or_else(|_| {
+            panic!("a user-defined `to_s` raised inside an infallible display path")
+        })
+    }
+
+    /// `to_display_string`'s fallible form: a user-defined `to_s` (or a
+    /// nested element's `inspect`) that raises propagates as its `Signal`,
+    /// exactly like CRuby's own `rb_obj_as_string` call chain.
+    pub fn try_display_string(&self) -> Result<String, crate::Signal> {
         self.display_with(&mut Vec::new())
     }
 
@@ -226,28 +242,27 @@ impl RubyValue {
     /// the guard). A self-referential `Array`/`Hash` prints CRuby's own
     /// recursion markers (`[...]`/`{...}`) instead of deadlocking on its
     /// own non-reentrant payload `Mutex` (the pre-15.2 behavior).
-    fn display_with(&self, seen: &mut Vec<usize>) -> String {
+    fn display_with(&self, seen: &mut Vec<usize>) -> Result<String, crate::Signal> {
         // A builtin-reopen `to_s` override wins -- real Ruby's
         // behavior for `puts`/interpolation, oracle-verified (`class
         // Integer; def to_s; "int"; end` makes `puts 5`/`"v=#{5}"` print
         // "int"). Object receivers keep their own registry probe in the
         // match below; the result's payload is taken directly when it's a
         // `Str` (re-dispatching would re-probe the same override forever
-        // for an identity-shaped `to_s`).
+        // for an identity-shaped `to_s`). A RAISING override propagates --
+        // `puts obj` with a raising `to_s` is a catchable exception in
+        // Ruby, not a crash.
         if !matches!(self, RubyValue::Object(_)) {
             if let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("to_s"))
             {
-                return match f(self, &[], None) {
-                    Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-                    Ok(other) => other.display_with(seen),
-                    Err(_) => panic!(
-                        "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
-                    ),
+                return match f(self, &[], None)? {
+                    RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+                    other => other.display_with(seen),
                 };
             }
         }
-        match self {
+        Ok(match self {
             RubyValue::Nil => String::new(),
             RubyValue::Bool(b) => b.to_string(),
             RubyValue::Int(i) => i.to_string(),
@@ -270,17 +285,16 @@ impl RubyValue {
             RubyValue::Array(a) => {
                 let ptr = container_identity(self).expect("Array is a container");
                 if seen.contains(&ptr) {
-                    return "[...]".to_string();
+                    return Ok("[...]".to_string());
                 }
                 seen.push(ptr);
                 let body = a
                     .lock()
                     .iter()
                     .map(|e| e.inspect_with(seen))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Result<Vec<_>, _>>();
                 seen.pop();
-                format!("[{body}]")
+                format!("[{}]", body?.join(", "))
             }
             // An approximation of `Hash#inspect` (symbol keys as `key:
             // value`, everything else as `key => value`) -- good enough for
@@ -291,7 +305,7 @@ impl RubyValue {
             RubyValue::Hash(h) => {
                 let ptr = container_identity(self).expect("Hash is a container");
                 if seen.contains(&ptr) {
-                    return "{...}".to_string();
+                    return Ok("{...}".to_string());
                 }
                 seen.push(ptr);
                 // `Hash#to_s` IS `#inspect`, so keys and values render in
@@ -299,47 +313,46 @@ impl RubyValue {
                 let body = h
                     .lock()
                     .values()
-                    .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!(
-                            "{}: {}",
-                            crate::builtins::symbol::hash_key(&s.name()),
-                            v.inspect_with(seen)
-                        ),
-                        _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
+                    .map(|(k, v)| {
+                        Ok(match k {
+                            RubyValue::Symbol(s) => format!(
+                                "{}: {}",
+                                crate::builtins::symbol::hash_key(&s.name()),
+                                v.inspect_with(seen)?
+                            ),
+                            _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
+                        })
                     })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Result<Vec<_>, crate::Signal>>();
                 seen.pop();
-                format!("{{{body}}}")
+                format!("{{{}}}", body?.join(", "))
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start
-                    .as_ref()
-                    .map(|b| b.display_with(seen))
-                    .unwrap_or_default();
-                let e = end
-                    .as_ref()
-                    .map(|b| b.display_with(seen))
-                    .unwrap_or_default();
+                let s = match start {
+                    Some(b) => b.display_with(seen)?,
+                    None => String::new(),
+                };
+                let e = match end {
+                    Some(b) => b.display_with(seen)?,
+                    None => String::new(),
+                };
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
             // A user-defined `to_s` wins (dispatched through
-            // the registry so inherited/mixed-in definitions resolve); the
-            // default is CRuby's `#<Class:0xADDR>` (no ivars -- that's
-            // `inspect`'s job). The address is normalized by the conformance
-            // harness (see `default_object_repr`).
+            // the registry so inherited/mixed-in definitions resolve, and a
+            // RAISING one propagates); the default is CRuby's
+            // `#<Class:0xADDR>` (no ivars -- that's `inspect`'s job). The
+            // address is normalized by the conformance harness (see
+            // `default_object_repr`).
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, "to_s", &[]) {
-                    Some(Ok(v)) => v.display_with(seen),
-                    Some(Err(_)) => panic!(
-                        "a user-defined `to_s` raised inside stringification (spike scope: no exception channel here)"
-                    ),
+                    Some(v) => v?.display_with(seen)?,
                     // A value-builtin subclass (D3) with no `to_s` override
                     // renders as its payload (`Array#to_s` etc.).
                     None => match o.builtin_payload() {
-                        Some(p) => p.display_with(seen),
-                        None => default_object_repr(o, false, seen),
+                        Some(p) => p.display_with(seen)?,
+                        None => default_object_repr(o, false, seen)?,
                     },
                 }
             }
@@ -347,9 +360,9 @@ impl RubyValue {
             // `Regexp#to_s` -- real Ruby's `(?opts-negopts:body)` form (NOT
             // the `/pattern/flags` literal form, that's `#inspect`'s job --
             // see `regexp::regexp_to_s`'s docs).
-            RubyValue::Regexp(re) => crate::regexp::regexp_to_s(re).to_display_string(),
+            RubyValue::Regexp(re) => crate::regexp::regexp_to_s(re).display_with(seen)?,
             // `MatchData#to_s` -- the whole matched substring.
-            RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).to_display_string(),
+            RubyValue::MatchData(m) => crate::regexp::matchdata_to_s(m).display_with(seen)?,
             // Same placeholder posture as `Object`/`Proc` above.
             RubyValue::Fiber(_) => "#<Fiber>".to_string(),
             // The real CRuby shape (`#<Enumerator: [1, 2]:each>`) -- to_s
@@ -372,7 +385,7 @@ impl RubyValue {
             RubyValue::Class(cid) => {
                 crate::dispatch::class_name(*cid).unwrap_or_else(|| format!("#<Class:{}>", cid.0))
             }
-        }
+        })
     }
 
     /// Mirrors `#inspect` -- the receiver-rendering half of a `FrozenError`
@@ -388,7 +401,18 @@ impl RubyValue {
     /// table). A SELF-REFERENTIAL `Array`/`Hash` prints CRuby's own
     /// recursion markers (`[1, [...]]` / `{k: {...}}`, oracle-verified) via
     /// the shared visited-stack guard -- see `container_identity`.
+    /// INFALLIBLE wrapper -- same contract as [`Self::to_display_string`]
+    /// (panics if a user `inspect` raises; the user-reachable consumers use
+    /// [`Self::try_inspect_string`]).
     pub fn inspect_string(&self) -> String {
+        self.try_inspect_string().unwrap_or_else(|_| {
+            panic!("a user-defined `inspect` raised inside an infallible display path")
+        })
+    }
+
+    /// `inspect_string`'s fallible form -- a raising user `inspect`
+    /// propagates as its `Signal` (CRuby's `rb_inspect` behavior).
+    pub fn try_inspect_string(&self) -> Result<String, crate::Signal> {
         self.inspect_with(&mut Vec::new())
     }
 
@@ -397,27 +421,25 @@ impl RubyValue {
     /// is chosen by the RECURRING container's own kind, so a cycle that
     /// enters through a Hash back into an outer Array prints `[...]` at the
     /// Array's re-entry point (`[1, {x: [...]}]`, oracle-verified).
-    fn inspect_with(&self, seen: &mut Vec<usize>) -> String {
+    fn inspect_with(&self, seen: &mut Vec<usize>) -> Result<String, crate::Signal> {
         // A builtin-reopen `inspect` override wins -- and it
         // propagates into CONTAINER rendering too (`[5].inspect` ->
         // `[I<5>]` with an `Integer#inspect` override -- real Ruby's
         // `rb_inspect` dispatches per element, oracle-verified), which this
         // probe's position inside the recursive worker reproduces. Same
-        // `Str`-payload shortcut as `display_with`'s probe.
+        // `Str`-payload shortcut as `display_with`'s probe; a raising
+        // override propagates.
         if !matches!(self, RubyValue::Object(_)) {
             if let Some(f) =
                 crate::dispatch::value_method(self.class_id(), 0, crate::Symbol::intern("inspect"))
             {
-                return match f(self, &[], None) {
-                    Ok(RubyValue::Str(s)) => s.lock().to_utf8_lossy().into_owned(),
-                    Ok(other) => other.display_with(seen),
-                    Err(_) => panic!(
-                        "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
-                    ),
+                return match f(self, &[], None)? {
+                    RubyValue::Str(s) => Ok(s.lock().to_utf8_lossy().into_owned()),
+                    other => other.display_with(seen),
                 };
             }
         }
-        match self {
+        Ok(match self {
             RubyValue::Nil => "nil".to_string(),
             // The parenthesized inspect forms (`(3/4)` / `(1+2i)`) vs the
             // bare `to_s` ones -- oracle-verified.
@@ -430,79 +452,76 @@ impl RubyValue {
             RubyValue::Array(a) => {
                 let ptr = container_identity(self).expect("Array is a container");
                 if seen.contains(&ptr) {
-                    return "[...]".to_string();
+                    return Ok("[...]".to_string());
                 }
                 seen.push(ptr);
                 let body = a
                     .lock()
                     .iter()
                     .map(|e| e.inspect_with(seen))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Result<Vec<_>, _>>();
                 seen.pop();
-                format!("[{body}]")
+                format!("[{}]", body?.join(", "))
             }
             // Ruby 3.4+ `Hash#inspect` format: `{a: 1, "k" => 2}` -- symbol
             // keys as `name: value` with no braces-padding spaces.
             RubyValue::Hash(h) => {
                 let ptr = container_identity(self).expect("Hash is a container");
                 if seen.contains(&ptr) {
-                    return "{...}".to_string();
+                    return Ok("{...}".to_string());
                 }
                 seen.push(ptr);
                 let body = h
                     .lock()
                     .values()
-                    .map(|(k, v)| match k {
-                        RubyValue::Symbol(s) => format!(
-                            "{}: {}",
-                            crate::builtins::symbol::hash_key(&s.name()),
-                            v.inspect_with(seen)
-                        ),
-                        _ => format!("{} => {}", k.inspect_with(seen), v.inspect_with(seen)),
+                    .map(|(k, v)| {
+                        Ok(match k {
+                            RubyValue::Symbol(s) => format!(
+                                "{}: {}",
+                                crate::builtins::symbol::hash_key(&s.name()),
+                                v.inspect_with(seen)?
+                            ),
+                            _ => format!("{} => {}", k.inspect_with(seen)?, v.inspect_with(seen)?),
+                        })
                     })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Result<Vec<_>, crate::Signal>>();
                 seen.pop();
-                format!("{{{body}}}")
+                format!("{{{}}}", body?.join(", "))
             }
             RubyValue::Range(start, end, exclusive) => {
-                let s = start
-                    .as_ref()
-                    .map(|b| b.inspect_with(seen))
-                    .unwrap_or_default();
-                let e = end
-                    .as_ref()
-                    .map(|b| b.inspect_with(seen))
-                    .unwrap_or_default();
+                let s = match start {
+                    Some(b) => b.inspect_with(seen)?,
+                    None => String::new(),
+                };
+                let e = match end {
+                    Some(b) => b.inspect_with(seen)?,
+                    None => String::new(),
+                };
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
-            RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).to_display_string(),
+            RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).display_with(seen)?,
             RubyValue::MatchData(m) => crate::regexp::matchdata_inspect(m),
-            // A user-defined `inspect` wins; the default is
-            // CRuby's `#<Class:0xADDR @iv=val, ...>` -- address plus the
-            // object's ivars, each inspected, in field-declaration order (see
-            // `default_object_repr`). NO fallback to a user `to_s` (real
-            // Ruby's inspect is independent of to_s).
+            // A user-defined `inspect` wins (a raising one propagates); the
+            // default is CRuby's `#<Class:0xADDR @iv=val, ...>` -- address
+            // plus the object's ivars, each inspected, in field-declaration
+            // order (see `default_object_repr`). NO fallback to a user
+            // `to_s` (real Ruby's inspect is independent of to_s).
             RubyValue::Object(o) => {
                 match crate::dispatch::call_user_method(o, "inspect", &[]) {
-                    Some(Ok(v)) => v.display_with(seen),
-                    Some(Err(_)) => panic!(
-                        "a user-defined `inspect` raised inside inspection (spike scope: no exception channel here)"
-                    ),
+                    Some(v) => v?.display_with(seen)?,
                     // A value-builtin subclass (D3) with no `inspect` override
                     // inspects as its payload (`[1, 2, 3]`).
                     None => match o.builtin_payload() {
-                        Some(p) => p.inspect_with(seen),
-                        None => default_object_repr(o, true, seen),
+                        Some(p) => p.inspect_with(seen)?,
+                        None => default_object_repr(o, true, seen)?,
                     },
                 }
             }
             // `Bool`/`Int`/`Float`/`Proc`: `#inspect` and `#to_s` agree
             // (or share the same placeholder approximation).
-            other => other.display_with(seen),
-        }
+            other => other.display_with(seen)?,
+        })
     }
 
     /// This value's runtime class -- the UNIVERSAL counterpart to

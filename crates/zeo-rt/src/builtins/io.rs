@@ -291,7 +291,7 @@ pub fn write_value(target: &RubyValue, v: &RubyValue) -> Result<i64, Signal> {
         )?;
         return Ok(bytes.len() as i64);
     }
-    let s = v.to_display_string();
+    let s = v.try_display_string()?;
     write_str(target, &s)?;
     Ok(s.len() as i64)
 }
@@ -300,25 +300,28 @@ pub fn write_value(target: &RubyValue, v: &RubyValue) -> Result<i64, Signal> {
 /// its own encoding, every other value's display rendering (UTF-8). The
 /// `print`/`puts` family accumulates through this so binary strings
 /// survive to the fd byte-for-byte.
-pub fn display_bytes(v: &RubyValue, buf: &mut Vec<u8>) {
+pub fn display_bytes(v: &RubyValue, buf: &mut Vec<u8>) -> Result<(), Signal> {
     match v {
         RubyValue::Str(s) => buf.extend_from_slice(s.lock().bytes()),
-        other => buf.extend_from_slice(other.to_display_string().as_bytes()),
+        // Fallible: a user `to_s` that raises propagates out of the
+        // `print`/`puts` family as a catchable exception (CRuby's rule).
+        other => buf.extend_from_slice(other.try_display_string()?.as_bytes()),
     }
+    Ok(())
 }
 
 /// `puts`'s rendering into a BYTE buffer (a String arg contributes its raw
 /// bytes -- see `display_bytes`): every arg on its own line, arrays
 /// flattened recursively, `[...]` for a self-referential array, a bare
 /// newline for no args / an empty array -- CRuby's exact shapes.
-pub fn render_puts(args: &[RubyValue], buf: &mut Vec<u8>) {
-    fn put_one(v: &RubyValue, seen: &mut Vec<usize>, buf: &mut Vec<u8>) {
+pub fn render_puts(args: &[RubyValue], buf: &mut Vec<u8>) -> Result<(), Signal> {
+    fn put_one(v: &RubyValue, seen: &mut Vec<usize>, buf: &mut Vec<u8>) -> Result<(), Signal> {
         match v {
             RubyValue::Array(a) => {
                 let id = Arc::as_ptr(a) as usize;
                 if seen.contains(&id) {
                     buf.extend_from_slice(b"[...]\n");
-                    return;
+                    return Ok(());
                 }
                 seen.push(id);
                 let items = a.lock().clone();
@@ -326,25 +329,27 @@ pub fn render_puts(args: &[RubyValue], buf: &mut Vec<u8>) {
                     buf.push(b'\n');
                 }
                 for e in &items {
-                    put_one(e, seen, buf);
+                    put_one(e, seen, buf)?;
                 }
                 seen.pop();
             }
             other => {
                 let start = buf.len();
-                display_bytes(other, buf);
+                display_bytes(other, buf)?;
                 if buf.len() == start || buf.last() != Some(&b'\n') {
                     buf.push(b'\n');
                 }
             }
         }
+        Ok(())
     }
     if args.is_empty() {
         buf.push(b'\n');
     }
     for a in args {
-        put_one(a, &mut Vec::new(), buf);
+        put_one(a, &mut Vec::new(), buf)?;
     }
+    Ok(())
 }
 
 fn recv_io(recv: &RubyValue) -> Result<&RubyValue, Signal> {
@@ -360,8 +365,10 @@ fn io_puts(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
-    render_puts(args, &mut buf);
+    // Flush-then-propagate on a raising `to_s` -- see `kernel_puts`.
+    let rendered = render_puts(args, &mut buf);
     write_bytes(recv_io(recv)?, &buf)?;
+    rendered?;
     Ok(RubyValue::Nil)
 }
 
@@ -371,10 +378,16 @@ fn io_print(
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
+    let mut rendered = Ok(());
     for a in args {
-        display_bytes(a, &mut buf);
+        if let Err(sig) = display_bytes(a, &mut buf) {
+            rendered = Err(sig);
+            break;
+        }
     }
+    // Flush-then-propagate on a raising `to_s` -- see `kernel_puts`.
     write_bytes(recv_io(recv)?, &buf)?;
+    rendered?;
     Ok(RubyValue::Nil)
 }
 
@@ -1218,7 +1231,7 @@ fn io_pwrite(
     crate::builtins::arity!(args, 2);
     let bytes = match &args[0] {
         RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned().into_bytes(),
-        other => other.to_display_string().into_bytes(),
+        other => other.try_display_string()?.into_bytes(),
     };
     let offset = offset_of(&args[1])?.max(0) as u64;
     with_file(recv, |f, path| {
@@ -1422,7 +1435,7 @@ fn io_printf(
             "wrong number of arguments (given 0, expected 1+)"
         ));
     };
-    let s = crate::builtins::format::sprintf(&fmt.to_display_string(), &args[1..])?;
+    let s = crate::builtins::format::sprintf(&fmt.try_display_string()?, &args[1..])?;
     write_str(recv_io(recv)?, &s)?;
     Ok(RubyValue::Nil)
 }
@@ -2060,23 +2073,23 @@ mod tests {
         // not the Latin-1 -> UTF-8 promotion `0xC2 0xB4` that corrupted
         // bm_ao_render/bm_so_mandelbrot's image output.
         let mut buf = Vec::new();
-        display_bytes(&bin(&[0xb4]), &mut buf);
+        display_bytes(&bin(&[0xb4]), &mut buf).unwrap();
         assert_eq!(buf, [0xb4]);
     }
 
     #[test]
     fn display_bytes_renders_utf8_strings_and_non_strings_as_display_text() {
         let mut buf = Vec::new();
-        display_bytes(&s("héllo"), &mut buf);
-        display_bytes(&RubyValue::Int(42), &mut buf);
-        display_bytes(&RubyValue::Nil, &mut buf); // `print nil` -> ""
+        display_bytes(&s("héllo"), &mut buf).unwrap();
+        display_bytes(&RubyValue::Int(42), &mut buf).unwrap();
+        display_bytes(&RubyValue::Nil, &mut buf).unwrap(); // `print nil` -> ""
         assert_eq!(buf, "héllo42".as_bytes());
     }
 
     #[test]
     fn display_bytes_keeps_every_byte_of_a_longer_binary_string() {
         let mut buf = Vec::new();
-        display_bytes(&bin(&[0x00, 0x7f, 0x80, 0xff]), &mut buf);
+        display_bytes(&bin(&[0x00, 0x7f, 0x80, 0xff]), &mut buf).unwrap();
         assert_eq!(buf, [0x00, 0x7f, 0x80, 0xff]);
     }
 
@@ -2085,17 +2098,17 @@ mod tests {
     #[test]
     fn render_puts_writes_a_bare_newline_for_no_args_and_empty_arrays() {
         let mut buf = Vec::new();
-        render_puts(&[], &mut buf);
+        render_puts(&[], &mut buf).unwrap();
         assert_eq!(buf, b"\n");
         buf.clear();
-        render_puts(&[RubyValue::Array(crate::array_new(Vec::new()))], &mut buf);
+        render_puts(&[RubyValue::Array(crate::array_new(Vec::new()))], &mut buf).unwrap();
         assert_eq!(buf, b"\n");
     }
 
     #[test]
     fn render_puts_adds_one_newline_and_never_doubles_a_trailing_one() {
         let mut buf = Vec::new();
-        render_puts(&[s("a"), s("b\n")], &mut buf);
+        render_puts(&[s("a"), s("b\n")], &mut buf).unwrap();
         assert_eq!(buf, b"a\nb\n");
     }
 
@@ -2104,18 +2117,18 @@ mod tests {
         let inner = RubyValue::Array(crate::array_new(vec![s("b"), s("c")]));
         let outer = RubyValue::Array(crate::array_new(vec![s("a"), inner]));
         let mut buf = Vec::new();
-        render_puts(&[outer], &mut buf);
+        render_puts(&[outer], &mut buf).unwrap();
         assert_eq!(buf, b"a\nb\nc\n");
     }
 
     #[test]
     fn render_puts_preserves_binary_bytes_and_still_terminates_the_line() {
         let mut buf = Vec::new();
-        render_puts(&[bin(&[0xb4])], &mut buf);
+        render_puts(&[bin(&[0xb4])], &mut buf).unwrap();
         assert_eq!(buf, [0xb4, b'\n']);
         // A binary string ENDING in 0x0A already has its line ending.
         buf.clear();
-        render_puts(&[bin(&[0xb4, b'\n'])], &mut buf);
+        render_puts(&[bin(&[0xb4, b'\n'])], &mut buf).unwrap();
         assert_eq!(buf, [0xb4, b'\n']);
     }
 
@@ -2124,7 +2137,7 @@ mod tests {
         let arr = crate::array_new(vec![s("a")]);
         arr.lock().push(RubyValue::Array(arr.clone()));
         let mut buf = Vec::new();
-        render_puts(&[RubyValue::Array(arr)], &mut buf);
+        render_puts(&[RubyValue::Array(arr)], &mut buf).unwrap();
         assert_eq!(buf, b"a\n[...]\n");
     }
 

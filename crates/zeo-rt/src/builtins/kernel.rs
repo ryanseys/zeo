@@ -398,11 +398,13 @@ builtin_methods! {
     }
     "to_s"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Str(crate::string_new(recv.to_display_string())))
+        // Fallible: `[obj].to_s` re-enters a user `inspect` per element,
+        // and a raising one propagates (catchable, CRuby's rule).
+        Ok(RubyValue::Str(crate::string_new(recv.try_display_string()?)))
     }
     "inspect"[0] => fn inspect(recv, args, _block) {
         arity!(args, 0);
-        Ok(RubyValue::Str(crate::string_new(recv.inspect_string())))
+        Ok(RubyValue::Str(crate::string_new(recv.try_inspect_string()?)))
     }
     // Kernel's default `===` is `==` (case subjects fall back to equality).
     "===" => fn case_eq(recv, args, _block) {
@@ -952,8 +954,13 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// and write plumbing.
 pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
-    crate::builtins::io::render_puts(args, &mut buf);
+    // A raising `to_s` mid-render still FLUSHES what rendered before it --
+    // CRuby writes line by line, so `puts [1, raiser]` prints "1" and then
+    // raises (oracle-verified). Rendering into one buffer and flushing
+    // before propagating reproduces that observable order.
+    let rendered = crate::builtins::io::render_puts(args, &mut buf);
     crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;
+    rendered?;
     Ok(RubyValue::Nil)
 }
 
@@ -988,7 +995,10 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
     for a in msgs {
         let start = buf.len();
-        crate::builtins::io::display_bytes(a, &mut buf);
+        // NO partial flush on a raising `to_s`: CRuby's `warn` renders the
+        // whole message before its one write (unlike `puts`/`print`/`p`),
+        // so nothing reaches stderr -- oracle-verified.
+        crate::builtins::io::display_bytes(a, &mut buf)?;
         if buf.len() == start || buf.last() != Some(&b'\n') {
             buf.push(b'\n');
         }
@@ -1001,13 +1011,26 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// nil / the single argument / the argument array (CRuby's exact shapes).
 pub fn kernel_p(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut buf = String::new();
+    // Fallible: a raising user `inspect` propagates out of `p` (catchable,
+    // CRuby's rule) -- after flushing the args already rendered, since
+    // CRuby's rb_f_p prints per argument.
+    let mut rendered = Ok(());
     for a in args {
-        buf.push_str(&a.inspect_string());
-        buf.push('\n');
+        match a.try_inspect_string() {
+            Ok(s) => {
+                buf.push_str(&s);
+                buf.push('\n');
+            }
+            Err(sig) => {
+                rendered = Err(sig);
+                break;
+            }
+        }
     }
     if !buf.is_empty() {
         crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
     }
+    rendered?;
     Ok(match args.len() {
         0 => RubyValue::Nil,
         1 => args[0].clone(),
@@ -1025,10 +1048,16 @@ pub fn kernel_pp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// what keeps `print 0xB4.chr` a single byte on the fd.
 pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     let mut buf = Vec::new();
+    let mut rendered = Ok(());
     for a in args {
-        crate::builtins::io::display_bytes(a, &mut buf);
+        if let Err(sig) = crate::builtins::io::display_bytes(a, &mut buf) {
+            rendered = Err(sig);
+            break;
+        }
     }
+    // Flush-then-propagate, same as `kernel_puts`.
     crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;
+    rendered?;
     Ok(RubyValue::Nil)
 }
 

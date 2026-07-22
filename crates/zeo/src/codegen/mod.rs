@@ -998,7 +998,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                             &[],
                             None,
                         )
-                        .map(|v| v.to_display_string())
+                        .and_then(|v| v.try_display_string())
                         .unwrap_or_default();
                         let __cls = zeo_rt::class_name_of_value(&__exc);
                         eprintln!("uncaught exception: {} ({})", __msg, __cls);
