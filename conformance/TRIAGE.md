@@ -6,7 +6,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be | 5 | issue_3193, issue_3194, issue_3197 | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>' |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b | 2 | issue_3119, issue_3002 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError) |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
 | g | arity-panic | 1 | str_method_nil_arg_no_segv | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |

@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **111 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `b60e95b`
+Suite `spinel` — **105 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `a59c214`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1477,60 +1477,6 @@ false
 
 ---
 
-## `exception_value_parity` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/exception_value_parity.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/exception_value_parity.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 11
---- expected (18 lines)
-true
-false
-false
-true
-false
-key not found: :missing_key
-key not found: :b
-5
-Math::DomainError
-Numerical argument is out of domain - sqrt
-NameError
-undefined method 'absent' for class 'Vis'
-false
-:foo
-NoMethodError
-#<ArgumentError: root>
-top
-#<ArgumentError: inner>
-
---- actual (18 lines)
-true
-false
-false
-true
-false
-key not found: :missing_key
-key not found: :b
-5
-Math::DomainError
-Numerical argument is out of domain - sqrt
-NoMethodError
-undefined method 'private' for class Vis
-false
-:foo
-NoMethodError
-#<ArgumentError: root>
-top
-#<ArgumentError: inner>
-```
-
----
-
 ## `ffi_callback` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb`
@@ -2308,7 +2254,7 @@ true
 
 --- actual (5 lines)
 C
-1535556214594812489
+3879926132606117613
 S
 P
 false
@@ -2753,95 +2699,6 @@ true
 
 ---
 
-## `issue_3135` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb:109:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (20 lines)
-1
-"hi"
-[1, 2]
-1
-9
-{a: 1, b: "hi", c: [1, 2], d: 9}
-true
-false
-OpenStruct
-#<OpenStruct a=1, b="hi", c=[1, 2], d=9>
-true
-false
-true
-true
-false
-nil
-{}
-"later"
-[#<OpenStruct x=1>, "s", 42]
-#<OpenStruct n=7>
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (3 lines)
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb:109:in '<main>'
-```
-
----
-
-## `issue_3155` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb:109:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (3 lines)
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb:109:in '<main>'
-```
-
----
-
 ## `issue_3163` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3163.rb`
@@ -2935,111 +2792,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uninitialized constant User (NameError)
-```
-
----
-
-## `issue_3193` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok3193
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (3 lines)
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>'
-```
-
----
-
-## `issue_3194` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb:109:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok3194
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (3 lines)
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb:109:in '<main>'
-```
-
----
-
-## `issue_3197` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb:109:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok3197
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (3 lines)
-/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
-	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb:109:in '<main>'
 ```
 
 ---
@@ -3691,7 +3443,7 @@ nil
 stderr:
 ```
 
-thread 'main' (108930683) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (109279236) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3765,7 +3517,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (108930683) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (109279236) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4362,7 +4114,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-31
+32
 diff
 ```
 

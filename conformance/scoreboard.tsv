@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=b60e95b
-# PASS=2184 FAIL_OUTPUT=109 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=a59c214
+# PASS=2190 FAIL_OUTPUT=103 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -616,7 +616,7 @@ exception_super_interpolated_message	PASS	-	-
 exception_super_message	PASS	-	-
 exception_user_subclass	PASS	-	-
 exception_value_flow_match	PASS	-	-
-exception_value_parity	FAIL_OUTPUT	expect	-
+exception_value_parity	PASS	-	-
 exit_poly_status	PASS	-	-
 expr_retry_equal_curry_methodobj	PASS	-	-
 extend_module	PASS	-	-
@@ -1275,7 +1275,7 @@ issue_3129	PASS	-	-
 issue_3130	PASS	-	-
 issue_3131	PASS	-	-
 issue_3132	PASS	-	-
-issue_3135	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3135	PASS	-	-
 issue_3135_norequire	PASS	-	-
 issue_3136	PASS	-	-
 issue_3137	PASS	-	-
@@ -1294,7 +1294,7 @@ issue_3151	PASS	-	-
 issue_3152	PASS	-	-
 issue_3153	PASS	-	-
 issue_3154	PASS	-	-
-issue_3155	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3155	PASS	-	-
 issue_3156	PASS	-	-
 issue_3157	PASS	-	-
 issue_3158	PASS	-	-
@@ -1331,10 +1331,10 @@ issue_3188	PASS	-	-
 issue_3189	PASS	-	-
 issue_3190	PASS	-	-
 issue_3191	PASS	-	-
-issue_3193	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
-issue_3194	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3193	PASS	-	-
+issue_3194	PASS	-	-
 issue_3196	PASS	-	-
-issue_3197	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3197	PASS	-	-
 issue_3198	PASS	-	-
 issue_3199	PASS	-	-
 iter_block_autosplat	PASS	-	-
