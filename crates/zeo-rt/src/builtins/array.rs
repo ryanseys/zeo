@@ -715,15 +715,14 @@ builtin_methods! {
     "zip" => fn zip(recv, args, block) {
         let base = recv_array!(recv).lock().clone();
         // CRuby's `take_items`: each source through `rb_check_array_type`
-        // (`to_ary` ducks accepted); a non-convertible source raises the
-        // respond-to-:each shape (the `each` fallback iteration itself is a
-        // documented gap).
+        // (`to_ary` ducks accepted); a non-convertible source falls back to
+        // iterating its own `each` (a Range, an Enumerator), and only a
+        // source with no `each` at all raises the respond-to shape.
         let others: Vec<Vec<RubyValue>> = args
             .iter()
             .map(|a| match convert::check_to_ary(a)? {
                 Some(RubyValue::Array(x)) => Ok(x.lock().clone()),
-                _ => Err(type_error!("wrong argument type {} (must respond to :each)",
-                        crate::builtins::class_name_of(a))),
+                _ => take_items_via_each(a, base.len()),
             })
             .collect::<Result<_, _>>()?;
         let out = base
@@ -1520,6 +1519,43 @@ fn walk_permutations(
         chosen.pop();
         used[i] = false;
     }
+}
+
+/// `zip`'s `:each` fallback (CRuby `take_items`): a source that isn't
+/// `to_ary`-convertible (a Range, an Enumerator) is iterated through its own
+/// `each`, collecting up to `n` values -- the collector breaks out at `n`
+/// exactly like CRuby's `rb_iter_break`, so an endless source terminates. A
+/// source with no `each` at all keeps the respond-to TypeError.
+fn take_items_via_each(src: &RubyValue, n: usize) -> Result<Vec<RubyValue>, crate::Signal> {
+    let each = crate::Symbol::intern("each");
+    if !crate::dispatch::responds_to_value(src, each, false) {
+        return Err(type_error!(
+            "wrong argument type {} (must respond to :each)",
+            crate::builtins::class_name_of(src)
+        ));
+    }
+    let out = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let sink = out.clone();
+    let collector = crate::RProc::new(move |a: &[RubyValue]| {
+        let mut g = sink.lock();
+        // A multi-value yield arrives as one row, like a block's array param.
+        g.push(match a {
+            [one] => one.clone(),
+            many => RubyValue::Array(crate::array_new(many.to_vec())),
+        });
+        if g.len() >= n {
+            return Err(crate::Signal::Break(RubyValue::Nil));
+        }
+        Ok(RubyValue::Nil)
+    });
+    match crate::dispatch::send_value(src, each, &[], Some(RubyValue::Proc(collector))) {
+        // The break either surfaces here or was absorbed by the iterator's
+        // own block-attach site -- both mean "stopped at n", not an error.
+        Ok(_) | Err(crate::Signal::Break(_)) => {}
+        Err(e) => return Err(e),
+    }
+    let items = out.lock().clone();
+    Ok(items)
 }
 
 /// Flattens nested arrays up to `depth` levels (`-1` = fully). Shared by

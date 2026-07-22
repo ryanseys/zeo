@@ -1060,9 +1060,7 @@ builtin_methods! {
     }
     "each_byte"[0] => fn each_byte(recv, args, block) {
         arity!(args, 0);
-        let Some(RubyValue::Proc(p)) = &block else {
-            return Err(crate::dispatch::raise_no_block_yield());
-        };
+        let p = block_or_enum!(recv, "each_byte", args, block);
         let bytes: Vec<u8> = recv_str!(recv).lock().bytes().to_vec();
         for b in bytes {
             p.call(&[RubyValue::Int(b as i64)])?;
