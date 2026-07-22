@@ -1146,6 +1146,161 @@ fn alias_captures_the_overriding_bodys_own_behavior_in_a_subclass() {
 }
 
 #[test]
+fn an_alias_of_the_inherited_builtin_raise_works_in_every_call_shape() {
+    // `alias_method :raise!, :raise` / `alias __raise__ raise` (ostruct's and
+    // delegate's shapes): the source is Kernel's BUILTIN raise -- no user
+    // `Scope` exists, so this used to be a compile error. Statically-resolved
+    // sites substitute into `emit_raise` (including the bare re-raise and the
+    // 3-arg form, whose custom-backtrace argument is evaluated and dropped);
+    // all outputs oracle-verified.
+    let result = run_ruby(
+        r#"
+        class Reporter
+          alias_method :raise!, :raise
+          def two_arg
+            raise! ArgumentError, "boom"
+          rescue ArgumentError => e
+            puts e.message
+          end
+          def re_raise
+            begin
+              raise IOError, "orig"
+            rescue
+              raise!
+            end
+          rescue IOError => e
+            puts e.message
+          end
+          def three_arg
+            raise! ArgumentError, "with-bt", caller(0)
+          rescue ArgumentError => e
+            puts e.message
+          end
+        end
+        class Failer
+          alias __raise__ raise
+          def go
+            __raise__ NotImplementedError, "need to define"
+          rescue NotImplementedError => e
+            puts e.message
+          end
+        end
+        r = Reporter.new
+        r.two_arg
+        r.re_raise
+        r.three_arg
+        Failer.new.go
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "boom\norig\nwith-bt\nneed to define\n");
+}
+
+#[test]
+fn an_alias_of_an_inherited_builtin_resolves_statically_dynamically_and_in_subclasses() {
+    // The general (non-raise) family: `dup!` for Object's `dup` becomes a
+    // registry NAME-INDIRECTION row (`register_alias`), consulted on the send
+    // MISS paths -- so a static call, a dynamic `send`, a subclass receiver,
+    // and an alias OF an alias all resolve. `respond_to?` answers through the
+    // source name, inheriting its visibility (`dup!` public, `raise!` private
+    // like `raise` itself). All outputs oracle-verified.
+    let result = run_ruby(
+        r#"
+        class Dupper
+          alias_method :dup!, :dup
+          alias_method :dup2!, :dup!
+          alias_method :raise!, :raise
+        end
+        class SubDupper < Dupper; end
+        puts Dupper.new.dup!.class
+        puts SubDupper.new.dup2!.class
+        puts SubDupper.new.send(:dup!).class
+        puts Dupper.new.respond_to?(:dup!)
+        puts Dupper.new.respond_to?(:raise!)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "Dupper\nSubDupper\nSubDupper\ntrue\nfalse\n");
+}
+
+#[test]
+fn an_alias_whose_source_resolves_nowhere_is_a_name_error_at_program_start() {
+    // `alias_method :foo, :nope_missing`: real Ruby raises NameError when the
+    // class body EXECUTES (runtime, not compile time) -- mirrored by
+    // `validate_aliases` at startup, with CRuby's message.
+    let result = run_ruby(
+        r#"
+        class Typo
+          alias_method :foo, :nope_missing
+        end
+        puts "unreached"
+        "#,
+    );
+    assert!(!result.status.success());
+    assert!(
+        result
+            .stderr
+            .contains("undefined method 'nope_missing' for class 'Typo' (NameError)"),
+        "stderr: {}",
+        result.stderr
+    );
+    assert_eq!(result.stdout, "");
+}
+
+#[test]
+fn kernel_raise_is_a_real_dispatch_row_reachable_through_send() {
+    // `obj.send(:raise, ...)` used to be NoMethodError (raise existed only as
+    // a parse-time lowering). Now a real Kernel row mirrors CRuby's
+    // `rb_make_exception`: class+message, bare re-raise from `$!`, a bare
+    // class defaulting its message to the class name, a String implying
+    // RuntimeError, and the non-exception TypeError. All oracle-verified.
+    let result = run_ruby(
+        r#"
+        o = Object.new
+        begin
+          o.send(:raise, ArgumentError, "via send")
+        rescue ArgumentError => e
+          puts e.message
+        end
+        begin
+          o.send(:raise, ArgumentError)
+        rescue ArgumentError => e
+          puts e.message
+        end
+        begin
+          o.send(:raise, "bare msg")
+        rescue RuntimeError => e
+          puts e.message
+        end
+        begin
+          o.send(:raise)
+        rescue RuntimeError => e
+          puts "[#{e.message}]"
+        end
+        begin
+          begin
+            raise IOError, "orig"
+          rescue
+            o.send(:raise)
+          end
+        rescue IOError => e
+          puts e.message
+        end
+        begin
+          o.send(:raise, 42)
+        rescue TypeError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "via send\nArgumentError\nbare msg\n[]\norig\nexception class/object expected\n"
+    );
+}
+
+#[test]
 fn class_shift_self_defines_multiple_class_methods_at_once() {
     let result = run_ruby(
         r#"

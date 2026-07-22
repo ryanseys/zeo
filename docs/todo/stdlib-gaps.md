@@ -8,8 +8,8 @@ now surfaced honestly instead of `cannot load such file`:
 | gem | status | blocker |
 |---|---|---|
 | tsort | **works** | -- |
-| ostruct | blocked | `alias_method :raise!, :raise` -- alias of an INHERITED builtin (Kernel) on a user class; plus the bulk `instance_methods.each { alias_method ... }` loop; attribute misses then need `method_missing` dispatch (plan M8) |
-| delegate | blocked | `alias __raise__ raise` -- same alias-of-inherited-builtin family |
+| ostruct | compiles | ex-alias-of-inherited-builtin, fixed (`alias_method :raise!, :raise` + the 3-arg `raise!` shape now work). Startup blockers remain: the bulk `give_access.each { alias_method "#{m}!", m }` loop runs as class-body code and needs a RUNTIME `alias_method` row on class receivers (deferred with the metaprogramming family), and `Warning[:performance]` needs a `Warning` module; attribute access then needs `method_missing` dispatch (plan M8) |
+| delegate | blocked | the `alias __raise__ raise` label was the SHALLOW symptom: it sits inside `kernel = ::Kernel.dup` + `kernel.class_eval do ... end` + `include kernel` -- Module#dup, block-form class_eval, and include-of-a-value are runtime metaprogramming (same territory as singleton's remaining blockers); lowering rejects the alias in BLOCK position |
 | shellwords | blocked | `class << self` body with `extend`/ivars (lowering handles only defs/constants/include/attr_*/private/alias) |
 | English | blocked | `alias $FULL_MATCH $&` -- alias of punctuation globals (lowering accepts only plain `$name` pairs) |
 | forwardable | blocked | a multi-assignment splat-target shape lowering rejects (`expected *name as a multi-assignment's splat target`) |
@@ -18,11 +18,18 @@ now surfaced honestly instead of `cannot load such file`:
 | prettyprint | **works** | ex-invalid-Rust, fixed: a later param default reading an earlier CAPTURED param (`width = sep.length`) now sees its capture cell (wraps interleave with bindings in parameter order); breakable/group line-breaking oracle-verified |
 | singleton | blocked (compiles) | ex-PANIC, now fixed: top-level `if defined?(Ractor)` guards fold at analyze time, extended-module `super` resolves the singleton chain, and Ruby methods named `clone` no longer hijack internal Arc clones. Remaining: `include Singleton` must fire the `Module.included` HOOK at runtime, `extend` on a CLASS receiver must install class methods (runtime_meta::runtime_extend only handles per-object singletons), and class OBJECTS need ivar storage (`@singleton__instance__` lives on the class) -- runtime-redesign territory (hybrid model / MRO fallback) |
 
-Grind order suggestion: the two rustc-failure codegen bugs, then the
-alias-of-inherited family (unblocks ostruct + delegate together), then the
-lowering shapes (class << self extend, global aliases, splat target,
-nested require). Re-probe each gem after its blocker lands; move rows out
-of this table as they turn green, and delete the file when empty.
+Grind order suggestion: the lowering shapes next (class << self extend,
+global aliases, splat target, nested require). Re-probe each gem after its
+blocker lands; move rows out of this table as they turn green, and delete
+the file when empty.
+
+Alias-of-inherited-builtin family DONE (2026-07-21): analyze records
+unresolved alias sources as name indirections, codegen substitutes the
+`raise`/`fail` family statically (3-arg raise accepted, backtrace arg
+evaluated-then-dropped until frame tracking), the registry carries
+validated alias rows for dynamic dispatch (typo sources -> NameError at
+program start, CRuby's timing), and `Kernel#raise` is a real dispatch row
+(closes the `send(:raise, ...)` NoMethodError divergence).
 
 FFI corpus port findings (2026-07-21, from the spinel-intrinsic -> real
 ffi gem test port; 25/29 pass): Proc -> C-function-pointer marshaling
