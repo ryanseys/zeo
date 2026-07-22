@@ -577,6 +577,18 @@ struct ClassEntry {
     /// consumer, because it WALKS the ancestors and would otherwise find
     /// the ancestor's still-live definition.
     undefined_methods: HashSet<Symbol>,
+    /// `new -> old` NAME indirections for aliases of INHERITED BUILTIN
+    /// methods (`alias_method :raise!, :raise`): the source has no user
+    /// `Scope` to clone a body from -- it lives in the static builtin
+    /// tables -- so the alias is recorded as a name rewrite instead. The
+    /// send miss paths consult this via `alias_target` (closest ancestor
+    /// first, so subclasses inherit it through the ordinary MRO walk) and
+    /// re-dispatch under `old`. Entries are TERMINAL: the compiler resolves
+    /// an alias-of-an-alias before emitting `register_alias`, and
+    /// `validate_aliases` raises `NameError` at program start for a source
+    /// that resolves nowhere (real Ruby's timing -- the class body
+    /// executing).
+    aliases: HashMap<Symbol, Symbol>,
     /// This class's own CLASS methods (`def self.x`, `class << self`,
     /// `extend`) -- reached when a `RubyValue::Class` receiver is sent to
     /// dynamically (`handler.run(...)`, where `handler` holds a class), the
@@ -647,6 +659,7 @@ impl ClassRegistry {
                 private_methods: HashSet::new(),
                 protected_methods: HashSet::new(),
                 undefined_methods: HashSet::new(),
+                aliases: HashMap::new(),
                 class_methods: HashMap::new(),
                 own_methods: HashSet::new(),
                 constructor,
@@ -800,6 +813,19 @@ impl ClassRegistry {
             .expect("class must be registered before undefining methods on it")
             .undefined_methods
             .insert(name);
+    }
+
+    /// Records an alias of an inherited BUILTIN method (see
+    /// `ClassEntry::aliases`) -- emitted by codegen next to the class's
+    /// registration. Pure data here; `validate_aliases` (run at program
+    /// start, inside the fallible closure) is what raises `NameError` for a
+    /// source that resolves nowhere.
+    pub fn register_alias(&mut self, id: ClassId, new: &str, old: &str) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before aliasing methods on it")
+            .aliases
+            .insert(Symbol::intern(new), Symbol::intern(old));
     }
 
     /// Whether `id`'s own body `undef`'d `name` -- the lookup TERMINATOR
@@ -1249,6 +1275,13 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
             }
         }
     }
+    // A builtin-alias row answers through its SOURCE name -- which also
+    // carries the source's visibility (a Ruby alias copies it): `dup!` for
+    // `dup` answers true, `raise!` for the hidden-private `raise` answers
+    // false unless `include_all`. See `alias_target`.
+    if let Some(old) = alias_target(recv_class, name) {
+        return responds_to(recv_class, old, include_all);
+    }
     false
 }
 
@@ -1353,7 +1386,7 @@ impl VisFilter {
 fn is_hidden_builtin_private(name: &str) -> bool {
     matches!(
         name,
-        "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`"
+        "initialize" | "puts" | "print" | "p" | "pp" | "warn" | "system" | "`" | "raise" | "fail"
     )
 }
 
@@ -2101,6 +2134,78 @@ pub fn send_value(
     send_value_in(0, recv, name, args, block)
 }
 
+/// The `old` name behind a builtin-alias row visible to instances of `id` --
+/// closest ancestor wins, so a subclass resolves an alias its parent (or an
+/// included module) declared. `None` for every ordinary name; consulted only
+/// on the send MISS paths, so a real method of the same name always beats it.
+/// See `ClassEntry::aliases`.
+fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
+    let r = REGISTRY.get()?;
+    for &anc in ancestors_of_value(id) {
+        if let Some(e) = r.entries.get(&anc.0) {
+            if let Some(&old) = e.aliases.get(&name) {
+                return Some(old);
+            }
+        }
+    }
+    None
+}
+
+/// Parse-special Kernel names with NO runtime dispatch row: statically-
+/// resolved call sites compile them directly, so an alias of one is valid
+/// even though no table can prove it. `validate_aliases` skips them.
+const PARSE_SPECIAL_KERNEL: &[&str] = &[
+    "block_given?",
+    "iterator?",
+    "__method__",
+    "__callee__",
+    "binding",
+];
+
+/// Validates every registered builtin-alias row (see `register_alias`) --
+/// called once from generated `main`'s fallible closure, right after the
+/// registry installs: an alias whose source resolves NOWHERE for instances
+/// of its class is `NameError`, raised at program start exactly when real
+/// Ruby raises it (the `alias_method` in the class body executing). Walked
+/// in id order (superclasses precede subclasses) with sorted names, so the
+/// first error is deterministic.
+pub fn validate_aliases() -> Result<(), Signal> {
+    let Some(r) = REGISTRY.get() else {
+        return Ok(());
+    };
+    let mut ids: Vec<u32> = r.entries.keys().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        let entry = &r.entries[&id];
+        if entry.aliases.is_empty() {
+            continue;
+        }
+        let mut olds: Vec<Symbol> = entry.aliases.values().copied().collect();
+        olds.sort_by_key(|s| s.name());
+        olds.dedup();
+        for old in olds {
+            let n = old.name();
+            let n = n.as_str();
+            if PARSE_SPECIAL_KERNEL.contains(&n) {
+                continue;
+            }
+            let resolves = ancestors_of_value(ClassId(id)).iter().any(|&anc| {
+                r.lookup(anc, old).is_some()
+                    || r.lookup_value_method(anc, 0, old).is_some()
+                    || crate::builtins::class_table(anc).is_some_and(|t| t(n).is_some())
+            });
+            if !resolves {
+                let kind = if entry.is_module { "module" } else { "class" };
+                return Err(crate::builtins::name_error!(
+                    "undefined method '{n}' for {kind} '{}'",
+                    entry.name
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `send_value` with the CALLER's box -- the statically-known
 /// defining box every codegen dynamic-dispatch site passes, the AOT
 /// translation of CRuby's `cme->def->box` (no frame walk). Only the
@@ -2246,6 +2351,13 @@ pub fn send_value_in(
             }
         }
     }
+    // A builtin-alias row (`alias_method :dup!, :dup`): rewrite the name and
+    // re-dispatch. Probed only after every real method missed -- a real
+    // definition of the alias name always wins -- and rows are terminal, so
+    // the re-entry can't loop. See `alias_target`.
+    if let Some(old) = alias_target(recv.class_id(), name) {
+        return send_value_in(box_id, recv, old, args, block);
+    }
     // Every receiver shape -- class, module, immediate, object -- gets its
     // message from the one method-missing raiser, so the class/module form
     // ("for class Widget") and the instance form stay in step.
@@ -2361,6 +2473,13 @@ pub fn send_in(
         }
     }
 
+    // A builtin-alias row (`alias_method :raise!, :raise`): rewrite the name
+    // and re-dispatch -- after every real method (a real definition of the
+    // alias name wins) and BEFORE `method_missing` (an alias is a real
+    // method in Ruby). Rows are terminal, so the re-entry can't loop.
+    if let Some(old) = alias_target(id, name) {
+        return send_in(box_id, recv, old, args, block);
+    }
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol) -- AFTER every real method, per real Ruby.
     let mm = Symbol::intern("method_missing");

@@ -193,6 +193,66 @@ builtin_methods! {
     "throw" => fn throw_m(_recv, args, _block) {
         crate::kernel_throw(args)
     }
+    // `Kernel#raise`/`#fail` as REAL dispatch rows -- reached by
+    // `send(:raise, ...)` and by builtin-alias rewrites (`alias_method
+    // :raise!, :raise`). Statically-written `raise` never comes here (parse
+    // lowers it to `HirNode::Raise`); this is the dynamic mirror of
+    // codegen's `emit_raise`, following CRuby's `rb_make_exception`: the
+    // operand's own `exception` method constructs the value (running a user
+    // subclass's `initialize`), a String implies `RuntimeError`, an
+    // exception OBJECT with no message raises as-is, anything else is
+    // `TypeError: exception class/object expected`. A third argument (a
+    // custom backtrace) is accepted and DROPPED -- there is no backtrace
+    // representation yet (same divergence as every raise); an explicit
+    // `cause:` doesn't reach this row (kwargs ride as a trailing Hash that
+    // 2-arg shapes would misread; the automatic `$!` chaining below is
+    // what dynamic callers get).
+    "raise" | "fail" => fn kernel_raise(_recv, args, _block) {
+        arity!(args, 0..=3);
+        let exc = match args {
+            // Bare re-raise: the exception being rescued, exactly (same
+            // object); outside any rescue, a fresh EMPTY-message
+            // RuntimeError (oracle-verified, matching `emit_raise`).
+            [] => match crate::current_exception() {
+                Some(e) => e,
+                None => crate::dispatch::coerce_raise_arg(RubyValue::Str(crate::string_new(
+                    String::new(),
+                ))),
+            },
+            [first, rest @ ..] => {
+                // At most the message reaches `exception`; `rest[1]` is the
+                // dropped backtrace.
+                let msg = &rest[..rest.len().min(1)];
+                match first {
+                    RubyValue::Class(cid) => {
+                        if !crate::dispatch::is_a(*cid, zeo_abi::EXCEPTION_CLASS) {
+                            return Err(type_error!("exception class/object expected"));
+                        }
+                        crate::dispatch::send_value(first, Symbol::intern("exception"), msg, None)?
+                    }
+                    RubyValue::Object(o)
+                        if crate::dispatch::is_a(o.class_id(), zeo_abi::EXCEPTION_CLASS) =>
+                    {
+                        if msg.is_empty() {
+                            first.clone()
+                        } else {
+                            crate::dispatch::send_value(
+                                first,
+                                Symbol::intern("exception"),
+                                msg,
+                                None,
+                            )?
+                        }
+                    }
+                    RubyValue::Str(_) if rest.is_empty() => {
+                        crate::dispatch::coerce_raise_arg(first.clone())
+                    }
+                    _ => return Err(type_error!("exception class/object expected")),
+                }
+            }
+        };
+        Err(Signal::Raise(crate::dispatch::raise_with_cause(exc)))
+    }
     "sleep" => fn sleep_m(_recv, args, _block) {
         crate::kernel_sleep(args)
     }
