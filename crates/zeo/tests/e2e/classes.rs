@@ -2120,3 +2120,47 @@ fn reopened_prelude_and_parent_methods_resolve_on_subclass_instances() {
          exc: RuntimeError\n"
     );
 }
+
+#[test]
+fn class_bodies_execute_at_their_document_position_and_rerun_per_reopen() {
+    // Real Ruby runs a class/module body WHERE IT APPEARS, interleaved
+    // with surrounding top-level code, re-executing each reopen's body at
+    // its own site; a rescued raise inside a module body shows the
+    // `<module:M>` frame and `<main>` at the `module` keyword's line.
+    // (Bodies used to be hoisted wholesale to the head of `run_main`,
+    // printing before earlier top-level output and reading line 0.)
+    let result = run_ruby(
+        r#"
+        puts "top1"
+        class Foo
+          puts "body1"
+        end
+        puts "top2"
+        class Foo
+          puts "body2"
+        end
+        class Outer
+          puts "outer start"
+          class Inner
+            puts "inner body"
+          end
+          puts "outer end"
+        end
+        module M
+          begin
+            raise "inmod"
+          rescue => e
+            puts "rescued: #{e.backtrace[0]}"
+            puts "from: #{e.backtrace[1]}"
+          end
+        end
+        puts "top3"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "top1\nbody1\ntop2\nbody2\nouter start\ninner body\nouter end\n\
+         rescued: -e:19:in '<module:M>'\nfrom: -e:17:in '<main>'\ntop3\n"
+    );
+}

@@ -108,6 +108,38 @@ fn tail_nil(wrap_ok: bool) -> TokenStream {
 /// sub-expression case, which does return the assigned value, matching
 /// Ruby's real assignment-as-expression semantics).
 fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> TokenStream {
+    if let HirNode::ClassDef { .. } = &cx.compiler.hir[stmt] {
+        // A class/module definition SITE: its body statements run right
+        // here, in document order (real Ruby executes a class body where
+        // it appears, re-running each reopen) -- see
+        // `Compiler::class_body_sites`. Dispatch-table registration stays
+        // hoisted in `fn main()`; only the body's execution moves. In tail
+        // position the expression value is `nil` (real Ruby returns the
+        // body's last value -- a documented narrow divergence).
+        // A marker with NO registered site is a `class`/`module` the
+        // analyze walk never reached (e.g. inside a top-level `begin`) --
+        // the same catalogued gap that used to die in `emit_expr` as "a
+        // top-level-only node in expression position"; keep it loud rather
+        // than silently skipping the definition.
+        let site_body = cx
+            .compiler
+            .class_body_sites
+            .iter()
+            .find(|s| s.def_node == Some(stmt))
+            .map(|s| crate::codegen::emit_class_body_site(cx.compiler, s))
+            .unwrap_or_else(|| {
+                panic!(
+                    "`class`/`module` in a position the analyze walk doesn't register \
+                     (e.g. inside a top-level `begin`) isn't supported yet (zeo limitation)"
+                )
+            });
+        return if is_tail {
+            let nil = tail_nil(wrap_ok);
+            quote! { #site_body #nil }
+        } else {
+            quote! { #site_body }
+        };
+    }
     if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
         let v = emit_expr(cx, *value);
         // Box an `Object`-typed RHS when `name`'s OWN storage disagrees (Tier

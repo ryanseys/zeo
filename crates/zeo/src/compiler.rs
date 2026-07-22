@@ -266,6 +266,26 @@ pub struct Compiler {
     /// payload. Created by `analyze` (one per box id the loader
     /// allocated), looked up by codegen.
     pub box_surrogates: HashMap<u32, ClassId>,
+    /// One entry per `class`/`module` DEFINITION SITE (reopens included),
+    /// in registration order: the site's `ClassDef` marker node (`None`
+    /// for the synthetic/pinned registrations, which have no source
+    /// position), the class it (re)opens, and ITS OWN body statements to
+    /// execute at that position -- real Ruby runs a class body where it
+    /// appears in the file, re-running each reopen. `ClassInfo`'s flat
+    /// `class_body_stmts` keeps the union (the cvar/const collectors and
+    /// `mro` read it); codegen executes per SITE: a marker reachable from
+    /// `main_statements` emits inline in document order (`codegen::stmt`'s
+    /// `ClassDef` arm), the rest (prelude, `None`) splice at `run_main`'s
+    /// head exactly as before. A NESTED `ClassDef` appears as a marker in
+    /// its parent's site list, so inner bodies run mid-parent-body.
+    pub class_body_sites: Vec<ClassBodySite>,
+}
+
+/// See [`Compiler::class_body_sites`].
+pub struct ClassBodySite {
+    pub def_node: Option<crate::hir::NodeId>,
+    pub class: ClassId,
+    pub stmts: Vec<crate::hir::NodeId>,
 }
 
 impl Compiler {
@@ -303,6 +323,7 @@ impl Compiler {
             }],
             scopes: Vec::new(),
             box_surrogates: HashMap::new(),
+            class_body_sites: Vec::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table (Phase
         // 17.1): superclass edges (`Integer < Numeric`, `Class < Module`,

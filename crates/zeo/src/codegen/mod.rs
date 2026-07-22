@@ -546,18 +546,28 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         })
         .map(|(idx, _)| emit_builtin_reopen(compiler, ClassId(idx as u32)));
 
-    // In FILE order (matching real Ruby's "a class/module body runs
-    // immediately as it's defined"): register the class's dispatch table
-    // (skipped for a module, which has none), then run any class-body
-    // top-level `@@x = expr` statements -- including a MODULE's own, which
-    // still needs to run even though a module never gets a `__register()`
-    // call of its own (see `ClassInfo::class_body_stmts`'s docs).
-    // Class-body statements (`@@x = expr` / `CONST = expr`) are collected
-    // separately from the registry calls: they can be FALLIBLE (`CONST =
-    // some_call?`), so they run at the head of `run_main`'s closure (where
-    // `?` propagates as a Signal) rather than in plain `fn main()`. Still
-    // before every top-level statement, and now after the registry install
-    // -- both orderings the previous in-main splice already implied.
+    // Class-body statements run at their DOCUMENT position: a site whose
+    // `ClassDef` marker is reachable from `main_statements` (directly, via
+    // a `BoxScope`, or nested inside another reachable site) emits inline
+    // there (`codegen::stmt`'s `ClassDef` arm) -- real Ruby's "a class body
+    // runs where it appears, re-running per reopen". Everything else --
+    // the prelude's bootstrap bodies and the synthetic `None`-marker
+    // registrations -- keeps the old hoisted splice at the head of
+    // `run_main`'s fallible closure (where `?` propagates as a Signal), so
+    // no recorded statement can ever be silently dropped.
+    let inline_markers = inline_class_markers(compiler, &analyzed.main_statements);
+    let hoisted_sites_for = |cid: ClassId| {
+        let inline_markers = &inline_markers;
+        compiler
+            .class_body_sites
+            .iter()
+            .filter(move |s| {
+                s.class == cid
+                    && !s.stmts.is_empty()
+                    && !s.def_node.is_some_and(|n| inline_markers.contains(&n))
+            })
+            .map(|s| emit_class_body_site(compiler, s))
+    };
     let mut user_class_bodies: Vec<TokenStream> = Vec::new();
     let mut builtin_class_bodies: Vec<TokenStream> = Vec::new();
 
@@ -783,7 +793,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             });
         }
-        user_class_bodies.push(emit_class_body_stmts(compiler, ClassId(idx as u32)));
+        user_class_bodies.extend(hoisted_sites_for(ClassId(idx as u32)));
     }
 
     // Native-exception reopen/subclass DELTAS (D3): the native default method
@@ -1046,7 +1056,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 #mark_vis
             }
         });
-        builtin_class_bodies.push(emit_class_body_stmts(compiler, ClassId(id)));
+        builtin_class_bodies.extend(hoisted_sites_for(ClassId(id)));
         // Always-on builtins with their DEFAULT ancestors are registered
         // once by `zeo_rt::register_builtins` -- so emit a base register
         // here only for a require-gated extension (per-program, and the loop
@@ -1243,11 +1253,15 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
 /// `run_main`'s fallible closure (see the call site), so a fallible statement
 /// propagates its `Signal` through `?` like any method-body statement (#97
 /// F2a). Runs right after this class/module's own dispatch-table registration.
-fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
-    let stmts = &compiler.class(cid).class_body_stmts;
+pub(crate) fn emit_class_body_site(
+    compiler: &Compiler,
+    site: &crate::compiler::ClassBodySite,
+) -> TokenStream {
+    let stmts = &site.stmts;
     if stmts.is_empty() {
         return quote! {};
     }
+    let cid = site.class;
     let label_counter = Cell::new(0u32);
     let no_captures = HashSet::new();
     let no_locals = HashMap::new();
@@ -1287,18 +1301,59 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
     // effect; `main_body` supplies the program's tail.
     let body = hoisting::emit_hoisted_body(&cx, stmts, true);
     // A class body executes under its own backtrace frame -- CRuby's
-    // `<class:Foo>` (raise-in-class-body shows it, then `<main>` at the
-    // `class` keyword's line). Fully span-less bodies (prelude) skip it;
-    // scanning for the first LOCATED statement keeps the predicate aligned
-    // with `stamp_line` (see `scope_frame_guard`).
-    let frame = match stmts.iter().find_map(|&n| source_location(compiler, n)) {
+    // `<class:Foo>` / `<module:M>` (oracle-verified labels), initialized
+    // at the site's own `class`/`module` keyword line, the first LOCATED
+    // statement as fallback (aligned with `stamp_line`'s predicate -- see
+    // `scope_frame_guard`). Fully span-less sites (prelude) skip it.
+    let loc = site
+        .def_node
+        .and_then(|n| source_location(compiler, n))
+        .or_else(|| stmts.iter().find_map(|&n| source_location(compiler, n)));
+    let frame = match loc {
         Some((file, line)) => {
-            let label = format!("<class:{}>", compiler.fq_name(cid));
+            let kind = if compiler.class(cid).is_module {
+                "module"
+            } else {
+                "class"
+            };
+            let label = format!("<{kind}:{}>", compiler.fq_name(cid));
             quote! { let __frame = zeo_rt::FrameGuard::push(#file, #label, #line); }
         }
         None => quote! {},
     };
     quote! { { #frame #body }?; }
+}
+
+/// The `ClassDef` markers whose sites execute INLINE, in document order:
+/// everything reachable from the top-level statement stream -- directly, a
+/// statement inside a `BoxScope` splice, or nested inside another
+/// reachable site's own body. The complement (prelude bootstrap sites,
+/// synthetic `None`-marker registrations) keeps the hoisted splice.
+fn inline_class_markers(
+    compiler: &Compiler,
+    main_statements: &[crate::hir::NodeId],
+) -> HashSet<crate::hir::NodeId> {
+    let site_by_marker: HashMap<crate::hir::NodeId, &crate::compiler::ClassBodySite> = compiler
+        .class_body_sites
+        .iter()
+        .filter_map(|s| s.def_node.map(|n| (n, s)))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut work: Vec<crate::hir::NodeId> = main_statements.to_vec();
+    while let Some(s) = work.pop() {
+        match &compiler.hir[s] {
+            crate::hir::HirNode::ClassDef { .. } => {
+                if seen.insert(s) {
+                    if let Some(site) = site_by_marker.get(&s) {
+                        work.extend(site.stmts.iter().copied());
+                    }
+                }
+            }
+            crate::hir::HirNode::BoxScope { body, .. } => work.extend(body.iter().copied()),
+            _ => {}
+        }
+    }
+    seen
 }
 
 /// Class methods (`def self.x`, `extend`) -- see `ClassInfo::class_methods`'s

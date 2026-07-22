@@ -154,7 +154,24 @@ fn process_top_stmt(
         let is_module = *is_module;
         let before = compiler.classes.len();
         let scopes_before = compiler.scopes.len();
-        register_class(compiler, name, superclass, is_module, &body, &[], 0)?;
+        register_class(
+            compiler,
+            name,
+            superclass,
+            is_module,
+            &body,
+            &[],
+            0,
+            Some(stmt),
+        )?;
+        // The marker STAYS in the top-level statement stream (non-bootstrap
+        // only -- the prelude's bodies keep their hoisted splice): real Ruby
+        // executes a class body at its document position, interleaved with
+        // the surrounding top-level code, and `codegen::stmt`'s `ClassDef`
+        // arm emits this site's body right here.
+        if !bootstrap {
+            main_statements.push(stmt);
+        }
         // Built-in exception classes are BOOTSTRAP: the "defined before
         // any user program runs" set every `Ruby::Box` sees (see
         // `Compiler::resolve_class`'s fallback and `Hir::builtin_exceptions_len`).
@@ -188,10 +205,20 @@ fn process_top_stmt(
             {
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
-                register_class(compiler, name, superclass, is_module, &body, &[], bx)?;
-            } else {
-                rest.push(s);
+                register_class(
+                    compiler,
+                    name,
+                    superclass,
+                    is_module,
+                    &body,
+                    &[],
+                    bx,
+                    Some(s),
+                )?;
             }
+            // The `ClassDef` marker stays in the box body too (document
+            // order inside the box, same as the top level).
+            rest.push(s);
         }
         compiler.hir[stmt] = HirNode::BoxScope {
             box_id: bx,
@@ -445,6 +472,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     // `SyntaxError < ScriptError` (#97 stage 2) -- the eval VM's parse-failure
     // class. Pinned here (not in `BUILTIN_EXCEPTIONS_RB`) so it takes the id
@@ -458,6 +486,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     // `UncaughtThrowError < ArgumentError` -- raised by `throw` with no live
     // `catch` for its tag. Pinned right after `SyntaxError` so it takes the
@@ -470,6 +499,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     // The `Exception`-direct tail (`SystemExit`/`SignalException`/`Interrupt`):
     // uncaught by a bare `rescue`, so a program names them explicitly. Order
@@ -483,6 +513,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     register_class(
         compiler,
@@ -492,6 +523,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     register_class(
         compiler,
@@ -501,6 +533,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         &[],
         &[],
         0,
+        None,
     )?;
     // The remaining core `Exception`-tree classes, ids matching
     // `zeo-abi::EXCEPTION_CLASSES` exc_id(51..56). Each parent is already
@@ -522,6 +555,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
             &[],
             &[],
             0,
+            None,
         )?;
     }
     for c in &mut compiler.classes[before..] {
@@ -533,6 +567,10 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
     Ok(())
 }
 
+// Every parameter is a distinct piece of the definition site (same
+// posture as `register_method`); `def_node` is the site's own `ClassDef`
+// marker for document-order body execution (`Compiler::class_body_sites`).
+#[allow(clippy::too_many_arguments)]
 fn register_class(
     compiler: &mut Compiler,
     name: String,
@@ -541,6 +579,7 @@ fn register_class(
     body: &[NodeId],
     cref: &[ClassId],
     box_id: u32,
+    def_node: Option<NodeId>,
 ) -> Result<(), String> {
     let path = crate::constpath::ConstPath::parse(&name);
     let (lexical_parent, leaf, qualified_def) = match path.scope() {
@@ -773,6 +812,16 @@ fn register_class(
     // correctly contributes a cut chain.
     let child_cref = compiler.cref_of(Some(class_id));
 
+    // This definition site's own record -- see `Compiler::class_body_sites`.
+    let site_idx = compiler.class_body_sites.len();
+    compiler
+        .class_body_sites
+        .push(crate::compiler::ClassBodySite {
+            def_node,
+            class: class_id,
+            stmts: Vec::new(),
+        });
+
     for &stmt in body {
         match &compiler.hir[stmt] {
             HirNode::DefMethod {
@@ -816,11 +865,14 @@ fn register_class(
                 )?;
                 add_own_method(compiler, class_id, sid, is_class_method);
             }
-            // A nested `class`/`module` definition --
-            // registered recursively under this class's own cref; the
-            // `ClassDef` node itself never lands in `class_body_stmts`
-            // (nested classes are ordinary `ClassInfo`s emitted from the
-            // global class list, not statements to re-execute).
+            // A nested `class`/`module` definition -- registered
+            // recursively under this class's own cref. The `ClassDef` node
+            // stays out of the flat `class_body_stmts` (nested classes are
+            // ordinary `ClassInfo`s, not statements to re-execute through
+            // that path) but IS recorded as a marker in this site's list:
+            // real Ruby runs the inner body at its position inside the
+            // outer body, and `codegen::stmt`'s `ClassDef` arm recurses
+            // into the child's own site there.
             HirNode::ClassDef {
                 name,
                 superclass,
@@ -829,6 +881,7 @@ fn register_class(
             } => {
                 let (name, superclass, body, is_module) =
                     (name.clone(), superclass.clone(), body.clone(), *is_module);
+                compiler.class_body_sites[site_idx].stmts.push(stmt);
                 register_class(
                     compiler,
                     name,
@@ -837,6 +890,7 @@ fn register_class(
                     &body,
                     &child_cref,
                     box_id,
+                    Some(stmt),
                 )?;
             }
             HirNode::Include(m) => {
@@ -886,18 +940,21 @@ fn register_class(
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);
+                compiler.class_body_sites[site_idx].stmts.push(stmt);
             }
             // Any OTHER class-body statement -- a method call, conditional,
             // loop, a runtime `define_method` inside an `each`, etc. -- is real
             // code that runs ONCE at class-definition time with `self` = the
-            // class object (#97 F2a). Collected here and emitted from
-            // `emit_class_body_stmts` inside `run_main`'s fallible closure.
-            // Before this it fell through and was SILENTLY DROPPED, so a
-            // class-body `[:a].each { define_method(...) }` never ran.
+            // class object (#97 F2a). Collected here (flat list AND this
+            // site's own record) and executed at the site's document
+            // position. Before this it fell through and was SILENTLY
+            // DROPPED, so a class-body `[:a].each { define_method(...) }`
+            // never ran.
             _ => {
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);
+                compiler.class_body_sites[site_idx].stmts.push(stmt);
             }
         }
     }
