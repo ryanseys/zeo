@@ -120,27 +120,34 @@ pub fn emit_super_inline(
     });
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
-    let Some(pos) = pos else {
-        // The `extend M` shape from the note above: real Ruby resolves
-        // `super` at call time against the live singleton-class chain
-        // (`vm_search_super_method`), so hand off to the runtime walk
-        // rather than guessing here.
-        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+    let found = match pos {
+        Some(pos) => ancestors[pos + 1..].iter().find_map(|&anc| {
+            own_pool(cx.compiler, anc)
+                .iter()
+                .find(|&&s| cx.compiler.scope(s).name == mname)
+                .map(|&sid| (anc, sid))
+        }),
+        // The `extend M` shape from the note above: resolve against the
+        // SINGLETON-class chain, which the compiler can reconstruct exactly
+        // for compile-time extends -- each non-module ancestor contributes
+        // its own class methods and then its `extend`ed modules'
+        // instance methods, most recently extended first (`make_metaclass`'s
+        // parallel chain; the same priority `mro`'s class_methods
+        // materialization mirrors). A miss (e.g. `super` targeting a
+        // BUILTIN default like `Module#included`) falls through to the
+        // runtime walk below.
+        None => extended_singleton_super(cx, receiver_class, defining_class, mname),
     };
-    let found = ancestors[pos + 1..].iter().find_map(|&anc| {
-        own_pool(cx.compiler, anc)
-            .iter()
-            .find(|&&s| cx.compiler.scope(s).name == mname)
-            .map(|&sid| (anc, sid))
-    });
 
     // `super` into an inherited VALUE builtin (D3): a `class Stack < Array`
     // method whose `super` finds NO user definition above targets the native
     // `Array` method -- `super` in `initialize` re-seats the payload, any other
     // runs the builtin against it. There is no HIR to splice (the builtin has no
     // `own_methods`), so dispatch through the runtime. Only reached when no user
-    // ancestor overrides `mname`; a user parent still splices.
-    if found.is_none() && cx.compiler.is_value_subclass(receiver_class) {
+    // ancestor overrides `mname`; a user parent still splices. (Not for the
+    // extend shape: a class-method `super` never targets a value builtin's
+    // INSTANCE method -- it keeps its runtime handoff below.)
+    if found.is_none() && pos.is_some() && cx.compiler.is_value_subclass(receiver_class) {
         return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block);
     }
 
@@ -268,6 +275,61 @@ pub fn emit_super_inline(
     );
     quote! { { #bindings #blk_binding #inlined } }
 }
+
+/// `super` resolution for a method that reached the receiver as a CLASS
+/// method via `extend M`: walks the receiver's SINGLETON-class chain as the
+/// compiler knows it -- for each non-module ancestor (`include`d modules
+/// never join a singleton chain), the ancestor's own `def self.x` pool and
+/// then its `extend`ed modules' instance-method pools, most recently
+/// extended first. Returns the first `mname` definition STRICTLY AFTER
+/// `defining_class`'s own entry in that chain, `None` when the walk runs
+/// dry (the caller then defers to the runtime walk, which owns builtin
+/// defaults and runtime-defined methods).
+fn extended_singleton_super(
+    cx: &Ctx,
+    receiver_class: crate::compiler::ClassId,
+    defining_class: crate::compiler::ClassId,
+    mname: &str,
+) -> Option<(crate::compiler::ClassId, crate::compiler::ScopeId)> {
+    // `(class, instance_pool)`: a chain entry resolves `mname` against its
+    // instance methods (an extended module) or its `def self.x` pool (a
+    // class standing in for its own metaclass).
+    let mut chain: Vec<(crate::compiler::ClassId, bool)> = Vec::new();
+    for (i, &anc) in cx
+        .compiler
+        .class(receiver_class)
+        .ancestors
+        .iter()
+        .enumerate()
+    {
+        let info = cx.compiler.class(anc);
+        // The receiver itself heads the chain even when it IS a module
+        // (`module Target; extend Props; end`); mixed-in modules deeper in
+        // the MRO contribute nothing to the singleton chain.
+        if i > 0 && info.is_module {
+            continue;
+        }
+        chain.push((anc, false));
+        for &m in info.extends.iter().rev() {
+            chain.push((m, true));
+        }
+    }
+    let dpos = chain
+        .iter()
+        .position(|&(c, instance_pool)| instance_pool && c == defining_class)?;
+    chain[dpos + 1..].iter().find_map(|&(anc, instance_pool)| {
+        let info = cx.compiler.class(anc);
+        let pool = if instance_pool {
+            &info.own_methods
+        } else {
+            &info.own_class_methods
+        };
+        pool.iter()
+            .find(|&&s| cx.compiler.scope(s).name == mname)
+            .map(|&sid| (anc, sid))
+    })
+}
+
 /// `super` dispatched through `zeo_rt::send_super_from` rather than spliced,
 /// resuming the receiver's REAL ancestor walk after `defining_class`.
 ///

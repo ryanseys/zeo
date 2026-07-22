@@ -1958,3 +1958,110 @@ fn struct_self_equality_and_keyword_init_tri_state() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "true\ntrue\nfalse\nnil\ntrue\nfalse\n");
 }
+
+#[test]
+fn a_static_top_level_if_guard_registers_or_drops_its_definitions() {
+    // The `if defined?(Const) ... module M ... end` idiom (singleton's
+    // `if defined?(Ractor)` tail): a decidably-TRUE guard's branch is spliced
+    // through the top-level walk (its module registers, its methods resolve),
+    // a decidably-FALSE guard's branch is dropped entirely -- exactly the
+    // branch real Ruby would or wouldn't execute there. Nesting folds too.
+    let result = run_ruby(
+        r#"
+        if defined?(String)
+          module Kept
+            def self.tag
+              "kept"
+            end
+          end
+          if defined?(Integer)
+            module KeptNested
+              def self.tag
+                "nested"
+              end
+            end
+          end
+        end
+        if defined?(NoSuchConstantAnywhere)
+          module Dropped
+            def self.tag
+              "dropped"
+            end
+          end
+        end
+        puts Kept.tag
+        puts KeptNested.tag
+        puts defined?(Dropped).inspect
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "kept\nnested\nnil\n");
+}
+
+#[test]
+fn a_user_method_named_clone_does_not_shadow_the_internal_arc_clone() {
+    // A Ruby method named `clone` becomes an INHERENT `fn clone` on the
+    // generated struct; every internal self/local copy must therefore avoid
+    // `.clone()` method syntax (which would resolve to the Ruby method --
+    // infinite recursion in `clone`'s own body, type errors elsewhere).
+    // Exercises the collision through self-reference, ivar writes (the
+    // frozen-check emission), and an Object-typed local re-read.
+    let result = run_ruby(
+        r#"
+        class Uncopyable
+          def initialize
+            @n = 1
+          end
+          def clone
+            raise TypeError, "can't clone #{self.class}"
+          end
+          def bump
+            @n += 1
+            self
+          end
+          def n
+            @n
+          end
+        end
+        u = Uncopyable.new
+        u.bump
+        puts u.n
+        begin
+          u.clone
+        rescue TypeError => e
+          puts e.message
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\ncan't clone Uncopyable\n");
+}
+
+#[test]
+fn super_from_an_extended_module_method_resolves_the_singleton_chain() {
+    // `extend M` puts M in the receiver's SINGLETON-class chain -- a `super`
+    // inside M's method used to panic the compiler ("not found in own
+    // ancestors"); it now resolves that chain statically (most recent extend
+    // first), falling back to the runtime walk for builtin defaults.
+    let result = run_ruby(
+        r#"
+        module Base
+          def greet
+            "base"
+          end
+        end
+        module Loud
+          def greet
+            super + "!"
+          end
+        end
+        class Host
+          extend Base
+          extend Loud
+        end
+        puts Host.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "base!\n");
+}

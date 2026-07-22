@@ -1042,7 +1042,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
 /// instance methods, receiverless). **Remaining scope-cut**: a class
 /// method's own body may not reference `self`/`@ivar` -- there's no
 /// concrete instance for `self` to mean here (a class-level ivar /
-/// `class << self` state store is the plan's G5(d), not attempted yet).
+/// `class << self` state store is not attempted yet).
 fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
     let ci = compiler.class(cid);
     let name_ident = ident::class_ident(compiler, cid);

@@ -92,14 +92,16 @@ pub fn emit_new(
             let ctor = emit_ctor_struct(cx, cid);
             // `initialize` takes `self: Arc<Self>` BY VALUE (see
             // `ruby_class!`'s docs), so it would move `__obj` -- clone the
-            // handle (a refcount bump) to keep `__obj` returnable.
+            // handle (a refcount bump) to keep `__obj` returnable. UFCS, not
+            // `.clone()` method syntax, which a user Ruby method named
+            // `clone` (an inherent fn on the struct) would hijack.
             //
             // A literal block passed to `.new` is forwarded to `initialize`
             // (so `yield`/`block_given?` inside it see it); `needs_block`
             // keeps the callee's block slot lined up either way.
             let init = crate::codegen::params::emit_call_args_to(
                 cx,
-                &crate::codegen::params::Callee::Method(quote! { __obj.clone() }),
+                &crate::codegen::params::Callee::Method(quote! { Clone::clone(&__obj) }),
                 "initialize",
                 &scope.params,
                 args,
@@ -286,8 +288,10 @@ pub fn emit_new_with_arg_tokens(
             // `initialize` takes `self: Arc<Self>` BY VALUE now (see
             // `ruby_class!`'s docs), so calling it on `__obj` directly would
             // move it -- clone the `Arc` handle first (a cheap refcount bump,
-            // not a deep copy) so `__obj` is still available to return.
-            quote! { { let __obj = #ctor; __obj.clone().initialize(#(#final_args),*)?; __obj } }
+            // not a deep copy) so `__obj` is still available to return. UFCS,
+            // not `.clone()` method syntax, which a user Ruby method named
+            // `clone` (an inherent fn on the struct) would hijack.
+            quote! { { let __obj = #ctor; Clone::clone(&__obj).initialize(#(#final_args),*)?; __obj } }
         }
         // No user `initialize`, so the inherited `Object#initialize` takes
         // none -- passing any is an ArgumentError, not something to drop on

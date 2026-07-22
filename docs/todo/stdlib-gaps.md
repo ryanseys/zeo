@@ -16,14 +16,21 @@ now surfaced honestly instead of `cannot load such file`:
 | pp | blocked | `require` in non-top-level position (inside method/conditional) |
 | timeout | blocked | generated Rust fails rustc -- codegen bug, triage via the kept temp source |
 | prettyprint | blocked | generated Rust fails rustc -- codegen bug, triage via the kept temp source |
-| singleton | blocked | compiler PANIC during compile (run with RUST_BACKTRACE=1) -- highest-priority of these: panics are never acceptable diagnostics |
+| singleton | blocked (compiles) | ex-PANIC, now fixed: top-level `if defined?(Ractor)` guards fold at analyze time, extended-module `super` resolves the singleton chain, and Ruby methods named `clone` no longer hijack internal Arc clones. Remaining: `include Singleton` must fire the `Module.included` HOOK at runtime, `extend` on a CLASS receiver must install class methods (runtime_meta::runtime_extend only handles per-object singletons), and class OBJECTS need ivar storage (`@singleton__instance__` lives on the class) -- runtime-redesign territory (hybrid model / MRO fallback) |
 
-Grind order suggestion: the singleton panic first (compiler bug class),
-then the two rustc-failure codegen bugs, then the alias-of-inherited
-family (unblocks ostruct + delegate together), then the lowering shapes
-(class << self extend, global aliases, splat target, nested require).
-Re-probe each gem after its blocker lands; move rows out of this table as
-they turn green, and delete the file when empty.
+Grind order suggestion: the two rustc-failure codegen bugs, then the
+alias-of-inherited family (unblocks ostruct + delegate together), then the
+lowering shapes (class << self extend, global aliases, splat target,
+nested require). Re-probe each gem after its blocker lands; move rows out
+of this table as they turn green, and delete the file when empty.
+
+FFI corpus port findings (2026-07-21, from the spinel-intrinsic -> real
+ffi gem test port; 25/29 pass): Proc -> C-function-pointer marshaling
+unimplemented (parse/ffi.rs resolves `callback` tags to plain `:pointer`);
+`:varargs` missing from `ffi_type_of`; binary `Digest#digest` bytes get
+UTF-8-transcoded through concat/pack/Base64 (zeo-rt string-encoding bug,
+likely affects other binary-data tests); `OpenSSL::Random` implemented in
+ext/openssl.rs but never registered in zeo-abi.
 
 # Benchmark-suite gaps (same probe discipline)
 
@@ -35,6 +42,11 @@ other 55. Each is a real bug, not a harness artifact:
 | bm_ao_render | compiler PANIC | nested escaping block capturing its enclosing BLOCK's local (documented spike-scope limit in codegen/call/procs.rs:104 -- but it must become a diagnostic, and the capture shape must land for real programs) |
 | bm_linked_list | runtime stack overflow | deep recursion overflows the `may` coroutine's 2MB stack (`coroutine ... has overflowed its stack, size=2097152`); the OS-thread + GVL migration (plan P3, 8MiB stacks) resolves it structurally |
 | bm_so_mandelbrot | output mismatch | genuine divergence in the generated program's output (binary PBM differs from the oracle at line 3) -- miscompilation or runtime arithmetic bug; triage by diffing intermediate rows |
+
+Also: `bm_life`'s RUBY-oracle timing leg fails (`ruby bench/bm_life.rb`
+exits 1 while the compiled zeo binary matches `.expected`) -- triage
+whether the benchmark depends on something environment-specific or the
+`.expected` was recorded from a different oracle state.
 
 Perf root causes found (2026-07-21):
 

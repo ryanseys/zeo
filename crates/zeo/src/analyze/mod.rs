@@ -325,9 +325,7 @@ fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
             then_body,
             else_body,
             ..
-        } => {
-            branch_has_top_defs(compiler, then_body) || branch_has_top_defs(compiler, else_body)
-        }
+        } => branch_has_top_defs(compiler, then_body) || branch_has_top_defs(compiler, else_body),
         _ => false,
     })
 }

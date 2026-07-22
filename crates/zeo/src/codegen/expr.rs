@@ -1644,7 +1644,9 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     // `use` the trait by name. The one atomic load this adds to every ivar
     // write (including inside `initialize`, where it's always false) is
     // negligible.
-    let current = cx.current_class.expect("ivar write outside a class context");
+    let current = cx
+        .current_class
+        .expect("ivar write outside a class context");
     let class_name = cx.compiler.class(current).name.clone();
     let prefix = format!("can't modify frozen {class_name}: ");
     // Boxed via the concrete `new_handle` (not a bare
