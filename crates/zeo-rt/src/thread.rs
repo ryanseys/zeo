@@ -701,4 +701,83 @@ mod tests {
         mutex_unlock(m).unwrap();
         assert!(!mutex_locked(m));
     }
+
+    // The next four tests pin the load-bearing assumptions of the staged
+    // OS-thread migration: during the flag-staged window, generated code
+    // runs on BARE OS THREADS while `may` is still linked, so (a) `may`'s
+    // coroutine-local storage must fall back to a fresh per-OS-thread slot
+    // outside any coroutine, and (b) its sync primitives must park and wake
+    // plain threads. If any of these fail, the migration must be a single
+    // cutover instead of a flag-staged one.
+
+    /// `execution_id` (the Mutex-ownership key) is a coroutine-local read:
+    /// stable within one OS thread, distinct across OS threads.
+    #[test]
+    fn execution_ids_isolate_per_bare_os_thread() {
+        let main_a = execution_id();
+        let main_b = execution_id();
+        assert_eq!(main_a, main_b, "stable within a thread");
+        let t1 = std::thread::spawn(execution_id).join().unwrap();
+        let t2 = std::thread::spawn(execution_id).join().unwrap();
+        assert_ne!(t1, main_a);
+        assert_ne!(t2, main_a);
+        assert_ne!(t1, t2);
+    }
+
+    /// A mutated `RefCell`-valued coroutine-local (the shape of the
+    /// handling/catch-tag/proc-home stacks) must NOT leak into a fresh OS
+    /// thread, and the writer's own slot must survive the other thread.
+    #[test]
+    fn refcell_coroutine_locals_do_not_leak_across_os_threads() {
+        may::coroutine_local!(
+            static PROBE: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(Vec::new())
+        );
+        PROBE.with(|p| p.borrow_mut().push(1));
+        let seen = std::thread::spawn(|| PROBE.with(|p| p.borrow().len()))
+            .join()
+            .unwrap();
+        assert_eq!(seen, 0, "a fresh OS thread must get a fresh slot");
+        assert_eq!(PROBE.with(|p| p.borrow().len()), 1);
+    }
+
+    /// An empty `Queue#pop` parks a bare OS thread; a push from ANOTHER
+    /// bare OS thread wakes it with the value.
+    #[test]
+    fn queue_pop_parks_and_wakes_across_bare_os_threads() {
+        let q_val = queue_new();
+        let RubyValue::Queue(q) = &q_val else {
+            panic!()
+        };
+        let q2 = q.clone();
+        let popper = std::thread::spawn(move || queue_pop(&q2));
+        // Let the popper reach the parked wait before the push.
+        std::thread::sleep(Duration::from_millis(20));
+        queue_push(q, RubyValue::Int(7)).unwrap();
+        assert!(matches!(popper.join().unwrap(), Ok(RubyValue::Int(7))));
+    }
+
+    /// A contended Ruby `Mutex` (the may mpmc token channel) blocks a bare
+    /// OS thread until the owning THREAD unlocks, and ownership (keyed by
+    /// per-thread execution id) transfers to the waiter.
+    #[test]
+    fn mutex_token_hands_off_across_bare_os_threads() {
+        let m_val = mutex_new();
+        let RubyValue::Mutex(m) = &m_val else {
+            panic!()
+        };
+        mutex_lock(m).unwrap();
+        let m2 = m.clone();
+        let waiter = std::thread::spawn(move || {
+            mutex_lock(&m2).unwrap();
+            let owned = mutex_owned(&m2);
+            mutex_unlock(&m2).unwrap();
+            owned
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        mutex_unlock(m).unwrap();
+        assert!(
+            waiter.join().unwrap(),
+            "the waiter thread must own the mutex after the handoff"
+        );
+    }
 }
