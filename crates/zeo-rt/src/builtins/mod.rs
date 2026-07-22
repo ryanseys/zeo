@@ -282,6 +282,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::QUEUE_CLASS => queue::lookup_class,
         zeo_abi::SIZED_QUEUE_CLASS => queue::lookup_class_sized,
         zeo_abi::MUTEX_CLASS => mutex::lookup_class,
+        zeo_abi::RACTOR_CLASS => crate::ractor::lookup_class,
         // In-tree `ext/` extensions -- each behind its `ext-<name>` cargo
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         #[cfg(feature = "ext-base64")]

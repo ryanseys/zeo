@@ -205,8 +205,10 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
         RubyValue::Object(o) => {
             o.is_frozen() && o.ivar_values().iter().all(|iv| shareable_guarded(iv, seen))
         }
-        RubyValue::Proc(_)
-        | RubyValue::Fiber(_)
+        // A frozen Proc counts as shareable (the post-`make_shareable`
+        // state; see the freeze-without-isolation-check note there).
+        RubyValue::Proc(p) => p.is_frozen(),
+        RubyValue::Fiber(_)
         | RubyValue::Enumerator(_)
         | RubyValue::Yielder(_)
         | RubyValue::Thread(_)
@@ -277,6 +279,15 @@ fn make_shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> Result<(), St
                 make_shareable_guarded(&iv, seen)?;
             }
         }
+        // CRuby isolates a Proc (snapshots its captured outers, requiring
+        // self and each captured value be shareable -- `Proc#isolate`).
+        // A compiled zeo closure's captures can't be inspected, so the
+        // proc is frozen and accepted WITHOUT the isolation check -- over-
+        // permissive vs CRuby's IsolationError, but every zeo value is
+        // Send+Sync by construction, so nothing unsafe can result
+        // (ostruct's `Ractor.make_shareable(getter_proc)` is the driving
+        // use, and its captures are shareable anyway).
+        RubyValue::Proc(p) => p.set_frozen(),
         other => {
             return Err(format!(
                 "can't make shareable object: {}",
@@ -328,6 +339,23 @@ fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
     }
 }
 
+// `Ractor` class methods reached DYNAMICALLY (`::Ractor.make_shareable(p)`
+// in ostruct's `new_ostruct_member!` -- the cpath/computed forms the static
+// recognizer in codegen doesn't fold). Same helpers as the static emission,
+// same `RactorError` mapping.
+crate::builtins::builtin_methods! {
+    pub(crate) fn lookup_class;
+
+    "make_shareable" => fn make_shareable_m(_recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        make_shareable(&args[0]).map_err(|msg| crate::dispatch::raise_error("RactorError", msg))
+    }
+    "shareable?" => fn shareable_p(_recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        Ok(RubyValue::Bool(shareable(&args[0])))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,9 +387,13 @@ mod tests {
             &shared.as_array_unchecked()
         ));
 
-        assert!(
-            make_shareable(&RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)))).is_err()
-        );
+        // A Proc is frozen in place and counts as shareable afterwards
+        // (freeze-without-isolation-check -- see `make_shareable_guarded`).
+        let pr = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
+        assert!(!shareable(&pr));
+        make_shareable(&pr).unwrap();
+        assert!(pr.is_frozen());
+        assert!(shareable(&pr));
     }
 
     /// Cycle guards: a self-referential graph used to recurse to
