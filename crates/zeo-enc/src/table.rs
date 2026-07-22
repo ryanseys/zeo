@@ -31,6 +31,10 @@ pub const WINDOWS_31J: EncodingId = EncodingId(16);
 pub const EUC_JP: EncodingId = EncodingId(17);
 pub const GBK: EncodingId = EncodingId(18);
 pub const BIG5: EncodingId = EncodingId(19);
+pub const UTF_16LE: EncodingId = EncodingId(20);
+pub const UTF_16BE: EncodingId = EncodingId(21);
+pub const UTF_32LE: EncodingId = EncodingId(22);
+pub const UTF_32BE: EncodingId = EncodingId(23);
 
 /// How an encoding maps bytes to characters -- the single knob that drives
 /// character iteration, validation, and transcoding. A new encoding picks
@@ -57,6 +61,10 @@ pub enum EncKind {
     /// A multibyte CJK encoding: 1-3 bytes per character, structural walk
     /// per family, Unicode mapping via encoding_rs -- see `mb`.
     MultiByte(MbFamily),
+    /// UTF-16 (2-byte code units, surrogate pairs) -- NOT ASCII-compatible.
+    Utf16 { be: bool },
+    /// UTF-32 (4-byte scalars) -- NOT ASCII-compatible.
+    Utf32 { be: bool },
 }
 
 /// One encoding's declarative description -- the whole per-encoding surface.
@@ -104,6 +112,17 @@ const fn multi_byte(
         aliases,
         ascii_compatible: true,
         kind: EncKind::MultiByte(family),
+        table: None,
+    }
+}
+
+/// A wide Unicode row (UTF-16/32) -- the only NON-ascii-compatible rows.
+const fn wide(name: &'static str, aliases: &'static [&'static str], kind: EncKind) -> EncodingSpec {
+    EncodingSpec {
+        name,
+        aliases,
+        ascii_compatible: false,
+        kind,
         table: None,
     }
 }
@@ -159,6 +178,10 @@ pub static ENCODINGS: &[EncodingSpec] = &[
     multi_byte("EUC-JP", &["eucJP"], MbFamily::EucJp),
     multi_byte("GBK", &["CP936"], MbFamily::Gbk),
     multi_byte("Big5", &[], MbFamily::Big5),
+    wide("UTF-16LE", &[], EncKind::Utf16 { be: false }),
+    wide("UTF-16BE", &["UCS-2BE"], EncKind::Utf16 { be: true }),
+    wide("UTF-32LE", &["UCS-4LE"], EncKind::Utf32 { be: false }),
+    wide("UTF-32BE", &["UCS-4BE"], EncKind::Utf32 { be: true }),
 ];
 
 impl EncodingId {

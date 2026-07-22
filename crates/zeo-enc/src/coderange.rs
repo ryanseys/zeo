@@ -22,8 +22,11 @@ pub enum CodeRange {
 /// Classifies `bytes` under `enc` -- the definition of `SevenBit`/`Valid`/
 /// `Broken` per encoding family.
 pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
-    let all_ascii = bytes.iter().all(|b| *b < 0x80);
-    if all_ascii {
+    // `SevenBit` is only meaningful for ASCII-compatible encodings: a
+    // UTF-16 string whose bytes all happen to sit below 0x80 is NOT
+    // ASCII-usable (`"abc".force_encoding("UTF-16LE").ascii_only?` is
+    // false in CRuby, empty strings included).
+    if enc.ascii_compatible() && bytes.iter().all(|b| *b < 0x80) {
         return CodeRange::SevenBit;
     }
     match enc.kind() {
@@ -45,6 +48,17 @@ pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
         // still a character; a bad lead/trail or truncated lead is Broken).
         EncKind::MultiByte(family) => {
             if crate::mb::mb_ranges(family, bytes).iter().all(|(_, v)| *v) {
+                CodeRange::Valid
+            } else {
+                CodeRange::Broken
+            }
+        }
+        EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+            let w = crate::wide::wide_of(enc.kind()).expect("wide kind");
+            if crate::wide::wide_ranges(w, bytes)
+                .iter()
+                .all(|(_, scalar, _)| scalar.is_some())
+            {
                 CodeRange::Valid
             } else {
                 CodeRange::Broken

@@ -125,6 +125,15 @@ impl StrBuf {
                     Cow::Owned(out)
                 }
             }
+            EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
+                Cow::Owned(
+                    crate::wide::wide_ranges(w, &self.bytes)
+                        .into_iter()
+                        .map(|(_, scalar, _)| scalar.unwrap_or('\u{FFFD}'))
+                        .collect(),
+                )
+            }
         }
     }
 
@@ -175,6 +184,13 @@ impl StrBuf {
                 .into_iter()
                 .map(|(r, _)| r)
                 .collect(),
+            EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
+                crate::wide::wide_ranges(w, &self.bytes)
+                    .into_iter()
+                    .map(|(r, _, _)| r)
+                    .collect()
+            }
         }
     }
 
@@ -222,7 +238,10 @@ impl StrBuf {
                 self.bytes.len()
             }
             EncKind::Utf8 | EncKind::MultiByte(_) if self.ascii_only() => self.bytes.len(),
-            EncKind::Utf8 | EncKind::MultiByte(_) => self.char_ranges().len(),
+            EncKind::Utf8
+            | EncKind::MultiByte(_)
+            | EncKind::Utf16 { .. }
+            | EncKind::Utf32 { .. } => self.char_ranges().len(),
         }
     }
 
@@ -289,6 +308,36 @@ impl StrBuf {
                 }
                 StrBuf::from_bytes(bytes, self.enc)
             }
+            // UTF-16/32: full Unicode case per character, re-encoded in
+            // place; a broken unit's bytes are copied through untouched.
+            EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+                let w = crate::wide::wide_of(self.enc.kind()).expect("wide kind");
+                let mut out = Vec::with_capacity(self.bytes.len());
+                for (i, (r, scalar, _)) in crate::wide::wide_ranges(w, &self.bytes)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let Some(c) = scalar else {
+                        out.extend_from_slice(&self.bytes[r]);
+                        continue;
+                    };
+                    let up = match mode {
+                        CaseMode::Up => true,
+                        CaseMode::Down => false,
+                        CaseMode::Swap => !c.is_uppercase(),
+                        CaseMode::Cap => i == 0,
+                    };
+                    let cased: Vec<char> = if up {
+                        c.to_uppercase().collect()
+                    } else {
+                        c.to_lowercase().collect()
+                    };
+                    for cc in cased {
+                        out.extend(crate::wide::wide_encode_char(w, cc));
+                    }
+                }
+                StrBuf::from_bytes(out, self.enc)
+            }
         }
     }
 
@@ -298,8 +347,7 @@ impl StrBuf {
     /// untouched -- the caller raises `Encoding::CompatibilityError` (this
     /// crate keeps `Signal` out of the encoding layer).
     pub fn push_buf(&mut self, other: &StrBuf) -> Result<(), IncompatibleEncodings> {
-        let enc = compat_concat_enc(self.enc, self.ascii_only(), other.enc, other.ascii_only())
-            .ok_or(IncompatibleEncodings)?;
+        let enc = compat_concat_enc(self, other).ok_or(IncompatibleEncodings)?;
         self.bytes.extend_from_slice(&other.bytes);
         self.enc = enc;
         self.coderange.set(CodeRange::Unknown);
@@ -336,7 +384,7 @@ impl StrBuf {
     /// `push_buf`'s decision as a dry run: the encoding a concatenation of
     /// `self` and `other` would produce, `None` for the incompatible pair.
     pub fn concat_enc_with(&self, other: &StrBuf) -> Option<EncodingId> {
-        compat_concat_enc(self.enc, self.ascii_only(), other.enc, other.ascii_only())
+        compat_concat_enc(self, other)
     }
 
     /// The `(bytes, encoding-tag)` a Hash key / `eql?` comparison uses.
@@ -372,24 +420,33 @@ impl Clone for StrBuf {
     }
 }
 
-/// CRuby's `rb_enc_compatible` for CONCATENATION, reduced to this engine's
-/// encodings (every one is ASCII-compatible): equal encodings are trivially
-/// compatible; a 7-bit (`ascii_only`) side adopts the OTHER side's encoding
-/// -- checked right side first, so the LEFT side wins when both are 7-bit
-/// (oracle-verified: `usascii + "y"` is US-ASCII, `"y" + usascii` is UTF-8,
-/// `"abc" + binary_high` is BINARY); two differently-encoded non-7-bit
-/// strings are incompatible -- `None`, the caller's
-/// `Encoding::CompatibilityError`.
-pub fn compat_concat_enc(
-    left: EncodingId,
-    left_ascii: bool,
-    right: EncodingId,
-    right_ascii: bool,
-) -> Option<EncodingId> {
-    if left == right || right_ascii {
-        Some(left)
-    } else if left_ascii {
-        Some(right)
+/// CRuby's `rb_enc_compatible` for CONCATENATION. Equal encodings are
+/// trivially compatible. An EMPTY side defers to the other (right first, so
+/// two empties keep the left's encoding) -- the only door through which a
+/// non-ASCII-compatible encoding (UTF-16/32) mixes with anything else;
+/// otherwise two ASCII-compatible sides negotiate: a 7-bit (`ascii_only`)
+/// side adopts the OTHER side's encoding, right side checked first so the
+/// LEFT wins when both are 7-bit. All oracle-verified: `usascii + "y"` is
+/// US-ASCII, `"y" + usascii` is UTF-8, `"abc" + binary_high` is BINARY,
+/// `utf16 + ""` is UTF-16LE, `empty_utf16 + "abc"` is UTF-8, and
+/// `utf16_nonempty + "b"` is the `Encoding::CompatibilityError` (`None`).
+pub fn compat_concat_enc(left: &StrBuf, right: &StrBuf) -> Option<EncodingId> {
+    if left.enc == right.enc {
+        return Some(left.enc);
+    }
+    if right.is_empty() {
+        return Some(left.enc);
+    }
+    if left.is_empty() {
+        return Some(right.enc);
+    }
+    if !left.enc.ascii_compatible() || !right.enc.ascii_compatible() {
+        return None;
+    }
+    if right.ascii_only() {
+        Some(left.enc)
+    } else if left.ascii_only() {
+        Some(right.enc)
     } else {
         None
     }

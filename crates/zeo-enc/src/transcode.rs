@@ -97,6 +97,16 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
             }
             units
         }
+        EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+            let w = crate::wide::wide_of(from.kind()).expect("wide kind");
+            crate::wide::wide_ranges(w, bytes)
+                .into_iter()
+                .map(|(r, scalar, style)| match scalar {
+                    Some(c) => Unit::Char(c),
+                    None => Unit::Invalid(bytes[r].to_vec(), style),
+                })
+                .collect()
+        }
         EncKind::Utf8 => decode_utf8(bytes),
     }
 }
@@ -128,7 +138,12 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
 }
 
 /// Encodes one scalar into `to`'s bytes, or `None` if `to` can't represent
-/// it (an undefined conversion).
+/// it (an undefined conversion). Public as `encode_scalar` for the
+/// runtime's `Integer#chr`/`String#<<` codepoint paths.
+pub fn encode_scalar(enc: EncodingId, c: char) -> Option<Vec<u8>> {
+    encode_char(c, enc)
+}
+
 fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
     let cp = c as u32;
     match to.kind() {
@@ -140,6 +155,10 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
         EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
         EncKind::SingleByte => to.single_byte_table().encode(c).map(|b| vec![b]),
         EncKind::MultiByte(family) => crate::mb::mb_encode_char(family, c),
+        EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+            let w = crate::wide::wide_of(to.kind()).expect("wide kind");
+            Some(crate::wide::wide_encode_char(w, c))
+        }
     }
 }
 
@@ -182,7 +201,7 @@ pub fn transcode(
                 if opts.invalid_replace {
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
-                    let esc: String = raw.iter().map(|b| format!("\\x{b:02X}")).collect();
+                    let esc: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     // CRuby's three forms, oracle-verified: `incomplete
                     // "\x8F" on EUC-JP` (lead truncated by end-of-string),
                     // `"\x82" followed by "\x00" on Shift_JIS` (valid lead,
@@ -196,12 +215,11 @@ pub fn transcode(
                             format!("incomplete \"{esc}\" on {}", from.name())
                         }
                         crate::mb::InvalidStyle::FollowedBy(t) => {
-                            let trail = if (0x20..0x7F).contains(&t) && t != b'"' && t != b'\\' {
-                                (t as char).to_string()
-                            } else {
-                                format!("\\x{t:02X}")
-                            };
-                            format!("\"{esc}\" followed by \"{trail}\" on {}", from.name())
+                            format!(
+                                "\"{esc}\" followed by \"{}\" on {}",
+                                quote_byte(t),
+                                from.name()
+                            )
                         }
                     };
                     return Err(TranscodeError::InvalidByteSequence(msg));
@@ -218,16 +236,7 @@ pub fn transcode(
                 if opts.undef_replace {
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
-                    let escaped: String = raw
-                        .iter()
-                        .map(|b| {
-                            if (0x20..0x7F).contains(b) && *b != b'"' && *b != b'\\' {
-                                (*b as char).to_string()
-                            } else {
-                                format!("\\x{b:02X}")
-                            }
-                        })
-                        .collect();
+                    let escaped: String = raw.iter().map(|b| quote_byte(*b)).collect();
                     let msg = if to == crate::table::UTF_8 && transcoder_name(from) == from.name() {
                         format!("\"{escaped}\" from {} to UTF-8", from.name())
                     } else {
@@ -277,6 +286,17 @@ pub fn transcode(
         }
     }
     Ok(out)
+}
+
+/// How CRuby quotes one byte inside an error message's `"..."`: printable
+/// ASCII verbatim (`incomplete "\xD84"` -- the 0x34 is a literal `4`),
+/// everything else as `\xNN`. Oracle-verified.
+fn quote_byte(b: u8) -> String {
+    if (0x20..0x7F).contains(&b) && b != b'"' && b != b'\\' {
+        (b as char).to_string()
+    } else {
+        format!("\\x{b:02X}")
+    }
 }
 
 /// How CRuby's transcoder registry spells `enc` in error messages: the

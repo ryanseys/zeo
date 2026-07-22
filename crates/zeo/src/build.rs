@@ -50,7 +50,7 @@ use std::time::SystemTime;
 /// list MUST track `zeo-rt`'s `path = "..."` dependencies (see its
 /// `Cargo.toml`). Getting it wrong under-scopes the freshness check and lets a
 /// stale runtime be linked silently -- the very bug the check exists to prevent.
-const RUNTIME_CRATES: &[&str] = &["zeo-rt", "zeo-abi", "zeo-fiber"];
+const RUNTIME_CRATES: &[&str] = &["zeo-rt", "zeo-abi", "zeo-enc", "zeo-fiber"];
 
 /// The workspace root -- two levels up from `crates/zeo` (this crate's
 /// own `CARGO_MANIFEST_DIR`), i.e. wherever the top-level `Cargo.toml`/

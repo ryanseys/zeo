@@ -1461,7 +1461,9 @@ pub(crate) fn putc_bytes(arg: &RubyValue) -> Result<Vec<u8>, Signal> {
                 }
                 // First CHARACTER in the string's own encoding -- a
                 // multibyte sequence stays its raw bytes.
-                crate::encoding::EncKind::MultiByte(_) => {
+                crate::encoding::EncKind::MultiByte(_)
+                | crate::encoding::EncKind::Utf16 { .. }
+                | crate::encoding::EncKind::Utf32 { .. } => {
                     b.char_at(0).map(|c| c.bytes().to_vec()).unwrap_or_default()
                 }
                 crate::encoding::EncKind::Utf8 | crate::encoding::EncKind::Ascii => b

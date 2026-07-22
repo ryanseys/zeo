@@ -53,6 +53,40 @@ pub fn inspect(buf: &StrBuf) -> String {
                 }
             }
         }
+        // UTF-16/32, CRuby's form: decoded characters, printable ASCII as
+        // usual, everything non-ASCII as `\uXXXX` (astral: `\u{XXXXX}`),
+        // broken units' bytes as `\xNN` -- oracle-verified
+        // (`"ab€".encode("UTF-16LE").inspect` is `"ab€"`,
+        // `"AB𝄞"` gives `"AB\u{1D11E}"`).
+        EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+            let w = crate::wide::wide_of(buf.encoding().kind()).expect("wide kind");
+            let bytes = buf.bytes();
+            let ranges = crate::wide::wide_ranges(w, bytes);
+            for i in 0..ranges.len() {
+                let (r, scalar, _) = &ranges[i];
+                match scalar {
+                    Some(c) if (*c as u32) < 0x80 => {
+                        let next = ranges
+                            .get(i + 1)
+                            .and_then(|(_, s, _)| s.filter(|nc| (*nc as u32) < 0x80));
+                        push_inspect_char(&mut out, *c, next, true);
+                    }
+                    Some(c) => {
+                        let cp = *c as u32;
+                        if cp > 0xFFFF {
+                            out.push_str(&format!("\\u{{{cp:X}}}"));
+                        } else {
+                            out.push_str(&format!("\\u{cp:04X}"));
+                        }
+                    }
+                    None => {
+                        for b in &bytes[r.clone()] {
+                            out.push_str(&format!("\\x{b:02X}"));
+                        }
+                    }
+                }
+            }
+        }
         // A multibyte CJK encoding, CRuby's forms: a MULTI-byte character
         // shows its raw bytes brace-grouped (`\x{82A0}`), a 1-byte high
         // character (halfwidth kana) or broken byte as `\xNN`, ASCII as

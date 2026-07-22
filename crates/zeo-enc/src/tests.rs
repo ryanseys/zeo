@@ -3,39 +3,79 @@
 
 use crate::*;
 
+/// A quick content-driven `StrBuf` for the concat-rule tests: `bytes` under
+/// `enc` (ascii-only-ness and emptiness come from the content, exactly as
+/// the rule reads them).
+fn buf(bytes: &[u8], enc: EncodingId) -> StrBuf {
+    StrBuf::from_bytes(bytes.to_vec(), enc)
+}
+
 #[test]
 fn concat_enc_keeps_equal_encodings() {
     assert_eq!(
-        compat_concat_enc(ASCII_8BIT, false, ASCII_8BIT, false),
+        compat_concat_enc(&buf(b"\xFF", ASCII_8BIT), &buf(b"\xFE", ASCII_8BIT)),
         Some(ASCII_8BIT)
     );
-    assert_eq!(compat_concat_enc(UTF_8, true, UTF_8, false), Some(UTF_8));
+    assert_eq!(
+        compat_concat_enc(&buf(b"ab", UTF_8), &buf("é".as_bytes(), UTF_8)),
+        Some(UTF_8)
+    );
 }
 
 #[test]
 fn concat_enc_lets_a_seven_bit_side_adopt_the_other_encoding() {
     // BINARY high bytes + ASCII-only UTF-8 stays BINARY, either side.
     assert_eq!(
-        compat_concat_enc(ASCII_8BIT, false, UTF_8, true),
+        compat_concat_enc(&buf(b"\xFF", ASCII_8BIT), &buf(b"y", UTF_8)),
         Some(ASCII_8BIT)
     );
     assert_eq!(
-        compat_concat_enc(UTF_8, true, ASCII_8BIT, false),
+        compat_concat_enc(&buf(b"y", UTF_8), &buf(b"\xFF", ASCII_8BIT)),
         Some(ASCII_8BIT)
     );
     // Both 7-bit: the LEFT side's encoding wins (oracle-verified:
     // `usascii + "y"` is US-ASCII, `"y" + usascii` is UTF-8).
     assert_eq!(
-        compat_concat_enc(US_ASCII, true, UTF_8, true),
+        compat_concat_enc(&buf(b"x", US_ASCII), &buf(b"y", UTF_8)),
         Some(US_ASCII)
     );
-    assert_eq!(compat_concat_enc(UTF_8, true, US_ASCII, true), Some(UTF_8));
+    assert_eq!(
+        compat_concat_enc(&buf(b"y", UTF_8), &buf(b"x", US_ASCII)),
+        Some(UTF_8)
+    );
 }
 
 #[test]
 fn concat_enc_rejects_two_differently_encoded_high_bit_strings() {
-    assert_eq!(compat_concat_enc(ASCII_8BIT, false, UTF_8, false), None);
-    assert_eq!(compat_concat_enc(UTF_8, false, ISO_8859_1, false), None);
+    assert_eq!(
+        compat_concat_enc(&buf(b"\xFF", ASCII_8BIT), &buf("é".as_bytes(), UTF_8)),
+        None
+    );
+    assert_eq!(
+        compat_concat_enc(&buf("é".as_bytes(), UTF_8), &buf(b"\xE9", ISO_8859_1)),
+        None
+    );
+}
+
+#[test]
+fn concat_enc_wide_encodings_mix_only_through_emptiness() {
+    // Oracle-verified: `utf16 + ""` stays UTF-16LE, `empty_utf16 + "abc"`
+    // is UTF-8, and a NON-empty wide side refuses even pure-ASCII content.
+    let u16ab = buf(&[0x61, 0x00], UTF_16LE);
+    let empty16 = buf(b"", UTF_16LE);
+    assert_eq!(compat_concat_enc(&u16ab, &buf(b"", UTF_8)), Some(UTF_16LE));
+    assert_eq!(
+        compat_concat_enc(&empty16, &buf(b"abc", UTF_8)),
+        Some(UTF_8)
+    );
+    assert_eq!(
+        compat_concat_enc(&buf(b"abc", UTF_8), &empty16),
+        Some(UTF_8)
+    );
+    assert_eq!(compat_concat_enc(&u16ab, &buf(b"b", UTF_8)), None);
+    // A wide string's content is never `ascii_only`, empty included.
+    assert!(!u16ab.ascii_only());
+    assert!(!empty16.ascii_only());
 }
 
 #[test]

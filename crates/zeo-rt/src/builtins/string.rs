@@ -1428,6 +1428,18 @@ builtin_methods! {
                             };
                             g.push_str(&c.to_string());
                         }
+                        // Unicode scalars, encoded in the receiver's own
+                        // wide layout (`utf16le << 0x20AC` appends AC 20).
+                        crate::encoding::EncKind::Utf16 { .. }
+                        | crate::encoding::EncKind::Utf32 { .. } => {
+                            let enc = g.encoding();
+                            let Some(c) = u32::try_from(*i).ok().and_then(char::from_u32) else {
+                                return Err(range_error!("{i} out of char range"));
+                            };
+                            let bytes = crate::encoding::encode_scalar(enc, c)
+                                .expect("wide encodings represent every scalar");
+                            g.push_bytes(&bytes);
+                        }
                     }
                 }
                 RubyValue::BigInt(_) => {

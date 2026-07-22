@@ -79,6 +79,19 @@ fn encode_codepoint(
             Ok(cp) => crate::encoding::mb_codepoint_bytes(family, cp),
             Err(_) => out_of_range,
         },
+        // UTF-16/32 codepoints are Unicode SCALARS (`65.chr(UTF_16LE)` is
+        // the two bytes 41 00): surrogates are invalid codepoints, values
+        // past U+10FFFF out of range.
+        EncKind::Utf16 { .. } | EncKind::Utf32 { .. } => {
+            match u32::try_from(cp).ok().filter(|v| *v <= 0x10FFFF) {
+                Some(v) => match char::from_u32(v) {
+                    Some(c) => Ok(crate::encoding::encode_scalar(enc, c)
+                        .expect("wide encodings represent every scalar")),
+                    None => Err(MbCodepointError::InvalidCodepoint),
+                },
+                None => out_of_range,
+            }
+        }
     }
 }
 
