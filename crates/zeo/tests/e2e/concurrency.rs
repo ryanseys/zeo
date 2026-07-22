@@ -990,6 +990,29 @@ fn an_armed_gvl_holder_blocked_on_a_full_pipe_write_does_not_stall_its_siblings(
 }
 
 #[test]
+fn an_armed_gvl_holder_waiting_on_a_child_process_does_not_stall_its_siblings() {
+    // The process-family probe: the backtick child spins until main
+    // creates its flag file, and main can only run if the thread parked
+    // in read_to_end/wait(2) released the armed Gvl -- without the
+    // release this is a three-way deadlock (thread waits on child, child
+    // waits on main, main waits on the Gvl) and the test hangs.
+    let result = run_ruby_configured(
+        r#"
+        flag = File.join(ENV["TMPDIR"] || "/tmp", "zeo_gvl_probe_#{Process.pid}")
+        t = Thread.new { `until [ -e #{flag} ]; do sleep 0.05; done; echo done` }
+        sleep 0.2
+        File.write(flag, "go")
+        p t.value
+        File.delete(flag)
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"done\\n\"\n");
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.

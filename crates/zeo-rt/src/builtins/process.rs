@@ -594,8 +594,9 @@ pub fn system(
         Err(_) => return Ok(RubyValue::Nil),
     };
     let pid = child.id() as i64;
-    let status = child
-        .wait()
+    // Gvl-released: the child can run arbitrarily long, and an armed
+    // (`ZEO_GVL=1`) holder parked in wait(2) must not stall its siblings.
+    let status = crate::gvl::without_gvl(|| child.wait())
         .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
     Ok(RubyValue::Bool(status.success()))
@@ -632,13 +633,14 @@ pub fn backquote(
     };
     let pid = child.id() as i64;
     let mut out = Vec::new();
+    // Gvl-released like `system`: draining the child's stdout and waiting
+    // for its exit both block until the child decides to finish.
     if let Some(mut so) = child.stdout.take() {
         use std::io::Read;
-        so.read_to_end(&mut out)
+        crate::gvl::without_gvl(|| so.read_to_end(&mut out))
             .map_err(|e| raise_error("IOError", e.to_string()))?;
     }
-    let status = child
-        .wait()
+    let status = crate::gvl::without_gvl(|| child.wait())
         .map_err(|e| raise_error("SystemCallError", e.to_string()))?;
     set_last_child_status(new_status(pid, status.into_raw()));
     // Tagged with the default external encoding, as CRuby's backtick output is.
