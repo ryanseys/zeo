@@ -128,6 +128,9 @@ pub use value::{case_eq, case_eq_any};
 #[inline]
 pub fn check_ints() -> Result<(), Signal> {
     if gvl::interrupts_pending_anywhere() {
+        // Quantum tick first (a yield under an armed GVL, a no-op consume
+        // otherwise), then any queued kill/raise for THIS thread.
+        gvl::service_timer();
         thread::check_interrupt()?;
     }
     Ok(())

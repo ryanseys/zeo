@@ -69,8 +69,15 @@ fn execution_id() -> u64 {
 // Thread
 // ---------------------------------------------------------------------------
 
+/// A running thread's join handle -- one variant per execution substrate
+/// (see `exec::ExecMode`; the May variant dies with the may deletion).
+enum ThreadHandle {
+    May(may::coroutine::JoinHandle<Result<RubyValue, Signal>>),
+    Os(std::thread::JoinHandle<Result<RubyValue, Signal>>),
+}
+
 enum ThreadState {
-    Running(may::coroutine::JoinHandle<Result<RubyValue, Signal>>),
+    Running(ThreadHandle),
     /// Cached after the first `join`/`value`, so repeats see the same
     /// outcome (CRuby: `join` on a dead thread returns immediately; the
     /// stored exception re-raises on EVERY join).
@@ -94,6 +101,11 @@ pub struct ThreadData {
     is_main: bool,
     /// A pending `Thread#kill`/`#raise`, taken at the next checkpoint.
     interrupt: PlMutex<Option<InterruptKind>>,
+    /// The OS-thread mode's scheduling ctx for this thread, registered by
+    /// its first interruptible sleep -- lets `#kill`/`#raise` wake exactly
+    /// this sleeper instead of waiting out the timeout. `None` under the
+    /// may mode (whose blocking waits poll on a 2ms cadence instead).
+    ctx: PlMutex<Option<std::sync::Arc<crate::gvl::ThreadCtx>>>,
     /// Set by `#kill`; makes the thread's outcome a silent `nil` no matter what
     /// the unwinding exception was (so even a `rescue Exception` can't keep a
     /// killed thread alive).
@@ -116,6 +128,7 @@ impl ThreadData {
             tvars: PlMutex::new(HashMap::new()),
             is_main,
             interrupt: PlMutex::new(None),
+            ctx: PlMutex::new(None),
             was_killed: AtomicBool::new(false),
             frozen: AtomicBool::new(false),
         })
@@ -201,10 +214,20 @@ pub fn thread_main() -> RubyValue {
 /// relies on for the target to reach its blocking point (and its own
 /// `begin`) before the interrupt lands.
 pub fn thread_pass() -> RubyValue {
-    if may::coroutine::is_coroutine() {
-        may::coroutine::yield_now();
-    } else {
-        std::thread::sleep(Duration::from_millis(2));
+    match crate::exec::exec_mode() {
+        crate::exec::ExecMode::Os => {
+            // Armed Gvl: rejoin the back of the FIFO queue (a real handoff);
+            // parallel: a plain OS yield is all "pass" can mean.
+            crate::gvl::process_gvl().yield_now();
+            std::thread::yield_now();
+        }
+        crate::exec::ExecMode::May => {
+            if may::coroutine::is_coroutine() {
+                may::coroutine::yield_now();
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
     }
     RubyValue::Nil
 }
@@ -216,25 +239,43 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let body = block.as_proc_unchecked();
     let data = ThreadData::build(None, false);
     register_live(&data);
-    let for_coro = data.clone();
-    let handle = may::go!(move || {
+    let for_thread = data.clone();
+    let run = move || {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
-        CURRENT.with(|c| *c.lock() = Some(for_coro.clone()));
+        CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
         // A fresh backtrace-frame stack for this thread's body, the
         // spawner's restored on exit -- see `frames`' module docs for the
-        // per-OS-thread TLS narrowing this bounds.
+        // per-OS-thread TLS narrowing this bounds. (On a fresh OS thread
+        // both swaps are empty<->empty no-ops.)
         let saved_frames = crate::frames::swap_stack(Vec::new());
         let result = body.call(&args);
         let _ = crate::frames::swap_stack(saved_frames);
         // A killed thread dies silently with a nil value, whatever exception
         // unwound it (its `ensure` blocks already ran during that unwind).
-        if for_coro.was_killed.load(Ordering::Relaxed) {
+        if for_thread.was_killed.load(Ordering::Relaxed) {
             Ok(RubyValue::Nil)
         } else {
             result
         }
-    });
+    };
+    let handle = match crate::exec::exec_mode() {
+        // A real OS thread: CRuby-sized 8MiB stack, its own scheduling ctx
+        // attached to the process Gvl, the (usually disabled, hence free)
+        // Gvl held for the body's duration -- released even on panic via
+        // the guard.
+        crate::exec::ExecMode::Os => ThreadHandle::Os(
+            std::thread::Builder::new()
+                .stack_size(8 * 1024 * 1024)
+                .spawn(move || {
+                    let _ctx = crate::gvl::install_ctx();
+                    let _held = crate::gvl::process_gvl().hold();
+                    run()
+                })
+                .expect("spawning a Ruby Thread's OS thread"),
+        ),
+        crate::exec::ExecMode::May => ThreadHandle::May(may::go!(run)),
+    };
     *data.state.lock() = Some(ThreadState::Running(handle));
     RubyValue::Thread(data)
 }
@@ -251,6 +292,7 @@ pub fn thread_kill(t: &RThread) {
     if t.interrupt.lock().replace(InterruptKind::Kill).is_none() {
         crate::gvl::note_posted();
     }
+    wake_target(t);
 }
 
 /// `Thread#raise(exc)` -- queue `exc` to be raised inside the target thread at
@@ -265,6 +307,25 @@ pub fn thread_raise(t: &RThread, exc: RubyValue) {
     {
         crate::gvl::note_posted();
     }
+    wake_target(t);
+}
+
+/// Wake `t` if it registered an interruptible-sleep ctx (OS-thread mode) --
+/// the queued interrupt delivers on its wake path rather than at timeout.
+fn wake_target(t: &RThread) {
+    if let Some(ctx) = &*t.ctx.lock() {
+        ctx.wake();
+    }
+}
+
+/// Register the calling OS thread's scheduling ctx on its own `ThreadData`
+/// (main included, via the ordinary `Thread.current` fallback), so posters
+/// can wake it -- `kernel_sleep`'s first os-mode call does this.
+pub(crate) fn register_current_ctx(ctx: &std::sync::Arc<crate::gvl::ThreadCtx>) {
+    let t = CURRENT
+        .with(|c| c.lock().clone())
+        .unwrap_or_else(main_thread);
+    *t.ctx.lock() = Some(ctx.clone());
 }
 
 /// The `Exception` (deliberately NOT a `StandardError`) a `#kill` unwinds with.
@@ -397,7 +458,14 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
     let taken = t.state.lock().take();
     match taken {
         Some(ThreadState::Running(handle)) => {
-            let outcome = match handle.join() {
+            let joined = match handle {
+                ThreadHandle::May(h) => h.join(),
+                // The joiner must not sit on an ARMED Gvl across the
+                // blocking join -- the target needs it to finish (the
+                // release is free when the Gvl is disabled, the default).
+                ThreadHandle::Os(h) => crate::gvl::process_gvl().without(|| h.join()),
+            };
+            let outcome = match joined {
                 Ok(result) => result,
                 Err(panic_payload) => std::panic::resume_unwind(panic_payload),
             };
@@ -419,7 +487,12 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
             if let Some(ThreadState::Done(outcome)) = &*t.state.lock() {
                 return outcome.clone();
             }
-            may::coroutine::sleep(std::time::Duration::from_millis(2));
+            if may::coroutine::is_coroutine() {
+                may::coroutine::sleep(std::time::Duration::from_millis(2));
+            } else {
+                crate::gvl::process_gvl()
+                    .without(|| std::thread::sleep(std::time::Duration::from_millis(2)));
+            }
         },
     }
 }
@@ -476,9 +549,14 @@ pub fn mutex_lock(m: &RMutex) -> Result<(), &'static str> {
     if *m.owner.lock() == Some(me) {
         return Err("deadlock; recursive locking");
     }
-    m.token_rx
-        .recv()
-        .expect("mutex token channel can't disconnect while the mutex is alive");
+    // The blocking recv runs with an armed Gvl released (free otherwise) --
+    // a waiter holding the scheduling lock would starve the very owner it
+    // waits on.
+    crate::gvl::process_gvl().without(|| {
+        m.token_rx
+            .recv()
+            .expect("mutex token channel can't disconnect while the mutex is alive")
+    });
     *m.owner.lock() = Some(me);
     Ok(())
 }
@@ -609,6 +687,16 @@ pub fn queue_set_max(q: &RQueue, n: i64) {
 /// in this runtime's posture, matching `parking_lot`'s no-poison stance
 /// everywhere else.
 pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
+    // The WHOLE lock-wait-store section runs with an armed Gvl released
+    // (plain call-through otherwise). The release must wrap the queue's
+    // own mutex region, not sit inside it: re-acquiring the Gvl while
+    // still holding the queue guard inverts lock order against a holder
+    // trying to lock this same queue -- the armed-mode gate found exactly
+    // that deadlock on the SizedQueue back-pressure tests.
+    crate::gvl::process_gvl().without(|| queue_push_locked(q, value))
+}
+
+fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if inner.closed {
@@ -635,6 +723,13 @@ pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
 /// interrupt each cycle (the killer doesn't own this condvar to notify it).
 pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
     check_interrupt()?;
+    // Whole lock-wait-take section under one armed-Gvl release -- see
+    // `queue_push` for the lock-order rationale (the Gvl must never be
+    // re-acquired while the queue's own guard is held).
+    crate::gvl::process_gvl().without(|| queue_pop_locked(q))
+}
+
+fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
     loop {
         if let Some(v) = inner.items.pop_front() {

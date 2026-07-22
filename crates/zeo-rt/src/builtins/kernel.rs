@@ -1307,24 +1307,58 @@ pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     }
 }
 
-/// `Kernel#sleep(seconds)` -- cooperative (`may`'s coroutine sleep, like
-/// the Thread machinery); returns the rounded seconds slept.
+/// `Kernel#sleep(seconds)` -- returns the rounded seconds ACTUALLY slept.
+/// In the OS-thread mode this is a genuinely interruptible wait on the
+/// thread's own ctx condvar (a `Thread#run`/`#raise`/`#kill` wakes it
+/// immediately -- delivered by the `check_ints` on the wake path), and
+/// `sleep` with NO duration finally works: it parks until woken instead of
+/// panicking. The may mode keeps the cooperative coroutine sleep (and the
+/// sleep-forever panic) until its deletion.
 pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 0..=1);
     let secs = match args.first() {
-        Some(RubyValue::Int(n)) if *n >= 0 => *n as f64,
-        Some(RubyValue::Float(f)) if *f >= 0.0 => *f,
-        None => {
-            panic!(
-                "Kernel#sleep without a duration (sleep forever) isn't supported yet (zeo limitation; lands with the OS-thread migration)"
-            )
-        }
+        Some(RubyValue::Int(n)) if *n >= 0 => Some(*n as f64),
+        Some(RubyValue::Float(f)) if *f >= 0.0 => Some(*f),
+        None => None,
         Some(other) => {
             return Err(type_error!(
                 "can't convert {} into time interval",
                 crate::builtins::class_name_of(other)
             ));
         }
+    };
+    if crate::exec::exec_mode() == crate::exec::ExecMode::Os {
+        let ctx = crate::gvl::install_ctx();
+        crate::thread::register_current_ctx(&ctx);
+        let started = std::time::Instant::now();
+        let deadline = secs.map(|s| started + std::time::Duration::from_secs_f64(s));
+        // Park (armed Gvl released; free otherwise) until the deadline,
+        // re-sleeping the remainder after any wake that check_ints doesn't
+        // turn into a delivered kill/raise -- a 100ms quantum tick or other
+        // spurious wake must not cut the sleep short. No deadline means
+        // only an interrupt ever exits the loop.
+        loop {
+            let remaining = match deadline {
+                Some(d) => {
+                    let now = std::time::Instant::now();
+                    if now >= d {
+                        break;
+                    }
+                    Some(d - now)
+                }
+                None => None,
+            };
+            crate::gvl::process_gvl().without(|| ctx.sleep(remaining));
+            crate::check_ints()?;
+        }
+        return Ok(RubyValue::Int(
+            started.elapsed().as_secs_f64().round() as i64
+        ));
+    }
+    let Some(secs) = secs else {
+        panic!(
+            "Kernel#sleep without a duration (sleep forever) isn't supported under ZEO_EXEC=may (zeo limitation; the OS-thread mode supports it)"
+        )
     };
     may::coroutine::sleep(std::time::Duration::from_secs_f64(secs));
     Ok(RubyValue::Int(secs.round() as i64))

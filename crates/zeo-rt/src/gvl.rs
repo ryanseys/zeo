@@ -162,6 +162,12 @@ struct GvlState {
     next_ticket: u64,
     /// The ticket currently allowed to run; `release` advances it.
     now_serving: u64,
+    /// The OS thread currently holding (armed mode) -- what lets
+    /// `release`/`without`/`yield_now` be safe no-ops on a thread that
+    /// never acquired (a Ractor's own thread, a foreign callback): a
+    /// non-holder advancing `now_serving` would corrupt the ticket queue
+    /// for everyone (found as a live deadlock in the armed-mode gate).
+    holder: Option<std::thread::ThreadId>,
 }
 
 impl Gvl {
@@ -171,6 +177,7 @@ impl Gvl {
             state: Mutex::new(GvlState {
                 next_ticket: 0,
                 now_serving: 0,
+                holder: None,
             }),
             cv: Condvar::new(),
             members: Mutex::new(Vec::new()),
@@ -218,6 +225,11 @@ impl Gvl {
             .count()
     }
 
+    /// Whether the CALLING thread is the current holder (armed mode).
+    fn holds(&self) -> bool {
+        self.armed && self.state.lock().holder == Some(std::thread::current().id())
+    }
+
     /// Block until it is this thread's turn to run (FIFO). No-op unarmed.
     pub fn acquire(&self) {
         if !self.armed {
@@ -229,24 +241,32 @@ impl Gvl {
         while s.now_serving != ticket {
             self.cv.wait(&mut s);
         }
+        s.holder = Some(std::thread::current().id());
     }
 
-    /// Hand the lock to the next waiter in arrival order. No-op unarmed.
-    /// Internal contract: called only by the current holder.
+    /// Hand the lock to the next waiter in arrival order. No-op unarmed,
+    /// and a SAFE no-op on a thread that isn't the holder (a Ractor's own
+    /// thread reaching a shared blocking primitive) -- only the holder may
+    /// advance the queue.
     pub fn release(&self) {
         if !self.armed {
             return;
         }
         let mut s = self.state.lock();
+        if s.holder != Some(std::thread::current().id()) {
+            return;
+        }
+        s.holder = None;
         s.now_serving += 1;
         drop(s);
         self.cv.notify_all();
     }
 
     /// Give up the current quantum and rejoin the back of the queue -- the
-    /// timer's preemption action and `Thread.pass`. No-op unarmed.
+    /// timer's preemption action and `Thread.pass`. No-op unarmed or when
+    /// the caller isn't the holder.
     pub fn yield_now(&self) {
-        if !self.armed {
+        if !self.holds() {
             return;
         }
         self.release();
@@ -255,9 +275,13 @@ impl Gvl {
 
     /// Run `f` with the lock released, re-acquiring afterwards EVEN IF `f`
     /// panics or unwinds (the guard re-acquires in `Drop`) -- the wrapper
-    /// every blocking syscall gets in armed mode so one thread's IO can't
-    /// stall its siblings. No-op wrapping unarmed.
+    /// every blocking wait gets so an armed holder's block can't stall its
+    /// siblings. Plain call-through when unarmed or when the caller never
+    /// held (it has nothing to release and must NOT re-acquire).
     pub fn without<R>(&self, f: impl FnOnce() -> R) -> R {
+        if !self.holds() {
+            return f();
+        }
         self.release();
         let _guard = ReacquireGuard { gvl: self };
         f()
@@ -287,6 +311,104 @@ impl Drop for ReacquireGuard<'_> {
     fn drop(&mut self) {
         self.gvl.acquire();
     }
+}
+
+/// Holds the lock from construction to drop -- the panic-safe way a thread
+/// body (or `run_main`) keeps the armed GVL for its whole execution: an
+/// unwinding panic still releases, so siblings aren't stranded.
+pub struct HoldGuard<'a> {
+    gvl: &'a Gvl,
+}
+
+impl Gvl {
+    pub fn hold(&self) -> HoldGuard<'_> {
+        self.acquire();
+        HoldGuard { gvl: self }
+    }
+}
+
+impl Drop for HoldGuard<'_> {
+    fn drop(&mut self) {
+        self.gvl.release();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The process scheduler surface the OS-thread execution mode uses: one
+// process-wide Gvl (per-Ractor Gvls arrive with the Ractor rework -- the
+// existing Ractor threads simply never touch this one), a per-OS-thread
+// ThreadCtx slot, and the lazy 100ms preemption timer.
+// ---------------------------------------------------------------------------
+
+static PROCESS_GVL: std::sync::OnceLock<Arc<Gvl>> = std::sync::OnceLock::new();
+
+/// The main Ractor's Gvl -- `ZEO_GVL=1` arms it, anything else (the
+/// default) is the parallel no-op. First access decides; safe to call from
+/// any mode (a disabled Gvl's operations are free no-ops).
+pub fn process_gvl() -> &'static Arc<Gvl> {
+    PROCESS_GVL.get_or_init(Gvl::from_env)
+}
+
+std::thread_local! {
+    static CTX: std::cell::RefCell<Option<Arc<ThreadCtx>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Create this OS thread's [`ThreadCtx`], attach it to the process Gvl,
+/// and remember it in TLS. Called once per Ruby thread (main included) in
+/// the OS-thread execution mode; repeat calls answer the existing ctx.
+pub fn install_ctx() -> Arc<ThreadCtx> {
+    CTX.with(|c| {
+        let mut slot = c.borrow_mut();
+        if let Some(ctx) = &*slot {
+            return ctx.clone();
+        }
+        let ctx = ThreadCtx::new();
+        let gvl = process_gvl();
+        gvl.attach(&ctx);
+        // The preemption timer becomes worth running once a SECOND thread
+        // exists (armed mode only -- `timer_tick` no-ops otherwise).
+        if gvl.is_armed() && gvl.live_members() >= 2 {
+            ensure_timer_thread();
+        }
+        *slot = Some(ctx.clone());
+        ctx
+    })
+}
+
+/// This OS thread's ctx, if `install_ctx` ran here (`None` under the
+/// coroutine mode, where no ctx exists at all).
+pub fn current_ctx() -> Option<Arc<ThreadCtx>> {
+    CTX.with(|c| c.borrow().clone())
+}
+
+/// Consume a pending quantum tick: under an ARMED Gvl the holder rejoins
+/// the back of the queue (CRuby's preemption action); the bit is consumed
+/// harmlessly everywhere else. Called from `check_ints`' slow path.
+pub fn service_timer() {
+    if let Some(ctx) = current_ctx()
+        && ctx.take(INT_TIMER)
+    {
+        process_gvl().yield_now();
+    }
+}
+
+/// The one lazy, detached 100ms timer thread (CRuby's quantum). It only
+/// ever posts bits -- delivery happens at the members' own checkpoints --
+/// and it dies with the process (detached daemon, like CRuby's own timer).
+fn ensure_timer_thread() {
+    static TIMER: std::sync::Once = std::sync::Once::new();
+    TIMER.call_once(|| {
+        std::thread::Builder::new()
+            .name("zeo-timer".into())
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(Duration::from_millis(100));
+                    process_gvl().timer_tick();
+                }
+            })
+            .expect("spawning the GVL timer thread");
+    });
 }
 
 #[cfg(test)]

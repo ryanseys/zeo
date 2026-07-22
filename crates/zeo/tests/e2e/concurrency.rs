@@ -284,7 +284,14 @@ fn scheduler_config_knobs_change_nothing_observable() {
 
 #[test]
 fn a_malformed_zeo_threads_value_fails_loudly_at_startup() {
-    let result = run_ruby_configured("puts 1\n", &[("ZEO_THREADS", "not-a-number")], &[]);
+    // ZEO_THREADS is a may-scheduler knob (it retires with may), so the
+    // loud-validation contract is pinned WITH the mode forced -- the
+    // OS-thread mode never reads it.
+    let result = run_ruby_configured(
+        "puts 1\n",
+        &[("ZEO_THREADS", "not-a-number"), ("ZEO_EXEC", "may")],
+        &[],
+    );
     assert!(!result.status.success());
     assert!(
         result

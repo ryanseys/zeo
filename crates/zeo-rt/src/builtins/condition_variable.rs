@@ -107,7 +107,10 @@ builtin_methods! {
         if let Err(msg) = crate::thread::mutex_unlock(rm) {
             return Err(thread_error!("{msg}"));
         }
-        match timeout {
+        // The park itself runs with an armed process Gvl released (a no-op
+        // when disabled, the default) -- the signaller needs to RUN to
+        // signal.
+        crate::gvl::process_gvl().without(|| match timeout {
             None => {
                 let g = cv.cond.wait(guard).unwrap_or_else(|e| e.into_inner());
                 drop(g);
@@ -117,7 +120,7 @@ builtin_methods! {
                     cv.cond.wait_timeout(guard, dur).unwrap_or_else(|e| e.into_inner());
                 drop(g);
             }
-        }
+        });
         if let Err(msg) = crate::thread::mutex_lock(rm) {
             return Err(thread_error!("{msg}"));
         }

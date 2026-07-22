@@ -82,10 +82,40 @@ pub fn run_at_exit() {
     }
 }
 
+/// Which execution substrate Ruby threads (and the top level) run on.
+/// `ZEO_EXEC=os` puts every Ruby thread on its own real OS thread with the
+/// (default-disabled) process Gvl; anything else keeps the incumbent may
+/// coroutine scheduler. The flag exists for the staged migration -- the os
+/// mode becomes the default (and `may` is deleted) once the stress gate is
+/// green -- so an unknown value is a loud panic, not a silent fallback.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExecMode {
+    May,
+    Os,
+}
+
+pub(crate) fn exec_mode() -> ExecMode {
+    static MODE: std::sync::OnceLock<ExecMode> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("ZEO_EXEC").as_deref() {
+        Ok("os") => ExecMode::Os,
+        Ok("may") | Err(_) => ExecMode::May,
+        Ok(other) => panic!("ZEO_EXEC must be `may` or `os`, got `{other}`"),
+    })
+}
+
 pub fn run_main<F>(body: F) -> Result<RubyValue, Signal>
 where
     F: FnOnce() -> Result<RubyValue, Signal> + Send + 'static,
 {
+    if exec_mode() == ExecMode::Os {
+        // The top level runs directly on the REAL main thread: install its
+        // scheduling ctx, take the (usually disabled, hence free) process
+        // Gvl for the duration, and just call the body -- no coroutine
+        // trampoline, no panic re-routing needed.
+        let _ctx = crate::gvl::install_ctx();
+        let _held = crate::gvl::process_gvl().hold();
+        return body();
+    }
     may::config()
         .set_workers(worker_count())
         .set_stack_size(STACK_SIZE_WORDS);
