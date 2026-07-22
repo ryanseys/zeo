@@ -4,7 +4,7 @@ expression: render(err)
 ---
 zeo::lower::unsupported
 
-  × a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)
+  × a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)
    ╭─[-e:2:3]
  1 │ x = 1
  2 │ p(/foo/e)

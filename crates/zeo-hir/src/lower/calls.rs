@@ -38,7 +38,7 @@ pub(crate) fn lower_block_like_params(
         Some(p) => {
             let bp = p
                 .as_block_parameters_node()
-                .ok_or("unsupported block parameter form (spike scope)")?;
+                .ok_or("unsupported block parameter form (zeo limitation)")?;
             let mut params = lower_params(result, hir, bp.parameters())?;
             // `|x; sum|`'s block-locals -- prism keeps them on the
             // `BlockParametersNode` itself (`locals()`), not in the

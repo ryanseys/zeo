@@ -181,7 +181,7 @@ impl Object {
 /// by the MRO walk for any receiver whose ancestors contain this id. Like
 /// every id above, re-exported from the shared `zeo-abi` numbering.
 pub use zeo_abi::ENUMERABLE_CLASS;
-/// Fixed, well-known `ClassId`s for every built-in Ruby type this spike
+/// Fixed, well-known `ClassId`s for every built-in Ruby type this runtime
 /// models as a `RubyValue` variant rather than a generated `ruby_class!`
 /// struct -- numerically mirrored by `zeo::compiler::BUILTIN_CLASSES`
 /// (same "two `ClassId` types, on purpose" convention as `Object::CLASS_ID`/
@@ -1046,7 +1046,7 @@ impl ClassRegistry {
 /// `analyze::mro::compute_ancestors`'s docs), not zeo's own two-tier
 /// "transplant for dispatch, shallower list for reflection" split (confirmed
 /// to diverge on a module-of-module diamond -- see the plan). The one
-/// runtime surface this spike needs for `Signal::Raise`/`rescue` matching:
+/// runtime surface this needs for `Signal::Raise`/`rescue` matching:
 /// there's no first-class `Class`/`Module` runtime VALUE (can't be stored in
 /// a variable or reflected on generally), just this narrow "is this concrete
 /// class id ancestor-compatible with that one" check.
@@ -1221,7 +1221,7 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
 /// reopened), the builtin method tables, and the Enumerable/Comparable
 /// name sets. Kernel PRIVATE functions (`puts`, ...) are deliberately
 /// invisible, real Ruby's rule. Doesn't consult
-/// `method_missing`/`respond_to_missing?`, which this spike doesn't model.
+/// `method_missing`/`respond_to_missing?`, which this runtime doesn't model.
 /// `respond_to?`'s answer: does `recv_class` (or any ancestor) provide
 /// `name`? `include_all` is the method's own second parameter -- false (the
 /// default) skips PRIVATE methods, exactly as in CRuby.

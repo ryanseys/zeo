@@ -10,7 +10,7 @@
 //! Explicit scope-cut: this does NOT drive automatic `.cause` chaining
 //! (setting a newly-raised exception's `cause` to whatever's currently being
 //! handled) -- that would need a way to set an arbitrary field on an
-//! arbitrary `RObj` by name at runtime, which this spike's object model
+//! arbitrary `RObj` by name at runtime, which this object model
 //! doesn't have (every ivar is a concrete, typed struct field, not a
 //! runtime name-keyed map). Left as a documented future item, not attempted
 //! here; likewise the explicit `raise ..., cause: e` override, already a

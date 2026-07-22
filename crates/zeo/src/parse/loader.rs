@@ -437,13 +437,13 @@ impl Loader {
             .unwrap_or_default();
         if name == "load" && arg_list.len() == 2 {
             return Err(
-                "`load` with a `wrap` argument isn't supported (spike scope) -- a wrap module needs load-time anonymous-module scoping, which doesn't exist yet"
+                "`load` with a `wrap` argument isn't supported (zeo limitation) -- a wrap module needs load-time anonymous-module scoping, which doesn't exist yet"
                     .to_string().into(),
             );
         }
         if arg_list.len() != 1 {
             return Err(format!(
-                "`{name}` is only supported with exactly one string-literal argument (spike scope)"
+                "`{name}` is only supported with exactly one string-literal argument (zeo limitation)"
             )
             .into());
         }
@@ -454,7 +454,7 @@ impl Loader {
         let arg_id = lower_node(result, hir, &arg_list[0])?;
         let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
             return Err(format!(
-                "`{name}` with a non-literal argument isn't supported (spike scope) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
+                "`{name}` with a non-literal argument isn't supported (zeo limitation) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
             ).into());
         };
         self.splice_feature(hir, &feature, name, dir, file_idx, current_box)
@@ -789,7 +789,7 @@ fn resolve_require_relative(feature: &str, dir: Option<&Path>) -> PResult<PathBu
     };
     if is_native_feature(feature) {
         return Err(format!(
-            "`require_relative \"{feature}\"`: native (.so/.bundle) features aren't supported (spike scope)"
+            "`require_relative \"{feature}\"`: native (.so/.bundle) features aren't supported (zeo limitation)"
         ).into());
     }
     // ORDER MATTERS, and CRuby's is the inverse of the obvious one.

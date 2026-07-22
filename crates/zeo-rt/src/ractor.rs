@@ -107,14 +107,14 @@ pub fn ractor_send(r: &RRactor, value: &RubyValue) -> Result<(), String> {
 }
 
 /// `Ractor.receive` -- blocks THIS Ractor's OS thread until a message
-/// arrives. Loud panics (not catchable errors) for the two spike-scope
-/// walls: calling it outside a spawned Ractor, and every sender handle
-/// being gone while blocked (a real deadlock either way).
+/// arrives. Loud panics (not catchable errors) for the two hard walls:
+/// calling it outside a spawned Ractor, and every sender handle being
+/// gone while blocked (a real deadlock either way).
 pub fn ractor_receive() -> RubyValue {
     CURRENT_INCOMING.with(|c| {
         let slot = c.borrow();
         let Some(rx) = slot.as_ref() else {
-            panic!("Ractor.receive outside a spawned Ractor isn't supported yet (spike scope -- the main Ractor has no incoming port)");
+            panic!("Ractor.receive outside a spawned Ractor isn't supported yet (zeo limitation -- the main Ractor has no incoming port)");
         };
         rx.recv()
             .expect("every handle to this Ractor was dropped while it blocked in Ractor.receive")
@@ -145,9 +145,15 @@ pub fn ractor_outcome(r: &RRactor) -> Result<RubyValue, Signal> {
             *r.state.lock() = Some(RactorState::Done(outcome.clone()));
             outcome
         }
-        None => {
-            panic!("concurrent value/join on the same Ractor isn't supported yet (spike scope)")
-        }
+        // Another thread is INSIDE `handle.join()` for this same Ractor --
+        // poll for its stored outcome (the `thread_outcome` pattern; Ractors
+        // are OS threads, so a plain sleep is the right wait here).
+        None => loop {
+            if let Some(RactorState::Done(outcome)) = &*r.state.lock() {
+                return outcome.clone();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        },
     }
 }
 
@@ -312,7 +318,7 @@ fn cross_boundary(v: &RubyValue) -> Result<RubyValue, String> {
             Ok(RubyValue::Range(cross_end(start)?, cross_end(end)?, *excl))
         }
         RubyValue::Object(_) => Err(
-            "an unfrozen Object can't cross a Ractor boundary (spike scope: real Ruby deep-copies it; here, Ractor.make_shareable it first)"
+            "an unfrozen Object can't cross a Ractor boundary (zeo limitation: real Ruby deep-copies it; here, Ractor.make_shareable it first)"
                 .to_string(),
         ),
         other => Err(format!(

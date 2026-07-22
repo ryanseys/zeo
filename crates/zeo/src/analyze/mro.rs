@@ -286,7 +286,7 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // (which also catches ivars arriving via an `include`d module) beats a
     // confusing `rustc` failure on the generated free functions. Real Ruby
     // allows generic ivars on (unfrozen) builtin instances; documented
-    // divergence, spike scope.
+    // divergence, zeo limitation.
     //
     // `Object` is NOT rejected alongside them, though it is value-backed the
     // same way: the runtime `main` object its `__bm_Object` copies dispatch
@@ -299,7 +299,7 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
     // skips `ClassId(0)` entirely.
     if compiler.class(class_id).is_builtin && !ivars.is_empty() {
         return Err(format!(
-            "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (spike scope: built-in values have no ivar storage)",
+            "instance variable `@{}` in a method of the reopened built-in class `{}` isn't supported (zeo limitation: built-in values have no ivar storage)",
             ivars[0],
             compiler.class(class_id).name
         ));

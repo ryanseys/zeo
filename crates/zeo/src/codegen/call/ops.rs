@@ -15,7 +15,7 @@ use proc_macro2::TokenStream;
 /// which `zeo_rt::RubyValue` variant wraps their result. Every one of
 /// these is a plain `CallNode` at the `ruby-prism` level (`a + b` and
 /// `a.foo(b)` are the same node shape, just a different `name()`) -- so this
-/// table is the entire generalization of the original spike's single
+/// table is the entire generalization of the original single
 /// hardcoded literal-`+`-on-`IntegerLit` fast path: any operand pair
 /// statically known `Int` (not just literals -- see
 /// `analyze::locals`/`types::infer_type_with_locals`) routes through here;

@@ -1,7 +1,7 @@
 //! zeo-rt: the runtime library every zeo-generated program links
-//! against. Mirrors zeo's `lib/` (the C runtime), scoped to exactly what
-//! the spike's 7 examples need. See `docs/PORTING_ANALYSIS.md`
-//! for the full design writeup.
+//! against. Began as a port of the C predecessor's `lib/` runtime and has
+//! grown far past that origin. See `docs/PORTING_ANALYSIS.md`
+//! for the original design writeup.
 
 mod arith;
 mod bootstrap;
@@ -137,7 +137,7 @@ pub fn lock<T>(m: &parking_lot::Mutex<T>) -> parking_lot::MutexGuard<'_, T> {
 }
 
 /// Mirrors CRuby's `Kernel#puts` for the single scalar-argument case (the
-/// only form the spike's examples use): print the value, adding a trailing
+/// only form the original examples used): print the value, adding a trailing
 /// newline only if it doesn't already end in one.
 pub fn puts(value: RubyValue) {
     let s = value.to_display_string();

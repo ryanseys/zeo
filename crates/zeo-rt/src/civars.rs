@@ -48,7 +48,7 @@ static CIVARS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// `nil` for a class-level `@x` never yet written -- and here that is real
-/// Ruby's ACTUAL behavior, not this spike's usual approximation of it:
+/// Ruby's ACTUAL behavior, not this runtime's usual approximation of it:
 /// reading a never-assigned instance variable genuinely answers `nil` (only
 /// `@@x` raises a NameError, and only warns for an ivar under `-w`).
 /// Oracle-checked: `class C; def self.probe = @never_written; end; C.probe`

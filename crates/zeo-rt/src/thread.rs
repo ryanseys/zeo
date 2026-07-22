@@ -583,7 +583,7 @@ pub fn queue_set_max(q: &RQueue, n: i64) {
 /// `Err` = `ClosedQueueError: "queue closed"` (message via codegen, as
 /// always). `may`'s std-style lock poisoning is unwrapped into the inner
 /// guard -- a panicking coroutine mid-queue-op is already a dying process
-/// in this spike's posture, matching `parking_lot`'s no-poison stance
+/// in this runtime's posture, matching `parking_lot`'s no-poison stance
 /// everywhere else.
 pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());

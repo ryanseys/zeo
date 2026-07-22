@@ -1,5 +1,5 @@
 //! A Ruby symbol. Mirrors zeo's `sp_sym` (`lib/sp_types.h`) -- an interned
-//! integer id -- but simplified for the spike to pure runtime interning via a
+//! integer id -- but simplified here to pure runtime interning via a
 //! `HashMap`, rather than zeo's split of a codegen-baked static name table
 //! plus a small dynamic intern pool (`sp_sym_names`/`sp_dyn_syms`,
 //! `codegen.c:4460-4478`). Every literal AND every runtime-computed symbol

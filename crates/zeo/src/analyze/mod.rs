@@ -2,8 +2,8 @@
 //! once (no fixpoint loop -- see the plan's stated scope-cut) and registers
 //! every `ClassDef`/`DefMethod` into a `Compiler`, mirroring zeo's
 //! `walk_scope`/`register_locals`/`resolve_parents` (a tiny slice of them).
-//! Structured as a single pass function rather than zeo's 128-iteration
-//! fixpoint loop because none of the spike's 7 examples need mutual
+//! Structured as a single pass function rather than the predecessor's
+//! 128-iteration fixpoint loop because nothing yet needs mutual
 //! recursion between inference results -- but the shape (one function that
 //! walks the whole program and mutates a `Compiler`) is exactly what a real
 //! fixpoint would wrap in `for iter in 0..128 { ... }` later.
@@ -569,7 +569,7 @@ fn register_class(
     // fresh, unrelated `Store::String` (real Ruby's rule), which then
     // lexically shadows the builtin inside `Store` -- also real Ruby's
     // rule, falling out of `resolve_class`'s scope walk. Still rejected
-    // (clean errors, spike scope): `Object` (per-box TOP-LEVEL methods
+    // (clean errors, zeo limitation): `Object` (per-box TOP-LEVEL methods
     // aren't supported yet -- an Object reopen is top-level `def` by another
     // name), `Class`/`Module` (no per-class-value dispatch exists), and
     // the builtin MODULES (`Enumerable`/`Comparable` -- patching one would
@@ -611,7 +611,7 @@ fn register_class(
             // module id, found by the MRO walk for every includer.
             if ci.is_module == is_module && (cid == CLASS_CLASS || cid == MODULE_CLASS) {
                 return Err(format!(
-                    "reopening the built-in {} `{name}` isn't supported yet (spike scope)",
+                    "reopening the built-in {} `{name}` isn't supported yet (zeo limitation)",
                     if ci.is_module { "module" } else { "class" }
                 ));
             }
@@ -740,7 +740,7 @@ fn register_class(
                         );
                         if compiler.class(cid).is_builtin && !subclassable {
                             return Err(format!(
-                                "subclassing the built-in type `{s}` isn't supported yet (spike scope, no generated Rust struct exists for it)"
+                                "subclassing the built-in type `{s}` isn't supported yet (zeo limitation, no generated Rust struct exists for it)"
                             ));
                         }
                         cid
@@ -790,8 +790,8 @@ fn register_class(
                     *visibility,
                 );
                 // An OPERATOR definition on a builtin reopen (`class
-                // Integer; def +`) is rejected outright (spike
-                // scope): the native `Int`/`Float`/`Str` operator fast
+                // Integer; def +`) is rejected outright (zeo
+                // limitation): the native `Int`/`Float`/`Str` operator fast
                 // paths are emitted unconditionally at every static call
                 // site, so a user operator would be silently bypassed
                 // there -- a loud rejection beats dispatch that only
@@ -800,7 +800,7 @@ fn register_class(
                     && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
                 {
                     return Err(format!(
-                        "defining operator `{name}` on the built-in class `{}` isn't supported yet (spike scope: static operator fast paths would bypass it)",
+                        "defining operator `{name}` on the built-in class `{}` isn't supported yet (zeo limitation: static operator fast paths would bypass it)",
                         compiler.class(class_id).name
                     ));
                 }
@@ -2024,7 +2024,7 @@ mod builtin_reopen_tests {
             "class Module\n  def probe\n    1\n  end\nend\n",
         ] {
             assert!(
-                analyze_err(src).contains("isn't supported yet (spike scope)"),
+                analyze_err(src).contains("isn't supported yet (zeo limitation)"),
                 "expected rejection for: {src}"
             );
         }

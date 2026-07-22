@@ -108,7 +108,7 @@ pub fn emit_loop(cx: &Ctx, body: &[NodeId]) -> TokenStream {
 /// the OUTER (pre-loop) label scope -- matching Ruby's own single evaluation
 /// and consistent with how `While`'s condition/`For`'s bounds are the only
 /// things that run outside the redo-wrapped body. Only `Array`/`Range` are
-/// supported (a clean codegen-time panic otherwise, spike scope, same
+/// supported (a clean codegen-time panic otherwise, zeo limitation, same
 /// posture as `emit_call`'s own final panic). `var` is a plain reassignment,
 /// not a `let` -- it's already declared `mut` in the enclosing scope's
 /// hoisting prelude (see `codegen::hoisting`), since (unlike a block's own
@@ -246,7 +246,7 @@ pub fn emit_break(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
     match &cx.loop_labels {
         Some((_, outer)) => quote! { break #outer #value_expr },
         None if cx.in_real_proc => quote! { return Err(zeo_rt::Signal::Break(#value_expr)) },
-        None => panic!("`break` outside a supported loop construct (spike scope)"),
+        None => panic!("`break` outside a supported loop construct (zeo limitation)"),
     }
 }
 
@@ -273,7 +273,7 @@ pub fn emit_next(cx: &Ctx, value: Option<NodeId>) -> TokenStream {
             };
             quote! { return Err(zeo_rt::Signal::Next(#value_expr)) }
         }
-        None => panic!("`next` outside a supported loop construct (spike scope)"),
+        None => panic!("`next` outside a supported loop construct (zeo limitation)"),
     }
 }
 
@@ -284,7 +284,7 @@ pub fn emit_redo(cx: &Ctx) -> TokenStream {
     match &cx.loop_labels {
         Some((redo, _)) => quote! { continue #redo },
         None if cx.in_real_proc => quote! { return Err(zeo_rt::Signal::Redo) },
-        None => panic!("`redo` outside a supported loop construct (spike scope)"),
+        None => panic!("`redo` outside a supported loop construct (zeo limitation)"),
     }
 }
 

@@ -46,7 +46,7 @@ fn lower_single_wrapped_pattern(
     let body: Vec<_> = stmts.body().iter().collect();
     if body.len() != 1 {
         return Err(format!(
-            "expected exactly one pattern inside an `{guard_kind}`-guarded `in` clause (spike scope)"
+            "expected exactly one pattern inside an `{guard_kind}`-guarded `in` clause (zeo limitation)"
         ).into());
     }
     lower_pattern(result, hir, &body[0])
@@ -77,8 +77,9 @@ pub(crate) fn lower_pattern(
         flatten_alternation(result, hir, node, &mut parts)?;
         if parts.iter().any(pattern_may_bind) {
             return Err(
-                "a pattern can't bind a variable inside a `|` alternation (spike scope, matches real Ruby)"
-                    .to_string().into(),
+                "a pattern can't bind a variable inside a `|` alternation (matches real Ruby)"
+                    .to_string()
+                    .into(),
             );
         }
         return Ok(Pattern::Or(parts));
@@ -143,7 +144,7 @@ pub(crate) fn lower_pattern(
         for el in hp.elements().iter() {
             let assoc = el
                 .as_assoc_node()
-                .ok_or("expected `key: pattern` inside a hash pattern (spike scope)")?;
+                .ok_or("expected `key: pattern` inside a hash pattern (zeo limitation)")?;
             let key = hash_pattern_key_name(&assoc.key())?;
             // The `{key:}` shorthand -- prism synthesizes the value as an
             // `ImplicitNode` wrapping a `LocalVariableTargetNode` of the
@@ -231,7 +232,7 @@ fn splat_target_name(splat: &ruby_prism::SplatNode<'_>) -> PResult<Option<String
         None => Ok(None),
         Some(e) => {
             let t = e.as_local_variable_target_node().ok_or(
-                "a pattern's `*` splat may only bind a plain local variable name (spike scope)",
+                "a pattern's `*` splat may only bind a plain local variable name (zeo limitation)",
             )?;
             Ok(Some(
                 String::from_utf8_lossy(t.name().as_slice()).into_owned(),
@@ -252,18 +253,18 @@ fn array_or_find_rest_name(node: &Node<'_>) -> PResult<Option<String>> {
     }
     let splat = node
         .as_splat_node()
-        .ok_or("expected a `*name` splat in this array pattern (spike scope)")?;
+        .ok_or("expected a `*name` splat in this array pattern (zeo limitation)")?;
     splat_target_name(&splat)
 }
 
-/// A hash pattern key -- only a literal `key:` symbol is supported (spike
+/// A hash pattern key -- only a literal `key:` symbol is supported (zeo
 /// scope, matching this project's existing symbol-key-only restriction on
 /// hash pattern -- a computed/string key needs a distinct `AssocNode` shape
 /// this doesn't lower).
 fn hash_pattern_key_name(node: &Node<'_>) -> PResult<String> {
     let sym = node
         .as_symbol_node()
-        .ok_or("only symbol keys (`key:`) are supported in a hash pattern (spike scope)")?;
+        .ok_or("only symbol keys (`key:`) are supported in a hash pattern (zeo limitation)")?;
     Ok(String::from_utf8_lossy(sym.unescaped()).into_owned())
 }
 
@@ -278,12 +279,12 @@ fn hash_pattern_rest(node: Option<Node<'_>>) -> PResult<HashPatternRest> {
     }
     let sp = n
         .as_assoc_splat_node()
-        .ok_or("expected `**rest`/`**nil` in this hash pattern (spike scope)")?;
+        .ok_or("expected `**rest`/`**nil` in this hash pattern (zeo limitation)")?;
     match sp.value() {
         None => Ok(HashPatternRest::Rest(None)),
         Some(v) => {
             let t = v.as_local_variable_target_node().ok_or(
-                "a hash pattern's `**` may only bind a plain local variable name (spike scope)",
+                "a hash pattern's `**` may only bind a plain local variable name (zeo limitation)",
             )?;
             Ok(HashPatternRest::Rest(Some(
                 String::from_utf8_lossy(t.name().as_slice()).into_owned(),

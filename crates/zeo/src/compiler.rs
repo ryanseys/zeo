@@ -136,7 +136,7 @@ pub struct ClassInfo {
     /// `ancestors` (superclass, `include`, `prepend`), each carrying its own
     /// `Scope::defining_class` for `super` to search from. Always populated
     /// by `analyze::mro::materialize`, even for a class with no mixins at
-    /// all (closes a latent gap: today's spike never generated a Rust
+    /// all (closes a latent gap: the compiler never generated a Rust
     /// method for a purely-inherited, non-overridden method at all).
     pub methods: Vec<ScopeId>,
     /// `def self.name` written literally in this class/module's own body.
@@ -163,7 +163,7 @@ pub struct ClassInfo {
     /// Class-body TOP-LEVEL `@@x = expr` statements (`@@count = 0` written
     /// directly inside `class Foo; ... end`, not inside any method) -- real
     /// Ruby executes a class body immediately, top to bottom, as part of
-    /// loading the class. This spike doesn't model general class-body
+    /// loading the class. This compiler doesn't model general class-body
     /// statement execution (arbitrary side-effecting code interleaved with
     /// other top-level code) -- only this one common, narrow shape, run
     /// once from generated `main()` right after this class's own

@@ -203,7 +203,7 @@ fn parse_args() -> Result<Args, String> {
 /// The compiler's OWN bundled `gems/` is not listed here: the loader appends
 /// it unconditionally, so it is found whether zeo is driven through this
 /// CLI or used as a library. The bundled path is baked in
-/// via `CARGO_MANIFEST_DIR` -- honest for a dev-tree spike compiler
+/// via `CARGO_MANIFEST_DIR` -- honest for a dev-tree compiler
 /// (both `cargo run` and the test harness live in the repo); an installed
 /// distribution would locate it relative to the executable instead, the
 /// reference project's approach.

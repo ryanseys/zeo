@@ -28,7 +28,7 @@ use zeo_hir::lower::{encoding_const_name, parse_and_lower_into};
 /// NO new machinery either -- it's just ordinary inheritance + materialized
 /// `super`. `msg` is a plain REQUIRED param,
 /// not a Ruby-level default (`msg = "..."`, which real Ruby's own
-/// `Exception.new` supports) -- every construction site this spike
+/// `Exception.new` supports) -- every construction site this compiler
 /// generates (`raise`'s codegen -- see `codegen::expr::emit_raise_value`)
 /// always supplies a message explicitly (the raising class's own name as a
 /// compile-time string literal, when `raise` itself gave none), so this

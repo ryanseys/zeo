@@ -187,7 +187,7 @@ tower_binop!(
             Ok(RubyValue::Float(crate::float_mod(x, y)))
         }
     },
-    cpx(_x, _y) => panic!("Complex has no modulo (NoMethodError in real Ruby; spike scope: raised as a panic)"),
+    cpx(_x, _y) => panic!("Complex has no modulo (NoMethodError in real Ruby; zeo limitation: raised as a panic)"),
 );
 
 tower_binop!(

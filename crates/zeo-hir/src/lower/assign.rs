@@ -359,7 +359,7 @@ pub(crate) fn lower_multi_target(
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
         if arg_list.len() != 1 {
-            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (spike scope)".to_string().into());
+            return Err("`arr[i] = ...` as a multi-assignment target only supports a single index argument (zeo limitation)".to_string().into());
         }
         let index = lower_node(result, hir, &arg_list[0])?;
         let tmp_name = hir.gensym("__mval");
@@ -385,7 +385,7 @@ pub(crate) fn lower_multi_target(
         return Ok(MultiTarget::Nested(group));
     }
     Err(
-        "unsupported multi-assignment/`for`-loop target shape (spike scope)"
+        "unsupported multi-assignment/`for`-loop target shape (zeo limitation)"
             .to_string()
             .into(),
     )

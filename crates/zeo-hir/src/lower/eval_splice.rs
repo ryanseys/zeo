@@ -27,7 +27,7 @@ pub fn lower_box_eval_body(
         .unwrap_or_default();
     if args.len() != 1 {
         return Err(
-            "`Ruby::Box#eval` is only supported with exactly one string-literal argument (spike scope)"
+            "`Ruby::Box#eval` is only supported with exactly one string-literal argument (zeo limitation)"
                 .to_string().into(),
         );
     }
@@ -36,7 +36,7 @@ pub fn lower_box_eval_body(
         .map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned())
     else {
         return Err(
-            "`Ruby::Box#eval` with a non-literal argument isn't supported (spike scope) -- the source must be a plain string literal, resolvable at compile time"
+            "`Ruby::Box#eval` with a non-literal argument isn't supported (zeo limitation) -- the source must be a plain string literal, resolvable at compile time"
                 .to_string().into(),
         );
     };
@@ -115,7 +115,7 @@ pub fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
 /// top-level `class`/`def` inside an eval'd literal would otherwise flow
 /// straight to `codegen::expr::emit_expr`'s "unexpected top-level-only node
 /// in expression position" panic -- this rejects that case with a clean
-/// compile error instead of letting zeo itself panic (spike scope: the
+/// compile error instead of letting zeo itself panic (zeo limitation: the
 /// same gap already exists today for any non-eval code that nests a
 /// `class`/`def` inside e.g. an `if`, so this isn't a new hole, just a new
 /// way to trigger an old one).
@@ -126,7 +126,7 @@ pub(crate) fn reject_top_level_defs(hir: &Hir, body: &[NodeId]) -> PResult<()> {
             HirNode::ClassDef { .. } | HirNode::DefMethod { .. }
         ) {
             return Err(
-                "`eval` containing a top-level `class`/`def` isn't supported yet (spike scope)"
+                "`eval` containing a top-level `class`/`def` isn't supported yet (zeo limitation)"
                     .to_string()
                     .into(),
             );

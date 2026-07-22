@@ -13,7 +13,7 @@
 //! representation (`SpNode`'s string fields are plain C strings too;
 //! zeo's `sp_sym_intern` is a *codegen-time*, generated-*program*
 //! concern, not a compiler-internal one). Interning zeo's own
-//! identifiers is a straightforward later optimization, not a spike
+//! identifiers is a straightforward later optimization, not a
 //! blocker.
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -236,7 +236,7 @@ impl Hir {
     /// (real Ruby: everything defined inside `class << self` becomes a
     /// method on the class itself, not an instance method). Panics if `id`
     /// isn't a `DefMethod` -- the caller already rejects any other statement
-    /// shape appearing inside `class << self` (spike scope).
+    /// shape appearing inside `class << self` (zeo limitation).
     pub fn set_method_is_class_method(&mut self, id: NodeId) {
         let HirNode::DefMethod {
             is_class_method, ..
@@ -963,7 +963,7 @@ pub enum StrPart {
 /// A `/pattern/flags` / `%r{pattern}flags` literal's option letters --
 /// `ruby-prism`'s `RegularExpressionNode`/`InterpolatedRegularExpressionNode`
 /// expose several more (`o`/`e`/`n`/`s`/`u`, all encoding/interpolation-once
-/// concerns), but this spike is UTF-8-only throughout (see
+/// concerns), but zeo is UTF-8-only throughout (see
 /// `docs/limitations.md`'s existing posture on strings), so only the three
 /// letters that change actual MATCHING semantics are modeled; the rest are
 /// silently accepted as no-ops except a genuinely non-UTF-8-forcing encoding
@@ -1040,9 +1040,9 @@ pub struct FfiCall {
 }
 
 /// A small, real enum instead of zeo's ~115 string-typed `SP_NODE_KINDS`
-/// that every pass has to `sp_streq` against. Sized to exactly what the
-/// spike's 7 examples need; growing it is additive (new variants), matching
-/// zeo's own incremental node-kind coverage.
+/// that every pass has to `sp_streq` against. Started at exactly what the
+/// original 7 examples needed; growing it is additive (new variants),
+/// matching the predecessor's own incremental node-kind coverage.
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
@@ -1203,7 +1203,7 @@ pub enum HirNode {
     /// forwarding an already-built `Proc` value as the call's block (a
     /// distinct `BlockArgumentNode`), separate from `block` (a literal `{
     /// }`/`do..end` at the call site); real Ruby rejects having both on the
-    /// same call, which this spike doesn't separately re-validate (whichever
+    /// same call, which zeo doesn't separately re-validate (whichever
     /// lowers last silently wins -- harmless, since `ruby-prism` itself
     /// already rejects this at parse time before lowering ever runs).
     Call {
@@ -1241,10 +1241,9 @@ pub enum HirNode {
         /// `Call` lowering instead (this stays `None`).
         block: Option<NodeId>,
     },
-    /// Mirrors zeo's `emit_super`: always resolved against the *static*
-    /// superclass, never through the dynamic dispatch table. See codegen's
-    /// handling -- the spike implements this via statement inlining rather
-    /// than a cross-type function call (see docs/PORTING_ANALYSIS.md).
+    /// A `super` call. Resolved at RUNTIME against the receiver's live
+    /// linearized ancestry (`codegen::call::super_calls` picks the dispatch
+    /// channel; the former static-superclass inline splice is gone).
     ///
     /// `zsuper` distinguishes real Ruby's two zero-written-argument shapes,
     /// which mean OPPOSITE things: bare `super` (prism's
@@ -1317,7 +1316,7 @@ pub enum HirNode {
     /// `self: Arc<Self>` receiver at codegen time at all, see
     /// `compiler::ClassInfo`'s docs) even though the body shape is
     /// identical. Any OTHER explicit receiver (`def SomeConst.name`) is a
-    /// clean lowering rejection (spike scope -- reopening a class from
+    /// clean lowering rejection (zeo limitation -- reopening a class from
     /// outside its own body isn't supported).
     DefMethod {
         name: String,
@@ -1371,7 +1370,7 @@ pub enum HirNode {
     /// block-based iteration (`each { |x| ... }`), Ruby's `for` does NOT
     /// introduce a new variable scope: `var` and any locals first assigned
     /// in the body stay visible after the loop ends -- a real semantic
-    /// difference, not a spike shortcut, and one `codegen`'s plain
+    /// difference, not a shortcut, and one `codegen`'s plain
     /// (non-block-nested) `let` emission already gives for free. `target`
     /// reuses `MultiTarget` (a plain `for x in ...` lowers to
     /// `MultiTarget::Local`; `for a, b in ...` to `MultiTarget::Nested`),
@@ -1379,8 +1378,8 @@ pub enum HirNode {
     /// `MultiWrite`'s value. The loop's own expression-position value is
     /// documented as `nil` unless a `break value` fires -- real Ruby returns
     /// the iterated collection itself in the no-break case, a
-    /// narrower-than-real-Ruby simplification nothing in the spike's
-    /// examples depends on.
+    /// narrower-than-real-Ruby simplification nothing in the corpus
+    /// depends on.
     For {
         target: MultiTarget,
         iterable: NodeId,
@@ -1475,7 +1474,7 @@ pub enum HirNode {
     /// (if/case/while/etc.), not inside a NESTED block literal -- `yield`
     /// lexically inside a block passed elsewhere refers to a different
     /// thing in real Ruby (the block's own enclosing method, not this one),
-    /// a genuinely harder case this spike doesn't attempt; see
+    /// a genuinely harder case zeo doesn't attempt; see
     /// `analyze::register_class`'s `uses_bare_block` scan, which enforces
     /// this restriction with a clean rejection. Compiles to invoking the
     /// method's implicit `__blk` parameter (see `codegen::params`), panicking
@@ -1501,7 +1500,7 @@ pub enum HirNode {
     /// generically (not a call-shape desugar). Only meaningful inside an
     /// ordinary instance method body (`cx.current_class` is `Some`, see
     /// `codegen::expr::infer`'s special case); a class method/module
-    /// function has no backing instance to be (this spike has no first-class
+    /// function has no backing instance to be (zeo has no first-class
     /// `Class`/`Module` runtime value -- see the plan's Part 6 scope-cut), so
     /// `codegen::expr::emit_expr`'s `SelfRef` arm rejects that case with a
     /// clear error instead of emitting a reference to a Rust `self` that
@@ -1574,7 +1573,7 @@ pub enum HirNode {
     /// `retry` -- restarts the nearest enclosing `begin`'s own `body` from
     /// the top (an `ensure` that already ran does NOT re-run). Only valid
     /// lexically inside a `rescue` clause in real Ruby (a real, if rare,
-    /// `SyntaxError` otherwise) -- this spike doesn't re-validate that
+    /// `SyntaxError` otherwise) -- zeo doesn't re-validate that
     /// positional restriction at lowering time; see
     /// `codegen::exceptions::emit_retry`'s docs for what happens to a
     /// mis-scoped one instead (an uncaught `Signal`, not silent wrongness).

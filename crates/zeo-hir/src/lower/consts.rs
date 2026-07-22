@@ -28,9 +28,9 @@ pub fn constant_path_name(node: &Node<'_>) -> PResult<String> {
     let cp = node
         .as_constant_path_node()
         .ok_or("expected a constant name or path (e.g. `Foo` or `Foo::Bar`)")?;
-    let name = cp
-        .name()
-        .ok_or("a `::` constant path with a dynamic/computed name isn't supported (spike scope)")?;
+    let name = cp.name().ok_or(
+        "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
+    )?;
     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
     Ok(match cp.parent() {
         None => format!("::{name}"),
@@ -49,9 +49,9 @@ pub fn constant_path_name(node: &Node<'_>) -> PResult<String> {
 pub(crate) fn constant_path_scope_and_name(
     node: &ruby_prism::ConstantPathNode<'_>,
 ) -> PResult<(String, String)> {
-    let name = node
-        .name()
-        .ok_or("a `::` constant path with a dynamic/computed name isn't supported (spike scope)")?;
+    let name = node.name().ok_or(
+        "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
+    )?;
     let name = String::from_utf8_lossy(name.as_slice()).into_owned();
     let scope = match node.parent() {
         None => "Object".to_string(),

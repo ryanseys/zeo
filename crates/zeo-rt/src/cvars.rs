@@ -29,7 +29,7 @@ static CVARS: LazyLock<Mutex<HashMap<(u32, String), RubyValue>>> =
 
 /// `nil` for a `@@x` never yet written -- matches real Ruby's own behavior
 /// for reading a class variable before any assignment ever ran (a
-/// `NameError` in REAL CRuby, technically, but this spike's established
+/// `NameError` in REAL CRuby, technically, but this runtime's established
 /// posture elsewhere treats "never assigned" as `nil` rather than adding a
 /// distinct raise for it -- see `IvarRead`'s identical convention).
 pub fn cvar_get(owner_class_id: u32, name: &str) -> RubyValue {

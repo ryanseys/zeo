@@ -207,7 +207,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
             if out.write_all(bytes).is_err() {
                 // A closed pipe downstream (`head`, etc.) -- CRuby
                 // dies with EPIPE; a quiet exit is the pragmatic
-                // spike-scope equivalent.
+                // equivalent here.
                 std::process::exit(0);
             }
             Ok(())

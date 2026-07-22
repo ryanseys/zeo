@@ -36,7 +36,7 @@ pub(crate) fn lower_if_chain(
             } else if let Some(else_node) = n.as_else_node() {
                 lower_body(result, hir, else_node.statements().map(|s| s.as_node()))?
             } else {
-                return Err("expected `elsif` or `else` after `if` (spike scope)"
+                return Err("expected `elsif` or `else` after `if` (zeo limitation)"
                     .to_string()
                     .into());
             }
@@ -180,6 +180,6 @@ pub(crate) fn lower_single_optional_argument(
 fn local_target_name(node: &Node<'_>) -> PResult<String> {
     let target = node
         .as_local_variable_target_node()
-        .ok_or("`rescue => name` only supports a plain local variable binding (spike scope)")?;
+        .ok_or("`rescue => name` only supports a plain local variable binding (zeo limitation)")?;
     Ok(String::from_utf8_lossy(target.name().as_slice()).into_owned())
 }

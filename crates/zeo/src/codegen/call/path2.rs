@@ -46,7 +46,7 @@ pub(super) fn emit_safe_call(
             if __safe_recv.is_nil() {
                 zeo_rt::RubyValue::Nil
             } else {
-                // `&.` doesn't accept a block yet (spike scope --
+                // `&.` doesn't accept a block yet (zeo limitation --
                 // narrower than real Ruby, matches
                 // this call's existing kwargs restriction). `send_value`
                 // handles Object AND builtin receivers

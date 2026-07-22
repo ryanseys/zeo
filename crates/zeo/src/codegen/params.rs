@@ -458,7 +458,7 @@ pub fn emit_call_args_to(
             match &cx.compiler.hir[*k] {
                 HirNode::SymbolLit(s) => s.clone(),
                 _ => panic!(
-                    "`{method_name}`: keyword argument names must be literal symbols (spike scope)"
+                    "`{method_name}`: keyword argument names must be literal symbols (zeo limitation)"
                 ),
             }
         })
@@ -635,7 +635,7 @@ pub fn emit_call_args_to(
 /// control flow can, so zeo authors this once, here, using the same
 /// `Params` info the Path 1 caller above already has).
 ///
-/// Keyword parameters are NOT bound dynamically (documented spike scope-
+/// Keyword parameters are NOT bound dynamically (documented zeo scope-
 /// cut, not an oversight): Path 2's calling convention is a bare positional
 /// `&[RubyValue]` slice with no name information at all, unlike Path 1's
 /// call sites, which always know the callee's declared keyword names

@@ -335,7 +335,7 @@ fn bind_new_args(
         || params.keyword_rest.is_some()
     {
         panic!(
-            "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (spike scope)"
+            "`{class_name}.new`: an `initialize` with splat/post/keyword parameters isn't supported yet (zeo limitation)"
         );
     }
     if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {

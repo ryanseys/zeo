@@ -187,7 +187,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             .find(|n| !block_caps.assigned.contains(n.as_str()))
         {
             panic!(
-                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
+                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (zeo limitation) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
             );
         }
     }

@@ -3,7 +3,7 @@
 //! combined into one in-process step (no text-serialization round-trip; see
 //! `hir.rs`'s module docs for why zeo needed that step and we don't).
 //!
-//! Covers exactly the node kinds the spike's 7 examples exercise; anything
+//! Covers the node kinds the corpus exercises; anything
 //! else is a clean `Err` (mirroring zeo's `unsupported(c, id, "...")`
 //! convention), not a panic.
 
@@ -423,7 +423,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(alias) = node.as_alias_global_variable_node() {
         let name_of = |n: &Node<'_>| -> PResult<String> {
             let g = n.as_global_variable_read_node().ok_or(
-                "`alias`'s global targets must both be plain `$name` globals (spike scope)",
+                "`alias`'s global targets must both be plain `$name` globals (zeo limitation)",
             )?;
             Ok(String::from_utf8_lossy(g.name().as_slice()).into_owned())
         };
@@ -494,7 +494,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             "$+" => LastMatch::LastGroup,
             other => {
                 return Err(format!(
-                    "the `{other}` back-reference global isn't supported yet (spike scope)"
+                    "the `{other}` back-reference global isn't supported yet (zeo limitation)"
                 )
                 .into());
             }
@@ -650,7 +650,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(op) = node.as_call_operator_write_node() {
         let recv = op
             .receiver()
-            .ok_or("`+=` on a method call with no receiver isn't supported (spike scope)")?;
+            .ok_or("`+=` on a method call with no receiver isn't supported (zeo limitation)")?;
         let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
         let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
@@ -671,7 +671,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(op) = node.as_call_and_write_node() {
         let recv = op
             .receiver()
-            .ok_or("`&&=` on a method call with no receiver isn't supported (spike scope)")?;
+            .ok_or("`&&=` on a method call with no receiver isn't supported (zeo limitation)")?;
         let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
         let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
@@ -683,7 +683,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(op) = node.as_call_or_write_node() {
         let recv = op
             .receiver()
-            .ok_or("`||=` on a method call with no receiver isn't supported (spike scope)")?;
+            .ok_or("`||=` on a method call with no receiver isn't supported (zeo limitation)")?;
         let read_name = String::from_utf8_lossy(op.read_name().as_slice()).into_owned();
         let write_name = String::from_utf8_lossy(op.write_name().as_slice()).into_owned();
         let rhs = lower_node(result, hir, &op.value())?;
@@ -700,7 +700,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // `bind_index_target_once`'s docs.
     if let Some(op) = node.as_index_operator_write_node() {
         let recv = op.receiver().ok_or(
-            "`+=` on an indexing expression with no receiver isn't supported (spike scope)",
+            "`+=` on an indexing expression with no receiver isn't supported (zeo limitation)",
         )?;
         let idx = index_arguments(op.arguments())?;
         let op_name = String::from_utf8_lossy(op.binary_operator().as_slice()).into_owned();
@@ -723,7 +723,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
     if let Some(op) = node.as_index_and_write_node() {
         let recv = op.receiver().ok_or(
-            "`&&=` on an indexing expression with no receiver isn't supported (spike scope)",
+            "`&&=` on an indexing expression with no receiver isn't supported (zeo limitation)",
         )?;
         let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
@@ -737,7 +737,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
     if let Some(op) = node.as_index_or_write_node() {
         let recv = op.receiver().ok_or(
-            "`||=` on an indexing expression with no receiver isn't supported (spike scope)",
+            "`||=` on an indexing expression with no receiver isn't supported (zeo limitation)",
         )?;
         let idx = index_arguments(op.arguments())?;
         let rhs = lower_node(result, hir, &op.value())?;
@@ -835,7 +835,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         for cond in case_node.conditions().iter() {
             let when = cond
                 .as_when_node()
-                .ok_or("expected a `when` clause inside `case` (spike scope)")?;
+                .ok_or("expected a `when` clause inside `case` (zeo limitation)")?;
             // `lower_array_elem`, not a bare `lower_node`: `when *a` is a
             // SplatNode, structurally identical to `[*a]`'s element.
             let values = when
@@ -863,13 +863,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(case_match) = node.as_case_match_node() {
         let subject = case_match
             .predicate()
-            .ok_or("`case/in` requires a subject (spike scope)")?;
+            .ok_or("`case/in` requires a subject (zeo limitation)")?;
         let subject = lower_node(result, hir, &subject)?;
         let mut arms = Vec::new();
         for cond in case_match.conditions().iter() {
             let in_node = cond
                 .as_in_node()
-                .ok_or("expected an `in` clause inside `case/in` (spike scope)")?;
+                .ok_or("expected an `in` clause inside `case/in` (zeo limitation)")?;
             let (pattern, guard) = lower_in_pattern_and_guard(result, hir, &in_node.pattern())?;
             let body = lower_body(result, hir, in_node.statements().map(|s| s.as_node()))?;
             arms.push(PatternArm {
@@ -1007,7 +1007,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
     // `module Name ... end` -- see `HirNode::ClassDef`'s docs for why this
     // shares the same node as `class`. Nested modules/namespaced constant
-    // paths (`module Foo::Bar`) aren't supported yet (spike scope, matching
+    // paths (`module Foo::Bar`) aren't supported yet (zeo limitation, matching
     // today's existing top-level-only class restriction) -- `constant_name`
     // already rejects anything but a plain `ConstantReadNode`.
     if let Some(module) = node.as_module_node() {
@@ -1268,7 +1268,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `walk_scope`. Only reachable here with a literal symbol name and a
         // block; anything else (computed name, no block) falls through to
         // the generic `Call` case below and is a compile-time rejection --
-        // the spike has no runtime "define a method on any class from
+        // zeo has no runtime "define a method on any class from
         // arbitrary code" path, only the two forms zeo itself supports
         // plus the literal-and-desugared one.
         if name == "define_method" && call.receiver().is_none() {
@@ -1589,7 +1589,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // form. Unlike `define_method`/`loop` above, this is intercepted
         // UNCONDITIONALLY: those two have a genuine second runtime path for
         // their non-desugared shape (an ordinary implicit-self `Call`), but
-        // `eval` doesn't -- this spike has no runtime parser/interpreter (see
+        // `eval` doesn't -- this path has no runtime parser/interpreter (see
         // docs/EVAL_VM.md), so letting a non-literal `eval(...)` fall through
         // as a plain `Call` would compile cleanly and only fail at RUNTIME
         // with a confusing `NoMethodError`, strictly worse than a clear
@@ -1633,7 +1633,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 }
             }
             return Err(format!(
-                "`{name}` is only supported as a top-level statement with a single string-literal argument (spike scope) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
+                "`{name}` is only supported as a top-level statement with a single string-literal argument (zeo limitation) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
             ).into());
         }
         // `autoload :Const, "feature"` -- the loader's eager pre-pass
@@ -1658,7 +1658,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         if let Some(recv) = call.receiver() {
             if constant_path_name(&recv).is_ok_and(|n| n == "Ruby::Box") {
                 return Err(format!(
-                    "`Ruby::Box.{name}` isn't supported here (spike scope) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement; `.current`/`.root`/`.main`/`.enabled?` have no compile-time meaning"
+                    "`Ruby::Box.{name}` isn't supported here (zeo limitation) -- the one supported allocation shape is `box = Ruby::Box.new` as a top-level statement; `.current`/`.root`/`.main`/`.enabled?` have no compile-time meaning"
                 ).into());
             }
             // Operations on a bound box handle outside their recognized
@@ -1825,15 +1825,15 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     // `/pattern/flags` / `%r{pattern}flags` (`RegularExpressionNode` covers
     // BOTH delimiter spellings -- prism only distinguishes opening/closing
     // `Location`s, not a separate node kind). `e`/`s` (EUC-JP/Windows-31J)
-    // are a clean rejection: this spike is UTF-8-only throughout (see
+    // are a clean rejection: source lowering is UTF-8-only throughout (see
     // `docs/limitations.md`), unlike `o`/`n`/`u`, which are harmless no-ops
     // here (`o`'s "only interpolate once" has no effect when every regex
     // literal is freshly constructed anyway; `n`/`u` just reassert the
-    // encoding this spike already assumes).
+    // encoding the lowering already assumes).
     if let Some(re) = node.as_regular_expression_node() {
         if re.is_euc_jp() || re.is_windows_31j() {
             return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string().into(),
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)".to_string().into(),
             );
         }
         let content = String::from_utf8_lossy(re.unescaped()).into_owned();
@@ -1850,7 +1850,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(re) = node.as_interpolated_regular_expression_node() {
         if re.is_euc_jp() || re.is_windows_31j() {
             return Err(
-                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (spike scope, UTF-8-only)".to_string().into(),
+                "a Regexp literal forcing a non-UTF-8 encoding (`/e`/`/s`) isn't supported yet (zeo limitation, UTF-8-only)".to_string().into(),
             );
         }
         let parts = lower_string_parts(result, hir, re.parts().iter())?;
@@ -1873,7 +1873,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         || node.as_interpolated_match_last_line_node().is_some()
     {
         return Err(
-            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (spike scope) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
+            "a bare Regexp literal used as an implicit condition (`if /foo/`, matching against `$_`) isn't supported yet (zeo limitation) -- write an explicit `=~`/`match?` against a real receiver instead".to_string().into(),
         );
     }
 
@@ -2029,7 +2029,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     }
 
     Err(format!(
-        "unsupported syntax at {:?} (spike handles only what the 7 example programs need)",
+        "unsupported syntax at {:?} (a zeo lowering gap, not necessarily invalid Ruby)",
         node.location()
     )
     .into())
@@ -2044,7 +2044,7 @@ fn lower_array_elem(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
     if let Some(splat) = node.as_splat_node() {
         let expr = splat
             .expression()
-            .ok_or("a bare `*` isn't supported inside an array literal (spike scope)")?;
+            .ok_or("a bare `*` isn't supported inside an array literal (zeo limitation)")?;
         return Ok(ArrayElem::Splat(lower_node(result, hir, &expr)?));
     }
     Ok(ArrayElem::Single(lower_node(result, hir, node)?))
@@ -2069,7 +2069,7 @@ fn lower_kwargs(result: &ParseResult, hir: &mut Hir, elements: &[Node<'_>]) -> P
         } else {
             let assoc = el
                 .as_assoc_node()
-                .ok_or("unsupported keyword-argument shape (spike scope)")?;
+                .ok_or("unsupported keyword-argument shape (zeo limitation)")?;
             let key = lower_node(result, hir, &assoc.key())?;
             let value = lower_node(result, hir, &assoc.value())?;
             kwargs.push(KwArg::Pair(key, value));
@@ -2105,7 +2105,7 @@ fn lower_named_capture_match(
     for target in mw.targets().iter() {
         let lvt = target
             .as_local_variable_target_node()
-            .ok_or("`=~`'s named-capture auto-binding only writes plain locals (spike scope)")?;
+            .ok_or("`=~`'s named-capture auto-binding only writes plain locals (zeo limitation)")?;
         let name = String::from_utf8_lossy(lvt.name().as_slice()).into_owned();
         let group = hir.push(HirNode::SymbolLit(name.clone()));
         let last = hir.push(HirNode::LastMatchRef(LastMatch::Data));
@@ -2165,7 +2165,7 @@ pub fn autoload_feature(call: &CallNode<'_>) -> PResult<String> {
         return Ok(feature);
     }
     Err(
-        "`autoload` with a non-literal feature isn't supported (spike scope) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string().into(),
+        "`autoload` with a non-literal feature isn't supported (zeo limitation) -- the target must resolve at compile time: a string literal, or `File.expand_path(\"...\", __dir__)`".to_string().into(),
     )
 }
 

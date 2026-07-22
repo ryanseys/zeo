@@ -1315,7 +1315,9 @@ pub fn kernel_sleep(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         Some(RubyValue::Int(n)) if *n >= 0 => *n as f64,
         Some(RubyValue::Float(f)) if *f >= 0.0 => *f,
         None => {
-            panic!("Kernel#sleep without a duration (sleep forever) isn't supported (spike scope)")
+            panic!(
+                "Kernel#sleep without a duration (sleep forever) isn't supported yet (zeo limitation; lands with the OS-thread migration)"
+            )
         }
         Some(other) => {
             return Err(type_error!(

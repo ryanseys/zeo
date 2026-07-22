@@ -4,7 +4,7 @@
 //! in source order, refining each local's `TyKind` as it's assigned, so
 //! `codegen` can resolve `x + y` to native `Int` arithmetic when `x`/`y` are
 //! locals previously assigned an `Int`-typed value -- not just
-//! literal-on-literal operands, which is all the original spike handled.
+//! literal-on-literal operands, which is all the original version handled.
 //!
 //! Branches (`if`/`case`) are handled by `join_branches`: each
 //! branch is walked against its own clone of the pre-branch map, and a local
@@ -226,7 +226,7 @@ fn track_node(
             track_node(compiler, defining, box_id, locals, *value);
             targets.for_each_node(&mut |n| track_node(compiler, defining, box_id, locals, n));
             // Destructured targets' element types aren't tracked precisely
-            // (spike scope) -- an arbitrary Array's element types are
+            // (zeo limitation) -- an arbitrary Array's element types are
             // unknown -- so each local-like target widens to `Poly`, same as
             // any other Array-`[]` read.
             targets.for_each_local_name(&mut |n| {

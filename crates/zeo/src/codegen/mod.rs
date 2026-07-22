@@ -1479,7 +1479,7 @@ fn emit_builtin_reopen(compiler: &Compiler, cid: ClassId) -> TokenStream {
             .any(|&cs| compiler.scope(cs).name == *n)
         {
             panic!(
-                "the built-in class `{}` defines both an instance method and a class method named `{n}` -- not supported yet (spike scope: they share one generated container)",
+                "the built-in class `{}` defines both an instance method and a class method named `{n}` -- not supported yet (zeo limitation: they share one generated container)",
                 ci.name
             );
         }

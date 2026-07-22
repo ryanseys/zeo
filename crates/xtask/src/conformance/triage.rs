@@ -60,8 +60,8 @@ const CLUSTERS: &[(&str, &str, &str)] = &[
     // -- runtime failures (FAIL_OUTPUT with a recognizable message) -----
     ("uninitialized constant", "P", "missing-core-const"),
     ("undefined method", "P", "missing-builtin-method"),
-    // -- catch-alls (note: some messages end "(spike scope, ...") -------
-    ("(spike scope", "?", "spike-misc"),
+    // -- catch-alls (note: some messages end "(zeo limitation, ...") ----
+    ("(zeo limitation", "?", "unsupported-misc"),
 ];
 
 pub struct Triage {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn classifies_panic() {
         let stderr = "thread 'main' panicked at crates/zeo/src/codegen/call.rs:1305:17:\n\
-                      `super(**h)` (double-splat into super) isn't supported yet (spike scope)\n\
+                      `super(**h)` (double-splat into super) isn't supported yet (zeo limitation)\n\
                       note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace";
         let t = classify(stderr);
         assert_eq!(t.cluster, "a");
@@ -249,7 +249,7 @@ mod tests {
     #[test]
     fn classifies_clean_rejection() {
         let t = classify(
-            "zeo: only plain required parameters are supported in a method definition (spike scope)",
+            "zeo: only plain required parameters are supported in a method definition (zeo limitation)",
         );
         assert_eq!(t.cluster, "a");
         assert_eq!(t.bucket, "param-shapes");

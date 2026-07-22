@@ -1,5 +1,5 @@
 //! `RubyValue` -- the boxed/poly representation every ivar, method argument,
-//! and method return uses in the spike (see the plan's stated scope-cut:
+//! and method return uses in this runtime (see the plan's stated scope-cut:
 //! native-unboxed `i64` is used only for literal `Int` arithmetic in codegen,
 //! everything else is `RubyValue` uniformly for now). Mirrors zeo's boxed
 //! `sp_RbVal` tagged union (`lib/sp_gc.h:42`), but as a real Rust `enum`
@@ -298,7 +298,7 @@ impl RubyValue {
             }
             // An approximation of `Hash#inspect` (symbol keys as `key:
             // value`, everything else as `key => value`) -- good enough for
-            // the `Int`/`Symbol`-keyed hashes the spike's examples use, but
+            // the `Int`/`Symbol`-keyed hashes the common cases use, but
             // NOT a faithful `inspect` for nested `String`s (no quoting).
             // Same posture as `Object`'s "#<Object>" placeholder above: a
             // documented simplification, not silent wrongness.
@@ -582,7 +582,7 @@ impl RubyValue {
     /// expression that's *typed* as producing a Symbol (e.g. the argument to
     /// `send`) needs to become the plain `Symbol` `send`'s own signature
     /// expects. Panics (not silently-wrong) if the value isn't actually a
-    /// Symbol at runtime -- the spike has no static type-checker to catch
+    /// Symbol at runtime -- this compiler has no static type-checker to catch
     /// this earlier (see the plan's scope-cut).
     pub fn as_symbol_unchecked(&self) -> Symbol {
         match self {

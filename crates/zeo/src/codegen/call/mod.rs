@@ -804,7 +804,7 @@ pub fn emit_call(
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
                             panic!(
-                                "`Fiber.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)"
+                                "`Fiber.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)"
                             );
                         }
                         return raise::emit_missing_block_raise(cx, "Fiber");
@@ -837,7 +837,7 @@ pub fn emit_call(
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
                             panic!(
-                                "`Thread.new` requires a literal block (spike scope -- `&proc` conversion isn't wired here yet)"
+                                "`Thread.new` requires a literal block (zeo limitation -- `&proc` conversion isn't wired here yet)"
                             );
                         }
                         return raise::emit_missing_block_raise(cx, "Thread");
@@ -873,7 +873,7 @@ pub fn emit_call(
                 ("Ractor", "new") => {
                     let Some(block_id) = block else {
                         if block_arg.is_some() {
-                            panic!("`Ractor.new` requires a literal block (spike scope)");
+                            panic!("`Ractor.new` requires a literal block (zeo limitation)");
                         }
                         return raise::emit_missing_block_raise(cx, "Ractor");
                     };
@@ -978,7 +978,7 @@ pub fn emit_call(
             if is_static {
                 if safe {
                     panic!(
-                        "safe-navigation on a class-method call isn't supported yet (spike scope)"
+                        "safe-navigation on a class-method call isn't supported yet (zeo limitation)"
                     );
                 }
                 return reflect::emit_class_method_call_on(
@@ -1026,11 +1026,11 @@ pub fn emit_call(
     if safe {
         if !kwargs.is_empty() {
             panic!(
-                "keyword arguments on a safe-navigation (`&.`) call aren't supported yet (spike scope)"
+                "keyword arguments on a safe-navigation (`&.`) call aren't supported yet (zeo limitation)"
             );
         }
         if block.is_some() || block_arg.is_some() {
-            panic!("a block on a safe-navigation (`&.`) call isn't supported yet (spike scope)");
+            panic!("a block on a safe-navigation (`&.`) call isn't supported yet (zeo limitation)");
         }
         return path2::emit_safe_call(cx, recv_id, name, args);
     }
@@ -2197,7 +2197,7 @@ fn dispatch(
     // own operator overload, if any, already took priority above); real
     // Ruby can't catch a type mismatch here statically either, so a clear
     // runtime panic (not a raised exception, matching every other pre-
-    // `raise`/`rescue` failure in this spike) is a faithful, not a lesser,
+    // `raise`/`rescue` failure in this runtime) is a faithful, not a lesser,
     // translation for any OTHER operand shape -- STRICTLY better than
     // today's alternative of `dispatch` itself never reaching a fallback and
     // panicking zeo at compile time instead.

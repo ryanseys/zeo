@@ -37,7 +37,7 @@
 //! GC-finalizer dependence (the leak JRuby's thread-backed fibers were
 //! notorious for). Only Rust destructors run during that unwind; compiled
 //! Ruby control flow (including `ensure`) is `Result`-based, so no Ruby
-//! code executes -- matching this spike's general "no ensure on
+//! code executes -- matching this runtime's general "no ensure on
 //! never-finished fibers" simplification.
 
 use crate::{RubyValue, Signal, Symbol};
@@ -310,7 +310,7 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     // happen here, on the resumer's own stack, either side of the switch).
     // A Rust panic propagating out of the resume skips the swap-back --
     // acceptable: a runtime panic is already a dying process in this
-    // spike's posture.
+    // runtime's posture.
     let resumer_stack = crate::handling::swap_handling(std::mem::take(&mut handle.handling.lock()));
     // Mark THIS fiber as current for the duration of the switch, so
     // `Fiber.current` inside the body finds it (and nested resumes stack).

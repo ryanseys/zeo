@@ -52,7 +52,7 @@ const STACK_SIZE_WORDS: usize = 2 * 1024 * 1024;
 /// rule) after the top-level body finishes -- including via `exit` (see
 /// `kernel_exit`) and after an uncaught exception. An exception raised
 /// INSIDE a handler is swallowed after the remaining handlers run (CRuby
-/// reports it; a silent skip is the spike-scope approximation --
+/// reports it; a silent skip is this runtime's approximation --
 /// TODO(plan P-A): report through the exception-message machinery).
 static AT_EXIT: parking_lot::Mutex<Vec<RubyValue>> = parking_lot::Mutex::new(Vec::new());
 

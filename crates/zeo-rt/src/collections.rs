@@ -75,9 +75,8 @@ pub type RArray = Arc<Freezable<Vec<RubyValue>>>;
 /// matching `Integer#eql?`'s stricter same-class rule -- see `Int`/`Float`
 /// staying separate variants below). Everything else (`Object`/`Proc`/a
 /// nested `Hash`) falls back to pointer IDENTITY -- real Ruby's own default
-/// `Object#hash` before a user overrides it, and this spike has no
-/// user-overridable `#hash`/`#eql?` protocol yet (a documented, narrow
-/// scope-cut -- see the plan's Part 10, Tier 1 #10).
+/// `Object#hash` before a user overrides it. (A user-defined `#hash` IS
+/// consulted for `Object` keys -- see `hash_key`'s `Object` arm below.)
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum HashKey {
     Nil,
@@ -188,7 +187,7 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         RubyValue::Object(o) => match crate::dispatch::call_user_method(o, "hash", &[]) {
             Some(Ok(v)) => HashKey::Computed(Box::new(hash_key(&v))),
             Some(Err(_)) => panic!(
-                "a user-defined `hash` raised inside a Hash key lookup (spike scope: no exception channel here)"
+                "a user-defined `hash` raised inside a Hash key lookup (zeo limitation: no exception channel here)"
             ),
             // A value-builtin subclass (D3) with no `hash` override keys by its
             // payload -- `Tag.new("k")` is the same Hash key as `"k"`.
@@ -617,7 +616,7 @@ pub fn string_wrap(buf: crate::encoding::StrBuf) -> RStr {
 /// `String#[]` -- negative indices count from the end, out-of-range returns
 /// `nil`. Re-walking `.chars()` on every call is a real inefficiency for long
 /// strings (documented, not fixed -- a byte-offset cache is a
-/// straightforward later optimization, not a spike blocker).
+/// straightforward later optimization, not a blocker).
 pub fn string_get(s: &RStr, index: i64) -> RubyValue {
     // Encoding-aware: a character is a UTF-8 sequence or a single byte, and
     // the result keeps the receiver's encoding (a BINARY byte stays BINARY).

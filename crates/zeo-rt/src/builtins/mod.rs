@@ -738,7 +738,7 @@ pub(crate) use arg_str;
 
 /// The block -- or, blockless, an early return with the ENUMERATOR every
 /// iteration method answers in real Ruby (retiring the
-/// "would return an Enumerator (spike scope)" panics): the enumerator
+/// "would return an Enumerator" panics): the enumerator
 /// captures `(recv, method-name, args)` and re-invokes the method when
 /// iterated (`rb_enumeratorize`'s rule).
 macro_rules! block_or_enum {

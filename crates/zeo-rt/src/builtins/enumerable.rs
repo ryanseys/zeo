@@ -155,7 +155,7 @@ fn user_break(stash: &Mutex<Option<RubyValue>>) -> Option<RubyValue> {
 
 fn reject_args(args: &[RubyValue], method: &str, what: &str) {
     if !args.is_empty() {
-        panic!("Enumerable#{method} with {what} isn't supported yet (spike scope)");
+        panic!("Enumerable#{method} with {what} isn't supported yet (zeo limitation)");
     }
 }
 
@@ -297,7 +297,7 @@ fn any_all(
 /// retiring the documented native-only gap); the block form receives
 /// `(candidate, current)` and must return a negative/zero/positive Int.
 /// First element seeds; empty -> nil. The `n`-smallest/largest forms are
-/// rejected (spike scope).
+/// rejected (zeo limitation).
 fn min_max(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -1006,7 +1006,7 @@ builtin_methods! {
                     (Acc::Int(a), RubyValue::Int(b)) => match a.checked_add(b) {
                         Some(n) => Acc::Int(n),
                         None => panic!(
-                            "integer overflow in Enumerable#sum (Bignum isn't supported, spike scope)"
+                            "integer overflow in Enumerable#sum (zeo limitation: no Bignum promotion here)"
                         ),
                     },
                     (Acc::Int(a), RubyValue::Float(b)) => Acc::Float {

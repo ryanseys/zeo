@@ -69,8 +69,8 @@ use proc_macro2::TokenStream;
 /// module's docs), exactly like `break`/`next`/`redo` do once a real
 /// escaping `Proc`'s closure boundary is in play (`codegen::loops`). Caught
 /// by the nearest enclosing `begin`'s own retry loop. A `retry` used
-/// outside any `rescue` clause -- a real, if rare, Ruby `SyntaxError` this
-/// spike doesn't separately re-validate at lowering time -- simply
+/// outside any `rescue` clause -- a real, if rare, Ruby `SyntaxError` the
+/// lowering doesn't separately re-validate -- simply
 /// propagates as an uncaught `Signal`, matching this project's existing
 /// posture for other mis-scoped constructs it doesn't statically re-check
 /// (e.g. a bare `break` outside any loop is instead a clean codegen panic --

@@ -138,7 +138,7 @@ pub(super) fn emit_class_method_call_on(
     let target_name = &cx.compiler.class(target).name;
     let Some((_, sid)) = cx.compiler.class_method_in_chain(target, name) else {
         panic!(
-            "unsupported call `{target_name}.{name}` (spike scope, or no such class method is defined)"
+            "unsupported call `{target_name}.{name}` (a zeo gap, or no such class method is defined)"
         );
     };
     let scope = cx.compiler.scope(sid);

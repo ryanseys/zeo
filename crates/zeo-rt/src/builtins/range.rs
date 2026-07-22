@@ -279,7 +279,7 @@ builtin_methods! {
     }
     // `Range#===` IS `#cover?`; `include?`/`member?` differ from `cover?`
     // in real Ruby only for non-linear element types (String ranges walk
-    // succ) -- for the numeric/comparable cases this spike supports the
+    // succ) -- for the numeric/comparable cases this runtime supports the
     // cover check is the faithful behavior for all four names.
     "==="[1] | "include?"[1] | "member?"[1] => fn case_eq(recv, args, _block) {
         arity!(args, 1);
@@ -417,7 +417,7 @@ builtin_methods! {
             return Ok(recv.clone());
         }
         let (Some(RubyValue::Int(s)), Some(RubyValue::Int(e))) = (start, end) else {
-            panic!("Range#step on a non-Integer range isn't supported (spike scope)");
+            panic!("Range#step on a non-Integer range isn't supported (zeo limitation)");
         };
         // NOT an implicit-conversion site: CRuby's Range#step raises the
         // numeric-tower coerce shape here (oracle: `(1..5).step("x")` is

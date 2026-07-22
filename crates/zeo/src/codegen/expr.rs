@@ -183,7 +183,7 @@ pub fn emit_symbol_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// for a never-assigned ivar); a `Call`/`New`/`SuperCall` is always
 /// classified `"method"` without checking it actually resolves. Both are
 /// documented approximations, not silent wrongness -- getting `defined?`
-/// fully faithful needs real per-instance/per-callsite tracking this spike
+/// fully faithful needs real per-instance/per-callsite tracking zeo
 /// doesn't have yet.
 /// Globals CRuby predefines, so `defined?` always answers `"global-variable"`
 /// for them regardless of assignment (`$!`, `$stdout`, `$0`, ...). The
@@ -1395,7 +1395,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
             return emit_expr(cx, node);
         }
         panic!(
-            "`raise <expr>, message` with a computed (non-constant) class operand isn't supported (spike scope) -- name the exception class as a literal constant"
+            "`raise <expr>, message` with a computed (non-constant) class operand isn't supported (zeo limitation) -- name the exception class as a literal constant"
         );
     }
     match infer(cx, node) {

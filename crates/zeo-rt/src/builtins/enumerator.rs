@@ -677,7 +677,7 @@ builtin_methods! {
     "each" => fn each(recv, args, block) {
         let e = recv_enum(recv);
         if !args.is_empty() {
-            panic!("Enumerator#each with extra arguments isn't supported yet (spike scope; CRuby appends them to the captured args on a dup)");
+            panic!("Enumerator#each with extra arguments isn't supported yet (zeo limitation; CRuby appends them to the captured args on a dup)");
         }
         match block {
             // Re-invoke the captured method with the caller's block; the

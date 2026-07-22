@@ -75,7 +75,7 @@ pub(crate) fn desugar_singleton_class_defs(
                 ..
             } => (name.clone(), params.clone(), body.clone()),
             _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (spike scope)".to_string().into());
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (zeo limitation)".to_string().into());
             }
         };
         let recv = lower_node(result, hir, &recv_node)?;
@@ -193,7 +193,7 @@ pub(crate) fn const_is_class_def(hir: &Hir, name: &str) -> bool {
 pub fn alias_target_name(node: &Node<'_>) -> PResult<String> {
     let sym = node
         .as_symbol_node()
-        .ok_or("`alias`'s target must be a plain method name (spike scope)")?;
+        .ok_or("`alias`'s target must be a plain method name (zeo limitation)")?;
     Ok(String::from_utf8_lossy(sym.unescaped()).into_owned())
 }
 
@@ -240,7 +240,7 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
 /// params before it).
 fn required_param_name(node: &Node<'_>, where_: &str) -> PResult<String> {
     let p = node.as_required_parameter_node().ok_or_else(|| {
-        format!("only plain required parameters are supported {where_} (spike scope)")
+        format!("only plain required parameters are supported {where_} (zeo limitation)")
     })?;
     Ok(String::from_utf8_lossy(p.name().as_slice()).into_owned())
 }
@@ -323,7 +323,7 @@ pub(crate) fn lower_params(
         .map(|n| {
             let p = n
                 .as_optional_parameter_node()
-                .ok_or("expected an optional parameter (spike scope)")?;
+                .ok_or("expected an optional parameter (zeo limitation)")?;
             let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
             let default = lower_node(result, hir, &p.value())?;
             Ok((name, default))
@@ -343,7 +343,7 @@ pub(crate) fn lower_params(
         Some(n) => {
             let r = n
                 .as_rest_parameter_node()
-                .ok_or("unsupported rest-parameter form (spike scope)")?;
+                .ok_or("unsupported rest-parameter form (zeo limitation)")?;
             // Anonymous `*` (`def m(*)`) gets an internal name so `n(*)`
             // can forward it (Ruby 3.2's anonymous-forwarding semantics).
             Some(Some(match r.name() {
@@ -372,7 +372,7 @@ pub(crate) fn lower_params(
                 let default = lower_node(result, hir, &p.value())?;
                 Ok(KeywordParam::Optional(name, default))
             } else {
-                Err("unsupported keyword parameter form (spike scope)".into())
+                Err("unsupported keyword parameter form (zeo limitation)".into())
             }
         })
         .collect::<PResult<Vec<_>>>()?;
@@ -387,13 +387,13 @@ pub(crate) fn lower_params(
             // `**nil` -- explicit "no extra keywords accepted". Treated the
             // same as "no keyword_rest at all": real Ruby raises
             // `ArgumentError` for an unexpected kwarg only when `**nil` is
-            // present, which needs exceptions to matter (spike scope).
+            // present, which needs exceptions to matter (zeo limitation).
             None
         }
         Some(n) => {
             let r = n
                 .as_keyword_rest_parameter_node()
-                .ok_or("unsupported keyword-rest parameter form (spike scope)")?;
+                .ok_or("unsupported keyword-rest parameter form (zeo limitation)")?;
             // Anonymous `**` gets an internal name so `n(**)` can forward
             // it, same as the anonymous-`*` rule above.
             Some(Some(match r.name() {
@@ -612,7 +612,7 @@ pub(crate) fn lower_class_body(
 /// literal symbol arguments are recognized (matching `define_method`'s own
 /// literal-name restriction elsewhere in this file); anything else falls
 /// through to an ordinary `Call` (which real Ruby would resolve dynamically,
-/// e.g. `attr_reader(*names)` -- outside spike scope, a clean rejection at
+/// e.g. `attr_reader(*names)` -- unsupported, a clean rejection at
 /// codegen if `attr_reader` itself isn't otherwise defined). Every
 /// synthesized getter/setter gets the CURRENT default `visibility`, exactly
 /// like an ordinary `def` would.
@@ -718,7 +718,7 @@ fn lower_class_body_statement(
     // methods at once without repeating `def self.` on each one. `class <<
     // obj` on any expression OTHER than a bare `self` is a per-instance
     // singleton class -- a materially bigger feature (a dynamically-
-    // growable per-instance vtable) this spike doesn't support, matching
+    // growable per-instance vtable) zeo doesn't support, matching
     // the plan's existing scope-cut on `define_singleton_method`; a clean
     // rejection, not silently ignored. The nested body is lowered through
     // the ORDINARY class-body path (so `attr_reader`/`private`/`alias`/
@@ -770,7 +770,7 @@ fn lower_class_body_statement(
                 Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
                 Item::Reject => {
                     return Err(
-                        "unsupported statement in `class << self` (spike scope) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
+                        "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
                     );
                 }
             }
@@ -897,7 +897,7 @@ fn lower_class_body_statement(
             // Include`'s docs for the multi-arg ordering rule). Anything
             // else (a non-constant argument, e.g. a computed module
             // expression) falls through to an ordinary `Call`, a clean
-            // rejection at codegen time (spike scope: only a literal module
+            // rejection at codegen time (zeo limitation: only a literal module
             // name is resolvable to a `ClassId` at compile time anyway).
             if matches!(name.as_str(), "include" | "extend" | "prepend") {
                 if let Some(args) = call.arguments() {

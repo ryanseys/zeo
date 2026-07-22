@@ -1,4 +1,4 @@
-//! `TyKind` mirrors zeo's `types.h` -- deliberately trimmed for the spike
+//! `TyKind` mirrors the predecessor's `types.h` -- deliberately trimmed
 //! (no `Array`/`Hash`/`Float`/`Bignum` variants yet). See the plan's stated
 //! scope-cut: only `Int` gets a real unboxed native representation for now
 //! (literal arithmetic); everything else uses `RubyValue` (`Poly`)
@@ -128,7 +128,7 @@ fn builtin_override(compiler: &Compiler, recv_ty: TyKind, box_id: u32, name: &st
 
 /// Context-free type inference: given a node, what's its static type,
 /// ignoring any local variable bindings in scope? Mirrors `infer_type`/
-/// `infer_uncached` (`analyze_infer.c:4771`/`4225`) at spike scope: no
+/// `infer_uncached` (`analyze_infer.c:4771`/`4225`), simplified: no
 /// memoization cache (`c->ntype[id]`) because nothing here is expensive or
 /// mutually recursive yet. Prefer `infer_type_with_locals` wherever a
 /// per-scope local-type map is available (almost everywhere in `codegen` and
@@ -143,7 +143,7 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 /// `analyze::locals::infer_locals`), what's its static type? This is what
 /// lets `x + y` resolve to native `Int` arithmetic when `x`/`y` are locals
 /// previously assigned an `Int`-typed value, not just literal-on-literal --
-/// the generalization of the spike's original hardcoded
+/// the generalization of the original hardcoded
 /// literal-`+`-on-`IntegerLit` fast path.
 pub fn infer_type_with_locals(
     compiler: &Compiler,

@@ -116,7 +116,7 @@ fn lower_string_part(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PR
             &embedded.variable(),
         )?));
     }
-    Err("unsupported string interpolation part (spike scope)"
+    Err("unsupported string interpolation part (zeo limitation)"
         .to_string()
         .into())
 }
