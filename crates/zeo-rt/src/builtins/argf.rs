@@ -93,13 +93,14 @@ fn read_all(argf: &RArgf) -> Result<Vec<u8>, Signal> {
     if files.is_empty() {
         *argf.filename.lock() = "-".to_string();
         let mut buf = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::stdin(), &mut buf)
+        // Gvl-released: reading standard input blocks until EOF arrives.
+        crate::gvl::without_gvl(|| std::io::Read::read_to_end(&mut std::io::stdin(), &mut buf))
             .map_err(|e| crate::builtins::file::raise_errno(&e, "read", "-"))?;
         return Ok(buf);
     }
     let mut out = Vec::new();
     for f in files {
-        let bytes = std::fs::read(&f)
+        let bytes = crate::gvl::without_gvl(|| std::fs::read(&f))
             .map_err(|e| crate::builtins::file::raise_errno(&e, "rb_sysopen", &f))?;
         *argf.filename.lock() = f;
         out.extend(bytes);

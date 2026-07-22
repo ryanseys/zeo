@@ -946,6 +946,50 @@ fn opposite_order_two_container_ops_do_not_deadlock() {
 }
 
 #[test]
+fn an_armed_gvl_holder_blocked_on_a_pipe_read_does_not_stall_its_siblings() {
+    // The io-family without_gvl probe, in ZEO_GVL=1 fidelity mode: the
+    // reader parks on an EMPTY pipe while main sleeps, so without the
+    // release at the `with_file` seam the reader would block INSIDE the
+    // Gvl and main could never wake to perform the write -- this test
+    // hangs there. Completing IS the proof of release.
+    let result = run_ruby_configured(
+        r#"
+        r, w = IO.pipe
+        reader = Thread.new { r.gets }
+        sleep 0.2
+        w.puts "hello"
+        p reader.value
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"hello\\n\"\n");
+}
+
+#[test]
+fn an_armed_gvl_holder_blocked_on_a_full_pipe_write_does_not_stall_its_siblings() {
+    // The write-side twin (the `write_rio` seam): 200KB overflows the
+    // kernel pipe buffer, so the writer blocks mid-`write_all` until main
+    // drains the pipe -- which main can only do if the writer released
+    // the armed Gvl first.
+    let result = run_ruby_configured(
+        r#"
+        r, w = IO.pipe
+        writer = Thread.new { w.write("x" * 200_000); w.close; :done }
+        sleep 0.2
+        data = r.read
+        p writer.value
+        p data.bytesize
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, ":done\n200000\n");
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.

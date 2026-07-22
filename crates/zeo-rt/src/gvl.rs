@@ -349,6 +349,17 @@ pub fn process_gvl() -> &'static Arc<Gvl> {
     PROCESS_GVL.get_or_init(Gvl::from_env)
 }
 
+/// Run `f` with the process Gvl released -- the wrapper every potentially
+/// blocking syscall site uses so an armed (`ZEO_GVL=1`) holder can't stall
+/// its siblings behind a read/accept/child-wait. A call-through when the
+/// Gvl is disabled or this thread isn't the holder. Wrap the WHOLE
+/// lock-op-unlock section of the blocking primitive (never re-acquire the
+/// Gvl while still holding the primitive's own lock -- lock-order
+/// inversion; see `thread::queue_push_locked`).
+pub fn without_gvl<R>(f: impl FnOnce() -> R) -> R {
+    process_gvl().without(f)
+}
+
 std::thread_local! {
     static CTX: std::cell::RefCell<Option<Arc<ThreadCtx>>> =
         const { std::cell::RefCell::new(None) };

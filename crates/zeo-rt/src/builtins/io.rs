@@ -201,7 +201,10 @@ pub fn current_stderr() -> RubyValue {
 /// `to_utf8_lossy` promotes `0xB4` to `0xC2 0xB4`, which corrupted every
 /// binary-image benchmark's output; see `write_value`).
 fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
-    match &mut *io.backend.lock() {
+    // Gvl-released like `with_file`: a write to a full pipe blocks until
+    // the reader drains it, and an armed holder must not stall siblings
+    // behind that.
+    crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::Std(StdStream::Stdout) => {
             let mut out = std::io::stdout();
             if out.write_all(bytes).is_err() {
@@ -221,7 +224,7 @@ fn write_rio(io: &RIo, bytes: &[u8]) -> Result<(), Signal> {
         IoBackend::File(Some(f)) | IoBackend::Pipe(Some(f)) => f
             .write_all(bytes)
             .map_err(|e| crate::builtins::file::raise_errno(&e, "write", &io.path)),
-    }
+    })
 }
 
 /// Writes `s` to `target`: directly for one of our `RIo`s, via a dynamic
@@ -538,7 +541,11 @@ fn io_path(
 
 /// Run `f` against the receiver's open file, or raise the IOError a closed
 /// or non-file receiver deserves -- the shared preamble of every read/seek
-/// row below.
+/// row below. Runs Gvl-released: a pipe or socket read here can block
+/// indefinitely, and an armed (`ZEO_GVL=1`) holder must not stall its
+/// siblings behind it. The whole lock-op-unlock section releases as one
+/// unit; contention on the SAME IO still serializes on its backend lock
+/// (CRuby serializes per-fd operations too).
 fn with_file<T>(
     recv: &RubyValue,
     f: impl FnOnce(&mut std::fs::File, &str) -> Result<T, Signal>,
@@ -547,11 +554,11 @@ fn with_file<T>(
         return Err(io_error!("not a file"));
     };
     let path = io.path.clone();
-    match &mut *io.backend.lock() {
+    crate::gvl::without_gvl(|| match &mut *io.backend.lock() {
         IoBackend::File(Some(file)) | IoBackend::Pipe(Some(file)) => f(file, &path),
         IoBackend::File(None) | IoBackend::Pipe(None) => Err(io_error!("closed stream")),
         IoBackend::Std(_) => Err(io_error!("not a file")),
-    }
+    })
 }
 
 /// `read` / `read(n)` / `read(n, buf)` -- the whole rest, or `n` bytes,
@@ -591,7 +598,7 @@ fn io_read_val(
     // A read from STDIN reads the real one; anything else needs a file.
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         let mut buf = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+        crate::gvl::without_gvl(|| std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf))
             .map_err(|e| crate::builtins::file::raise_errno(&e, "read", "<STDIN>"))?;
         return Ok(RubyValue::Str(crate::collections::string_new(buf)));
     }
@@ -700,11 +707,14 @@ fn io_eof(
     // is non-destructive -- an empty buffer means end-of-input.
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         use std::io::BufRead;
-        let empty = std::io::stdin()
-            .lock()
-            .fill_buf()
-            .map(|b| b.is_empty())
-            .unwrap_or(true);
+        // `fill_buf` on an empty buffer BLOCKS for the next chunk of input.
+        let empty = crate::gvl::without_gvl(|| {
+            std::io::stdin()
+                .lock()
+                .fill_buf()
+                .map(|b| b.is_empty())
+                .unwrap_or(true)
+        });
         return Ok(RubyValue::Bool(empty));
     }
     with_file(recv, |f, path| {
@@ -851,8 +861,10 @@ fn io_gets(
     let opts = line_opts(args);
     if matches!(stream_of(recv), Some(StdStream::Stdin)) {
         let mut line = String::new();
-        let n = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line)
-            .map_err(|e| crate::builtins::file::raise_errno(&e, "gets", "<STDIN>"))?;
+        let n = crate::gvl::without_gvl(|| {
+            std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line)
+        })
+        .map_err(|e| crate::builtins::file::raise_errno(&e, "gets", "<STDIN>"))?;
         if n == 0 {
             return Ok(RubyValue::Nil);
         }
@@ -1963,10 +1975,10 @@ fn io_class_copy_stream(
     crate::builtins::arity!(args, 2..=4);
     let src = crate::builtins::file::path_arg(&args[0], "copy_stream")?;
     let dst = crate::builtins::file::path_arg(&args[1], "copy_stream")?;
-    let bytes = std::fs::read(&src)
+    let bytes = crate::gvl::without_gvl(|| std::fs::read(&src))
         .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?;
     let n = bytes.len();
-    std::fs::write(&dst, &bytes)
+    crate::gvl::without_gvl(|| std::fs::write(&dst, &bytes))
         .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
     Ok(RubyValue::Int(n as i64))
 }
