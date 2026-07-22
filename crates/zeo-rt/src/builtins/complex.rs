@@ -347,10 +347,37 @@ pub(crate) fn cpx_div(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal>
     complex_new(comp_quo(&real_num, &denom)?, comp_quo(&imag_num, &denom)?)
 }
 
+/// True for an exactly-zero numeric component (a `0` Integer or a `0/1`
+/// Rational) -- CRuby's `k_exact_zero_p`.
+fn is_exact_zero(v: &RubyValue) -> bool {
+    match v {
+        RubyValue::Int(0) => true,
+        RubyValue::Rational(r) => r.num == BigInt::from(0),
+        _ => false,
+    }
+}
+
+/// CRuby's `nucomp_expt` exponent reductions: a Complex exponent with an
+/// exactly-zero imaginary part collapses to its real component, and a Rational
+/// with denominator 1 collapses to its integer numerator -- both then take the
+/// exact square-and-multiply path (`(2+3i) ** Complex(1,0)` stays `(2+3i)`,
+/// `(2+3i) ** (2/1)` stays `(-5+12i)`).
+fn normalize_pow_exponent(b: &RubyValue) -> RubyValue {
+    match b {
+        RubyValue::Complex(c) if is_exact_zero(&c.imag) => normalize_pow_exponent(&c.real),
+        RubyValue::Rational(r) if r.den == BigInt::from(1) => {
+            crate::builtins::integer::int_value(r.num.clone())
+        }
+        _ => b.clone(),
+    }
+}
+
 /// `complex ** integer` stays exact via square-and-multiply over the exact
 /// component ops; every other exponent shape takes the polar-form path
 /// `z ** w == exp(w * log z)` in `f64` (CRuby's `rb_complex_pow`).
 pub(crate) fn cpx_pow(a: &RubyValue, b: &RubyValue) -> Result<RubyValue, Signal> {
+    let b_owned = normalize_pow_exponent(b);
+    let b = &b_owned;
     match b {
         RubyValue::Int(_) | RubyValue::BigInt(_) => {
             let e = crate::builtins::integer::to_bigint(b);
@@ -719,6 +746,28 @@ builtin_methods! {
         let real = scale_numerator(&c.real, &cd)?;
         let imag = scale_numerator(&c.imag, &cd)?;
         complex_new(real, imag)
+    }
+    // `Complex#fdiv(other)` -- complex division carried out in floating point,
+    // so `(2+3i).fdiv(2)` is `(1.0+1.5i)` (each component divided) and a
+    // Complex divisor gets the full `(ar*br+ai*bi + (ai*br-ar*bi)i)/|b|^2`.
+    "fdiv"[1] => fn fdiv(recv, args, _block) {
+        arity!(args, 1);
+        if !matches!(&args[0], RubyValue::Complex(_)) && !is_component(&args[0]) {
+            return Err(type_error!(
+                "{} can't be coerced into Complex",
+                crate::builtins::class_name_of(&args[0])
+            ));
+        }
+        let c = recv_complex(recv);
+        let f = crate::builtins::numeric::num_to_f64_unchecked;
+        let (ar, ai) = (f(&c.real), f(&c.imag));
+        let (br, bi) = as_components(&args[0]);
+        let (br, bi) = (f(&br), f(&bi));
+        let denom = br * br + bi * bi;
+        complex_new(
+            RubyValue::Float((ar * br + ai * bi) / denom),
+            RubyValue::Float((ai * br - ar * bi) / denom),
+        )
     }
 }
 
