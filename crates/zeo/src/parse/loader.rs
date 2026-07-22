@@ -205,6 +205,13 @@ pub(super) fn lower_main_file(
     // The main file is `__FILE__`'s answer for its own statements -- held
     // for exactly this lowering, and restored by the guard's Drop.
     let _file = SourceFileFrame::push(input_path);
+    // Span provenance: the main file's name AS GIVEN (matching `__FILE__`),
+    // `"-e"` for a pathless source string.
+    let main_file = hir.add_file(
+        input_path.map_or_else(|| "-e".to_string(), |p| p.display().to_string()),
+        source,
+    );
+    let prev_file = hir.lowering_file.replace(main_file);
     let statements = loader.lower_file_statements(
         hir,
         &result,
@@ -212,8 +219,9 @@ pub(super) fn lower_main_file(
         dir.as_deref(),
         None,
         0,
-    )?;
-    Ok((statements, loader.gem_records))
+    );
+    hir.lowering_file = prev_file;
+    Ok((statements?, loader.gem_records))
 }
 
 impl Loader {
@@ -635,6 +643,8 @@ impl Loader {
         // Popped by the guard's Drop, so the parent's own statements after
         // the splice see their own path again.
         let _file = SourceFileFrame::push(Some(canonical));
+        let file_id = hir.add_file(canonical.display().to_string(), source.clone());
+        let prev_file = hir.lowering_file.replace(file_id);
         let statements = self
             .lower_file_statements(
                 hir,
@@ -651,9 +661,16 @@ impl Loader {
                 if e.message().starts_with(&canonical.display().to_string()) {
                     e // already prefixed by a nested splice
                 } else {
-                    format!("{}: {e}", canonical.display()).into()
+                    // Prefix the message; the KIND and the span (pointing
+                    // into the spliced file) ride along untouched.
+                    LowerError {
+                        message: format!("{}: {e}", canonical.display()),
+                        ..e
+                    }
                 }
-            })?;
+            });
+        hir.lowering_file = prev_file;
+        let statements = statements?;
         self.splicing.pop();
         Ok(statements)
     }

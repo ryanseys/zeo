@@ -1,5 +1,5 @@
-//! What went wrong while lowering Ruby source into HIR, and WHICH KIND of
-//! wrong it was.
+//! What went wrong while lowering Ruby source into HIR, WHICH KIND of wrong
+//! it was, and WHERE.
 //!
 //! The front end had one error type -- `String` -- for two situations a Ruby
 //! program must be able to tell apart:
@@ -12,43 +12,76 @@
 //! being cosmetic the moment lowering runs at RUN time -- `eval` of a string
 //! has to raise one or the other, and reporting a zeo scope limitation as a
 //! `SyntaxError` tells the user their own code is malformed when it isn't.
-//! Splitting the type now means each rejection site states its kind while the
+//! Splitting the type means each rejection site states its kind while the
 //! author is right there, instead of a later pass guessing from message text.
+//!
+//! The `span` is stamped by the `lower_node` wrapper on the way OUT: the
+//! innermost node being lowered when the error arose wins
+//! (`with_span_if_missing`), so rejection sites keep raising bare messages
+//! and still end up located. `None` survives only for errors outside any
+//! span frame -- source strings with no registered file (the exception
+//! prelude, `eval` bodies) and pre-parse failures.
 
+use crate::hir::Span;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LowerError {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LowerErrorKind {
     /// Not valid Ruby -- prism refused to parse it. Ruby: `SyntaxError`.
-    Syntax(String),
+    Syntax,
     /// Valid Ruby this front end does not lower yet. Ruby:
     /// `NotImplementedError`. The default for a bare message, because that is
     /// what the overwhelming majority of the front end's rejections are.
-    Unsupported(String),
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LowerError {
+    pub kind: LowerErrorKind,
+    pub message: String,
+    /// Where in the source the rejected construct sits -- see the module
+    /// docs for when this is `None`.
+    pub span: Option<Span>,
 }
 
 impl LowerError {
     pub fn syntax(msg: impl Into<String>) -> LowerError {
-        LowerError::Syntax(msg.into())
+        LowerError {
+            kind: LowerErrorKind::Syntax,
+            message: msg.into(),
+            span: None,
+        }
     }
 
     pub fn unsupported(msg: impl Into<String>) -> LowerError {
-        LowerError::Unsupported(msg.into())
+        LowerError {
+            kind: LowerErrorKind::Unsupported,
+            message: msg.into(),
+            span: None,
+        }
     }
 
     pub fn message(&self) -> &str {
-        match self {
-            LowerError::Syntax(m) | LowerError::Unsupported(m) => m,
+        &self.message
+    }
+
+    /// Stamps `span` unless an INNER frame already did -- the `lower_node`
+    /// wrapper calls this at every level on the way out, so the deepest
+    /// (most precise) location wins.
+    pub fn with_span_if_missing(mut self, span: Span) -> LowerError {
+        if self.span.is_none() {
+            self.span = span.known();
         }
+        self
     }
 
     /// The Ruby exception class a runtime lowering of this source should
     /// raise. Unused while lowering only ever runs at compile time; it is the
     /// whole reason the variants exist.
     pub fn ruby_class(&self) -> &'static str {
-        match self {
-            LowerError::Syntax(_) => "SyntaxError",
-            LowerError::Unsupported(_) => "NotImplementedError",
+        match self.kind {
+            LowerErrorKind::Syntax => "SyntaxError",
+            LowerErrorKind::Unsupported => "NotImplementedError",
         }
     }
 }
@@ -56,7 +89,7 @@ impl LowerError {
 impl fmt::Display for LowerError {
     /// Just the message: the compiler's own output is unchanged by this split.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.message())
+        f.write_str(&self.message)
     }
 }
 
@@ -66,33 +99,33 @@ impl fmt::Display for LowerError {
 /// explicitly.
 impl From<String> for LowerError {
     fn from(msg: String) -> LowerError {
-        LowerError::Unsupported(msg)
+        LowerError::unsupported(msg)
     }
 }
 
 impl From<&str> for LowerError {
     fn from(msg: &str) -> LowerError {
-        LowerError::Unsupported(msg.to_string())
+        LowerError::unsupported(msg.to_string())
     }
 }
 
 /// The compiler's public surface is still `Result<_, String>`; this is the one
-/// place the kind is dropped, and it happens at that boundary rather than
-/// inside the front end.
+/// place the kind and span are dropped, and it happens at that boundary rather
+/// than inside the front end.
 impl From<LowerError> for String {
     fn from(err: LowerError) -> String {
-        err.message().to_string()
+        err.message
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::LowerError;
+    use super::{LowerError, LowerErrorKind};
 
     #[test]
     fn a_bare_message_defaults_to_unsupported() {
         let e: LowerError = "no good".into();
-        assert_eq!(e, LowerError::Unsupported("no good".to_string()));
+        assert_eq!(e, LowerError::unsupported("no good"));
         assert_eq!(e.ruby_class(), "NotImplementedError");
     }
 
@@ -102,18 +135,43 @@ mod tests {
         assert_eq!(e.ruby_class(), "SyntaxError");
     }
 
-    /// The compiler prints the same text either way -- the split adds a kind,
-    /// it does not change any existing message.
+    /// The compiler prints the same text either way -- the split adds a kind
+    /// and a location, it does not change any existing message.
     #[test]
     fn display_is_the_message_alone() {
         assert_eq!(LowerError::syntax("boom").to_string(), "boom");
         assert_eq!(LowerError::unsupported("boom").to_string(), "boom");
     }
+
+    /// `with_span_if_missing` is innermost-wins: once a frame stamped a
+    /// span, outer frames leave it alone.
+    #[test]
+    fn the_innermost_span_wins() {
+        use crate::hir::{FileId, Span};
+        let inner = Span {
+            file: FileId(0),
+            start: 4,
+            end: 9,
+        };
+        let outer = Span {
+            file: FileId(0),
+            start: 0,
+            end: 20,
+        };
+        let e = LowerError::unsupported("nope")
+            .with_span_if_missing(inner)
+            .with_span_if_missing(outer);
+        assert_eq!(e.span, Some(inner));
+        // SYNTH never overwrites and never sticks.
+        let e = LowerError::unsupported("nope").with_span_if_missing(Span::SYNTH);
+        assert_eq!(e.span, None);
+        assert_eq!(e.kind, LowerErrorKind::Unsupported);
+    }
 }
 
 #[cfg(test)]
 mod classification_tests {
-    use super::LowerError;
+    use super::LowerErrorKind;
 
     /// The distinction has to survive real lowering, not just hold at the type
     /// level: malformed source is the user's `SyntaxError`, while valid Ruby
@@ -126,7 +184,7 @@ mod classification_tests {
         let err = crate::lower::parse_and_lower_into(&mut hir, "def foo(\n")
             .expect_err("malformed source is rejected");
         assert!(
-            matches!(err, LowerError::Syntax(_)),
+            matches!(err.kind, LowerErrorKind::Syntax),
             "malformed source must be a SyntaxError, got: {err:?}"
         );
         assert_eq!(err.ruby_class(), "SyntaxError");
@@ -136,7 +194,7 @@ mod classification_tests {
         let err = crate::lower::parse_and_lower_into(&mut hir, "p(/foo/e)\n")
             .expect_err("unsupported construct is rejected");
         assert!(
-            matches!(err, LowerError::Unsupported(_)),
+            matches!(err.kind, LowerErrorKind::Unsupported),
             "an unimplemented construct must be NotImplementedError, got: {err:?}"
         );
         assert_eq!(err.ruby_class(), "NotImplementedError");

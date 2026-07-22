@@ -21,7 +21,7 @@ mod pattern;
 
 use crate::hir::{
     ArrayElem, Hir, HirNode, KwArg, LastMatch, NodeId, Params, PatternArm, RaiseCause, RegexpFlags,
-    RescueClause, StrPart, Visibility,
+    RescueClause, Span, StrPart, Visibility,
 };
 use crate::lower_error::LowerError;
 use ruby_prism::{CallNode, Node, ParseResult};
@@ -115,7 +115,30 @@ fn assemble_i64(negative: bool, digits: &[u32]) -> Option<i64> {
     }
 }
 
+/// The span-stamping wrapper around the big lowering match: every prism node
+/// entering lowering pushes its byte range (in the file currently being
+/// lowered -- `Hir::lowering_file`) onto the arena's span stack, so each
+/// `hir.push` during that node's lowering is stamped with ITS provenance,
+/// and an error propagating out picks up the innermost frame's span
+/// (`LowerError::with_span_if_missing`). `HirNode` itself carries no span
+/// field -- the parallel `Hir::spans` table is the whole design.
 pub fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
+    let loc = node.location();
+    let span = match hir.lowering_file {
+        Some(file) => Span {
+            file,
+            start: loc.start_offset() as u32,
+            end: loc.end_offset() as u32,
+        },
+        None => Span::SYNTH,
+    };
+    hir.push_span(span);
+    let out = lower_node_inner(result, hir, node);
+    hir.pop_span();
+    out.map_err(|e| e.with_span_if_missing(span))
+}
+
+fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<NodeId> {
     if let Some(int) = node.as_integer_node() {
         // prism's own arbitrary-precision value (LSB-first u32 digits) --
         // which also handles `0xff`/`0b101`/`1_000` uniformly, unlike the

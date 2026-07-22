@@ -19,9 +19,62 @@
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct NodeId(u32);
 
+/// Index into `Hir::files` -- which source file a `Span` points into.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct FileId(pub u32);
+
+/// A byte range in one source file, straight from prism's own offsets.
+/// Stamped per-NODE in `Hir::spans` (parallel to the arena, so `HirNode`
+/// itself carries no span field) by the `lower_node` wrapper; a node pushed
+/// outside any lowering frame -- a synthetic desugaring node, the `Program`
+/// root -- gets `Span::SYNTH`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Span {
+    pub file: FileId,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl Span {
+    /// The no-provenance sentinel: a synthetic node, or one lowered from a
+    /// source string no file entry was registered for (the exception
+    /// prelude, `eval` bodies). `Span::SYNTH.known()` is `None`.
+    pub const SYNTH: Span = Span {
+        file: FileId(u32::MAX),
+        start: 0,
+        end: 0,
+    };
+
+    /// `Some(self)` for a real span, `None` for `SYNTH`.
+    pub fn known(self) -> Option<Span> {
+        (self.file.0 != u32::MAX).then_some(self)
+    }
+}
+
+/// One registered source file: the name diagnostics display (the path as
+/// given, `"-e"`, ...) plus the full source text a renderer excerpts from.
+pub struct SourceFile {
+    pub name: String,
+    pub source: String,
+}
+
 #[derive(Default)]
 pub struct Hir {
     nodes: Vec<HirNode>,
+    /// Per-node provenance, parallel to `nodes` -- see `Span`.
+    spans: Vec<Span>,
+    /// The span of the prism node currently being lowered (innermost last);
+    /// `Hir::push` stamps from the top of this stack. Maintained by the
+    /// `lower_node` wrapper, empty outside lowering.
+    span_stack: Vec<Span>,
+    /// Registered source files (`Span::file` indexes here).
+    pub files: Vec<SourceFile>,
+    /// The file whose source is currently being lowered -- the drivers (the
+    /// compiler's `parse_and_lower_with` and its loader) set/restore this
+    /// around each file's statements; `None` (source strings with no file
+    /// entry: the exception prelude, `eval` bodies) makes every span
+    /// `SYNTH`.
+    pub lowering_file: Option<FileId>,
     /// Provenance of every `require`/`require_relative`/`load` SPLICE
     /// INSTANCE grafted into this arena, in splice order --
     /// the main file itself is NOT recorded (matching CRuby, where the main
@@ -119,7 +172,33 @@ impl std::ops::IndexMut<NodeId> for Hir {
 impl Hir {
     pub fn push(&mut self, node: HirNode) -> NodeId {
         self.nodes.push(node);
+        self.spans
+            .push(self.span_stack.last().copied().unwrap_or(Span::SYNTH));
         NodeId((self.nodes.len() - 1) as u32)
+    }
+
+    /// The provenance of `id` -- `None` for a synthetic node (see `Span`).
+    pub fn span(&self, id: NodeId) -> Option<Span> {
+        self.spans[id.0 as usize].known()
+    }
+
+    /// Registers a source file for span provenance; the caller then sets
+    /// `lowering_file` while that file's statements lower.
+    pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
+        self.files.push(SourceFile {
+            name: name.into(),
+            source: source.into(),
+        });
+        FileId((self.files.len() - 1) as u32)
+    }
+
+    /// Enters/leaves the span frame for one prism node -- called only by the
+    /// `lower_node` wrapper, paired push/pop.
+    pub(crate) fn push_span(&mut self, span: Span) {
+        self.span_stack.push(span);
+    }
+    pub(crate) fn pop_span(&mut self) {
+        self.span_stack.pop();
     }
 
     /// Every node lowered so far, for the rare pass that must ask a
@@ -1635,4 +1714,71 @@ pub enum HirNode {
     /// to a Ruby reader and to tooling, not because they generate
     /// differently.
     Seq(Vec<NodeId>),
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::{FileId, Hir, HirNode, Span};
+
+    /// Every pushed node gets a span row; nodes lowered inside a registered
+    /// file point at their own source bytes, innermost node winning.
+    #[test]
+    fn lowering_stamps_byte_precise_spans_parallel_to_nodes() {
+        let src = "x = 1\nputs x + 2\n";
+        let mut hir = Hir::default();
+        let file = hir.add_file("app.rb", src);
+        hir.lowering_file = Some(file);
+        let stmts = crate::lower::parse_and_lower_into(&mut hir, src).expect("lowers");
+        hir.lowering_file = None;
+        assert_eq!(hir.nodes().len(), hir.iter().count());
+
+        // The `IntegerLit(2)` node's span covers exactly the `2` byte.
+        let two = (0..hir.nodes().len())
+            .map(|i| super::NodeId(i as u32))
+            .find(|&id| matches!(hir[id], HirNode::IntegerLit(2)))
+            .expect("the literal 2 was lowered");
+        let span = hir.span(two).expect("a real span");
+        assert_eq!(span.file, file);
+        assert_eq!(&src[span.start as usize..span.end as usize], "2");
+
+        // The statement roots carry their full statement ranges.
+        let first = hir.span(stmts[0]).expect("a real span");
+        assert_eq!(&src[first.start as usize..first.end as usize], "x = 1");
+    }
+
+    /// Without a registered file (the exception prelude, `eval` bodies) the
+    /// same lowering stamps only `SYNTH`, and `span()` answers `None`.
+    #[test]
+    fn lowering_without_a_file_stamps_no_provenance() {
+        let mut hir = Hir::default();
+        let stmts = crate::lower::parse_and_lower_into(&mut hir, "a = [1, 2]\n").expect("lowers");
+        assert!(stmts.iter().all(|&id| hir.span(id).is_none()));
+    }
+
+    /// An error surfacing from deep inside a statement carries the span of
+    /// the innermost offending construct, not the whole statement.
+    #[test]
+    fn a_lowering_error_pinpoints_the_offending_construct() {
+        let src = "y = 1\nputs [1, /bad/e]\n";
+        let mut hir = Hir::default();
+        let file = hir.add_file("app.rb", src);
+        hir.lowering_file = Some(file);
+        let err = crate::lower::parse_and_lower_into(&mut hir, src)
+            .expect_err("the e-flag regexp is rejected");
+        let span = err.span.expect("located");
+        assert_eq!(span.file, file);
+        assert_eq!(&src[span.start as usize..span.end as usize], "/bad/e");
+    }
+
+    /// `SYNTH` round-trips as "no span" without an `Option` in the table.
+    #[test]
+    fn synth_is_not_a_known_span() {
+        assert_eq!(Span::SYNTH.known(), None);
+        let real = Span {
+            file: FileId(3),
+            start: 5,
+            end: 9,
+        };
+        assert_eq!(real.known(), Some(real));
+    }
 }
