@@ -667,11 +667,16 @@ builtin_methods! {
 /// The entry names in `path`, excluding `.`/`..` -- the shared read the
 /// listing rows use, with the ENOENT raise they all need.
 fn read_names(path: &str) -> Result<Vec<String>, Signal> {
-    let entries = std::fs::read_dir(path).map_err(|e| raise_errno(&e, "dir_initialize", path))?;
-    Ok(entries
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect())
+    // Gvl-released: the lazy ReadDir iterator syscalls per entry, so the
+    // whole scan runs outside an armed Gvl.
+    crate::gvl::without_gvl(|| {
+        let entries = std::fs::read_dir(path)?;
+        Ok(entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect())
+    })
+    .map_err(|e: std::io::Error| raise_errno(&e, "dir_initialize", path))
 }
 
 #[cfg(test)]

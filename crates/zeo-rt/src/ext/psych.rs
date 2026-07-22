@@ -253,7 +253,7 @@ builtin_methods! {
     "load_file" => fn load_file(_recv, args, _block) {
         arity!(args, 1..=2); // (path[, opts]) -- opts ignored
         let path = crate::builtins::file::path_arg(&args[0], "load_file")?;
-        let text = std::fs::read_to_string(&path).map_err(|e| raise_error(
+        let text = crate::gvl::without_gvl(|| std::fs::read_to_string(&path)).map_err(|e| raise_error(
             "Errno::ENOENT",
             format!("No such file or directory - {path} ({e})"),
         ))?;

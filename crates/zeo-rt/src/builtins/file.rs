@@ -567,8 +567,8 @@ builtin_methods! {
             }
             Some(v) => open_options(&path_arg(v, "open")?)?,
         };
-        let f = opts
-            .open(&path)
+        // Gvl-released: open(2) itself can block (a FIFO with no peer).
+        let f = crate::gvl::without_gvl(|| opts.open(&path))
             .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let io = crate::builtins::io::file_value(f, path);
         let Some(RubyValue::Proc(p)) = block else {
@@ -588,7 +588,8 @@ builtin_methods! {
     "read" => fn file_read(_recv, args, _block) {
         arity!(args, 1..=4);
         let path = path_arg(&args[0], "read")?;
-        let mut bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let mut bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
+            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         // `File.read(path, length, offset)`: drop `offset` leading bytes, then
         // cap at `length` (an Integer positional; a trailing Hash is options).
         if let Some(RubyValue::Int(off)) = args.get(2) {
@@ -605,20 +606,23 @@ builtin_methods! {
     "binread" => fn file_binread(_recv, args, _block) {
         arity!(args, 1..=3);
         let path = path_arg(&args[0], "binread")?;
-        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
+            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT)))
     }
     "binwrite" => fn file_binwrite(_recv, args, _block) {
         arity!(args, 2..=3);
         let path = path_arg(&args[0], "binwrite")?;
         let data = write_bytes(&args[1]);
-        std::fs::write(&path, &data).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        crate::gvl::without_gvl(|| std::fs::write(&path, &data))
+            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         Ok(RubyValue::Int(data.len() as i64))
     }
     "readlines" => fn file_readlines(_recv, args, _block) {
         arity!(args, 1..=3);
         let path = path_arg(&args[0], "readlines")?;
-        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
+            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         // A String positional after the path is the record separator (default
         // "\n"); `chomp: true` (trailing Hash) strips it.
         let sep = match args.get(1) {
@@ -634,7 +638,8 @@ builtin_methods! {
         arity!(args, 1..=2);
         let path = path_arg(&args[0], "foreach")?;
         let p = block_or_enum!(recv, "foreach", args, block);
-        let bytes = std::fs::read(&path).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
+        let bytes = crate::gvl::without_gvl(|| std::fs::read(&path))
+            .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let chomp = kwarg_truthy(args.get(1), "chomp");
         for line in crate::builtins::string::split_lines(&text) {
@@ -735,7 +740,8 @@ builtin_methods! {
                     .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?;
                 f.write_all(&data).map_err(|e| raise_errno(&e, "write", &path))?;
             }
-            _ => std::fs::write(&path, &data).map_err(|e| raise_errno(&e, "rb_sysopen", &path))?,
+            _ => crate::gvl::without_gvl(|| std::fs::write(&path, &data))
+                .map_err(|e| raise_errno(&e, "rb_sysopen", &path))?,
         }
         Ok(RubyValue::Int(data.len() as i64))
     }

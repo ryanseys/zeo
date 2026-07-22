@@ -33,7 +33,8 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// from OpenSSL's RAND_bytes, so this must be a genuine CSPRNG, not a seeded
 /// generator. `OpenSSL::Random::RandomError` is the CRuby failure surface.
 fn fill_random(buf: &mut [u8]) -> Result<(), Signal> {
-    getrandom::fill(buf)
+    // Gvl-released: the OS entropy pool can block right after boot.
+    crate::gvl::without_gvl(|| getrandom::fill(buf))
         .map_err(|e| raise_error("OpenSSL::Random::RandomError", format!("RAND_bytes: {e}")))
 }
 
