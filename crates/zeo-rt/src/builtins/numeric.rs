@@ -52,6 +52,23 @@ enum NumLane {
     Cpx,
 }
 
+/// CRuby's `flo_divmod` (numeric.c): floored division and remainder computed
+/// together so their signs stay consistent, including the infinite-divisor
+/// edge (`mod` takes the dividend when `y` is infinite and `x` finite).
+fn flo_divmod(x: f64, y: f64) -> (f64, f64) {
+    let mut m = if y.is_infinite() && x.is_finite() { x } else { x % y };
+    let mut div = if x.is_infinite() && y.is_finite() {
+        x
+    } else {
+        ((x - m) / y).round()
+    };
+    if y * m < 0.0 {
+        m += y;
+        div -= 1.0;
+    }
+    (div, m)
+}
+
 fn lane(v: &RubyValue) -> Option<NumLane> {
     match v {
         RubyValue::Int(_) | RubyValue::BigInt(_) => Some(NumLane::Int),
@@ -387,6 +404,33 @@ builtin_methods! {
     }
     "divmod"[1] => fn divmod(recv, args, _block) {
         arity!(args, 1);
+        // Float lane: CRuby's coupled `flo_divmod` adjusts the quotient and the
+        // remainder together at a sign boundary, so `7.0.divmod(-Infinity)` is
+        // `[-1, -Infinity]`, not `[0, -Infinity]` -- an independent floor of
+        // `7.0 / -Infinity` (== -0.0) would answer 0.
+        if matches!(lane(recv), Some(NumLane::Flo)) || matches!(lane(&args[0]), Some(NumLane::Flo)) {
+            if lane(recv).is_none() || lane(&args[0]).is_none() {
+                return Err(coercion_error(recv, &args[0]));
+            }
+            let x = num_to_f64_unchecked(recv);
+            let y = num_to_f64_unchecked(&args[0]);
+            if y == 0.0 {
+                return Err(crate::dispatch::raise_error(
+                    "ZeroDivisionError",
+                    "divided by 0".to_string(),
+                ));
+            }
+            let (div, m) = flo_divmod(x, y);
+            if !div.is_finite() {
+                let msg = if div.is_nan() { "NaN" } else if div > 0.0 { "Infinity" } else { "-Infinity" };
+                return Err(crate::dispatch::raise_error("FloatDomainError", msg.to_string()));
+            }
+            use num_traits::FromPrimitive;
+            let q = crate::builtins::integer::int_value(
+                num_bigint::BigInt::from_f64(div).expect("finite float"),
+            );
+            return Ok(RubyValue::Array(crate::array_new(vec![q, RubyValue::Float(m)])));
+        }
         let q = num_div(recv, &args[0])
             .ok_or_else(|| coercion_error(recv, &args[0]))??;
         let r = num_mod(recv, &args[0])

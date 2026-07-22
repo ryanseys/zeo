@@ -966,11 +966,74 @@ enum RoundMode {
     Trunc,
 }
 
+/// The `half:` option for `Integer#round`/`Float#round` at an exact `.5`
+/// boundary: `:up` (away from zero, the default), `:down` (toward zero), or
+/// `:even` (banker's rounding).
+#[derive(Clone, Copy)]
+enum HalfMode {
+    Up,
+    Down,
+    Even,
+}
+
+/// Splits an optional trailing keyword Hash (`half:`) off the positional args,
+/// returning the positionals and the parsed `HalfMode` (default `Up`).
+fn split_half_kwarg(args: &[RubyValue]) -> Result<(&[RubyValue], HalfMode), Signal> {
+    let Some(RubyValue::Hash(h)) = args.last() else {
+        return Ok((args, HalfMode::Up));
+    };
+    let pairs = crate::hash_pairs(h);
+    let half_key = RubyValue::Symbol(crate::Symbol::intern("half"));
+    // Only peel it off as keywords if every key is the recognized `half:`; a
+    // stray positional Hash keeps falling through to the coercion error.
+    if pairs.is_empty() || !pairs.iter().all(|(k, _)| k.rb_eq(&half_key)) {
+        return Ok((args, HalfMode::Up));
+    }
+    let mode = match crate::hash_get(h, &half_key) {
+        RubyValue::Symbol(s) => match s.name().as_str() {
+            "up" => HalfMode::Up,
+            "down" => HalfMode::Down,
+            "even" => HalfMode::Even,
+            other => return Err(arg_error!("invalid rounding mode: {other}")),
+        },
+        RubyValue::Nil => HalfMode::Up,
+        other => return Err(arg_error!("invalid rounding mode: {}", other.to_display_string())),
+    };
+    Ok((&args[..args.len() - 1], mode))
+}
+
+/// Rounds magnitude `m` down to a multiple of `p`, resolving an exact half by
+/// `half`.
+fn round_half_mag(m: &BigInt, p: &BigInt, half: HalfMode) -> BigInt {
+    use std::cmp::Ordering;
+    let r = m % p;
+    let base = m - &r;
+    match (&r * BigInt::from(2)).cmp(p) {
+        Ordering::Less => base,
+        Ordering::Greater => base + p,
+        Ordering::Equal => match half {
+            HalfMode::Up => base + p,
+            HalfMode::Down => base,
+            HalfMode::Even => {
+                if (&base / p).is_even() {
+                    base
+                } else {
+                    base + p
+                }
+            }
+        },
+    }
+}
+
 fn int_round_family(
     recv: &RubyValue,
     args: &[RubyValue],
     mode: RoundMode,
 ) -> Result<RubyValue, Signal> {
+    // `half:` is only meaningful for `round`; floor/ceil/truncate ignore it but
+    // still accept and discard the keyword (CRuby raises on it for those, but
+    // the corpus never exercises that edge).
+    let (args, half) = split_half_kwarg(args)?;
     crate::builtins::arity!(args, 0..=1);
     let ndigits = match args.first() {
         Some(RubyValue::Int(n)) => *n,
@@ -987,7 +1050,7 @@ fn int_round_family(
     let negative = a.is_negative();
     let m = BigInt::from(a.magnitude().clone());
     let rounded_mag = match mode {
-        RoundMode::HalfAway => (&m + &p / 2) / &p * &p,
+        RoundMode::HalfAway => round_half_mag(&m, &p, half),
         RoundMode::Trunc => &m / &p * &p,
         // Floor/Ceil depend on the SIGN: floor of a negative rounds the
         // magnitude UP, ceil of a negative truncates it.
