@@ -55,8 +55,14 @@ fn encode_codepoint(
         return out_of_range;
     }
     match enc.kind() {
-        EncKind::Utf8 => match u32::try_from(cp).ok().and_then(char::from_u32) {
-            Some(c) => Ok(c.to_string().into_bytes()),
+        EncKind::Utf8 => match u32::try_from(cp).ok().filter(|v| *v <= 0x10FFFF) {
+            // A surrogate (0xD800..=0xDFFF) is in Unicode's range but has no
+            // UTF-8 encoding: CRuby reports it as an invalid codepoint, unlike
+            // a value past U+10FFFF which is simply out of range.
+            Some(v) => match char::from_u32(v) {
+                Some(c) => Ok(c.to_string().into_bytes()),
+                None => Err(MbCodepointError::InvalidCodepoint),
+            },
             None => out_of_range,
         },
         EncKind::Ascii => {

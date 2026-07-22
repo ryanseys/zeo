@@ -328,9 +328,9 @@ pub fn render_puts(args: &[RubyValue], buf: &mut Vec<u8>) -> Result<(), Signal> 
                 }
                 seen.push(id);
                 let items = a.lock().clone();
-                if items.is_empty() {
-                    buf.push(b'\n');
-                }
+                // An empty array contributes nothing (CRuby's `io_puts_ary`
+                // loops zero times); only zero-arg `puts` writes a bare
+                // newline -- oracle-verified `puts []` prints nothing.
                 for e in &items {
                     put_one(e, seen, buf)?;
                 }
@@ -2108,13 +2108,13 @@ mod tests {
     // --- render_puts: CRuby's exact line shapes, now byte-faithful ----
 
     #[test]
-    fn render_puts_writes_a_bare_newline_for_no_args_and_empty_arrays() {
+    fn render_puts_writes_a_bare_newline_for_no_args_but_nothing_for_empty_arrays() {
         let mut buf = Vec::new();
         render_puts(&[], &mut buf).unwrap();
         assert_eq!(buf, b"\n");
         buf.clear();
         render_puts(&[RubyValue::Array(crate::array_new(Vec::new()))], &mut buf).unwrap();
-        assert_eq!(buf, b"\n");
+        assert_eq!(buf, b"");
     }
 
     #[test]

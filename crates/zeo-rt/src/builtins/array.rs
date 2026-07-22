@@ -1597,7 +1597,7 @@ fn take_items_via_each(src: &RubyValue, n: usize) -> Result<Vec<RubyValue>, crat
 
 /// Flattens nested arrays up to `depth` levels (`-1` = fully). Shared by
 /// `flatten` and `flatten!`.
-fn flatten_to_depth(items: &[RubyValue], depth: i64) -> Vec<RubyValue> {
+pub(crate) fn flatten_to_depth(items: &[RubyValue], depth: i64) -> Vec<RubyValue> {
     let mut out = Vec::new();
     for e in items {
         match e {

@@ -258,27 +258,19 @@ builtin_methods! {
     // values). Depth 0 leaves the pairs nested.
     "flatten" => fn flatten(recv, args, _block) {
         arity!(args, 0..=1);
+        // `Hash#flatten(depth)` == `to_a.flatten(depth)`: depth 0 keeps the
+        // `[k, v]` pairs intact, 1 (the argless default) splays one level,
+        // and a negative depth flattens fully.
         let depth = match args.first() {
             None => 1,
             Some(_) => crate::builtins::arg_int!(args, 0),
         };
-        let mut out = Vec::new();
-        for (k, v) in recv_hash!(recv).lock().values() {
-            out.push(k.clone());
-            out.push(v.clone());
-        }
-        // The pairs are already one level of splay; each further level
-        // flattens nested arrays.
-        for _ in 1..depth {
-            let mut next = Vec::with_capacity(out.len());
-            for e in out {
-                match e {
-                    RubyValue::Array(inner) => next.extend(inner.lock().iter().cloned()),
-                    other => next.push(other),
-                }
-            }
-            out = next;
-        }
+        let pairs: Vec<RubyValue> = recv_hash!(recv)
+            .lock()
+            .values()
+            .map(|(k, v)| RubyValue::Array(crate::array_new(vec![k.clone(), v.clone()])))
+            .collect();
+        let out = crate::builtins::array::flatten_to_depth(&pairs, depth);
         Ok(RubyValue::Array(crate::array_new(out)))
     }
     // `compact` drops nil-valued entries into a new Hash; `compact!` does it
