@@ -67,9 +67,13 @@ labs2 = { "a" => { "x" => "hi" } }
 puts labs2.dig("a", "x")        # hi
 p labs2.dig("a", "missing")     # nil
 
-# 10. Mid-walk into a non-hash leaf.
+# 10. Mid-walk into a non-diggable leaf raises TypeError (CRuby).
 flat = { a: 1 }
-p flat.dig(:a, :b)              # nil
+begin
+  p flat.dig(:a, :b)
+rescue TypeError => e
+  puts "TypeError: #{e.message}"
+end
 
 # 11. Each key expression evaluates exactly once across the dig walk.
 def k_first
