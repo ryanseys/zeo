@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **105 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `0a62e65`
+Suite `spinel` — **101 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `38459fe`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -2254,7 +2254,7 @@ true
 
 --- actual (5 lines)
 C
--8975192812081390862
+2214825183111576065
 S
 P
 false
@@ -3057,44 +3057,6 @@ nil
 
 ---
 
-## `op_assign_tail_return` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/op_assign_tail_return.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/op_assign_tail_return.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (11 lines)
-11
-8
-12
-11
-12
-17
-17
-11
-12
-105
--105
-
---- actual (11 lines)
-
-
-
-11
-12
-17
-17
-11
-12
-```
-
----
-
 ## `param_body_hash_inference` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb`
@@ -3324,74 +3286,6 @@ done
 
 ---
 
-## `proc_capture_enclosing_lambda` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_capture_enclosing_lambda.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_capture_enclosing_lambda.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (11 lines)
-5
-7
-11
-12
-101
-13
-"id:5"
-7
-[1, {x: 2}]
-[1, {}]
-3
-
---- actual (11 lines)
-5
-7
-nil
-nil
-nil
-nil
-"id:5"
-7
-[1, {x: 2}]
-[1, {}]
-3
-```
-
----
-
-## `proc_cell_opassign_returns_new_value` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_cell_opassign_returns_new_value.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_cell_opassign_returns_new_value.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-15
-15
-6
-6
-3
-
---- actual (5 lines)
-nil
-15
-nil
-6
-3
-```
-
----
-
 ## `range_bsearch_float` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/range_bsearch_float.rb`
@@ -3443,7 +3337,7 @@ nil
 stderr:
 ```
 
-thread 'main' (110621204) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (110835612) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3517,7 +3411,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (110621204) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (110835612) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4114,7 +4008,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-32
+35
 diff
 ```
 
@@ -4904,42 +4798,6 @@ false
 true
 true
 false
-```
-
----
-
-## `while_until_as_value` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/while_until_as_value.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/while_until_as_value.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 7
---- expected (9 lines)
-nil
-3
-nil
-2
-[1, nil, 2]
-"nil"
-[3, 3]
-[nil, 2]
-nil
-
---- actual (9 lines)
-nil
-3
-nil
-2
-[1, nil, 2]
-"nil"
-[nil, 3]
-[nil, 2]
-nil
 ```
 
 ---

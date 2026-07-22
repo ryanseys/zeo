@@ -1590,6 +1590,24 @@ pub(super) fn box_for_tail_return(cx: &Ctx, id: NodeId, value: TokenStream) -> T
     box_if_object_typed(cx, id, value)
 }
 
+/// Boxes a tail `LocalWrite`'s write-then-read value (see `emit_expr`'s
+/// `LocalWrite` arm) to `RubyValue`. Unlike `box_if_object_typed`, this keys
+/// on the TARGET LOCAL's own storage, not the write's RHS type: a `nil | Foo`
+/// union local stores as a plain `RubyValue` slot (`LocalStorage::Hoisted`)
+/// even when THIS write's RHS is a concrete `Foo` -- so its read-back is
+/// already a `RubyValue` and must NOT be re-boxed. Only a `Shadowed`
+/// (`TyKind::Object`) local reads back as an unboxed `Arc<Concrete>` needing
+/// the `RubyValue::Object` wrap.
+pub(super) fn box_tail_local_write(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
+    match cx.local_types.get(name) {
+        Some(TyKind::Object(cid)) => {
+            let class_ident = super::ident::class_ident(cx.compiler, *cid);
+            quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#value)) }
+        }
+        _ => value,
+    }
+}
+
 /// The already-resolved OWNER class id for a `@@name` reference (see
 /// `analyze::mro::resolve_cvars`) -- looked up via `cx.defining_class` (the
 /// class/module whose HIR body this reference is LEXICALLY written in), not

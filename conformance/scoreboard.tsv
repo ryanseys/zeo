@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=0a62e65
-# PASS=2190 FAIL_OUTPUT=103 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=38459fe
+# PASS=2194 FAIL_OUTPUT=99 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1584,7 +1584,7 @@ oneline_in_array	PASS	-	-
 oneline_in_hash	PASS	-	-
 oneline_in_hash_presence	PASS	-	-
 oneline_in_pattern_bind	PASS	-	-
-op_assign_tail_return	FAIL_OUTPUT	expect	-
+op_assign_tail_return	PASS	-	-
 op_assign_user_operator	PASS	-	-
 op_method_bitwise	PASS	-	-
 op_method_shift	PASS	-	-
@@ -1749,10 +1749,10 @@ proc_call_blk_gc_root	PASS	-	-
 proc_call_kw_and_lead_splat	PASS	-	-
 proc_call_splat	PASS	-	-
 proc_call_value_return	PASS	-	-
-proc_capture_enclosing_lambda	FAIL_OUTPUT	expect	-
+proc_capture_enclosing_lambda	PASS	-	-
 proc_capture_inline_block_param	PASS	-	-
 proc_case_eq	PASS	-	-
-proc_cell_opassign_returns_new_value	FAIL_OUTPUT	expect	-
+proc_cell_opassign_returns_new_value	PASS	-	-
 proc_closure	PASS	-	-
 proc_compose_curry_forward	PASS	-	-
 proc_compose_intermediate_type	PASS	-	-
@@ -2273,7 +2273,7 @@ wave_followups_2833	PASS	-	-
 when_splat_rational_complex	PASS	-	-
 while_break_value	PASS	-	-
 while_tail_return_type	PASS	-	-
-while_until_as_value	FAIL_OUTPUT	expect	-
+while_until_as_value	PASS	-	-
 with_index	PASS	-	-
 with_index_enumerator	PASS	-	-
 yield	PASS	-	-

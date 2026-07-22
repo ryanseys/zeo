@@ -80,8 +80,9 @@ pub fn emit_body_boxed(cx: &Ctx, body: &[NodeId]) -> TokenStream {
         .collect::<Vec<_>>();
     let tail_id = last[0];
     let tail = emit_statement(cx, tail_id, true, false);
-    // A tail assignment appends its own trailing-nil value (already a
-    // `RubyValue`, and the tokens aren't a single boxable expression).
+    // A tail assignment's own arm already boxed its value to `RubyValue`
+    // (see `emit_statement`); every other tail still needs Object-typed
+    // boxing here.
     let tail = match &cx.compiler.hir[tail_id] {
         HirNode::LocalWrite(..) | HirNode::MultiWrite { .. } => tail,
         _ => super::expr::box_if_object_typed(cx, tail_id, tail),
@@ -140,33 +141,56 @@ fn emit_statement(cx: &Ctx, stmt: NodeId, is_tail: bool, wrap_ok: bool) -> Token
             quote! { #site_body }
         };
     }
-    if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
-        let v = emit_expr(cx, *value);
-        // Box an `Object`-typed RHS when `name`'s OWN storage disagrees (Tier
-        // 0 fix #2) -- see `emit_expr::box_for_local_storage`'s docs.
-        let v = super::expr::box_for_local_storage(cx, name, *value, v);
-        // `emit_local_write` picks the right shape (plain reassignment,
-        // shadowing `let`, or a `RefCell` store) for whichever storage
-        // class `name` has -- see `codegen::hoisting::LocalStorage`'s docs.
-        let write = super::hoisting::emit_local_write(cx, name, v);
+    if matches!(
+        &cx.compiler.hir[stmt],
+        HirNode::LocalWrite(..) | HirNode::MultiWrite { .. }
+    ) {
+        // In TAIL position an assignment evaluates to the assigned value,
+        // exactly like Ruby's real "assignment-as-expression" semantics
+        // (`def inc(v); v += 1; end` returns the incremented value): reuse
+        // `emit_expr`'s write-then-read form, boxed to `RubyValue`. As a
+        // NON-tail statement it compiles to a plain Rust reassignment
+        // (`x = v;`, not a value-returning block) so the mutation persists
+        // across loop iterations -- see `codegen::hoisting`'s docs.
         if is_tail {
-            let nil = tail_nil(wrap_ok);
-            quote! { #write #nil }
-        } else {
-            quote! { #write }
+            // Box the write-then-read value to `RubyValue`. For a `LocalWrite`
+            // this keys on the LOCAL's storage (a `nil | Foo` union local
+            // already reads back as `RubyValue`, so must not be re-boxed --
+            // see `box_tail_local_write`); a `MultiWrite` yields its RHS array,
+            // already a `RubyValue`.
+            let value = match &cx.compiler.hir[stmt] {
+                HirNode::LocalWrite(name, _) => {
+                    super::expr::box_tail_local_write(cx, name, emit_expr(cx, stmt))
+                }
+                _ => emit_expr(cx, stmt),
+            };
+            return if wrap_ok {
+                quote! { Ok(#value) }
+            } else {
+                value
+            };
         }
-    } else if let HirNode::MultiWrite { targets, value } = &cx.compiler.hir[stmt] {
-        // Same reasoning as `LocalWrite` above: every target that's a plain
-        // `Local` reassigns the SAME already-hoisted identifier as before,
-        // so wrapping the destructuring scratch locals (`__elems`/`__before`/
-        // `__splat`/`__after`) in their own nested block (see
-        // `codegen::loops::emit_multi_target_group`) doesn't affect their
-        // visibility to LATER statements in this same body at all.
-        let write = super::loops::emit_multi_write(cx, targets, *value);
-        if is_tail {
-            let nil = tail_nil(wrap_ok);
-            quote! { #write #nil }
+        if let HirNode::LocalWrite(name, value) = &cx.compiler.hir[stmt] {
+            let v = emit_expr(cx, *value);
+            // Box an `Object`-typed RHS when `name`'s OWN storage disagrees
+            // (Tier 0 fix #2) -- see `emit_expr::box_for_local_storage`'s docs.
+            let v = super::expr::box_for_local_storage(cx, name, *value, v);
+            // `emit_local_write` picks the right shape (plain reassignment,
+            // shadowing `let`, or a `RefCell` store) for whichever storage
+            // class `name` has -- see `codegen::hoisting::LocalStorage`'s docs.
+            let write = super::hoisting::emit_local_write(cx, name, v);
+            quote! { #write }
         } else {
+            let HirNode::MultiWrite { targets, value } = &cx.compiler.hir[stmt] else {
+                unreachable!()
+            };
+            // Same reasoning as `LocalWrite` above: every target that's a
+            // plain `Local` reassigns the SAME already-hoisted identifier as
+            // before, so wrapping the destructuring scratch locals
+            // (`__elems`/`__before`/`__splat`/`__after`) in their own nested
+            // block (see `codegen::loops::emit_multi_target_group`) doesn't
+            // affect their visibility to LATER statements in this body at all.
+            let write = super::loops::emit_multi_write(cx, targets, *value);
             quote! { #write }
         }
     } else {
