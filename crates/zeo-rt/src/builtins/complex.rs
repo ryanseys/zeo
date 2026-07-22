@@ -413,9 +413,15 @@ pub(crate) fn cpx_format(c: &RComplexData, inspect: bool) -> String {
     };
     let real = render(&c.real);
     let imag = render(&c.imag);
-    let (sign, imag) = match imag.strip_prefix('-') {
-        Some(rest) => ("-", rest.to_string()),
-        None => ("+", imag),
+    // The imag's own sign supplies the `-`; a positive coefficient gets `+`. A
+    // negative Rational inspects as `(-1/2)`, so the sign hides just inside the
+    // paren -- CRuby lifts it out (`0-(1/2)*i`, not `0+(-1/2)*i`).
+    let (sign, imag) = if let Some(rest) = imag.strip_prefix('-') {
+        ("-", rest.to_string())
+    } else if let Some(rest) = imag.strip_prefix("(-") {
+        ("-", format!("({rest}"))
+    } else {
+        ("+", imag)
     };
     // CRuby separates the imaginary unit with `*` when the coefficient isn't a
     // bare number: a Rational (`3/4*i`, inspect), or a non-finite Float whose
