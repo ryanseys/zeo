@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2175/2295 passing (94.8%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `70a1f6b`
+Suite `spinel` — **2183/2295 passing (95.1%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `8ce93b2`
 
 | verdict | count |
 |---|---|
-| PASS | 2175 |
-| FAIL_OUTPUT | 117 |
+| PASS | 2183 |
+| FAIL_OUTPUT | 109 |
 | FAIL_COMPILE | 1 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
@@ -20,9 +20,9 @@ Suite `spinel` — **2175/2295 passing (94.8%)** — oracle `ruby 4.0.5 (2026-05
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
 | 5 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be | ? | issue_3193 | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>' |
-| 3 | arity-panic | g | str_method_nil_arg_no_segv | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |
 | 2 | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b | ? | issue_3119 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError) |
 | 2 | missing-method:>= | P | gc_stat_string_heap | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
+| 1 | arity-panic | g | str_method_nil_arg_no_segv | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |
 | 1 | auto-error-unrecognized-escape-sequence-regexperror-2794 | ? | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 | 1 | auto-expected-numeric-value-got-ni-4730 | ? | rational_complex_wave9 | expected a numeric value, got 2+3i |
 | 1 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0 | ? | compile_time_attribute_singular | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:1:in '<main>' |

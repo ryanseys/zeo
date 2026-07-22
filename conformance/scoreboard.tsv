@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=70a1f6b
-# PASS=2175 FAIL_OUTPUT=117 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=8ce93b2
+# PASS=2183 FAIL_OUTPUT=109 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -100,7 +100,7 @@ array_sort_by_bang	PASS	-	-
 array_sort_by_schwartzian	PASS	-	-
 array_spaceship	PASS	-	-
 array_splice	PASS	-	-
-array_splice_exceptions	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-1c66
+array_splice_exceptions	PASS	-	-
 array_splice_to_ary	PASS	-	-
 array_splice_widen	PASS	-	-
 array_sum_concat_init	PASS	-	-
@@ -127,7 +127,7 @@ bare_sibling_cls_method_call	PASS	-	-
 bareword_freeze	PASS	-	-
 basicobject_blank_slate	PASS	-	-
 basicobject_dup_rescued	PASS	-	-
-basicobject_new	FAIL_OUTPUT	expect	missing-method:new
+basicobject_new	PASS	-	-
 basicobject_send_missing	PASS	-	-
 begin_rescue_as_expression	PASS	-	-
 begin_rescue_else_clause	PASS	-	-
@@ -550,7 +550,7 @@ enum_chain_with_index_object	PASS	-	-
 enum_each_family_receiver	PASS	-	-
 enum_for_each	PASS	-	-
 enum_map_chain	PASS	-	-
-enum_terminal_chunk_zip_lazy	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260
+enum_terminal_chunk_zip_lazy	PASS	-	-
 enum_with_index_map	PASS	-	-
 enum_with_index_value	PASS	-	-
 enum_with_object	PASS	-	-
@@ -761,7 +761,7 @@ hash_default_proc_assign	PASS	-	-
 hash_default_proc_key	PASS	-	-
 hash_delete_if_select_reject_bang	PASS	-	-
 hash_delete_returns_value	PASS	-	-
-hash_dig	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-10d6
+hash_dig	PASS	-	-
 hash_dig_into_array	PASS	-	-
 hash_dispatch_missing_cells	PASS	-	-
 hash_double_splat	PASS	-	-
@@ -977,7 +977,7 @@ int_overflow_raises	PASS	-	-
 int_round_large_precision	PASS	-	-
 int_sentinel_class_nilclass	PASS	-	-
 int_to_enum_times	PASS	-	-
-integer_argument_error	FAIL_OUTPUT	expect	-
+integer_argument_error	PASS	-	-
 integer_bignum_batch2	PASS	-	-
 integer_bit_index_clamped	PASS	-	-
 integer_chr_encoding	FAIL_OUTPUT	expect	-
@@ -1206,7 +1206,7 @@ issue_3053	PASS	-	-
 issue_3054	PASS	-	-
 issue_3055	PASS	-	-
 issue_3056	PASS	-	-
-issue_3057	FAIL_OUTPUT	expect	arity-panic
+issue_3057	PASS	-	-
 issue_3058	PASS	-	-
 issue_3059	PASS	-	-
 issue_3060	PASS	-	-
@@ -1962,7 +1962,7 @@ set_full_api	FAIL_OUTPUT	expect	-
 set_operations	PASS	-	-
 setbyte_nul_bytes	PASS	-	-
 shareable_constant	PASS	-	-
-signal_module_surface	FAIL_OUTPUT	expect	missing-method:kill
+signal_module_surface	PASS	-	-
 signal_trap_stub	PASS	-	-
 singleton_class_block	PASS	-	-
 singleton_class_object	PASS	-	-
@@ -2050,9 +2050,9 @@ string_each_line_expr	PASS	-	-
 string_each_line_keeps_newline	PASS	-	-
 string_embedded_nul_core	PASS	-	-
 string_encoding	PASS	-	-
-string_enum_arg_forms	FAIL_OUTPUT	expect	arity-panic
+string_enum_arg_forms	PASS	-	-
 string_enum_block_returns_self	FAIL_OUTPUT	expect	-
-string_enum_inspect_source	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab
+string_enum_inspect_source	FAIL_OUTPUT	expect	-
 string_equal_identity	FAIL_OUTPUT	expect	-
 string_format_poly_array_rhs	PASS	-	-
 string_format_polyarr	PASS	-	-

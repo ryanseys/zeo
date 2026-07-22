@@ -1,97 +1,11 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **120 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `70a1f6b`
+Suite `spinel` — **112 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `8ce93b2`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
 diff — enough to understand each failure without re-running the harness.
 Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.
-
-## `array_splice_exceptions` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-1c66` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb:55:in '<main>': index -7 too small for array; minimum: -3 (IndexError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (19 lines)
-IndexError: negative length (-2)
-IndexError: negative length (-1)
-FrozenError
-IndexError
-IndexError: negative length (-1)
-IndexError: index -5 too small for array; minimum: -3
-RangeError: -10..1 out of range
-RangeError: -10.. out of range
-FrozenError
-FrozenError
-FrozenError
-FrozenError
-FrozenError
-FrozenError
-IndexError: negative length (-1)
-IndexError: negative length (-1)
-RangeError: -9..0 out of range
-[9, 3]
-[1, 8]
-
---- actual (5 lines)
-IndexError: negative length (-2)
-IndexError: negative length (-1)
-IndexError
-IndexError: negative length (-1)
-IndexError: index -5 too small for array; minimum: -3
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb:55:in '<main>': index -7 too small for array; minimum: -3 (IndexError)
-```
-
----
-
-## `basicobject_new` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:new` (cluster `P`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb:3:in '<main>': undefined method 'new' for class BasicObject (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-:created
-Object
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb:3:in '<main>': undefined method 'new' for class BasicObject (NoMethodError)
-```
-
----
 
 ## `block_local_fresh_per_iteration` — FAIL_OUTPUT
 
@@ -1563,46 +1477,6 @@ false
 
 ---
 
-## `enum_terminal_chunk_zip_lazy` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (10 lines)
-[104, 105]
-2
-{1 => 2, 3 => 4}
-2
-[1, 2, 3]
-[[false, [1]], [true, [2]], [false, [3]], [true, [4]]]
-[[1, 4], [2, 5], [3, 6]]
-[[1, 3, 5], [2, 4, 6]]
-[1, 4, 9]
-[1, 2]
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError)
-```
-
----
-
 ## `exception_value_parity` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/exception_value_parity.rb`
@@ -1887,103 +1761,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uninitialized constant OpenSSL (NameError)
-```
-
----
-
-## `hash_dig` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-10d6` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb:72:in '<main>': Integer does not have #dig method (TypeError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 31
---- expected (37 lines)
-1
-2
-alpha
-beta
-x
-y
-10
-20
-Alice
-30
-7
-100
-50
-2
-hi
-sayonara
-42
-
-
-Bob
-25
-
-0
-nil
-""
-nil
-1
-nil
-hi
-nil
-nil
-k1
-k2
-99
-nil
-nil
-nil
-
---- actual (30 lines)
-1
-2
-alpha
-beta
-x
-y
-10
-20
-Alice
-30
-7
-100
-50
-2
-hi
-sayonara
-42
-
-
-Bob
-25
-
-0
-nil
-""
-nil
-1
-nil
-hi
-nil
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb:72:in '<main>': Integer does not have #dig method (TypeError)
 ```
 
 ---
@@ -2419,96 +2196,6 @@ first difference at line 1
 
 ---
 
-## `integer_argument_error` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_argument_error.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_argument_error.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 19
---- expected (36 lines)
-42
-0
--7
-5
--7
-42
-42
-42
-42
-42
--7
-0
-0
--1
--1
--1
--1
-9223372036854775807
--1
--1
--1
--1
--1
--1
--1
--1
--1
-42
--1
--1
-msg: invalid value for Integer(): "nope"
-stress ok: 100
-42
-0
-0
--7
-
---- actual (36 lines)
-42
-0
--7
-5
--7
-42
-42
-42
-42
-42
--7
-0
-0
--1
--1
--1
--1
-9223372036854775807
--9223372036854775808
--1
--1
--1
--1
--1
--1
--1
--1
-42
--1
--1
-msg: invalid value for Integer(): "nope"
-stress ok: 100
-42
-0
-0
--7
-```
-
----
-
 ## `integer_chr_encoding` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_chr_encoding.rb`
@@ -2621,7 +2308,7 @@ true
 
 --- actual (5 lines)
 C
--8534035146381811205
+-706273149769686704
 S
 P
 false
@@ -2895,41 +2582,6 @@ true
 true
 true
 true
-```
-
----
-
-## `issue_3057` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb:1:in '<main>': wrong number of arguments (given 1, expected 0) (ArgumentError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-(1/3)
-(1/2)
-(22/7)
-(2/3)
-(1/3)
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb:1:in '<main>': wrong number of arguments (given 1, expected 0) (ArgumentError)
 ```
 
 ---
@@ -4039,7 +3691,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (107143535) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (107669509) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4113,7 +3765,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (107143535) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (107669509) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4618,102 +4270,6 @@ Set["a", "b"]
 
 ---
 
-## `signal_module_surface` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:kill` (cluster `P`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb:33:in '<main>': undefined method 'kill' for module Process (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 30
---- expected (37 lines)
-2
-0
-15
-Hash
-"INT"
-nil
-"EXIT"
-"CHLD"
-"DEFAULT"
-"IGNORE"
-ArgumentError
-Errno::EINVAL
-ArgumentError
-Proc
-Signal
-Module
-"constant"
-"SIGINT"
-2
-"SIGINT"
-SignalException
-"SIGTERM"
-"SIGINT"
-"Interrupt"
-2
-"stop"
-ArgumentError
-Interrupt
-SignalException
-1
-Errno::ESRCH
-handler true
-main
-"SYSTEM_DEFAULT"
-Proc
-1
-1
-
---- actual (29 lines)
-2
-0
-15
-Hash
-"INT"
-nil
-"EXIT"
-"CHLD"
-"DEFAULT"
-"IGNORE"
-ArgumentError
-Errno::EINVAL
-ArgumentError
-Proc
-Signal
-Module
-"constant"
-"SIGINT"
-2
-"SIGINT"
-SignalException
-"SIGTERM"
-"SIGINT"
-"Interrupt"
-2
-"stop"
-ArgumentError
-Interrupt
-SignalException
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb:33:in '<main>': undefined method 'kill' for module Process (NoMethodError)
-```
-
----
-
 ## `socket_tcp_thread` — TIMEOUT_RUN
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb`
@@ -4781,7 +4337,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-34
+30
 diff
 ```
 
@@ -4890,41 +4446,6 @@ RangeError
 
 ---
 
-## `string_enum_arg_forms` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb:4:in '<main>': wrong number of arguments (given 1, expected 2) (ArgumentError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-["a", "a", "a"]
-["1", "2"]
-["1-", "2-", "3"]
-["1-", "2-", "3"]
-["x,", "y"]
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb:4:in '<main>': wrong number of arguments (given 1, expected 2) (ArgumentError)
-```
-
----
-
 ## `string_enum_block_returns_self` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_block_returns_self.rb`
@@ -4975,17 +4496,12 @@ y
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError)
-```
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
 diff:
 ```
 === stdout diff ===
-first difference at line 3
+first difference at line 5
 --- expected (8 lines)
 #<Enumerator: "abc":each_char>
 #<Enumerator: "a\nb\n":each_line>
@@ -4996,16 +4512,15 @@ first difference at line 3
 "i"
 ["h", "i"]
 
---- actual (2 lines)
+--- actual (8 lines)
 #<Enumerator: "abc":each_char>
 #<Enumerator: "a\nb\n":each_line>
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError)
+#<Enumerator: "ab":each_byte>
+#<Enumerator: "ab":each_codepoint>
+#<Enumerator: "x\ny\n":each_line({chomp: true})>
+"h"
+"i"
+["h", "i"]
 ```
 
 ---
