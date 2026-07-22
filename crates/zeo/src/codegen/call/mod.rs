@@ -478,6 +478,7 @@ pub fn emit_call(
                         block,
                         block_arg,
                         scope.needs_block_param(),
+                        crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                     );
                 }
                 // The universal Kernel forms resolve here too -- `puts`/
@@ -533,6 +534,7 @@ pub fn emit_call(
                     block,
                     block_arg,
                     scope.needs_block_param(),
+                    crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                 );
             }
             // A name that resolves only as an alias of an inherited BUILTIN
@@ -669,6 +671,7 @@ pub fn emit_call(
                     block,
                     block_arg,
                     scope.needs_block_param(),
+                    crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                 );
             }
         }
@@ -1972,6 +1975,7 @@ fn dispatch(
                     block,
                     block_arg,
                     scope.needs_block_param(),
+                    crate::codegen::scope_frame_guard(cx.compiler, scope, false),
                 );
             }
         }
@@ -2176,6 +2180,7 @@ fn dispatch(
                 block,
                 block_arg,
                 scope.needs_block_param(),
+                crate::codegen::scope_frame_guard(cx.compiler, scope, false),
             );
         }
     }

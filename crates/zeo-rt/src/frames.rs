@@ -76,6 +76,20 @@ impl Drop for FrameGuard {
     }
 }
 
+/// A frame for a C-implemented callee: CRuby shows such frames at the
+/// CALLER's file:line (there is no Ruby-level line inside a C function),
+/// so this clones the current innermost frame's location under `method`'s
+/// label -- e.g. `'BasicObject#initialize'` when an `initialize`-less
+/// `.new` rejects arguments. Same RAII contract as [`FrameGuard::push`].
+pub fn synthetic_c_frame(method: &'static str) -> FrameGuard {
+    FRAMES.with(|f| {
+        let mut stack = f.borrow_mut();
+        let (file, line) = stack.last().map_or(("", 0), |fr| (fr.file, fr.line));
+        stack.push(Frame { file, line, method });
+    });
+    FrameGuard(())
+}
+
 /// Stamp the innermost frame's current line -- emitted before a statement
 /// whose source line differs from the previous statement's.
 #[inline]

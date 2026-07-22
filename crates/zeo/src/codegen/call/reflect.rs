@@ -156,5 +156,6 @@ pub(super) fn emit_class_method_call_on(
         block,
         block_arg,
         scope.needs_block_param(),
+        crate::codegen::scope_frame_guard(cx.compiler, scope, true),
     )
 }

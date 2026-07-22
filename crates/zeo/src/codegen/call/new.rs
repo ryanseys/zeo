@@ -109,6 +109,7 @@ pub fn emit_new(
                 block,
                 None,
                 scope.needs_block_param() || block.is_some(),
+                crate::codegen::scope_frame_guard(cx.compiler, scope, false),
             );
             return quote! { { let __obj = #ctor; #init; __obj } };
         }
@@ -247,7 +248,10 @@ pub fn emit_new_with_arg_tokens(
         };
         return match cx.compiler.method_in_chain(cid, "initialize") {
             Some((_, sid)) => {
-                let final_args = bind_new_args(cx, sid, class_name, arg_exprs);
+                let final_args = match bind_new_args(cx, sid, class_name, arg_exprs) {
+                    Ok(a) => a,
+                    Err(raise) => return raise,
+                };
                 let needs_block = cx.compiler.scope(sid).needs_block_param();
                 let block_slot = needs_block.then(|| quote! { , None });
                 let mod_ident = crate::codegen::ident::class_ident(cx.compiler, cid);
@@ -267,6 +271,7 @@ pub fn emit_new_with_arg_tokens(
                 quote! {
                     {
                         #(let _ = #arg_exprs;)*
+                        let __frame = zeo_rt::synthetic_c_frame("BasicObject#initialize");
                         return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string()));
                     }
                 }
@@ -278,7 +283,10 @@ pub fn emit_new_with_arg_tokens(
 
     match cx.compiler.method_in_chain(cid, "initialize") {
         Some((_, sid)) => {
-            let mut final_args = bind_new_args(cx, sid, class_name, arg_exprs);
+            let mut final_args = match bind_new_args(cx, sid, class_name, arg_exprs) {
+                Ok(a) => a,
+                Err(raise) => return raise,
+            };
             // An `initialize` that uses `yield`/`&blk` still gets its block
             // slot (always `None` -- `.new` doesn't forward a block yet, a
             // narrower, pre-existing gap).
@@ -305,9 +313,12 @@ pub fn emit_new_with_arg_tokens(
         None if !arg_exprs.is_empty() => {
             let n = arg_exprs.len();
             let msg = format!("wrong number of arguments (given {n}, expected 0)");
+            // The synthetic C frame: CRuby's innermost row here is
+            // `'BasicObject#initialize'` at the CALLER's line.
             quote! {
                 {
                     #(let _ = #arg_exprs;)*
+                    let __frame = zeo_rt::synthetic_c_frame("BasicObject#initialize");
                     return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string()));
                 }
             }
@@ -320,13 +331,19 @@ pub fn emit_new_with_arg_tokens(
 /// `Some(expr)` when provided else `None` (the callee's own prologue lazily
 /// evaluates the default). Splat/post/keyword params on `initialize` remain
 /// out of scope, matching `emit_new_with_arg_tokens`'s original posture.
+///
+/// A wrong argument COUNT is `Err(tokens)`: real Ruby raises a rescuable
+/// runtime `ArgumentError` inside `'Class#initialize'` at its def line
+/// (oracle-verified), so the caller returns those raise tokens instead of
+/// the construction -- never a compile abort for reachable-or-not code.
 fn bind_new_args(
     cx: &Ctx,
     sid: crate::compiler::ScopeId,
     class_name: &str,
     arg_exprs: Vec<TokenStream>,
-) -> Vec<TokenStream> {
-    let params = &cx.compiler.scope(sid).params;
+) -> Result<Vec<TokenStream>, TokenStream> {
+    let scope = cx.compiler.scope(sid);
+    let params = &scope.params;
     let nreq = params.required.len();
     let nopt = params.optional.len();
     if params.rest.is_some()
@@ -339,8 +356,8 @@ fn bind_new_args(
         );
     }
     if arg_exprs.len() < nreq || arg_exprs.len() > nreq + nopt {
-        panic!(
-            "wrong number of arguments for `{class_name}.new` (given {}, expected {})",
+        let msg = format!(
+            "wrong number of arguments (given {}, expected {})",
             arg_exprs.len(),
             if nopt == 0 {
                 nreq.to_string()
@@ -348,6 +365,14 @@ fn bind_new_args(
                 format!("{nreq}..{}", nreq + nopt)
             }
         );
+        let frame = crate::codegen::scope_frame_guard(cx.compiler, scope, false);
+        return Err(quote! {
+            {
+                #(let _ = #arg_exprs;)*
+                #frame
+                return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string()));
+            }
+        });
     }
     let mut final_args: Vec<TokenStream> = Vec::with_capacity(nreq + nopt);
     let mut provided = arg_exprs.into_iter();
@@ -361,5 +386,5 @@ fn bind_new_args(
             None => quote! { None },
         });
     }
-    final_args
+    Ok(final_args)
 }

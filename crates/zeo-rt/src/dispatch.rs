@@ -2001,8 +2001,10 @@ pub fn run_initialize(
     // arity at runtime and the error is rescuable -- `rescue ArgumentError`
     // around a bad `.new` is a corpus idiom, and a panic is uncatchable.
     // Message shape oracle-verified: CRuby says "wrong number of arguments
-    // (given 2, expected 0)" with no method name in it.
+    // (given 2, expected 0)" with no method name in it, and the backtrace's
+    // innermost row is `'BasicObject#initialize'` at the caller's line.
     if !args.is_empty() {
+        let __frame = crate::frames::synthetic_c_frame("BasicObject#initialize");
         return Err(arg_error!(
             "wrong number of arguments (given {}, expected 0)",
             args.len()

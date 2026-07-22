@@ -286,6 +286,7 @@ pub fn emit_call_args(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     needs_block: bool,
+    callee_frame: TokenStream,
 ) -> TokenStream {
     emit_call_args_to(
         cx,
@@ -297,6 +298,7 @@ pub fn emit_call_args(
         block,
         block_arg,
         needs_block,
+        callee_frame,
     )
 }
 
@@ -331,6 +333,12 @@ impl Callee {
 }
 
 /// `emit_call_args`, generalized over the invocation shape (see `Callee`).
+///
+/// `callee_frame` is the CALLEE's backtrace-frame guard
+/// (`codegen::scope_frame_guard` tokens, possibly empty): a statically
+/// detected arity/keyword mismatch raises with that frame pushed, so the
+/// backtrace's innermost line is the callee's `def` -- CRuby raises these
+/// inside the callee, oracle-verified. The happy path never pushes it.
 #[allow(clippy::too_many_arguments)]
 pub fn emit_call_args_to(
     cx: &Ctx,
@@ -342,6 +350,7 @@ pub fn emit_call_args_to(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     needs_block: bool,
+    callee_frame: TokenStream,
 ) -> TokenStream {
     // Fast path: a plain required-only callee called with the RIGHT number
     // of arguments, no call-site kwargs and no block channel -- by far the
@@ -465,12 +474,16 @@ pub fn emit_call_args_to(
         .collect();
 
     // A statically-detectable argument-shape error: evaluate the arg
-    // temporaries, then raise -- see the comment above `pos_temps`.
+    // temporaries (caller's frame -- CRuby's order), then raise under the
+    // CALLEE's frame -- see the comment above `pos_temps` and the
+    // `callee_frame` doc above.
     let raise_argument_error = |msg: String| {
+        let frame = &callee_frame;
         quote! {
             {
                 #(#pos_lets)*
                 #(#kw_lets)*
+                #frame
                 return Err(zeo_rt::raise_error("ArgumentError", #msg.to_string()));
             }
         }
@@ -653,6 +666,7 @@ pub fn emit_call_args_to(
 fn dynamic_kwargs_binding(
     method_name: &str,
     params: &Params,
+    callee_frame: &TokenStream,
 ) -> (Option<TokenStream>, Vec<TokenStream>) {
     if params.keywords.is_empty() && params.keyword_rest.is_none() {
         return (None, Vec::new());
@@ -674,15 +688,21 @@ fn dynamic_kwargs_binding(
         })
         .collect();
     let has_kwrest = params.keyword_rest.is_some();
+    // The binder's missing/unknown-keyword raises happen with the CALLEE's
+    // frame pushed (block-scoped, so the guard pops before the real body --
+    // which pushes its own -- runs). CRuby attributes these to the def line.
     let preamble = quote! {
         #[allow(unused_mut, unused_variables)]
-        let (args, __kw_req, __kw_opt, mut __kw_rest) = zeo_rt::bind_dynamic_kwargs(
-            #method_name,
-            args,
-            &[#(#req_names),*],
-            &[#(#opt_names),*],
-            #has_kwrest,
-        )?;
+        let (args, __kw_req, __kw_opt, mut __kw_rest) = {
+            #callee_frame
+            zeo_rt::bind_dynamic_kwargs(
+                #method_name,
+                args,
+                &[#(#req_names),*],
+                &[#(#opt_names),*],
+                #has_kwrest,
+            )?
+        };
     };
     // Keyword arguments in DECLARED order (matching
     // `emit_signature_params`), picking from the binder's required/optional
@@ -723,7 +743,7 @@ fn dynamic_kwargs_binding(
 /// Both trampolines build their argument bindings identically below, so the
 /// `Option`-built bounds keep a missing lower/upper bound from emitting a
 /// dangling `||` (an `args.len() < 0` useless-comparison lint).
-fn emit_arity_check(params: &Params) -> TokenStream {
+fn emit_arity_check(params: &Params, callee_frame: &TokenStream) -> TokenStream {
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
@@ -747,8 +767,11 @@ fn emit_arity_check(params: &Params) -> TokenStream {
     } else {
         format!("{min_lit}..{}", nreq + nopt + npost)
     };
+    // The raise runs with the CALLEE's frame pushed -- CRuby attributes a
+    // wrong-argument-count error to the callee's def line.
     quote! {
         if #cond {
+            #callee_frame
             return Err(zeo_rt::raise_error(
                 "ArgumentError",
                 format!("wrong number of arguments (given {}, expected {})", args.len(), #expected),
@@ -762,15 +785,16 @@ pub fn emit_dynamic_trampoline(
     method_name: &str,
     params: &Params,
     needs_block: bool,
+    callee_frame: &TokenStream,
 ) -> TokenStream {
     let method_ident = safe_ident(method_name);
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
 
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
     let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params);
+    let arity_check = emit_arity_check(params, callee_frame);
 
     let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
     let optional_args = (0..nopt).map(|i| {
@@ -841,14 +865,15 @@ pub fn emit_value_trampoline(
     params: &Params,
     needs_block: bool,
     recv_mode: RecvMode,
+    callee_frame: &TokenStream,
 ) -> TokenStream {
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
 
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
     let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params);
+    let arity_check = emit_arity_check(params, callee_frame);
 
     let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
     let optional_args = (0..nopt).map(|i| {
@@ -896,14 +921,15 @@ pub fn emit_exc_trampoline(
     method_name: &str,
     params: &Params,
     needs_block: bool,
+    callee_frame: &TokenStream,
 ) -> TokenStream {
-    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params);
+    let (kw_preamble, kw_args) = dynamic_kwargs_binding(method_name, params, callee_frame);
 
     let nreq = params.required.len();
     let nopt = params.optional.len();
     let npost = params.post.len();
     let min_lit = nreq + npost;
-    let arity_check = emit_arity_check(params);
+    let arity_check = emit_arity_check(params, callee_frame);
 
     let required_args = (0..nreq).map(|i| quote! { args[#i].clone() });
     let optional_args = (0..nopt).map(|i| {
@@ -1969,6 +1995,7 @@ mod tests {
             self_is_dynamic: false,
             runtime_super_params: None,
             block_depth: 0,
+            has_blk_binding: false,
         };
         emit_proc_param_bindings(&cx, params, &format_ident!("__args"), is_lambda).to_string()
     }

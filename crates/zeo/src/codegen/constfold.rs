@@ -141,6 +141,7 @@ mod tests {
                 self_is_dynamic: false,
                 runtime_super_params: None,
                 block_depth: 0,
+                has_blk_binding: false,
             }
         }
 

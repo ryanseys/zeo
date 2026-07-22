@@ -3250,3 +3250,65 @@ fn uncaught_exception_report_matches_cruby_shape() {
          \tfrom -e:3:in '<main>'\n"
     );
 }
+
+#[test]
+fn arity_errors_attribute_to_the_callee_frame_like_cruby() {
+    // CRuby raises wrong-number-of-arguments / missing-keyword INSIDE the
+    // callee: the innermost backtrace row is the callee's label at its
+    // `def` line, and an `initialize`-less `.new` shows the C-frame shape
+    // `'BasicObject#initialize'` at the CALLER's line. This battery was
+    // verified verbatim against ruby 4.0.5 (the arity family was previously
+    // an excluded, catalogued divergence of the frame-tracking battery).
+    let result = run_ruby(
+        r#"
+        def f(a, b)
+          a + b
+        end
+        begin
+          f(1)
+        rescue ArgumentError => e
+          puts e.message
+          puts e.backtrace.first.split('/').last
+        end
+        class Bag
+          def initialize(x)
+            @x = x
+          end
+        end
+        begin
+          Bag.new(1, 2, 3)
+        rescue ArgumentError => e
+          puts e.message
+          puts e.backtrace.first.split('/').last
+        end
+        class Plain; end
+        begin
+          Plain.new(5)
+        rescue ArgumentError => e
+          puts e.message
+          puts e.backtrace.first.split('/').last
+        end
+        def kw(x:)
+          x
+        end
+        begin
+          kw
+        rescue ArgumentError => e
+          puts e.message
+          puts e.backtrace.first.split('/').last
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "wrong number of arguments (given 1, expected 2)\n\
+         -e:2:in 'Object#f'\n\
+         wrong number of arguments (given 3, expected 1)\n\
+         -e:12:in 'Bag#initialize'\n\
+         wrong number of arguments (given 1, expected 0)\n\
+         -e:24:in 'BasicObject#initialize'\n\
+         missing keyword: :x\n\
+         -e:29:in 'Object#kw'\n"
+    );
+}

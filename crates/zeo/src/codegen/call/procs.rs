@@ -104,14 +104,13 @@ pub(crate) fn emit_proc_or_lambda_value(
     // own block param must NOT also clone in the lexical `__blk` (the param owns
     // that name here).
     let takes_own_block = params.block.is_some();
-    // ... and only where a lexical `__blk` EXISTS: inside a method body.
+    // ... and only where a lexical `__blk` EXISTS (`cx.has_blk_binding`).
     // A top-level/class-body block can still scan as a bare block use (a
     // bare `super` forwards the caller's block, and `super` there emits
     // CRuby's runtime "super called outside of method" raise) -- there is
     // no `__blk` binding to clone at that level.
-    let blk_clone =
-        (bare_block_use && !method_body && !takes_own_block && cx.current_method.is_some())
-            .then(|| quote! { let __blk = __blk.clone(); });
+    let blk_clone = (bare_block_use && !method_body && !takes_own_block && cx.has_blk_binding)
+        .then(|| quote! { let __blk = __blk.clone(); });
 
     // Whether a METHOD-BODY closure must name its call-site block parameter
     // `__blk` (vs `_`): needed if the body uses bare block OR declares a `&blk`
@@ -193,6 +192,16 @@ pub(crate) fn emit_proc_or_lambda_value(
     }
 
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
+    // Whether THIS closure's body has a `__blk` in scope, for nested blocks'
+    // own forwarding captures: a method-body closure names its call-site
+    // block param `__blk` when `needs_blk_param`; an ordinary closure has
+    // one exactly when it cloned the lexical one in (or receives it for its
+    // own `&block` param).
+    proc_cx.has_blk_binding = if method_body {
+        needs_blk_param
+    } else {
+        blk_clone.is_some() || takes_own_block
+    };
     if !nested_captured.is_empty() {
         proc_cx
             .captured_locals

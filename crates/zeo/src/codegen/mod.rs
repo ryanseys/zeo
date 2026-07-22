@@ -154,6 +154,15 @@ struct Ctx<'a> {
     /// blocks: `block in X`, `block (2 levels) in X`, ... (see
     /// `frames`-related emission in `emit_proc_or_lambda_value`).
     block_depth: u32,
+    /// Whether a `__blk` binding exists LEXICALLY at this position -- a
+    /// method body whose signature takes a block parameter, a method-body
+    /// lambda closure that named its call-site block param `__blk`, or a
+    /// closure that cloned the enclosing `__blk` in. Gates the
+    /// block-forwarding capture in `emit_proc_or_lambda_value`: a
+    /// top-level/class-body block can scan as a bare block use (bare
+    /// `super` forwards the caller's block) with no `__blk` anywhere to
+    /// clone. False at top level, class bodies, and `constfold`.
+    has_blk_binding: bool,
     /// Whether `self_ident` names a `RubyValue` whose concrete class isn't
     /// statically known, rather than an `Arc<Concrete>`/`self`. True exactly
     /// inside an escaping Proc that captured `self`: such a block's receiver
@@ -355,7 +364,12 @@ pub(crate) fn source_location(
 /// otherwise stamp the caller's frame). Empty tokens only for a fully
 /// span-less scope (the exception prelude) -- CRuby shows no frames for
 /// internal methods either, and such a body never stamps.
-fn scope_frame_guard(
+///
+/// Also pushed synthetically on CALL-SITE arity/keyword raise paths
+/// (`params::emit_call_args_to`, the dynamic trampolines): CRuby raises
+/// "wrong number of arguments" INSIDE the callee's frame at its def line,
+/// so the raise block borrows the same guard the real prologue would push.
+pub(crate) fn scope_frame_guard(
     compiler: &Compiler,
     scope: &crate::compiler::Scope,
     class_method: bool,
@@ -757,6 +771,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 scope.needs_block_param(),
                 // A class method takes no receiver parameter -- see `RecvMode`.
                 params::RecvMode::Drop,
+                &scope_frame_guard(compiler, scope, true),
             );
             // Keyed on the real Ruby name, not the mangled Rust ident.
             let key = &scope.name;
@@ -912,6 +927,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 &scope.params,
                 scope.needs_block_param(),
                 params::RecvMode::Pass,
+                &scope_frame_guard(compiler, scope, false),
             );
             let key = &scope.name;
             registrations.push(quote! {
@@ -982,6 +998,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 &scope.params,
                 scope.needs_block_param(),
                 params::RecvMode::Pass,
+                &scope_frame_guard(compiler, scope, false),
             );
             // The dispatch KEY is the real Ruby name, not the escaped
             // Rust ident -- same reasoning as `emit_class`'s
@@ -1105,6 +1122,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         self_is_dynamic: false,
         runtime_super_params: None,
         block_depth: 0,
+        has_blk_binding: false,
     };
     let main_body = hoisting::emit_hoisted_body(&cx, &analyzed.main_statements, true);
     // The top level's own backtrace frame -- CRuby's `<main>` (its file is
@@ -1259,6 +1277,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
         self_is_dynamic: false,
         runtime_super_params: None,
         block_depth: 0,
+        has_blk_binding: false,
     };
     // Hoist the class body's own locals and emit its statements as a scoped
     // block that evaluates to `Result` -- `?` propagates a raised Signal into
@@ -1373,6 +1392,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_is_dynamic: false,
         runtime_super_params: None,
         block_depth: 0,
+        has_blk_binding: needs_block,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1454,6 +1474,7 @@ fn emit_user_module_bridges(compiler: &Compiler) -> (Vec<TokenStream>, Vec<Token
                 &scope.params,
                 scope.needs_block_param(),
                 params::RecvMode::Pass,
+                &scope_frame_guard(compiler, scope, false),
             );
             let key = &scope.name;
             regs.push(quote! {
@@ -1550,6 +1571,7 @@ fn emit_exception_deltas(
                 name,
                 &scope.params,
                 scope.needs_block_param(),
+                &scope_frame_guard(compiler, scope, false),
             );
             quote! {
                 __registry.define_method(
@@ -1611,6 +1633,7 @@ fn emit_builtin_method_fn(
         self_is_dynamic: true,
         runtime_super_params: None,
         block_depth: 0,
+        has_blk_binding: needs_block,
     };
     let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1684,6 +1707,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             self_is_dynamic: false,
             runtime_super_params: None,
             block_depth: 0,
+            has_blk_binding: needs_block,
         };
         let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);
         let body = hoisting::emit_hoisted_body_with_extra_roots(
@@ -1725,6 +1749,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             &scope.name,
             &scope.params,
             scope.needs_block_param(),
+            &scope_frame_guard(compiler, scope, false),
         );
         // The dispatch KEY is the method's real Ruby name (`"tag="`), a
         // plain string literal -- NOT `safe_ident(&scope.name)` (the
