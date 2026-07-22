@@ -1130,7 +1130,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
                 // No literal block: real Ruby forwards the current method's
                 // own block to the parent, whose body may `yield` it -- the
                 // splice references `__blk` directly (see
-                // `codegen::call::emit_super_inline`), so this method needs
+                // `codegen::call::emit_super`), so this method needs
                 // the parameter whether or not the parent turns out to use
                 // it (an unused `Option` costs nothing).
                 None => true,

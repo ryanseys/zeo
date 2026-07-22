@@ -61,7 +61,7 @@ struct Ctx<'a> {
     /// a materialized (inherited or mixed-in) method, or while inlining a
     /// `super` splice (see `compiler::Scope::defining_class`'s docs). Two
     /// distinct roles read this: `super` resolution
-    /// (`codegen::call::emit_super_inline`) searches `current_class`'s
+    /// (`codegen::call::emit_super`) searches `current_class`'s
     /// `ancestors` starting AFTER this position, and `@@cvar` ownership
     /// lookup (`codegen::expr::cvar_owner_id`) uses it directly (cvar
     /// ownership is a property of where the code was LEXICALLY written,
@@ -107,11 +107,7 @@ struct Ctx<'a> {
     /// the body of a `While`/`Loop`/`For`/the pre-existing `.times`
     /// block-inlining special case. `break`/`next`/`redo` (see
     /// `codegen::loops`) always target the NEAREST one: Ruby has no labeled
-    /// break, so a loop's own body simply shadows this field for itself, and
-    /// `emit_super_inline` preserves the *caller's* labels unchanged (the
-    /// inlined parent body is spliced at the call site, so a `break` inside
-    /// it must still target whatever loop lexically encloses that call
-    /// site, exactly as if the code were written there directly).
+    /// break, so a loop's own body simply shadows this field for itself.
     loop_labels: Option<(Lifetime, Lifetime)>,
     /// A `for`-loop's own index variable's statically-known element type,
     /// active only while emitting THAT loop's body -- overrides whatever
@@ -123,13 +119,7 @@ struct Ctx<'a> {
     /// as `Poly` (or not at all) even though it's provably `Int` for every
     /// read inside the loop's own body (see `codegen::loops::emit_for`).
     /// Mirrors `loop_labels`' same "child context overrides one field for
-    /// this construct's own body" shape -- but, unlike `loop_labels`,
-    /// `emit_super_inline` does NOT carry this over into the inlined parent
-    /// body: the override names a specific local by NAME, and the parent
-    /// method's own locals are a different Ruby scope that just might
-    /// happen to reuse that name for something unrelated (a narrow,
-    /// defensive choice -- worst case without it is a missed optimization,
-    /// not a wrong answer).
+    /// this construct's own body" shape.
     for_var_override: Option<(String, TyKind)>,
     /// Enclosing-scope local/parameter names that some escaping block (see
     /// `codegen::captures`) captures -- these get the `Captured`
@@ -147,10 +137,7 @@ struct Ctx<'a> {
     /// receiver parameter -- so the closure clones into a DIFFERENT name;
     /// see `codegen::call`'s Proc-construction docs). Consulted everywhere
     /// an ivar is read/written (`codegen::expr`'s `IvarRead`/`IvarWrite`)
-    /// instead of a hardcoded `self`. `emit_super_inline` carries this over
-    /// into the inlined parent body (unlike `for_var_override`): the
-    /// splice needs to keep referring to whichever `self` the CALLING
-    /// method's body is already using.
+    /// instead of a hardcoded `self`.
     self_ident: proc_macro2::Ident,
     /// Whether the code currently being emitted is inside a real (escaping)
     /// `Proc` closure's own body, as opposed to an ordinary method body or
@@ -180,7 +167,7 @@ struct Ctx<'a> {
     /// `def`/`define_method` installed inside a `Class.new`/`Struct.new`/
     /// `Data.define` block, whose class is minted at runtime and so has no
     /// compile-time `defining_class`. Its presence is what tells
-    /// `emit_super_inline` to resolve `super` through the runtime method-frame
+    /// `emit_super` to resolve `super` through the runtime method-frame
     /// stack (`zeo_rt::send_super_dynamic`) rather than the compile-time
     /// ancestor splice; the carried `Params` are the enclosing method's own,
     /// for a bare `super`'s argument forwarding. Propagates through `in_proc`

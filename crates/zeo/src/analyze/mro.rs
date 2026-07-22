@@ -240,7 +240,7 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
 
     // Ivars are collected from EVERY ancestor's OWN methods -- not just the
     // MRO-winning ones in `materialized` above. `super` can splice in a
-    // shadowed ancestor's body at codegen time (`emit_super_inline`) even
+    // shadowed ancestor's body at codegen time (`emit_super`) even
     // though that body never gets its own entry in `methods[class_id]` --
     // only the winning override does -- so an ivar only ever touched
     // through a `super`-reachable (but not otherwise winning) method would

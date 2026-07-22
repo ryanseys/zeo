@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=8cfddef
-# PASS=2169 FAIL_OUTPUT=123 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=2685cb0
+# PASS=2170 FAIL_OUTPUT=122 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -125,7 +125,7 @@ bang_op_ruby_truthy	PASS	-	-
 bare_arg_in_module_body	PASS	-	-
 bare_module_body_cmethod_call	PASS	-	-
 bare_rescue_standard_error_only	PASS	-	-
-bare_return_in_initialize	FAIL_OUTPUT	expect	-
+bare_return_in_initialize	PASS	-	-
 bare_sibling_cls_method_call	PASS	-	-
 bareword_freeze	PASS	-	-
 basicobject_blank_slate	PASS	-	-

@@ -206,7 +206,7 @@ pub struct Scope {
     /// Which class/module's HIR body this Scope's `params`/`body` actually
     /// came from -- equal to `class` for an ordinary own-body method, but
     /// set to the true source ancestor for a materialized (inherited or
-    /// mixed-in) method. `super` resolution (`codegen::call::emit_super_inline`)
+    /// mixed-in) method. `super` resolution (`codegen::call::emit_super`)
     /// searches `class`'s `ancestors` starting AFTER this position, not
     /// after `class` itself -- see `analyze::mro`'s docs for why these two
     /// need to be distinct once mixins/plain inheritance-without-override
@@ -712,7 +712,7 @@ impl Compiler {
     /// since `analyze::mro::materialize` already resolved every reachable
     /// name (own, inherited, or mixed-in) onto the class itself. Returns
     /// the ALREADY-RESOLVED `(class, scope)` pair; `super` resolution
-    /// (`codegen::call::emit_super_inline`) is the one place that still
+    /// (`codegen::call::emit_super`) is the one place that still
     /// needs to walk `ancestors` explicitly, since it must search PAST
     /// wherever the currently-executing method was actually defined, not
     /// just find the winner from scratch.

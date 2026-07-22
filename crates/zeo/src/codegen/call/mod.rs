@@ -38,7 +38,7 @@ use proc_macro2::TokenStream;
 pub use new::{emit_new, emit_new_with_arg_tokens};
 pub use procs::emit_lambda_value;
 pub(crate) use procs::emit_proc_or_lambda_value;
-pub use super_calls::emit_super_inline;
+pub use super_calls::emit_super;
 
 /// Whether a call shape is the `.times` fast path (inline splice, no real
 /// `Proc` ever allocated) -- the exact condition `dispatch` already checks

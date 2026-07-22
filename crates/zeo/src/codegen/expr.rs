@@ -619,7 +619,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `define_singleton_method`. So a `super` inside it must resolve
             // through the runtime method-frame stack, exactly as for a `def`
             // in expression position: there is no compile-time singleton class
-            // to splice an ancestor chain against, and `emit_super_inline`
+            // to splice an ancestor chain against, and `emit_super`
             // would otherwise fall through to `defining_class` and panic with
             // "`super` outside a method".
             let mut body_cx = cx.clone();
@@ -890,7 +890,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             kwargs,
             zsuper,
             block,
-        } => super::call::emit_super_inline(cx, args, kwargs, *zsuper, *block),
+        } => super::call::emit_super(cx, args, kwargs, *zsuper, *block),
         HirNode::While { cond, body, negate } => emit_while(cx, *cond, body, *negate),
         HirNode::Loop { body } => emit_loop(cx, body),
         HirNode::For {
@@ -1212,7 +1212,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // method: the class it lands on is minted at runtime, so a `super`
             // in its body resolves through the runtime method-frame stack, not
             // a compile-time ancestor splice. Marking `runtime_super_params` is
-            // what routes it there; `emit_super_inline` checks that marker
+            // what routes it there; `emit_super` checks that marker
             // BEFORE reading `defining_class`, so a `def` nested inside a real
             // class's method (`class Foo; def m; Class.new { def g; super; end
             // }; end; end`) resolves `g`'s `super` at runtime without wrongly

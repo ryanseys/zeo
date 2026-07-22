@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **126 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `8cfddef`
+Suite `spinel` — **125 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `2685cb0`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -156,31 +156,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uncaught exception: index -7 too small for array; minimum: -3 (IndexError)
-```
-
----
-
-## `bare_return_in_initialize` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bare_return_in_initialize.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bare_return_in_initialize.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 4
---- expected (4 lines)
-ok
-hi
-label
-empty
-
---- actual (4 lines)
-ok
-hi
-label
 ```
 
 ---
@@ -2786,10 +2761,10 @@ true
 
 --- actual (5 lines)
 C
-4646092071051628451
+-3283607483369279049
 S
 P
-false
+true
 ```
 
 ---
@@ -4208,7 +4183,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (104906811) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (105705796) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4282,7 +4257,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (104906811) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (105705796) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4950,7 +4925,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-31
+32
 diff
 ```
 
