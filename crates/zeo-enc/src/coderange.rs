@@ -41,5 +41,14 @@ pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
         // refuses TRANSCODING, not validity -- oracle-verified:
         // `"\x81".force_encoding("Windows-1252").valid_encoding?` is true).
         EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => CodeRange::Valid,
+        // Multibyte: STRUCTURALLY valid sequences only (an unmapped pair is
+        // still a character; a bad lead/trail or truncated lead is Broken).
+        EncKind::MultiByte(family) => {
+            if crate::mb::mb_ranges(family, bytes).iter().all(|(_, v)| *v) {
+                CodeRange::Valid
+            } else {
+                CodeRange::Broken
+            }
+        }
     }
 }

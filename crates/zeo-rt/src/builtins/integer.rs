@@ -40,23 +40,45 @@ pub fn int_from_u32_digits(negative: bool, digits: &[u32]) -> RubyValue {
 
 /// Encodes a codepoint in `enc` for `Integer#chr(encoding)`: UTF-8 as a
 /// multibyte sequence (0..=0x10FFFF, surrogates excluded), a byte encoding as
-/// a single byte within its range. `None` when the codepoint is out of range.
-fn encode_codepoint(cp: i64, enc: crate::encoding::EncodingId) -> Option<Vec<u8>> {
-    use crate::encoding::EncKind;
+/// a single byte within its range. `Err` distinguishes CRuby's two
+/// `RangeError` messages: `Ok`-shaped values that are simply too big are
+/// `OutOfRange` ("N out of char range"), while a multibyte split that can't
+/// spell a character is `InvalidCodepoint` ("invalid codepoint 0xNNNN in
+/// ENC") -- oracle-verified.
+fn encode_codepoint(
+    cp: i64,
+    enc: crate::encoding::EncodingId,
+) -> Result<Vec<u8>, crate::encoding::MbCodepointError> {
+    use crate::encoding::{EncKind, MbCodepointError};
+    let out_of_range = Err(MbCodepointError::OutOfRange);
     if cp < 0 {
-        return None;
+        return out_of_range;
     }
     match enc.kind() {
-        EncKind::Utf8 => {
-            let c = char::from_u32(u32::try_from(cp).ok()?)?;
-            Some(c.to_string().into_bytes())
+        EncKind::Utf8 => match u32::try_from(cp).ok().and_then(char::from_u32) {
+            Some(c) => Ok(c.to_string().into_bytes()),
+            None => out_of_range,
+        },
+        EncKind::Ascii => {
+            if cp <= 0x7F {
+                Ok(vec![cp as u8])
+            } else {
+                out_of_range
+            }
         }
-        EncKind::Ascii => (cp <= 0x7F).then(|| vec![cp as u8]),
         // Codepoint == byte for every single-byte encoding (oracle-verified:
         // `233.chr(Encoding::Windows_1252)` is the byte 0xE9, 256 raises).
         EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
-            (cp <= 0xFF).then(|| vec![cp as u8])
+            if cp <= 0xFF {
+                Ok(vec![cp as u8])
+            } else {
+                out_of_range
+            }
         }
+        EncKind::MultiByte(family) => match u32::try_from(cp) {
+            Ok(cp) => crate::encoding::mb_codepoint_bytes(family, cp),
+            Err(_) => out_of_range,
+        },
     }
 }
 
@@ -683,7 +705,13 @@ builtin_methods! {
             }
             Some(enc_arg) => {
                 let enc = crate::builtins::encoding::arg_encoding(enc_arg)?;
-                (encode_codepoint(i, enc).ok_or_else(range_err)?, enc)
+                let bytes = encode_codepoint(i, enc).map_err(|e| match e {
+                    crate::encoding::MbCodepointError::OutOfRange => range_err(),
+                    crate::encoding::MbCodepointError::InvalidCodepoint => {
+                        range_error!("invalid codepoint 0x{i:X} in {}", enc.name())
+                    }
+                })?;
+                (bytes, enc)
             }
         };
         Ok(RubyValue::Str(crate::string_from_bytes(bytes, enc)))

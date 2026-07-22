@@ -107,6 +107,24 @@ impl StrBuf {
                     )
                 }
             }
+            EncKind::MultiByte(family) => {
+                if self.ascii_only() {
+                    String::from_utf8_lossy(&self.bytes)
+                } else {
+                    let mut out = String::with_capacity(self.bytes.len());
+                    for (r, valid) in crate::mb::mb_ranges(family, &self.bytes) {
+                        let seq = &self.bytes[r];
+                        match valid
+                            .then(|| crate::mb::mb_decode_seq(family, seq))
+                            .flatten()
+                        {
+                            Some(c) => out.push(c),
+                            None => out.push('\u{FFFD}'),
+                        }
+                    }
+                    Cow::Owned(out)
+                }
+            }
         }
     }
 
@@ -153,6 +171,10 @@ impl StrBuf {
             EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
                 (0..self.bytes.len()).map(|i| i..i + 1).collect()
             }
+            EncKind::MultiByte(family) => crate::mb::mb_ranges(family, &self.bytes)
+                .into_iter()
+                .map(|(r, _)| r)
+                .collect(),
         }
     }
 
@@ -199,8 +221,8 @@ impl StrBuf {
             EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
                 self.bytes.len()
             }
-            EncKind::Utf8 if self.ascii_only() => self.bytes.len(),
-            EncKind::Utf8 => self.char_ranges().len(),
+            EncKind::Utf8 | EncKind::MultiByte(_) if self.ascii_only() => self.bytes.len(),
+            EncKind::Utf8 | EncKind::MultiByte(_) => self.char_ranges().len(),
         }
     }
 
@@ -245,6 +267,26 @@ impl StrBuf {
                     // KOI8-R: CRuby folds ASCII letters only.
                     case_bytes(&self.bytes, mode, ascii_case_byte)
                 };
+                StrBuf::from_bytes(bytes, self.enc)
+            }
+            // CRuby folds ASCII only in the CJK encodings (oracle-verified:
+            // Shift_JIS fullwidth `ａ` upcases UNCHANGED, kana untouched).
+            // Multibyte trail bytes can land in the ASCII letter range
+            // (Shift_JIS trail 0x61 is `a`), so the fold walks by CHARACTER
+            // and touches only 1-byte units.
+            EncKind::MultiByte(family) => {
+                let mut bytes = self.bytes.clone();
+                for (r, _) in crate::mb::mb_ranges(family, &self.bytes) {
+                    if r.len() == 1 && bytes[r.start] < 0x80 {
+                        let up = match mode {
+                            CaseMode::Up => true,
+                            CaseMode::Down => false,
+                            CaseMode::Swap => bytes[r.start].is_ascii_lowercase(),
+                            CaseMode::Cap => r.start == 0,
+                        };
+                        bytes[r.start] = ascii_case_byte(bytes[r.start], up);
+                    }
+                }
                 StrBuf::from_bytes(bytes, self.enc)
             }
         }

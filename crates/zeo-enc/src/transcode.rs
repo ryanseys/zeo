@@ -46,12 +46,12 @@ pub enum TranscodeError {
 pub(crate) enum Unit {
     /// A decoded Unicode scalar.
     Char(char),
-    /// Bytes the SOURCE encoding couldn't decode (`:invalid` territory).
-    Invalid(Vec<u8>),
+    /// Bytes the SOURCE encoding couldn't decode (`:invalid` territory),
+    /// with the CRuby message form they warrant.
+    Invalid(Vec<u8>, crate::mb::InvalidStyle),
     /// A VALID source character with no Unicode mapping (an unassigned
-    /// windows-125x vendor-page slot): `:undef` territory, but reported by
-    /// its bytes -- CRuby's `"\x81" to UTF-8 in conversion from Windows-1252
-    /// to UTF-8` form -- since there is no scalar to name.
+    /// windows-125x vendor-page slot, an unassigned CJK pair): `:undef`
+    /// territory, but reported by its bytes -- there is no scalar to name.
     Unmapped(Vec<u8>),
 }
 
@@ -65,7 +65,7 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
                 if *b < 0x80 {
                     Unit::Char(*b as char)
                 } else {
-                    Unit::Invalid(vec![*b])
+                    Unit::Invalid(vec![*b], crate::mb::InvalidStyle::Plain)
                 }
             })
             .collect(),
@@ -78,6 +78,24 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
                     None => Unit::Unmapped(vec![*b]),
                 })
                 .collect()
+        }
+        EncKind::MultiByte(family) => {
+            let mut units = Vec::new();
+            let mut i = 0;
+            while i < bytes.len() {
+                let unit = crate::mb::mb_unit(family, &bytes[i..]);
+                let seq = &bytes[i..i + unit.len];
+                if !unit.valid {
+                    units.push(Unit::Invalid(seq.to_vec(), unit.style));
+                } else {
+                    match crate::mb::mb_decode_seq(family, seq) {
+                        Some(c) => units.push(Unit::Char(c)),
+                        None => units.push(Unit::Unmapped(seq.to_vec())),
+                    }
+                }
+                i += unit.len;
+            }
+            units
         }
         EncKind::Utf8 => decode_utf8(bytes),
     }
@@ -98,7 +116,10 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
                 let valid = unsafe { std::str::from_utf8_unchecked(&rest[..good]) };
                 units.extend(valid.chars().map(Unit::Char));
                 let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
-                units.push(Unit::Invalid(rest[good..good + bad_len].to_vec()));
+                units.push(Unit::Invalid(
+                    rest[good..good + bad_len].to_vec(),
+                    crate::mb::InvalidStyle::Plain,
+                ));
                 rest = &rest[good + bad_len..];
             }
         }
@@ -118,6 +139,7 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
         // binary byte (it isn't a byte).
         EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
         EncKind::SingleByte => to.single_byte_table().encode(c).map(|b| vec![b]),
+        EncKind::MultiByte(family) => crate::mb::mb_encode_char(family, c),
     }
 }
 
@@ -156,36 +178,70 @@ pub fn transcode(
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     for unit in decode(bytes, from) {
         match unit {
-            Unit::Invalid(raw) => {
+            Unit::Invalid(raw, style) => {
                 if opts.invalid_replace {
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
-                    return Err(TranscodeError::InvalidByteSequence(format!(
-                        "\"{}\" on {}",
-                        raw.iter()
-                            .map(|b| format!("\\x{b:02X}"))
-                            .collect::<String>(),
-                        from.name()
-                    )));
+                    let esc: String = raw.iter().map(|b| format!("\\x{b:02X}")).collect();
+                    // CRuby's three forms, oracle-verified: `incomplete
+                    // "\x8F" on EUC-JP` (lead truncated by end-of-string),
+                    // `"\x82" followed by "\x00" on Shift_JIS` (valid lead,
+                    // wrong next byte -- printable trails quoted verbatim,
+                    // `"\xA1" followed by "a"`), plain `"\xFF" on EUC-JP`.
+                    let msg = match style {
+                        crate::mb::InvalidStyle::Plain => {
+                            format!("\"{esc}\" on {}", from.name())
+                        }
+                        crate::mb::InvalidStyle::Incomplete => {
+                            format!("incomplete \"{esc}\" on {}", from.name())
+                        }
+                        crate::mb::InvalidStyle::FollowedBy(t) => {
+                            let trail = if (0x20..0x7F).contains(&t) && t != b'"' && t != b'\\' {
+                                (t as char).to_string()
+                            } else {
+                                format!("\\x{t:02X}")
+                            };
+                            format!("\"{esc}\" followed by \"{trail}\" on {}", from.name())
+                        }
+                    };
+                    return Err(TranscodeError::InvalidByteSequence(msg));
                 }
             }
             // A valid character with no Unicode mapping: `:undef` territory,
-            // byte-quoted, naming the UTF-8 pivot leg that refused --
-            // oracle-verified both message forms.
+            // byte-quoted (there is no scalar to name). Follows the same
+            // short/long message split as `undef_message`: the short form
+            // only for a direct-to-UTF-8 conversion from a plainly-named
+            // source (`"\x82z" from Shift_JIS to UTF-8`); a windows-named
+            // source or any pivot gets the long path form -- oracle-verified
+            // all three ways.
             Unit::Unmapped(raw) => {
                 if opts.undef_replace {
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
-                    let escaped: String = raw.iter().map(|b| format!("\\x{b:02X}")).collect();
-                    let tail = if to == crate::table::UTF_8 {
-                        String::new()
+                    let escaped: String = raw
+                        .iter()
+                        .map(|b| {
+                            if (0x20..0x7F).contains(b) && *b != b'"' && *b != b'\\' {
+                                (*b as char).to_string()
+                            } else {
+                                format!("\\x{b:02X}")
+                            }
+                        })
+                        .collect();
+                    let msg = if to == crate::table::UTF_8 && transcoder_name(from) == from.name() {
+                        format!("\"{escaped}\" from {} to UTF-8", from.name())
                     } else {
-                        format!(" to {}", transcoder_name(to))
+                        let tail = if to == crate::table::UTF_8 {
+                            String::new()
+                        } else {
+                            format!(" to {}", transcoder_name(to))
+                        };
+                        format!(
+                            "\"{escaped}\" to UTF-8 in conversion from {} to UTF-8{tail}",
+                            from.name()
+                        )
                     };
-                    return Err(TranscodeError::UndefinedConversion(format!(
-                        "\"{escaped}\" to UTF-8 in conversion from {} to UTF-8{tail}",
-                        from.name()
-                    )));
+                    return Err(TranscodeError::UndefinedConversion(msg));
                 }
             }
             Unit::Char(c) => {

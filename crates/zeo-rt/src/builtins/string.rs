@@ -1401,6 +1401,27 @@ builtin_methods! {
                             };
                             g.push_bytes(&[b]);
                         }
+                        // The codepoint IS the byte sequence read big-endian
+                        // (`sjis << 0x82A0` appends bytes 82 A0); CRuby's two
+                        // RangeError messages, oracle-verified.
+                        crate::encoding::EncKind::MultiByte(family) => {
+                            let enc = g.encoding();
+                            let bytes = u32::try_from(*i)
+                                .map_err(|_| crate::encoding::MbCodepointError::OutOfRange)
+                                .and_then(|cp| crate::encoding::mb_codepoint_bytes(family, cp))
+                                .map_err(|e| match e {
+                                    crate::encoding::MbCodepointError::OutOfRange => {
+                                        range_error!("{i} out of char range")
+                                    }
+                                    crate::encoding::MbCodepointError::InvalidCodepoint => {
+                                        range_error!(
+                                            "invalid codepoint 0x{i:X} in {}",
+                                            enc.name()
+                                        )
+                                    }
+                                })?;
+                            g.push_bytes(&bytes);
+                        }
                         crate::encoding::EncKind::Utf8 | crate::encoding::EncKind::Ascii => {
                             let Some(c) = u32::try_from(*i).ok().and_then(char::from_u32) else {
                                 return Err(range_error!("{i} out of char range"));

@@ -361,3 +361,66 @@ fn single_byte_lossy_display_and_inspect() {
     // Inspect stays byte-faithful: high bytes as \xNN.
     assert_eq!(inspect(&s), "\"caf\\xE9\\x81\"");
 }
+
+// --- Multibyte CJK rows (structural walk oracle-verified).
+
+#[test]
+fn multibyte_walk_counts_characters_structurally() {
+    let len = |bytes: &[u8], enc| StrBuf::from_bytes(bytes.to_vec(), enc).char_len();
+    let valid = |bytes: &[u8], enc| StrBuf::from_bytes(bytes.to_vec(), enc).valid_encoding();
+    // あいz in Shift_JIS: two 2-byte chars + ASCII.
+    assert_eq!(len(&[0x82, 0xA0, 0x82, 0xA2, 0x7A], SHIFT_JIS), 3);
+    // A structurally valid but UNMAPPED pair is one valid character.
+    assert_eq!(len(&[0x82, 0x7A], SHIFT_JIS), 1);
+    assert!(valid(&[0x82, 0x7A], SHIFT_JIS));
+    // Truncated lead: one broken 1-byte char.
+    assert_eq!(len(&[0x82], SHIFT_JIS), 1);
+    assert!(!valid(&[0x82], SHIFT_JIS));
+    // Invalid trail: lead and trail each count on their own.
+    assert_eq!(len(&[0x82, 0x00], SHIFT_JIS), 2);
+    // Halfwidth kana is 1 byte; EUC-JP SS3 is 3.
+    assert_eq!(len(&[0xB1, 0xB2], SHIFT_JIS), 2);
+    assert_eq!(len(&[0x8F, 0xA1, 0xA1], EUC_JP), 1);
+    assert_eq!(len(&[0x8E, 0xA1], EUC_JP), 1);
+    // GBK accepts 0x40 trails; Big5's lead floor is 0xA1.
+    assert_eq!(len(&[0x81, 0x40], GBK), 1);
+    assert!(!valid(&[0x81, 0x40], BIG5));
+}
+
+#[test]
+fn multibyte_codepoint_splits_match_chr_semantics() {
+    use crate::mb::MbCodepointError;
+    assert_eq!(
+        mb_codepoint_bytes(MbFamily::Sjis, 0x82A0),
+        Ok(vec![0x82, 0xA0])
+    );
+    assert_eq!(mb_codepoint_bytes(MbFamily::Sjis, 0xB1), Ok(vec![0xB1]));
+    assert_eq!(mb_codepoint_bytes(MbFamily::Sjis, 0x41), Ok(vec![0x41]));
+    assert_eq!(
+        mb_codepoint_bytes(MbFamily::Sjis, 0x8200),
+        Err(MbCodepointError::InvalidCodepoint)
+    );
+    assert_eq!(
+        mb_codepoint_bytes(MbFamily::Sjis, 0x80),
+        Err(MbCodepointError::InvalidCodepoint)
+    );
+    assert_eq!(
+        mb_codepoint_bytes(MbFamily::Sjis, 0x110000),
+        Err(MbCodepointError::OutOfRange)
+    );
+}
+
+#[test]
+fn multibyte_inspect_braces_sequences_and_cases_ascii_only() {
+    // あいz -> \x{82A0}\x{82A2}z; kana byte -> \xB1 (oracle forms).
+    let s = StrBuf::from_bytes(vec![0x82, 0xA0, 0x82, 0xA2, 0x7A], SHIFT_JIS);
+    assert_eq!(inspect(&s), "\"\\x{82A0}\\x{82A2}z\"");
+    assert_eq!(
+        inspect(&StrBuf::from_bytes(vec![0xB1], SHIFT_JIS)),
+        "\"\\xB1\""
+    );
+    // ASCII-only case fold: trail bytes in the letter range are NOT
+    // touched (0x82 0x61 is one character whose trail is 'a').
+    let t = StrBuf::from_bytes(vec![0x82, 0x61, 0x62], SHIFT_JIS);
+    assert_eq!(t.upcased().bytes(), &[0x82, 0x61, 0x42]);
+}

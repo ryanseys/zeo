@@ -712,3 +712,64 @@ fn single_byte_transcoding_round_trips_and_error_shapes() {
          \"\\xE9\\x81ab\"\n\"\u{E9}ab\"\n"
     );
 }
+
+/// The multibyte CJK rows (Shift_JIS / Windows-31J / EUC-JP / GBK / Big5):
+/// structural walking is CRuby-faithful (a valid-but-unmapped pair is a real
+/// character), mapping via encoding_rs; char ops, transcode round trips,
+/// Integer#chr / << codepoint splits, and all three
+/// InvalidByteSequenceError message forms. Verbatim ruby 4.0.5 output.
+#[test]
+fn multibyte_cjk_encodings_walk_transcode_and_error_shapes() {
+    let result = run_ruby(
+        r#"
+        sj = "あいz".encode("Shift_JIS")
+        p sj.bytes
+        p sj.length
+        p sj.valid_encoding?
+        p sj
+        p sj.reverse.bytes
+        p sj[0]&.bytes
+        p sj.encode("UTF-8")
+        e = "日本語".encode("EUC-JP")
+        p e.bytes
+        p e.length
+        p e.encode("UTF-8")
+        g = "中文".encode("GBK")
+        p g.bytes
+        b5 = "中文".encode("Big5")
+        p b5.bytes
+        p g.encode("Big5") == b5
+        w = "アｱ".encode("Windows-31J")
+        p w.bytes
+        p w.encoding
+        p 0x82A0.chr(Encoding::Shift_JIS).bytes
+        s2 = "".force_encoding("Shift_JIS"); s2 << 0x82A0; s2 << 65; p s2.bytes
+        begin; 0x8200.chr(Encoding::Shift_JIS); rescue RangeError => ex; puts ex.message; end
+        bad = 0x82.chr.force_encoding("Shift_JIS")
+        p bad.valid_encoding?
+        p bad.length
+        p bad
+        begin; bad.encode("UTF-8"); rescue Encoding::InvalidByteSequenceError => ex; puts ex.message; end
+        begin; (0x82.chr + 0x00.chr).force_encoding("Shift_JIS").encode("UTF-8"); rescue Encoding::InvalidByteSequenceError => ex; puts ex.message; end
+        begin; (0x82.chr + "z").force_encoding("Shift_JIS").encode("UTF-8"); rescue Encoding::UndefinedConversionError => ex; puts ex.message; end
+        kana = 0xB1.chr.force_encoding("Shift_JIS")
+        p kana.length
+        p kana.encode("UTF-8")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[130, 160, 130, 162, 122]\n3\ntrue\n\"\\x{82A0}\\x{82A2}z\"\n\
+         [122, 130, 162, 130, 160]\n[130, 160]\n\"あいz\"\n\
+         [198, 252, 203, 220, 184, 236]\n3\n\"日本語\"\n\
+         [214, 208, 206, 196]\n[164, 164, 164, 229]\ntrue\n\
+         [131, 65, 177]\n#<Encoding:Windows-31J>\n[130, 160]\n\
+         [130, 160, 65]\ninvalid codepoint 0x8200 in Shift_JIS\n\
+         false\n1\n\"\\x82\"\n\
+         incomplete \"\\x82\" on Shift_JIS\n\
+         \"\\x82\" followed by \"\\x00\" on Shift_JIS\n\
+         \"\\x82z\" from Shift_JIS to UTF-8\n\
+         1\n\"ｱ\"\n"
+    );
+}

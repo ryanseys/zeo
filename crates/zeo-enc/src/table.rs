@@ -3,6 +3,7 @@
 //! every string carries. Adding an encoding is a new row (plus, for a
 //! genuinely new byte<->character mapping family, an [`EncKind`] variant).
 
+use crate::mb::MbFamily;
 use crate::single_byte::{self, SingleByteTable};
 
 /// An index into [`ENCODINGS`]. `Copy` and one byte wide, so every string
@@ -25,6 +26,11 @@ pub const WINDOWS_1257: EncodingId = EncodingId(11);
 pub const ISO_8859_2: EncodingId = EncodingId(12);
 pub const ISO_8859_15: EncodingId = EncodingId(13);
 pub const KOI8_R: EncodingId = EncodingId(14);
+pub const SHIFT_JIS: EncodingId = EncodingId(15);
+pub const WINDOWS_31J: EncodingId = EncodingId(16);
+pub const EUC_JP: EncodingId = EncodingId(17);
+pub const GBK: EncodingId = EncodingId(18);
+pub const BIG5: EncodingId = EncodingId(19);
 
 /// How an encoding maps bytes to characters -- the single knob that drives
 /// character iteration, validation, and transcoding. A new encoding picks
@@ -48,6 +54,9 @@ pub enum EncKind {
     /// whose table slot is `None` has no Unicode mapping and refuses to
     /// transcode OUT (the windows-125x vendor pages' unassigned slots).
     SingleByte,
+    /// A multibyte CJK encoding: 1-3 bytes per character, structural walk
+    /// per family, Unicode mapping via encoding_rs -- see `mb`.
+    MultiByte(MbFamily),
 }
 
 /// One encoding's declarative description -- the whole per-encoding surface.
@@ -79,6 +88,23 @@ const fn single_byte(
         ascii_compatible: true,
         kind: EncKind::SingleByte,
         table: Some(table),
+    }
+}
+
+/// A `MultiByte` row -- name/aliases straight from `Encoding#names` under
+/// the ruby 4.0.5 oracle. Both Shift_JIS and Windows-31J share the `Sjis`
+/// family (CP932 mappings for both -- the documented divergence).
+const fn multi_byte(
+    name: &'static str,
+    aliases: &'static [&'static str],
+    family: MbFamily,
+) -> EncodingSpec {
+    EncodingSpec {
+        name,
+        aliases,
+        ascii_compatible: true,
+        kind: EncKind::MultiByte(family),
+        table: None,
     }
 }
 
@@ -124,6 +150,15 @@ pub static ENCODINGS: &[EncodingSpec] = &[
     single_byte("ISO-8859-2", &["ISO8859-2"], &single_byte::ISO_8859_2),
     single_byte("ISO-8859-15", &["ISO8859-15"], &single_byte::ISO_8859_15),
     single_byte("KOI8-R", &["CP878"], &single_byte::KOI8_R),
+    multi_byte("Shift_JIS", &[], MbFamily::Sjis),
+    multi_byte(
+        "Windows-31J",
+        &["CP932", "csWindows31J", "SJIS", "PCK"],
+        MbFamily::Sjis,
+    ),
+    multi_byte("EUC-JP", &["eucJP"], MbFamily::EucJp),
+    multi_byte("GBK", &["CP936"], MbFamily::Gbk),
+    multi_byte("Big5", &[], MbFamily::Big5),
 ];
 
 impl EncodingId {

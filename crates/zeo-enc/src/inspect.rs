@@ -28,7 +28,7 @@ pub fn inspect(buf: &StrBuf) -> String {
                     }
                     // `Unmapped` never occurs under UTF-8, but rendering it
                     // like `Invalid` is right anywhere it could.
-                    Unit::Invalid(bytes) | Unit::Unmapped(bytes) => {
+                    Unit::Invalid(bytes, _) | Unit::Unmapped(bytes) => {
                         for b in bytes {
                             out.push_str(&format!("\\x{b:02X}"));
                         }
@@ -50,6 +50,32 @@ pub fn inspect(buf: &StrBuf) -> String {
                     push_inspect_char(&mut out, b as char, next, false);
                 } else {
                     out.push_str(&format!("\\x{b:02X}"));
+                }
+            }
+        }
+        // A multibyte CJK encoding, CRuby's forms: a MULTI-byte character
+        // shows its raw bytes brace-grouped (`\x{82A0}`), a 1-byte high
+        // character (halfwidth kana) or broken byte as `\xNN`, ASCII as
+        // usual -- all oracle-verified.
+        EncKind::MultiByte(family) => {
+            let bytes = buf.bytes();
+            for (r, _) in crate::mb::mb_ranges(family, bytes) {
+                if r.len() > 1 {
+                    out.push_str("\\x{");
+                    for b in &bytes[r] {
+                        out.push_str(&format!("{b:02X}"));
+                    }
+                    out.push('}');
+                } else {
+                    let b = bytes[r.start];
+                    if b < 0x80 {
+                        let next = bytes
+                            .get(r.start + 1)
+                            .and_then(|&nb| (nb < 0x80).then_some(nb as char));
+                        push_inspect_char(&mut out, b as char, next, false);
+                    } else {
+                        out.push_str(&format!("\\x{b:02X}"));
+                    }
                 }
             }
         }
