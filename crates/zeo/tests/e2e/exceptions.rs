@@ -2548,6 +2548,46 @@ fn super_with_no_definition_above_raises_at_runtime() {
     );
 }
 
+#[test]
+fn super_outside_any_method_raises_at_runtime_not_compile_time() {
+    // `super` at top level (or in a top-level block) is a RUNTIME
+    // NoMethodError in real Ruby -- "super called outside of method",
+    // rescuable like any other raise (vm_insnhelper.c). The compiler used to
+    // panic on the missing method context; now it emits that raise. The
+    // block form also pins the `block in <main>` frame label and that no
+    // orphaned `__blk` forwarding capture is emitted where no lexical block
+    // binding exists.
+    let rescued = run_ruby(
+        r#"
+        begin
+          super
+        rescue NoMethodError => e
+          puts "top: #{e.message}"
+        end
+        [1].each do
+          super
+        rescue NoMethodError => e
+          puts "block: #{e.message}"
+        end
+        "#,
+    );
+    assert!(rescued.status.success(), "stderr: {}", rescued.stderr);
+    assert_eq!(
+        rescued.stdout,
+        "top: super called outside of method\nblock: super called outside of method\n",
+    );
+
+    let uncaught = run_ruby("[1].each { super }");
+    assert!(!uncaught.status.success());
+    assert!(
+        uncaught
+            .stderr
+            .contains("in 'block in <main>': super called outside of method (NoMethodError)"),
+        "stderr: {}",
+        uncaught.stderr
+    );
+}
+
 // --- Batch A6: eager-codegen panics that name a legitimate runtime error are
 // deferred to a runtime raise, so an undefined-constant reference in a dead or
 // rescued branch compiles cleanly (CRuby only raises `uninitialized constant`

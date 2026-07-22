@@ -63,15 +63,22 @@ pub fn emit_super(
     // `own_methods`. (Documented divergence: the flattening copies bodies
     // down, so it cannot see a class method added at runtime.)
     let in_class_method = cx.current_class.is_none();
-    let receiver_class = cx
-        .current_class
-        .or(cx.class_self)
-        .expect("`super` outside a method");
-    let defining_class = cx.defining_class.expect("`super` outside a method");
-    let mname = cx
-        .current_method
-        .as_deref()
-        .expect("`super` outside a method");
+    // `super` with no enclosing method at all (top level, a top-level
+    // block, a class body): real Ruby raises at RUNTIME, rescuable -- so
+    // emit that raise (message verbatim, vm_insnhelper.c) instead of
+    // crashing the compiler on the missing context.
+    let (Some(receiver_class), Some(defining_class), Some(mname)) = (
+        cx.current_class.or(cx.class_self),
+        cx.defining_class,
+        cx.current_method.as_deref(),
+    ) else {
+        let err = super::raise::emit_simple_error(
+            cx,
+            "NoMethodError",
+            "super called outside of method",
+        );
+        return quote! { Err(zeo_rt::Signal::Raise(#err))? };
+    };
     // Which pool a `super` search consults, per the note above.
     let own_pool = |compiler: &crate::compiler::Compiler, anc: crate::compiler::ClassId| {
         let info = compiler.class(anc);
@@ -108,10 +115,22 @@ pub fn emit_super(
         scope_of(&cx.compiler.class(defining_class).own_methods)
     } else {
         scope_of(&own_pool(cx.compiler, defining_class))
-    }
-    .unwrap_or_else(|| {
-        panic!("internal error: `{mname}` not found in its own defining class's own methods")
-    });
+    };
+    let Some(current_sid) = current_sid else {
+        // The current scope missing from the expected pool is an internal
+        // inconsistency, but only a BARE `super` actually needs it (its
+        // param names drive zsuper forwarding) -- explicit-args `super`
+        // still resolves correctly through the runtime walk, so degrade to
+        // that instead of crashing the compiler on a shape the pool
+        // selection didn't anticipate.
+        if zsuper {
+            panic!(
+                "internal error: bare `super` in `{mname}` whose scope isn't in its \
+                 defining class's own pool"
+            )
+        }
+        return emit_runtime_super(cx, mname, &Params::default(), args, kwargs, false, block);
+    };
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
     let found = match pos {
