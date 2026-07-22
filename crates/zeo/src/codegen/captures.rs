@@ -23,6 +23,15 @@ pub struct Captures {
     /// see `walk`'s `param_exclusions`, which is what makes this
     /// exclusion correct even for a name shadowed two levels deep).
     pub locals: HashSet<String>,
+    /// The subset of `locals` that is ASSIGNED somewhere in the walked
+    /// subtree (`LocalWrite`, a multi-assign/`for` target, a pattern's
+    /// bound name, a rescue binding) -- as opposed to only ever read.
+    /// `emit_proc_or_lambda_value`'s nested-Proc guard consumes this: a
+    /// name a nested block assigns is (at worst) that block's own fresh
+    /// local, while a name NOBODY under this block assigns can only be a
+    /// read of some enclosing block's plain (non-cell) per-invocation
+    /// `let`, the one genuinely unsupported capture shape.
+    pub assigned: HashSet<String>,
     /// Whether any escaping block needs the receiver captured: an
     /// `@ivar` reference, a bare/explicit `self`, or a receiverless call
     /// resolving to a method on the enclosing class (`walk`'s `self_class`
@@ -88,6 +97,7 @@ pub fn collect_escaping_captures(
             .into_iter()
             .filter(|n| outer.contains(n))
             .collect(),
+        assigned: raw.assigned,
         self_captured: raw.self_captured,
     }
 }
@@ -553,6 +563,7 @@ fn walk(
         HirNode::LocalWrite(name, value) => {
             if in_escaping && !param_exclusions.contains(name) {
                 caps.locals.insert(name.clone());
+                caps.assigned.insert(name.clone());
             }
             walk(compiler, *value, in_escaping, param_exclusions, caps, self_class);
         }
@@ -685,6 +696,7 @@ fn walk(
                     arm.pattern.for_each_bound_name(&mut |n| {
                         if !param_exclusions.contains(n) {
                             caps.locals.insert(n.to_string());
+                            caps.assigned.insert(n.to_string());
                         }
                     });
                 }
@@ -709,6 +721,7 @@ fn walk(
                 pattern.for_each_bound_name(&mut |n| {
                     if !param_exclusions.contains(n) {
                         caps.locals.insert(n.to_string());
+                        caps.assigned.insert(n.to_string());
                     }
                 });
             }
@@ -725,6 +738,7 @@ fn walk(
                     if let Some(name) = &r.binding {
                         if !param_exclusions.contains(name) {
                             caps.locals.insert(name.clone());
+                            caps.assigned.insert(name.clone());
                         }
                     }
                 }
@@ -945,6 +959,7 @@ fn walk_multi_target(
         MultiTarget::Local(name) => {
             if in_escaping && !param_exclusions.contains(name) {
                 caps.locals.insert(name.clone());
+                caps.assigned.insert(name.clone());
             }
         }
         MultiTarget::Ivar(_) => {
@@ -962,6 +977,7 @@ fn walk_multi_target(
         } => {
             if in_escaping && !param_exclusions.contains(tmp_name) {
                 caps.locals.insert(tmp_name.clone());
+                caps.assigned.insert(tmp_name.clone());
             }
             walk(
                 compiler,

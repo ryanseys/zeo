@@ -1177,3 +1177,66 @@ fn a_procs_own_block_param_receives_the_call_site_block() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "10\n\"none\"\n100\n15\n53\n");
 }
+
+#[test]
+fn deeply_nested_dynamic_blocks_share_locals_through_capture_cells() {
+    // bm_ao_render's shape: `.times` on an UNTYPED receiver makes every
+    // level a real escaping Proc, and the innermost block both assigns its
+    // own local (`vf`) and reads outer block params. The mid-chain block
+    // used to panic ("capturing its enclosing BLOCK's own local") because
+    // the guard ran before the nested-capture cell machinery classified
+    // the name; it now recognizes a deeper block's own local. The
+    // accumulator (`rad`) round-trips through three closure levels via its
+    // cell. Output oracle-verified.
+    let result = run_ruby(
+        r#"
+        def render(n)
+          n.times do |x|
+            rad = 0.0
+            n.times do |v|
+              n.times do |u|
+                vf = v.to_f
+                rad = rad + vf + u.to_f
+              end
+            end
+            puts rad
+          end
+        end
+        render(2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "4.0\n4.0\n");
+}
+
+#[test]
+fn a_nested_block_reading_outer_cells_and_writing_its_own_locals_composes() {
+    // Four levels deep, mixing: a method-level captured local (`total`),
+    // an outer block's cell-promoted local (`row`), block params read from
+    // two levels down, and inner-only locals. Oracle-verified.
+    let result = run_ruby(
+        r#"
+        def grid(n)
+          total = 0
+          n.times do |a|
+            row = 0
+            n.times do |b|
+              n.times do |c|
+                cell = a * 100 + b * 10 + c
+                row = row + cell
+                n.times do |d|
+                  bump = d + cell
+                  total = total + bump
+                end
+              end
+            end
+            total = total + row
+          end
+          total
+        end
+        p grid(2)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1340\n");
+}

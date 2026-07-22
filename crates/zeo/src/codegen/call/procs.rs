@@ -85,28 +85,6 @@ pub(crate) fn emit_proc_or_lambda_value(
         .cloned()
         .collect();
 
-    // Nested-Proc guard (replacing the old blanket "no block
-    // escaping inside another escaping block" rejection): names shared with
-    // the enclosing METHOD are `Captured` cells and compose through any
-    // nesting depth, but an `own_only` name that this INNER block never
-    // assigns itself can only be the enclosing BLOCK's own local -- a plain
-    // per-invocation `let`, not a cell, which a `move` closure can't share
-    // correctly (fresh-declaring it here would silently read `nil` where
-    // real Ruby sees the outer block's value). Reject that narrow case
-    // cleanly; everything else nests fine.
-    if cx.in_real_proc && !own_only.is_empty() {
-        let mut assigned_here = Vec::new();
-        for &n in body {
-            crate::codegen::hoisting::collect_locals(cx.compiler, n, &mut assigned_here);
-        }
-        let assigned_here: std::collections::HashSet<&String> = assigned_here.iter().collect();
-        if let Some(outer_block_local) = own_only.iter().find(|n| !assigned_here.contains(n)) {
-            panic!(
-                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
-            );
-        }
-    }
-
     // BARE block use (`yield`/`block_given?`) in this body (nested blocks
     // included) targets the LEXICALLY enclosing METHOD's block, so an ordinary
     // block/lambda clones that method's `__blk` in from the parent scope.
@@ -181,6 +159,33 @@ pub(crate) fn emit_proc_or_lambda_value(
     // shadows the shared cell (the inner closure then reads `nil`), which the
     // prelude's own-only invariant (`hoisting.rs`) forbids outright.
     own_only.retain(|n| !nested_captured.contains(n));
+
+    // Nested-Proc guard (replacing the old blanket "no block escaping inside
+    // another escaping block" rejection): names shared with the enclosing
+    // METHOD are `Captured` cells, and a name a NESTED escaping block
+    // captures from this one just became a cell too (`nested_captured`,
+    // removed from `own_only` above) -- both compose through any nesting
+    // depth. A remaining `own_only` name that IS assigned somewhere in this
+    // subtree is at worst a deeper block's own fresh local (bm_ao_render's
+    // `vf`, assigned two `.times` levels down: the fresh `let` declared
+    // here is dead, and the assigning block re-declares its own -- the same
+    // emission this shape already gets when the enclosing scope is a
+    // method). Only a name NOBODY under this block assigns is left: a read
+    // of the enclosing BLOCK's own plain per-invocation `let`, not a cell,
+    // which a `move` closure can't share correctly (fresh-declaring it
+    // would silently read `nil` where real Ruby sees the outer block's
+    // value). Reject that narrow case cleanly; everything else nests fine.
+    if cx.in_real_proc {
+        if let Some(outer_block_local) = own_only
+            .iter()
+            .find(|n| !block_caps.assigned.contains(n.as_str()))
+        {
+            panic!(
+                "a nested escaping block capturing its enclosing BLOCK's own local `{outer_block_local}` isn't supported yet (spike scope) -- move it to the enclosing method/top level, which makes it a shared Captured cell"
+            );
+        }
+    }
+
     let mut proc_cx = cx.in_proc(needs_self, &own_params);
     if !nested_captured.is_empty() {
         proc_cx
