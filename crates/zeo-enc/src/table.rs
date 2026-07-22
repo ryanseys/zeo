@@ -3,6 +3,8 @@
 //! every string carries. Adding an encoding is a new row (plus, for a
 //! genuinely new byte<->character mapping family, an [`EncKind`] variant).
 
+use crate::single_byte::{self, SingleByteTable};
+
 /// An index into [`ENCODINGS`]. `Copy` and one byte wide, so every string
 /// carries its encoding for free.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -12,6 +14,17 @@ pub const UTF_8: EncodingId = EncodingId(0);
 pub const US_ASCII: EncodingId = EncodingId(1);
 pub const ASCII_8BIT: EncodingId = EncodingId(2);
 pub const ISO_8859_1: EncodingId = EncodingId(3);
+pub const WINDOWS_1250: EncodingId = EncodingId(4);
+pub const WINDOWS_1251: EncodingId = EncodingId(5);
+pub const WINDOWS_1252: EncodingId = EncodingId(6);
+pub const WINDOWS_1253: EncodingId = EncodingId(7);
+pub const WINDOWS_1254: EncodingId = EncodingId(8);
+pub const WINDOWS_1255: EncodingId = EncodingId(9);
+pub const WINDOWS_1256: EncodingId = EncodingId(10);
+pub const WINDOWS_1257: EncodingId = EncodingId(11);
+pub const ISO_8859_2: EncodingId = EncodingId(12);
+pub const ISO_8859_15: EncodingId = EncodingId(13);
+pub const KOI8_R: EncodingId = EncodingId(14);
 
 /// How an encoding maps bytes to characters -- the single knob that drives
 /// character iteration, validation, and transcoding. A new encoding picks
@@ -30,6 +43,11 @@ pub enum EncKind {
     /// Raw bytes: one "character" per byte, never invalid, but bytes
     /// `>= 0x80` have no character meaning to convert FROM (ASCII-8BIT).
     Binary,
+    /// One byte per character through a per-encoding mapping table
+    /// (`EncodingSpec::table`): every byte is a valid CHARACTER, but a byte
+    /// whose table slot is `None` has no Unicode mapping and refuses to
+    /// transcode OUT (the windows-125x vendor pages' unassigned slots).
+    SingleByte,
 }
 
 /// One encoding's declarative description -- the whole per-encoding surface.
@@ -43,6 +61,25 @@ pub struct EncodingSpec {
     /// but genuinely non-ASCII encodings) -- governs `Encoding.compatible?`.
     pub ascii_compatible: bool,
     pub kind: EncKind,
+    /// The mapping table for `EncKind::SingleByte` rows; `None` for every
+    /// kind that needs no table.
+    pub table: Option<&'static SingleByteTable>,
+}
+
+/// A `SingleByte` row -- name/aliases straight from `Encoding#names` under
+/// the ruby 4.0.5 oracle, mapping table generated from the same oracle.
+const fn single_byte(
+    name: &'static str,
+    aliases: &'static [&'static str],
+    table: &'static SingleByteTable,
+) -> EncodingSpec {
+    EncodingSpec {
+        name,
+        aliases,
+        ascii_compatible: true,
+        kind: EncKind::SingleByte,
+        table: Some(table),
+    }
 }
 
 /// The encoding registry. Extend by appending a row -- ids are the row
@@ -53,25 +90,40 @@ pub static ENCODINGS: &[EncodingSpec] = &[
         aliases: &["CP65001", "locale", "external", "filesystem"],
         ascii_compatible: true,
         kind: EncKind::Utf8,
+        table: None,
     },
     EncodingSpec {
         name: "US-ASCII",
         aliases: &["ASCII", "ANSI_X3.4-1968", "646"],
         ascii_compatible: true,
         kind: EncKind::Ascii,
+        table: None,
     },
     EncodingSpec {
         name: "ASCII-8BIT",
         aliases: &["BINARY"],
         ascii_compatible: true,
         kind: EncKind::Binary,
+        table: None,
     },
     EncodingSpec {
         name: "ISO-8859-1",
         aliases: &["ISO8859-1", "Latin-1"],
         ascii_compatible: true,
         kind: EncKind::Latin1,
+        table: None,
     },
+    single_byte("Windows-1250", &["CP1250"], &single_byte::WINDOWS_1250),
+    single_byte("Windows-1251", &["CP1251"], &single_byte::WINDOWS_1251),
+    single_byte("Windows-1252", &["CP1252"], &single_byte::WINDOWS_1252),
+    single_byte("Windows-1253", &["CP1253"], &single_byte::WINDOWS_1253),
+    single_byte("Windows-1254", &["CP1254"], &single_byte::WINDOWS_1254),
+    single_byte("Windows-1255", &["CP1255"], &single_byte::WINDOWS_1255),
+    single_byte("Windows-1256", &["CP1256"], &single_byte::WINDOWS_1256),
+    single_byte("Windows-1257", &["CP1257"], &single_byte::WINDOWS_1257),
+    single_byte("ISO-8859-2", &["ISO8859-2"], &single_byte::ISO_8859_2),
+    single_byte("ISO-8859-15", &["ISO8859-15"], &single_byte::ISO_8859_15),
+    single_byte("KOI8-R", &["CP878"], &single_byte::KOI8_R),
 ];
 
 impl EncodingId {
@@ -95,6 +147,13 @@ impl EncodingId {
     }
     pub fn kind(self) -> EncKind {
         self.spec().kind
+    }
+    /// The mapping table of an `EncKind::SingleByte` row. Panics for other
+    /// kinds -- every caller has already matched on the kind.
+    pub(crate) fn single_byte_table(self) -> &'static SingleByteTable {
+        self.spec()
+            .table
+            .expect("SingleByte rows always carry a table")
     }
     pub fn ascii_compatible(self) -> bool {
         self.spec().ascii_compatible

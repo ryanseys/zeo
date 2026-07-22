@@ -1393,7 +1393,9 @@ builtin_methods! {
                 RubyValue::Int(i) => {
                     let mut g = s.lock();
                     match g.encoding().kind() {
-                        crate::encoding::EncKind::Latin1 | crate::encoding::EncKind::Binary => {
+                        crate::encoding::EncKind::Latin1
+                        | crate::encoding::EncKind::Binary
+                        | crate::encoding::EncKind::SingleByte => {
                             let Ok(b) = u8::try_from(*i) else {
                                 return Err(range_error!("{i} out of char range"));
                             };

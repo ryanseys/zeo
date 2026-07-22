@@ -52,7 +52,11 @@ fn encode_codepoint(cp: i64, enc: crate::encoding::EncodingId) -> Option<Vec<u8>
             Some(c.to_string().into_bytes())
         }
         EncKind::Ascii => (cp <= 0x7F).then(|| vec![cp as u8]),
-        EncKind::Latin1 | EncKind::Binary => (cp <= 0xFF).then(|| vec![cp as u8]),
+        // Codepoint == byte for every single-byte encoding (oracle-verified:
+        // `233.chr(Encoding::Windows_1252)` is the byte 0xE9, 256 raises).
+        EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
+            (cp <= 0xFF).then(|| vec![cp as u8])
+        }
     }
 }
 

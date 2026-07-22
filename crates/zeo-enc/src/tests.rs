@@ -252,3 +252,112 @@ fn transcode_fallback_consulted_first() {
     .unwrap();
     assert_eq!(out, b"cafe");
 }
+
+// --- Single-byte table rows (Windows-125x / ISO-8859-2/-15 / KOI8-R).
+// Every expectation oracle-verified against ruby 4.0.5.
+
+#[test]
+fn single_byte_tables_map_and_round_trip() {
+    // Windows-1250 0xBF is ż (U+017C); ISO-8859-15 0xA4 is € (U+20AC);
+    // KOI8-R 0xC1 is а (U+0430).
+    let t = WINDOWS_1250.single_byte_table();
+    assert_eq!(t.decode(0xBF), Some('\u{017C}'));
+    assert_eq!(t.encode('\u{017C}'), Some(0xBF));
+    assert_eq!(ISO_8859_15.single_byte_table().decode(0xA4), Some('€'));
+    assert_eq!(KOI8_R.single_byte_table().decode(0xC1), Some('а'));
+    // ASCII half is identity everywhere.
+    assert_eq!(t.decode(b'z'), Some('z'));
+    assert_eq!(t.encode('z'), Some(b'z'));
+}
+
+#[test]
+fn unmapped_vendor_bytes_are_valid_characters_that_refuse_transcode() {
+    // 0x81 is unassigned in Windows-1252: still a VALID character...
+    let s = StrBuf::from_bytes(vec![0x81], WINDOWS_1252);
+    assert!(s.valid_encoding());
+    assert_eq!(s.char_len(), 1);
+    // ...but transcoding out refuses with CRuby's byte-quoted message,
+    // naming the pivot tail when the target isn't UTF-8.
+    let err = transcode(&[0x81], WINDOWS_1252, UTF_8, &Default::default(), None).unwrap_err();
+    match err {
+        TranscodeError::UndefinedConversion(m) => {
+            assert_eq!(
+                m,
+                "\"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8"
+            );
+        }
+        other => panic!("wrong error: {other:?}"),
+    }
+    let err = transcode(&[0x81], WINDOWS_1252, KOI8_R, &Default::default(), None).unwrap_err();
+    match err {
+        TranscodeError::UndefinedConversion(m) => {
+            assert_eq!(
+                m,
+                "\"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8 to KOI8-R"
+            );
+        }
+        other => panic!("wrong error: {other:?}"),
+    }
+}
+
+#[test]
+fn undefined_conversion_messages_match_crubys_three_shapes() {
+    let msg = |bytes: &[u8], from, to| match transcode(bytes, from, to, &Default::default(), None)
+        .unwrap_err()
+    {
+        TranscodeError::UndefinedConversion(m) => m,
+        other => panic!("wrong error: {other:?}"),
+    };
+    // Direct from UTF-8, plain target name: the short form.
+    assert_eq!(
+        msg("\u{3042}".as_bytes(), UTF_8, KOI8_R),
+        "U+3042 from UTF-8 to KOI8-R"
+    );
+    // Direct from UTF-8, windows target: upcased long form.
+    assert_eq!(
+        msg("\u{044B}".as_bytes(), UTF_8, WINDOWS_1250),
+        "U+044B to WINDOWS-1250 in conversion from UTF-8 to WINDOWS-1250"
+    );
+    // Pivoted pair: long form, FROM side keeps its requested spelling.
+    assert_eq!(
+        msg(&[0xC1], KOI8_R, ISO_8859_2),
+        "U+0430 to ISO-8859-2 in conversion from KOI8-R to UTF-8 to ISO-8859-2"
+    );
+    assert_eq!(
+        msg(&[0xE9], ISO_8859_1, US_ASCII),
+        "U+00E9 to US-ASCII in conversion from ISO-8859-1 to UTF-8 to US-ASCII"
+    );
+}
+
+#[test]
+fn windows_and_iso_case_map_through_unicode_koi8_ascii_only() {
+    let up = |bytes: &[u8], enc: EncodingId| {
+        StrBuf::from_bytes(bytes.to_vec(), enc)
+            .upcased()
+            .bytes()
+            .to_vec()
+    };
+    // Windows-1252 é -> É; ß EXPANDS to SS; µ's uppercase (Greek Μ)
+    // isn't representable, so it stays.
+    assert_eq!(up(b"caf\xE9", WINDOWS_1252), b"CAF\xC9");
+    assert_eq!(up(b"stra\xDFe", WINDOWS_1252), b"STRASSE");
+    assert_eq!(up(b"\xB5", WINDOWS_1252), b"\xB5");
+    // ÿ -> Ÿ exists in Windows-1252 (0x9F) but not Latin-1 (kept).
+    assert_eq!(up(b"\xFF", WINDOWS_1252), b"\x9F");
+    assert_eq!(up(b"\xFF", ISO_8859_1), b"\xFF");
+    // Latin-1 ß also expands (the pre-table fold missed this).
+    assert_eq!(up(b"\xDF", ISO_8859_1), b"SS");
+    // ISO-8859-2 ą -> Ą.
+    assert_eq!(up(b"\xB1", ISO_8859_2), b"\xA1");
+    // KOI8-R: ASCII folds, Cyrillic deliberately does NOT (CRuby's rule).
+    assert_eq!(up(b"\xC1z", KOI8_R), b"\xC1Z");
+}
+
+#[test]
+fn single_byte_lossy_display_and_inspect() {
+    let s = StrBuf::from_bytes(b"caf\xE9\x81".to_vec(), WINDOWS_1252);
+    // Display decodes through the table; the unassigned byte is U+FFFD.
+    assert_eq!(s.to_utf8_lossy(), "caf\u{E9}\u{FFFD}");
+    // Inspect stays byte-faithful: high bytes as \xNN.
+    assert_eq!(inspect(&s), "\"caf\\xE9\\x81\"");
+}

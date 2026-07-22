@@ -26,7 +26,9 @@ pub fn inspect(buf: &StrBuf) -> String {
                         };
                         push_inspect_char(&mut out, *c, next, true);
                     }
-                    Unit::Invalid(bytes) => {
+                    // `Unmapped` never occurs under UTF-8, but rendering it
+                    // like `Invalid` is right anywhere it could.
+                    Unit::Invalid(bytes) | Unit::Unmapped(bytes) => {
                         for b in bytes {
                             out.push_str(&format!("\\x{b:02X}"));
                         }
@@ -34,9 +36,10 @@ pub fn inspect(buf: &StrBuf) -> String {
                 }
             }
         }
-        // A non-Unicode encoding: ASCII bytes escape as usual, high bytes as
-        // `\xNN` (CRuby prints Latin-1 `0xE9` as `\xE9`, not as `é`).
-        EncKind::Ascii | EncKind::Latin1 | EncKind::Binary => {
+        // A non-Unicode single-byte encoding: ASCII bytes escape as usual,
+        // high bytes as `\xNN` (CRuby prints Latin-1 `0xE9` as `\xE9`, not
+        // as `é` -- and Windows-1252 the same, oracle-verified).
+        EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
             let bytes = buf.bytes();
             for i in 0..bytes.len() {
                 let b = bytes[i];

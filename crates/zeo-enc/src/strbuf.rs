@@ -4,7 +4,7 @@
 use std::borrow::Cow;
 use std::cell::Cell;
 
-use crate::case::{CaseMode, ascii_case_byte, case_bytes, case_unicode, latin1_case_byte};
+use crate::case::{CaseMode, ascii_case_byte, case_bytes, case_single_byte, case_unicode};
 use crate::coderange::{CodeRange, compute_coderange};
 use crate::table::{EncKind, EncodingId, UTF_8};
 use crate::transcode::utf8_seq_len;
@@ -94,6 +94,19 @@ impl StrBuf {
                     Cow::Owned(self.bytes.iter().map(|b| *b as char).collect())
                 }
             }
+            EncKind::SingleByte => {
+                if self.ascii_only() {
+                    String::from_utf8_lossy(&self.bytes)
+                } else {
+                    let table = self.enc.single_byte_table();
+                    Cow::Owned(
+                        self.bytes
+                            .iter()
+                            .map(|b| table.decode(*b).unwrap_or('\u{FFFD}'))
+                            .collect(),
+                    )
+                }
+            }
         }
     }
 
@@ -137,7 +150,7 @@ impl StrBuf {
                 }
                 ranges
             }
-            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary => {
+            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
                 (0..self.bytes.len()).map(|i| i..i + 1).collect()
             }
         }
@@ -183,7 +196,9 @@ impl StrBuf {
     pub fn char_len(&self) -> usize {
         match self.enc.kind() {
             // One character per byte for every single-byte encoding.
-            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary => self.bytes.len(),
+            EncKind::Ascii | EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => {
+                self.bytes.len()
+            }
             EncKind::Utf8 if self.ascii_only() => self.bytes.len(),
             EncKind::Utf8 => self.char_ranges().len(),
         }
@@ -212,8 +227,25 @@ impl StrBuf {
             EncKind::Ascii | EncKind::Binary => {
                 StrBuf::from_bytes(case_bytes(&self.bytes, mode, ascii_case_byte), self.enc)
             }
-            EncKind::Latin1 => {
-                StrBuf::from_bytes(case_bytes(&self.bytes, mode, latin1_case_byte), self.enc)
+            // Latin-1: full Unicode case through the identity byte<->scalar
+            // mapping (`ß` -> `"SS"`, unrepresentable results kept).
+            EncKind::Latin1 => StrBuf::from_bytes(
+                case_single_byte(&self.bytes, mode, &|b| Some(b as char), &|c| {
+                    u8::try_from(c as u32).ok()
+                }),
+                self.enc,
+            ),
+            EncKind::SingleByte => {
+                let table = self.enc.single_byte_table();
+                let bytes = if table.unicode_case {
+                    case_single_byte(&self.bytes, mode, &|b| table.decode(b), &|c| {
+                        table.encode(c)
+                    })
+                } else {
+                    // KOI8-R: CRuby folds ASCII letters only.
+                    case_bytes(&self.bytes, mode, ascii_case_byte)
+                };
+                StrBuf::from_bytes(bytes, self.enc)
             }
         }
     }

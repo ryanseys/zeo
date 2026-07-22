@@ -20,20 +20,49 @@ pub(crate) fn ascii_case_byte(b: u8, up: bool) -> u8 {
     }
 }
 
-/// Latin-1 case fold: ASCII plus the `À`-`Þ` / `à`-`þ` accented-letter ranges
-/// (skipping the `×`/`÷` math signs at 0xD7/0xF7).
-pub(crate) fn latin1_case_byte(b: u8, up: bool) -> u8 {
-    if up {
-        if b.is_ascii_lowercase() || ((0xE0..=0xFE).contains(&b) && b != 0xF7) {
-            b - 32
+/// Case mapping for a 1-byte-per-character encoding through FULL Unicode
+/// case rules -- CRuby's own model for the Latin/Windows/ISO single-byte
+/// families (oracle-verified: Windows-1252 `\xE9` (é) upcases to `\xC9` (É),
+/// Latin-1 `\xDF` (ß) upcases to `"SS"`, and a character whose cased form
+/// the encoding can't represent -- `µ` -> `Μ` -- stays UNCHANGED).
+///
+/// Per byte: decode to its scalar (an unmapped byte stays as-is), apply the
+/// mode's Unicode mapping (which may expand, ß -> SS), then re-encode every
+/// resulting scalar; if ANY result scalar has no byte, the original byte is
+/// kept verbatim.
+pub(crate) fn case_single_byte(
+    bytes: &[u8],
+    mode: CaseMode,
+    decode: &dyn Fn(u8) -> Option<char>,
+    encode: &dyn Fn(char) -> Option<u8>,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for (i, &b) in bytes.iter().enumerate() {
+        let Some(c) = decode(b) else {
+            out.push(b);
+            continue;
+        };
+        let up = match mode {
+            CaseMode::Up => true,
+            CaseMode::Down => false,
+            CaseMode::Swap => !c.is_uppercase(),
+            CaseMode::Cap => i == 0,
+        };
+        let cased: Vec<char> = if up {
+            c.to_uppercase().collect()
         } else {
-            b
+            c.to_lowercase().collect()
+        };
+        match cased
+            .iter()
+            .map(|cc| encode(*cc))
+            .collect::<Option<Vec<u8>>>()
+        {
+            Some(bs) => out.extend(bs),
+            None => out.push(b),
         }
-    } else if b.is_ascii_uppercase() || ((0xC0..=0xDE).contains(&b) && b != 0xD7) {
-        b + 32
-    } else {
-        b
     }
+    out
 }
 
 pub(crate) fn case_bytes(bytes: &[u8], mode: CaseMode, fold: fn(u8, bool) -> u8) -> Vec<u8> {

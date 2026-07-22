@@ -36,7 +36,10 @@ pub(crate) fn compute_coderange(bytes: &[u8], enc: EncodingId) -> CodeRange {
         }
         // A high byte is never a valid US-ASCII character.
         EncKind::Ascii => CodeRange::Broken,
-        // Binary and Latin-1 accept every byte.
-        EncKind::Latin1 | EncKind::Binary => CodeRange::Valid,
+        // Binary, Latin-1, and the table-driven single-byte encodings accept
+        // every byte as a character (a table slot being unmapped to Unicode
+        // refuses TRANSCODING, not validity -- oracle-verified:
+        // `"\x81".force_encoding("Windows-1252").valid_encoding?` is true).
+        EncKind::Latin1 | EncKind::Binary | EncKind::SingleByte => CodeRange::Valid,
     }
 }

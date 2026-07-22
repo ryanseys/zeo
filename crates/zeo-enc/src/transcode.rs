@@ -48,6 +48,11 @@ pub(crate) enum Unit {
     Char(char),
     /// Bytes the SOURCE encoding couldn't decode (`:invalid` territory).
     Invalid(Vec<u8>),
+    /// A VALID source character with no Unicode mapping (an unassigned
+    /// windows-125x vendor-page slot): `:undef` territory, but reported by
+    /// its bytes -- CRuby's `"\x81" to UTF-8 in conversion from Windows-1252
+    /// to UTF-8` form -- since there is no scalar to name.
+    Unmapped(Vec<u8>),
 }
 
 /// Decodes `bytes` under `from` into a sequence of units.
@@ -64,6 +69,16 @@ fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
                 }
             })
             .collect(),
+        EncKind::SingleByte => {
+            let table = from.single_byte_table();
+            bytes
+                .iter()
+                .map(|b| match table.decode(*b) {
+                    Some(c) => Unit::Char(c),
+                    None => Unit::Unmapped(vec![*b]),
+                })
+                .collect()
+        }
         EncKind::Utf8 => decode_utf8(bytes),
     }
 }
@@ -102,6 +117,7 @@ fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
         // Binary accepts any ASCII char verbatim; a non-ASCII scalar has no
         // binary byte (it isn't a byte).
         EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
+        EncKind::SingleByte => to.single_byte_table().encode(c).map(|b| vec![b]),
     }
 }
 
@@ -153,6 +169,25 @@ pub fn transcode(
                     )));
                 }
             }
+            // A valid character with no Unicode mapping: `:undef` territory,
+            // byte-quoted, naming the UTF-8 pivot leg that refused --
+            // oracle-verified both message forms.
+            Unit::Unmapped(raw) => {
+                if opts.undef_replace {
+                    out.extend_from_slice(&replacement(opts, to));
+                } else {
+                    let escaped: String = raw.iter().map(|b| format!("\\x{b:02X}")).collect();
+                    let tail = if to == crate::table::UTF_8 {
+                        String::new()
+                    } else {
+                        format!(" to {}", transcoder_name(to))
+                    };
+                    return Err(TranscodeError::UndefinedConversion(format!(
+                        "\"{escaped}\" to UTF-8 in conversion from {} to UTF-8{tail}",
+                        from.name()
+                    )));
+                }
+            }
             Unit::Char(c) => {
                 if let Some(bytes) = encode_char(c, to) {
                     apply_xml(&mut out, c, &bytes, opts, to);
@@ -178,17 +213,51 @@ pub fn transcode(
                 } else if opts.undef_replace {
                     out.extend_from_slice(&replacement(opts, to));
                 } else {
-                    return Err(TranscodeError::UndefinedConversion(format!(
-                        "U+{:04X} from {} to {}",
-                        c as u32,
-                        from.name(),
-                        to.name()
+                    return Err(TranscodeError::UndefinedConversion(undef_message(
+                        c, from, to,
                     )));
                 }
             }
         }
     }
     Ok(out)
+}
+
+/// How CRuby's transcoder registry spells `enc` in error messages: the
+/// windows-125x pages register under UPCASED entry names (`WINDOWS-1252`),
+/// everything else under its canonical name. The name mismatch is also what
+/// selects the long message form below -- both oracle-verified.
+fn transcoder_name(enc: EncodingId) -> String {
+    let name = enc.name();
+    if name.starts_with("Windows-125") {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_string()
+    }
+}
+
+/// The `Encoding::UndefinedConversionError` message, matching CRuby's three
+/// oracle-verified shapes:
+/// - direct from UTF-8, plainly-named target: `U+3042 from UTF-8 to KOI8-R`
+/// - direct from UTF-8, windows target: `U+044B to WINDOWS-1250 in
+///   conversion from UTF-8 to WINDOWS-1250`
+/// - any pivoted pair: `U+0430 to ISO-8859-2 in conversion from KOI8-R to
+///   UTF-8 to ISO-8859-2` (the FROM side keeps its requested spelling).
+fn undef_message(c: char, from: EncodingId, to: EncodingId) -> String {
+    let cp = c as u32;
+    let to_disp = transcoder_name(to);
+    if from == crate::table::UTF_8 {
+        if to_disp == to.name() {
+            format!("U+{cp:04X} from UTF-8 to {to_disp}")
+        } else {
+            format!("U+{cp:04X} to {to_disp} in conversion from UTF-8 to {to_disp}")
+        }
+    } else {
+        format!(
+            "U+{cp:04X} to {to_disp} in conversion from {} to UTF-8 to {to_disp}",
+            from.name()
+        )
+    }
 }
 
 /// Applies the `:xml` escaping to a REPRESENTABLE character, or emits its

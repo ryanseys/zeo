@@ -642,3 +642,73 @@ fn incompatible_concatenation_raises_the_compatibility_error() {
          range: 128512 out of char range\n"
     );
 }
+
+// --- The single-byte encoding family (Windows-125x, ISO-8859-2/-15,
+// KOI8-R): oracle-generated mapping tables, CRuby's validity model (every
+// byte is a character; unassigned slots refuse only transcoding), and full
+// Unicode case mapping for the windows/ISO pages. All expectations below
+// are the verbatim output of ruby 4.0.5 on the same program.
+
+#[test]
+fn single_byte_encodings_validity_length_case_and_lookup() {
+    let result = run_ruby(
+        r#"
+        s = ("caf" + 0xE9.chr).force_encoding("Windows-1252")
+        p s.valid_encoding?
+        p s.length
+        p s.upcase.bytes
+        puts ("stra" + 0xDF.chr + "e").force_encoding("Windows-1252").upcase
+        p 0x81.chr.force_encoding("Windows-1252").valid_encoding?
+        p Encoding.find("cp1250")
+        p Encoding::Windows_1251.name
+        p Encoding::CP1252 == Encoding::Windows_1252
+        koi = (0xC1.chr + "z").force_encoding("KOI8-R")
+        p koi.upcase.bytes
+        p 0xB1.chr.force_encoding("ISO-8859-2").upcase.bytes
+        p 0xFF.chr.force_encoding("Windows-1252").upcase.bytes
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\n4\n[67, 65, 70, 201]\nSTRASSE\ntrue\n#<Encoding:Windows-1250>\n\
+         \"Windows-1251\"\ntrue\n[193, 90]\n[161]\n[159]\n"
+    );
+}
+
+#[test]
+fn single_byte_transcoding_round_trips_and_error_shapes() {
+    let result = run_ruby(
+        r#"
+        pl = "żółć gęś"
+        w = pl.encode("Windows-1250")
+        p w.bytes
+        p w.encoding.name
+        p w.encode("UTF-8") == pl
+        r = "привет".encode("Windows-1251")
+        p r.bytes
+        p r.encode("KOI8-R").bytes
+        p "€uro".encode("ISO-8859-15").bytes
+        b = 0x81.chr.force_encoding("Windows-1252")
+        begin; b.encode("UTF-8"); rescue Encoding::UndefinedConversionError => e; puts e.message; end
+        begin; b.encode("KOI8-R"); rescue Encoding::UndefinedConversionError => e; puts e.message; end
+        p b.encode("UTF-8", undef: :replace)
+        begin; "щ".encode("Windows-1252"); rescue Encoding::UndefinedConversionError => e; puts e.message; end
+        s = (0xE9.chr + 0x81.chr + "ab").force_encoding("Windows-1252")
+        p s
+        p (0xE9.chr + "ab").force_encoding("Windows-1252").encode("UTF-8")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "[191, 243, 179, 230, 32, 103, 234, 156]\n\"Windows-1250\"\ntrue\n\
+         [239, 240, 232, 226, 229, 242]\n[208, 210, 201, 215, 197, 212]\n\
+         [164, 117, 114, 111]\n\
+         \"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8\n\
+         \"\\x81\" to UTF-8 in conversion from Windows-1252 to UTF-8 to KOI8-R\n\
+         \"\u{FFFD}\"\n\
+         U+0449 to WINDOWS-1252 in conversion from UTF-8 to WINDOWS-1252\n\
+         \"\\xE9\\x81ab\"\n\"\u{E9}ab\"\n"
+    );
+}

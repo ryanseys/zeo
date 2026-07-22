@@ -42,6 +42,16 @@ treatment -- re-probe the digest tests when touching them);
 `OpenSSL::Random` implemented in ext/openssl.rs but never registered in
 zeo-abi.
 
+Same lossy family, found while testing the single-byte encoding rows
+(2026-07-21): a string LITERAL with raw high `\xNN` escapes is not
+byte-faithful through lowering -- `"caf\xE9"` reaches the runtime as the
+UTF-8 bytes for `é` (Latin-1 promotion in the literal path), where CRuby
+keeps the single raw byte 0xE9 (UTF-8-tagged, `valid_encoding?` false).
+The dumped-string `"...".force_encoding("ENC")` recognizer already
+byte-round-trips its narrow shape; the general literal path needs the
+same treatment (HIR literal repr carrying bytes, not String). Encoding
+e2e tests construct bytes via `chr` until then.
+
 # Benchmark-suite gaps (same probe discipline)
 
 One of the 58 vendored benchmarks still fails:
