@@ -580,15 +580,11 @@ struct QueueInner {
 }
 
 pub struct QueueData {
-    /// `may::sync::Mutex` (not `parking_lot`) because `pop`'s wait must be
-    /// a real `may::sync::Condvar` wait -- a coroutine-yielding block, not
-    /// an OS-thread block that would stall the whole single-worker
-    /// scheduler.
-    inner: may::sync::Mutex<QueueInner>,
-    not_empty: may::sync::Condvar,
+    inner: PlMutex<QueueInner>,
+    not_empty: parking_lot::Condvar,
     /// Wakes a `push` back-pressured on a full `SizedQueue` after a `pop`
     /// frees a slot.
-    not_full: may::sync::Condvar,
+    not_full: parking_lot::Condvar,
     /// Whether this value is a `SizedQueue` (vs a plain `Queue`) -- fixed at
     /// construction, so `class_id` reads it lock-free. Distinct from `max`,
     /// which is the (mutable) bound: the class never changes even if `max=`
@@ -605,13 +601,13 @@ pub fn queue_is_sized(q: &RQueue) -> bool {
 
 fn queue_with(max: Option<usize>, is_sized: bool) -> RubyValue {
     RubyValue::Queue(Arc::new(QueueData {
-        inner: may::sync::Mutex::new(QueueInner {
+        inner: PlMutex::new(QueueInner {
             items: VecDeque::new(),
             closed: false,
             max,
         }),
-        not_empty: may::sync::Condvar::new(),
-        not_full: may::sync::Condvar::new(),
+        not_empty: parking_lot::Condvar::new(),
+        not_full: parking_lot::Condvar::new(),
         is_sized,
     }))
 }
@@ -620,35 +616,28 @@ pub fn queue_new() -> RubyValue {
     queue_with(None, false)
 }
 
-/// `SizedQueue.new(n)` -- a bounded queue whose `push` blocks (coroutine-
-/// yieldingly) once `n` items are enqueued, until a `pop` frees a slot.
+/// `SizedQueue.new(n)` -- a bounded queue whose `push` blocks once `n`
+/// items are enqueued, until a `pop` frees a slot.
 pub fn sized_queue_new(n: i64) -> RubyValue {
     queue_with(Some(n.max(0) as usize), true)
 }
 
 /// `SizedQueue#max` -- the current bound (`None` for an unbounded `Queue`).
 pub fn queue_max(q: &RQueue) -> Option<i64> {
-    q.inner
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .max
-        .map(|m| m as i64)
+    q.inner.lock().max.map(|m| m as i64)
 }
 
 /// `SizedQueue#max=` -- raise or lower the bound; a raised bound wakes any
 /// back-pressured pushers.
 pub fn queue_set_max(q: &RQueue, n: i64) {
-    let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+    let mut inner = q.inner.lock();
     inner.max = Some(n.max(0) as usize);
     drop(inner);
     q.not_full.notify_all();
 }
 
 /// `Err` = `ClosedQueueError: "queue closed"` (message via codegen, as
-/// always). `may`'s std-style lock poisoning is unwrapped into the inner
-/// guard -- a panicking coroutine mid-queue-op is already a dying process
-/// in this runtime's posture, matching `parking_lot`'s no-poison stance
-/// everywhere else.
+/// always).
 pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     // The WHOLE lock-wait-store section runs with an armed Gvl released
     // (plain call-through otherwise). The release must wrap the queue's
@@ -660,7 +649,7 @@ pub fn queue_push(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
 }
 
 fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
-    let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+    let mut inner = q.inner.lock();
     loop {
         if inner.closed {
             return Err("queue closed");
@@ -669,7 +658,7 @@ fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
         // slot; an unbounded `Queue` (`max` = None) never waits.
         match inner.max {
             Some(m) if inner.items.len() >= m => {
-                inner = q.not_full.wait(inner).unwrap_or_else(|e| e.into_inner());
+                q.not_full.wait(&mut inner);
             }
             _ => break,
         }
@@ -679,7 +668,7 @@ fn queue_push_locked(q: &RQueue, value: RubyValue) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Blocks (coroutine-yielding) while empty and open; a CLOSED empty queue
+/// Blocks while empty and open; a CLOSED empty queue
 /// returns nil -- CRuby `thread_sync.c:1034`. This is an interruption
 /// CHECKPOINT: a `Thread#kill`/`#raise` on the blocked thread is delivered
 /// here (`Err(Signal)`), so the wait uses a short TIMEOUT and re-checks the
@@ -693,7 +682,7 @@ pub fn queue_pop(q: &RQueue) -> Result<RubyValue, Signal> {
 }
 
 fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
-    let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+    let mut inner = q.inner.lock();
     loop {
         if let Some(v) = inner.items.pop_front() {
             // A freed slot may unblock a `SizedQueue` pusher.
@@ -703,48 +692,37 @@ fn queue_pop_locked(q: &RQueue) -> Result<RubyValue, Signal> {
         if inner.closed {
             return Ok(RubyValue::Nil);
         }
-        let (guard, _timed_out) = q
-            .not_empty
-            .wait_timeout(inner, Duration::from_millis(2))
-            .unwrap_or_else(|e| e.into_inner());
-        inner = guard;
+        let _ = q.not_empty.wait_for(&mut inner, Duration::from_millis(2));
         // Deliver a pending kill/raise now that we're awake, dropping the lock
         // first so the unwinding thread isn't holding the queue mutex.
         if interrupt_pending() {
             drop(inner);
             check_interrupt()?;
             // No interrupt after all (a spurious peek); re-acquire and continue.
-            inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+            inner = q.inner.lock();
         }
     }
 }
 
 pub fn queue_close(q: &RQueue) {
-    let mut inner = q.inner.lock().unwrap_or_else(|e| e.into_inner());
+    let mut inner = q.inner.lock();
     inner.closed = true;
     // Every parked popper must wake to observe closure (and drain or nil).
     q.not_empty.notify_all();
 }
 
 pub fn queue_closed(q: &RQueue) -> bool {
-    q.inner.lock().unwrap_or_else(|e| e.into_inner()).closed
+    q.inner.lock().closed
 }
 
 pub fn queue_len(q: &RQueue) -> i64 {
-    q.inner
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .items
-        .len() as i64
+    q.inner.lock().items.len() as i64
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Unit tests run on plain OS threads (no may coroutine ambient), which
-    /// exercises that the primitives work from thread context too -- may's
-    /// sync types support both.
     #[test]
     fn queue_rendezvous_and_close_semantics() {
         let q_val = queue_new();
