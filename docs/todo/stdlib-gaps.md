@@ -52,6 +52,19 @@ byte-round-trips its narrow shape; the general literal path needs the
 same treatment (HIR literal repr carrying bytes, not String). Encoding
 e2e tests construct bytes via `chr` until then.
 
+# The lossy-UTF-8 audit (the next encoding pass)
+
+With the 24-encoding engine landed, the remaining systematic gap is the
+~211 `to_utf8_lossy` call sites across zeo-rt's builtins (CI now
+ratchets the count -- see ci.yml). Each needs one judgment: a DISPLAY
+path (`to_s`-ish rendering, error text) keeps the lossy call; a SEMANTIC
+path (comparison, slicing, matching, formatting on the bytes) must go
+byte/encoding-aware via the StrBuf char layer, which is now correct for
+every encoding kind. Highest-value files first: string.rs (index/slice/
+sub/gsub families), format.rs, pack.rs, regexp.rs haystacks, io.rs line
+reading. The pack/Base64/format legs of the binary-transcoding family
+(above) fall out of the same sweep.
+
 # Benchmark-suite gaps (same probe discipline)
 
 One of the 58 vendored benchmarks still fails:

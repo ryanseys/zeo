@@ -25,6 +25,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The lossy-UTF-8 ratchet: `to_utf8_lossy` in the runtime is a
+      # DISPLAY-path convenience that silently corrupts non-UTF-8 semantic
+      # operations; the audit migrates sites onto byte/encoding-aware paths
+      # one by one. The count may only go DOWN -- lower the limit as sites
+      # are converted; never raise it.
+      - name: lossy-UTF-8 ratchet
+        run: |
+          count=$(grep -rn "to_utf8_lossy" crates/zeo-rt/src --include="*.rs" | wc -l)
+          limit=211
+          echo "to_utf8_lossy sites in zeo-rt: $count (limit: $limit)"
+          if [ "$count" -gt "$limit" ]; then
+            echo "::error::to_utf8_lossy count grew ($count > $limit) -- new runtime code must use byte/encoding-aware paths"
+            exit 1
+          fi
 
   deny:
     name: cargo-deny (licenses + advisories)

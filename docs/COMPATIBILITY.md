@@ -1,5 +1,27 @@
 # Library compatibility
 
+## Encoding divergences (zeo-enc)
+
+The encoding engine carries 24 encodings. The single-byte tables
+(Windows-125x, ISO-8859-2/-15, KOI8-R) are generated from the ruby 4.0.5
+oracle itself, so their mappings -- including which vendor-page bytes have
+NO Unicode mapping -- are exact. Known divergences:
+
+- **Shift_JIS mappings are CP932's.** Both the `Shift_JIS` and
+  `Windows-31J` rows transcode through encoding_rs's WHATWG `shift_jis`
+  table, which matches Windows-31J/CP932. CRuby's strict `Shift_JIS`
+  differs in the NEC/IBM extension rows; a program that round-trips those
+  extension characters through the `Shift_JIS` row gets CP932 answers.
+  Structural validity (what counts as a character) is CRuby-faithful for
+  both rows.
+- **Big5 pairs that WHATWG maps to two-scalar sequences** (a handful of
+  HKSCS combining forms) are treated as unmapped (undefined conversion)
+  rather than decoded.
+- **String literals with raw high `\xNN` escapes** are not yet
+  byte-faithful through the compiler's lowering (see
+  docs/todo/stdlib-gaps.md); runtime-constructed bytes (`chr`, IO reads,
+  `force_encoding`) are exact.
+
 How zeo satisfies a `require`, and where its answer is **not** the upstream
 gem or C extension. This is prose, not a percentage: each entry carries a
 *reason*, because "zeo's `json` is not the `json` gem" is a fact that can
