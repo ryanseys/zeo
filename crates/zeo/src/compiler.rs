@@ -591,6 +591,21 @@ impl Compiler {
             && !self.is_immediate_subclass(cid)
     }
 
+    /// Walks the recorded `parent` (superclass) links from `cid` toward the
+    /// root, inclusive of `cid` itself. The registration-time-safe form of
+    /// "is X in the ancestry": `ancestors` is only linearized later by
+    /// `mro::materialize`, but the native-backing predicates below must
+    /// answer correctly DURING registration too -- `register_method` runs
+    /// local-type inference as each class body is walked, and typing an
+    /// exception/value subclass's `.new` as `TyKind::Object` there baked
+    /// `new_handle` calls to structs codegen (correctly) never emits.
+    /// Superclass-chain membership is equivalent to the linearized test for
+    /// every predicate here: each targets CLASS ids, which only ever enter
+    /// an ancestry through `< Super`, never through a mixin.
+    fn superclass_chain(&self, cid: ClassId) -> impl Iterator<Item = ClassId> + '_ {
+        std::iter::successors(Some(cid), |&c| self.class(c).parent)
+    }
+
     /// Whether `cid`'s instances are the native `RubyException` (D3): the
     /// bootstrap exception classes themselves, and any user subclass of one
     /// (`class MyErr < StandardError`). Such a class has NO generated struct --
@@ -601,7 +616,11 @@ impl Compiler {
     /// `is_module` guards the `Errno` namespace (a module, never instantiated).
     pub fn is_exception_backed(&self, cid: ClassId) -> bool {
         let ci = self.class(cid);
-        !ci.is_module && (ci.is_bootstrap || ci.ancestors.contains(&zeo_abi::EXCEPTION_CLASS))
+        !ci.is_module
+            && (ci.is_bootstrap
+                || self
+                    .superclass_chain(cid)
+                    .any(|a| a == zeo_abi::EXCEPTION_CLASS))
     }
 
     /// The instantiable value-builtin a USER subclass wraps as its payload
@@ -616,9 +635,8 @@ impl Compiler {
         if ci.is_module || ci.is_builtin || ci.is_bootstrap || cid == OBJECT_CLASS {
             return None;
         }
-        ci.ancestors
-            .iter()
-            .copied()
+        // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
+        self.superclass_chain(cid)
             .find(|a| matches!(*a, ARRAY_CLASS | STRING_CLASS | HASH_CLASS))
     }
 
@@ -668,9 +686,10 @@ impl Compiler {
         if ci.is_module || ci.is_builtin || ci.is_bootstrap || cid == OBJECT_CLASS {
             return false;
         }
-        ci.ancestors.iter().any(|a| {
+        // Superclass-chain walk, not `ancestors` -- see `superclass_chain`.
+        self.superclass_chain(cid).any(|a| {
             matches!(
-                *a,
+                a,
                 INTEGER_CLASS | FLOAT_CLASS | SYMBOL_CLASS | NIL_CLASS | TRUE_CLASS | FALSE_CLASS
             )
         })

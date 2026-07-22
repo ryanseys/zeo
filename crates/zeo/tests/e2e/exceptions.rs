@@ -2757,3 +2757,31 @@ fn exception_attributes_raise_when_unset_and_private_call_flag() {
         "ArgumentError\nArgumentError\nArgumentError\nArgumentError\n:k\nnil\n:z\ntrue\nfalse\n[1, 2]\n"
     );
 }
+
+#[test]
+fn an_exception_subclass_instance_is_a_boxed_value_everywhere() {
+    // `EE.new` for a user `class EE < Exception` constructs a native-backed
+    // `RubyValue` (no generated struct exists) -- but registration-time type
+    // inference consulted the not-yet-linearized `ancestors` and typed the
+    // local as an unboxed struct handle, baking `new_handle` calls to a type
+    // codegen never emits (invalid Rust, from the timeout gem's
+    // `ExitException`). The ancestry predicates now walk the recorded
+    // superclass links, which exist from registration.
+    let result = run_ruby(
+        r#"
+        module T
+          class EE < Exception
+          end
+          class Er < RuntimeError
+            def self.go(m)
+              exc = EE.new(m)
+              yield exc
+            end
+          end
+        end
+        T::Er.go("x") { |e| puts e.class; puts e.message }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "T::EE\nx\n");
+}
