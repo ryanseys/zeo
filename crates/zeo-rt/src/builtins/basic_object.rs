@@ -102,7 +102,12 @@ builtin_methods! {
             // receiver, so `@ivar`/implicit-self calls resolve against `obj`.
             // A non-String argument keeps Ruby's own TypeError (handled by
             // `eval_value`'s coercion).
-            return crate::eval_value(arg.clone(), recv.clone(), 0);
+            return crate::eval_vm::eval_value_mode(
+                arg.clone(),
+                recv.clone(),
+                0,
+                crate::eval_vm::EvalMode::InstanceEval,
+            );
         }
         let blk = block_proc(block, "instance_eval")?;
         blk.call_with_self(recv, std::slice::from_ref(recv))

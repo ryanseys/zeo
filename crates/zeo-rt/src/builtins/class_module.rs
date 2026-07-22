@@ -448,7 +448,12 @@ builtin_methods! {
             // (`Hir::uses_runtime_eval`). Ignoring `args` here meant a string
             // form fell through to the block path and reported the misleading
             // "tried to create Proc object without a block".
-            return crate::eval_value(arg.clone(), recv.clone(), 0);
+            return crate::eval_vm::eval_value_mode(
+                arg.clone(),
+                recv.clone(),
+                0,
+                crate::eval_vm::EvalMode::ClassEval,
+            );
         }
         let blk = crate::builtins::basic_object::block_proc(block, "class_eval")?;
         blk.call_with_self(recv, &[])

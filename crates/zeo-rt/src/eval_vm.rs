@@ -14,12 +14,16 @@
 //! `def`/`class`. So the eval VM is a purely additive module against the
 //! live runtime, not a second compiler.
 //!
-//! **Scope of this stage: top-level-first.** An `eval` runs with a correct
-//! `self` (its receiver's ivars, implicit-self calls, constants, globals)
-//! but does NOT see the CALLER's own local variables -- those live as Rust
-//! stack slots the interpreter can't reach without codegen materializing a
-//! `Binding`. That materialization (and a first-class `binding`) is the next
-//! increment; a local ASSIGNED inside an eval is visible to later statements
+//! **Scope.** An `eval` runs with a correct `self` (its receiver's ivars,
+//! implicit-self calls, constants, globals) and can `def` methods (installed
+//! on the mode's default definee -- an instance method for `class_eval`, a
+//! singleton for `instance_eval`, `self`'s class for a plain `eval`), run
+//! blocks passed to calls, and `yield`/`return` inside an eval-defined
+//! method; each such method/block re-parses its own captured source per
+//! invocation. What it does NOT yet see is the CALLER's own local variables:
+//! those live as Rust stack slots the interpreter can't reach without codegen
+//! materializing a `Binding` (the next increment, with a first-class
+//! `binding`). A local ASSIGNED inside an eval is visible to later statements
 //! of the SAME eval, held in `Env::locals`.
 
 // Feature-split imports: the interpreter (`mod imp`, eval-vm on) raises
@@ -32,26 +36,52 @@ use crate::builtins::name_error;
 use crate::builtins::not_impl_error;
 use crate::{RubyValue, Signal};
 
+/// Which surface invoked the eval -- it decides where a `def` inside the
+/// source installs (the "default definee", CRuby's `cref`):
+/// - `Caller` (`Kernel#eval`): an instance method on `self`'s class (a plain
+///   top-level eval's `self` is the main object, so `def` lands on `Object`).
+/// - `ClassEval` (`Module#class_eval`): an instance method on `self` (a Class).
+/// - `InstanceEval` (`BasicObject#instance_eval`): a singleton method on
+///   `self` (a class method when `self` is itself a Class).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    Caller,
+    ClassEval,
+    InstanceEval,
+}
+
 /// Evaluate `src` as a standalone chunk of Ruby with `self` bound to
 /// `self_val`, resolving constants/globals against `box_id`. A parse failure
 /// becomes a catchable `SyntaxError`; the value of the last statement is
-/// returned (`nil` for an empty program).
+/// returned (`nil` for an empty program). `mode` decides where a `def`
+/// inside the source installs -- see [`EvalMode`].
 ///
 /// Compiled without the `eval-vm` feature this is the honest stub: a
 /// `NotImplementedError` naming the missing feature, mirroring the runtime's
 /// other "not compiled in" surfaces.
-pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+pub fn eval_string_mode(
+    src: &str,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+) -> Result<RubyValue, Signal> {
     #[cfg(feature = "eval-vm")]
     {
-        imp::eval_string(src, self_val, box_id)
+        imp::eval_string(src, self_val, box_id, mode)
     }
     #[cfg(not(feature = "eval-vm"))]
     {
-        let _ = (src, self_val, box_id);
+        let _ = (src, self_val, box_id, mode);
         Err(not_impl_error!(
             "string eval requires the eval VM (build zeo-rt with --features eval-vm)"
         ))
     }
+}
+
+/// [`eval_string_mode`] in the default `Kernel#eval` mode -- the entry the
+/// literal-splice fallback and the internal unit tests use.
+pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+    eval_string_mode(src, self_val, box_id, EvalMode::Caller)
 }
 
 /// The dynamic-`eval` entry every dispatch site funnels through: coerce the
@@ -59,20 +89,44 @@ pub fn eval_string(src: &str, self_val: RubyValue, box_id: u32) -> Result<RubyVa
 /// even a Symbol) and evaluate it with `self` bound to `self_val`. Keeping the
 /// coercion here means every caller -- `Kernel#eval`, `instance_eval`,
 /// `class_eval` -- shares one definition of "what counts as evalable source".
-pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+pub fn eval_value_mode(
+    src: RubyValue,
+    self_val: RubyValue,
+    box_id: u32,
+    mode: EvalMode,
+) -> Result<RubyValue, Signal> {
     let code = crate::builtins::convert::to_rstr(&src)?
         .lock()
         .to_utf8_lossy()
         .into_owned();
-    eval_string(&code, self_val, box_id)
+    eval_string_mode(&code, self_val, box_id, mode)
+}
+
+/// [`eval_value_mode`] in the default `Kernel#eval` mode.
+pub fn eval_value(src: RubyValue, self_val: RubyValue, box_id: u32) -> Result<RubyValue, Signal> {
+    eval_value_mode(src, self_val, box_id, EvalMode::Caller)
 }
 
 #[cfg(feature = "eval-vm")]
 mod imp {
     use super::*;
-    use crate::builtins::type_error;
-    use ruby_prism::{Node, NodeList, StatementsNode};
+    use crate::builtins::{arg_error, type_error};
+    use crate::{RProc, Symbol};
+    use ruby_prism::{DefNode, Node, NodeList, StatementsNode};
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    /// Where a `def` in the current lexical context installs -- CRuby's
+    /// default definee (`cref`). A `class`/`module` body pushes a fresh
+    /// `Class` definee; `def self.x` / `def obj.x` targets a `Singleton`.
+    #[derive(Clone)]
+    enum Definee {
+        /// An instance method on this class (top-level `Object`, a class body,
+        /// a `class_eval`).
+        Class(crate::ClassId),
+        /// A singleton method on this value (`instance_eval`, `def self.x`).
+        Singleton(RubyValue),
+    }
 
     /// The lexical environment a single `eval` runs in -- see the module docs
     /// on the "top-level-first" scope decision.
@@ -86,12 +140,22 @@ mod imp {
         locals: HashMap<String, RubyValue>,
         /// Defining box for constant/global resolution.
         box_id: u32,
+        /// Where a bare `def` installs (see [`Definee`]).
+        definee: Definee,
+        /// The block available to a `yield` in the current method body -- set
+        /// when interpreting an eval-defined method, `None` at eval top level.
+        block: Option<RubyValue>,
+        /// The full source under interpretation, shared so a `def` can slice
+        /// out its own text to re-parse on each later invocation (the eval VM
+        /// holds no `'src`-lifetime nodes past the call that built them).
+        src: Arc<str>,
     }
 
     pub(super) fn eval_string(
         src: &str,
         self_val: RubyValue,
         box_id: u32,
+        mode: EvalMode,
     ) -> Result<RubyValue, Signal> {
         let result = ruby_prism::parse(src.as_bytes());
         if let Some(err) = result.errors().next() {
@@ -104,12 +168,32 @@ mod imp {
             .node()
             .as_program_node()
             .ok_or_else(|| internal("eval: expected a top-level ProgramNode"))?;
+        let definee = initial_definee(&self_val, mode);
         let mut env = Env {
             self_val,
             locals: HashMap::new(),
             box_id,
+            definee,
+            block: None,
+            src: Arc::from(src),
         };
         eval_list(&program.statements().body(), &mut env)
+    }
+
+    /// The `cref` an eval starts with, from its mode and `self` -- see
+    /// [`EvalMode`].
+    fn initial_definee(self_val: &RubyValue, mode: EvalMode) -> Definee {
+        match mode {
+            EvalMode::InstanceEval => Definee::Singleton(self_val.clone()),
+            // A class body context (`class_eval`, or a `Caller` eval whose
+            // `self` is already a Class) installs instance methods on it; a
+            // plain object's `Caller` eval installs on that object's class
+            // (top-level `self` is main -> `Object`).
+            EvalMode::ClassEval | EvalMode::Caller => match self_val {
+                RubyValue::Class(cid) => Definee::Class(*cid),
+                other => Definee::Class(other.class_id()),
+            },
+        }
     }
 
     /// Evaluate every node in a list, answering the last value (`nil` if empty).
@@ -352,6 +436,36 @@ mod imp {
             return Ok(RubyValue::Range(start, end, range.is_exclude_end()));
         }
 
+        // ---- def ------------------------------------------------------------
+        if let Some(def) = node.as_def_node() {
+            return eval_def(&def, env);
+        }
+
+        // ---- return / yield (inside an eval-defined method body) ------------
+        if let Some(ret) = node.as_return_node() {
+            let value = match ret.arguments() {
+                Some(a) => eval_arguments_single(&a, env)?,
+                None => RubyValue::Nil,
+            };
+            return Err(Signal::Return(value));
+        }
+        if let Some(y) = node.as_yield_node() {
+            let Some(block) = env.block.clone() else {
+                return Err(crate::builtins::local_jump_error!("no block given (yield)"));
+            };
+            let mut args = Vec::new();
+            if let Some(a) = y.arguments() {
+                collect_arguments(&a.arguments(), &mut args, env)?;
+            }
+            return crate::dispatch::send_value_in(
+                env.box_id,
+                &block,
+                Symbol::intern("call"),
+                &args,
+                None,
+            );
+        }
+
         // ---- method calls ---------------------------------------------------
         if let Some(call) = node.as_call_node() {
             return eval_call(&call, env);
@@ -362,12 +476,319 @@ mod imp {
         ))
     }
 
-    fn eval_call(call: &ruby_prism::CallNode<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
-        if call.block().is_some() {
-            return Err(internal(
-                "eval: a block passed to a call inside `eval` is not supported yet",
+    /// `def name(params) body end` / `def self.name ...` / `def recv.name ...`
+    /// -- install a method whose body is INTERPRETED by re-parsing its own
+    /// source on each call (the VM keeps no `'src` nodes past this point).
+    /// Installs per the current [`Definee`], or on the receiver's singleton
+    /// for a `def recv.x`. Returns the method name Symbol, as Ruby's `def`
+    /// expression does.
+    fn eval_def(def: &DefNode<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
+        let name = String::from_utf8_lossy(def.name().as_slice()).into_owned();
+        let sym = Symbol::intern(&name);
+        let target = match def.receiver() {
+            Some(r) => Definee::Singleton(eval_node(&r, env)?),
+            None => env.definee.clone(),
+        };
+        let body = make_eval_method(&env.src, def, env.box_id)?;
+        match target {
+            Definee::Class(cid) => crate::runtime_define_method(cid, sym, body)?,
+            Definee::Singleton(val) => {
+                crate::runtime_meta::runtime_define_singleton_method(&val, sym, body)?
+            }
+        };
+        Ok(RubyValue::Symbol(sym))
+    }
+
+    /// Build the `RProc` body for an eval-defined method. It captures the
+    /// def's OWN source text (sliced from the enclosing eval source) and the
+    /// box; on every invocation it re-parses that snippet, binds the call's
+    /// args/block to the parameters, and interprets the body -- a `return`
+    /// inside folds to the method's value here (the method boundary).
+    fn make_eval_method(src: &Arc<str>, def: &DefNode<'_>, box_id: u32) -> Result<RProc, Signal> {
+        let loc = def.location();
+        let snippet: Arc<str> = Arc::from(&src[loc.start_offset()..loc.end_offset()]);
+        // Methods behave like lambdas w.r.t. `return` (it exits the method),
+        // which we implement directly by catching `Signal::Return` below.
+        Ok(RProc::with_self_and_block(
+            move |self_val: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
+                run_eval_method(&snippet, box_id, self_val, args, block)
+            },
+            RubyValue::Nil,
+            -1,
+            true,
+        ))
+    }
+
+    /// One invocation of an eval-defined method: re-parse the stored snippet,
+    /// bind params, interpret the body, and resolve `return`.
+    fn run_eval_method(
+        snippet: &str,
+        box_id: u32,
+        self_val: &RubyValue,
+        args: &[RubyValue],
+        block: Option<RubyValue>,
+    ) -> Result<RubyValue, Signal> {
+        let result = ruby_prism::parse(snippet.as_bytes());
+        if let Some(err) = result.errors().next() {
+            return Err(crate::dispatch::raise_error(
+                "SyntaxError",
+                err.message().to_string(),
             ));
         }
+        let program = result
+            .node()
+            .as_program_node()
+            .ok_or_else(|| internal("eval: re-parsed method body lost its ProgramNode"))?;
+        let node = program.statements().body().iter().next();
+        let def = node
+            .as_ref()
+            .and_then(Node::as_def_node)
+            .ok_or_else(|| internal("eval: re-parsed method body is not a def"))?;
+
+        let mut env = Env {
+            self_val: self_val.clone(),
+            locals: HashMap::new(),
+            box_id,
+            // A nested `def` inside a method body installs on the receiver's
+            // class -- the common lexical case.
+            definee: Definee::Class(self_val.class_id()),
+            block,
+            src: Arc::from(snippet),
+        };
+        bind_params(&def, args, &env.block.clone(), &mut env)?;
+
+        match eval_opt_stmts(def.body().and_then(|b| b.as_statements_node()), &mut env) {
+            Err(Signal::Return(v)) => Ok(v),
+            other => other,
+        }
+    }
+
+    /// Bind a method call's positional args, keyword args, and block to the
+    /// def's parameters, writing each into `env.locals`. Covers required,
+    /// optional (with defaults), rest, post, required/optional keyword, and
+    /// block parameters -- the shapes real methods use. Destructuring params
+    /// and `**kwrest` are surfaced as a `NotImplementedError` for now.
+    fn bind_params(
+        def: &DefNode<'_>,
+        args: &[RubyValue],
+        block: &Option<RubyValue>,
+        env: &mut Env,
+    ) -> Result<(), Signal> {
+        let Some(params) = def.parameters() else {
+            if !args.is_empty() {
+                return Err(arg_error!(
+                    "wrong number of arguments (given {}, expected 0)",
+                    args.len()
+                ));
+            }
+            return Ok(());
+        };
+
+        let keywords: Vec<_> = params.keywords().iter().collect();
+        let has_kw = !keywords.is_empty() || params.keyword_rest().is_some();
+        // With keyword params declared, a trailing Hash argument is the
+        // keyword source (CRuby's implicit-hash-to-keywords rule).
+        let (positional, kwargs): (&[RubyValue], Option<RubyValue>) = if has_kw {
+            match args.last() {
+                Some(RubyValue::Hash(_)) => {
+                    (&args[..args.len() - 1], Some(args[args.len() - 1].clone()))
+                }
+                _ => (args, None),
+            }
+        } else {
+            (args, None)
+        };
+
+        let reqs: Vec<_> = params.requireds().iter().collect();
+        let opts: Vec<_> = params.optionals().iter().collect();
+        let posts: Vec<_> = params.posts().iter().collect();
+        let rest = params.rest();
+        let has_rest = rest.is_some();
+        let (n_req, n_opt, n_post) = (reqs.len(), opts.len(), posts.len());
+        let min = n_req + n_post;
+
+        // Arity check with CRuby's "given X, expected ..." shapes.
+        let too_few = positional.len() < min;
+        let too_many = !has_rest && positional.len() > min + n_opt;
+        if too_few || too_many {
+            let expected = if has_rest {
+                format!("{min}+")
+            } else if n_opt > 0 {
+                format!("{min}..{}", min + n_opt)
+            } else {
+                format!("{min}")
+            };
+            return Err(arg_error!(
+                "wrong number of arguments (given {}, expected {expected})",
+                positional.len()
+            ));
+        }
+
+        // Front-load requireds, back-load posts, the middle feeds optionals
+        // then the rest splat.
+        for (i, p) in reqs.iter().enumerate() {
+            let name = required_name(p)?;
+            env.locals.insert(name, positional[i].clone());
+        }
+        let mid_end = positional.len() - n_post;
+        let mut cursor = n_req;
+        for opt in &opts {
+            let p = opt
+                .as_optional_parameter_node()
+                .ok_or_else(|| internal("eval: unsupported optional-parameter form"))?;
+            let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
+            let value = if cursor < mid_end {
+                let v = positional[cursor].clone();
+                cursor += 1;
+                v
+            } else {
+                eval_node(&p.value(), env)?
+            };
+            env.locals.insert(name, value);
+        }
+        if let Some(r) = rest {
+            // A named `*rest` collects the leftover middle; an anonymous `*`
+            // has no name to bind, so it simply absorbs them.
+            if let Some(rp) = r.as_rest_parameter_node() {
+                if let Some(name) = rp.name() {
+                    let collected: Vec<RubyValue> = positional[cursor..mid_end].to_vec();
+                    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+                    env.locals
+                        .insert(name, RubyValue::Array(crate::array_new(collected)));
+                }
+            }
+        }
+        for (i, p) in posts.iter().enumerate() {
+            let name = required_name(p)?;
+            env.locals.insert(name, positional[mid_end + i].clone());
+        }
+
+        bind_keywords(&keywords, params.keyword_rest().is_some(), &kwargs, env)?;
+
+        if let Some(bp) = params.block() {
+            if let Some(name) = bp.name() {
+                let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+                env.locals
+                    .insert(name, block.clone().unwrap_or(RubyValue::Nil));
+            }
+        }
+        Ok(())
+    }
+
+    /// Bind keyword parameters from the trailing kwargs hash. Required
+    /// keywords missing → ArgumentError; unknown keywords with no `**rest`
+    /// declared → ArgumentError -- both CRuby's messages.
+    fn bind_keywords(
+        keywords: &[Node<'_>],
+        has_kw_rest: bool,
+        kwargs: &Option<RubyValue>,
+        env: &mut Env,
+    ) -> Result<(), Signal> {
+        // Symbol-keyed view of the passed keywords.
+        let mut supplied: HashMap<String, RubyValue> = HashMap::new();
+        if let Some(RubyValue::Hash(h)) = kwargs {
+            for (k, v) in h.lock().values() {
+                if let RubyValue::Symbol(s) = k {
+                    supplied.insert(s.name().to_string(), v.clone());
+                }
+            }
+        }
+        let mut consumed: Vec<String> = Vec::new();
+        for kw in keywords {
+            if let Some(p) = kw.as_required_keyword_parameter_node() {
+                let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
+                let name = name.trim_end_matches(':').to_string();
+                let value = supplied
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| arg_error!("missing keyword: :{name}"))?;
+                consumed.push(name.clone());
+                env.locals.insert(name, value);
+            } else if let Some(p) = kw.as_optional_keyword_parameter_node() {
+                let name = String::from_utf8_lossy(p.name().as_slice()).into_owned();
+                let name = name.trim_end_matches(':').to_string();
+                let value = match supplied.get(&name) {
+                    Some(v) => v.clone(),
+                    None => eval_node(&p.value(), env)?,
+                };
+                consumed.push(name.clone());
+                env.locals.insert(name, value);
+            } else {
+                return Err(internal("eval: unsupported keyword-parameter form"));
+            }
+        }
+        if !has_kw_rest {
+            for key in supplied.keys() {
+                if !consumed.contains(key) {
+                    return Err(arg_error!("unknown keyword: :{key}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The name of a required (positional) parameter -- destructuring
+    /// `(a, b)` params are not modeled yet.
+    fn required_name(n: &Node<'_>) -> Result<String, Signal> {
+        n.as_required_parameter_node()
+            .map(|p| String::from_utf8_lossy(p.name().as_slice()).into_owned())
+            .ok_or_else(|| internal("eval: destructuring method parameters are not supported yet"))
+    }
+
+    /// Evaluate an argument list into a flat value vector (splats flattened),
+    /// pushing a trailing keyword hash for `k: v` arguments.
+    fn collect_arguments(
+        args: &NodeList<'_>,
+        out: &mut Vec<RubyValue>,
+        env: &mut Env,
+    ) -> Result<(), Signal> {
+        let mut kw_pairs: Vec<(RubyValue, RubyValue)> = Vec::new();
+        for arg in args.iter() {
+            if let Some(splat) = arg.as_splat_node() {
+                if let Some(expr) = splat.expression() {
+                    splat_into(out, eval_node(&expr, env)?);
+                }
+            } else if let Some(kh) = arg.as_keyword_hash_node() {
+                for el in kh.elements().iter() {
+                    let assoc = el.as_assoc_node().ok_or_else(|| {
+                        internal(
+                            "eval: `**` double-splat in keyword arguments is not supported yet",
+                        )
+                    })?;
+                    kw_pairs.push((
+                        eval_node(&assoc.key(), env)?,
+                        eval_node(&assoc.value(), env)?,
+                    ));
+                }
+            } else {
+                out.push(eval_node(&arg, env)?);
+            }
+        }
+        if !kw_pairs.is_empty() {
+            out.push(RubyValue::Hash(crate::hash_new(kw_pairs)));
+        }
+        Ok(())
+    }
+
+    /// The value of a `return`/`break` with an argument list: a lone value as
+    /// itself, several as an Array (`return 1, 2` -> `[1, 2]`).
+    fn eval_arguments_single(
+        args: &ruby_prism::ArgumentsNode<'_>,
+        env: &mut Env,
+    ) -> Result<RubyValue, Signal> {
+        let mut values = Vec::new();
+        collect_arguments(&args.arguments(), &mut values, env)?;
+        Ok(match values.len() {
+            1 => values.pop().unwrap(),
+            _ => RubyValue::Array(crate::array_new(values)),
+        })
+    }
+
+    fn eval_call(call: &ruby_prism::CallNode<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
+        let block = match call.block() {
+            Some(b) => Some(eval_call_block(&b, env)?),
+            None => None,
+        };
         let receiver = match call.receiver() {
             Some(r) => eval_node(&r, env)?,
             None => env.self_val.clone(),
@@ -377,21 +798,133 @@ mod imp {
 
         let mut args = Vec::new();
         if let Some(arg_node) = call.arguments() {
-            for arg in arg_node.arguments().iter() {
-                if let Some(splat) = arg.as_splat_node() {
-                    if let Some(expr) = splat.expression() {
-                        splat_into(&mut args, eval_node(&expr, env)?);
-                    }
-                } else if arg.as_keyword_hash_node().is_some() {
-                    return Err(internal(
-                        "eval: keyword arguments in a call inside `eval` are not supported yet",
-                    ));
-                } else {
-                    args.push(eval_node(&arg, env)?);
+            collect_arguments(&arg_node.arguments(), &mut args, env)?;
+        }
+        crate::dispatch::send_value_in(env.box_id, &receiver, sym, &args, block)
+    }
+
+    /// Build the `Proc` for a literal block (`{ ... }` / `do ... end`) passed
+    /// to a call inside eval. Like an eval-defined method it re-parses its own
+    /// source per invocation; unlike one it is NOT a lambda (a `return` inside
+    /// is a non-local return, left to propagate). A `&proc_arg` block-pass is
+    /// handled separately (it's already a Proc value).
+    fn eval_call_block(node: &Node<'_>, env: &mut Env) -> Result<RubyValue, Signal> {
+        if let Some(bp) = node.as_block_argument_node() {
+            // `foo(&blk)` -- forward an existing Proc/block value.
+            return match bp.expression() {
+                Some(e) => eval_node(&e, env),
+                None => Ok(RubyValue::Nil),
+            };
+        }
+        let block = node
+            .as_block_node()
+            .ok_or_else(|| internal("eval: unsupported block form on a call inside eval"))?;
+        let loc = block.location();
+        let snippet: Arc<str> = Arc::from(&env.src[loc.start_offset()..loc.end_offset()]);
+        let self_val = env.self_val.clone();
+        let box_id = env.box_id;
+        let proc = RProc::with_self_and_block(
+            move |bound_self: &RubyValue, args: &[RubyValue], _blk: Option<RubyValue>| {
+                run_eval_block(&snippet, box_id, bound_self, args)
+            },
+            self_val,
+            -1,
+            false,
+        );
+        Ok(RubyValue::Proc(proc))
+    }
+
+    /// One invocation of an eval-defined block: re-parse the `{...}`/`do...end`
+    /// snippet, bind its params to the yielded args, interpret the body.
+    fn run_eval_block(
+        snippet: &str,
+        box_id: u32,
+        self_val: &RubyValue,
+        args: &[RubyValue],
+    ) -> Result<RubyValue, Signal> {
+        let result = ruby_prism::parse(snippet.as_bytes());
+        if let Some(err) = result.errors().next() {
+            return Err(crate::dispatch::raise_error(
+                "SyntaxError",
+                err.message().to_string(),
+            ));
+        }
+        let program = result
+            .node()
+            .as_program_node()
+            .ok_or_else(|| internal("eval: re-parsed block lost its ProgramNode"))?;
+        // The snippet is a lone call whose single argument is the block; dig it
+        // back out. Simpler: prism parses `{ |x| x }` bare as a BlockNode only
+        // in call context, so we wrap-parse it as the block of a no-op call.
+        let block = program
+            .statements()
+            .body()
+            .iter()
+            .next()
+            .as_ref()
+            .and_then(Node::as_call_node)
+            .and_then(|c| c.block())
+            .and_then(|b| b.as_block_node());
+        let Some(block) = block else {
+            return Err(internal("eval: re-parsed block body is not a block"));
+        };
+        let mut env = Env {
+            self_val: self_val.clone(),
+            locals: HashMap::new(),
+            box_id,
+            definee: Definee::Class(self_val.class_id()),
+            block: None,
+            src: Arc::from(snippet),
+        };
+        bind_block_params(&block, args, &mut env)?;
+        eval_opt_stmts(block.body().and_then(|b| b.as_statements_node()), &mut env)
+    }
+
+    /// Bind a block's parameters to the yielded args -- lenient like `yield`
+    /// (extra args dropped, missing ones nil), with `*rest` and auto-splat of
+    /// a lone Array across multiple params.
+    fn bind_block_params(
+        block: &ruby_prism::BlockNode<'_>,
+        args: &[RubyValue],
+        env: &mut Env,
+    ) -> Result<(), Signal> {
+        let Some(params) = block
+            .parameters()
+            .and_then(|p| p.as_block_parameters_node())
+        else {
+            return Ok(());
+        };
+        let Some(params) = params.parameters() else {
+            return Ok(());
+        };
+        let reqs: Vec<_> = params.requireds().iter().collect();
+        // Auto-splat: `[[1,2]].each { |a, b| }` spreads the lone Array when the
+        // block declares more than one parameter (Ruby's block-arg rule).
+        let effective: Vec<RubyValue> = if reqs.len() > 1 && args.len() == 1 {
+            match &args[0] {
+                RubyValue::Array(a) => a.lock().clone(),
+                other => vec![other.clone()],
+            }
+        } else {
+            args.to_vec()
+        };
+        for (i, p) in reqs.iter().enumerate() {
+            let name = required_name(p)?;
+            env.locals
+                .insert(name, effective.get(i).cloned().unwrap_or(RubyValue::Nil));
+        }
+        if let Some(rest) = params.rest() {
+            if let Some(rp) = rest.as_rest_parameter_node() {
+                if let Some(name) = rp.name() {
+                    let collected: Vec<RubyValue> =
+                        effective.iter().skip(reqs.len()).cloned().collect();
+                    let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+                    env.locals
+                        .insert(name, RubyValue::Array(crate::array_new(collected)));
                 }
             }
         }
-        crate::dispatch::send_value_in(env.box_id, &receiver, sym, &args, None)
+        Ok(())
     }
 
     /// Concatenate a (possibly interpolated) string literal's parts. A literal
@@ -481,7 +1014,7 @@ mod imp {
         // `dispatch::send` requires). Arithmetic and real method calls are
         // covered end-to-end by the `--features eval-vm` e2e suite.
         fn eval(src: &str) -> RubyValue {
-            super::eval_string(src, RubyValue::Nil, 0).expect("eval ok")
+            super::eval_string(src, RubyValue::Nil, 0, super::EvalMode::Caller).expect("eval ok")
         }
 
         #[test]
@@ -547,8 +1080,13 @@ mod imp {
         #[test]
         fn while_loop_runs_and_returns_nil() {
             // Counts up entirely in locals -- no dispatch.
-            let v = super::eval_string("i = 0; i = 3 while false; i", RubyValue::Nil, 0)
-                .expect("eval ok");
+            let v = super::eval_string(
+                "i = 0; i = 3 while false; i",
+                RubyValue::Nil,
+                0,
+                super::EvalMode::Caller,
+            )
+            .expect("eval ok");
             assert!(matches!(v, RubyValue::Int(0)));
         }
 
@@ -584,7 +1122,7 @@ mod imp {
         #[test]
         #[should_panic(expected = "SyntaxError")]
         fn parse_error_is_a_syntax_error() {
-            let _ = super::eval_string("def", RubyValue::Nil, 0);
+            let _ = super::eval_string("def", RubyValue::Nil, 0, super::EvalMode::Caller);
         }
     }
 }
