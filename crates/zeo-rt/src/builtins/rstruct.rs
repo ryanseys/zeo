@@ -274,6 +274,37 @@ fn build_to_h(recv: &RubyValue) -> RubyValue {
     RubyValue::Hash(hash_new(pairs))
 }
 
+/// `Struct#to_h`/`Data#to_h`: the plain member-keyed Hash, or -- with a block --
+/// a Hash built from the `[key, value]` pairs the block returns for each
+/// `(member_sym, value)` pair (CRuby's `rb_struct_to_h` block form).
+fn struct_to_h(recv: &RubyValue, block: Option<RubyValue>) -> Result<RubyValue, Signal> {
+    let Some(RubyValue::Proc(p)) = block else {
+        return Ok(build_to_h(recv));
+    };
+    let inst = recv_struct(recv);
+    let meta = meta_of(inst.class_id).expect("struct instance has meta");
+    let slots = inst.slots.lock().clone();
+    let mut pairs = Vec::with_capacity(meta.members.len());
+    for (m, v) in meta.members.iter().zip(slots.iter()) {
+        let ret = p.call(&[RubyValue::Symbol(*m), v.clone()])?;
+        let RubyValue::Array(a) = &ret else {
+            return Err(type_error!(
+                "wrong element type {} (expected array)",
+                crate::builtins::class_name_of(&ret)
+            ));
+        };
+        let kv = a.lock();
+        if kv.len() != 2 {
+            return Err(arg_error!(
+                "element has wrong array length (expected 2, was {})",
+                kv.len()
+            ));
+        }
+        pairs.push((kv[0].clone(), kv[1].clone()));
+    }
+    Ok(RubyValue::Hash(hash_new(pairs)))
+}
+
 fn build_inspect(recv: &RubyValue) -> Result<RubyValue, Signal> {
     let inst = recv_struct(recv);
     let meta = meta_of(inst.class_id).expect("struct instance has meta");
@@ -368,8 +399,9 @@ builtin_methods! {
         Ok(RubyValue::Array(array_new(slots_of(recv))))
     }
 
-    "to_h" => fn to_h(recv, _args, _block) {
-        Ok(build_to_h(recv))
+    "to_h" => fn to_h(recv, args, block) {
+        arity!(args, 0);
+        struct_to_h(recv, block)
     }
 
     "each" => fn each(recv, args, block) {
@@ -476,8 +508,9 @@ builtin_methods! {
         members(recv, &[], None)
     }
 
-    "to_h" => fn data_to_h(recv, _args, _block) {
-        Ok(build_to_h(recv))
+    "to_h" => fn data_to_h(recv, args, block) {
+        arity!(args, 0);
+        struct_to_h(recv, block)
     }
 
     "deconstruct" => fn data_deconstruct(recv, _args, _block) {
