@@ -556,3 +556,92 @@ fn eval_vm_defines_methods_and_runs_blocks() {
         "11\n10\n[10, 20]\nwidget\n42\nfalse\n[1, 2, 5]\nmissing keyword: :x\nwrong number of arguments (given 0, expected 1+)\n[2, 4, 6]\n[3, 7]\n:foo\n"
     );
 }
+
+/// `class`/`module` bodies inside eval: a fresh class with initialize+ivars,
+/// a subclass whose method calls `super`, a module function, reopening a
+/// compiled class, and the class expression's value. Non-literal source ->
+/// the runtime eval VM. Oracle-verified verbatim.
+#[test]
+fn eval_vm_defines_classes_and_modules() {
+    let result = run_ruby(
+        r#"
+        code = <<~RUBY
+          class Point
+            def initialize(x, y)
+              @x = x
+              @y = y
+            end
+            def sum
+              @x + @y
+            end
+          end
+        RUBY
+        eval(code)
+        p Point.new(3, 4).sum
+        eval("class Base; def kind; \"base\"; end; end; class Sub < Base; def kind; \"sub:\" + super; end; end")
+        p Sub.new.kind
+        eval("module Helpers; def self.double(n); n * 2; end; end")
+        p Helpers.double(21)
+        class Widget
+          def base; 1; end
+        end
+        eval("class Widget; def extra; base + 10; end; end")
+        p Widget.new.extra
+        p eval("class Empty; 99; end")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\n\"sub:base\"\n42\n11\n99\n");
+}
+
+/// `define_method(name, method_obj)` / `define_singleton_method(name,
+/// method_obj)` with a `Method`/`UnboundMethod` body (not a Proc): aliases
+/// within a class, an UnboundMethod copied into a subclass, a bound Method
+/// as an object singleton, the subclass-compatibility TypeError, and the
+/// still-working Proc form. Oracle-verified verbatim.
+#[test]
+fn define_method_accepts_a_method_object_body() {
+    let result = run_ruby(
+        r#"
+        class A
+          def greet(n); "hi #{n}"; end
+          r = define_method(:hail, instance_method(:greet))
+          p r
+        end
+        p A.new.hail("x")
+        class Sub < A
+          define_method(:hey, A.instance_method(:greet))
+        end
+        p Sub.new.hey("y")
+        class B < A
+          def m(n); n * 2; end
+        end
+        class C < B
+          define_method(:m2, B.instance_method(:m))
+        end
+        p C.new.m2(5)
+        class Unrelated; end
+        begin
+          Unrelated.class_eval { define_method(:g, A.instance_method(:greet)) }
+        rescue TypeError => e
+          puts e.message
+        end
+        class Widget
+          def ping(x); "pong #{x}"; end
+        end
+        w = Widget.new
+        w.define_singleton_method(:sm, Widget.new.method(:ping))
+        p w.sm("z")
+        class D
+          define_method(:sq) { |x| x * x }
+        end
+        p D.new.sq(6)
+        puts "done"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        ":hail\n\"hi x\"\n\"hi y\"\n10\nbind argument must be a subclass of A\n\"pong z\"\n36\ndone\n"
+    );
+}

@@ -145,6 +145,9 @@ mod imp {
         /// The block available to a `yield` in the current method body -- set
         /// when interpreting an eval-defined method, `None` at eval top level.
         block: Option<RubyValue>,
+        /// The positional args the current eval-defined method was called with
+        /// -- what a bare `super` (zsuper) forwards. `None` at eval top level.
+        method_args: Option<Vec<RubyValue>>,
         /// The full source under interpretation, shared so a `def` can slice
         /// out its own text to re-parse on each later invocation (the eval VM
         /// holds no `'src`-lifetime nodes past the call that built them).
@@ -175,6 +178,7 @@ mod imp {
             box_id,
             definee,
             block: None,
+            method_args: None,
             src: Arc::from(src),
         };
         eval_list(&program.statements().body(), &mut env)
@@ -436,9 +440,21 @@ mod imp {
             return Ok(RubyValue::Range(start, end, range.is_exclude_end()));
         }
 
-        // ---- def ------------------------------------------------------------
+        // ---- def / class / module -------------------------------------------
         if let Some(def) = node.as_def_node() {
             return eval_def(&def, env);
+        }
+        if let Some(class) = node.as_class_node() {
+            return eval_class_or_module(
+                &class.constant_path(),
+                class.superclass(),
+                class.body(),
+                false,
+                env,
+            );
+        }
+        if let Some(module) = node.as_module_node() {
+            return eval_class_or_module(&module.constant_path(), None, module.body(), true, env);
         }
 
         // ---- return / yield (inside an eval-defined method body) ------------
@@ -463,6 +479,30 @@ mod imp {
                 Symbol::intern("call"),
                 &args,
                 None,
+            );
+        }
+
+        // ---- super (inside an eval-defined method) --------------------------
+        // The method was installed via `runtime_define_method`, whose wrapper
+        // pushes the (defining class, name) frame `send_super_dynamic` reads.
+        if let Some(sup) = node.as_super_node() {
+            let mut args = Vec::new();
+            if let Some(a) = sup.arguments() {
+                collect_arguments(&a.arguments(), &mut args, env)?;
+            }
+            return crate::runtime_meta::send_super_dynamic(
+                &env.self_val,
+                &args,
+                env.block.clone(),
+            );
+        }
+        if node.as_forwarding_super_node().is_some() {
+            // Bare `super` forwards the method's own arguments.
+            let args = env.method_args.clone().unwrap_or_default();
+            return crate::runtime_meta::send_super_dynamic(
+                &env.self_val,
+                &args,
+                env.block.clone(),
             );
         }
 
@@ -497,6 +537,102 @@ mod imp {
             }
         };
         Ok(RubyValue::Symbol(sym))
+    }
+
+    /// `class Name [< Super] ... end` / `module Name ... end` inside eval.
+    /// Reopens an existing class/module (a compiled AOT one, or one an earlier
+    /// eval created) or mints a fresh runtime one, then interprets the body
+    /// with `self` and the definee bound to it. The body runs in a FRESH local
+    /// scope (a Ruby class body sees no enclosing locals). Returns the body's
+    /// last value.
+    fn eval_class_or_module(
+        cpath: &Node<'_>,
+        superclass: Option<Node<'_>>,
+        body: Option<Node<'_>>,
+        is_module: bool,
+        env: &mut Env,
+    ) -> Result<RubyValue, Signal> {
+        let (owner, name) = cpath_target(cpath, env)?;
+        let existing = match crate::constants::const_get(owner, &name) {
+            Some(RubyValue::Class(cid)) => Some(cid),
+            _ if owner == 0 => crate::dispatch::class_id_by_name(&name),
+            _ => None,
+        };
+        let class_id = match existing {
+            Some(cid) => cid,
+            None => {
+                let super_val = match superclass {
+                    Some(s) => Some(eval_node(&s, env)?),
+                    None => None,
+                };
+                let val = if is_module {
+                    crate::runtime_meta::runtime_module_new(None)?
+                } else {
+                    crate::runtime_meta::runtime_class_new(super_val, None)?
+                };
+                let RubyValue::Class(cid) = val else {
+                    return Err(internal(
+                        "eval: class/module creation did not yield a Class",
+                    ));
+                };
+                let qualified = if owner == 0 {
+                    name.clone()
+                } else {
+                    format!(
+                        "{}::{name}",
+                        crate::dispatch::class_name(crate::ClassId(owner)).unwrap_or_default()
+                    )
+                };
+                crate::runtime_meta::name_runtime_class_if_anonymous(cid, &qualified);
+                crate::constants::const_set(owner, &name, RubyValue::Class(cid));
+                cid
+            }
+        };
+        let class_val = RubyValue::Class(class_id);
+        let mut body_env = Env {
+            self_val: class_val,
+            locals: HashMap::new(),
+            box_id: env.box_id,
+            definee: Definee::Class(class_id),
+            block: None,
+            method_args: None,
+            src: Arc::clone(&env.src),
+        };
+        eval_opt_stmts(body.and_then(|b| b.as_statements_node()), &mut body_env)
+    }
+
+    /// Resolve a `class`/`module` name node to `(owner class id, name)`. A
+    /// bare `Foo` is owned by the current definee (the top level -> `Object`,
+    /// id 0); a `A::B` path resolves `A` to a class/module value first.
+    fn cpath_target(node: &Node<'_>, env: &mut Env) -> Result<(u32, String), Signal> {
+        if let Some(cr) = node.as_constant_read_node() {
+            let name = String::from_utf8_lossy(cr.name().as_slice()).into_owned();
+            let owner = match &env.definee {
+                Definee::Class(cid) => cid.0,
+                Definee::Singleton(_) => 0,
+            };
+            return Ok((owner, name));
+        }
+        if let Some(cp) = node.as_constant_path_node() {
+            let name = cp
+                .name()
+                .map(|n| String::from_utf8_lossy(n.as_slice()).into_owned())
+                .ok_or_else(|| internal("eval: a computed `::` class name is not supported"))?;
+            let owner = match cp.parent() {
+                None => 0,
+                Some(parent) => match eval_node(&parent, env)? {
+                    RubyValue::Class(cid) => cid.0,
+                    other => {
+                        return Err(type_error!(
+                            "{} is not a class/module",
+                            other.inspect_string()
+                        ));
+                    }
+                },
+            };
+            return Ok((owner, name));
+        }
+        Err(internal("eval: unsupported class/module name form"))
     }
 
     /// Build the `RProc` body for an eval-defined method. It captures the
@@ -553,6 +689,7 @@ mod imp {
             // class -- the common lexical case.
             definee: Definee::Class(self_val.class_id()),
             block,
+            method_args: Some(args.to_vec()),
             src: Arc::from(snippet),
         };
         bind_params(&def, args, &env.block.clone(), &mut env)?;
@@ -874,6 +1011,7 @@ mod imp {
             box_id,
             definee: Definee::Class(self_val.class_id()),
             block: None,
+            method_args: None,
             src: Arc::from(snippet),
         };
         bind_block_params(&block, args, &mut env)?;
