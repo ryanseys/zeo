@@ -63,6 +63,28 @@ and a COMPUTED name (`define_singleton_method(sym_var)`) works everywhere
 (it rides the runtime_meta path). Fix direction: desugar only in
 statement position, else emit the runtime call.
 
+Backtrace-frame divergences (2026-07-22, from the frame-tracking pass;
+everything else in the 20-case oracle battery matches ruby 4.0.5
+verbatim):
+
+- **No C-method frames.** CRuby shows a frame for most (not all) C
+  methods -- `Array#each` between a block and its caller, `Integer#/` at
+  a division's line -- attributed to the CALLER's file:line. zeo's
+  builtins are native fns that push no frame, so those rows are simply
+  absent (surrounding Ruby-level frames are correct). Fixing this needs a
+  frame push at the dynamic-dispatch boundary plus the codegen fast
+  paths; note `Class#new` is one CRuby itself does NOT show.
+- **Arity-error attribution.** CRuby raises "wrong number of arguments"
+  inside the CALLEE's frame (`file:DEF_LINE:in 'Object#f'`); zeo checks
+  arity at the call site, so the innermost frame is the caller's.
+- **`define_method(:m) { ... }` labels.** The literal form desugars to a
+  `def` at compile time, so its frames say `Foo#m` where CRuby says
+  `block in <class:Foo>` (the lexical block label).
+- **Class-body execution order.** Class bodies run before top-level
+  statements (pre-existing), so a rescued raise in a class body prints
+  before earlier top-level output, and the `<main>` frame under a
+  class-body frame reads line 0.
+
 # The lossy-UTF-8 audit (the next encoding pass)
 
 With the 24-encoding engine landed, the remaining systematic gap is the

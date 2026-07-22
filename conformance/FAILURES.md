@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **125 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `2685cb0`
+Suite `spinel` — **125 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `bfdf297`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -11,11 +11,12 @@ Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb`
 - reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'attributes' for class BadAttributes (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>'
 ```
 
 diff:
@@ -26,8 +27,9 @@ first difference at line 1
 /Users/ryanseys/dev/spinel/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
 	from /Users/ryanseys/dev/spinel/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
 
---- actual (1 lines)
-uncaught exception: undefined method 'attributes' for class BadAttributes (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>'
 ```
 
 ---
@@ -36,11 +38,12 @@ uncaught exception: undefined method 'attributes' for class BadAttributes (NoMet
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb`
 - reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:define_method` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>'
 ```
 
 diff:
@@ -49,8 +52,9 @@ diff:
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>'
 ```
 
 ---
@@ -59,11 +63,12 @@ uncaught exception: undefined method 'define_method' for an instance of BoxPlus 
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb`
 - reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:define_method` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
 ```
 
 diff:
@@ -75,8 +80,9 @@ first difference at line 1
 	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb:15:in 'BasicObject#instance_exec'
 	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
 
---- actual (1 lines)
-uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
 ```
 
 ---
@@ -85,11 +91,11 @@ uncaught exception: undefined method 'define_method' for an instance of BoxPlus 
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb`
 - reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-tried-to-create-proc-object-without-block-in-8cab` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-6dd5` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>': tried to create Proc object without a block (in `instance_exec') (ArgumentError)
 ```
 
 diff:
@@ -101,7 +107,7 @@ first difference at line 1
 	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>'
 
 --- actual (1 lines)
-uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>': tried to create Proc object without a block (in `instance_exec') (ArgumentError)
 ```
 
 ---
@@ -111,11 +117,11 @@ uncaught exception: tried to create Proc object without a block (in `instance_ex
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-index-too-small-for-array-minimum-indexerror-4878` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-1c66` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: index -7 too small for array; minimum: -3 (IndexError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb:55:in '<main>': index -7 too small for array; minimum: -3 (IndexError)
 ```
 
 diff:
@@ -155,7 +161,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: index -7 too small for array; minimum: -3 (IndexError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb:55:in '<main>': index -7 too small for array; minimum: -3 (IndexError)
 ```
 
 ---
@@ -169,7 +175,7 @@ uncaught exception: index -7 too small for array; minimum: -3 (IndexError)
 
 stderr:
 ```
-uncaught exception: undefined method 'new' for class BasicObject (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb:3:in '<main>': undefined method 'new' for class BasicObject (NoMethodError)
 ```
 
 diff:
@@ -187,7 +193,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'new' for class BasicObject (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb:3:in '<main>': undefined method 'new' for class BasicObject (NoMethodError)
 ```
 
 ---
@@ -229,11 +235,12 @@ yes
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-index-too-small-for-array-minimum-indexerror-4878` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-ca26` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: index -5 too small for array; minimum: -3 (IndexError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:188:in 'Object#t_array_fill': index -5 too small for array; minimum: -3 (IndexError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:193:in '<main>'
 ```
 
 diff:
@@ -416,8 +423,9 @@ done
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: index -5 too small for array; minimum: -3 (IndexError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:188:in 'Object#t_array_fill': index -5 too small for array; minimum: -3 (IndexError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:193:in '<main>'
 ```
 
 ---
@@ -1021,11 +1029,12 @@ true
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:[]=` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:30:in 'Object#t_fiber_storage_current_alias': undefined method '[]=' for an instance of Fiber (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:36:in '<main>'
 ```
 
 diff:
@@ -1049,8 +1058,9 @@ nil_ok
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:30:in 'Object#t_fiber_storage_current_alias': undefined method '[]=' for an instance of Fiber (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:36:in '<main>'
 ```
 
 ---
@@ -1060,11 +1070,12 @@ uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodErr
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:length` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'length' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:50:in 'Object#t_program_name_gvar': undefined method 'length' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>'
 ```
 
 diff:
@@ -1149,8 +1160,9 @@ done
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'length' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:50:in 'Object#t_program_name_gvar': undefined method 'length' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>'
 ```
 
 ---
@@ -1160,11 +1172,12 @@ uncaught exception: undefined method 'length' for nil (NoMethodError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-3ae3` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:161:in 'Object#t_string_squeeze_multi_arg': wrong number of arguments (given 2, expected 0..1) (ArgumentError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:166:in '<main>'
 ```
 
 diff:
@@ -1310,8 +1323,9 @@ xhxexlxlxox
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:161:in 'Object#t_string_squeeze_multi_arg': wrong number of arguments (given 2, expected 0..1) (ArgumentError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:166:in '<main>'
 ```
 
 ---
@@ -1419,11 +1433,12 @@ first difference at line 1
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attribute` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:2:in '<class:CompileTimeSingleAttribute>': undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>'
 ```
 
 diff:
@@ -1440,8 +1455,9 @@ Grace
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:2:in '<class:CompileTimeSingleAttribute>': undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>'
 ```
 
 ---
@@ -1451,11 +1467,12 @@ uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttr
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-823a` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'attributes' for class WrappedResult (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:4:in '<class:WrappedResult>': undefined method 'attributes' for class WrappedResult (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>'
 ```
 
 diff:
@@ -1472,8 +1489,9 @@ manual:reviewed
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'attributes' for class WrappedResult (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:4:in '<class:WrappedResult>': undefined method 'attributes' for class WrappedResult (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>'
 ```
 
 ---
@@ -1483,11 +1501,12 @@ uncaught exception: undefined method 'attributes' for class WrappedResult (NoMet
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-5ed7` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:2:in '<class:CompileTimeAttributeHolder>': undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>'
 ```
 
 diff:
@@ -1505,8 +1524,9 @@ Ada
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:2:in '<class:CompileTimeAttributeHolder>': undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>'
 ```
 
 ---
@@ -1516,11 +1536,12 @@ uncaught exception: undefined method 'attributes' for class CompileTimeAttribute
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-d498` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'attributes' for class CompileTimePostState (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:2:in '<class:CompileTimePostState>': undefined method 'attributes' for class CompileTimePostState (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>'
 ```
 
 diff:
@@ -1539,8 +1560,9 @@ true
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'attributes' for class CompileTimePostState (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:2:in '<class:CompileTimePostState>': undefined method 'attributes' for class CompileTimePostState (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>'
 ```
 
 ---
@@ -1554,7 +1576,7 @@ uncaught exception: undefined method 'attributes' for class CompileTimePostState
 
 stderr:
 ```
-uncaught exception: undefined method 'wordy' for an instance of Integer (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError)
 ```
 
 diff:
@@ -1572,7 +1594,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'wordy' for an instance of Integer (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError)
 ```
 
 ---
@@ -1586,7 +1608,7 @@ uncaught exception: undefined method 'wordy' for an instance of Integer (NoMetho
 
 stderr:
 ```
-uncaught exception: uninitialized constant M::C (NameError)
+uninitialized constant M::C (NameError)
 ```
 
 diff:
@@ -1623,7 +1645,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant M::C (NameError)
+uninitialized constant M::C (NameError)
 ```
 
 ---
@@ -1747,11 +1769,11 @@ false
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-block-given-yield-localjumperror-1be0` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: no block given (yield) (LocalJumpError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError)
 ```
 
 diff:
@@ -1777,7 +1799,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: no block given (yield) (LocalJumpError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError)
 ```
 
 ---
@@ -1841,11 +1863,12 @@ top
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-cannot-convert-proc-into-an-ffi-pointer-typeerror-3629` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: cannot convert Proc into an FFI pointer (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:11:in 'L.qsort': cannot convert Proc into an FFI pointer (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>'
 ```
 
 diff:
@@ -1865,8 +1888,9 @@ done
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: cannot convert Proc into an FFI pointer (TypeError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:11:in 'L.qsort': cannot convert Proc into an FFI pointer (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>'
 ```
 
 ---
@@ -1968,11 +1992,12 @@ BUG: no raise
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-can-modify-frozen-string-plain-frozenerror-b7c8` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: can't modify frozen String: "plain" (FrozenError)
+/Users/ryanseys/dev/zeo/conformance/corpus/test/frozen_string_literal_per_file/helper_plain.rb:7:in 'Object#plain_helper_build': can't modify frozen String: "plain" (FrozenError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb:8:in '<main>'
 ```
 
 diff:
@@ -1992,8 +2017,9 @@ true
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: can't modify frozen String: "plain" (FrozenError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/conformance/corpus/test/frozen_string_literal_per_file/helper_plain.rb:7:in 'Object#plain_helper_build': can't modify frozen String: "plain" (FrozenError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb:8:in '<main>'
 ```
 
 ---
@@ -2007,7 +2033,7 @@ uncaught exception: can't modify frozen String: "plain" (FrozenError)
 
 stderr:
 ```
-uncaught exception: undefined method '>=' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError)
 ```
 
 diff:
@@ -2026,7 +2052,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method '>=' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError)
 ```
 
 ---
@@ -2040,7 +2066,7 @@ uncaught exception: undefined method '>=' for nil (NoMethodError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenSSL (NameError)
+uninitialized constant OpenSSL (NameError)
 ```
 
 diff:
@@ -2061,7 +2087,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenSSL (NameError)
+uninitialized constant OpenSSL (NameError)
 ```
 
 ---
@@ -2071,11 +2097,11 @@ uncaught exception: uninitialized constant OpenSSL (NameError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-integer-does-not-have-dig-method-typeerror-ee2a` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-10d6` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: Integer does not have #dig method (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb:72:in '<main>': Integer does not have #dig method (TypeError)
 ```
 
 diff:
@@ -2158,7 +2184,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: Integer does not have #dig method (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb:72:in '<main>': Integer does not have #dig method (TypeError)
 ```
 
 ---
@@ -2168,11 +2194,12 @@ uncaught exception: Integer does not have #dig method (TypeError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:<<` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-2467` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method '<<' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in 'block in <main>': undefined method '<<' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in '<main>'
 ```
 
 diff:
@@ -2190,8 +2217,9 @@ first difference at line 2
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method '<<' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in 'block in <main>': undefined method '<<' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in '<main>'
 ```
 
 ---
@@ -2347,7 +2375,7 @@ first difference at line 10
 
 stderr:
 ```
-uncaught exception: undefined method '>=' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/i1021.rb:7:in '<main>': undefined method '>=' for nil (NoMethodError)
 ```
 
 diff:
@@ -2377,7 +2405,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method '>=' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/i1021.rb:7:in '<main>': undefined method '>=' for nil (NoMethodError)
 ```
 
 ---
@@ -2391,7 +2419,7 @@ uncaught exception: undefined method '>=' for nil (NoMethodError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameError)
+uninitialized constant RequestDispatch::ViewHelpers (NameError)
 ```
 
 diff:
@@ -2409,7 +2437,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameError)
+uninitialized constant RequestDispatch::ViewHelpers (NameError)
 ```
 
 ---
@@ -2761,10 +2789,10 @@ true
 
 --- actual (5 lines)
 C
--3283607483369279049
+4448284125482149461
 S
 P
-true
+false
 ```
 
 ---
@@ -2778,7 +2806,7 @@ true
 
 stderr:
 ```
-uncaught exception: undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb:3:in '<main>': undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError)
 ```
 
 diff:
@@ -2802,7 +2830,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb:3:in '<main>': undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError)
 ```
 
 ---
@@ -2846,11 +2874,11 @@ TypeError
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-receiver-is-available-argumenterror-234c` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: no receiver is available (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb:2:in '<main>': no receiver is available (ArgumentError)
 ```
 
 diff:
@@ -2870,7 +2898,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: no receiver is available (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb:2:in '<main>': no receiver is available (ArgumentError)
 ```
 
 ---
@@ -3048,7 +3076,7 @@ true
 
 stderr:
 ```
-uncaught exception: wrong number of arguments (given 1, expected 0) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb:1:in '<main>': wrong number of arguments (given 1, expected 0) (ArgumentError)
 ```
 
 diff:
@@ -3069,7 +3097,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: wrong number of arguments (given 1, expected 0) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb:1:in '<main>': wrong number of arguments (given 1, expected 0) (ArgumentError)
 ```
 
 ---
@@ -3185,11 +3213,11 @@ false
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-receiver-is-available-argumenterror-234c` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: no receiver is available (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError)
 ```
 
 diff:
@@ -3210,7 +3238,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: no receiver is available (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError)
 ```
 
 ---
@@ -3250,7 +3278,7 @@ true
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 diff:
@@ -3286,7 +3314,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
@@ -3300,7 +3328,7 @@ uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 diff:
@@ -3317,7 +3345,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
@@ -3361,7 +3389,7 @@ false
 
 stderr:
 ```
-uncaught exception: uninitialized constant A (NameError)
+uninitialized constant A (NameError)
 ```
 
 diff:
@@ -3382,7 +3410,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant A (NameError)
+uninitialized constant A (NameError)
 ```
 
 ---
@@ -3396,7 +3424,7 @@ uncaught exception: uninitialized constant A (NameError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant User (NameError)
+uninitialized constant User (NameError)
 ```
 
 diff:
@@ -3414,7 +3442,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant User (NameError)
+uninitialized constant User (NameError)
 ```
 
 ---
@@ -3428,7 +3456,7 @@ uncaught exception: uninitialized constant User (NameError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 diff:
@@ -3445,7 +3473,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
@@ -3459,7 +3487,7 @@ uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 diff:
@@ -3476,7 +3504,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
@@ -3490,7 +3518,7 @@ uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 
 stderr:
 ```
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 diff:
@@ -3507,7 +3535,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
@@ -3667,11 +3695,12 @@ hi
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:native_obj` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-59e4` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'native_obj' for module NB (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<class:NB>': undefined method 'native_obj' for module NB (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>'
 ```
 
 diff:
@@ -3690,8 +3719,9 @@ first difference at line 1
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'native_obj' for module NB (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<class:NB>': undefined method 'native_obj' for module NB (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>'
 ```
 
 ---
@@ -3701,11 +3731,11 @@ uncaught exception: undefined method 'native_obj' for module NB (NoMethodError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-hash-can-be-coerced-into-integer-typeerror-8a63` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: Hash can't be coerced into Integer (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb:11:in '<main>': Hash can't be coerced into Integer (TypeError)
 ```
 
 diff:
@@ -3748,7 +3778,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: Hash can't be coerced into Integer (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb:11:in '<main>': Hash can't be coerced into Integer (TypeError)
 ```
 
 ---
@@ -3846,11 +3876,12 @@ first difference at line 1
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:[]` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-26e1` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method '[]' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:43:in 'Object#consume': undefined method '[]' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:51:in '<main>'
 ```
 
 diff:
@@ -3871,8 +3902,9 @@ name=
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method '[]' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:43:in 'Object#consume': undefined method '[]' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:51:in '<main>'
 ```
 
 ---
@@ -3882,11 +3914,12 @@ uncaught exception: undefined method '[]' for nil (NoMethodError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:include?` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-faa9` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'include?' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:16:in 'Object#consume': undefined method 'include?' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:24:in '<main>'
 ```
 
 diff:
@@ -3906,8 +3939,9 @@ false
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'include?' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:16:in 'Object#consume': undefined method 'include?' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:24:in '<main>'
 ```
 
 ---
@@ -3917,11 +3951,12 @@ uncaught exception: undefined method 'include?' for nil (NoMethodError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:length` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-1c7a` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'length' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:32:in 'Object#consume_length': undefined method 'length' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:44:in '<main>'
 ```
 
 diff:
@@ -3942,8 +3977,9 @@ true
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method 'length' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:32:in 'Object#consume_length': undefined method 'length' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:44:in '<main>'
 ```
 
 ---
@@ -4183,7 +4219,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (105705796) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (106298738) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4257,7 +4293,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (105705796) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (106298738) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4535,7 +4571,7 @@ nil
 
 stderr:
 ```
-uncaught exception: regex parse error:
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_line_anchors.rb:33:in '<main>': regex parse error:
     a\Z
      ^^
 error: unrecognized escape sequence (RegexpError)
@@ -4582,7 +4618,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (4 lines)
-uncaught exception: regex parse error:
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_line_anchors.rb:33:in '<main>': regex parse error:
     a\Z
      ^^
 error: unrecognized escape sequence (RegexpError)
@@ -4637,7 +4673,7 @@ true
 
 stderr:
 ```
-uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb:27:in '<main>': undefined method 'hi' for an instance of Mailer (NoMethodError)
 ```
 
 diff:
@@ -4659,7 +4695,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb:27:in '<main>': undefined method 'hi' for an instance of Mailer (NoMethodError)
 ```
 
 ---
@@ -4771,7 +4807,7 @@ Set["a", "b"]
 
 stderr:
 ```
-uncaught exception: undefined method 'kill' for module Process (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb:33:in '<main>': undefined method 'kill' for module Process (NoMethodError)
 ```
 
 diff:
@@ -4853,7 +4889,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'kill' for module Process (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb:33:in '<main>': undefined method 'kill' for module Process (NoMethodError)
 ```
 
 ---
@@ -4925,7 +4961,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-32
+34
 diff
 ```
 
@@ -4964,7 +5000,7 @@ wrN6TyzDgGJPFsKQw7ZGBsOPOFlFwrLCvsOEw6o=
 
 stderr:
 ```
-uncaught exception: wrong number of arguments (given 0, expected 1+) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError)
 ```
 
 diff:
@@ -4987,7 +5023,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: wrong number of arguments (given 0, expected 1+) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError)
 ```
 
 ---
@@ -5043,7 +5079,7 @@ RangeError
 
 stderr:
 ```
-uncaught exception: wrong number of arguments (given 1, expected 2) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb:4:in '<main>': wrong number of arguments (given 1, expected 2) (ArgumentError)
 ```
 
 diff:
@@ -5064,7 +5100,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: wrong number of arguments (given 1, expected 2) (ArgumentError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb:4:in '<main>': wrong number of arguments (given 1, expected 2) (ArgumentError)
 ```
 
 ---
@@ -5119,11 +5155,11 @@ y
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-block-given-yield-localjumperror-1be0` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: no block given (yield) (LocalJumpError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError)
 ```
 
 diff:
@@ -5149,7 +5185,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: no block given (yield) (LocalJumpError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError)
 ```
 
 ---
@@ -5259,7 +5295,7 @@ first difference at line 16
 
 stderr:
 ```
-uncaught exception: undefined method '>' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError)
 ```
 
 diff:
@@ -5276,7 +5312,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method '>' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError)
 ```
 
 ---
@@ -5360,11 +5396,12 @@ first difference at line 1
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:<=` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method '<=' for nil (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:7:in 'Object#churn_gc': undefined method '<=' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:43:in '<main>'
 ```
 
 diff:
@@ -5380,8 +5417,9 @@ ok
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uncaught exception: undefined method '<=' for nil (NoMethodError)
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:7:in 'Object#churn_gc': undefined method '<=' for nil (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:43:in '<main>'
 ```
 
 ---
@@ -5507,7 +5545,7 @@ first difference at line 1
 
 stderr:
 ```
-uncaught exception: uninitialized constant Line (NameError)
+uninitialized constant Line (NameError)
 ```
 
 diff:
@@ -5527,7 +5565,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: uninitialized constant Line (NameError)
+uninitialized constant Line (NameError)
 ```
 
 ---
@@ -5568,11 +5606,11 @@ true
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-can-coerce-complex-into-float-typeerror-9cc0` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: can't coerce Complex into Float (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError)
 ```
 
 diff:
@@ -5645,7 +5683,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: can't coerce Complex into Float (TypeError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError)
 ```
 
 ---
@@ -5683,7 +5721,7 @@ done
 
 stderr:
 ```
-uncaught exception: undefined method 'hello' for main (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError)
 ```
 
 diff:
@@ -5707,7 +5745,7 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'hello' for main (NoMethodError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError)
 ```
 
 ---

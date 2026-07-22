@@ -6,43 +6,50 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
-| P | missing-const:OpenStruct::Warning | 5 | issue_3135, issue_3155, issue_3193 | uncaught exception: uninitialized constant OpenStruct::Warning (NameError) |
-| g | arity-panic | 4 | bundle_tiny_string, issue_3057, str_method_nil_arg_no_segv | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
-| P | missing-method:attributes | 4 | compile_time_attributes, compile_time_define_method_predicates, analyze_fail/attributes_non_symbol | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
-| ? | auto-index-too-small-for-array-minimum-indexerror-4878 | 2 | array_splice_exceptions, bundle_array_a | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
-| ? | auto-no-block-given-yield-localjumperror-1be0 | 2 | string_enum_inspect_source, enum_terminal_chunk_zip_lazy | uncaught exception: no block given (yield) (LocalJumpError) |
-| ? | auto-no-receiver-is-available-argumenterror-234c | 2 | issue_3002, issue_3119 | uncaught exception: no receiver is available (ArgumentError) |
-| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | uncaught exception: undefined method '>=' for nil (NoMethodError) |
-| P | missing-method:define_method | 2 | analyze_fail/instance_exec_def_in_block, analyze_fail/instance_exec_define_method | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
-| P | missing-method:length | 2 | param_lengthlike_body_widen, bundle_misc_c_36 | uncaught exception: undefined method 'length' for nil (NoMethodError) |
-| ? | auto-can-coerce-complex-into-float-typeerror-9cc0 | 1 | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
-| ? | auto-can-modify-frozen-string-plain-frozenerror-b7c8 | 1 | frozen_string_literal_per_file_rev | uncaught exception: can't modify frozen String: "plain" (FrozenError) |
-| ? | auto-cannot-convert-proc-into-an-ffi-pointer-typeerror-3629 | 1 | ffi_callback | uncaught exception: cannot convert Proc into an FFI pointer (TypeError) |
+| P | missing-const:OpenStruct::Warning | 5 | issue_3135, issue_3155, issue_3193 | uninitialized constant OpenStruct::Warning (NameError) |
+| g | arity-panic | 3 | str_method_nil_arg_no_segv, string_enum_arg_forms, issue_3057 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6 | 2 | bundle_misc_c_36, bundle_misc_c_09 | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>' |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b | 2 | issue_3119, issue_3002 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError) |
+| P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
 | ? | auto-error-unrecognized-escape-sequence-regexperror-2794 | 1 | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
-| ? | auto-hash-can-be-coerced-into-integer-typeerror-8a63 | 1 | numeric_edges_wave10 | uncaught exception: Hash can't be coerced into Integer (TypeError) |
-| ? | auto-integer-does-not-have-dig-method-typeerror-ee2a | 1 | hash_dig | uncaught exception: Integer does not have #dig method (TypeError) |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0 | 1 | compile_time_attribute_singular | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827 | 1 | string_split_inline_arg_gc_root | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:43:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-1c7a | 1 | param_lengthlike_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:44:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-2467 | 1 | hash_each_with_object | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-26e1 | 1 | param_body_hash_inference | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:51:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-3ae3 | 1 | bundle_tiny_string | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:166:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3 | 1 | analyze_fail/instance_exec_def_in_block | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-59e4 | 1 | native_binding_poc | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-5ed7 | 1 | compile_time_attributes | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28 | 1 | analyze_fail/attributes_non_symbol | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011 | 1 | frozen_string_literal_per_file_rev | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb:8:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-823a | 1 | compile_time_attribute_wrapped_record | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f | 1 | analyze_fail/instance_exec_define_method | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-ca26 | 1 | bundle_array_a | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:193:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-d498 | 1 | compile_time_define_method_predicates | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249 | 1 | ffi_callback | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-faa9 | 1 | param_include_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:24:in '<main>' |
 | ? | auto-territory-not-syntaxerror-ed71 | 1 | ffi_variadic | territory, not a SyntaxError) |
-| ? | auto-tried-to-create-proc-object-without-block-in-8cab | 1 | analyze_fail/instance_exec_no_block | uncaught exception: tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
-| P | missing-const:A | 1 | issue_3179 | uncaught exception: uninitialized constant A (NameError) |
-| P | missing-const:Line | 1 | struct_block_constant_init | uncaught exception: uninitialized constant Line (NameError) |
-| P | missing-const:M::C | 1 | constant_path | uncaught exception: uninitialized constant M::C (NameError) |
-| P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uncaught exception: uninitialized constant OpenSSL (NameError) |
-| P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameError) |
-| P | missing-const:User | 1 | issue_3180 | uncaught exception: uninitialized constant User (NameError) |
-| P | missing-method:<< | 1 | hash_each_with_object | uncaught exception: undefined method '<<' for nil (NoMethodError) |
-| P | missing-method:<= | 1 | string_split_inline_arg_gc_root | uncaught exception: undefined method '<=' for nil (NoMethodError) |
-| P | missing-method:> | 1 | string_plus_heap_gc | uncaught exception: undefined method '>' for nil (NoMethodError) |
-| P | missing-method:[] | 1 | param_body_hash_inference | uncaught exception: undefined method '[]' for nil (NoMethodError) |
-| P | missing-method:[]= | 1 | bundle_misc_c_09 | uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodError) |
-| P | missing-method:attribute | 1 | compile_time_attribute_singular | uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError) |
-| P | missing-method:hello | 1 | toplevel_include_module_function | uncaught exception: undefined method 'hello' for main (NoMethodError) |
-| P | missing-method:hi | 1 | send_literal_and_user | uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodError) |
-| P | missing-method:include? | 1 | param_include_body_widen | uncaught exception: undefined method 'include?' for nil (NoMethodError) |
-| P | missing-method:kill | 1 | signal_module_surface | uncaught exception: undefined method 'kill' for module Process (NoMethodError) |
-| P | missing-method:native_obj | 1 | native_binding_poc | uncaught exception: undefined method 'native_obj' for module NB (NoMethodError) |
-| P | missing-method:new | 1 | basicobject_new | uncaught exception: undefined method 'new' for class BasicObject (NoMethodError) |
-| P | missing-method:with_index | 1 | issue_2993 | uncaught exception: undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError) |
-| P | missing-method:wordy | 1 | const_aliased_class_reopen_include | uncaught exception: undefined method 'wordy' for an instance of Integer (NoMethodError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-10d6 | 1 | hash_dig | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb:72:in '<main>': Integer does not have #dig method (TypeError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-1c66 | 1 | array_splice_exceptions | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb:55:in '<main>': index -7 too small for array; minimum: -3 (IndexError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-6dd5 | 1 | analyze_fail/instance_exec_no_block | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>': tried to create Proc object without a block (in `instance_exec') (ArgumentError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc | 1 | symbol_nil_bool_float_batch | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab | 1 | string_enum_inspect_source | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a | 1 | numeric_edges_wave10 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb:11:in '<main>': Hash can't be coerced into Integer (TypeError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260 | 1 | enum_terminal_chunk_zip_lazy | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError) |
+| P | missing-const:A | 1 | issue_3179 | uninitialized constant A (NameError) |
+| P | missing-const:Line | 1 | struct_block_constant_init | uninitialized constant Line (NameError) |
+| P | missing-const:M::C | 1 | constant_path | uninitialized constant M::C (NameError) |
+| P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uninitialized constant OpenSSL (NameError) |
+| P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uninitialized constant RequestDispatch::ViewHelpers (NameError) |
+| P | missing-const:User | 1 | issue_3180 | uninitialized constant User (NameError) |
+| P | missing-method:> | 1 | string_plus_heap_gc | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError) |
+| P | missing-method:hello | 1 | toplevel_include_module_function | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError) |
+| P | missing-method:hi | 1 | send_literal_and_user | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb:27:in '<main>': undefined method 'hi' for an instance of Mailer (NoMethodError) |
+| P | missing-method:kill | 1 | signal_module_surface | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb:33:in '<main>': undefined method 'kill' for module Process (NoMethodError) |
+| P | missing-method:new | 1 | basicobject_new | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb:3:in '<main>': undefined method 'new' for class BasicObject (NoMethodError) |
+| P | missing-method:with_index | 1 | issue_2993 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb:3:in '<main>': undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError) |
+| P | missing-method:wordy | 1 | const_aliased_class_reopen_include | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError) |
 
 List one bucket's tests: `cargo run -p xtask -- conformance triage --bucket <name>`.

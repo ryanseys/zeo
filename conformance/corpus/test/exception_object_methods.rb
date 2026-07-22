@@ -70,19 +70,19 @@ rescue ArgumentError => e
   puts "msg: #{e.message}"
 end
 
-# .backtrace returns an empty str_array (#895; spinel does not
-# track per-exception backtraces).
+# .backtrace carries the real stamped frames (non-empty after a raise).
 begin
   raise "trace"
 rescue => e
   puts "backtrace is empty: #{e.backtrace.empty?}"
 end
 
-# .full_message returns "ClassName: message".
+# .full_message renders the uncaught-report shape from the stamped frames;
+# path-portable via the frame suffix.
 begin
   raise ArgumentError, "fm"
 rescue => e
-  puts "full: #{e.full_message}"
+  puts "full: #{e.full_message(highlight: false).lines.first.chomp.end_with?("in '<main>': fm (ArgumentError)")}"
 end
 
 # Multi-clause rescue chain: first clause misses, second clause catches.

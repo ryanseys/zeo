@@ -1,4 +1,4 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=2685cb0
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=bfdf297
 # PASS=2170 FAIL_OUTPUT=122 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
@@ -7,11 +7,11 @@ alias_inherited_method	PASS	-	-
 alias_method_dispatch	PASS	-	-
 alias_under_modifier	PASS	-	-
 amp_sym_in_string_literals	PASS	-	-
-analyze_fail/attributes_non_symbol	FAIL_OUTPUT	expect	missing-method:attributes
+analyze_fail/attributes_non_symbol	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28
 analyze_fail/dynamic_define_method	PASS	-	-
-analyze_fail/instance_exec_def_in_block	FAIL_OUTPUT	expect	missing-method:define_method
-analyze_fail/instance_exec_define_method	FAIL_OUTPUT	expect	missing-method:define_method
-analyze_fail/instance_exec_no_block	FAIL_OUTPUT	expect	auto-tried-to-create-proc-object-without-block-in-8cab
+analyze_fail/instance_exec_def_in_block	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3
+analyze_fail/instance_exec_define_method	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f
+analyze_fail/instance_exec_no_block	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-6dd5
 analyze_fail/nonliteral_define_method_each	PASS	-	-
 and_nullable_container_poly	PASS	-	-
 anon_block_forward	PASS	-	-
@@ -104,7 +104,7 @@ array_sort_by_bang	PASS	-	-
 array_sort_by_schwartzian	PASS	-	-
 array_spaceship	PASS	-	-
 array_splice	PASS	-	-
-array_splice_exceptions	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-indexerror-4878
+array_splice_exceptions	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-1c66
 array_splice_to_ary	PASS	-	-
 array_splice_widen	PASS	-	-
 array_sum_concat_init	PASS	-	-
@@ -203,7 +203,7 @@ box_unbox_local_assign_cond	PASS	-	-
 boxed_nil_string_identity	PASS	-	-
 bsearch_find_any_mixed	PASS	-	-
 builtin_array_method_capture	PASS	-	-
-bundle_array_a	FAIL_OUTPUT	expect	auto-index-too-small-for-array-minimum-indexerror-4878
+bundle_array_a	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-ca26
 bundle_array_b	PASS	-	-
 bundle_array_c	PASS	-	-
 bundle_array_d	PASS	-	-
@@ -268,7 +268,7 @@ bundle_io_sys	PASS	-	-
 bundle_misc_a	FAIL_OUTPUT	expect	-
 bundle_misc_b	PASS	-	-
 bundle_misc_c_08	FAIL_OUTPUT	expect	-
-bundle_misc_c_09	FAIL_OUTPUT	expect	missing-method:[]=
+bundle_misc_c_09	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6
 bundle_misc_c_10	PASS	-	-
 bundle_misc_c_17	PASS	-	-
 bundle_misc_c_23	PASS	-	-
@@ -278,7 +278,7 @@ bundle_misc_c_31	PASS	-	-
 bundle_misc_c_33	PASS	-	-
 bundle_misc_c_34	PASS	-	-
 bundle_misc_c_35	PASS	-	-
-bundle_misc_c_36	FAIL_OUTPUT	expect	missing-method:length
+bundle_misc_c_36	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6
 bundle_misc_c_37	PASS	-	-
 bundle_poly	PASS	-	-
 bundle_poly_b1	PASS	-	-
@@ -289,7 +289,7 @@ bundle_sym	PASS	-	-
 bundle_tiny_array	PASS	-	-
 bundle_tiny_misc	PASS	-	-
 bundle_tiny_num	PASS	-	-
-bundle_tiny_string	FAIL_OUTPUT	expect	arity-panic
+bundle_tiny_string	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-3ae3
 call_and_write	PASS	-	-
 call_arg_int_to_obj_cast	PASS	-	-
 call_op_write_poly_recv	PASS	-	-
@@ -408,12 +408,12 @@ comparable_nil_spaceship	PASS	-	-
 comparable_no_block_cmp	PASS	-	-
 comparable_operator_nil_cmp	PASS	-	-
 compare_by_identity_predicate	PASS	-	-
-compile_time_attribute_singular	FAIL_OUTPUT	expect	missing-method:attribute
-compile_time_attribute_wrapped_record	FAIL_OUTPUT	expect	missing-method:attributes
-compile_time_attributes	FAIL_OUTPUT	expect	missing-method:attributes
+compile_time_attribute_singular	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0
+compile_time_attribute_wrapped_record	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-823a
+compile_time_attributes	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-5ed7
 compile_time_define_method_direct	PASS	-	-
 compile_time_define_method_int	PASS	-	-
-compile_time_define_method_predicates	FAIL_OUTPUT	expect	missing-method:attributes
+compile_time_define_method_predicates	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-d498
 compile_time_define_method_strings	PASS	-	-
 complex_arithmetic	PASS	-	-
 complex_component_class	PASS	-	-
@@ -553,7 +553,7 @@ enum_chain_with_index_object	PASS	-	-
 enum_each_family_receiver	PASS	-	-
 enum_for_each	PASS	-	-
 enum_map_chain	PASS	-	-
-enum_terminal_chunk_zip_lazy	FAIL_OUTPUT	expect	auto-no-block-given-yield-localjumperror-1be0
+enum_terminal_chunk_zip_lazy	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260
 enum_with_index_map	PASS	-	-
 enum_with_index_value	PASS	-	-
 enum_with_object	PASS	-	-
@@ -629,7 +629,7 @@ ffi_array_specs_decl	PASS	-	-
 ffi_binstr_recv	PASS	-	-
 ffi_binstr_ws_frame	PASS	-	-
 ffi_buffer_reader	PASS	-	-
-ffi_callback	FAIL_OUTPUT	expect	auto-cannot-convert-proc-into-an-ffi-pointer-typeerror-3629
+ffi_callback	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249
 ffi_cflags_fold_forms	PASS	-	-
 ffi_const	PASS	-	-
 ffi_const_leaf_collision	PASS	-	-
@@ -727,7 +727,7 @@ frozen_string_append_guard	PASS	-	-
 frozen_string_global_survives_gc	PASS	-	-
 frozen_string_literal_gc_root	PASS	-	-
 frozen_string_literal_per_file	FAIL_OUTPUT	expect	-
-frozen_string_literal_per_file_rev	FAIL_OUTPUT	expect	auto-can-modify-frozen-string-plain-frozenerror-b7c8
+frozen_string_literal_per_file_rev	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011
 frozen_string_literal_pragma	PASS	-	-
 gc_grandparent_ivar_scan	PASS	-	-
 gc_poly_local_int	PASS	-	-
@@ -764,14 +764,14 @@ hash_default_proc_assign	PASS	-	-
 hash_default_proc_key	PASS	-	-
 hash_delete_if_select_reject_bang	PASS	-	-
 hash_delete_returns_value	PASS	-	-
-hash_dig	FAIL_OUTPUT	expect	auto-integer-does-not-have-dig-method-typeerror-ee2a
+hash_dig	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-10d6
 hash_dig_into_array	PASS	-	-
 hash_dispatch_missing_cells	PASS	-	-
 hash_double_splat	PASS	-	-
 hash_each_enumerator	PASS	-	-
 hash_each_key_value	PASS	-	-
 hash_each_value_key_enumerator	PASS	-	-
-hash_each_with_object	FAIL_OUTPUT	expect	missing-method:<<
+hash_each_with_object	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-2467
 hash_empty_block_methods	PASS	-	-
 hash_empty_literal_and_map	PASS	-	-
 hash_enum_with_index_chain	PASS	-	-
@@ -1150,7 +1150,7 @@ issue_2997	PASS	-	-
 issue_2998	PASS	-	-
 issue_3000	FAIL_OUTPUT	expect	-
 issue_3001	PASS	-	-
-issue_3002	FAIL_OUTPUT	expect	auto-no-receiver-is-available-argumenterror-234c
+issue_3002	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b
 issue_3003	PASS	-	-
 issue_3004	PASS	-	-
 issue_3005	PASS	-	-
@@ -1263,7 +1263,7 @@ issue_3114	PASS	-	-
 issue_3116	PASS	-	-
 issue_3117	PASS	-	-
 issue_3118	PASS	-	-
-issue_3119	FAIL_OUTPUT	expect	auto-no-receiver-is-available-argumenterror-234c
+issue_3119	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b
 issue_3120	PASS	-	-
 issue_3121	PASS	-	-
 issue_3124	PASS	-	-
@@ -1510,7 +1510,7 @@ mutator_value_forms_bang_nil	PASS	-	-
 mutex_synchronize_block	PASS	-	-
 mutex_synchronize_ensure	PASS	-	-
 narrow_and_predicate	PASS	-	-
-native_binding_poc	FAIL_OUTPUT	expect	missing-method:native_obj
+native_binding_poc	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-59e4
 negative_range_slice	PASS	-	-
 nested_array_eq	PASS	-	-
 nested_class_module_const_resolution	PASS	-	-
@@ -1557,7 +1557,7 @@ nullable_poly_hash_arg_unbox	PASS	-	-
 numbered_param_arity	PASS	-	-
 numeric_coerce	PASS	-	-
 numeric_conformance_batch2	PASS	-	-
-numeric_edges_wave10	FAIL_OUTPUT	expect	auto-hash-can-be-coerced-into-integer-typeerror-8a63
+numeric_edges_wave10	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a
 numeric_tower_methods	PASS	-	-
 numeric_tower_remainder	PASS	-	-
 obj_array_param_accumulator	PASS	-	-
@@ -1601,11 +1601,11 @@ pack_endian_modifiers	PASS	-	-
 pack_float_directives	PASS	-	-
 pack_utf8	PASS	-	-
 param_body_array_hash_inference	PASS	-	-
-param_body_hash_inference	FAIL_OUTPUT	expect	missing-method:[]
+param_body_hash_inference	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-26e1
 param_default_references_sibling	PASS	-	-
-param_include_body_widen	FAIL_OUTPUT	expect	missing-method:include?
+param_include_body_widen	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-faa9
 param_inference_if_predicate	PASS	-	-
-param_lengthlike_body_widen	FAIL_OUTPUT	expect	missing-method:length
+param_lengthlike_body_widen	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-1c7a
 param_narrow_from_body_call	PASS	-	-
 param_ptr_from_callee_slot	PASS	-	-
 param_widens_when_body_assigns_string	PASS	-	-
@@ -2052,7 +2052,7 @@ string_embedded_nul_core	PASS	-	-
 string_encoding	PASS	-	-
 string_enum_arg_forms	FAIL_OUTPUT	expect	arity-panic
 string_enum_block_returns_self	FAIL_OUTPUT	expect	-
-string_enum_inspect_source	FAIL_OUTPUT	expect	auto-no-block-given-yield-localjumperror-1be0
+string_enum_inspect_source	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab
 string_equal_identity	FAIL_OUTPUT	expect	-
 string_format_poly_array_rhs	PASS	-	-
 string_format_polyarr	PASS	-	-
@@ -2095,7 +2095,7 @@ string_slice_range	PASS	-	-
 string_splice_family	FAIL_OUTPUT	expect	-
 string_split_block	PASS	-	-
 string_split_capture	PASS	-	-
-string_split_inline_arg_gc_root	FAIL_OUTPUT	expect	missing-method:<=
+string_split_inline_arg_gc_root	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827
 string_squeeze_no_trailing_nul	PASS	-	-
 string_sub_hash_replacement	PASS	-	-
 string_succ_scan_slice_tilde_wave10	FAIL_OUTPUT	expect	-
@@ -2148,7 +2148,7 @@ symbol_id2name_ruby_desc_minmax	PASS	-	-
 symbol_inspect_nonascii	PASS	-	-
 symbol_inspect_quoting	PASS	-	-
 symbol_multibyte_length	PASS	-	-
-symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-can-coerce-complex-into-float-typeerror-9cc0
+symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc
 symbol_nil_truthiness	PASS	-	-
 symbol_range_enum	PASS	-	-
 symbol_string_methods	PASS	-	-

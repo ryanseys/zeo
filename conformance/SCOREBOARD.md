@@ -1,6 +1,6 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2170/2295 passing (94.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `2685cb0`
+Suite `spinel` — **2170/2295 passing (94.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `bfdf297`
 
 | verdict | count |
 |---|---|
@@ -19,16 +19,16 @@ Suite `spinel` — **2170/2295 passing (94.6%)** — oracle `ruby 4.0.5 (2026-05
 
 | blocked | bucket | cluster | sample test | sample message |
 |---|---|---|---|---|
-| 5 | missing-const:OpenStruct::Warning | P | issue_3135 | uncaught exception: uninitialized constant OpenStruct::Warning (NameError) |
-| 4 | arity-panic | g | bundle_tiny_string | uncaught exception: wrong number of arguments (given 2, expected 0..1) (ArgumentError) |
-| 4 | missing-method:attributes | P | compile_time_attributes | uncaught exception: undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError) |
-| 2 | auto-index-too-small-for-array-minimum-indexerror-4878 | ? | array_splice_exceptions | uncaught exception: index -7 too small for array; minimum: -3 (IndexError) |
-| 2 | auto-no-block-given-yield-localjumperror-1be0 | ? | string_enum_inspect_source | uncaught exception: no block given (yield) (LocalJumpError) |
-| 2 | auto-no-receiver-is-available-argumenterror-234c | ? | issue_3002 | uncaught exception: no receiver is available (ArgumentError) |
-| 2 | missing-method:>= | P | gc_stat_string_heap | uncaught exception: undefined method '>=' for nil (NoMethodError) |
-| 2 | missing-method:define_method | P | analyze_fail/instance_exec_def_in_block | uncaught exception: undefined method 'define_method' for an instance of BoxPlus (NoMethodError) |
-| 2 | missing-method:length | P | param_lengthlike_body_widen | uncaught exception: undefined method 'length' for nil (NoMethodError) |
-| 1 | auto-can-coerce-complex-into-float-typeerror-9cc0 | ? | symbol_nil_bool_float_batch | uncaught exception: can't coerce Complex into Float (TypeError) |
+| 5 | missing-const:OpenStruct::Warning | P | issue_3135 | uninitialized constant OpenStruct::Warning (NameError) |
+| 3 | arity-panic | g | str_method_nil_arg_no_segv | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |
+| 2 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6 | ? | bundle_misc_c_36 | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>' |
+| 2 | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b | ? | issue_3119 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError) |
+| 2 | missing-method:>= | P | gc_stat_string_heap | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
+| 1 | auto-error-unrecognized-escape-sequence-regexperror-2794 | ? | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
+| 1 | auto-expected-numeric-value-got-ni-4730 | ? | rational_complex_wave9 | expected a numeric value, got 2+3i |
+| 1 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0 | ? | compile_time_attribute_singular | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>' |
+| 1 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827 | ? | string_split_inline_arg_gc_root | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:43:in '<main>' |
+| 1 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-1c7a | ? | param_lengthlike_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:44:in '<main>' |
 
 ## Skipped tests
 
