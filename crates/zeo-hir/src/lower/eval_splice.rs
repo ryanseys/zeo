@@ -5,19 +5,31 @@
 
 use super::consts::constant_path_name;
 use super::{PResult, lower_node, parse_and_lower_into};
-use crate::hir::{Hir, HirNode, NodeId, StrPart};
+use crate::hir::{ArrayElem, Hir, HirNode, NodeId, StrPart};
 use ruby_prism::{CallNode, Node, ParseResult};
 
-/// `box.eval("literal")`'s body splice -- shared by the loader's
-/// STATEMENT-position recognizer (class definitions allowed: real Ruby's
-/// `Box#eval` compiles a top-level iseq) and `lower_node`'s
-/// expression-position one (which additionally rejects defs, same as root
-/// `eval`).
-pub fn lower_box_eval_body(
+/// Lower a `box.eval(arg)` call to its final HIR node, always a
+/// [`HirNode::BoxScope`] carrying the box's static id.
+///
+/// A single string-LITERAL argument keeps the zero-cost AOT path: the source
+/// is parsed and INLINED into the scope's body at compile time, so it needs
+/// no runtime parser and -- at STATEMENT position (`allow_defs`) -- may even
+/// define classes, exactly like real Ruby's `Box#eval` top-level iseq.
+///
+/// Every other source shape -- a non-literal expression, or a computed
+/// string -- lowers to a receiver-less `eval` [`HirNode::Call`] wrapped in
+/// the same `BoxScope`. Codegen threads the enclosing `box_id` into that
+/// call so it evaluates through the runtime eval VM in the box's dimension,
+/// mirroring how receiver-less `Kernel#eval` already falls through to the VM
+/// for a non-literal source. `class`/`def` in a dynamic body are handled by
+/// the VM at runtime, so `allow_defs` gates only the literal path.
+pub fn lower_box_eval(
     hir: &mut Hir,
-    _result: &ruby_prism::ParseResult,
+    result: &ruby_prism::ParseResult,
     call: &ruby_prism::CallNode<'_>,
-) -> PResult<Vec<NodeId>> {
+    box_id: u32,
+    allow_defs: bool,
+) -> PResult<NodeId> {
     if call.block().is_some() {
         return Err("`Ruby::Box#eval` doesn't take a block".to_string().into());
     }
@@ -27,21 +39,43 @@ pub fn lower_box_eval_body(
         .unwrap_or_default();
     if args.len() != 1 {
         return Err(
-            "`Ruby::Box#eval` is only supported with exactly one string-literal argument (zeo limitation)"
-                .to_string().into(),
+            "`Ruby::Box#eval` is only supported with exactly one argument (zeo limitation)"
+                .to_string()
+                .into(),
         );
     }
-    let Some(src) = args[0]
+    // Literal source: parse + inline at compile time (the AOT path).
+    if let Some(src) = args[0]
         .as_string_node()
         .map(|sn| String::from_utf8_lossy(sn.unescaped()).into_owned())
-    else {
-        return Err(
-            "`Ruby::Box#eval` with a non-literal argument isn't supported (zeo limitation) -- the source must be a plain string literal, resolvable at compile time"
-                .to_string().into(),
-        );
-    };
-    parse_and_lower_into(hir, &src)
-        .map_err(|e| crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}")))
+    {
+        let body = parse_and_lower_into(hir, &src).map_err(|e| {
+            crate::lower_error::LowerError::unsupported(format!("Ruby::Box#eval: {e}"))
+        })?;
+        if !allow_defs {
+            reject_top_level_defs(hir, &body)?;
+        }
+        return Ok(hir.push(HirNode::BoxScope { box_id, body }));
+    }
+    // Non-literal source: evaluate through the runtime eval VM in the box's
+    // dimension. A receiver-less `eval` Call inside the `BoxScope` picks up
+    // `box_id` from codegen's box context (see `codegen::call`'s eval
+    // special-case); `self` is the ambient main object, consistent with the
+    // literal path and with CRuby's `box.eval("self")` returning `main`.
+    let source = lower_node(result, hir, &args[0])?;
+    let eval_call = hir.push(HirNode::Call {
+        receiver: None,
+        name: "eval".to_string(),
+        args: vec![ArrayElem::Single(source)],
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    });
+    Ok(hir.push(HirNode::BoxScope {
+        box_id,
+        body: vec![eval_call],
+    }))
 }
 
 /// Whether `node` is exactly `Ruby::Box.new` (no args, no block) -- the

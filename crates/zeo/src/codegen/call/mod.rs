@@ -397,6 +397,29 @@ pub fn emit_call(
     // Implicit self / no receiver. `&.` is meaningless without a receiver,
     // so `safe` is irrelevant here.
     let Some(recv_id) = receiver else {
+        // Receiver-less `eval(src)` with a single positional argument (not the
+        // `binding`/`filename`/`lineno` forms, no block): route straight to the
+        // runtime eval VM in the CURRENT box dimension. `cx.box_id` is 0 at top
+        // level (an ordinary `Kernel#eval`) and the box's id inside a `BoxScope`
+        // (a `box.eval(dynamic_source)`), so this one path serves both -- and
+        // threading `box_id` here is what fixes dynamic `Kernel#eval` inside a
+        // box, not just `box.eval`. The single string-LITERAL form never reaches
+        // here: it lowered to `HirNode::Eval` (an AOT inline splice) at lower
+        // time. Like that literal path, this treats `eval` as `Kernel#eval`
+        // rather than resolving a user-defined override.
+        if name == "eval"
+            && args.len() == 1
+            && kwargs.is_empty()
+            && block.is_none()
+            && block_arg.is_none()
+        {
+            let recv = boxed_implicit_self(cx).expect("every context has an implicit self");
+            let src = {
+                let e = emit_expr(cx, args[0]);
+                box_if_object_typed(cx, args[0], e)
+            };
+            return quote! { zeo_rt::eval_value(#src, #recv, #__bx)? };
+        }
         // `public_send` on the IMPLICIT self still enforces visibility: real
         // Ruby checks the RESOLVED method entry's visibility with a
         // `CALL_PUBLIC` scope (`rb_method_call_status`, vm_eval.c:837), which

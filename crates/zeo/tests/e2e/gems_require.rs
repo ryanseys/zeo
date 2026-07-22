@@ -672,6 +672,49 @@ fn box_eval_defines_and_returns_across_the_boundary() {
     );
 }
 
+/// A NON-literal `box.eval` source (a variable, a computed string) routes
+/// through the runtime eval VM in the box's dimension -- the same fall-through
+/// `Kernel#eval` uses for a dynamic source, but carrying `box_id`. A dynamic
+/// eval reads/calls the box's own (`require`-defined) constants and classes,
+/// its globals stay isolated from main, and a non-String source raises a
+/// catchable `TypeError` at runtime rather than a compile error.
+#[test]
+fn box_eval_dynamic_source_routes_through_the_vm() {
+    let result = run_ruby_project(
+        &[
+            (
+                "lib.rb",
+                "WIDGET_CONST = \"widget!\"\n\
+                 class Widget\n  def self.describe = \"a widget\"\nend\n",
+            ),
+            (
+                "main.rb",
+                "box = Ruby::Box.new\n\
+                 box.require_relative \"lib\"\n\
+                 code = \"1 + 2\"\n\
+                 p box.eval(code)\n\
+                 p box.eval(\"WIDGET_CONST\")\n\
+                 p box.eval(\"Widget.describe\")\n\
+                 $g = \"main value\"\n\
+                 read = \"$g\"\n\
+                 p box.eval(read)\n\
+                 box.eval(\"$g = 'box value'\")\n\
+                 p $g\n\
+                 p box.eval(read)\n\
+                 begin\n  box.eval(123)\nrescue TypeError => e\n  puts \"rescued: #{e.message}\"\nend\n",
+            ),
+        ],
+        "main.rb",
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "3\n\"widget!\"\n\"a widget\"\nnil\n\"main value\"\n\"box value\"\n\
+         rescued: no implicit conversion of Integer into String\n"
+    );
+}
+
 /// Exceptions cross the boundary as plain references: a box-defined
 /// `BoxError < StandardError` raised from box code is rescuable in main
 /// through the SHARED bootstrap superclass chain, and `e.class` names it.
@@ -718,7 +761,10 @@ fn box_globals_are_fully_separate() {
 
 /// The clean rejections: `Ruby::Box.current`-family reflection, box
 /// operations outside their recognized positions, and expression-position
-/// eval defining classes.
+/// eval defining classes. (A non-literal `box.eval` source is NOT rejected
+/// here -- it routes to the runtime eval VM, so a non-string source is a
+/// catchable runtime `TypeError`, exactly like `Kernel#eval`; see
+/// `box_eval_dynamic_source_routes_through_the_vm`.)
 #[test]
 fn ruby_box_rejections_are_clean_errors() {
     let err = zeo::compile_to_rust("p Ruby::Box.current\n").unwrap_err();
@@ -728,8 +774,6 @@ fn ruby_box_rejections_are_clean_errors() {
     let err =
         zeo::compile_to_rust("box = Ruby::Box.new\nv = box.eval(\"class X; end\")\n").unwrap_err();
     assert!(err.contains("class"), "{err}");
-    let err = zeo::compile_to_rust("box = Ruby::Box.new\nbox.eval(1)\n").unwrap_err();
-    assert!(err.contains("non-literal"), "{err}");
 }
 
 /// A main-only class/constant is INVISIBLE inside a box (boxes dup from

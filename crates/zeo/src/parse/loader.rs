@@ -296,10 +296,10 @@ impl Loader {
                                 continue;
                             }
                             if name == "eval" {
-                                let body = zeo_hir::lower::eval_splice::lower_box_eval_body(
-                                    hir, result, &call,
+                                let node = zeo_hir::lower::eval_splice::lower_box_eval(
+                                    hir, result, &call, bx, true,
                                 )?;
-                                combined.push(hir.push(HirNode::BoxScope { box_id: bx, body }));
+                                combined.push(node);
                                 continue;
                             }
                         }

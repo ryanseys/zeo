@@ -39,7 +39,7 @@ use defs::{
     lower_params, lower_runtime_class, lower_runtime_class_reopen,
     runtime_class_body_is_expressible,
 };
-use eval_splice::{lower_box_eval_body, reject_top_level_defs, single_literal_string_arg};
+use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
 pub use literals::encoding_const_name;
 use literals::{line_of, lower_string_parts, string_literal_part};
 use pattern::{lower_in_pattern_and_guard, lower_pattern};
@@ -1676,9 +1676,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             ).into());
                         }
                         "eval" => {
-                            let body = lower_box_eval_body(hir, result, &call)?;
-                            reject_top_level_defs(hir, &body)?;
-                            return Ok(hir.push(HirNode::BoxScope { box_id: bx, body }));
+                            return lower_box_eval(hir, result, &call, bx, false);
                         }
                         _ => {}
                     }
