@@ -1184,6 +1184,14 @@ pub fn kernel_rand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             )
         }
         Some(RubyValue::Float(x)) => {
+            // A non-finite bound has no Integer image: CRuby's `dbl2ival`
+            // raises FloatDomainError named for the value ("Infinity"/"NaN").
+            if !x.is_finite() {
+                return Err(crate::dispatch::raise_error(
+                    "FloatDomainError",
+                    RubyValue::Float(*x).to_display_string(),
+                ));
+            }
             // CRuby's `Kernel#rand` truncates a Float bound to an Integer and
             // draws an Integer from `[0, ⌊x⌋)` (`rand(3.5)` -> 0..2). A bound
             // below 1 truncates to 0, i.e. the plain `[0.0, 1.0)` Float draw.

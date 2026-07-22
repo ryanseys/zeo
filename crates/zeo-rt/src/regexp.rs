@@ -965,11 +965,36 @@ fn flags_split(ignore_case: bool, extended: bool, multiline: bool) -> (String, S
     (set, unset)
 }
 
+/// Escapes bare `/` characters in a regexp source for the `/.../ ` and
+/// `(?...:...)` display forms (CRuby's `rb_reg_expr_str`): a backslash escape
+/// is copied verbatim (so an already-escaped `\/` stays a single escape), and
+/// any remaining `/` gets a `\` prepended.
+fn escape_forward_slashes(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push('\\');
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+            }
+            '/' => out.push_str("\\/"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// `Regexp#to_s` -- what `puts`/string interpolation display for a Regexp
 /// value (real Ruby: `Kernel#puts`/`#{}` both call `to_s`, not `inspect`).
 pub fn regexp_to_s(re: &RRegexp) -> RubyValue {
     let (set, unset) = flags_split(re.ignore_case, re.extended, re.multiline);
-    RubyValue::Str(string_new(format!("(?{set}-{unset}:{})", re.source)))
+    RubyValue::Str(string_new(format!(
+        "(?{set}-{unset}:{})",
+        escape_forward_slashes(&re.source)
+    )))
 }
 
 /// `Regexp#inspect` -- the `/pattern/flags` literal form, flags in `m,i,x`
@@ -985,7 +1010,10 @@ pub fn regexp_inspect(re: &RRegexp) -> RubyValue {
     if re.extended {
         flags.push('x');
     }
-    RubyValue::Str(string_new(format!("/{}/{flags}", re.source)))
+    RubyValue::Str(string_new(format!(
+        "/{}/{flags}",
+        escape_forward_slashes(&re.source)
+    )))
 }
 
 /// `Regexp#scan`... no -- `String#scan`: every match, as a plain `String`

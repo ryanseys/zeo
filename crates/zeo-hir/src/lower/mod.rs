@@ -1472,12 +1472,13 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // this is a lowering-time call-shape desugar exactly like
         // `loop`/`define_method`. An explicit `self` receiver
         // (`self.block_given?`) is the same query about the current method's
-        // block, so it desugars identically.
+        // block, so it desugars identically. `iterator?` is CRuby's (deprecated)
+        // alias for `block_given?` and folds the same way.
         let bg_self_or_none = match call.receiver() {
             None => true,
             Some(r) => r.as_self_node().is_some(),
         };
-        if name == "block_given?" && bg_self_or_none {
+        if (name == "block_given?" || name == "iterator?") && bg_self_or_none {
             let no_args = call
                 .arguments()
                 .is_none_or(|a| a.arguments().iter().next().is_none());

@@ -84,7 +84,10 @@ fn range_bsearch_float(
     let mut numeric_mode = false;
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
-        let x = u2f(mid);
+        // CRuby's float bsearch collapses the two signed zeros (its
+        // `double_as_int64` maps both to 0), so a boundary at zero is reported
+        // as +0.0; `+ 0.0` normalizes -0.0 without disturbing any other value.
+        let x = u2f(mid) + 0.0;
         let r = p.call(&[RubyValue::Float(x)])?;
         let cmp = match r {
             RubyValue::Int(n) => Some(n.cmp(&0)),
