@@ -1,11 +1,10 @@
 //! `ConditionVariable` (CRuby `Thread::ConditionVariable`, exposed top-level
 //! as `ConditionVariable` -- matching how `Mutex`/`Queue` are already
-//! simplified from `Thread::*`). A runtime-resident `RObj` wrapping a `may`
-//! `Condvar` so `#wait` yields the coroutine (like `Queue#pop`) rather than
-//! blocking the single-worker scheduler.
+//! simplified from `Thread::*`). A runtime-resident `RObj` over a
+//! parking_lot condvar.
 //!
 //! `#wait(mutex, timeout=nil)` atomically releases the Ruby `Mutex` and parks:
-//! the internal `may::sync::Mutex` is held across the release so a concurrent
+//! the internal handoff lock is held across the release so a concurrent
 //! `#signal`/`#broadcast` (which must take that same lock) cannot slip a wakeup
 //! in between the release and the park -- the classic no-lost-wakeup guarantee.
 //! On wake (or timeout) the Ruby mutex is re-acquired before returning.
@@ -21,16 +20,16 @@ use zeo_abi::CONDITION_VARIABLE_CLASS;
 pub struct RConditionVariable {
     /// Guards the wait/signal handoff -- see the module docs' no-lost-wakeup
     /// note. The `()` payload is unused; the lock itself is the token.
-    lock: may::sync::Mutex<()>,
-    cond: may::sync::Condvar,
+    lock: parking_lot::Mutex<()>,
+    cond: parking_lot::Condvar,
     frozen: AtomicBool,
 }
 
 impl RConditionVariable {
     fn new() -> RConditionVariable {
         RConditionVariable {
-            lock: may::sync::Mutex::new(()),
-            cond: may::sync::Condvar::new(),
+            lock: parking_lot::Mutex::new(()),
+            cond: parking_lot::Condvar::new(),
             frozen: AtomicBool::new(false),
         }
     }
@@ -103,23 +102,21 @@ builtin_methods! {
         let cv = cv_of(recv);
         // Hold the handoff lock across the mutex release so a signaller can't
         // race a wakeup in before we park.
-        let guard = cv.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = cv.lock.lock();
         if let Err(msg) = crate::thread::mutex_unlock(rm) {
             return Err(thread_error!("{msg}"));
         }
         // The park itself runs with an armed process Gvl released (a no-op
         // when disabled, the default) -- the signaller needs to RUN to
         // signal.
-        crate::gvl::process_gvl().without(|| match timeout {
-            None => {
-                let g = cv.cond.wait(guard).unwrap_or_else(|e| e.into_inner());
-                drop(g);
+        crate::gvl::process_gvl().without(|| {
+            match timeout {
+                None => cv.cond.wait(&mut guard),
+                Some(dur) => {
+                    let _ = cv.cond.wait_for(&mut guard, dur);
+                }
             }
-            Some(dur) => {
-                let (g, _timed_out) =
-                    cv.cond.wait_timeout(guard, dur).unwrap_or_else(|e| e.into_inner());
-                drop(g);
-            }
+            drop(guard);
         });
         if let Err(msg) = crate::thread::mutex_lock(rm) {
             return Err(thread_error!("{msg}"));
@@ -130,7 +127,7 @@ builtin_methods! {
     "signal" => fn signal(recv, args, _block) {
         arity!(args, 0);
         let cv = cv_of(recv);
-        let _g = cv.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = cv.lock.lock();
         cv.cond.notify_one();
         Ok(recv.clone())
     }
@@ -138,7 +135,7 @@ builtin_methods! {
     "broadcast" => fn broadcast(recv, args, _block) {
         arity!(args, 0);
         let cv = cv_of(recv);
-        let _g = cv.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = cv.lock.lock();
         cv.cond.notify_all();
         Ok(recv.clone())
     }
