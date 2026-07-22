@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **160 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `3a2e7ef`
+Suite `spinel` — **126 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `8cfddef`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -9,7 +9,7 @@ Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.
 
 ## `analyze_fail/attributes_non_symbol` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/analyze_fail/attributes_non_symbol.rb`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb`
 - reference: zeo must reject the program (compile-fail)
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
 
@@ -34,7 +34,7 @@ uncaught exception: undefined method 'attributes' for class BadAttributes (NoMet
 
 ## `analyze_fail/instance_exec_def_in_block` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_def_in_block.rb`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb`
 - reference: zeo must reject the program (compile-fail)
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:define_method` (cluster `P`)
 
@@ -57,7 +57,7 @@ uncaught exception: undefined method 'define_method' for an instance of BoxPlus 
 
 ## `analyze_fail/instance_exec_define_method` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb`
 - reference: zeo must reject the program (compile-fail)
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:define_method` (cluster `P`)
 
@@ -83,7 +83,7 @@ uncaught exception: undefined method 'define_method' for an instance of BoxPlus 
 
 ## `analyze_fail/instance_exec_no_block` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_no_block.rb`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb`
 - reference: zeo must reject the program (compile-fail)
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-tried-to-create-proc-object-without-block-in-8cab` (cluster `?`)
 
@@ -108,8 +108,8 @@ uncaught exception: tried to create Proc object without a block (in `instance_ex
 
 ## `array_splice_exceptions` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/array_splice_exceptions.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/array_splice_exceptions.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/array_splice_exceptions.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-index-too-small-for-array-minimum-indexerror-4878` (cluster `?`)
 
@@ -162,8 +162,8 @@ uncaught exception: index -7 too small for array; minimum: -3 (IndexError)
 
 ## `bare_return_in_initialize` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bare_return_in_initialize.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bare_return_in_initialize.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bare_return_in_initialize.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bare_return_in_initialize.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -187,8 +187,8 @@ label
 
 ## `basicobject_new` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/basicobject_new.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/basicobject_new.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/basicobject_new.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:new` (cluster `P`)
 
@@ -219,8 +219,8 @@ uncaught exception: undefined method 'new' for class BasicObject (NoMethodError)
 
 ## `block_local_fresh_per_iteration` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/block_local_fresh_per_iteration.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/block_local_fresh_per_iteration.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/block_local_fresh_per_iteration.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/block_local_fresh_per_iteration.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -251,8 +251,8 @@ yes
 
 ## `bundle_array_a` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_array_a.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_array_a.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-index-too-small-for-array-minimum-indexerror-4878` (cluster `?`)
 
@@ -447,42 +447,10 @@ uncaught exception: index -5 too small for array; minimum: -3 (IndexError)
 
 ---
 
-## `bundle_classd_43` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/bundle_classd_43.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_classd_43.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-literal: can't modify frozen String: "abc"
-lv-literal: can't modify frozen String: "abc"
-Cbc
-Zy
-Cb
-Cbc
-ok
-
---- actual (7 lines)
-no raise (literal)
-no raise (lv-literal): Cbc
-Cbc
-Zy
-Cb
-Cbc
-ok
-```
-
----
-
 ## `bundle_hash_b2` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_hash_b2.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_hash_b2.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_hash_b2.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_hash_b2.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -557,8 +525,8 @@ got it
 
 ## `bundle_misc_a` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_misc_a.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_misc_a.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_a.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_a.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -991,8 +959,8 @@ foo,bar,baz,qux
 
 ## `bundle_misc_c_08` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_08.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_08.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_08.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_08.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1075,8 +1043,8 @@ true
 
 ## `bundle_misc_c_09` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_09.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_09.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:[]=` (cluster `P`)
 
@@ -1114,8 +1082,8 @@ uncaught exception: undefined method '[]=' for an instance of Fiber (NoMethodErr
 
 ## `bundle_misc_c_36` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_36.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_misc_c_36.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:length` (cluster `P`)
 
@@ -1214,8 +1182,8 @@ uncaught exception: undefined method 'length' for nil (NoMethodError)
 
 ## `bundle_tiny_string` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/bundle_tiny_string.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/bundle_tiny_string.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
 
@@ -1375,8 +1343,8 @@ uncaught exception: wrong number of arguments (given 2, expected 0..1) (Argument
 
 ## `case_when_lambda_predicate` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/case_when_lambda_predicate.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/case_when_lambda_predicate.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_lambda_predicate.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_lambda_predicate.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1409,8 +1377,8 @@ no2
 
 ## `case_when_string_range_nil_bound` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/case_when_string_range_nil_bound.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/case_when_string_range_nil_bound.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_string_range_nil_bound.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_string_range_nil_bound.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1439,8 +1407,8 @@ first difference at line 1
 
 ## `chunk_family_enumerator_value` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/chunk_family_enumerator_value.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/chunk_family_enumerator_value.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/chunk_family_enumerator_value.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/chunk_family_enumerator_value.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1473,8 +1441,8 @@ first difference at line 1
 
 ## `compile_time_attribute_singular` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/compile_time_attribute_singular.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/compile_time_attribute_singular.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attribute` (cluster `P`)
 
@@ -1505,8 +1473,8 @@ uncaught exception: undefined method 'attribute' for class CompileTimeSingleAttr
 
 ## `compile_time_attribute_wrapped_record` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/compile_time_attribute_wrapped_record.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/compile_time_attribute_wrapped_record.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
 
@@ -1537,8 +1505,8 @@ uncaught exception: undefined method 'attributes' for class WrappedResult (NoMet
 
 ## `compile_time_attributes` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/compile_time_attributes.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/compile_time_attributes.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
 
@@ -1570,8 +1538,8 @@ uncaught exception: undefined method 'attributes' for class CompileTimeAttribute
 
 ## `compile_time_define_method_predicates` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/compile_time_define_method_predicates.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/compile_time_define_method_predicates.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:attributes` (cluster `P`)
 
@@ -1604,8 +1572,8 @@ uncaught exception: undefined method 'attributes' for class CompileTimePostState
 
 ## `const_aliased_class_reopen_include` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/const_aliased_class_reopen_include.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/const_aliased_class_reopen_include.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:wordy` (cluster `P`)
 
@@ -1636,8 +1604,8 @@ uncaught exception: undefined method 'wordy' for an instance of Integer (NoMetho
 
 ## `constant_path` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/constant_path.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/constant_path.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:M::C` (cluster `P`)
 
@@ -1687,8 +1655,8 @@ uncaught exception: uninitialized constant M::C (NameError)
 
 ## `data_dup_clone_frozen` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/data_dup_clone_frozen.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/data_dup_clone_frozen.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_dup_clone_frozen.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_dup_clone_frozen.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1717,8 +1685,8 @@ false
 
 ## `data_hash_key` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/data_hash_key.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/data_hash_key.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_hash_key.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_hash_key.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1739,8 +1707,8 @@ nil
 
 ## `data_new_validation` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/data_new_validation.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/data_new_validation.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_new_validation.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_new_validation.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1765,8 +1733,8 @@ first difference at line 4
 
 ## `data_value_eq_container` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/data_value_eq_container.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/data_value_eq_container.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_value_eq_container.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_value_eq_container.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1789,7 +1757,7 @@ false
 false
 false
 nil
-2
+1
 false
 false
 false
@@ -1799,43 +1767,10 @@ false
 
 ---
 
-## `empty_array_push_ptr` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/empty_array_push_ptr.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/empty_array_push_ptr.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-2
-p1=match
-p2=match
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
----
-
 ## `enum_terminal_chunk_zip_lazy` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/enum_terminal_chunk_zip_lazy.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/enum_terminal_chunk_zip_lazy.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-block-given-yield-localjumperror-1be0` (cluster `?`)
 
@@ -1874,8 +1809,8 @@ uncaught exception: no block given (yield) (LocalJumpError)
 
 ## `exception_value_parity` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/exception_value_parity.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/exception_value_parity.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/exception_value_parity.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/exception_value_parity.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -1926,114 +1861,16 @@ top
 
 ---
 
-## `ffi_array_specs_decl` — FAIL_OUTPUT
+## `ffi_callback` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/ffi_array_specs_decl.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_array_specs_decl.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-cannot-convert-proc-into-an-ffi-pointer-typeerror-3629` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'ffi_func' for module BulkF (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module BulkF (NoMethodError)
-```
-
----
-
-## `ffi_binstr_recv` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_binstr_recv.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_binstr_recv.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Net (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-5
-5
-[97, 0, 98, 0, 99]
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Net (NoMethodError)
-```
-
----
-
-## `ffi_binstr_ws_frame` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_binstr_ws_frame.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_binstr_ws_frame.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Bin (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-frame bytes (binstr)  = 135
-truncated (str)       = 2
-unmasked length       = 127
-unmasked == subscribe = true
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Bin (NoMethodError)
-```
-
----
-
-## `ffi_buffer_reader` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_buffer_reader.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_buffer_reader.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_buffer` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
+uncaught exception: cannot convert Proc into an FFI pointer (TypeError)
 ```
 
 diff:
@@ -2041,47 +1878,11 @@ diff:
 === stdout diff ===
 first difference at line 1
 --- expected (5 lines)
-0
-0
-0
-0
-0
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
-```
-
----
-
-## `ffi_callback` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_callback.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_callback.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_callback` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_callback' for module L (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
 [1, 1, 2, 3, 4, 5, 6, 9]
 [40, 30, 20, 10]
 5
 miss
 done
-at exit
 
 --- actual (0 lines)
 
@@ -2090,482 +1891,24 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uncaught exception: undefined method 'ffi_callback' for module L (NoMethodError)
+uncaught exception: cannot convert Proc into an FFI pointer (TypeError)
 ```
 
 ---
 
-## `ffi_cflags_fold_forms` — FAIL_OUTPUT
+## `ffi_variadic` — FAIL_COMPILE
 
-- source: `/Users/ryanseys/dev/spinel/test/ffi_cflags_fold_forms.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_cflags_fold_forms.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_variadic.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_variadic.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_lib` (cluster `P`)
+- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-territory-not-syntaxerror-ed71` (cluster `?`)
 
 stderr:
 ```
-uncaught exception: undefined method 'ffi_lib' for module MathA (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-1.5
-1.0
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_lib' for module MathA (NoMethodError)
-```
-
----
-
-## `ffi_const` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_const.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_const.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_const` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_const' for module Flags (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-1
-2
-4
-255
-7
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_const' for module Flags (NoMethodError)
-```
-
----
-
-## `ffi_const_leaf_collision` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_const_leaf_collision.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_const_leaf_collision.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_lib` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_lib' for module CMath (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-int
-download-text
-4
-2.5
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_lib' for module CMath (NoMethodError)
-```
-
----
-
-## `ffi_const_nested_module_path` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_const_nested_module_path.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_const_nested_module_path.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_lib` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_lib' for module Outer::CMath (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-int
-verbose
-8
-1.5
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_lib' for module Outer::CMath (NoMethodError)
-```
-
----
-
-## `ffi_foreign_ptr_gc` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_foreign_ptr_gc.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_foreign_ptr_gc.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_lib` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_lib' for module F (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok 200
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_lib' for module F (NoMethodError)
-```
-
----
-
-## `ffi_int_arg_bigint` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_int_arg_bigint.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_int_arg_bigint.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_lib` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_lib' for module M (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-40
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_lib' for module M (NoMethodError)
-```
-
----
-
-## `ffi_int_arg_poly_value` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_int_arg_poly_value.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_int_arg_poly_value.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Lib (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-42
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Lib (NoMethodError)
-```
-
----
-
-## `ffi_libc_libm_basic` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_libc_libm_basic.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_libc_libm_basic.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibM (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-1
-4
-1024
-12
-pid_ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibM (NoMethodError)
-```
-
----
-
-## `ffi_poly_int_array` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_poly_int_array.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_poly_int_array.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module L (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-"A"
-TypeError: no implicit conversion into an FFI :int_array
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module L (NoMethodError)
-```
-
----
-
-## `ffi_ptr_array` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_ptr_array.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_ptr_array.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-2
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
----
-
-## `ffi_ptr_int_literal` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_ptr_int_literal.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_ptr_int_literal.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
----
-
-## `ffi_ptr_nil` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_ptr_nil.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_ptr_nil.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-non_nil
-zero_is_nil
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
----
-
-## `ffi_str_arg_poly_value` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_str_arg_poly_value.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_str_arg_poly_value.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Lib (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-42
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Lib (NoMethodError)
-```
-
----
-
-## `ffi_struct` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_struct.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_struct.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_struct` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_struct' for module M (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (11 lines)
-3
-7
-10
-42
-3.5
-11
-true
-true
-true
-hello
-5
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_struct' for module M (NoMethodError)
-```
-
----
-
-## `ffi_variadic` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_variadic.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_variadic.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module C (NoMethodError)
+ 14 │     
+    ╰────
+  help: valid Ruby that zeo does not compile yet (NotImplementedError
+        territory, not a SyntaxError)
 ```
 
 diff:
@@ -2591,77 +1934,10 @@ uncaught exception: undefined method 'ffi_func' for module C (NoMethodError)
 
 ---
 
-## `ffi_void_return` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_void_return.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_void_return.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-freed
-42
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module LibC (NoMethodError)
-```
-
----
-
-## `ffi_write_roundtrip` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/ffi_write_roundtrip.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/ffi_write_roundtrip.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_buffer` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
--12345
-4000000000
-77
-77
-true
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
-```
-
----
-
 ## `float_pow_negative_fractional` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/float_pow_negative_fractional.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/float_pow_negative_fractional.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/float_pow_negative_fractional.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/float_pow_negative_fractional.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -2686,8 +1962,8 @@ NaN
 
 ## `frozen_string_literal_per_file` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/frozen_string_literal_per_file.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/frozen_string_literal_per_file.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -2714,8 +1990,8 @@ BUG: no raise
 
 ## `frozen_string_literal_per_file_rev` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/frozen_string_literal_per_file_rev.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/frozen_string_literal_per_file_rev.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-can-modify-frozen-string-plain-frozenerror-b7c8` (cluster `?`)
 
@@ -2749,8 +2025,8 @@ uncaught exception: can't modify frozen String: "plain" (FrozenError)
 
 ## `gc_stat_string_heap` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/gc_stat_string_heap.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/gc_stat_string_heap.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:>=` (cluster `P`)
 
@@ -2782,8 +2058,8 @@ uncaught exception: undefined method '>=' for nil (NoMethodError)
 
 ## `harness_batch_2453_2456` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/harness_batch_2453_2456.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/harness_batch_2453_2456.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/harness_batch_2453_2456.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/harness_batch_2453_2456.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenSSL` (cluster `P`)
 
@@ -2817,8 +2093,8 @@ uncaught exception: uninitialized constant OpenSSL (NameError)
 
 ## `hash_dig` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/hash_dig.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_dig.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_dig.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-integer-does-not-have-dig-method-typeerror-ee2a` (cluster `?`)
 
@@ -2914,8 +2190,8 @@ uncaught exception: Integer does not have #dig method (TypeError)
 
 ## `hash_each_with_object` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/hash_each_with_object.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_each_with_object.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:<<` (cluster `P`)
 
@@ -2947,8 +2223,8 @@ uncaught exception: undefined method '<<' for nil (NoMethodError)
 
 ## `hash_flatten_depth` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/hash_flatten_depth.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_flatten_depth.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_flatten_depth.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_flatten_depth.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -2979,8 +2255,8 @@ first difference at line 2
 
 ## `hash_numeric_wave11` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/hash_numeric_wave11.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_numeric_wave11.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_numeric_wave11.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_numeric_wave11.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3049,8 +2325,8 @@ Infinity
 
 ## `hash_variant_returns` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/hash_variant_returns.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/hash_variant_returns.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_variant_returns.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_variant_returns.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3087,73 +2363,10 @@ first difference at line 10
 
 ---
 
-## `i1011` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/i1011.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/i1011.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_cflags` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_cflags' for module Pathy (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-5
-0
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_cflags' for module Pathy (NoMethodError)
-```
-
----
-
-## `i1017` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/i1017.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/i1017.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_buffer` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (1 lines)
-ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_buffer' for module Buf (NoMethodError)
-```
-
----
-
 ## `i1021` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/i1021.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/i1021.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/i1021.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/i1021.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:>=` (cluster `P`)
 
@@ -3194,51 +2407,10 @@ uncaught exception: undefined method '>=' for nil (NoMethodError)
 
 ---
 
-## `i918` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/i918.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/i918.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (13 lines)
-true
-array << raised
-array []= raised
-array push raised
-[1, 2, 3]
-false
-[9, 2, 3, 4]
-str_array << raised
-["x", "y"]
-true
-hash []= raised
-false
-2
-
---- actual (10 lines)
-true
-array []= raised
-[1, 2, 3, 4, 5]
-false
-[9, 2, 3, 4]
-["x", "y", "z"]
-true
-hash []= raised
-false
-2
-```
-
----
-
 ## `include_chain_module_nested_const` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/include_chain_module_nested_const.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/include_chain_module_nested_const.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/include_chain_module_nested_const.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/include_chain_module_nested_const.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:RequestDispatch::ViewHelpers` (cluster `P`)
 
@@ -3269,8 +2441,8 @@ uncaught exception: uninitialized constant RequestDispatch::ViewHelpers (NameErr
 
 ## `inline_yield_method_with_return` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/inline_yield_method_with_return.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/inline_yield_method_with_return.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/inline_yield_method_with_return.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/inline_yield_method_with_return.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3291,8 +2463,8 @@ first difference at line 2
 
 ## `inspect` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/inspect.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/inspect.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/inspect.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/inspect.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3414,8 +2586,8 @@ done
 
 ## `integer_argument_error` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/integer_argument_error.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/integer_argument_error.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_argument_error.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_argument_error.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3504,8 +2676,8 @@ stress ok: 100
 
 ## `integer_chr_encoding` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/integer_chr_encoding.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/integer_chr_encoding.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_chr_encoding.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_chr_encoding.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3552,8 +2724,8 @@ first difference at line 14
 
 ## `issue_2962` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_2962.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2962.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2962.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2962.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3576,8 +2748,8 @@ first difference at line 1
 
 ## `issue_2970` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_2970.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2970.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2970.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2970.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3596,8 +2768,8 @@ false
 
 ## `issue_2975` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_2975.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2975.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2975.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2975.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3614,7 +2786,7 @@ true
 
 --- actual (5 lines)
 C
-4124922702142622782
+4646092071051628451
 S
 P
 false
@@ -3624,8 +2796,8 @@ false
 
 ## `issue_2993` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_2993.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_2993.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:with_index` (cluster `P`)
 
@@ -3662,8 +2834,8 @@ uncaught exception: undefined method 'with_index' for an instance of Enumerator:
 
 ## `issue_3000` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3000.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3000.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3000.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3000.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3696,10 +2868,15 @@ TypeError
 
 ## `issue_3002` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3002.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3002.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3002.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-receiver-is-available-argumenterror-234c` (cluster `?`)
+
+stderr:
+```
+uncaught exception: no receiver is available (ArgumentError)
+```
 
 diff:
 ```
@@ -3711,19 +2888,22 @@ true
 ["x"]
 FrozenError
 
---- actual (4 lines)
-[1, 2, 3]
-[1, 2]
-["x", "y"]
-FrozenError
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: no receiver is available (ArgumentError)
 ```
 
 ---
 
 ## `issue_3024` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3024.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3024.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3024.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3024.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3746,8 +2926,8 @@ nil
 
 ## `issue_3024b` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3024b.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3024b.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3024b.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3024b.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3768,8 +2948,8 @@ nil
 
 ## `issue_3037` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3037.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3037.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3037.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3037.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3792,42 +2972,10 @@ undefined method 'undefined_bareword_thing' for main
 
 ---
 
-## `issue_3048` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3048.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3048.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-false
-42
-false
-2
-2
-true
-42
-
---- actual (7 lines)
-true
-42
-true
-2
-2
-true
-42
-```
-
----
-
 ## `issue_3049` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3049.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3049.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3049.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3049.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3854,8 +3002,8 @@ true
 
 ## `issue_3049b` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3049b.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3049b.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3049b.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3049b.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3884,8 +3032,8 @@ Infinity
 
 ## `issue_3051` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3051.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3051.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3051.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3051.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3918,8 +3066,8 @@ true
 
 ## `issue_3057` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3057.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3057.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3057.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
 
@@ -3953,8 +3101,8 @@ uncaught exception: wrong number of arguments (given 1, expected 0) (ArgumentErr
 
 ## `issue_3061` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3061.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3061.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3061.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3061.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -3985,8 +3133,8 @@ a/b
 
 ## `issue_3069` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3069.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3069.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3069.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3069.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4011,8 +3159,8 @@ false
 
 ## `issue_3088` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3088.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3088.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3088.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3088.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4035,8 +3183,8 @@ UncaughtThrowError
 
 ## `issue_3098` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3098.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3098.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3098.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3098.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4057,40 +3205,10 @@ false
 
 ---
 
-## `issue_3101` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/issue_3101.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3101.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-true
-false
-true
-false
-true
-true
-
---- actual (6 lines)
-false
-false
-false
-false
-false
-false
-```
-
----
-
 ## `issue_3119` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3119.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3119.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-receiver-is-available-argumenterror-234c` (cluster `?`)
 
@@ -4124,8 +3242,8 @@ uncaught exception: no receiver is available (ArgumentError)
 
 ## `issue_3126` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3126.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3126.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3126.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3126.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4148,38 +3266,91 @@ true
 
 ---
 
-## `issue_3135` — FAIL_COMPILE
+## `issue_3135` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3135.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3135.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
 
 stderr:
 ```
-zeo: cannot load such file -- ostruct
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (20 lines)
+1
+"hi"
+[1, 2]
+1
+9
+{a: 1, b: "hi", c: [1, 2], d: 9}
+true
+false
+OpenStruct
+#<OpenStruct a=1, b="hi", c=[1, 2], d=9>
+true
+false
+true
+true
+false
+nil
+{}
+"later"
+[#<OpenStruct x=1>, "s", 42]
+#<OpenStruct n=7>
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
 
-## `issue_3155` — FAIL_COMPILE
+## `issue_3155` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3155.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3155.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
 
 stderr:
 ```
-zeo: cannot load such file -- ostruct
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (1 lines)
+ok
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
 
 ## `issue_3163` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3163.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3163.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3163.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3163.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4199,7 +3370,7 @@ false
 false
 false
 false
-true
+false
 false
 false
 ```
@@ -4208,8 +3379,8 @@ false
 
 ## `issue_3179` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3179.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3179.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3179.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3179.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:A` (cluster `P`)
 
@@ -4243,8 +3414,8 @@ uncaught exception: uninitialized constant A (NameError)
 
 ## `issue_3180` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3180.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3180.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3180.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3180.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:User` (cluster `P`)
 
@@ -4273,52 +3444,103 @@ uncaught exception: uninitialized constant User (NameError)
 
 ---
 
-## `issue_3193` — FAIL_COMPILE
+## `issue_3193` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3193.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3193.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
 
 stderr:
 ```
-zeo: cannot load such file -- ostruct
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (1 lines)
+ok3193
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
 
-## `issue_3194` — FAIL_COMPILE
+## `issue_3194` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3194.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3194.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
 
 stderr:
 ```
-zeo: cannot load such file -- ostruct
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (1 lines)
+ok3194
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
 
-## `issue_3197` — FAIL_COMPILE
+## `issue_3197` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/issue_3197.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/issue_3197.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_COMPILE (stage `compile`) · bucket `auto-cannot-load-such-file-ostruct-0485` (cluster `?`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
 
 stderr:
 ```
-zeo: cannot load such file -- ostruct
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (1 lines)
+ok3197
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+uncaught exception: uninitialized constant OpenStruct::Warning (NameError)
 ```
 
 ---
 
 ## `kernel_array_format_negx_wave10` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/kernel_array_format_negx_wave10.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/kernel_array_format_negx_wave10.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/kernel_array_format_negx_wave10.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/kernel_array_format_negx_wave10.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4369,8 +3591,8 @@ first difference at line 3
 
 ## `kernel_float_integer_strict` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/kernel_float_integer_strict.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/kernel_float_integer_strict.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/kernel_float_integer_strict.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/kernel_float_integer_strict.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4435,8 +3657,8 @@ I NUL "AE"
 
 ## `module_class_body_side_effects` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/module_class_body_side_effects.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/module_class_body_side_effects.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/module_class_body_side_effects.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/module_class_body_side_effects.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4467,8 +3689,8 @@ hi
 
 ## `native_binding_poc` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/native_binding_poc.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/native_binding_poc.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:native_obj` (cluster `P`)
 
@@ -4501,8 +3723,8 @@ uncaught exception: undefined method 'native_obj' for module NB (NoMethodError)
 
 ## `numeric_edges_wave10` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/numeric_edges_wave10.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/numeric_edges_wave10.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-hash-can-be-coerced-into-integer-typeerror-8a63` (cluster `?`)
 
@@ -4556,55 +3778,17 @@ uncaught exception: Hash can't be coerced into Integer (TypeError)
 
 ---
 
-## `object_freeze_module_isa` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/object_freeze_module_isa.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/object_freeze_module_isa.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (10 lines)
-false
-true
-true
-false
-true
-true
-true
-true
-false
-true
-
---- actual (10 lines)
-false
-false
-true
-false
-false
-true
-true
-true
-false
-true
-```
-
----
-
 ## `object_identity_cluster` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/object_identity_cluster.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/object_identity_cluster.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/object_identity_cluster.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/object_identity_cluster.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
 diff:
 ```
 === stdout diff ===
-first difference at line 7
+first difference at line 16
 --- expected (16 lines)
 true
 false
@@ -4630,7 +3814,7 @@ false
 true
 false
 true
-false
+true
 true
 true
 true
@@ -4646,8 +3830,8 @@ nil
 
 ## `op_assign_tail_return` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/op_assign_tail_return.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/op_assign_tail_return.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/op_assign_tail_return.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/op_assign_tail_return.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4684,8 +3868,8 @@ first difference at line 1
 
 ## `param_body_hash_inference` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/param_body_hash_inference.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/param_body_hash_inference.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:[]` (cluster `P`)
 
@@ -4720,8 +3904,8 @@ uncaught exception: undefined method '[]' for nil (NoMethodError)
 
 ## `param_include_body_widen` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/param_include_body_widen.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/param_include_body_widen.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:include?` (cluster `P`)
 
@@ -4755,8 +3939,8 @@ uncaught exception: undefined method 'include?' for nil (NoMethodError)
 
 ## `param_lengthlike_body_widen` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/param_lengthlike_body_widen.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/param_lengthlike_body_widen.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:length` (cluster `P`)
 
@@ -4789,76 +3973,10 @@ uncaught exception: undefined method 'length' for nil (NoMethodError)
 
 ---
 
-## `poly_keyed_hash_method_dedup` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/poly_keyed_hash_method_dedup.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/poly_keyed_hash_method_dedup.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:foo` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'foo' for class 'Class' (NameError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-true
-false
-1
-true
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'foo' for class 'Class' (NameError)
-```
-
----
-
-## `poly_keyed_hash_pipeline` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/poly_keyed_hash_pipeline.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/poly_keyed_hash_pipeline.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:read` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'read' for class 'Class' (NameError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-2
-4
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'read' for class 'Class' (NameError)
-```
-
----
-
 ## `primitive_eq_user_class` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/primitive_eq_user_class.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/primitive_eq_user_class.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/primitive_eq_user_class.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/primitive_eq_user_class.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -4973,8 +4091,8 @@ done
 
 ## `proc_capture_enclosing_lambda` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/proc_capture_enclosing_lambda.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/proc_capture_enclosing_lambda.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_capture_enclosing_lambda.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_capture_enclosing_lambda.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5013,8 +4131,8 @@ nil
 
 ## `proc_cell_opassign_returns_new_value` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/proc_cell_opassign_returns_new_value.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/proc_cell_opassign_returns_new_value.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_cell_opassign_returns_new_value.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/proc_cell_opassign_returns_new_value.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5041,8 +4159,8 @@ nil
 
 ## `range_bsearch_float` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/range_bsearch_float.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/range_bsearch_float.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/range_bsearch_float.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/range_bsearch_float.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5071,17 +4189,26 @@ nil
 
 ---
 
+## `range_each_fusion` — TIMEOUT_RUN
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/range_each_fusion.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/range_each_fusion.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: TIMEOUT_RUN (stage `run`) · bucket `-` (cluster `-`)
+
+---
+
 ## `rational_complex_wave9` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/rational_complex_wave9.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/rational_complex_wave9.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_complex_wave9.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_complex_wave9.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-expected-numeric-value-got-ni-4730` (cluster `?`)
 
 stderr:
 ```
 
-thread '<unnamed>' (101109395) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (104906811) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5155,7 +4282,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (101109395) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (104906811) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -5164,8 +4291,8 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 ## `rational_i_to_complex` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/rational_i_to_complex.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/rational_i_to_complex.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_i_to_complex.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_i_to_complex.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5198,8 +4325,8 @@ true
 
 ## `rational_mod_cmp_slice_default_wave10` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/rational_mod_cmp_slice_default_wave10.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/rational_mod_cmp_slice_default_wave10.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_mod_cmp_slice_default_wave10.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/rational_mod_cmp_slice_default_wave10.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5256,8 +4383,8 @@ nil
 
 ## `regexp_brace_zero_lower` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/regexp_brace_zero_lower.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_brace_zero_lower.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_brace_zero_lower.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_brace_zero_lower.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5306,8 +4433,8 @@ first difference at line 4
 
 ## `regexp_gsub_zero_width` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/regexp_gsub_zero_width.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_gsub_zero_width.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_gsub_zero_width.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_gsub_zero_width.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5348,8 +4475,8 @@ first difference at line 6
 
 ## `regexp_inline_options` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/regexp_inline_options.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_inline_options.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_inline_options.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_inline_options.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5426,8 +4553,8 @@ nil
 
 ## `regexp_line_anchors` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/regexp_line_anchors.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_line_anchors.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_line_anchors.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_line_anchors.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-error-unrecognized-escape-sequence-regexperror-2794` (cluster `?`)
 
@@ -5490,8 +4617,8 @@ error: unrecognized escape sequence (RegexpError)
 
 ## `regexp_pike_capture_and_bol` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/regexp_pike_capture_and_bol.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_pike_capture_and_bol.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_pike_capture_and_bol.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_pike_capture_and_bol.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5526,40 +4653,10 @@ true
 
 ---
 
-## `regexp_sub_gsub_realloc` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/regexp_sub_gsub_realloc.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/regexp_sub_gsub_realloc.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (6 lines)
-200
-"zzzzzzzz"
-200
-200
-500
-true
-
---- actual (6 lines)
-200
-"zzzzzzzz"
-200
-200
-100
-false
-```
-
----
-
 ## `send_literal_and_user` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/send_literal_and_user.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/send_literal_and_user.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:hi` (cluster `P`)
 
@@ -5594,8 +4691,8 @@ uncaught exception: undefined method 'hi' for an instance of Mailer (NoMethodErr
 
 ## `set_full_api` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/set_full_api.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/set_full_api.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/set_full_api.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/set_full_api.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5692,8 +4789,8 @@ Set["a", "b"]
 
 ## `signal_module_surface` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/signal_module_surface.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/signal_module_surface.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/signal_module_surface.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:kill` (cluster `P`)
 
@@ -5788,8 +4885,8 @@ uncaught exception: undefined method 'kill' for module Process (NoMethodError)
 
 ## `socket_tcp_thread` — TIMEOUT_RUN
 
-- source: `/Users/ryanseys/dev/spinel/test/socket_tcp_thread.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/socket_tcp_thread.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: TIMEOUT_RUN (stage `run`) · bucket `-` (cluster `-`)
 
@@ -5797,8 +4894,8 @@ uncaught exception: undefined method 'kill' for module Process (NoMethodError)
 
 ## `source_file` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/source_file.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/source_file.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -5817,34 +4914,29 @@ true
 param: test/source_file.rb
 
 --- actual (8 lines)
-/Users/ryanseys/dev/spinel/test/source_file.rb
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb
 true
-[/Users/ryanseys/dev/spinel/test/source_file.rb]
-got: /Users/ryanseys/dev/spinel/test/source_file.rb
+[/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb]
+got: /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb
 true
 true
 true
-param: /Users/ryanseys/dev/spinel/test/source_file.rb
+param: /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/source_file.rb
 ```
 
 ---
 
 ## `sp_crypto_basic` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/sp_crypto_basic.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/sp_crypto_basic.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/sp_crypto_basic.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/sp_crypto_basic.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Crypto (NoMethodError)
-```
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
 diff:
 ```
 === stdout diff ===
-first difference at line 1
+first difference at line 4
 --- expected (6 lines)
 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
 aGVsbG8
@@ -5853,87 +4945,45 @@ Eg-2z_z4syxD5yJSVsT4N6hlSMkszDVICAWYfLcL4Xs
 22
 diff
 
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Crypto (NoMethodError)
+--- actual (6 lines)
+5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+aGVsbG8
+hello
+Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
+31
+diff
 ```
 
 ---
 
 ## `sp_crypto_sha1` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/sp_crypto_sha1.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/sp_crypto_sha1.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/sp_crypto_sha1.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/sp_crypto_sha1.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Crypto (NoMethodError)
-```
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
 diff:
 ```
 === stdout diff ===
-first difference at line 1
+first difference at line 3
 --- expected (3 lines)
 a9993e364706816aba3e25717850c26c9cd0d89d
 da39a3ee5e6b4b0d3255bfef95601890afd80709
 s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Crypto (NoMethodError)
-```
-
----
-
-## `sp_net_basic` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/sp_net_basic.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/sp_net_basic.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:ffi_func` (cluster `P`)
-
-stderr:
-```
-uncaught exception: undefined method 'ffi_func' for module Net (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-hello
-pid-ok
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-uncaught exception: undefined method 'ffi_func' for module Net (NoMethodError)
+--- actual (3 lines)
+a9993e364706816aba3e25717850c26c9cd0d89d
+da39a3ee5e6b4b0d3255bfef95601890afd80709
+wrN6TyzDgGJPFsKQw7ZGBsOPOFlFwrLCvsOEw6o=
 ```
 
 ---
 
 ## `str_method_nil_arg_no_segv` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/str_method_nil_arg_no_segv.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_method_nil_arg_no_segv.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
 
@@ -5967,76 +5017,10 @@ uncaught exception: wrong number of arguments (given 0, expected 1+) (ArgumentEr
 
 ---
 
-## `str_unpack_gc_root` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/str_unpack_gc_root.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/str_unpack_gc_root.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-["11223344", "55667788"]
-40000
-20000
-
---- actual (3 lines)
-["11223344", "667788c2"]
-40000
-0
-```
-
----
-
-## `string_append_binary_safe` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_append_binary_safe.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_append_binary_safe.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 3
---- expected (12 lines)
-2
-2
-3
-[126, 0, 200]
-4
-[120, 126, 0, 200]
-134
-0
-130
-5
-6
-2
-
---- actual (12 lines)
-2
-2
-4
-[126, 0, 195, 136]
-5
-[120, 126, 0, 195, 136]
-136
-126
-0
-5
-6
-2
-```
-
----
-
 ## `string_conformance_batch4` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_conformance_batch4.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_conformance_batch4.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_conformance_batch4.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_conformance_batch4.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6077,8 +5061,8 @@ RangeError
 
 ## `string_enum_arg_forms` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_enum_arg_forms.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_enum_arg_forms.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_arg_forms.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `arity-panic` (cluster `g`)
 
@@ -6112,8 +5096,8 @@ uncaught exception: wrong number of arguments (given 1, expected 2) (ArgumentErr
 
 ## `string_enum_block_returns_self` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_enum_block_returns_self.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_enum_block_returns_self.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_block_returns_self.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_block_returns_self.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6157,8 +5141,8 @@ y
 
 ## `string_enum_inspect_source` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_enum_inspect_source.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_enum_inspect_source.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-no-block-given-yield-localjumperror-1be0` (cluster `?`)
 
@@ -6197,8 +5181,8 @@ uncaught exception: no block given (yield) (LocalJumpError)
 
 ## `string_equal_identity` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_equal_identity.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_equal_identity.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_equal_identity.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_equal_identity.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6237,8 +5221,8 @@ false
 
 ## `string_oct_parse` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_oct_parse.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_oct_parse.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_oct_parse.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_oct_parse.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6293,8 +5277,8 @@ first difference at line 16
 
 ## `string_plus_heap_gc` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_plus_heap_gc.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_plus_heap_gc.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:>` (cluster `P`)
 
@@ -6324,8 +5308,8 @@ uncaught exception: undefined method '>' for nil (NoMethodError)
 
 ## `string_scrub` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_scrub.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_scrub.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_scrub.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_scrub.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6350,8 +5334,8 @@ valid
 
 ## `string_splice_family` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_splice_family.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_splice_family.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_splice_family.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_splice_family.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6398,8 +5382,8 @@ first difference at line 1
 
 ## `string_split_inline_arg_gc_root` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_split_inline_arg_gc_root.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_split_inline_arg_gc_root.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:<=` (cluster `P`)
 
@@ -6429,8 +5413,8 @@ uncaught exception: undefined method '<=' for nil (NoMethodError)
 
 ## `string_succ_scan_slice_tilde_wave10` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/string_succ_scan_slice_tilde_wave10.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_succ_scan_slice_tilde_wave10.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_succ_scan_slice_tilde_wave10.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_succ_scan_slice_tilde_wave10.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6505,60 +5489,10 @@ nil
 
 ---
 
-## `string_with_embedded_nul` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/spinel/test/string_with_embedded_nul.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/string_with_embedded_nul.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (16 lines)
-1
-1
-0
-2
-2
-0
-200
-3
-120
-0
-121
-4
-0
-200
-4
-200
-
---- actual (16 lines)
-1
-1
-0
-2
-3
-0
-200
-3
-120
-0
-121
-4
-0
-200
-4
-200
-```
-
----
-
 ## `strip_nul` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/strip_nul.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/strip_nul.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/strip_nul.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/strip_nul.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6591,8 +5525,8 @@ first difference at line 1
 
 ## `struct_block_constant_init` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/struct_block_constant_init.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/struct_block_constant_init.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/struct_block_constant_init.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/struct_block_constant_init.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:Line` (cluster `P`)
 
@@ -6625,8 +5559,8 @@ uncaught exception: uninitialized constant Line (NameError)
 
 ## `struct_to_h_block` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/struct_to_h_block.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/struct_to_h_block.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/struct_to_h_block.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/struct_to_h_block.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6656,8 +5590,8 @@ true
 
 ## `symbol_nil_bool_float_batch` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/symbol_nil_bool_float_batch.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/symbol_nil_bool_float_batch.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-can-coerce-complex-into-float-typeerror-9cc0` (cluster `?`)
 
@@ -6743,8 +5677,8 @@ uncaught exception: can't coerce Complex into Float (TypeError)
 
 ## `thread_pass_fairness` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/thread_pass_fairness.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/thread_pass_fairness.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/thread_pass_fairness.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/thread_pass_fairness.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6767,8 +5701,8 @@ done
 
 ## `toplevel_include_module_function` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/toplevel_include_module_function.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/toplevel_include_module_function.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:hello` (cluster `P`)
 
@@ -6805,8 +5739,8 @@ uncaught exception: undefined method 'hello' for main (NoMethodError)
 
 ## `uniq_block` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/uniq_block.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/uniq_block.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/uniq_block.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/uniq_block.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6841,8 +5775,8 @@ first difference at line 1
 
 ## `value_type_identity` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/value_type_identity.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/value_type_identity.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/value_type_identity.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/value_type_identity.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
@@ -6875,8 +5809,8 @@ false
 
 ## `while_until_as_value` — FAIL_OUTPUT
 
-- source: `/Users/ryanseys/dev/spinel/test/while_until_as_value.rb`
-- expected stdout: `/Users/ryanseys/dev/spinel/test/while_until_as_value.rb.expected`
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/while_until_as_value.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/while_until_as_value.rb.expected`
 - expected stderr: *(must be empty)*
 - verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
 
