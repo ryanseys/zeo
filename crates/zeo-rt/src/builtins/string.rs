@@ -2843,6 +2843,14 @@ fn sub_gsub(
     };
     if block_proc.is_some() {
         crate::builtins::arity!(args, 1);
+    } else if global && args.len() == 1 {
+        // Blockless `gsub(pattern)` is an Enumerator over the matched
+        // substrings (iterating it with a block performs the substitution,
+        // `rb_enumeratorize`'s re-invoke rule). `sub` has no such form --
+        // it keeps the 2-arg ArgumentError below (oracle-verified).
+        return Ok(crate::builtins::enumerator::enumerator_for(
+            recv, "gsub", args,
+        ));
     } else {
         crate::builtins::arity!(args, 2);
     }
