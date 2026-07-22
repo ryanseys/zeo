@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=7e2334a
-# PASS=2198 FAIL_OUTPUT=95 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=f8afe77
+# PASS=2203 FAIL_OUTPUT=90 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -317,12 +317,12 @@ case_string_when_sym_no_match	PASS	-	-
 case_value_untaken_arm_effects	PASS	-	-
 case_when_class	PASS	-	-
 case_when_class_scalar_predicate	PASS	-	-
-case_when_lambda_predicate	FAIL_OUTPUT	expect	-
+case_when_lambda_predicate	PASS	-	-
 case_when_poly_scrutinee_bound_to_local	PASS	-	-
 case_when_qualified_class	PASS	-	-
 case_when_regex	PASS	-	-
 case_when_string_range	PASS	-	-
-case_when_string_range_nil_bound	FAIL_OUTPUT	expect	-
+case_when_string_range_nil_bound	PASS	-	-
 case_when_value_constant	PASS	-	-
 catch_in_fiber_body	PASS	-	-
 catch_throw_ensure	PASS	-	-
@@ -686,7 +686,7 @@ float_divmod_zerodiv	PASS	-	-
 float_hex_encoding_isa_bool_wave10	PASS	-	-
 float_limit_constants	PASS	-	-
 float_modulo	PASS	-	-
-float_pow_negative_fractional	FAIL_OUTPUT	expect	-
+float_pow_negative_fractional	PASS	-	-
 float_quo_step_by	PASS	-	-
 float_rational_arith	PASS	-	-
 float_rational_math_family	PASS	-	-
@@ -1235,7 +1235,7 @@ issue_3084	PASS	-	-
 issue_3085	PASS	-	-
 issue_3086	PASS	-	-
 issue_3087	PASS	-	-
-issue_3088	FAIL_OUTPUT	expect	-
+issue_3088	PASS	-	-
 issue_3089	PASS	-	-
 issue_3090	PASS	-	-
 issue_3091	PASS	-	-
@@ -2106,7 +2106,7 @@ string_to_i_overflow_raises	PASS	-	-
 string_undump	PASS	-	-
 string_upto	PASS	-	-
 string_with_embedded_nul	PASS	-	-
-strip_nul	FAIL_OUTPUT	expect	-
+strip_nul	PASS	-	-
 struct	PASS	-	-
 struct_bare_super_initialize	PASS	-	-
 struct_block_constant_init	FAIL_OUTPUT	expect	missing-const:Line

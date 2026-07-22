@@ -606,6 +606,44 @@ fn exc_private_call(
     Ok(RubyValue::Bool(exc(recv).detail("private_call").truthy()))
 }
 
+/// `UncaughtThrowError.new(tag, value, msg = ...)` -- unlike a plain
+/// Exception it REQUIRES the tag and value (2..3 args); `.new`/`.new(:t)`
+/// raise ArgumentError. Stores `tag`/`value` and defaults the message to
+/// `uncaught throw <tag.inspect>`.
+fn uncaught_throw_initialize(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    guard_frozen(recv, &e)?;
+    // The internal `throw` path constructs the error with a single String
+    // message (`raise_error_details` -> `construct_exception`, which then sets
+    // `tag`/`value` itself); accept that form. A genuine `.new`/`.new(tag)`
+    // (0 or 1 non-String arg) is the ArgumentError CRuby raises.
+    let internal_msg_only = matches!(args, [RubyValue::Str(_)]);
+    if !internal_msg_only && !(2..=3).contains(&args.len()) {
+        return Err(arg_error!(
+            "wrong number of arguments (given {}, expected 2..3)",
+            args.len()
+        ));
+    }
+    if args.len() >= 2 {
+        e.set_detail("tag", args[0].clone());
+        e.set_detail("value", args[1].clone());
+    }
+    let msg = match args.get(2) {
+        Some(m) => m.clone(),
+        None if internal_msg_only => args[0].clone(),
+        None => RubyValue::Str(crate::string_new(format!(
+            "uncaught throw {}",
+            args[0].inspect_string()
+        ))),
+    };
+    *e.mesg.lock() = msg.clone();
+    Ok(msg)
+}
+
 /// `UncaughtThrowError#tag` -- the tag of the uncaught `throw`.
 fn exc_tag(recv: &RObj, _args: &[RubyValue], _blk: Option<RubyValue>) -> Result<RubyValue, Signal> {
     Ok(exc(recv).detail("tag"))
@@ -1073,6 +1111,7 @@ pub fn register_exception_subclass(
         registry.define_method_own(id, Symbol::intern("success?"), exc_success);
     }
     if is_uncaught_throw {
+        registry.define_method_own(id, Symbol::intern("initialize"), uncaught_throw_initialize);
         registry.define_method_own(id, Symbol::intern("tag"), exc_tag);
         registry.define_method_own(id, Symbol::intern("value"), exc_value);
     }

@@ -63,6 +63,22 @@ pub fn float_mod_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Sign
 pub fn float_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }
+
+/// `Float#**` with zeo's negative-base rule: a negative base to a fractional
+/// (non-integer) power has no real result, so it raises Math::DomainError
+/// loudly (CRuby promotes to Complex -- a documented divergence). A
+/// whole-valued exponent (`(-2.0) ** 2.0`) still takes the ordinary power.
+/// Mirrors `float_pow`'s use in `builtins::numeric::num_pow`.
+pub fn float_pow_checked(a: f64, b: f64) -> Result<crate::RubyValue, crate::Signal> {
+    if a < 0.0 && b.is_finite() && b.fract() != 0.0 {
+        Err(crate::dispatch::raise_error(
+            "Math::DomainError",
+            "Numerical argument is out of domain".to_string(),
+        ))
+    } else {
+        Ok(crate::RubyValue::Float(a.powf(b)))
+    }
+}
 pub fn float_neg(a: f64) -> f64 {
     -a
 }

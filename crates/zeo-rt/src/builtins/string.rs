@@ -1307,11 +1307,19 @@ builtin_methods! {
         // Rewrite every invalid byte sequence to the replacement (an explicit
         // String argument, else U+FFFD for a Unicode encoding / "?" otherwise).
         arity!(args, 0..=1);
+        let s = recv_str!(recv).lock();
         let repl = match args.first() {
             Some(RubyValue::Str(r)) => Some(r.lock().to_utf8_lossy().into_owned()),
-            _ => None,
+            // Default: U+FFFD for a Unicode encoding (the replacement
+            // character, 3 bytes in UTF-8), "?" otherwise -- CRuby's rule.
+            _ => matches!(
+                s.encoding().kind(),
+                crate::encoding::EncKind::Utf8
+                    | crate::encoding::EncKind::Utf16 { .. }
+                    | crate::encoding::EncKind::Utf32 { .. }
+            )
+            .then(|| "\u{FFFD}".to_string()),
         };
-        let s = recv_str!(recv).lock();
         let mut opts = crate::encoding::TranscodeOptions { invalid_replace: true, ..Default::default() };
         opts.replace = repl;
         // Scrub = transcode to self's own encoding, replacing invalids.
@@ -1534,15 +1542,15 @@ builtin_methods! {
     }
     "strip" => fn strip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_matches(is_rb_strip).to_string()))
     }
     "lstrip" => fn lstrip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_start().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_start_matches(is_rb_strip).to_string()))
     }
     "rstrip" => fn rstrip(recv, args, _block) {
         arity!(args, 0);
-        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end().to_string()))
+        Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end_matches(is_rb_strip).to_string()))
     }
     "chars"[0] => fn chars(recv, args, _block) {
         arity!(args, 0);
@@ -2997,6 +3005,14 @@ fn kw_strip(args: &[RubyValue]) -> &[RubyValue] {
         Some(RubyValue::Hash(_)) => &args[..args.len() - 1],
         _ => args,
     }
+}
+
+/// The byte set `String#strip`/`#lstrip`/`#rstrip` remove: CRuby strips
+/// `"\0\t\n\v\f\r "` -- ASCII whitespace PLUS the NUL byte (which Rust's
+/// `char::is_whitespace` does not include), and only these ASCII bytes (no
+/// Unicode spaces, unlike `str::trim`).
+fn is_rb_strip(c: char) -> bool {
+    matches!(c, '\0' | '\t' | '\n' | '\x0B' | '\x0C' | '\r' | ' ')
 }
 
 /// `unpack`/`unpack1`'s `offset:` keyword: the byte index to start decoding

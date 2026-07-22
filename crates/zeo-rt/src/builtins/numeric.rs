@@ -196,7 +196,20 @@ tower_binop!(
     num_pow,
     int(x, y) => int_pow(x, y),
     rat(x, y) => rat_pow(x, y),
-    flo(x, y) => Ok(RubyValue::Float(x.powf(y))),
+    // A negative base to a fractional (non-integer) power has no real result:
+    // CRuby promotes to Complex, but zeo raises Math::DomainError loudly (a
+    // documented divergence; see docs/limitations.md). A whole-valued Float
+    // exponent (`(-2.0) ** 2.0`) still takes the ordinary real power.
+    flo(x, y) => {
+        if x < 0.0 && y.is_finite() && y.fract() != 0.0 {
+            Err(crate::dispatch::raise_error(
+                "Math::DomainError",
+                "Numerical argument is out of domain".to_string(),
+            ))
+        } else {
+            Ok(RubyValue::Float(x.powf(y)))
+        }
+    },
     cpx(x, y) => cpx_pow(x, y),
 );
 

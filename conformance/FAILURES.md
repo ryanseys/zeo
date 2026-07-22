@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **97 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `7e2334a`
+Suite `spinel` — **92 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `f8afe77`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1037,70 +1037,6 @@ first difference at line 1
 
 ---
 
-## `case_when_lambda_predicate` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_lambda_predicate.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_lambda_predicate.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-story
-comment
-other
-big
-even
-other
-big7
-no2
-
---- actual (8 lines)
-other
-other
-other
-other
-other
-other
-no
-no2
-```
-
----
-
-## `case_when_string_range_nil_bound` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_string_range_nil_bound.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/case_when_string_range_nil_bound.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-"in"
-"out"
-"in"
-"out"
-"in"
-"in"
-
---- actual (6 lines)
-"out"
-"out"
-"out"
-"out"
-"in"
-"out"
-```
-
----
-
 ## `chunk_family_enumerator_value` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/chunk_family_enumerator_value.rb`
@@ -1460,32 +1396,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uncaught exception: undefined method 'ffi_func' for module C (NoMethodError)
-```
-
----
-
-## `float_pow_negative_fractional` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/float_pow_negative_fractional.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/float_pow_negative_fractional.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-Math::DomainError: raised
-1.4142135623730951
-4.0
-raised2
-
---- actual (4 lines)
-NaN
-1.4142135623730951
-4.0
-NaN
 ```
 
 ---
@@ -2502,30 +2412,6 @@ false
 
 ---
 
-## `issue_3088` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3088.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3088.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-ArgumentError
-ArgumentError
-UncaughtThrowError
-
---- actual (3 lines)
-#<UncaughtThrowError: UncaughtThrowError>
-#<UncaughtThrowError: tag>
-UncaughtThrowError
-```
-
----
-
 ## `issue_3098` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3098.rb`
@@ -3249,7 +3135,7 @@ nil
 stderr:
 ```
 
-thread 'main' (111162808) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111580688) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3323,7 +3209,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (111162808) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111580688) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3920,7 +3806,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-34
+35
 diff
 ```
 
@@ -4416,40 +4302,6 @@ true
 "he"
 "o"
 nil
-```
-
----
-
-## `strip_nul` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/strip_nul.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/strip_nul.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-[104, 105]
-[104, 105, 0]
-[0, 104, 105]
-[104, 0, 105]
-"hi"
-"x"
-"ab"
-"ab"
-
---- actual (8 lines)
-[0, 104, 105, 0]
-[0, 104, 105, 0]
-[0, 104, 105, 0]
-[0, 0, 104, 0, 105, 0]
-"hi"
-"x"
-"ab"
-"ab"
 ```
 
 ---

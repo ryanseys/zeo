@@ -1940,6 +1940,14 @@ fn dispatch(
                     zeo_rt::float_mod_checked(#recv_f, #arg_f)?
                 };
             }
+            // `**` needs a fallible form too: a negative base to a fractional
+            // power has no real result (zeo raises Math::DomainError; CRuby
+            // promotes to Complex -- a documented divergence).
+            if name == "**" {
+                return quote! {
+                    zeo_rt::float_pow_checked(#recv_f, #arg_f)?
+                };
+            }
             if let Some(&(_, rt_fn, result_ty)) =
                 ops::FLOAT_BINARY_OPS.iter().find(|(op, _, _)| *op == name)
             {
