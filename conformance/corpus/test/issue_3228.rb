@@ -1,0 +1,6 @@
+p((1..10).slice_when { |i, j| j.even? }.to_a)
+p((1..8).chunk_while { |i, j| j == i + 1 }.map { |r| r.sum })
+p((1..8).chunk_while { |i, j| j == i + 1 }.to_a)
+p((1..4).each.with_index(5).to_a)
+p((1..4).each.with_index.to_a)
+p((1..4).map.with_index { |v, i| v * i })

@@ -1,0 +1,5 @@
+p(Rational(5, 2).clamp(1, 2))
+p(Rational(5, 2).clamp(1.0, 2.0))
+p(Rational(5, 2).clamp(Rational(0, 1), Rational(3, 1)))
+p(Rational(5, 2).between?(1, 3))
+p(Rational(1, 2).clamp(1, 3))

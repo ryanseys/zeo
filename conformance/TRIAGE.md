@@ -6,6 +6,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 
 | cluster | bucket | blocked | sample tests | sample message |
 |---|---|---|---|---|
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be | 3 | issue_3216, issue_3217, issue_3251 | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb:10:in '<main>' |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b | 2 | issue_3119, issue_3002 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3119.rb:8:in '<main>': no receiver is available (ArgumentError) |
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
 | g | arity-panic | 1 | str_method_nil_arg_no_segv | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/str_method_nil_arg_no_segv.rb:19:in '<main>': wrong number of arguments (given 0, expected 1+) (ArgumentError) |
@@ -40,6 +41,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:> | 1 | string_plus_heap_gc | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError) |
 | P | missing-method:hello | 1 | toplevel_include_module_function | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError) |
 | P | missing-method:hi | 1 | send_literal_and_user | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/send_literal_and_user.rb:27:in '<main>': undefined method 'hi' for an instance of Mailer (NoMethodError) |
+| P | missing-method:loop | 1 | issue_3236 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3236.rb:2:in '<main>': undefined method 'loop' for main (NoMethodError) |
 | P | missing-method:with_index | 1 | issue_2993 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_2993.rb:3:in '<main>': undefined method 'with_index' for an instance of Enumerator::Lazy (NoMethodError) |
 | P | missing-method:wordy | 1 | const_aliased_class_reopen_include | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError) |
 

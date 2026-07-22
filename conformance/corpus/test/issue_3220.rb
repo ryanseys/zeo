@@ -1,0 +1,6 @@
+p([Rational(1, 2), Rational(1, 4)].reduce(0, :+))
+p([2, -3].inject(0) { |a, c| a + Rational(1, 2) })
+p([1, 2, 3].reduce(0, :+))
+p([1.0, 2.0].reduce(0, :+))
+p([Rational(1, 2), Rational(1, 4)].reduce(Rational(0, 1), :+))
+p([1, 2, 3].inject(0) { |a, x| a + x })

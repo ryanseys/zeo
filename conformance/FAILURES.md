@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **92 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `f8afe77`
+Suite `spinel` — **97 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `2d5efaa`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -2594,6 +2594,181 @@ uninitialized constant User (NameError)
 
 ---
 
+## `issue_3216` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb:5:in 'Object#http_resp': no implicit conversion of StringIO into String (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb:10:in '<main>'
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (3 lines)
+11
+"hello world"
+"cdef"
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb:5:in 'Object#http_resp': no implicit conversion of StringIO into String (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3216.rb:10:in '<main>'
+```
+
+---
+
+## `issue_3217` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb:4:in 'block in <main>': no implicit conversion of StringIO into String (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb:3:in '<main>'
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (3 lines)
+11
+hello world
+abc123
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb:4:in 'block in <main>': no implicit conversion of StringIO into String (TypeError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3217.rb:3:in '<main>'
+```
+
+---
+
+## `issue_3226` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3226.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3226.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
+
+diff:
+```
+=== stdout diff ===
+first difference at line 5
+--- expected (8 lines)
+{a: 1, b: 2}
+{a: 1, b: 3}
+[:a, :b]
+{a: 1, b: 2}
+NameError
+[1, 2]
+2
+{a: 1, b: 2}
+
+--- actual (8 lines)
+{a: 1, b: 2}
+{a: 1, b: 3}
+[:a, :b]
+{a: 1, b: 2}
+NoMethodError
+[1, 2]
+2
+{a: 1, b: 2}
+```
+
+---
+
+## `issue_3236` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3236.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3236.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:loop` (cluster `P`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3236.rb:2:in '<main>': undefined method 'loop' for main (NoMethodError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (5 lines)
+Enumerator
+[nil, nil, nil]
+[nil, nil]
+nil
+nil
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3236.rb:2:in '<main>': undefined method 'loop' for main (NoMethodError)
+```
+
+---
+
+## `issue_3251` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb:1:in 'Object#has_block?': undefined method 'iterator?' for main (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb:2:in '<main>'
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (4 lines)
+true
+false
+"yes"
+"no"
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb:1:in 'Object#has_block?': undefined method 'iterator?' for main (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3251.rb:2:in '<main>'
+```
+
+---
+
 ## `kernel_array_format_negx_wave10` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/kernel_array_format_negx_wave10.rb`
@@ -3135,7 +3310,7 @@ nil
 stderr:
 ```
 
-thread 'main' (111580688) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111731160) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3209,7 +3384,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (111580688) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111731160) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3806,7 +3981,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-35
+30
 diff
 ```
 

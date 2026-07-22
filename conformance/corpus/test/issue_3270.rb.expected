@@ -1,0 +1,5 @@
+#<OpenStruct x=1>
+#<OpenStruct x=1, y="hi">
+#<OpenStruct a=1, b=2>
+#<OpenStruct a=1>
+#<OpenStruct a=1, b=2>
