@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **111 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `a78c7ce`
+Suite `spinel` — **111 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `b60e95b`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1467,7 +1467,7 @@ false
 false
 false
 nil
-2
+1
 false
 false
 false
@@ -2308,7 +2308,7 @@ true
 
 --- actual (5 lines)
 C
-8090348615941170344
+1535556214594812489
 S
 P
 false
@@ -3691,7 +3691,7 @@ nil
 stderr:
 ```
 
-thread 'main' (108328012) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (108930683) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3765,7 +3765,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (108328012) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (108930683) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4362,7 +4362,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-35
+31
 diff
 ```
 

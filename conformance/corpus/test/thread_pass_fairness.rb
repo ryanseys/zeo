@@ -1,31 +1,28 @@
-# Thread.pass from the main thread yields one round-robin turn to the runnable
-# siblings and then resumes main, rather than draining them to completion. So
-# main interleaves with a sibling that also yields, instead of being starved
-# until the sibling finishes.
-#
-# The interleaving order is scheduler-specific (CRuby is preemptive and
-# nondeterministic; spinel's Phase 0 scheduler is cooperative and deterministic),
-# so this checks spinel's deterministic output. The property that matters: the
-# `:main` entries are interleaved with the sibling's, not all bunched before or
-# after them.
+# Thread.pass from the main thread yields a turn to runnable siblings
+# without draining them to completion. On a preemptive parallel scheduler
+# (CRuby, and zeo's OS threads) the interleaving ORDER is nondeterministic,
+# so this asserts only schedule-independent properties: every entry lands,
+# the sibling's own entries stay in its program order, and main is never
+# starved out of completing its loop.
 log = []
+mx = Mutex.new
 t = Thread.new do
   5.times do |i|
-    log << i
+    mx.synchronize { log << i }
     Thread.pass
   end
 end
 3.times do
-  log << :main
+  mx.synchronize { log << :main }
   Thread.pass
 end
 t.join
-puts log.inspect
+puts log.length
+puts log.count(:main)
+puts log.select { |e| e != :main }.inspect
 
-# A sibling looping on Thread.pass must not starve main: main reaches here and
-# completes its own loop (with the old drain behaviour main would run the
-# sibling to completion on its first pass, but it would still complete -- the
-# point of the first check above is the *interleaving*).
+# A sibling looping on Thread.pass must not starve main: main reaches here
+# and completes its own loop regardless of how turns interleave.
 spinner = Thread.new { 100.times { Thread.pass } }
 main_turns = 0
 4.times do

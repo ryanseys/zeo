@@ -211,13 +211,9 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
         // Record identity so `Thread.current` inside the body finds THIS
         // thread rather than falling through to main.
         CURRENT.with(|c| *c.lock() = Some(for_thread.clone()));
-        // A fresh backtrace-frame stack for this thread's body, the
-        // spawner's restored on exit -- see `frames`' module docs for the
-        // per-OS-thread TLS narrowing this bounds. (On a fresh OS thread
-        // both swaps are empty<->empty no-ops.)
-        let saved_frames = crate::frames::swap_stack(Vec::new());
+        // The frame stack needs no management here: this closure runs on
+        // a brand-new OS thread whose `frames` TLS starts empty.
         let result = body.call(&args);
-        let _ = crate::frames::swap_stack(saved_frames);
         // A killed thread dies silently with a nil value, whatever exception
         // unwound it (its `ensure` blocks already ran during that unwind).
         if for_thread.was_killed.load(Ordering::Relaxed) {

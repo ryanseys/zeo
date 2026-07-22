@@ -33,13 +33,11 @@ pub struct Frame {
 
 // A frame push/pop pair runs on EVERY method call -- plain TLS keeps it
 // two words + a u32 with no registry lookup. Each Ruby `Thread` is its own
-// OS thread with its own (fresh) slot; the body's `swap_stack` in
-// `thread::thread_new` is a belt-and-suspenders empty<->empty exchange.
+// OS thread with its own (fresh) slot.
 std::thread_local!(static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) });
 
-/// Install `new` as this execution context's frame stack, returning the
-/// previous one -- a Ruby `Thread` body swaps in a fresh stack on entry
-/// and restores its parent's on exit.
+/// Install `new` as this context's frame stack, returning the previous one
+/// -- the fiber ec-swap's slice of this cell (see `crate::ec`).
 pub fn swap_stack(new: Vec<Frame>) -> Vec<Frame> {
     FRAMES.with(|f| std::mem::replace(&mut *f.borrow_mut(), new))
 }
