@@ -400,30 +400,19 @@ builtin_methods! {
             .collect();
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "uniq"[0] => fn uniq(recv, args, _block) {
+    "uniq"[0] => fn uniq(recv, args, block) {
         arity!(args, 0);
-        let mut out: Vec<RubyValue> = Vec::new();
-        for e in recv_array!(recv).lock().iter() {
-            // `uniq` dedups by `eql?`/`hash`, not `==` (so `[1.0, 1]` keeps
-            // both -- `1.0` and `1` are `==` but not `eql?`).
-            if !out.iter().any(|x| values_eql(e, x)) {
-                out.push(e.clone());
-            }
-        }
+        let items = recv_array!(recv).lock().clone();
+        let out = uniq_dedup(&items, block.as_ref())?;
         Ok(RubyValue::Array(crate::array_new(out)))
     }
-    "uniq!"[0] => fn uniq_bang(recv, args, _block) {
+    "uniq!"[0] => fn uniq_bang(recv, args, block) {
         arity!(args, 0);
         let h = recv_array!(recv);
         check_frozen(h, recv)?;
-        let mut out: Vec<RubyValue> = Vec::new();
-        let before = h.lock().len();
-        for e in h.lock().iter() {
-            if !out.iter().any(|x| values_eql(e, x)) {
-                out.push(e.clone());
-            }
-        }
-        if out.len() == before {
+        let items = h.lock().clone();
+        let out = uniq_dedup(&items, block.as_ref())?;
+        if out.len() == items.len() {
             return Ok(RubyValue::Nil); // no change -- CRuby's nil answer
         }
         *h.lock() = out;
@@ -1351,6 +1340,35 @@ fn join_recursive(elems: &[RubyValue], sep: &str) -> String {
 /// `rb_eq` here would dispatch the user `==` and wrongly merge them.
 fn values_eql(a: &RubyValue, b: &RubyValue) -> bool {
     crate::collections::hash_key(a) == crate::collections::hash_key(b)
+}
+
+/// Shared `uniq`/`uniq!` dedup, keeping the FIRST element of each group. With
+/// no block, groups by the element's own `eql?`/`hash` (so `[1.0, 1]` keeps
+/// both). With a block, groups by the block's return value instead, comparing
+/// those keys by `eql?`/`hash` -- CRuby's `rb_ary_uniq` semantics.
+fn uniq_dedup(items: &[RubyValue], block: Option<&RubyValue>) -> Result<Vec<RubyValue>, crate::Signal> {
+    let mut out: Vec<RubyValue> = Vec::new();
+    match block {
+        None => {
+            for e in items {
+                if !out.iter().any(|x| values_eql(e, x)) {
+                    out.push(e.clone());
+                }
+            }
+        }
+        Some(b) => {
+            let p = b.as_proc_unchecked();
+            let mut keys: Vec<RubyValue> = Vec::new();
+            for e in items {
+                let key = p.call(std::slice::from_ref(e))?;
+                if !keys.iter().any(|k| values_eql(&key, k)) {
+                    keys.push(key);
+                    out.push(e.clone());
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The optional COUNT argument of `pop(n)`/`shift(n)`/`last(n)`: `None` when

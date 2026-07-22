@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=38459fe
-# PASS=2194 FAIL_OUTPUT=99 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=1a860b2
+# PASS=2195 FAIL_OUTPUT=98 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -2229,7 +2229,7 @@ undef_method_raises	PASS	-	-
 unicode_case_latin1	PASS	-	-
 uninit_const_raises_nameerror	PASS	-	-
 uninit_ivar_returns_nil	PASS	-	-
-uniq_block	FAIL_OUTPUT	expect	-
+uniq_block	PASS	-	-
 uniq_user_eql_hash	PASS	-	-
 unless_return_path_hash	PASS	-	-
 unpack1_literal_format	PASS	-	-

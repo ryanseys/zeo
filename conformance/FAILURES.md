@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **101 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `38459fe`
+Suite `spinel` — **100 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `1a860b2`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -2254,7 +2254,7 @@ true
 
 --- actual (5 lines)
 C
-2214825183111576065
+509093622321895642
 S
 P
 false
@@ -3337,7 +3337,7 @@ nil
 stderr:
 ```
 
-thread 'main' (110835612) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111038489) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3411,7 +3411,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (110835612) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111038489) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4008,7 +4008,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-35
+31
 diff
 ```
 
@@ -4728,42 +4728,6 @@ first difference at line 1
 
 --- actual (1 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError)
-```
-
----
-
-## `uniq_block` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/uniq_block.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/uniq_block.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (9 lines)
-[1, 2]
-[1, 2, 3]
-3
-["foo", "bar", "qux"]
-[1.5, 2.5]
-[1, "a"]
-[]
-[5, 6, 7]
-[1, 2, 3]
-
---- actual (9 lines)
-[1, 2, 3, 4]
-[1, 2, 3, 4, 5, 6]
-10
-["foo", "bar", "baz", "qux"]
-[1.5, 2.5, 3.5, 4.5]
-[1, "a", 2, "b"]
-[]
-[5, 6, 7]
-[1, 2, 3]
 ```
 
 ---

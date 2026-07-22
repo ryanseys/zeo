@@ -1,11 +1,11 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2194/2295 passing (95.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `38459fe`
+Suite `spinel` — **2195/2295 passing (95.6%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `1a860b2`
 
 | verdict | count |
 |---|---|
-| PASS | 2194 |
-| FAIL_OUTPUT | 99 |
+| PASS | 2195 |
+| FAIL_OUTPUT | 98 |
 | FAIL_COMPILE | 1 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
