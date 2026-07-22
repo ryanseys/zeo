@@ -1,116 +1,11 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **124 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `529e48f`
+Suite `spinel` — **120 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `70a1f6b`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
 diff — enough to understand each failure without re-running the harness.
 Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.
-
-## `analyze_fail/attributes_non_symbol` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb`
-- reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
-```
-
-diff:
-```
-=== stderr diff ===
-first difference at line 1
---- expected (2 lines)
-/Users/ryanseys/dev/spinel/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
-	from /Users/ryanseys/dev/spinel/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
-
---- actual (2 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
-```
-
----
-
-## `analyze_fail/instance_exec_def_in_block` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb`
-- reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>'
-```
-
-diff:
-```
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (2 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>'
-```
-
----
-
-## `analyze_fail/instance_exec_define_method` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb`
-- reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
-```
-
-diff:
-```
-=== stderr diff ===
-first difference at line 1
---- expected (3 lines)
-/Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb:15:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
-	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb:15:in 'BasicObject#instance_exec'
-	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
-
---- actual (2 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in 'block in <main>': undefined method 'define_method' for an instance of BoxPlus (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>'
-```
-
----
-
-## `analyze_fail/instance_exec_no_block` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb`
-- reference: zeo must reject the program (compile-fail)
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-6dd5` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>': tried to create Proc object without a block (in `instance_exec') (ArgumentError)
-```
-
-diff:
-```
-=== stderr diff ===
-first difference at line 1
---- expected (2 lines)
-/Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_no_block.rb:13:in 'BasicObject#instance_exec': no block given (LocalJumpError)
-	from /Users/ryanseys/dev/spinel/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>'
-
---- actual (1 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_no_block.rb:13:in '<main>': tried to create Proc object without a block (in `instance_exec') (ArgumentError)
-```
-
----
 
 ## `array_splice_exceptions` — FAIL_OUTPUT
 
@@ -1061,108 +956,6 @@ first difference at line 1
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:30:in 'Object#t_fiber_storage_current_alias': undefined method '[]=' for an instance of Fiber (NoMethodError)
 	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_09.rb:36:in '<main>'
-```
-
----
-
-## `bundle_misc_c_36` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:50:in 'Object#t_program_name_gvar': undefined method 'length' for nil (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 12
---- expected (59 lines)
-5
-0.75
-1.25
-2.0
-3.5
-4.125
-3.5
-1.25
-4294967296
-16777621
-3601407474
-true
-true
-11
-10
-11
-"hi"
-"lo"
-"hi"
-"lo"
-true
-false
-true
-true
-false
-true
-false
-true
-false
-false
-found-0
-missing
-found-42
-found-str-0
-missing-str-key
-1, 2, 3, 4, 5
-5
-true
-0
-done
-4
-1
-0
-0
-0
-0
-0
-0
-1
-0
-0
-0
-0
-0
-0
-0
-1
-0
-5
-
---- actual (11 lines)
-5
-0.75
-1.25
-2.0
-3.5
-4.125
-3.5
-1.25
-4294967296
-16777621
-3601407474
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (2 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:50:in 'Object#t_program_name_gvar': undefined method 'length' for nil (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_misc_c_36.rb:53:in '<main>'
 ```
 
 ---
@@ -2593,6 +2386,39 @@ done
 
 ---
 
+## `instance_exec_def_singleton` — FAIL_OUTPUT
+
+- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb`
+- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb.expected`
+- expected stderr: *(must be empty)*
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4add` (cluster `?`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb:11:in 'block in <main>': undefined method 'define_method' for an instance of Box (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb:11:in '<main>'
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 1
+--- expected (1 lines)
+hi
+
+--- actual (0 lines)
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (2 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb:11:in 'block in <main>': undefined method 'define_method' for an instance of Box (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/instance_exec_def_singleton.rb:11:in '<main>'
+```
+
+---
+
 ## `integer_argument_error` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/integer_argument_error.rb`
@@ -2795,7 +2621,7 @@ true
 
 --- actual (5 lines)
 C
-7619167277014293876
+-8534035146381811205
 S
 P
 false
@@ -3280,11 +3106,13 @@ true
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant OpenStruct::Warning (NameError)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb:109:in '<main>'
 ```
 
 diff:
@@ -3319,8 +3147,10 @@ nil
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uninitialized constant OpenStruct::Warning (NameError)
+--- actual (3 lines)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3135.rb:109:in '<main>'
 ```
 
 ---
@@ -3330,11 +3160,13 @@ uninitialized constant OpenStruct::Warning (NameError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant OpenStruct::Warning (NameError)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb:109:in '<main>'
 ```
 
 diff:
@@ -3350,8 +3182,10 @@ ok
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uninitialized constant OpenStruct::Warning (NameError)
+--- actual (3 lines)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3155.rb:109:in '<main>'
 ```
 
 ---
@@ -3458,11 +3292,13 @@ uninitialized constant User (NameError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant OpenStruct::Warning (NameError)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>'
 ```
 
 diff:
@@ -3478,8 +3314,10 @@ ok3193
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uninitialized constant OpenStruct::Warning (NameError)
+--- actual (3 lines)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3193.rb:109:in '<main>'
 ```
 
 ---
@@ -3489,11 +3327,13 @@ uninitialized constant OpenStruct::Warning (NameError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant OpenStruct::Warning (NameError)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb:109:in '<main>'
 ```
 
 diff:
@@ -3509,8 +3349,10 @@ ok3194
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uninitialized constant OpenStruct::Warning (NameError)
+--- actual (3 lines)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3194.rb:109:in '<main>'
 ```
 
 ---
@@ -3520,11 +3362,13 @@ uninitialized constant OpenStruct::Warning (NameError)
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:OpenStruct::Warning` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant OpenStruct::Warning (NameError)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb:109:in '<main>'
 ```
 
 diff:
@@ -3540,8 +3384,10 @@ ok3197
 first difference at line 1
 --- expected (0 lines)
 
---- actual (1 lines)
-uninitialized constant OpenStruct::Warning (NameError)
+--- actual (3 lines)
+/Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:481:in 'block in <class:OpenStruct>': undefined method 'alias_method' for class OpenStruct (NoMethodError)
+	from /Users/ryanseys/dev/zeo/gems/ostruct/lib/ostruct.rb:477:in '<class:OpenStruct>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3197.rb:109:in '<main>'
 ```
 
 ---
@@ -4193,7 +4039,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (106811130) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (107143535) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4267,7 +4113,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (106811130) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (107143535) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4935,7 +4781,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-32
+34
 diff
 ```
 

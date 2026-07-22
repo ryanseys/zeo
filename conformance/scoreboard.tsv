@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=529e48f
-# PASS=2171 FAIL_OUTPUT=121 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=70a1f6b
+# PASS=2175 FAIL_OUTPUT=117 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -7,11 +7,7 @@ alias_inherited_method	PASS	-	-
 alias_method_dispatch	PASS	-	-
 alias_under_modifier	PASS	-	-
 amp_sym_in_string_literals	PASS	-	-
-analyze_fail/attributes_non_symbol	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28
 analyze_fail/dynamic_define_method	PASS	-	-
-analyze_fail/instance_exec_def_in_block	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3
-analyze_fail/instance_exec_define_method	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f
-analyze_fail/instance_exec_no_block	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-6dd5
 analyze_fail/nonliteral_define_method_each	PASS	-	-
 and_nullable_container_poly	PASS	-	-
 anon_block_forward	PASS	-	-
@@ -119,6 +115,7 @@ array_unshift_return	PASS	-	-
 at_exit_lifo	PASS	-	-
 attr	PASS	-	-
 attr_override_dispatch	PASS	-	-
+attributes_undefined_dsl	PASS	-	-
 back_ref	PASS	-	-
 bang_exception_object	PASS	-	-
 bang_op_ruby_truthy	PASS	-	-
@@ -278,7 +275,7 @@ bundle_misc_c_31	PASS	-	-
 bundle_misc_c_33	PASS	-	-
 bundle_misc_c_34	PASS	-	-
 bundle_misc_c_35	PASS	-	-
-bundle_misc_c_36	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-27f6
+bundle_misc_c_36	PASS	-	-
 bundle_misc_c_37	PASS	-	-
 bundle_poly	PASS	-	-
 bundle_poly_b1	PASS	-	-
@@ -926,6 +923,8 @@ instance_exec_autosplat	PASS	-	-
 instance_exec_break	PASS	-	-
 instance_exec_capture	PASS	-	-
 instance_exec_const_receiver	PASS	-	-
+instance_exec_def_singleton	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4add
+instance_exec_define_method_privacy	PASS	-	-
 instance_exec_direct	PASS	-	-
 instance_exec_direct_splat	PASS	-	-
 instance_exec_dynamic_ivar	PASS	-	-
@@ -936,6 +935,7 @@ instance_exec_mixed_args	PASS	-	-
 instance_exec_module_builder	PASS	-	-
 instance_exec_nested	PASS	-	-
 instance_exec_next	PASS	-	-
+instance_exec_no_block_error	PASS	-	-
 instance_exec_nonlocal_return	PASS	-	-
 instance_exec_numbered	PASS	-	-
 instance_exec_override	PASS	-	-
@@ -1275,7 +1275,7 @@ issue_3129	PASS	-	-
 issue_3130	PASS	-	-
 issue_3131	PASS	-	-
 issue_3132	PASS	-	-
-issue_3135	FAIL_OUTPUT	expect	missing-const:OpenStruct::Warning
+issue_3135	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
 issue_3135_norequire	PASS	-	-
 issue_3136	PASS	-	-
 issue_3137	PASS	-	-
@@ -1294,7 +1294,7 @@ issue_3151	PASS	-	-
 issue_3152	PASS	-	-
 issue_3153	PASS	-	-
 issue_3154	PASS	-	-
-issue_3155	FAIL_OUTPUT	expect	missing-const:OpenStruct::Warning
+issue_3155	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
 issue_3156	PASS	-	-
 issue_3157	PASS	-	-
 issue_3158	PASS	-	-
@@ -1331,10 +1331,10 @@ issue_3188	PASS	-	-
 issue_3189	PASS	-	-
 issue_3190	PASS	-	-
 issue_3191	PASS	-	-
-issue_3193	FAIL_OUTPUT	expect	missing-const:OpenStruct::Warning
-issue_3194	FAIL_OUTPUT	expect	missing-const:OpenStruct::Warning
+issue_3193	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3194	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
 issue_3196	PASS	-	-
-issue_3197	FAIL_OUTPUT	expect	missing-const:OpenStruct::Warning
+issue_3197	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
 issue_3198	PASS	-	-
 issue_3199	PASS	-	-
 iter_block_autosplat	PASS	-	-
