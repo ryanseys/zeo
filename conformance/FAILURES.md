@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **112 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `8ce93b2`
+Suite `spinel` — **111 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `a78c7ce`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -2308,7 +2308,7 @@ true
 
 --- actual (5 lines)
 C
--706273149769686704
+8090348615941170344
 S
 P
 false
@@ -3691,7 +3691,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (107669509) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (108328012) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3765,7 +3765,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (107669509) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (108328012) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4270,12 +4270,37 @@ Set["a", "b"]
 
 ---
 
-## `socket_tcp_thread` — TIMEOUT_RUN
+## `socket_tcp_thread` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: TIMEOUT_RUN (stage `run`) · bucket `-` (cluster `-`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-cac9` (cluster `?`)
+
+stderr:
+```
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb:14:in '<main>': Unknown error @ read -  (SystemCallError)
+```
+
+diff:
+```
+=== stdout diff ===
+first difference at line 2
+--- expected (3 lines)
+"HTTP/1.0 200 OK\r\n"
+true
+"GET / HTTP/1.0\r\n"
+
+--- actual (1 lines)
+"HTTP/1.0 200 OK\r\n"
+
+=== stderr diff ===
+first difference at line 1
+--- expected (0 lines)
+
+--- actual (1 lines)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb:14:in '<main>': Unknown error @ read -  (SystemCallError)
+```
 
 ---
 
@@ -4337,7 +4362,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-30
+35
 diff
 ```
 
@@ -5019,30 +5044,6 @@ first difference at line 1
 
 --- actual (1 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError)
-```
-
----
-
-## `thread_pass_fairness` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/thread_pass_fairness.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/thread_pass_fairness.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (3 lines)
-[:main, 0, :main, 1, :main, 2, 3, 4]
-main_turns: 4
-done
-
---- actual (3 lines)
-[:main, :main, :main, 0, 1, 2, 3, 4]
-main_turns: 4
-done
 ```
 
 ---

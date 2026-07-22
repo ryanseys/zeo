@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=8ce93b2
-# PASS=2183 FAIL_OUTPUT=109 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=2 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=a78c7ce
+# PASS=2184 FAIL_OUTPUT=109 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1974,7 +1974,7 @@ slice_before_after_block	PASS	-	-
 slice_when_first_class	PASS	-	-
 socket_requires_require	PASS	-	-
 socket_tcp_basic	PASS	-	-
-socket_tcp_thread	TIMEOUT_RUN	run	-
+socket_tcp_thread	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-cac9
 sort_by_array_key	PASS	-	-
 sort_min_max_block_comparator	PASS	-	-
 sort_mixed_type_raises	PASS	-	-
@@ -2172,7 +2172,7 @@ thread_mutex	PASS	-	-
 thread_name	PASS	-	-
 thread_new_args	PASS	-	-
 thread_new_value	PASS	-	-
-thread_pass_fairness	FAIL_OUTPUT	expect	-
+thread_pass_fairness	PASS	-	-
 thread_preempt	PASS	-	-
 thread_queue	PASS	-	-
 thread_raise_main	PASS	-	-

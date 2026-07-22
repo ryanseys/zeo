@@ -32,6 +32,7 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc | 1 | symbol_nil_bool_float_batch | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a | 1 | numeric_edges_wave10 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb:11:in '<main>': Hash can't be coerced into Integer (TypeError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-c5a2 | 1 | constant_path | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb:29:in '<main>': tried to create Proc object without a block (ArgumentError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-cac9 | 1 | socket_tcp_thread | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb:14:in '<main>': Unknown error @ read -  (SystemCallError) |
 | P | missing-const:A | 1 | issue_3179 | uninitialized constant A (NameError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uninitialized constant Line (NameError) |
 | P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uninitialized constant OpenSSL (NameError) |
