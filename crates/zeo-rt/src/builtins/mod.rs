@@ -71,6 +71,7 @@ pub(crate) mod thread;
 pub(crate) mod thread_group;
 pub(crate) mod time;
 pub(crate) mod value_subclass;
+pub(crate) mod warning;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately
@@ -265,6 +266,7 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::TIME_CLASS => time::lookup_class,
         zeo_abi::PROCESS_CLASS => process::lookup_class,
         zeo_abi::SIGNAL_MODULE => signal::lookup_class,
+        zeo_abi::WARNING_MODULE => warning::lookup_class,
         zeo_abi::GC_CLASS => gc::lookup_class,
         zeo_abi::ENCODING_CLASS => encoding::lookup_class,
         zeo_abi::SET_CLASS => set::lookup_class,
@@ -414,6 +416,7 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::TIME_CLASS => time::lookup_class_names(),
         zeo_abi::PROCESS_CLASS => process::lookup_class_names(),
         zeo_abi::SIGNAL_MODULE => signal::lookup_class_names(),
+        zeo_abi::WARNING_MODULE => warning::lookup_class_names(),
         zeo_abi::GC_CLASS => gc::lookup_class_names(),
         zeo_abi::ENCODING_CLASS => encoding::lookup_class_names(),
         zeo_abi::SET_CLASS => set::lookup_class_names(),

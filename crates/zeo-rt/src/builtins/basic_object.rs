@@ -89,16 +89,21 @@ builtin_methods! {
     }
 }
 
-/// The block argument `instance_exec`/`instance_eval` require, or real
-/// Ruby's own no-block error.
+/// The block argument `instance_exec`/`instance_eval` (and their
+/// `class_*` twins) require, or real Ruby's own no-block error --
+/// oracle-verified split: the `*_exec` forms raise `LocalJumpError: no
+/// block given`, the `*_eval` forms (which could also have taken a source
+/// STRING) raise `ArgumentError: wrong number of arguments (given 0,
+/// expected 1..3)`.
 pub(crate) fn block_proc(
     block: Option<RubyValue>,
     method: &str,
 ) -> Result<crate::RProc, crate::Signal> {
     match block {
         Some(RubyValue::Proc(p)) => Ok(p),
+        _ if method.ends_with("_exec") => Err(crate::builtins::local_jump_error!("no block given")),
         _ => Err(arg_error!(
-            "tried to create Proc object without a block (in `{method}')"
+            "wrong number of arguments (given 0, expected 1..3)"
         )),
     }
 }

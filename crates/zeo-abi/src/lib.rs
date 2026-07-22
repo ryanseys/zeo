@@ -312,6 +312,11 @@ pub const TCPSERVER_CLASS: ClassId = ClassId(79);
 /// re-adding to `ThreadGroup::Default` (timeout does both).
 pub const THREAD_GROUP_CLASS: ClassId = ClassId(80);
 
+/// The `Warning` module -- category flags (`Warning[:deprecated]` /
+/// `[]=`) and the `Warning.warn` sink. Always-on core: stdlib probes it
+/// at load time (ostruct's `HAS_PERFORMANCE_WARNINGS`).
+pub const WARNING_MODULE: ClassId = ClassId(81);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -971,6 +976,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         name: "ThreadGroup",
         is_module: false,
         superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
+    },
+    BuiltinClass {
+        id: WARNING_MODULE,
+        name: "Warning",
+        is_module: true,
+        superclass: None,
         includes: &[],
         feature: None,
     },

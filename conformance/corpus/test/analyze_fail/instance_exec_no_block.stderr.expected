@@ -1,1 +1,0 @@
-Spinel: instance_exec: no block given; pass a literal block (`recv.instance_exec { ... }`)
