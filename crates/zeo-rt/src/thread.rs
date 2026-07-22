@@ -26,15 +26,13 @@
 //! exception CONSTRUCTION happens in codegen (the `IndexError` division of
 //! labor); runtime functions return `Err(message)` / enums.
 //!
-//! The Ruby `Mutex` is a TOKEN CHANNEL (an mpmc channel holding at most one
-//! `()`): `lock` = blocking `recv` (a real `may` yield point), `unlock` =
-//! `send` it back. Not `may::sync::Mutex`, whose RAII guard can't span
-//! Ruby's split `lock`/`unlock` calls (a guard is lifetime-bound to the
-//! locking scope; Ruby's isn't). Owner identity for the error semantics
-//! comes from [`execution_id`], a lazily-assigned per-coroutine id in
-//! `may`'s coroutine-local storage -- per-EXECUTION-CONTEXT like CRuby's
-//! `ec_serial`, and correct even if a coroutine migrates OS threads
-//! (unlike a `thread_local!`).
+//! The Ruby `Mutex` is an OWNER CELL plus condvar (not a Rust mutex whose
+//! RAII guard can't span Ruby's split `lock`/`unlock` calls -- a guard is
+//! lifetime-bound to the locking scope; Ruby's isn't): `lock` parks on the
+//! condvar until the cell reads `None`, `unlock` clears it and wakes one
+//! waiter. Owner identity for the error semantics comes from
+//! [`execution_id`], a lazily-assigned per-thread id -- per-EXECUTION-
+//! CONTEXT like CRuby's `ec_serial`.
 
 use crate::{RubyValue, Signal, Symbol};
 use parking_lot::Mutex as PlMutex;
@@ -477,10 +475,11 @@ pub fn thread_alive(t: &RThread) -> bool {
 // ---------------------------------------------------------------------------
 
 pub struct MutexData {
-    /// Holds the single availability token -- see module docs.
-    token_tx: may::sync::mpmc::Sender<()>,
-    token_rx: may::sync::mpmc::Receiver<()>,
+    /// `Some(execution_id)` while held. The one cell both the CRuby error
+    /// semantics (owner identity) and the blocking handoff key off --
+    /// waiters park on `freed` until it reads `None`.
     owner: PlMutex<Option<u64>>,
+    freed: parking_lot::Condvar,
     /// `.frozen?` state -- flag-only (CRuby allows locking a frozen Mutex,
     /// oracle-verified).
     frozen: AtomicBool,
@@ -501,12 +500,9 @@ impl MutexData {
 }
 
 pub fn mutex_new() -> RubyValue {
-    let (token_tx, token_rx) = may::sync::mpmc::channel();
-    token_tx.send(()).expect("priming a fresh mutex's token");
     RubyValue::Mutex(Arc::new(MutexData {
-        token_tx,
-        token_rx,
         owner: PlMutex::new(None),
+        freed: parking_lot::Condvar::new(),
         frozen: AtomicBool::new(false),
     }))
 }
@@ -515,19 +511,21 @@ pub fn mutex_new() -> RubyValue {
 /// exception itself is codegen's job.
 pub fn mutex_lock(m: &RMutex) -> Result<(), &'static str> {
     let me = execution_id();
-    if *m.owner.lock() == Some(me) {
-        return Err("deadlock; recursive locking");
-    }
-    // The blocking recv runs with an armed Gvl released (free otherwise) --
-    // a waiter holding the scheduling lock would starve the very owner it
-    // waits on.
+    // The whole potentially-blocking section runs with an armed Gvl
+    // released (free otherwise) -- a waiter holding the scheduling lock
+    // would starve the very owner it waits on. The recursive-lock check
+    // lives inside so the read and the park see one consistent owner.
     crate::gvl::process_gvl().without(|| {
-        m.token_rx
-            .recv()
-            .expect("mutex token channel can't disconnect while the mutex is alive")
-    });
-    *m.owner.lock() = Some(me);
-    Ok(())
+        let mut owner = m.owner.lock();
+        if *owner == Some(me) {
+            return Err("deadlock; recursive locking");
+        }
+        while owner.is_some() {
+            m.freed.wait(&mut owner);
+        }
+        *owner = Some(me);
+        Ok(())
+    })
 }
 
 pub fn mutex_unlock(m: &RMutex) -> Result<(), &'static str> {
@@ -542,9 +540,7 @@ pub fn mutex_unlock(m: &RMutex) -> Result<(), &'static str> {
     }
     *owner = None;
     drop(owner);
-    m.token_tx
-        .send(())
-        .expect("mutex token channel can't disconnect while the mutex is alive");
+    m.freed.notify_one();
     Ok(())
 }
 
@@ -557,15 +553,13 @@ pub fn mutex_locked(m: &RMutex) -> bool {
 /// ourselves -- CRuby never deadlocks on a recursive `try_lock`).
 pub fn mutex_try_lock(m: &RMutex) -> bool {
     let me = execution_id();
-    if *m.owner.lock() == Some(me) {
-        return false;
-    }
-    match m.token_rx.try_recv() {
-        Ok(()) => {
-            *m.owner.lock() = Some(me);
+    let mut owner = m.owner.lock();
+    match *owner {
+        None => {
+            *owner = Some(me);
             true
         }
-        Err(_) => false,
+        Some(_) => false,
     }
 }
 
