@@ -193,9 +193,19 @@ pub fn thread_main() -> RubyValue {
     RubyValue::Thread(main_thread())
 }
 
-/// `Thread.pass` -- a scheduler hint to let other coroutines run; nil.
+/// `Thread.pass` -- give up the current quantum; nil. Inside a coroutine
+/// that is may's own yield; on a plain OS thread (main) a brief real sleep,
+/// so freshly spawned coroutines genuinely get scheduler time before the
+/// caller proceeds -- CRuby's `Thread.pass` likewise cedes the caller's
+/// quantum, which is what the `Thread.new ...; Thread.pass; t.raise` idiom
+/// relies on for the target to reach its blocking point (and its own
+/// `begin`) before the interrupt lands.
 pub fn thread_pass() -> RubyValue {
-    may::coroutine::yield_now();
+    if may::coroutine::is_coroutine() {
+        may::coroutine::yield_now();
+    } else {
+        std::thread::sleep(Duration::from_millis(2));
+    }
     RubyValue::Nil
 }
 
@@ -238,18 +248,23 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
 /// reaches one); `was_killed` makes the eventual outcome an authoritative nil.
 pub fn thread_kill(t: &RThread) {
     t.was_killed.store(true, Ordering::Relaxed);
-    *t.interrupt.lock() = Some(InterruptKind::Kill);
+    if t.interrupt.lock().replace(InterruptKind::Kill).is_none() {
+        crate::gvl::note_posted();
+    }
 }
 
 /// `Thread#raise(exc)` -- queue `exc` to be raised inside the target thread at
-/// its next checkpoint, where an ordinary `rescue` can catch it.
+/// its next checkpoint, where an ordinary `rescue` can catch it. The main
+/// thread is a first-class target: `check_ints` checkpoints run in its body
+/// like any other thread's.
 pub fn thread_raise(t: &RThread, exc: RubyValue) {
-    // Delivery to the MAIN thread is unsupported (it has no checkpoint loop of
-    // its own here) -- a documented no-op, matching `thread_raise_main`.
-    if t.is_main {
-        return;
+    if t.interrupt
+        .lock()
+        .replace(InterruptKind::Raise(exc))
+        .is_none()
+    {
+        crate::gvl::note_posted();
     }
-    *t.interrupt.lock() = Some(InterruptKind::Raise(exc));
 }
 
 /// The `Exception` (deliberately NOT a `StandardError`) a `#kill` unwinds with.
@@ -264,9 +279,16 @@ fn kill_signal() -> Signal {
 /// return the `Signal` that delivers it (unwinding the thread's body). Called
 /// from every blocking primitive that can park a thread indefinitely.
 pub fn check_interrupt() -> Result<(), Signal> {
-    let here = CURRENT.with(|c| c.lock().clone());
-    let Some(t) = here else { return Ok(()) };
+    // Outside any spawned coroutine the current thread IS main -- the same
+    // fallback `Thread.current` makes, and what lets `Thread#raise` reach
+    // the main thread's checkpoints.
+    let t = CURRENT
+        .with(|c| c.lock().clone())
+        .unwrap_or_else(main_thread);
     let taken = t.interrupt.lock().take();
+    if taken.is_some() {
+        crate::gvl::note_consumed();
+    }
     match taken {
         Some(InterruptKind::Kill) => Err(kill_signal()),
         Some(InterruptKind::Raise(exc)) => Err(Signal::Raise(exc)),
@@ -277,9 +299,10 @@ pub fn check_interrupt() -> Result<(), Signal> {
 /// Whether the CURRENT thread has a pending interrupt (a cheap peek used inside
 /// a condvar-wait loop before committing to `check_interrupt`'s take).
 fn interrupt_pending() -> bool {
-    CURRENT
+    let t = CURRENT
         .with(|c| c.lock().clone())
-        .is_some_and(|t| t.interrupt.lock().is_some())
+        .unwrap_or_else(main_thread);
+    t.interrupt.lock().is_some()
 }
 
 /// `Thread#status` -- "run" while alive, `false` after a clean finish, `nil`

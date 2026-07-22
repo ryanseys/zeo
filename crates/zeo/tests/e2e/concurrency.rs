@@ -775,6 +775,51 @@ fn thread_registry_and_kill_raise() {
 }
 
 #[test]
+fn busy_loop_threads_are_killable_and_raisable() {
+    // Impossible before the interruption checkpoints: a compute-only loop
+    // never reaches a blocking primitive, so `#kill`/`#raise` had no
+    // delivery point and the target spun forever. The back-edge check in
+    // every native loop delivers them now -- kill runs the ensure, raise is
+    // rescuable inside the body.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        killed = []
+        t = Thread.new do
+          begin
+            x = 0
+            loop { x += 1 }
+          ensure
+            killed << :ensure_ran
+          end
+        end
+        Thread.pass
+        t.kill
+        t.join
+        p t.alive?
+        p killed
+
+        log = []
+        u = Thread.new do
+          begin
+            i = 0
+            i += 1 while true
+            "unreached"
+          rescue => e
+            log << e.message
+          end
+        end
+        Thread.pass
+        u.raise("stop it")
+        u.join
+        p log
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "false\n[:ensure_ran]\n[\"stop it\"]\n");
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.

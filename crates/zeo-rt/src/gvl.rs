@@ -42,6 +42,20 @@ pub fn interrupts_pending_anywhere() -> bool {
     PENDING_GLOBAL.load(Ordering::Relaxed) != 0
 }
 
+/// Coroutine-mode shims: while Ruby threads are still coroutines with their
+/// interrupt payload in `thread.rs`' per-thread slot (no [`ThreadCtx`] yet),
+/// `Thread#kill`/`#raise` note a NEWLY filled slot here and
+/// `check_interrupt` notes its consumption -- keeping the fast-path counter
+/// exactly equal to the number of undelivered interrupts. The OS-thread
+/// mode replaces these with [`ThreadCtx::post`]/[`ThreadCtx::take`].
+pub(crate) fn note_posted() {
+    PENDING_GLOBAL.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(crate) fn note_consumed() {
+    PENDING_GLOBAL.fetch_sub(1, Ordering::Relaxed);
+}
+
 /// Timer quantum expired -- the holder should `yield_now` (armed mode only).
 pub const INT_TIMER: u32 = 1;
 /// A `Thread#kill`/`#raise` is queued for this thread (the payload itself

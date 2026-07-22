@@ -120,6 +120,19 @@ pub use value::RubyValue;
 pub use value::rb_eq_checked;
 pub use value::{case_eq, case_eq_any};
 
+/// The interruption checkpoint generated code plants at loop back-edges and
+/// method prologues: ONE relaxed load of the process-wide pending counter
+/// (see `gvl`), and only a nonzero value takes the slow path that actually
+/// resolves the current thread and delivers a queued `Thread#kill`/`#raise`.
+/// This is what makes a busy loop killable -- with or without a GVL.
+#[inline]
+pub fn check_ints() -> Result<(), Signal> {
+    if gvl::interrupts_pending_anywhere() {
+        thread::check_interrupt()?;
+    }
+    Ok(())
+}
+
 /// Re-exported so `ruby_class!`'s macro-expanded code (which runs inside a
 /// GENERATED program's own crate, not this one) can reference
 /// `$crate::parking_lot::Mutex` without that program's own `Cargo.toml`

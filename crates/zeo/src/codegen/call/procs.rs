@@ -343,7 +343,7 @@ pub(crate) fn emit_proc_or_lambda_value(
             #self_default
             zeo_rt::RubyValue::Proc(#ctor(move |#closure_params| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
                 #frame_guard
-                #redo_label: loop {
+                let __out = #redo_label: loop {
                     let __result: Result<zeo_rt::RubyValue, zeo_rt::Signal> = (|| -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
                         #arity_check
                         #own_locals_prelude
@@ -357,7 +357,16 @@ pub(crate) fn emit_proc_or_lambda_value(
                         Err(zeo_rt::Signal::Next(__v)) => break #redo_label Ok(__v),
                         #terminal_arm
                     }
-                }
+                };
+                // Per-invocation interruption checkpoint, on the normal EXIT
+                // (not entry): iterator-driven loops (`arr.each { ... }`)
+                // still hit it once per element, but a freshly started
+                // Thread body -- also a proc -- always reaches its own first
+                // statements (and any `begin`) before a queued kill/raise
+                // can land, matching the running-target delivery real Ruby's
+                // `Thread.new ...; Thread.pass; t.raise` idiom relies on.
+                if __out.is_ok() { zeo_rt::check_ints()?; }
+                __out
             }, #default_arg #arity, #is_lambda).with_home().with_params(#proc_params))
         }
     }

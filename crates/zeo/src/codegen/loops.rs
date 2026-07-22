@@ -55,8 +55,13 @@ pub(super) fn emit_redo_wrapped_body(
     // tail as its own separate statement -- and when that tail happens to
     // be something like a plain `RubyValue::Nil` with no visible side
     // effect, `clippy`'s `path_statements` lint flags it.
+    // The interruption checkpoint at every back-edge: one relaxed load per
+    // iteration (see `zeo_rt::check_ints`), which is what makes a busy
+    // `while`/`loop`/`for`/`.times` body killable by `Thread#kill`/`#raise`.
+    // Placed inside the redo loop so a `redo`-repeated iteration checks too.
     quote! {
         #redo_label: loop {
+            zeo_rt::check_ints()?;
             { #body_val };
             break #redo_label;
         }

@@ -1300,6 +1300,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     // "before every top-level statement" order the old
                     // in-`main()` splice had.
                     #main_frame
+                    zeo_rt::check_ints()?;
                     #validate_aliases
                     #(#builtin_class_bodies)*
                     #(#user_class_bodies)*
@@ -1561,10 +1562,14 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         || captures::body_contains_escaping_block(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
+    // `check_ints` after the frame push: the method-prologue interruption
+    // checkpoint (pairs with the back-edge check in `loops`), so recursion-
+    // driven busy work is killable even with no native loop in sight.
     quote! {
         #[allow(unused_variables)]
         pub fn #method_ident(#sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
+            zeo_rt::check_ints()?;
             #body_tokens
         }
     }
@@ -1802,6 +1807,7 @@ fn emit_builtin_method_fn(
         #[allow(unused_variables)]
         pub fn #method_ident(__self: zeo_rt::RubyValue #sig_params) -> Result<zeo_rt::RubyValue, zeo_rt::Signal> {
             #frame
+            zeo_rt::check_ints()?;
             #body_tokens
         }
     }
@@ -1883,6 +1889,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
         quote! {
             def #method_ident(self: std::sync::Arc<Self> #sig_params) {
                 #frame
+                zeo_rt::check_ints()?;
                 #body_tokens
             }
         }
