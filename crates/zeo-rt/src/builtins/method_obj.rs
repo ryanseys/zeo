@@ -441,6 +441,22 @@ pub struct RUnboundMethod {
     pub name: Symbol,
 }
 
+/// If `v` is a `Method` or `UnboundMethod`, its source `(owning class, method
+/// name)` -- what `define_method(name, method_obj)` copies the definition of.
+/// `None` for anything else (a Proc, a bare value).
+pub fn method_source(v: &RubyValue) -> Option<(ClassId, Symbol)> {
+    let RubyValue::Object(o) = v else {
+        return None;
+    };
+    if let Some(m) = o.as_any().downcast_ref::<RMethod>() {
+        return Some((m.recv.class_id(), m.name));
+    }
+    if let Some(u) = o.as_any().downcast_ref::<RUnboundMethod>() {
+        return Some((u.class_id, u.name));
+    }
+    None
+}
+
 impl RubyObject for RUnboundMethod {
     fn class_id(&self) -> ClassId {
         zeo_abi::UNBOUND_METHOD_CLASS

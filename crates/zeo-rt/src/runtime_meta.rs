@@ -424,6 +424,125 @@ fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     crate::dispatch::alias_target(id, name).and_then(|old| snapshot_instance_method(id, old))
 }
 
+/// `define_method(name, method_obj)` -- install an instance method on `id`
+/// whose body IS the `Method`/`UnboundMethod`'s source definition (`owner`
+/// class, `src_name`). CRuby requires `id` be the source's owner or a
+/// descendant (so `self` is a valid instance of the method's class),
+/// TypeError otherwise. Snapshots the source impl (the same resolution
+/// `alias_method` uses) and installs it under `name`. Returns the name.
+pub fn runtime_define_method_from_method(
+    id: ClassId,
+    name: Symbol,
+    owner: ClassId,
+    src_name: Symbol,
+) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    if !ancestors_of_value(id).contains(&owner) {
+        return Err(type_error!(
+            "bind argument must be a subclass of {}",
+            crate::dispatch::class_name(owner).unwrap_or_default()
+        ));
+    }
+    // Snapshot the method as resolved for the TARGET class's own instances,
+    // not the owner's: zeo materializes each class's own layout-correct copy
+    // of an inherited method, and the owner's compiled impl would panic on a
+    // subclass-layout receiver. (For the common case where the target doesn't
+    // override the name, this is the same behavior; a target that DOES
+    // override it binds its own version -- a documented AOT divergence.)
+    let m = snapshot_instance_method(id, src_name).ok_or_else(|| {
+        name_error!(
+            "undefined method '{}' for class '{}'",
+            src_name.name(),
+            crate::dispatch::class_name(owner).unwrap_or_default()
+        )
+    })?;
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.methods.insert(name, m);
+        e.methods_vis.remove(&name);
+    }
+    mark_live();
+    Ok(RubyValue::Symbol(name))
+}
+
+/// `recv.define_singleton_method(name, method_obj)` -- the method-object body
+/// form: install the source method's definition as a per-object singleton (or
+/// a class method for a `Class` receiver). The compatibility check runs
+/// against the RECEIVER's class, matching CRuby's singleton bind rule.
+pub fn runtime_define_singleton_from_method(
+    recv: &RubyValue,
+    name: Symbol,
+    owner: ClassId,
+    src_name: Symbol,
+) -> Result<RubyValue, Signal> {
+    let recv_class = recv.class_id();
+    if !ancestors_of_value(recv_class).contains(&owner) {
+        return Err(type_error!(
+            "bind argument must be a subclass of {}",
+            crate::dispatch::class_name(owner).unwrap_or_default()
+        ));
+    }
+    // Snapshot as resolved for the RECEIVER's class (layout-correct copy) --
+    // see the note in `runtime_define_method_from_method`.
+    let m = snapshot_instance_method(recv_class, src_name).ok_or_else(|| {
+        name_error!(
+            "undefined method '{}' for class '{}'",
+            src_name.name(),
+            crate::dispatch::class_name(owner).unwrap_or_default()
+        )
+    })?;
+    match recv {
+        RubyValue::Class(cid) => {
+            if crate::dispatch::class_frozen(*cid) {
+                return Err(crate::dispatch::frozen_class_error(*cid));
+            }
+            // A class method whose body is a snapshot of an instance method:
+            // wrap it so the `RubyValue::Class` receiver reaches the impl.
+            let wrapped = RProc::with_self_and_block(
+                move |self_val: &RubyValue, args: &[RubyValue], block: Option<RubyValue>| {
+                    if let RubyValue::Object(o) = self_val {
+                        m.call(o, args, block)
+                    } else {
+                        Err(type_error!(
+                            "singleton method body needs an object receiver"
+                        ))
+                    }
+                },
+                recv.clone(),
+                -1,
+                true,
+            );
+            let mut w = maps().classes.write().unwrap();
+            w.entry(cid.0)
+                .or_insert_with(OverlayEntry::delta)
+                .class_methods
+                .insert(name, wrapped);
+            mark_live();
+            Ok(RubyValue::Symbol(name))
+        }
+        RubyValue::Object(o) => {
+            crate::builtins::check_frozen(recv)?;
+            let key = obj_identity(o);
+            maps()
+                .singletons
+                .write()
+                .unwrap()
+                .entry(key)
+                .or_default()
+                .insert(name, m);
+            mark_live();
+            Ok(RubyValue::Symbol(name))
+        }
+        other => Err(type_error!(
+            "can't define singleton method for {}",
+            immediate_kind(other)
+        )),
+    }
+}
+
 /// `recv.define_singleton_method(name) { body }` -- a per-object singleton when
 /// `recv` is an ordinary object, or a class/singleton method when `recv` is a
 /// `Class`. A singleton on an immediate (Integer/Symbol/nil/...) is a

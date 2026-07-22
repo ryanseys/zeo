@@ -403,6 +403,14 @@ builtin_methods! {
     "define_method" => fn define_method(recv, args, block) {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
+        // A `Method`/`UnboundMethod` second argument installs that method's
+        // own definition under `name` (not a Proc body).
+        if let Some(src) = args.get(1) {
+            if let Some((owner, src_name)) = crate::builtins::method_obj::method_source(src) {
+                return crate::runtime_meta::runtime_define_method_from_method(
+                    recv_cid(recv), name, owner, src_name);
+            }
+        }
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         crate::runtime_define_method(recv_cid(recv), name, body)
     }

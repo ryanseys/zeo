@@ -141,6 +141,12 @@ builtin_methods! {
     "define_singleton_method" => fn define_singleton_method(recv, args, block) {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
+        if let Some(src) = args.get(1) {
+            if let Some((owner, src_name)) = crate::builtins::method_obj::method_source(src) {
+                return crate::runtime_meta::runtime_define_singleton_from_method(
+                    recv, name, owner, src_name);
+            }
+        }
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         crate::runtime_define_singleton_method(recv, name, body)
     }
