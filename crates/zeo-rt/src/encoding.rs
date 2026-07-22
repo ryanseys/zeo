@@ -433,6 +433,20 @@ impl StrBuf {
         }
     }
 
+    /// Appends `other`'s raw bytes under CRuby's concatenation-compatibility
+    /// rule (see `compat_concat_enc`), adopting the negotiated encoding.
+    /// `Err(IncompatibleEncodings)` is the incompatible case, receiver left
+    /// untouched -- the caller raises `Encoding::CompatibilityError` (this
+    /// crate keeps `Signal` out of the encoding layer).
+    pub fn push_buf(&mut self, other: &StrBuf) -> Result<(), IncompatibleEncodings> {
+        let enc = compat_concat_enc(self.enc, self.ascii_only(), other.enc, other.ascii_only())
+            .ok_or(IncompatibleEncodings)?;
+        self.bytes.extend_from_slice(&other.bytes);
+        self.enc = enc;
+        self.coderange.set(CodeRange::Unknown);
+        Ok(())
+    }
+
     /// Appends valid UTF-8 text; resets the coderange cache.
     pub fn push_str(&mut self, s: &str) {
         self.bytes.extend_from_slice(s.as_bytes());
@@ -458,6 +472,12 @@ impl StrBuf {
         self.bytes = bytes;
         self.enc = enc;
         self.coderange.set(CodeRange::Unknown);
+    }
+
+    /// `push_buf`'s decision as a dry run: the encoding a concatenation of
+    /// `self` and `other` would produce, `None` for the incompatible pair.
+    pub fn concat_enc_with(&self, other: &StrBuf) -> Option<EncodingId> {
+        compat_concat_enc(self.enc, self.ascii_only(), other.enc, other.ascii_only())
     }
 
     /// The `(bytes, encoding-tag)` a Hash key / `eql?` comparison uses.
@@ -492,6 +512,35 @@ impl Clone for StrBuf {
         }
     }
 }
+
+/// CRuby's `rb_enc_compatible` for CONCATENATION, reduced to this engine's
+/// encodings (every one is ASCII-compatible): equal encodings are trivially
+/// compatible; a 7-bit (`ascii_only`) side adopts the OTHER side's encoding
+/// -- checked right side first, so the LEFT side wins when both are 7-bit
+/// (oracle-verified: `usascii + "y"` is US-ASCII, `"y" + usascii` is UTF-8,
+/// `"abc" + binary_high` is BINARY); two differently-encoded non-7-bit
+/// strings are incompatible -- `None`, the caller's
+/// `Encoding::CompatibilityError`.
+pub fn compat_concat_enc(
+    left: EncodingId,
+    left_ascii: bool,
+    right: EncodingId,
+    right_ascii: bool,
+) -> Option<EncodingId> {
+    if left == right || right_ascii {
+        Some(left)
+    } else if left_ascii {
+        Some(right)
+    } else {
+        None
+    }
+}
+
+/// `push_buf`'s refusal marker: the two buffers' encodings can't legally
+/// concatenate (two differently-encoded non-7-bit strings). Carries no data
+/// -- the caller re-reads both encodings for the error message.
+#[derive(Debug)]
+pub struct IncompatibleEncodings;
 
 impl std::fmt::Debug for StrBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -979,6 +1028,66 @@ pub fn set_default_internal(enc: Option<EncodingId>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concat_enc_keeps_equal_encodings() {
+        assert_eq!(
+            compat_concat_enc(ASCII_8BIT, false, ASCII_8BIT, false),
+            Some(ASCII_8BIT)
+        );
+        assert_eq!(compat_concat_enc(UTF_8, true, UTF_8, false), Some(UTF_8));
+    }
+
+    #[test]
+    fn concat_enc_lets_a_seven_bit_side_adopt_the_other_encoding() {
+        // BINARY high bytes + ASCII-only UTF-8 stays BINARY, either side.
+        assert_eq!(
+            compat_concat_enc(ASCII_8BIT, false, UTF_8, true),
+            Some(ASCII_8BIT)
+        );
+        assert_eq!(
+            compat_concat_enc(UTF_8, true, ASCII_8BIT, false),
+            Some(ASCII_8BIT)
+        );
+        // Both 7-bit: the LEFT side's encoding wins (oracle-verified:
+        // `usascii + "y"` is US-ASCII, `"y" + usascii` is UTF-8).
+        assert_eq!(
+            compat_concat_enc(US_ASCII, true, UTF_8, true),
+            Some(US_ASCII)
+        );
+        assert_eq!(compat_concat_enc(UTF_8, true, US_ASCII, true), Some(UTF_8));
+    }
+
+    #[test]
+    fn concat_enc_rejects_two_differently_encoded_high_bit_strings() {
+        assert_eq!(compat_concat_enc(ASCII_8BIT, false, UTF_8, false), None);
+        assert_eq!(compat_concat_enc(UTF_8, false, ISO_8859_1, false), None);
+    }
+
+    #[test]
+    fn push_buf_appends_raw_bytes_and_adopts_the_negotiated_encoding() {
+        // THE regression seam: BINARY 0xB5 + UTF-8 "\n" must stay the two
+        // raw bytes [0xB5, 0x0A] tagged BINARY -- the old display-text path
+        // promoted it to [0xC2, 0xB5, 0x0A] UTF-8.
+        let mut b = StrBuf::from_bytes(vec![0xb5], ASCII_8BIT);
+        b.push_buf(&StrBuf::from_utf8("\n".to_string())).unwrap();
+        assert_eq!(b.bytes(), [0xb5, 0x0a]);
+        assert_eq!(b.encoding(), ASCII_8BIT);
+        // An ASCII-only receiver adopts a high-bit UTF-8 argument's tag.
+        let mut a = StrBuf::from_utf8("x".to_string());
+        a.push_buf(&StrBuf::from_utf8("é".to_string())).unwrap();
+        assert_eq!(a.encoding(), UTF_8);
+        assert_eq!(a.bytes(), "xé".as_bytes());
+    }
+
+    #[test]
+    fn push_buf_refuses_the_incompatible_pair_without_mutating() {
+        let mut b = StrBuf::from_bytes(vec![0xb5], ASCII_8BIT);
+        assert!(b.push_buf(&StrBuf::from_utf8("é".to_string())).is_err());
+        // The receiver is untouched on the error path.
+        assert_eq!(b.bytes(), [0xb5]);
+        assert_eq!(b.encoding(), ASCII_8BIT);
+    }
 
     #[test]
     fn find_is_case_and_separator_insensitive() {

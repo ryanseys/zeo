@@ -174,6 +174,22 @@ fn lenient_to_i(text: &str, base: u32) -> RubyValue {
     }
 }
 
+/// The `Encoding::CompatibilityError` a concatenation of two
+/// differently-encoded non-7-bit strings raises, message shaped exactly
+/// like CRuby's (receiver's encoding first, `inspect_name` forms --
+/// "incompatible character encodings: BINARY (ASCII-8BIT) and UTF-8",
+/// oracle-verified). See `StrBuf::push_buf`.
+fn concat_incompat(left: &StrBuf, right: &StrBuf) -> crate::Signal {
+    crate::dispatch::raise_error(
+        "Encoding::CompatibilityError",
+        format!(
+            "incompatible character encodings: {} and {}",
+            left.encoding().inspect_name(),
+            right.encoding().inspect_name()
+        ),
+    )
+}
+
 fn str_value(s: String) -> RubyValue {
     RubyValue::Str(crate::string_new(s))
 }
@@ -1334,14 +1350,21 @@ builtin_methods! {
     "+"[1] => fn plus(recv, args, _block) {
         arity!(args, 1);
         let other = arg_str!(args, 0);
-        // Read the receiver out and RELEASE its guard before locking `other`.
-        // `s + s` hands the same `Arc<Mutex<..>>` in twice, and parking_lot's
-        // Mutex is not reentrant, so taking both guards in one expression
-        // (`format!("{}{}", recv.lock(), other.lock())`) deadlocks the process
-        // -- a hang, with no output and no error.
-        let mut joined = recv_str!(recv).lock().to_string();
-        joined.push_str(&other.lock().to_string());
-        Ok(str_value(joined))
+        // BYTE concatenation under the encoding-compatibility rule
+        // (`compat_concat_enc`) -- never through the lossy display text,
+        // which promoted a BINARY `0xB5` to UTF-8 `0xC2 0xB5` (the bug that
+        // corrupted digest/pack bytes and every `chr`-built binary string).
+        //
+        // Clone the receiver's buffer out and RELEASE its guard before
+        // locking `other`. `s + s` hands the same `Arc<Mutex<..>>` in twice,
+        // and parking_lot's Mutex is not reentrant, so taking both guards at
+        // once deadlocks the process -- a hang, with no output and no error.
+        let mut joined = recv_str!(recv).lock().clone();
+        let compatible = joined.push_buf(&other.lock());
+        if compatible.is_err() {
+            return Err(concat_incompat(&joined, &other.lock()));
+        }
+        Ok(RubyValue::Str(crate::collections::string_wrap(joined)))
     }
     // Mutating append -- returns the receiver (the same object).
     "<<"[1] | "concat" => fn concat(recv, args, _block) {
@@ -1360,22 +1383,45 @@ builtin_methods! {
             ));
         }
         for arg in args {
-            let addition = match arg {
-                // `str << 65` appends the CODEPOINT's character (a Float
-                // does NOT truncate here -- it goes through `to_str` and
-                // fails, CRuby's rule).
-                RubyValue::Int(i) => match u32::try_from(*i).ok().and_then(char::from_u32) {
-                    Some(c) => c.to_string(),
-                    None => {
-                        return Err(range_error!("{i} out of char range"))
+            match arg {
+                // `str << 65` appends the CODEPOINT's character IN THE
+                // RECEIVER'S ENCODING: one raw byte for the byte encodings
+                // (`"".b << 181` is the single byte 0xB5, and anything past
+                // 255 is out of range there), the UTF-8 character otherwise.
+                // A Float does NOT truncate here -- it goes through `to_str`
+                // and fails, CRuby's rule. All oracle-verified.
+                RubyValue::Int(i) => {
+                    let mut g = s.lock();
+                    match g.encoding().kind() {
+                        crate::encoding::EncKind::Latin1 | crate::encoding::EncKind::Binary => {
+                            let Ok(b) = u8::try_from(*i) else {
+                                return Err(range_error!("{i} out of char range"));
+                            };
+                            g.push_bytes(&[b]);
+                        }
+                        crate::encoding::EncKind::Utf8 | crate::encoding::EncKind::Ascii => {
+                            let Some(c) = u32::try_from(*i).ok().and_then(char::from_u32) else {
+                                return Err(range_error!("{i} out of char range"));
+                            };
+                            g.push_str(&c.to_string());
+                        }
                     }
-                },
+                }
                 RubyValue::BigInt(_) => {
                     return Err(range_error!("bignum out of char range"))
                 }
-                other => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
-            };
-            s.lock().push_str(&addition);
+                // A String (or `to_str` duck): raw-byte append under the
+                // encoding-compatibility rule -- see `"+"` just above.
+                other => {
+                    let addition = convert::to_rstr(other)?;
+                    let addition = addition.lock().clone();
+                    let mut g = s.lock();
+                    if g.push_buf(&addition).is_err() {
+                        let signal = concat_incompat(&g, &addition);
+                        return Err(signal);
+                    }
+                }
+            }
         }
         Ok(recv.clone())
     }
@@ -1385,7 +1431,12 @@ builtin_methods! {
         if n < 0 {
             return Err(arg_error!("negative argument"));
         }
-        let src = recv_str!(recv).lock().to_utf8_lossy().into_owned();
+        // RAW bytes, keeping the receiver's encoding -- `180.chr * 3` is
+        // three 0xB4 bytes, not three UTF-8 promotions (oracle-verified).
+        let (src, enc) = {
+            let g = recv_str!(recv).lock();
+            (g.bytes().to_vec(), g.encoding())
+        };
         // Guard the RESULT size before allocating. Without this, `"x" * (1 <<
         // 60)` hands the allocator a 2^60-byte request and the process ABORTS
         // -- an uncatchable failure, strictly worse than any exception.
@@ -1399,9 +1450,9 @@ builtin_methods! {
         // expectation is checked in rather than oracle-generated, and its
         // header cites the segfault this replaced), so cap on total size.
         match src.len().checked_mul(n as usize) {
-            Some(total) if total <= MAX_STRING_SIZE => {
-                Ok(str_value(src.repeat(n as usize)))
-            }
+            Some(total) if total <= MAX_STRING_SIZE => Ok(RubyValue::Str(
+                crate::collections::string_from_bytes(src.repeat(n as usize), enc),
+            )),
             _ => Err(arg_error!("string size too big")),
         }
     }

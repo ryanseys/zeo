@@ -90,24 +90,11 @@ builtin_methods! {
     "putc" => fn putc(_recv, args, _block) {
         arity!(args, 1);
         let out = crate::builtins::io::current_stdout();
-        match &args[0] {
-            RubyValue::Int(n) => {
-                let byte = (n & 0xff) as u8;
-                crate::builtins::io::write_str(&out, &(byte as char).to_string())?;
-            }
-            RubyValue::Str(s) => {
-                let text = s.lock().to_utf8_lossy().into_owned();
-                if let Some(c) = text.chars().next() {
-                    crate::builtins::io::write_str(&out, &c.to_string())?;
-                }
-            }
-            // NUM2CHR: the low byte of the `to_int` conversion (`putc 2.5`
-            // truncates; no `to_str` duck here -- oracle-verified).
-            other => {
-                let byte = (crate::builtins::convert::to_index(other)? & 0xff) as u8;
-                crate::builtins::io::write_str(&out, &(byte as char).to_string())?;
-            }
-        }
+        // Shared with `IO#putc`: first character in the string's own
+        // encoding (ONE raw byte for the byte encodings), an Integer's low
+        // byte, NUM2CHR otherwise.
+        let bytes = crate::builtins::io::putc_bytes(&args[0])?;
+        crate::builtins::io::write_bytes(&out, &bytes)?;
         Ok(args[0].clone())
     }
     // `public_method(:name)` -- a bound Method restricted to the public
@@ -965,9 +952,9 @@ pub fn kernel_hash(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 /// redirects the whole print family. See `builtins::io` for the rendering
 /// and write plumbing.
 pub fn kernel_puts(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     crate::builtins::io::render_puts(args, &mut buf);
-    crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
+    crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;
     Ok(RubyValue::Nil)
 }
 
@@ -999,15 +986,15 @@ pub fn kernel_warn(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             }
         }
     }
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     for a in msgs {
-        let s = a.to_display_string();
-        buf.push_str(&s);
-        if !s.ends_with('\n') {
-            buf.push('\n');
+        let start = buf.len();
+        crate::builtins::io::display_bytes(a, &mut buf);
+        if buf.len() == start || buf.last() != Some(&b'\n') {
+            buf.push(b'\n');
         }
     }
-    crate::builtins::io::write_str(&crate::builtins::io::current_stderr(), &buf)?;
+    crate::builtins::io::write_bytes(&crate::builtins::io::current_stderr(), &buf)?;
     Ok(RubyValue::Nil)
 }
 
@@ -1034,13 +1021,15 @@ pub fn kernel_pp(args: &[RubyValue]) -> Result<RubyValue, Signal> {
     kernel_p(args)
 }
 
-/// `Kernel#print`: display renderings, no separators, no newline.
+/// `Kernel#print`: display renderings, no separators, no newline. A String
+/// argument contributes its RAW bytes (see `io::display_bytes`), which is
+/// what keeps `print 0xB4.chr` a single byte on the fd.
 pub fn kernel_print(args: &[RubyValue]) -> Result<RubyValue, Signal> {
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     for a in args {
-        buf.push_str(&a.to_display_string());
+        crate::builtins::io::display_bytes(a, &mut buf);
     }
-    crate::builtins::io::write_str(&crate::builtins::io::current_stdout(), &buf)?;
+    crate::builtins::io::write_bytes(&crate::builtins::io::current_stdout(), &buf)?;
     Ok(RubyValue::Nil)
 }
 
