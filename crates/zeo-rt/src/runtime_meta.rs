@@ -24,7 +24,7 @@
 //! method therefore takes the write lock without deadlocking against a read
 //! lock held across its own execution.
 
-use crate::builtins::{arg_error, runtime_error, type_error};
+use crate::builtins::{arg_error, name_error, runtime_error, type_error};
 use crate::dispatch::{
     ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
     registry_lookup_cloned, send_super_from,
@@ -235,6 +235,78 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     }
     mark_live();
     Ok(RubyValue::Symbol(name))
+}
+
+/// `Module#alias_method(new, old)` reached AT RUNTIME (computed names --
+/// e.g. ostruct's `instance_methods.each { |m| alias_method "#{m}!", m }`
+/// bulk loop; the literal-symbol class-body form resolves at compile time).
+/// The method `old` resolves to for instances of `id` is SNAPSHOTTED and
+/// installed under `new` in the overlay -- CRuby's copy-the-method-entry
+/// semantics (`rb_alias`), so a later runtime redefinition of `old` does
+/// not change the alias. Returns the new name's Symbol.
+///
+/// The alias installs PUBLIC regardless of `old`'s visibility: the overlay
+/// has no per-method visibility model, so a runtime alias of a private
+/// method is callable (divergence catalogued in docs/todo/stdlib-gaps.md).
+pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    let Some(m) = snapshot_instance_method(id, old) else {
+        let kind = if crate::dispatch::class_is_module(id).unwrap_or(false) {
+            "module"
+        } else {
+            "class"
+        };
+        let cls = crate::dispatch::class_name(id).unwrap_or_default();
+        return Err(name_error!(
+            "undefined method '{}' for {kind} '{cls}'",
+            old.name()
+        ));
+    };
+    {
+        let mut w = maps().classes.write().unwrap();
+        w.entry(id.0)
+            .or_insert_with(OverlayEntry::delta)
+            .methods
+            .insert(new, m);
+    }
+    mark_live();
+    Ok(RubyValue::Symbol(new))
+}
+
+/// The `MethodImpl` that instance method `name` resolves to for instances of
+/// `id`, in dispatch order per ancestor: overlay delta, registry method,
+/// builtin-reopen value method, builtin table row -- the latter two wrapped
+/// into the `MethodImpl` ABI (they run against a boxed receiver, so the
+/// resulting alias serves `RObj` dispatch, which is where the overlay is
+/// probed). A compile-time builtin-alias row resolves through its target
+/// (rows are terminal, so the single recursion can't loop).
+fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
+    let n = name.name();
+    let n = n.as_str();
+    for &anc in ancestors_of_value(id) {
+        {
+            let c = maps().classes.read().unwrap();
+            if let Some(m) = c.get(&anc.0).and_then(|e| e.methods.get(&name).cloned()) {
+                return Some(m);
+            }
+        }
+        if let Some(m) = registry_lookup_cloned(anc, name) {
+            return Some(m);
+        }
+        if let Some(m) = crate::dispatch::registry_value_method_impl(anc, name) {
+            return Some(m);
+        }
+        if let Some(f) = crate::builtins::class_table(anc).and_then(|t| t(n)) {
+            return Some(MethodImpl::Dynamic(Arc::new(
+                move |recv: &RObj, args: &[RubyValue], block: Option<RubyValue>| {
+                    f(&RubyValue::Object(recv.clone()), args, block)
+                },
+            )));
+        }
+    }
+    crate::dispatch::alias_target(id, name).and_then(|old| snapshot_instance_method(id, old))
 }
 
 /// `recv.define_singleton_method(name) { body }` -- a per-object singleton when

@@ -8,7 +8,7 @@ now surfaced honestly instead of `cannot load such file`:
 | gem | status | blocker |
 |---|---|---|
 | tsort | **works** | -- |
-| ostruct | compiles | ex-alias-of-inherited-builtin, fixed (`alias_method :raise!, :raise` + the 3-arg `raise!` shape now work). Startup blockers remain: the bulk `give_access.each { alias_method "#{m}!", m }` loop runs as class-body code and needs a RUNTIME `alias_method` row on class receivers (deferred with the metaprogramming family), and `Warning[:performance]` needs a `Warning` module; attribute access then needs `method_missing` dispatch (plan M8) |
+| ostruct | compiles | the bulk `give_access.each { alias_method "#{m}!", m }` loop now runs (runtime `Module#alias_method` row, snapshot semantics; a runtime alias installs PUBLIC regardless of the source's visibility -- the overlay has no per-method visibility model yet) and `Warning[:performance]` works; attribute access next needs `method_missing` dispatch (plan M8) |
 | delegate | blocked | the `alias __raise__ raise` label was the SHALLOW symptom: it sits inside `kernel = ::Kernel.dup` + `kernel.class_eval do ... end` + `include kernel` -- Module#dup, block-form class_eval, and include-of-a-value are runtime metaprogramming (same territory as singleton's remaining blockers); lowering rejects the alias in BLOCK position |
 | shellwords | blocked | `class << self` body with `extend`/ivars (lowering handles only defs/constants/include/attr_*/private/alias) |
 | English | blocked | `alias $FULL_MATCH $&` -- alias of punctuation globals (lowering accepts only plain `$name` pairs) |

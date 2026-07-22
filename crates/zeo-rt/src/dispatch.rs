@@ -2422,7 +2422,7 @@ pub fn send_value(
 /// included module) declared. `None` for every ordinary name; consulted only
 /// on the send MISS paths, so a real method of the same name always beats it.
 /// See `ClassEntry::aliases`.
-fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
+pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
     let r = REGISTRY.get()?;
     for &anc in ancestors_of_value(id) {
         if let Some(e) = r.entries.get(&anc.0) {

@@ -295,3 +295,67 @@ fn module_const_get_resolves_or_raises_name_error() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "42\n42\nFoo\nNameError\n");
 }
+
+/// Runtime `Module#alias_method` (computed names, ostruct's bulk-`!` loop
+/// shape): aliases of user methods, of builtins (`dup`/`class`), snapshot
+/// semantics against a later runtime redefinition, the Symbol return value,
+/// NameError for an unresolvable source, and the frozen-class refusal.
+/// Expected output oracle-verified verbatim.
+#[test]
+fn runtime_alias_method_covers_user_and_builtin_sources() {
+    let result = run_ruby(
+        r##"
+        class T
+          def greet
+            "hi"
+          end
+        end
+        class T
+          instance_methods(false).each do |m|
+            alias_method "#{m}!", m
+          end
+        end
+        t = T.new
+        puts t.greet!
+        class T
+          ["dup", "class"].each { |m| alias_method "my_#{m}", m.to_sym }
+        end
+        p t.my_class
+        p t.my_dup.class
+        class Snap; end
+        n1 = :v
+        Snap.class_eval { define_method(n1) { "old" } }
+        Snap.class_eval do
+          [[:v2, :v]].each { |a, b| p alias_method(a, b) }
+        end
+        Snap.class_eval { define_method(n1) { "new" } }
+        o = Snap.new
+        p o.v2
+        p o.v
+        class T
+          begin
+            [[:x, :nope]].each { |a, b| alias_method(a, b) }
+          rescue NameError => e
+            puts e.message
+          end
+        end
+        class Fz
+          def m
+            1
+          end
+        end
+        Fz.freeze
+        begin
+          Fz.class_eval { [[:m2, :m]].each { |a, b| alias_method(a, b) } }
+        rescue FrozenError => e
+          puts e.message
+        end
+        puts "done"
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "hi\nT\nT\n:v2\n\"old\"\n\"new\"\nundefined method 'nope' for class 'T'\ncan't modify frozen Class: Fz\ndone\n"
+    );
+}

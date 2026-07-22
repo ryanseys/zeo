@@ -406,6 +406,18 @@ builtin_methods! {
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
         crate::runtime_define_method(recv_cid(recv), name, body)
     }
+    // `Module#alias_method(new_name, old_name)` -- the RUNTIME form (a
+    // computed name, or inside an `each` loop: ostruct's bulk `!`-alias
+    // loop). The literal class-body form resolves at compile time; this row
+    // serves everything that isn't literal. Snapshot semantics -- the alias
+    // keeps the method `old_name` resolves to NOW -- and returns the new
+    // name's Symbol, both per CRuby.
+    "alias_method" => fn alias_method(recv, args, _block) {
+        arity!(args, 2);
+        let new = crate::runtime_meta::coerce_method_name(args.first())?;
+        let old = crate::runtime_meta::coerce_method_name(args.get(1))?;
+        crate::runtime_meta::runtime_alias_method(recv_cid(recv), new, old)
+    }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
     // to the module/class value, returning the block's value. A
     // `def`/`define_method` inside installs on the receiver via the dynamic-
