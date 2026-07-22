@@ -16,6 +16,9 @@ builtin_methods! {
     pub(crate) fn lookup_class;
 
     "start" | "compact" => fn gc_start(_recv, _args, _block) {
+        // No tracing collector to drive, but this is the honest moment to run
+        // finalizers for objects whose last strong reference has dropped.
+        crate::builtins::weak::run_finalizers_for_dead();
         Ok(RubyValue::Nil)
     }
     // Real Ruby answers the PREVIOUS enabled state. Always-false is

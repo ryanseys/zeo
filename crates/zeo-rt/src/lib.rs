@@ -56,6 +56,7 @@ pub use builtins::kernel::{
 pub use builtins::math::math_call;
 pub use builtins::rational::{RRational, RRationalData, rational_from_digits, rational_new};
 pub use builtins::value_subclass::{register_value_subclass, value_super};
+pub use builtins::weak::run_finalizers;
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
 pub use constants::{const_get, const_set};

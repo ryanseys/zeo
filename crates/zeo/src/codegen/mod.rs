@@ -1310,6 +1310,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             // reporting -- CRuby runs them on both the normal and the
             // uncaught path. (`Kernel#exit` runs them itself.)
             zeo_rt::run_at_exit();
+            // Then the `ObjectSpace.define_finalizer` sweep: CRuby finalizes
+            // every remaining object at exit, after `at_exit`.
+            zeo_rt::run_finalizers();
             if let Err(__signal) = __result {
                 match __signal {
                     // An uncaught `raise` renders CRuby's full report

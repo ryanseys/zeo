@@ -26,7 +26,7 @@ use crate::encoding::StrBuf;
 use crate::{RubyValue, Signal, Symbol};
 use zeo_abi::{ClassId, WEAKMAP_CLASS};
 
-use super::{arity, builtin_methods, local_jump_error, not_impl_error, type_error};
+use super::{arg_error, arity, builtin_methods, local_jump_error, not_impl_error, type_error};
 
 /// A weak handle to a Ruby value's liveness. The heap kinds carry a real
 /// `Weak` to their backing `Arc`; everything else is kept alive strongly
@@ -351,9 +351,121 @@ pub fn register_weak(registry: &mut ClassRegistry) {
     m(registry, "inspect", wm_inspect);
 }
 
+/// One registered `ObjectSpace.define_finalizer` callback. `object_id` is
+/// captured at registration (the referent may be gone by the time the
+/// callback runs, so the id -- CRuby's finalizer argument -- must be kept
+/// independently). `target` detects collection for the `GC.start` sweep.
+struct Finalizer {
+    target: WeakTarget,
+    object_id: i64,
+    callback: RubyValue,
+}
+
+static FINALIZERS: Mutex<Vec<Finalizer>> = Mutex::new(Vec::new());
+
+/// CRuby's object id for a value -- the Integer a finalizer callback receives.
+/// Mirrors `Kernel#object_id` (the immediate shapes and heap-pointer ids).
+fn object_id_i64(v: &RubyValue) -> i64 {
+    match v {
+        RubyValue::Int(i) => i.wrapping_mul(2).wrapping_add(1),
+        RubyValue::Nil => 4,
+        RubyValue::Bool(true) => 20,
+        RubyValue::Bool(false) => 0,
+        RubyValue::Object(o) => Arc::as_ptr(o) as *const () as i64,
+        RubyValue::Str(s) => Arc::as_ptr(s) as i64,
+        RubyValue::Array(a) => Arc::as_ptr(a) as i64,
+        RubyValue::Hash(h) => Arc::as_ptr(h) as i64,
+        RubyValue::Symbol(s) => 0x1000_0000_0000 + i64::from(s.to_u32()),
+        _ => v as *const _ as i64,
+    }
+}
+
+/// Run `f`'s callback with the captured object id, swallowing any error --
+/// CRuby warns on a raising finalizer but never aborts the sweep.
+fn run_one(f: &Finalizer) {
+    let _ = crate::dispatch::send_value(
+        &f.callback,
+        Symbol::intern("call"),
+        &[RubyValue::Int(f.object_id)],
+        None,
+    );
+}
+
+/// Run and drop every finalizer whose referent has been collected -- the
+/// `GC.start` sweep.
+pub fn run_finalizers_for_dead() {
+    let dead: Vec<Finalizer> = {
+        let mut fs = FINALIZERS.lock();
+        let mut i = 0;
+        let mut out = Vec::new();
+        while i < fs.len() {
+            if fs[i].target.upgrade().is_none() {
+                out.push(fs.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        out
+    };
+    // Run OUTSIDE the lock: a callback may register/undefine finalizers.
+    for f in &dead {
+        run_one(f);
+    }
+}
+
+/// Run every remaining finalizer, live or dead, and clear the registry -- the
+/// program-exit sweep (CRuby finalizes all objects at exit). Called from
+/// generated `main` after `at_exit`.
+pub fn run_finalizers() {
+    let all: Vec<Finalizer> = std::mem::take(&mut *FINALIZERS.lock());
+    for f in &all {
+        run_one(f);
+    }
+}
+
 builtin_methods! {
     pub(crate) fn lookup_class;
 
+    // `define_finalizer(obj, callable)` or `define_finalizer(obj) { |id| }` --
+    // best-effort: the callback runs when `obj` is seen collected (`GC.start`)
+    // and unconditionally at program exit, receiving obj's id.
+    "define_finalizer" => fn os_define_finalizer(_recv, args, block) {
+        arity!(args, 1..=2);
+        let obj = &args[0];
+        let callback = match (args.get(1), block) {
+            (Some(cb), _) => {
+                if !crate::dispatch::responds_to(cb.class_id(), Symbol::intern("call"), false) {
+                    return Err(arg_error!(
+                        "wrong type argument {} (should be callable)",
+                        crate::builtins::class_name_of(cb)
+                    ));
+                }
+                cb.clone()
+            }
+            (None, Some(b)) => b,
+            (None, None) => {
+                return Err(arg_error!("tried to create Proc object without a block"));
+            }
+        };
+        FINALIZERS.lock().push(Finalizer {
+            target: WeakTarget::downgrade(obj),
+            object_id: object_id_i64(obj),
+            callback,
+        });
+        // CRuby returns `[0, callable]` (arity + the finalizer); the arity slot
+        // is an internal detail callers don't read.
+        Ok(RubyValue::Array(array_new(vec![RubyValue::Int(0), obj.clone()])))
+    }
+    // Remove every finalizer registered for `obj` (by identity). Returns obj.
+    "undefine_finalizer" => fn os_undefine_finalizer(_recv, args, _block) {
+        arity!(args, 1);
+        let obj = &args[0];
+        FINALIZERS.lock().retain(|f| match f.target.upgrade() {
+            Some(t) => !same_object(&t, obj),
+            None => true,
+        });
+        Ok(obj.clone())
+    }
     // A `WeakMap` of every live object of a class -- zeo has no heap
     // enumeration, so this is an honest NotImplementedError (decision #4).
     "each_object" => fn os_each_object(_recv, _args, _block) {
