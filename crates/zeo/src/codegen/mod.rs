@@ -570,6 +570,9 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
     };
     let mut user_class_bodies: Vec<TokenStream> = Vec::new();
     let mut builtin_class_bodies: Vec<TokenStream> = Vec::new();
+    // Shadowed extend-copy containers (singleton-chain super targets) --
+    // spliced at the top level next to the own-method bridge containers.
+    let mut sst_containers: Vec<TokenStream> = Vec::new();
 
     let mut registrations: Vec<TokenStream> = Vec::new();
     for (idx, class) in compiler.classes.iter().enumerate() {
@@ -788,6 +791,93 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
             registrations.push(quote! {
                 __registry.define_class_method(
                     zeo_rt::ClassId(#id),
+                    zeo_rt::Symbol::intern(#key),
+                    #tramp,
+                );
+            });
+        }
+        // Singleton-chain super targets: every `extend`ed module method's
+        // copy -- winner AND shadowed -- registered per `(module, name)` so
+        // `call_singleton_super_target` finds the RECEIVER's own copy at
+        // any chain position (see `ClassInfo::singleton_super_targets`).
+        // Winners reuse the class container's fn; shadowed copies get their
+        // own per-class container (same names from different modules would
+        // collide in one namespace).
+        let ci = compiler.class(ClassId(id));
+        let shadowed: Vec<(ClassId, crate::compiler::ScopeId)> = ci
+            .singleton_super_targets
+            .iter()
+            .filter(|(_, sid)| !ci.class_methods.contains(sid))
+            .copied()
+            .collect();
+        // One container per (class, module): the same NAME can be shadowed
+        // in several sibling modules, and each copy is a distinct fn.
+        let mut by_module: Vec<(ClassId, Vec<crate::compiler::ScopeId>)> = Vec::new();
+        for &(m, sid) in &shadowed {
+            match by_module.iter_mut().find(|(bm, _)| *bm == m) {
+                Some((_, sids)) => sids.push(sid),
+                None => by_module.push((m, vec![sid])),
+            }
+        }
+        for (m, sids) in by_module {
+            let flat = ci.name.replace("::", "_");
+            let container = format_ident!("__sst_{}_{}_{}", idx, m.0, flat);
+            let fns = sids.iter().map(|&sid| emit_class_method_fn(compiler, sid));
+            sst_containers.push(quote! {
+                #[allow(non_snake_case)]
+                pub mod #container {
+                    #[allow(unused_imports)]
+                    use super::*;
+                    #(#fns)*
+                }
+            });
+            for &sid in &sids {
+                let scope = compiler.scope(sid);
+                let method_ident = ident::class_method_ident(&scope.name);
+                let fn_path = quote! { #container::#method_ident };
+                let tramp = params::emit_value_trampoline(
+                    &fn_path,
+                    &scope.name,
+                    &scope.params,
+                    scope.needs_block_param(),
+                    params::RecvMode::Drop,
+                    &scope_frame_guard(compiler, scope, true),
+                );
+                let key = &scope.name;
+                let mid = m.0;
+                registrations.push(quote! {
+                    __registry.define_singleton_super_target(
+                        zeo_rt::ClassId(#id),
+                        zeo_rt::ClassId(#mid),
+                        zeo_rt::Symbol::intern(#key),
+                        #tramp,
+                    );
+                });
+            }
+        }
+        for &(m, sid) in ci
+            .singleton_super_targets
+            .iter()
+            .filter(|(_, sid)| ci.class_methods.contains(sid))
+        {
+            let scope = compiler.scope(sid);
+            let container = ident::class_ident(compiler, ClassId(id));
+            let method_ident = ident::class_method_ident(&scope.name);
+            let fn_path = quote! { #container::#method_ident };
+            let tramp = params::emit_value_trampoline(
+                &fn_path,
+                &scope.name,
+                &scope.params,
+                scope.needs_block_param(),
+                params::RecvMode::Drop,
+                &scope_frame_guard(compiler, scope, true),
+            );
+            let key = &scope.name;
+            let mid = m.0;
+            registrations.push(quote! {
+                __registry.define_singleton_super_target(
+                    zeo_rt::ClassId(#id),
+                    zeo_rt::ClassId(#mid),
                     zeo_rt::Symbol::intern(#key),
                     #tramp,
                 );
@@ -1166,6 +1256,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         #(#um_containers)*
         #(#exc_containers)*
         #(#own_bridge_containers)*
+        #(#sst_containers)*
 
         fn main() {
             // A registry pre-populated with the CORE world -- the always-on

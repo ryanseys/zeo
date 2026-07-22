@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **125 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `bfdf297`
+Suite `spinel` — **124 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `529e48f`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -16,7 +16,7 @@ Regenerate with `cargo run -p xtask -- conformance run --update-scoreboard`.
 stderr:
 ```
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
 ```
 
 diff:
@@ -29,7 +29,7 @@ first difference at line 1
 
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:2:in '<class:BadAttributes>': undefined method 'attributes' for class BadAttributes (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>'
 ```
 
 ---
@@ -1438,7 +1438,7 @@ first difference at line 1
 stderr:
 ```
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:2:in '<class:CompileTimeSingleAttribute>': undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:1:in '<main>'
 ```
 
 diff:
@@ -1457,7 +1457,7 @@ first difference at line 1
 
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:2:in '<class:CompileTimeSingleAttribute>': undefined method 'attribute' for class CompileTimeSingleAttribute (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:1:in '<main>'
 ```
 
 ---
@@ -1472,7 +1472,7 @@ first difference at line 1
 stderr:
 ```
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:4:in '<class:WrappedResult>': undefined method 'attributes' for class WrappedResult (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:3:in '<main>'
 ```
 
 diff:
@@ -1491,7 +1491,7 @@ first difference at line 1
 
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:4:in '<class:WrappedResult>': undefined method 'attributes' for class WrappedResult (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:3:in '<main>'
 ```
 
 ---
@@ -1506,7 +1506,7 @@ first difference at line 1
 stderr:
 ```
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:2:in '<class:CompileTimeAttributeHolder>': undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:1:in '<main>'
 ```
 
 diff:
@@ -1526,7 +1526,7 @@ first difference at line 1
 
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:2:in '<class:CompileTimeAttributeHolder>': undefined method 'attributes' for class CompileTimeAttributeHolder (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:1:in '<main>'
 ```
 
 ---
@@ -1541,7 +1541,7 @@ first difference at line 1
 stderr:
 ```
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:2:in '<class:CompileTimePostState>': undefined method 'attributes' for class CompileTimePostState (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:1:in '<main>'
 ```
 
 diff:
@@ -1562,7 +1562,7 @@ first difference at line 1
 
 --- actual (2 lines)
 /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:2:in '<class:CompileTimePostState>': undefined method 'attributes' for class CompileTimePostState (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>'
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:1:in '<main>'
 ```
 
 ---
@@ -1604,17 +1604,17 @@ first difference at line 1
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb`
 - expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb.expected`
 - expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-const:M::C` (cluster `P`)
+- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-c5a2` (cluster `?`)
 
 stderr:
 ```
-uninitialized constant M::C (NameError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb:29:in '<main>': tried to create Proc object without a block (ArgumentError)
 ```
 
 diff:
 ```
 === stdout diff ===
-first difference at line 1
+first difference at line 7
 --- expected (21 lines)
 0
 0
@@ -1638,14 +1638,20 @@ true
 start
 init
 
---- actual (0 lines)
+--- actual (6 lines)
+0
+0
+true
+true
+4
+2
 
 === stderr diff ===
 first difference at line 1
 --- expected (0 lines)
 
 --- actual (1 lines)
-uninitialized constant M::C (NameError)
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb:29:in '<main>': tried to create Proc object without a block (ArgumentError)
 ```
 
 ---
@@ -1754,7 +1760,7 @@ false
 false
 false
 nil
-1
+2
 false
 false
 false
@@ -1814,7 +1820,7 @@ first difference at line 1
 diff:
 ```
 === stdout diff ===
-first difference at line 1
+first difference at line 11
 --- expected (18 lines)
 true
 false
@@ -1836,8 +1842,6 @@ top
 #<ArgumentError: inner>
 
 --- actual (18 lines)
-NoMethodError
-undefined method 'private' for class Vis
 true
 false
 false
@@ -1848,6 +1852,8 @@ key not found: :b
 5
 Math::DomainError
 Numerical argument is out of domain - sqrt
+NoMethodError
+undefined method 'private' for class Vis
 false
 :foo
 NoMethodError
@@ -2789,7 +2795,7 @@ true
 
 --- actual (5 lines)
 C
-4448284125482149461
+7619167277014293876
 S
 P
 false
@@ -3658,38 +3664,6 @@ I NUL "AE"
 
 ---
 
-## `module_class_body_side_effects` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/module_class_body_side_effects.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/module_class_body_side_effects.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (7 lines)
-before module
-in module body
-version is 1.0
-after module
-in class body
-deep body ran
-hi
-
---- actual (7 lines)
-in module body
-version is 1.0
-in class body
-deep body ran
-before module
-after module
-hi
-```
-
----
-
 ## `native_binding_poc` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb`
@@ -3699,8 +3673,8 @@ hi
 
 stderr:
 ```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<class:NB>': undefined method 'native_obj' for module NB (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>'
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<module:NB>': undefined method 'native_obj' for module NB (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:5:in '<main>'
 ```
 
 diff:
@@ -3720,8 +3694,8 @@ first difference at line 1
 --- expected (0 lines)
 
 --- actual (2 lines)
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<class:NB>': undefined method 'native_obj' for module NB (NoMethodError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>'
+/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:6:in '<module:NB>': undefined method 'native_obj' for module NB (NoMethodError)
+	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:5:in '<main>'
 ```
 
 ---
@@ -4219,7 +4193,7 @@ nil
 stderr:
 ```
 
-thread '<unnamed>' (106298738) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (106811130) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4293,7 +4267,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread '<unnamed>' (106298738) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread '<unnamed>' (106811130) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4961,7 +4935,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-34
+32
 diff
 ```
 

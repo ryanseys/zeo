@@ -130,23 +130,29 @@ pub fn emit_super(
     };
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
-    let found = match pos {
-        Some(pos) => ancestors[pos + 1..].iter().find_map(|&anc| {
-            own_pool(cx.compiler, anc)
-                .iter()
-                .find(|&&s| cx.compiler.scope(s).name == mname)
-                .map(|&sid| (anc, sid, false))
-        }),
-        // The `extend M` shape from the note above: resolve against the
-        // SINGLETON-class chain, which the compiler can reconstruct exactly
-        // for compile-time extends -- each non-module ancestor contributes
-        // its own class methods and then its `extend`ed modules'
-        // instance methods, most recently extended first (`make_metaclass`'s
-        // parallel chain; the same priority `mro`'s class_methods
-        // materialization mirrors). A miss (e.g. `super` targeting a
-        // BUILTIN default like `Module#included`) falls through to the
-        // runtime walk below.
-        None => extended_singleton_super(cx, receiver_class, defining_class, mname),
+    // EVERY class-method `super` resolves against the SINGLETON-class
+    // chain, which the compiler reconstructs exactly for compile-time
+    // extends -- each non-module ancestor contributes its own class
+    // methods and then its `extend`ed modules' instance methods, most
+    // recently extended first (`make_metaclass`'s parallel chain). That
+    // covers both shapes: a `def self.x`'s `super` sees the class's OWN
+    // sibling extends first (Host extends A, B; `Host.who`'s super hits
+    // B then A -- oracle-verified), and a `super` written IN an extended
+    // module resumes after that module's chain entry. A miss (e.g.
+    // `super` targeting a BUILTIN default like `Module#included`) falls
+    // through to the runtime walk below. Instance methods keep the plain
+    // MRO walk over own pools.
+    let found = if in_class_method {
+        extended_singleton_super(cx, receiver_class, defining_class, mname)
+    } else {
+        pos.and_then(|pos| {
+            ancestors[pos + 1..].iter().find_map(|&anc| {
+                own_pool(cx.compiler, anc)
+                    .iter()
+                    .find(|&&s| cx.compiler.scope(s).name == mname)
+                    .map(|&sid| (anc, sid, false))
+            })
+        })
     };
 
     // `super` into an inherited VALUE builtin (D3): a `class Stack < Array`
@@ -178,11 +184,12 @@ pub fn emit_super(
     // The resolved target dispatches at RUNTIME -- the parent's HIR is
     // never spliced (M5): one mechanism, `send_super_from`'s per-position
     // MRO walk (or the class-method/singleton channels below), serves every
-    // `super`. The `extend M` singleton-chain shape keeps its COMPILE-TIME
+    // `super`. A CLASS-method target keeps its COMPILE-TIME singleton-chain
     // resolution -- sibling extends interleave in an order the runtime
     // registry doesn't record -- and dispatches the resolved target's
-    // registered row directly.
-    if extend_shape {
+    // registered row directly (module-instance bridge or `def self.x` row,
+    // `call_singleton_super_target` serves both).
+    if in_class_method {
         let target_id = new_defining_class.0;
         let recv_id = receiver_class.0;
         let (pushes, block_expr) =
@@ -243,9 +250,10 @@ fn extended_singleton_super(
             chain.push((m, true));
         }
     }
-    let dpos = chain
-        .iter()
-        .position(|&(c, instance_pool)| instance_pool && c == defining_class)?;
+    // The defining entry: the extended MODULE (`super` written in it,
+    // instance pool) or the CLASS itself (`def self.x`'s own slot) --
+    // module and class ids never collide, so the id alone identifies it.
+    let dpos = chain.iter().position(|&(c, _)| c == defining_class)?;
     chain[dpos + 1..].iter().find_map(|&(anc, instance_pool)| {
         let info = cx.compiler.class(anc);
         let pool = if instance_pool {

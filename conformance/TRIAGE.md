@@ -13,21 +13,21 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | P | missing-method:>= | 2 | gc_stat_string_heap, i1021 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError) |
 | ? | auto-error-unrecognized-escape-sequence-regexperror-2794 | 1 | regexp_line_anchors | error: unrecognized escape sequence (RegexpError) |
 | ? | auto-expected-numeric-value-got-ni-4730 | 1 | rational_complex_wave9 | expected a numeric value, got 2+3i |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0 | 1 | compile_time_attribute_singular | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-01c0 | 1 | compile_time_attribute_singular | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_singular.rb:1:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827 | 1 | string_split_inline_arg_gc_root | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_split_inline_arg_gc_root.rb:43:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-1c7a | 1 | param_lengthlike_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_lengthlike_body_widen.rb:44:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-2467 | 1 | hash_each_with_object | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb:15:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-26e1 | 1 | param_body_hash_inference | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_body_hash_inference.rb:51:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-3ae3 | 1 | bundle_tiny_string | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_tiny_string.rb:166:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4eb3 | 1 | analyze_fail/instance_exec_def_in_block | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_def_in_block.rb:14:in '<main>' |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-59e4 | 1 | native_binding_poc | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:0:in '<main>' |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-5ed7 | 1 | compile_time_attributes | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:0:in '<main>' |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28 | 1 | analyze_fail/attributes_non_symbol | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-59e4 | 1 | native_binding_poc | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/native_binding_poc.rb:5:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-5ed7 | 1 | compile_time_attributes | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attributes.rb:1:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-6e28 | 1 | analyze_fail/attributes_non_symbol | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/attributes_non_symbol.rb:1:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011 | 1 | frozen_string_literal_per_file_rev | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb:8:in '<main>' |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-823a | 1 | compile_time_attribute_wrapped_record | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-823a | 1 | compile_time_attribute_wrapped_record | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_attribute_wrapped_record.rb:3:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a91f | 1 | analyze_fail/instance_exec_define_method | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/analyze_fail/instance_exec_define_method.rb:15:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-ca26 | 1 | bundle_array_a | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/bundle_array_a.rb:193:in '<main>' |
-| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-d498 | 1 | compile_time_define_method_predicates | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:0:in '<main>' |
+| ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-d498 | 1 | compile_time_define_method_predicates | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/compile_time_define_method_predicates.rb:1:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249 | 1 | ffi_callback | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-faa9 | 1 | param_include_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:24:in '<main>' |
 | ? | auto-territory-not-syntaxerror-ed71 | 1 | ffi_variadic | territory, not a SyntaxError) |
@@ -37,10 +37,10 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc | 1 | symbol_nil_bool_float_batch | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-9fab | 1 | string_enum_inspect_source | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/string_enum_inspect_source.rb:8:in '<main>': no block given (yield) (LocalJumpError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a | 1 | numeric_edges_wave10 | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/numeric_edges_wave10.rb:11:in '<main>': Hash can't be coerced into Integer (TypeError) |
+| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-c5a2 | 1 | constant_path | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb:29:in '<main>': tried to create Proc object without a block (ArgumentError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-d260 | 1 | enum_terminal_chunk_zip_lazy | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/enum_terminal_chunk_zip_lazy.rb:3:in '<main>': no block given (yield) (LocalJumpError) |
 | P | missing-const:A | 1 | issue_3179 | uninitialized constant A (NameError) |
 | P | missing-const:Line | 1 | struct_block_constant_init | uninitialized constant Line (NameError) |
-| P | missing-const:M::C | 1 | constant_path | uninitialized constant M::C (NameError) |
 | P | missing-const:OpenSSL | 1 | harness_batch_2453_2456 | uninitialized constant OpenSSL (NameError) |
 | P | missing-const:RequestDispatch::ViewHelpers | 1 | include_chain_module_nested_const | uninitialized constant RequestDispatch::ViewHelpers (NameError) |
 | P | missing-const:User | 1 | issue_3180 | uninitialized constant User (NameError) |

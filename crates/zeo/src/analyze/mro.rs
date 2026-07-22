@@ -323,6 +323,7 @@ fn materialize_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(),
 fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut materialized = Vec::new();
+    let mut singleton_targets: Vec<(ClassId, crate::compiler::ScopeId)> = Vec::new();
     let mut level = Some(class_id);
 
     while let Some(cid) = level {
@@ -350,9 +351,13 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
         for &m in compiler.class(cid).extends.clone().iter().rev() {
             for sid in compiler.class(m).own_methods.clone() {
                 let name = compiler.scope(sid).name.clone();
-                if !seen.insert(name.clone()) {
-                    continue;
-                }
+                // SHADOWED copies register too (into the singleton-super
+                // pool below, not the flattened winner set): a sibling-
+                // extend `super` chain needs every position's own copy,
+                // emitted in THIS class's context so its own `super`
+                // resumes the chain here -- the `own_impls` distinction,
+                // on the singleton side.
+                let is_winner = seen.insert(name.clone());
                 let scope = compiler.scope(sid);
                 let (def_node, params, body, visibility) = (
                     scope.def_node,
@@ -363,13 +368,17 @@ fn materialize_class_methods(compiler: &mut Compiler, class_id: ClassId) -> Resu
                 let new_id = register_method(
                     compiler, class_id, m, name, def_node, params, body, visibility,
                 )?;
-                materialized.push(new_id);
+                if is_winner {
+                    materialized.push(new_id);
+                }
+                singleton_targets.push((m, new_id));
             }
         }
         level = compiler.class(cid).parent;
     }
 
     compiler.classes[class_id.0 as usize].class_methods = materialized;
+    compiler.classes[class_id.0 as usize].singleton_super_targets = singleton_targets;
     Ok(())
 }
 

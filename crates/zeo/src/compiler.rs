@@ -160,15 +160,21 @@ pub struct ClassInfo {
     /// -- an explicit `Foo::NAME` write always targets `Foo` directly,
     /// regardless of lexical position (see `HirNode::ConstWrite`'s docs).
     pub const_owners: HashMap<String, ClassId>,
-    /// Class-body TOP-LEVEL `@@x = expr` statements (`@@count = 0` written
-    /// directly inside `class Foo; ... end`, not inside any method) -- real
-    /// Ruby executes a class body immediately, top to bottom, as part of
-    /// loading the class. This compiler doesn't model general class-body
-    /// statement execution (arbitrary side-effecting code interleaved with
-    /// other top-level code) -- only this one common, narrow shape, run
-    /// once from generated `main()` right after this class's own
-    /// `__register()` call (see `codegen::mod::codegen`).
+    /// Class-body top-level statements (`@@x = expr`, `CONST = expr`, and
+    /// general side-effecting code) across ALL of this class's definition
+    /// sites, flat and in registration order -- what the cvar/const
+    /// collectors and `mro` read. EXECUTION is per-site and in document
+    /// order via `Compiler::class_body_sites` (see its docs); this union
+    /// list is analysis-only.
     pub class_body_stmts: Vec<NodeId>,
+    /// Every `extend`ed module's method copies registered for THIS class's
+    /// singleton-chain `super` resolution -- `(module, materialized scope)`
+    /// pairs, winners AND shadowed (the flattened `class_methods` keeps
+    /// only winners, which is exactly wrong for `super` -- the same
+    /// distinction `own_impls` covers for instance methods). Filled by
+    /// `analyze::mro::materialize_class_methods`; emitted + registered as
+    /// runtime `define_singleton_super_target` rows by `codegen`.
+    pub singleton_super_targets: Vec<(ClassId, ScopeId)>,
     /// The full linearized ancestor chain (this class/module first,
     /// prepends before it, includes/superclass after -- see
     /// `analyze::mro::compute_ancestors`), computed once. Empty until
@@ -316,6 +322,7 @@ impl Compiler {
                 cvar_owners: HashMap::new(),
                 const_owners: HashMap::new(),
                 class_body_stmts: Vec::new(),
+                singleton_super_targets: Vec::new(),
                 ancestors: Vec::new(),
                 is_builtin: false,
                 builtin_overlay: None,
@@ -571,6 +578,7 @@ impl Compiler {
             cvar_owners: HashMap::new(),
             const_owners: HashMap::new(),
             class_body_stmts: Vec::new(),
+            singleton_super_targets: Vec::new(),
             ancestors: Vec::new(),
             is_builtin: false,
             builtin_overlay: None,

@@ -609,6 +609,15 @@ struct ClassEntry {
     /// class-level `@x` storage correct through this path -- each copy
     /// carries its own class id (see `civars`' docs).
     class_methods: HashMap<Symbol, ValueMethodFn>,
+    /// Per-POSITION singleton-chain super targets, keyed `(module id,
+    /// name)`: one emitted copy of every `extend`ed module's method (winner
+    /// AND shadowed -- the flattened `class_methods` above keeps only
+    /// winners, which is exactly wrong for `super` the same way `methods`
+    /// is vs `own_impls`). `call_singleton_super_target` probes this before
+    /// the module's generic bridge, so a sibling-extend chain (`extend A`
+    /// then `extend B`, each `super`ing to the next) resolves every hop
+    /// with the RECEIVER's context.
+    singleton_super_targets: HashMap<(u32, Symbol), ValueMethodFn>,
     /// The names DEFINED DIRECTLY on this class (not materialized from an
     /// ancestor) -- what `instance_methods(false)` needs, since `methods`
     /// above holds the flattened, fully-materialized set (dispatch's own
@@ -665,6 +674,7 @@ impl ClassRegistry {
                 undefined_methods: HashSet::new(),
                 aliases: HashMap::new(),
                 class_methods: HashMap::new(),
+                singleton_super_targets: HashMap::new(),
                 own_methods: HashSet::new(),
                 constructor,
                 allocator: None,
@@ -848,6 +858,23 @@ impl ClassRegistry {
             .expect("class must be registered before defining class methods on it")
             .class_methods
             .insert(name, f);
+    }
+
+    /// Registers one `extend`ed-module method copy as a singleton-chain
+    /// super target on the EXTENDING class -- see
+    /// `ClassEntry::singleton_super_targets`.
+    pub fn define_singleton_super_target(
+        &mut self,
+        id: ClassId,
+        module: ClassId,
+        name: Symbol,
+        f: ValueMethodFn,
+    ) {
+        self.entries
+            .get_mut(&id.0)
+            .expect("class must be registered before defining class methods on it")
+            .singleton_super_targets
+            .insert((module.0, name), f);
     }
 
     /// The runtime-mutable path `define_method`/`define_singleton_method`
@@ -1765,6 +1792,17 @@ pub fn call_singleton_super_target(
     let recv = RubyValue::Class(recv_class);
     let method_name = name.to_string();
     if module_instance {
+        // The RECEIVER's own emitted copy of the module's method first --
+        // its `super` resolves the receiver's singleton chain, which the
+        // module's generic bridge (emitted in the module's own context)
+        // cannot. See `ClassEntry::singleton_super_targets`.
+        if let Some(f) = registry()
+            .entries
+            .get(&recv_class.0)
+            .and_then(|e| e.singleton_super_targets.get(&(target.0, name)).copied())
+        {
+            return f(&recv, args, block);
+        }
         if let Some(f) = value_method(target, 0, name) {
             return f(&recv, args, block);
         }
