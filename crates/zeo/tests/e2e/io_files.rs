@@ -1858,6 +1858,106 @@ fn tcp_server_and_socket_round_trip() {
 }
 
 #[test]
+fn tcp_server_addr_shape_listen_and_backlog_queueing() {
+    // #addr is `[family, port, name, ip]` (numeric name -- CRuby's
+    // do_not_reverse_lookup default); #listen on a bound listener is a
+    // validated no-op answering 0; and two clients that connect BEFORE any
+    // accept queue in the listen backlog and are handed out in order.
+    let result = run_ruby(
+        r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        addr = server.addr
+        p addr[0]
+        p addr[1] > 0
+        p addr[2]
+        p addr[3]
+        p server.listen(5)
+        c1 = TCPSocket.new("127.0.0.1", addr[1])
+        c2 = TCPSocket.new("127.0.0.1", addr[1])
+        c1.puts "first"
+        c2.puts "second"
+        s1 = server.accept
+        p s1.gets
+        s2 = server.accept
+        p s2.gets
+        [c1, c2, s1, s2].each(&:close)
+        server.close
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "\"AF_INET\"\ntrue\n\"127.0.0.1\"\n\"127.0.0.1\"\n0\n\"first\\n\"\n\"second\\n\"\n"
+    );
+}
+
+#[test]
+fn closed_tcp_server_raises_ioerror_and_a_dead_port_refuses_connections() {
+    // Every operation on a closed server raises IOError "closed stream"
+    // (close itself is idempotent), and connecting to the freed port
+    // raises Errno::ECONNREFUSED.
+    let result = run_ruby(
+        r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        port = server.addr[1]
+        p server.closed?
+        server.close
+        server.close
+        p server.closed?
+        begin
+          server.accept
+        rescue IOError => e
+          puts "accept: #{e.message}"
+        end
+        begin
+          server.addr
+        rescue IOError => e
+          puts "addr: #{e.message}"
+        end
+        begin
+          TCPSocket.new("127.0.0.1", port)
+        rescue Errno::ECONNREFUSED
+          puts "refused"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "false\ntrue\naccept: closed stream\naddr: closed stream\nrefused\n"
+    );
+}
+
+#[test]
+fn the_scaffolded_socket_class_raises_rescuable_not_implemented() {
+    // The generic Socket class is deliberately scaffolded (see
+    // ext/socket.rs docs): its surface raises a rescue-able
+    // NotImplementedError rather than pretending to network.
+    let result = run_ruby(
+        r#"
+        require "socket"
+        begin
+          Socket.new(:INET, :STREAM)
+        rescue NotImplementedError => e
+          puts e.message
+        end
+        begin
+          Socket.getaddrinfo("localhost", 80)
+        rescue NotImplementedError
+          puts "getaddrinfo too"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "Socket#new is not implemented (live networking is out of scope)\ngetaddrinfo too\n"
+    );
+}
+
+#[test]
 fn symbol_to_proc_arity_and_io_fcntl() {
     // :name.to_proc reports arity -2 (receiver + optional args); IO#fcntl runs
     // the raw syscall (F_GETFD reads the close-on-exec flag on the open file).

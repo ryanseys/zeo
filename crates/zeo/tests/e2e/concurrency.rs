@@ -1045,6 +1045,227 @@ fn a_thread_blocked_in_accept_does_not_stall_the_connecting_sibling() {
 }
 
 #[test]
+fn the_armed_read_family_parks_per_call_without_stalling_the_writer() {
+    // The with_file seam beyond gets: readline and a LENGTHED read(n)
+    // each park on the pipe in their own Gvl-released section, with main
+    // feeding the pipe in stages between sleeps -- two consecutive
+    // blocking reads on one fd, each of which must release.
+    let result = run_ruby_configured(
+        r#"
+        r, w = IO.pipe
+        consumer = Thread.new do
+          first = r.readline
+          rest = r.read(4)
+          [first, rest]
+        end
+        sleep 0.2
+        w.puts "line"
+        sleep 0.1
+        w.write "tail"
+        first, rest = consumer.value
+        p first
+        p rest
+        r.close
+        w.close
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"line\\n\"\n\"tail\"\n");
+}
+
+#[test]
+fn an_armed_each_line_streams_a_pipe_the_writer_fills_incrementally() {
+    // each_line re-enters the with_file seam once per line, so the
+    // consumer parks BETWEEN lines while main wakes to write the next
+    // one; the closed write end ends the stream.
+    let result = run_ruby_configured(
+        r#"
+        r, w = IO.pipe
+        lines = []
+        t = Thread.new { r.each_line { |l| lines << l.chomp } }
+        sleep 0.1
+        w.puts "alpha"
+        sleep 0.1
+        w.puts "beta"
+        w.close
+        t.join
+        p lines
+        r.close
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"alpha\", \"beta\"]\n");
+}
+
+#[test]
+fn an_armed_gvl_holder_blocked_in_fifo_open_does_not_stall_its_siblings() {
+    // File.open's open(2) ITSELF blocks on a FIFO until the other end
+    // shows up -- the reason the release wraps the open, not just reads.
+    // Without it the reader parks inside the armed Gvl and main can never
+    // open the write end: a deadlock, and this test hangs.
+    let result = run_ruby_configured(
+        r#"
+        fifo = File.join(ENV["TMPDIR"] || "/tmp", "zeo_fifo_probe_#{Process.pid}")
+        system("mkfifo", fifo)
+        reader = Thread.new { File.open(fifo, "r") { |f| f.gets } }
+        sleep 0.2
+        File.open(fifo, "w") { |f| f.puts "through the fifo" }
+        p reader.value
+        File.delete(fifo)
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"through the fifo\\n\"\n");
+}
+
+#[test]
+fn concurrent_whole_file_reads_and_writes_stay_isolated_per_thread() {
+    // The bounded-fs family under thread pressure in both scheduler
+    // modes: each thread File.writes its own file then reads it back
+    // three ways (read, binread byte count, readlines chomped) while its
+    // siblings do the same; Dir's entry scan then sees all three files.
+    let source = r#"
+        dir = ENV["TMPDIR"] || "/tmp"
+        files = 3.times.map { |i| File.join(dir, "zeo_fs_probe_#{Process.pid}_#{i}") }
+        results = files.each_with_index.map do |f, i|
+          Thread.new do
+            File.write(f, "data#{i}\nrow#{i}\n")
+            [File.read(f), File.binread(f).bytesize, File.readlines(f, chomp: true)]
+          end
+        end.map(&:value)
+        p results
+        stem = "zeo_fs_probe_#{Process.pid}"
+        p Dir.entries(dir).count { |n| n.start_with?(stem) }
+        files.each { |f| File.delete(f) }
+        "#;
+    for env in [&[][..], &[("ZEO_GVL", "1")][..]] {
+        let result = run_ruby_configured(source, env, &[]);
+        assert!(result.status.success(), "stderr: {}", result.stderr);
+        assert_eq!(
+            result.stdout,
+            "[[\"data0\\nrow0\\n\", 11, [\"data0\", \"row0\"]], \
+             [\"data1\\nrow1\\n\", 11, [\"data1\", \"row1\"]], \
+             [\"data2\\nrow2\\n\", 11, [\"data2\", \"row2\"]]]\n3\n",
+            "env: {env:?}"
+        );
+    }
+}
+
+#[test]
+fn a_threaded_echo_server_serves_three_concurrent_clients() {
+    // The socket family end-to-end under thread pressure in both
+    // scheduler modes: one acceptor thread serves three client threads
+    // that connect and round-trip concurrently -- accept, connect, and
+    // the per-socket gets/puts all park-and-release independently.
+    let source = r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        port = server.addr[1]
+        srv = Thread.new do
+          3.times do
+            c = server.accept
+            c.puts("echo:" + c.gets.chomp)
+            c.close
+          end
+        end
+        clients = 3.times.map do |i|
+          Thread.new do
+            s = TCPSocket.new("127.0.0.1", port)
+            s.puts "c#{i}"
+            line = s.gets
+            s.close
+            line
+          end
+        end
+        p clients.map(&:value).sort
+        srv.join
+        server.close
+        "#;
+    for env in [&[][..], &[("ZEO_GVL", "1")][..]] {
+        let result = run_ruby_configured(source, env, &[]);
+        assert!(result.status.success(), "stderr: {}", result.stderr);
+        assert_eq!(
+            result.stdout, "[\"echo:c0\\n\", \"echo:c1\\n\", \"echo:c2\\n\"]\n",
+            "env: {env:?}"
+        );
+    }
+}
+
+#[test]
+fn two_threads_parked_in_accept_on_one_server_each_get_a_client() {
+    // Two acceptors block on the SAME listener (each accept(2) runs on
+    // its own dup(2) with the mutex dropped), then two clients connect;
+    // the kernel hands each connection to exactly one parked acceptor.
+    let source = r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        port = server.addr[1]
+        acceptors = 2.times.map do
+          Thread.new do
+            c = server.accept
+            c.puts("hi " + c.gets.chomp)
+            c.close
+          end
+        end
+        sleep 0.2
+        replies = 2.times.map do |i|
+          Thread.new do
+            s = TCPSocket.new("127.0.0.1", port)
+            s.puts "t#{i}"
+            r = s.gets
+            s.close
+            r
+          end
+        end.map(&:value)
+        p replies.sort
+        acceptors.each(&:join)
+        server.close
+        "#;
+    for env in [&[][..], &[("ZEO_GVL", "1")][..]] {
+        let result = run_ruby_configured(source, env, &[]);
+        assert!(result.status.success(), "stderr: {}", result.stderr);
+        assert_eq!(
+            result.stdout, "[\"hi t0\\n\", \"hi t1\\n\"]\n",
+            "env: {env:?}"
+        );
+    }
+}
+
+#[test]
+fn yaml_loads_and_entropy_draws_run_concurrently_under_the_armed_gvl() {
+    // The ext tail of the sweep: two threads Psych-load the same file
+    // while a third draws OS entropy, all in ZEO_GVL=1 mode. Entropy goes
+    // through OpenSSL.random_bytes -- the module-level spelling, since
+    // the nested OpenSSL::Random constant is a catalogued gap
+    // (docs/todo/stdlib-gaps.md).
+    let result = run_ruby_configured(
+        r#"
+        require "yaml"
+        require "openssl"
+        y = File.join(ENV["TMPDIR"] || "/tmp", "zeo_yaml_probe_#{Process.pid}.yml")
+        File.write(y, "name: zeo\ncount: 3\n")
+        loads = 2.times.map { Thread.new { YAML.load_file(y) } }
+        entropy = Thread.new { OpenSSL.random_bytes(16) }
+        docs = loads.map(&:value)
+        p docs[0]["name"]
+        p docs[1]["count"]
+        p entropy.value.bytesize
+        File.delete(y)
+        "#,
+        &[("ZEO_GVL", "1")],
+        &[],
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"zeo\"\n3\n16\n");
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.

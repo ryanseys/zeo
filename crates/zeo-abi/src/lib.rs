@@ -1469,6 +1469,14 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(31)),
         is_module: false,
     },
+    // `Errno::ECONNREFUSED` -- a TCP connect to a dead port, a
+    // SystemCallError like its siblings.
+    ExceptionClass {
+        id: exc_id(60),
+        name: "Errno::ECONNREFUSED",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

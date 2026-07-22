@@ -548,6 +548,7 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("Errno::EDOM", "SystemCallError"),
         ("Errno::ESRCH", "SystemCallError"),
         ("Errno::EPERM", "SystemCallError"),
+        ("Errno::ECONNREFUSED", "SystemCallError"),
     ] {
         register_class(
             compiler,
