@@ -40,10 +40,21 @@ pub fn cvar_get(owner_class_id: u32, name: &str) -> RubyValue {
         .unwrap_or(RubyValue::Nil)
 }
 
-pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) {
+/// Fallible because a FROZEN owner class refuses the write (`can't modify
+/// frozen Class: Base`). The check is on the OWNER -- the class whose
+/// storage holds the `@@name` slot -- not the lexical receiver:
+/// oracle-verified (`Sub.freeze` doesn't stop a write to `Base`'s `@@x`;
+/// `Base.freeze` stops it from any subclass).
+pub fn cvar_set(owner_class_id: u32, name: &str, value: RubyValue) -> Result<(), crate::Signal> {
+    if crate::dispatch::class_frozen(crate::ClassId(owner_class_id)) {
+        return Err(crate::dispatch::frozen_class_error(crate::ClassId(
+            owner_class_id,
+        )));
+    }
     CVARS
         .lock()
         .insert((owner_class_id, name.to_string()), value);
+    Ok(())
 }
 
 /// The class-variable names (`@@x`) owned DIRECTLY by `owner_class_id` -- the

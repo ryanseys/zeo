@@ -1624,18 +1624,13 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
         // Borrowed for the same reason as `IvarRead`'s arm above.
         return quote! { zeo_rt::ivar_set_dyn(&#slf, #key, #value)?; };
     }
-    // `self` is a CLASS object -- see the matching arm in `IvarRead`. No
-    // frozen guard: `Foo.freeze` has nowhere to record itself in this
-    // runtime (there is no per-class-object frozen flag), so emitting a
-    // check would be emitting a constant `false`. Tracked as a divergence
-    // rather than faked.
-    // TODO: honor `Foo.freeze` here once class objects carry a frozen flag;
-    // real Ruby raises FrozenError on a class-level ivar write to a frozen
-    // class, which this silently allows.
+    // `self` is a CLASS object -- see the matching arm in `IvarRead`. The
+    // frozen-class guard lives inside `class_ivar_set` itself (a frozen
+    // class raises `can't modify frozen Class: Foo`), hence the `?`.
     if let Some(cid) = cx.class_self {
         let id = cid.0;
         let key = ident.to_string();
-        return quote! { zeo_rt::class_ivar_set(#id, #key, #value); };
+        return quote! { zeo_rt::class_ivar_set(#id, #key, #value)?; };
     }
     // The TOP LEVEL: `self` is `main`, a runtime `Object` whose ivars are a
     // name-keyed map rather than struct fields (no compile-time class exists
@@ -1689,7 +1684,8 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
 /// for why this is factored out the same way.
 pub(super) fn emit_cvar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> TokenStream {
     let owner = cvar_owner_id(cx, name);
-    quote! { zeo_rt::cvar_set(#owner, #name, #value); }
+    // Fallible: a frozen OWNER class refuses the write -- see `cvar_set`.
+    quote! { zeo_rt::cvar_set(#owner, #name, #value)?; }
 }
 
 /// The already-resolved OWNER class id for a bare (lexically-scoped)

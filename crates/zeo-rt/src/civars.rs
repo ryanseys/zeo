@@ -61,8 +61,17 @@ pub fn class_ivar_get(class_id: u32, name: &str) -> RubyValue {
         .unwrap_or(RubyValue::Nil)
 }
 
-pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) {
+/// Fallible because a FROZEN class refuses the write (`can't modify frozen
+/// Class: Foo`, CRuby's `rb_check_frozen` on the receiver class -- checked
+/// here so every path in, static or reflective, gets the same guard).
+pub fn class_ivar_set(class_id: u32, name: &str, value: RubyValue) -> Result<(), crate::Signal> {
+    if crate::dispatch::class_frozen(crate::ClassId(class_id)) {
+        return Err(crate::dispatch::frozen_class_error(crate::ClassId(
+            class_id,
+        )));
+    }
     CIVARS.lock().insert((class_id, name.to_string()), value);
+    Ok(())
 }
 
 /// The class-level ivar names with a value, in sorted order -- backs
@@ -101,10 +110,10 @@ mod tests {
     // slots. `cvars`' table would answer 1 for both.
     #[test]
     fn storage_is_per_class_not_inherited() {
-        class_ivar_set(900, "reg", RubyValue::Int(1));
+        class_ivar_set(900, "reg", RubyValue::Int(1)).unwrap();
         assert_eq!(int_of(class_ivar_get(900, "reg")), Some(1));
         assert!(matches!(class_ivar_get(901, "reg"), RubyValue::Nil));
-        class_ivar_set(901, "reg", RubyValue::Int(2));
+        class_ivar_set(901, "reg", RubyValue::Int(2)).unwrap();
         assert_eq!(int_of(class_ivar_get(900, "reg")), Some(1));
         assert_eq!(int_of(class_ivar_get(901, "reg")), Some(2));
     }
@@ -116,9 +125,9 @@ mod tests {
 
     #[test]
     fn names_are_scoped_to_their_class() {
-        class_ivar_set(903, "b", RubyValue::Int(1));
-        class_ivar_set(903, "a", RubyValue::Int(2));
-        class_ivar_set(904, "z", RubyValue::Int(3));
+        class_ivar_set(903, "b", RubyValue::Int(1)).unwrap();
+        class_ivar_set(903, "a", RubyValue::Int(2)).unwrap();
+        class_ivar_set(904, "z", RubyValue::Int(3)).unwrap();
         assert_eq!(class_ivar_names(903), vec!["a", "b"]);
         assert_eq!(class_ivar_names(904), vec!["z"]);
     }

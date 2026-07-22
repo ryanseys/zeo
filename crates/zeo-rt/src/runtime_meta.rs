@@ -24,7 +24,7 @@
 //! method therefore takes the write lock without deadlocking against a read
 //! lock held across its own execution.
 
-use crate::builtins::{arg_error, runtime_error, type_error};
+use crate::builtins::{arg_error, frozen_error, runtime_error, type_error};
 use crate::dispatch::{
     ConstructorFn, MethodImpl, RObj, RubyObject, ancestors_of_value, raise_error,
     registry_lookup_cloned, send_super_from,
@@ -212,14 +212,18 @@ pub fn send_super_dynamic(
 
 /// `some_class.define_method(name) { body }` -- install/override an instance
 /// method on the class with id `id` (frozen or runtime). Returns the name.
-pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> RubyValue {
+/// A `Foo.freeze`d class refuses (`can't modify frozen Class: Foo`,
+/// CRuby's guard on every method-table mutation).
+pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<RubyValue, Signal> {
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
     // A method defined on an object's singleton class (`obj.singleton_class`)
     // is a per-object singleton, not an instance method of a shared class --
     // redirect to the owner. For a class owner it becomes a class method.
     let owner = maps().singleton_owner.read().unwrap().get(&id.0).cloned();
     if let Some(owner) = owner {
-        let _ = runtime_define_singleton_method(&owner, name, body);
-        return RubyValue::Symbol(name);
+        return runtime_define_singleton_method(&owner, name, body);
     }
     let m = dynamic_from_proc(id, name, body);
     {
@@ -230,7 +234,7 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> RubyValu
             .insert(name, m);
     }
     mark_live();
-    RubyValue::Symbol(name)
+    Ok(RubyValue::Symbol(name))
 }
 
 /// `recv.define_singleton_method(name) { body }` -- a per-object singleton when
@@ -244,6 +248,9 @@ pub fn runtime_define_singleton_method(
 ) -> Result<RubyValue, Signal> {
     match recv {
         RubyValue::Class(cid) => {
+            if crate::dispatch::class_frozen(*cid) {
+                return Err(crate::dispatch::frozen_class_error(*cid));
+            }
             {
                 let mut w = maps().classes.write().unwrap();
                 w.entry(cid.0)
@@ -255,6 +262,15 @@ pub fn runtime_define_singleton_method(
             Ok(RubyValue::Symbol(name))
         }
         RubyValue::Object(o) => {
+            // CRuby's rb_check_frozen on the singleton's attachee: a frozen
+            // object refuses new singleton methods.
+            if o.is_frozen() {
+                return Err(frozen_error!(
+                    "can't modify frozen {}: {}",
+                    crate::builtins::class_name_of(recv),
+                    recv.inspect_string()
+                ));
+            }
             let key = obj_identity(o);
             let m = dynamic_from_proc(SINGLETON_DEFINING, name, body);
             {
@@ -288,6 +304,15 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
         // `define_singleton_method`).
         return Err(type_error!("can't extend {}", immediate_kind(recv)));
     };
+    // CRuby's rb_check_frozen: a frozen object refuses `extend` (its
+    // singleton table is what would change).
+    if o.is_frozen() {
+        return Err(frozen_error!(
+            "can't modify frozen {}: {}",
+            crate::builtins::class_name_of(recv),
+            recv.inspect_string()
+        ));
+    }
     let mut names =
         crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::NotPrivate, false);
     // A runtime module (`Module.new` + `define_method`) keeps its methods in the
@@ -878,7 +903,7 @@ mod tests {
         // A runtime delta on a (pretend) frozen id resolves via resolve_dynamic.
         let id = ClassId(7); // a low, "frozen-range" id
         let name = Symbol::intern("answer");
-        runtime_define_method(id, name, nullary(42));
+        runtime_define_method(id, name, nullary(42)).unwrap();
         assert!(is_live());
 
         // A DynObject standing in as a receiver of that class.
@@ -917,7 +942,7 @@ mod tests {
             panic!()
         };
         let greet = Symbol::intern("greet");
-        runtime_define_method(parent_id, greet, nullary(99));
+        runtime_define_method(parent_id, greet, nullary(99)).unwrap();
 
         let child = runtime_class_new(Some(parent), None).unwrap();
         let RubyValue::Class(child_id) = child else {
@@ -942,7 +967,7 @@ mod tests {
         let body = RProc::with_self(
             move |self_val, _args| {
                 if let RubyValue::Class(cid) = self_val {
-                    runtime_define_method(*cid, Symbol::intern("x"), nullary(5));
+                    runtime_define_method(*cid, Symbol::intern("x"), nullary(5)).unwrap();
                 }
                 Ok(RubyValue::Nil)
             },

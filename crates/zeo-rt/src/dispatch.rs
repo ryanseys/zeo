@@ -413,12 +413,10 @@ pub fn ivar_set_dyn(recv: &RubyValue, name: &str, v: RubyValue) -> Result<RubyVa
             o.ivar_set_named(name, v.clone());
             Ok(v)
         }
-        // See `ivar_get_dyn`'s Class arm. No frozen check: a class object is
-        // only frozen by an explicit `Foo.freeze`, which this runtime has no
-        // storage to record -- the same posture the static class-ivar write
-        // path takes.
+        // See `ivar_get_dyn`'s Class arm. The frozen-class guard lives
+        // inside `class_ivar_set` itself.
         RubyValue::Class(cid) => {
-            crate::civars::class_ivar_set(cid.0, name, v.clone());
+            crate::civars::class_ivar_set(cid.0, name, v.clone())?;
             Ok(v)
         }
         // Real Ruby raises here (immediates are frozen and have no ivar
@@ -1047,8 +1045,10 @@ pub fn instance_variable_get(recv: &RubyValue, name_arg: &RubyValue) -> Result<R
 }
 
 /// `Object#instance_variable_set(:@x, v)` -- writes the named ivar (of an
-/// object or a class object), answering the value. A no-op on a receiver
-/// with no slot for the name.
+/// object or a class object), answering the value. A no-op on a
+/// non-Object, non-Class receiver with no slot for the name. Carries
+/// CRuby's `rb_check_frozen` (a frozen receiver raises before writing --
+/// the same guard `ivar_set_dyn` and the static write path emit).
 pub fn instance_variable_set(
     recv: &RubyValue,
     name_arg: &RubyValue,
@@ -1057,9 +1057,26 @@ pub fn instance_variable_set(
     let name = ivar_name_arg(name_arg)?;
     match recv {
         RubyValue::Object(o) => {
+            if o.is_frozen() {
+                let cls = crate::builtins::class_name_of(recv);
+                return Err(frozen_error!(
+                    "can't modify frozen {cls}: {}",
+                    recv.inspect_string()
+                ));
+            }
             o.ivar_set_named(&name, v.clone());
         }
-        RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone()),
+        RubyValue::Class(cid) => crate::civars::class_ivar_set(cid.0, &name, v.clone())?,
+        // A frozen builtin (immediates always; a frozen Str/Array/Hash)
+        // raises like CRuby; an UNFROZEN builtin keeps the documented
+        // no-generic-ivar-storage no-op.
+        other if other.is_frozen() => {
+            return Err(frozen_error!(
+                "can't modify frozen {}: {}",
+                crate::builtins::class_name_of(recv),
+                recv.inspect_string()
+            ));
+        }
         _ => {}
     }
     Ok(v)
@@ -1677,6 +1694,20 @@ static FROZEN_CLASSES: std::sync::LazyLock<parking_lot::Mutex<HashSet<u32>>> =
 /// `Foo.frozen?`'s storage half -- see `FROZEN_CLASSES`.
 pub fn class_frozen(id: ClassId) -> bool {
     FROZEN_CLASSES.lock().contains(&id.0)
+}
+
+/// The `FrozenError` every mutation of a frozen class/module raises --
+/// CRuby's exact shape (`can't modify frozen Class: Foo` /
+/// `can't modify frozen Module: Bar`, oracle-verified): the receiver's own
+/// class kind, then the frozen class's name (its inspect).
+pub fn frozen_class_error(id: ClassId) -> Signal {
+    let kind = if class_is_module(id).unwrap_or(false) {
+        "Module"
+    } else {
+        "Class"
+    };
+    let name = class_name(id).unwrap_or_else(|| format!("#<Class:{}>", id.0));
+    frozen_error!("can't modify frozen {kind}: {name}")
 }
 
 /// `Foo.freeze`'s storage half -- see `FROZEN_CLASSES`. Repeat calls are

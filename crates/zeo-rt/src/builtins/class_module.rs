@@ -296,7 +296,7 @@ builtin_methods! {
     "instance_variable_set" => fn ivar_set(recv, args, _block) {
         arity!(args, 2);
         let name = ivar_name_arg(&args[0])?;
-        crate::civars::class_ivar_set(recv_cid(recv).0, &name, args[1].clone());
+        crate::civars::class_ivar_set(recv_cid(recv).0, &name, args[1].clone())?;
         // Answers the VALUE, not the receiver -- oracle-checked.
         Ok(args[1].clone())
     }
@@ -404,7 +404,7 @@ builtin_methods! {
         arity!(args, 1..=2);
         let name = crate::runtime_meta::coerce_method_name(args.first())?;
         let body = crate::runtime_meta::coerce_method_body(args, &block)?;
-        Ok(crate::runtime_define_method(recv_cid(recv), name, body))
+        crate::runtime_define_method(recv_cid(recv), name, body)
     }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
     // to the module/class value, returning the block's value. A
@@ -455,7 +455,7 @@ builtin_methods! {
             .iter()
             .find(|&&anc| crate::cvar_defined(anc.0, &name))
             .map_or(cid, |&anc| anc);
-        crate::cvar_set(owner.0, &name, args[1].clone());
+        crate::cvar_set(owner.0, &name, args[1].clone())?;
         Ok(args[1].clone())
     }
     "class_variable_defined?" => fn cvar_defined_m(recv, args, _block) {

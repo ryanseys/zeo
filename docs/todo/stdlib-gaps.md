@@ -52,6 +52,17 @@ byte-round-trips its narrow shape; the general literal path needs the
 same treatment (HIR literal repr carrying bytes, not String). Encoding
 e2e tests construct bytes via `chr` until then.
 
+Compiler PANIC found while testing the frozen-class guards (2026-07-21):
+`Foo.define_singleton_method(:name) { ... }` with a CLASS receiver and a
+LITERAL symbol, in any non-statement position (inside a block, inside a
+top-level `begin`), dies with "unexpected top-level-only node in
+expression position" (codegen/expr.rs) -- the literal form desugars to a
+`def self.name` node that only statement position accepts. Plain
+top-level statement position works, an OBJECT receiver works everywhere,
+and a COMPUTED name (`define_singleton_method(sym_var)`) works everywhere
+(it rides the runtime_meta path). Fix direction: desugar only in
+statement position, else emit the runtime call.
+
 # The lossy-UTF-8 audit (the next encoding pass)
 
 With the 24-encoding engine landed, the remaining systematic gap is the
