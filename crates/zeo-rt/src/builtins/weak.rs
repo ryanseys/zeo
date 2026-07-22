@@ -24,7 +24,7 @@ use crate::collections::{Freezable, RHashData, array_new, string_new};
 use crate::dispatch::{ClassRegistry, RObj, RubyObject};
 use crate::encoding::StrBuf;
 use crate::{RubyValue, Signal, Symbol};
-use zeo_abi::{ClassId, WEAKMAP_CLASS};
+use zeo_abi::{ClassId, WEAKMAP_CLASS, WEAKREF_CLASS};
 
 use super::{arg_error, arity, builtin_methods, local_jump_error, not_impl_error, type_error};
 
@@ -189,6 +189,163 @@ fn as_weakmap(recv: &RObj) -> Result<&WeakMap, Signal> {
         .ok_or_else(|| type_error!("not an ObjectSpace::WeakMap"))
 }
 
+/// A `WeakRef` instance -- a weak handle to one referent it delegates to.
+/// CRuby roots `WeakRef` at `Delegator < BasicObject`, so EVERY method
+/// (`to_s`, `inspect`, ...) falls through to the referent. zeo roots it at
+/// `Object` and delegates via `method_missing`, so methods NOT already on
+/// `Object` (a referent's own API, the common case) delegate, while `Object`'s
+/// own (`class`/`is_a?`/`to_s`/`inspect`) answer for the `WeakRef` itself --
+/// a documented divergence from full `Delegator` semantics. `respond_to?`
+/// still forwards, via `respond_to_missing?`.
+pub struct WeakRef {
+    class_id: ClassId,
+    frozen: AtomicBool,
+    target: Mutex<WeakTarget>,
+}
+
+impl WeakRef {
+    fn new(class_id: ClassId, referent: &RubyValue) -> Arc<WeakRef> {
+        Arc::new(WeakRef {
+            class_id,
+            frozen: AtomicBool::new(false),
+            target: Mutex::new(WeakTarget::downgrade(referent)),
+        })
+    }
+}
+
+impl RubyObject for WeakRef {
+    fn class_id(&self) -> ClassId {
+        self.class_id
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_rc(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+    fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Acquire)
+    }
+    fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Release);
+    }
+    fn ivar_values(&self) -> Vec<RubyValue> {
+        Vec::new()
+    }
+    fn dup_object(&self, copy_frozen: bool) -> RObj {
+        let referent = self.target.lock().upgrade().unwrap_or(RubyValue::Nil);
+        let d = WeakRef::new(self.class_id, &referent);
+        if copy_frozen && self.is_frozen() {
+            d.set_frozen();
+        }
+        d
+    }
+}
+
+fn as_weakref(recv: &RObj) -> Result<&WeakRef, Signal> {
+    recv.as_any()
+        .downcast_ref::<WeakRef>()
+        .ok_or_else(|| type_error!("not a WeakRef"))
+}
+
+/// The referent if still alive, else the `WeakRef::RefError` every delegated
+/// call raises on a recycled reference.
+fn wr_referent(recv: &RObj) -> Result<RubyValue, Signal> {
+    as_weakref(recv)?.target.lock().upgrade().ok_or_else(|| {
+        crate::dispatch::raise_error(
+            "WeakRef::RefError",
+            "Invalid Reference - probably recycled".to_string(),
+        )
+    })
+}
+
+/// `WeakRef.new(referent)`.
+fn weakref_construct(
+    class: ClassId,
+    args: &[RubyValue],
+    _block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let [referent] = args else {
+        return Err(crate::dispatch::raise_error(
+            "ArgumentError",
+            format!(
+                "wrong number of arguments (given {}, expected 1)",
+                args.len()
+            ),
+        ));
+    };
+    Ok(RubyValue::Object(WeakRef::new(class, referent)))
+}
+
+fn wr_getobj(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    wr_referent(recv)
+}
+
+fn wr_setobj(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    arity!(args, 1);
+    *as_weakref(recv)?.target.lock() = WeakTarget::downgrade(&args[0]);
+    Ok(args[0].clone())
+}
+
+fn wr_alive(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(RubyValue::Bool(
+        as_weakref(recv)?.target.lock().upgrade().is_some(),
+    ))
+}
+
+/// Delegate an otherwise-unhandled call to the referent (raising `RefError`
+/// if it's gone). Reached via the send-miss `method_missing` fallback, so
+/// `args` is `[method_name_symbol, original_args...]`.
+fn wr_method_missing(
+    recv: &RObj,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let Some((name, rest)) = args.split_first() else {
+        return Err(arg_error!("no id given"));
+    };
+    let RubyValue::Symbol(sym) = name else {
+        return Err(type_error!("method name must be a Symbol"));
+    };
+    let referent = wr_referent(recv)?;
+    crate::dispatch::send_value(&referent, *sym, rest, block)
+}
+
+/// Forward `respond_to?` to the referent (so `w.respond_to?(:x)` mirrors the
+/// referent's), answering `false` once it's been collected.
+fn wr_respond_to_missing(
+    recv: &RObj,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let name = match args.first() {
+        Some(RubyValue::Symbol(s)) => *s,
+        Some(v) => Symbol::intern(&v.try_display_string()?),
+        None => return Err(arg_error!("no id given")),
+    };
+    let include_all = args.get(1).is_some_and(RubyValue::truthy);
+    let Some(referent) = as_weakref(recv)?.target.lock().upgrade() else {
+        return Ok(RubyValue::Bool(false));
+    };
+    Ok(RubyValue::Bool(crate::dispatch::responds_to(
+        referent.class_id(),
+        name,
+        include_all,
+    )))
+}
+
 /// `ObjectSpace::WeakMap.new` -- the registered constructor.
 fn weakmap_construct(
     class: ClassId,
@@ -349,6 +506,31 @@ pub fn register_weak(registry: &mut ClassRegistry) {
     m(registry, "each_key", wm_each_key);
     m(registry, "each_value", wm_each_value);
     m(registry, "inspect", wm_inspect);
+
+    let wr_ancestors = zeo_abi::declared_ancestors(WEAKREF_CLASS);
+    registry.register(
+        WEAKREF_CLASS,
+        "WeakRef",
+        false,
+        wr_ancestors,
+        Some(weakref_construct as crate::dispatch::ConstructorFn),
+    );
+    // `method_missing`/`respond_to_missing?` MUST go through the registry (the
+    // send-miss fallback consults only `registry().lookup`, never the builtin
+    // class table) -- that's what makes delegation to the referent fire.
+    registry.define_method_own(
+        WEAKREF_CLASS,
+        Symbol::intern("method_missing"),
+        wr_method_missing,
+    );
+    registry.define_method_own(
+        WEAKREF_CLASS,
+        Symbol::intern("respond_to_missing?"),
+        wr_respond_to_missing,
+    );
+    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("__getobj__"), wr_getobj);
+    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("__setobj__"), wr_setobj);
+    registry.define_method_own(WEAKREF_CLASS, Symbol::intern("weakref_alive?"), wr_alive);
 }
 
 /// One registered `ObjectSpace.define_finalizer` callback. `object_id` is

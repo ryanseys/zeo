@@ -54,6 +54,11 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // compile-time frontend (`extend FFI::Library` / `attach_function`, the
     // `lower_class_body` FFI pre-scan) is orthogonal -- it emits `extern "C"` +
     // `#[link]` inline and never needs a constant. See [[ffi-real-gem-api]].
-    matches!(feature, "tmpdir" | "set" | "time" | "io/console")
-        || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
+    // `weakref` (WeakRef) and `objspace` (ObjectSpace::WeakMap /
+    // define_finalizer / count_objects) name always-on builtins here, so both
+    // requires are pure no-ops -- their classes resolve unconditionally.
+    matches!(
+        feature,
+        "tmpdir" | "set" | "time" | "io/console" | "weakref" | "objspace"
+    ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }
