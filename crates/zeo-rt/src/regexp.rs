@@ -27,9 +27,41 @@ pub struct RegexpData {
     pub ignore_case: bool,
     pub extended: bool,
     pub multiline: bool,
+    /// `.frozen?` state. A regexp LITERAL is frozen at birth (real Ruby
+    /// since 3.0 -- `/a/.frozen?` is true; codegen's literal emission sets
+    /// this), `Regexp.new` starts unfrozen. Freezing changes nothing beyond
+    /// the flag: no mutating methods exist on Regexp.
+    pub frozen: std::sync::atomic::AtomicBool,
 }
 
 pub type RRegexp = Arc<RegexpData>;
+
+impl RegexpData {
+    /// `Regexp#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `Regexp#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `Regexp#dup`/`#clone`'s payload copy: a fresh allocation (fresh
+    /// object identity, `frozen` per the caller's dup-vs-clone rule) over
+    /// clones of the compiled engine and flags.
+    pub fn dup_data(&self, frozen: bool) -> RRegexp {
+        Arc::new(RegexpData {
+            engine: self.engine.clone(),
+            source: self.source.clone(),
+            ignore_case: self.ignore_case,
+            extended: self.extended,
+            multiline: self.multiline,
+            frozen: std::sync::atomic::AtomicBool::new(frozen),
+        })
+    }
+}
 
 /// Link-path proof for the vendored-Oniguruma migration: compiles and runs an
 /// onig pattern so generated programs (linked by bare `rustc` against the
@@ -52,6 +84,7 @@ pub fn onig_linkcheck() -> bool {
 /// selected only when a pattern uses a construct `regex` structurally can't do
 /// (in-pattern backreferences, look-around, atomic/possessive groups,
 /// `(?#comment)`). Both are `Send + Sync` and immutable after construction.
+#[derive(Clone)]
 pub enum Engine {
     Fast(regex::Regex),
     Fancy(fancy_regex::Regex),
@@ -180,9 +213,37 @@ pub struct MatchDataInner {
     pub names: Vec<(String, usize)>,
     /// The `Regexp` that produced this match -- `MatchData#regexp`.
     pub regexp: RRegexp,
+    /// `.frozen?` state -- flag-only, like `RegexpData::frozen` (MatchData
+    /// has no mutating methods either).
+    pub frozen: std::sync::atomic::AtomicBool,
 }
 
 pub type RMatchData = Arc<MatchDataInner>;
+
+impl MatchDataInner {
+    /// `MatchData#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `MatchData#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `MatchData#dup`/`#clone`'s payload copy -- fresh allocation, shared
+    /// regexp handle, `frozen` per the caller's dup-vs-clone rule.
+    pub fn dup_data(&self, frozen: bool) -> RMatchData {
+        Arc::new(MatchDataInner {
+            haystack: self.haystack.clone(),
+            groups: self.groups.clone(),
+            names: self.names.clone(),
+            regexp: self.regexp.clone(),
+            frozen: std::sync::atomic::AtomicBool::new(frozen),
+        })
+    }
+}
 
 /// Builds a real `regex::Regex`, translating Ruby's flag semantics --
 /// crucially, Ruby's `^`/`$` ALWAYS match at line boundaries (there is no
@@ -472,6 +533,7 @@ pub fn regexp_new(
         ignore_case,
         extended,
         multiline,
+        frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -676,6 +738,7 @@ fn build_match_data(re: &RRegexp, haystack: &str, caps: &Caps) -> RMatchData {
         groups: caps.spans.clone(),
         names: re.engine.capture_names(),
         regexp: re.clone(),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     })
 }
 

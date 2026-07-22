@@ -380,7 +380,7 @@ builtin_methods! {
             _ => recv.dup_value(copy_frozen),
         };
         if freeze == Some(true) {
-            copy.freeze_value();
+            copy.freeze_value()?;
         }
         Ok(copy)
     }
@@ -390,8 +390,7 @@ builtin_methods! {
     }
     "freeze" => fn freeze(recv, args, _block) {
         arity!(args, 0);
-        recv.freeze_value();
-        Ok(recv.clone())
+        recv.freeze_value()
     }
     "hash" => fn hash(recv, args, _block) {
         arity!(args, 0);

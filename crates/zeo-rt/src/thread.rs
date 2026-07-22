@@ -98,6 +98,10 @@ pub struct ThreadData {
     /// the unwinding exception was (so even a `rescue Exception` can't keep a
     /// killed thread alive).
     was_killed: AtomicBool,
+    /// `.frozen?` state -- flag-only (a frozen Thread still runs, joins, and
+    /// answers reflection in CRuby; only `#[]=`/`#name=`-style mutations
+    /// check it, audited with the mutator family).
+    frozen: AtomicBool,
 }
 
 pub type RThread = Arc<ThreadData>;
@@ -113,7 +117,18 @@ impl ThreadData {
             is_main,
             interrupt: PlMutex::new(None),
             was_killed: AtomicBool::new(false),
+            frozen: AtomicBool::new(false),
         })
+    }
+
+    /// `Thread#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    /// `Thread#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed);
     }
 }
 
@@ -389,9 +404,24 @@ pub struct MutexData {
     token_tx: may::sync::mpmc::Sender<()>,
     token_rx: may::sync::mpmc::Receiver<()>,
     owner: PlMutex<Option<u64>>,
+    /// `.frozen?` state -- flag-only (CRuby allows locking a frozen Mutex,
+    /// oracle-verified).
+    frozen: AtomicBool,
 }
 
 pub type RMutex = Arc<MutexData>;
+
+impl MutexData {
+    /// `Mutex#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    /// `Mutex#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed);
+    }
+}
 
 pub fn mutex_new() -> RubyValue {
     let (token_tx, token_rx) = may::sync::mpmc::channel();
@@ -400,6 +430,7 @@ pub fn mutex_new() -> RubyValue {
         token_tx,
         token_rx,
         owner: PlMutex::new(None),
+        frozen: AtomicBool::new(false),
     }))
 }
 

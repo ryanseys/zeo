@@ -1664,6 +1664,27 @@ pub fn class_name(id: ClassId) -> Option<String> {
     None
 }
 
+/// The ids of classes/modules an explicit `Foo.freeze` has frozen -- a
+/// side registry keyed by class id (NOT a pointer-keyed table: ids are
+/// minted once and never reused, so there is no ABA hazard), covering both
+/// AOT-registered classes and `runtime_meta`'s overlay classes with one
+/// mechanism. Empty in the overwhelmingly common no-`freeze` program: the
+/// guard paths (cvar/civar writes, runtime method definition) pay one
+/// short-held lock + hash probe only when actually reached.
+static FROZEN_CLASSES: std::sync::LazyLock<parking_lot::Mutex<HashSet<u32>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashSet::new()));
+
+/// `Foo.frozen?`'s storage half -- see `FROZEN_CLASSES`.
+pub fn class_frozen(id: ClassId) -> bool {
+    FROZEN_CLASSES.lock().contains(&id.0)
+}
+
+/// `Foo.freeze`'s storage half -- see `FROZEN_CLASSES`. Repeat calls are
+/// harmless no-ops (CRuby's already-frozen guard).
+pub fn class_set_frozen(id: ClassId) {
+    FROZEN_CLASSES.lock().insert(id.0);
+}
+
 /// Reverse of `class_name`: the id a fully-qualified class/module NAME is
 /// registered under (`"Integer"`, `"Math"`, a user `"Widget"`), or `None`.
 /// The eval VM uses this to resolve a bare class-name constant like

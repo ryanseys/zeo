@@ -650,7 +650,7 @@ mod tests {
     /// The freeze tiering `RubyValue::is_frozen`/`freeze_value`
     /// implement -- immediates/`Range` always frozen, mutable types start
     /// unfrozen and latch on `.freeze` (which returns self and no-ops when
-    /// repeated), the flagless `Proc` approximation stays `false`.
+    /// repeated); Queue is the one unfreezable kind (TypeError).
     #[test]
     fn freeze_tiering_matches_cruby_semantics() {
         assert!(RubyValue::Int(1).is_frozen());
@@ -660,16 +660,16 @@ mod tests {
 
         let arr = RubyValue::Array(array_new(vec![RubyValue::Int(1)]));
         assert!(!arr.is_frozen());
-        let same = arr.freeze_value();
+        let same = arr.freeze_value().unwrap();
         assert!(arr.is_frozen());
         // Returns SELF (the same shared storage), not a copy.
         assert!(same.is_frozen());
-        arr.freeze_value(); // repeat freeze is a silent no-op
+        arr.freeze_value().unwrap(); // repeat freeze is a silent no-op
         assert!(arr.is_frozen());
 
         let s = RubyValue::Str(string_new("abc".to_string()));
         assert!(!s.is_frozen());
-        s.freeze_value();
+        s.freeze_value().unwrap();
         assert!(s.is_frozen());
 
         let obj = RubyValue::Object(Point::new_handle(std::sync::Arc::new(Point {
@@ -678,7 +678,7 @@ mod tests {
             x: parking_lot::Mutex::new(RubyValue::Nil),
         })));
         assert!(!obj.is_frozen());
-        obj.freeze_value();
+        obj.freeze_value().unwrap();
         assert!(obj.is_frozen());
 
         assert_eq!(
@@ -775,7 +775,7 @@ mod tests {
         assert_eq!(arr.inspect_string(), "[1]");
         assert_eq!(copy.inspect_string(), "[1, 2]");
 
-        arr.freeze_value();
+        arr.freeze_value().unwrap();
         let cloned = send_value(&arr, Symbol::intern("clone"), &[], None).unwrap();
         assert!(cloned.is_frozen());
     }

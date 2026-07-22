@@ -5,7 +5,7 @@
 //! `sp_RbVal` tagged union (`lib/sp_gc.h:42`), but as a real Rust `enum`
 //! instead of a hand-written `{ tag; cls_id; union { ... } }` struct.
 
-use crate::builtins::arg_error;
+use crate::builtins::{arg_error, type_error};
 use crate::collections::{RArray, RHash, RStr};
 use crate::dispatch::{
     ARRAY_CLASS, CLASS_CLASS, ClassId, FALSE_CLASS, FIBER_CLASS, FLOAT_CLASS, HASH_CLASS,
@@ -990,14 +990,10 @@ impl RubyValue {
     /// `Symbol`/`nil`/`true`/`false`) are ALWAYS frozen (CRuby stores no
     /// flag for them at all -- `RB_FL_ABLE` is false, frozen is implied);
     /// `Range` is frozen-at-birth (real Ruby since 3.0, and this runtime's
-    /// `Range` is a plain immutable value anyway); the shared-mutable types
-    /// (`Str`/`Array`/`Hash`/`Object`) consult their real stored flag.
-    /// `Proc`/`Regexp`/`MatchData` report `false` unconditionally -- they
-    /// have nowhere to store the bit (`RProc` is a bare `Arc<dyn Fn>`) and
-    /// no mutating methods exist on any of them, so `.freeze` on one is
-    /// accepted as a no-op whose flag isn't remembered: a documented, narrow
-    /// approximation (real Ruby would report `true` after an explicit
-    /// freeze), not silent wrongness.
+    /// `Range` is a plain immutable value anyway); every other heap kind
+    /// consults its payload's real stored flag. A `Queue`/`SizedQueue`
+    /// cannot be frozen at all (`freeze` raises TypeError, oracle-verified),
+    /// so it is the one heap kind that answers a constant `false`.
     pub fn is_frozen(&self) -> bool {
         match self {
             RubyValue::Nil
@@ -1009,25 +1005,26 @@ impl RubyValue {
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
             | RubyValue::Range(..) => true,
-            // Classes and modules are NOT frozen by default -- CRuby reports
-            // `Integer.frozen?` and a plain `class C; end`'s `C.frozen?` both
-            // false. (Explicitly freezing a class isn't tracked in this AOT
-            // model; the default answer is what programs actually read.)
-            RubyValue::Class(_) => false,
+            // A class/module object's flag lives in the id-keyed side
+            // registry (`dispatch::class_frozen`) -- `Class` values are
+            // `Copy` ids with no payload of their own to store it in.
+            RubyValue::Class(cid) => crate::dispatch::class_frozen(*cid),
             RubyValue::Str(s) => s.is_frozen(),
             RubyValue::Array(a) => a.is_frozen(),
             RubyValue::Hash(h) => h.is_frozen(),
             RubyValue::Object(o) => o.is_frozen(),
-            RubyValue::Proc(_)
-            | RubyValue::Regexp(_)
-            | RubyValue::MatchData(_)
-            | RubyValue::Fiber(_)
-            | RubyValue::Enumerator(_)
-            | RubyValue::Yielder(_)
-            | RubyValue::Thread(_)
-            | RubyValue::Mutex(_)
-            | RubyValue::Queue(_)
-            | RubyValue::Ractor(_) => false,
+            RubyValue::Proc(p) => p.is_frozen(),
+            RubyValue::Regexp(re) => re.is_frozen(),
+            RubyValue::MatchData(m) => m.is_frozen(),
+            RubyValue::Fiber(f) => f.is_frozen(),
+            RubyValue::Enumerator(e) => e.is_frozen(),
+            // A yielder is a thin handle on the driving block; the flag
+            // rides the underlying proc.
+            RubyValue::Yielder(p) => p.is_frozen(),
+            RubyValue::Thread(t) => t.is_frozen(),
+            RubyValue::Mutex(m) => m.is_frozen(),
+            RubyValue::Queue(_) => false,
+            RubyValue::Ractor(r) => r.is_frozen(),
         }
     }
 
@@ -1035,18 +1032,49 @@ impl RubyValue {
     /// recursing into elements -- deep freeze is `Ractor.make_shareable`'s
     /// job, a later phase), returns self (a cheap handle clone), and is a
     /// silent no-op on anything already/always frozen -- all three verified
-    /// against CRuby's `rb_obj_freeze` (`object.c:1360`).
-    pub fn freeze_value(&self) -> RubyValue {
+    /// against CRuby's `rb_obj_freeze` (`object.c:1360`). Fallible because
+    /// `Queue`/`SizedQueue` REFUSE to freeze (`cannot freeze #<Thread::Queue:
+    /// 0x...>`, a TypeError -- CRuby's rb_obj_freeze override for queues).
+    pub fn freeze_value(&self) -> Result<RubyValue, crate::Signal> {
         match self {
             RubyValue::Str(s) => s.set_frozen(),
             RubyValue::Array(a) => a.set_frozen(),
             RubyValue::Hash(h) => h.set_frozen(),
             RubyValue::Object(o) => o.set_frozen(),
-            // Always-frozen immediates/`Range`, and the flagless
-            // `Proc`/`Regexp`/`MatchData` approximation -- see `is_frozen`.
-            _ => {}
+            RubyValue::Proc(p) | RubyValue::Yielder(p) => p.set_frozen(),
+            RubyValue::Regexp(re) => re.set_frozen(),
+            RubyValue::MatchData(m) => m.set_frozen(),
+            RubyValue::Fiber(f) => f.set_frozen(),
+            RubyValue::Enumerator(e) => e.set_frozen(),
+            RubyValue::Thread(t) => t.set_frozen(),
+            RubyValue::Mutex(m) => m.set_frozen(),
+            RubyValue::Queue(q) => {
+                // CRuby's message renders the receiver's default inspect,
+                // address included -- built here directly since this
+                // runtime's Queue inspect is the address-less placeholder.
+                let kind = if crate::thread::queue_is_sized(q) {
+                    "Thread::SizedQueue"
+                } else {
+                    "Thread::Queue"
+                };
+                let addr = std::sync::Arc::as_ptr(q) as *const () as usize;
+                return Err(type_error!("cannot freeze #<{kind}:0x{addr:016x}>"));
+            }
+            RubyValue::Ractor(r) => r.set_frozen(),
+            // A class/module: the id-keyed side registry (see `is_frozen`).
+            RubyValue::Class(cid) => crate::dispatch::class_set_frozen(*cid),
+            // Always-frozen immediates/`Range` -- the silent no-op tier.
+            RubyValue::Nil
+            | RubyValue::Bool(_)
+            | RubyValue::Int(_)
+            | RubyValue::BigInt(_)
+            | RubyValue::Rational(_)
+            | RubyValue::Complex(_)
+            | RubyValue::Float(_)
+            | RubyValue::Symbol(_)
+            | RubyValue::Range(..) => {}
         }
-        self.clone()
+        Ok(self.clone())
     }
 
     /// `Kernel#dup`/`#clone` -- the per-kind SHALLOW copy, the
@@ -1064,10 +1092,10 @@ impl RubyValue {
     /// - `Range`: immutable here and in Ruby -- self suffices (the fresh
     ///   object identity real Ruby mints is unobservable in this runtime).
     /// - `Object`: per-class `RubyObject::dup_object` (see `ruby_class!`).
-    /// - `Proc`/`Regexp`/`MatchData`: real Ruby allocates a fresh object;
-    ///   all three are immutable in this runtime with no exposed object
-    ///   identity, so a reference copy is indistinguishable -- a documented
-    ///   approximation, not silent wrongness.
+    /// - `Proc`/`Regexp`/`MatchData`: a fresh payload sharing the immutable
+    ///   innards (closure/engine/haystack), so the copy's frozen flag is its
+    ///   own -- freezing the original never freezes an earlier `dup`,
+    ///   CRuby's rule.
     /// - `Mutex`: a fresh, unlocked mutex (real Ruby's `Mutex#dup` gives
     ///   exactly that -- allocate + no state ivars).
     /// - `Thread`/`Queue`/`Ractor`: raise in real Ruby (`TypeError:
@@ -1088,13 +1116,13 @@ impl RubyValue {
             | RubyValue::Float(_)
             | RubyValue::Symbol(_)
             | RubyValue::Range(..)
-            | RubyValue::Proc(_)
-            | RubyValue::Regexp(_)
-            | RubyValue::MatchData(_)
             // Real `Class#dup` mints an anonymous class copy -- impossible
             // in this AOT model; the handle is returned instead (documented
-            // divergence, same posture as Proc/Regexp above).
+            // divergence).
             | RubyValue::Class(_) => self.clone(),
+            RubyValue::Proc(p) => RubyValue::Proc(p.dup_data(keep_frozen)),
+            RubyValue::Regexp(re) => RubyValue::Regexp(re.dup_data(keep_frozen)),
+            RubyValue::MatchData(m) => RubyValue::MatchData(m.dup_data(keep_frozen)),
             RubyValue::Str(s) => {
                 let fresh = crate::string_new(s.lock().to_utf8_lossy().into_owned());
                 if keep_frozen {
@@ -1118,7 +1146,15 @@ impl RubyValue {
                 RubyValue::Hash(fresh)
             }
             RubyValue::Object(o) => RubyValue::Object(o.dup_object(copy_frozen)),
-            RubyValue::Mutex(_) => crate::mutex_new(),
+            RubyValue::Mutex(_) => {
+                let fresh = crate::mutex_new();
+                if keep_frozen {
+                    if let RubyValue::Mutex(m) = &fresh {
+                        m.set_frozen();
+                    }
+                }
+                fresh
+            }
             // A never-iterated (or finished) enumerator copies as a fresh
             // one over the same source; a LIVE iteration can't be copied
             // (CRuby raises "can't copy execution context").
@@ -1126,7 +1162,11 @@ impl RubyValue {
                 if e.iteration_live() {
                     panic!("can't copy execution context (an Enumerator mid external iteration; CRuby raises TypeError)");
                 }
-                RubyValue::Enumerator(e.fresh_copy())
+                let fresh = e.fresh_copy();
+                if keep_frozen {
+                    fresh.set_frozen();
+                }
+                RubyValue::Enumerator(fresh)
             }
             // A yielder is just a handle onto the driving block -- the
             // reference copy is indistinguishable (the Proc posture above).
@@ -1457,7 +1497,7 @@ mod tests {
     #[test]
     fn dup_starts_unfrozen_and_clone_copies_the_flag() {
         let s = RubyValue::Str(string_new("abc".to_string()));
-        s.freeze_value();
+        s.freeze_value().unwrap();
 
         assert!(!s.dup_value(false).is_frozen(), "dup of frozen is unfrozen");
         assert!(
@@ -1470,6 +1510,36 @@ mod tests {
             !unfrozen.dup_value(true).is_frozen(),
             "clone of unfrozen stays unfrozen"
         );
+    }
+
+    /// The newly-flagged heap kinds follow the same tiering: unfrozen at
+    /// birth, latch on `freeze`, fresh flag through `dup` (freezing the
+    /// original never freezes an earlier copy) -- and `Queue` refuses to
+    /// freeze at all (TypeError, CRuby's rule). All oracle-verified.
+    #[test]
+    fn freeze_covers_the_handle_kinds_and_queue_refuses() {
+        let p = RubyValue::Proc(crate::RProc::new(|_| Ok(RubyValue::Nil)));
+        assert!(!p.is_frozen());
+        let d = p.dup_value(false);
+        p.freeze_value().unwrap();
+        assert!(p.is_frozen(), "proc latches");
+        assert!(!d.is_frozen(), "earlier dup keeps its own flag");
+        assert!(p.dup_value(true).is_frozen(), "clone copies the flag");
+        assert!(!p.dup_value(false).is_frozen(), "dup drops the flag");
+
+        let m = crate::mutex_new();
+        m.freeze_value().unwrap();
+        assert!(m.is_frozen());
+    }
+
+    /// `Queue#freeze` refuses (TypeError in CRuby); registry-less unit
+    /// tests see `raise_error`'s loud-panic fallback. The exact rescuable
+    /// message shape is pinned by the e2e freeze suite.
+    #[test]
+    #[should_panic(expected = "TypeError: cannot freeze #<Thread::Queue:0x")]
+    fn queue_refuses_to_freeze() {
+        let q = crate::queue_new();
+        let _ = q.freeze_value();
     }
 
     /// The copy's top-level payload is FRESH (mutating it leaves the

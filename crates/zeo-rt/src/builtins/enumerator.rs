@@ -119,6 +119,9 @@ pub struct EnumeratorData {
     /// enumerators derive size lazily from their source instead.
     size_hint: Option<RubyValue>,
     state: Mutex<ExternState>,
+    /// `.frozen?` state -- flag-only (CRuby happily iterates a frozen
+    /// enumerator; external-iteration state isn't Ruby-visible mutation).
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 pub type REnumerator = Arc<EnumeratorData>;
@@ -131,13 +134,26 @@ impl EnumeratorData {
     }
 
     /// A fresh, never-iterated enumerator over the same source --
-    /// `dup`/`clone`'s payload.
+    /// `dup`/`clone`'s payload (which starts unfrozen; `clone`'s flag copy
+    /// is `dup_value`'s job).
     pub(crate) fn fresh_copy(&self) -> REnumerator {
         Arc::new(EnumeratorData {
             source: self.source.clone(),
             size_hint: self.size_hint.clone(),
             state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// `Enumerator#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `Enumerator#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -165,6 +181,7 @@ pub(crate) fn enumerator_for(recv: &RubyValue, meth: &str, args: &[RubyValue]) -
         },
         size_hint: None,
         state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -175,6 +192,7 @@ pub(crate) fn chain_of(sources: Vec<RubyValue>) -> RubyValue {
         source: EnumSource::Chain { sources },
         size_hint: None,
         state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     }))
 }
 
@@ -224,6 +242,7 @@ pub(crate) fn enumerator_new(
         source: EnumSource::Generator { block: generator },
         size_hint,
         state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     })))
 }
 
@@ -242,6 +261,7 @@ builtin_methods! {
             source: EnumSource::Produce { initial: args.first().cloned(), block: generator },
             size_hint: None,
             state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
         })))
     }
 
@@ -252,6 +272,7 @@ builtin_methods! {
             source: EnumSource::Product { sources: args.to_vec() },
             size_hint: None,
             state: Mutex::new(ExternState::default()),
+            frozen: std::sync::atomic::AtomicBool::new(false),
         })))
     }
 }

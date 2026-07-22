@@ -23,9 +23,13 @@ use crate::builtins::{local_jump_error, type_error};
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
-/// The boxed body of a `Proc`: `(self, args, call-site block) -> result`.
-/// See [`ProcData::f`] for why `self` and the block are parameters.
-type ProcFn = Box<
+/// The shared body of a `Proc`: `(self, args, call-site block) -> result`.
+/// See [`ProcData::f`] for why `self` and the block are parameters. An `Arc`
+/// (not a `Box`) so `dup`/`clone` can mint a FRESH `ProcData` -- fresh
+/// object identity, fresh frozen flag -- while sharing the one closure
+/// allocation, exactly CRuby's split (the copy is a new object built from
+/// the same block).
+type ProcFn = Arc<
     dyn Fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal> + Send + Sync,
 >;
 
@@ -74,6 +78,11 @@ pub struct ProcData {
     /// `None` for a runtime-internal proc or one built at the top level (a
     /// `return` from the latter is an unconditional `LocalJumpError`).
     home: Option<crate::signal::ProcHome>,
+    /// `.frozen?` state -- Procs are freezable ordinary objects in Ruby
+    /// (freezing one changes nothing observable beyond the flag: no mutating
+    /// methods exist), and `dup`/`clone` follow the standard flag rule via
+    /// `dup_data`.
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 /// One entry of `Proc#parameters` -- a parameter's kind (`"req"`, `"opt"`,
@@ -112,12 +121,13 @@ impl RProc {
         f: impl Fn(&[RubyValue]) -> Result<RubyValue, Signal> + Send + Sync + 'static,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(move |_self, args, _block| f(args)),
+            f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity: -1,
             is_lambda: false,
             params: Vec::new(),
             home: None,
+            frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -130,12 +140,13 @@ impl RProc {
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(move |_self, args, _block| f(args)),
+            f: Arc::new(move |_self, args, _block| f(args)),
             self_val: RubyValue::Nil,
             arity,
             is_lambda,
             params: Vec::new(),
             home: None,
+            frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -170,12 +181,13 @@ impl RProc {
         is_lambda: bool,
     ) -> RProc {
         RProc(Arc::new(ProcData {
-            f: Box::new(f),
+            f: Arc::new(f),
             self_val,
             arity,
             is_lambda,
             params: Vec::new(),
             home: None,
+            frozen: std::sync::atomic::AtomicBool::new(false),
         }))
     }
 
@@ -297,6 +309,34 @@ impl RProc {
     /// that no longer exists.)
     pub fn ptr_id(&self) -> usize {
         Arc::as_ptr(&self.0) as *const () as usize
+    }
+
+    /// `Proc#frozen?` -- see [`ProcData::frozen`].
+    pub fn is_frozen(&self) -> bool {
+        self.0.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `Proc#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.0
+            .frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// `Proc#dup`/`#clone`'s payload copy: a FRESH `ProcData` (new object
+    /// identity, `frozen` per the caller's dup-vs-clone rule) sharing the
+    /// one closure allocation -- CRuby's own copy semantics, under which
+    /// freezing the original never freezes an earlier copy.
+    pub fn dup_data(&self, frozen: bool) -> RProc {
+        RProc(Arc::new(ProcData {
+            f: Arc::clone(&self.0.f),
+            self_val: self.0.self_val.clone(),
+            arity: self.0.arity,
+            is_lambda: self.0.is_lambda,
+            params: self.0.params.clone(),
+            home: self.0.home.clone(),
+            frozen: std::sync::atomic::AtomicBool::new(frozen),
+        }))
     }
 }
 

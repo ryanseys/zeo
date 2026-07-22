@@ -124,6 +124,7 @@ mod tests {
             names: Vec::new(),
             regexp: crate::regexp::regexp_new("(ll)", false, false, false)
                 .expect("valid test regexp"),
+            frozen: std::sync::atomic::AtomicBool::new(false),
         })
     }
 

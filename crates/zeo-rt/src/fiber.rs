@@ -76,6 +76,21 @@ pub struct FiberHandle {
     /// raises `FiberError` (CRuby's rule); `#resume` clears it, `#transfer`
     /// sets it.
     entered_by_transfer: AtomicBool,
+    /// `.frozen?` state -- flag-only (freezing a Fiber changes nothing
+    /// observable: resuming a frozen fiber is legal in CRuby).
+    frozen: AtomicBool,
+}
+
+impl FiberHandle {
+    /// `Fiber#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(Ordering::Relaxed)
+    }
+
+    /// `Fiber#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen.store(true, Ordering::Relaxed);
+    }
 }
 
 pub type RFiber = Arc<FiberHandle>;
@@ -117,6 +132,7 @@ fn root_fiber() -> RFiber {
                     handling: parking_lot::Mutex::new(Vec::new()),
                     storage: parking_lot::Mutex::new(None),
                     entered_by_transfer: AtomicBool::new(false),
+                    frozen: AtomicBool::new(false),
                 })
             })
             .clone()
@@ -169,6 +185,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         handling: parking_lot::Mutex::new(Vec::new()),
         storage: parking_lot::Mutex::new(inherited),
         entered_by_transfer: AtomicBool::new(false),
+        frozen: AtomicBool::new(false),
     }))
 }
 

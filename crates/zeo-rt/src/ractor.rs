@@ -52,9 +52,25 @@ enum RactorState {
 pub struct RactorData {
     incoming: mpsc::Sender<RubyValue>,
     state: PlMutex<Option<RactorState>>,
+    /// `.frozen?` state -- flag-only (a frozen Ractor still runs and
+    /// receives; CRuby accepts `Ractor#freeze`).
+    frozen: std::sync::atomic::AtomicBool,
 }
 
 pub type RRactor = Arc<RactorData>;
+
+impl RactorData {
+    /// `Ractor#frozen?` -- see the `frozen` field.
+    pub fn is_frozen(&self) -> bool {
+        self.frozen.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// `Ractor#freeze`'s storage half; repeat calls are harmless no-ops.
+    pub fn set_frozen(&self) {
+        self.frozen
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 thread_local! {
     /// The receiving end of THIS thread's Ractor's incoming port --
@@ -76,6 +92,7 @@ pub fn ractor_new(block: RubyValue, args: Vec<RubyValue>) -> Result<RubyValue, S
     Ok(RubyValue::Ractor(Arc::new(RactorData {
         incoming: tx,
         state: PlMutex::new(Some(RactorState::Running(handle))),
+        frozen: std::sync::atomic::AtomicBool::new(false),
     })))
 }
 

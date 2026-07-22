@@ -1410,7 +1410,9 @@ fn dispatch(
                 }
                 _ => {
                     if name == "freeze" {
-                        quote! { (#recv_expr).freeze_value() }
+                        // Fallible: Queue/SizedQueue refuse to freeze
+                        // (TypeError) -- see `freeze_value`'s docs.
+                        quote! { (#recv_expr).freeze_value()? }
                     } else {
                         quote! { zeo_rt::RubyValue::Bool((#recv_expr).is_frozen()) }
                     }

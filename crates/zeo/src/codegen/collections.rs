@@ -281,7 +281,13 @@ pub fn emit_regexp_lit(cx: &Ctx, parts: &[StrPart], flags: RegexpFlags) -> Token
     );
     quote! {
         match zeo_rt::regexp_new(&(#pattern_expr), #ignore_case, #extended, #multiline) {
-            Ok(__re) => zeo_rt::RubyValue::Regexp(__re),
+            // A regexp LITERAL is frozen at birth (real Ruby since 3.0,
+            // interpolated ones included); `Regexp.new`/`.union` stay
+            // unfrozen by not passing through this emission.
+            Ok(__re) => {
+                __re.set_frozen();
+                zeo_rt::RubyValue::Regexp(__re)
+            }
             Err(__err) => return Err(zeo_rt::Signal::Raise(#regexp_error)),
         }
     }
