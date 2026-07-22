@@ -83,11 +83,12 @@ pub fn run_at_exit() {
 }
 
 /// Which execution substrate Ruby threads (and the top level) run on.
-/// `ZEO_EXEC=os` puts every Ruby thread on its own real OS thread with the
-/// (default-disabled) process Gvl; anything else keeps the incumbent may
-/// coroutine scheduler. The flag exists for the staged migration -- the os
-/// mode becomes the default (and `may` is deleted) once the stress gate is
-/// green -- so an unknown value is a loud panic, not a silent fallback.
+/// **The default is `Os`**: every Ruby thread on its own real OS thread,
+/// truly parallel under the (default-disabled) process Gvl -- `ZEO_GVL=1`
+/// opts into CRuby-fidelity serialized scheduling. `ZEO_EXEC=may` keeps
+/// the outgoing coroutine scheduler as the staged migration's revert
+/// lever until its deletion. An unknown value is a loud panic, not a
+/// silent fallback.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ExecMode {
     May,
@@ -97,8 +98,8 @@ pub(crate) enum ExecMode {
 pub(crate) fn exec_mode() -> ExecMode {
     static MODE: std::sync::OnceLock<ExecMode> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("ZEO_EXEC").as_deref() {
-        Ok("os") => ExecMode::Os,
-        Ok("may") | Err(_) => ExecMode::May,
+        Ok("may") => ExecMode::May,
+        Ok("os") | Err(_) => ExecMode::Os,
         Ok(other) => panic!("ZEO_EXEC must be `may` or `os`, got `{other}`"),
     })
 }

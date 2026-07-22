@@ -827,6 +827,130 @@ fn busy_loop_threads_are_killable_and_raisable() {
 }
 
 #[test]
+fn raise_into_sleep_wakes_the_sleeper_immediately() {
+    // The timeout-gem shape: a thread parked in a LONG sleep is raisable
+    // and wakes now, not at the sleep's natural end. Threshold-based (well
+    // under the 10s the sleep would otherwise take), never order-based.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        t = Thread.new do
+          begin
+            sleep 10
+            :overslept
+          rescue => e
+            e.message
+          end
+        end
+        sleep 0.05
+        t.raise("wake up")
+        v = t.value
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
+        p v
+        p elapsed < 5
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"wake up\"\ntrue\n");
+}
+
+#[test]
+fn sleep_forever_parks_until_interrupted() {
+    // `sleep` with no duration -- a runtime panic for the whole spike era --
+    // now parks until an interrupt arrives and delivers it normally.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        t = Thread.new do
+          begin
+            sleep
+            :never
+          rescue => e
+            "woken: #{e.message}"
+          end
+        end
+        sleep 0.05
+        t.raise("done sleeping")
+        p t.value
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"woken: done sleeping\"\n");
+}
+
+#[test]
+fn the_main_thread_is_a_raise_target() {
+    // A sibling raising into MAIN: delivered at main's next checkpoint --
+    // here, waking its sleep -- and rescuable like any other raise.
+    let result = run_ruby(
+        r#"
+        main = Thread.main
+        t = Thread.new { sleep 0.05; main.raise("to-main") }
+        begin
+          sleep 5
+          puts "overslept"
+        rescue => e
+          puts "main caught: #{e.message}"
+        end
+        t.join
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "main caught: to-main\n");
+}
+
+#[test]
+fn a_spinning_thread_cannot_starve_a_sibling() {
+    // THE parallel-default headline, and the one test that structurally
+    // distinguishes it from the cooperative scheduler: under may's single
+    // worker a compute-only spinner occupied the scheduler forever and the
+    // second thread never ran (this test HANGS there); on OS threads the
+    // sibling completes concurrently.
+    let result = run_ruby(
+        r#"
+        Thread.report_on_exception = false
+        spinner = Thread.new { loop { } }
+        worker = Thread.new { 21 + 21 }
+        p worker.value
+        spinner.kill
+        spinner.join
+        p spinner.alive?
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\nfalse\n");
+}
+
+#[test]
+fn opposite_order_two_container_ops_do_not_deadlock() {
+    // The lock-ordering probe family: mirrored two-container operations
+    // (replace, ==, eql?, <=>, string ==, Encoding.compatible?) hammered
+    // from two threads in OPPOSITE orders. Any builtin that holds both
+    // containers' locks at once deadlocks here within a few iterations --
+    // this pinned the five sequential-snapshot/address-order fixes.
+    let result = run_ruby(
+        r#"
+        a = [1] * 50
+        b = [2] * 50
+        s1 = "x" * 50
+        s2 = "y" * 50
+        t1 = Thread.new do
+          500.times { a.replace(b); a == b; a.eql?(b); a <=> b; s1 == s2; Encoding.compatible?(s1, s2) }
+        end
+        t2 = Thread.new do
+          500.times { b.replace(a); b == a; b.eql?(a); b <=> a; s2 == s1; Encoding.compatible?(s2, s1) }
+        end
+        t1.join
+        t2.join
+        puts "no deadlock"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "no deadlock\n");
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.
