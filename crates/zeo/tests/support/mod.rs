@@ -13,6 +13,19 @@ pub struct RunResult {
     pub status: std::process::ExitStatus,
 }
 
+/// The runtime profile the e2e harness links generated programs against.
+///
+/// Release by default -- the same choice the conformance harness makes: the
+/// small stripped release rlib links far faster than the large debug one, and
+/// that per-test link is the dominant cost of this suite. A developer chasing a
+/// runtime panic sets `ZEO_RUNTIME_PROFILE=debug` for a symbolicated runtime
+/// (the release runtime is `strip = "symbols"`). Reading the env from many
+/// `#[test]` threads is safe: the data race `from_env_or` warns about is
+/// `set_var` vs `var_os`, and this only ever reads.
+fn harness_profile() -> zeo::build::Profile {
+    zeo::build::Profile::from_env_or(zeo::build::Profile::Release)
+}
+
 pub fn run_ruby(source: &str) -> RunResult {
     run_ruby_configured(source, &[], &[])
 }
@@ -50,12 +63,11 @@ pub fn run_ruby_packages(
         std::thread::current().id()
     ));
     let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::build::ensure_runtime_built(zeo::build::Profile::Debug, runtime)
+    zeo::build::ensure_runtime_built(harness_profile(), runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(rust_source, &bin, zeo::build::Profile::Debug, runtime)
-        .unwrap_or_else(|e| {
-            panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
-        });
+    zeo::build::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
+    });
     let out = std::process::Command::new(&bin)
         .output()
         .unwrap_or_else(|e| panic!("running compiled binary: {e}"));
@@ -157,12 +169,11 @@ pub fn run_ruby_configured(source: &str, env: &[(&str, &str)], args: &[&str]) ->
         std::thread::current().id()
     ));
     let runtime = zeo::build::Runtime::for_eval(compiled.needs_eval_vm);
-    zeo::build::ensure_runtime_built(zeo::build::Profile::Debug, runtime)
+    zeo::build::ensure_runtime_built(harness_profile(), runtime)
         .expect("building zeo-rt for the e2e harness");
-    zeo::build::build_binary(rust_source, &bin, zeo::build::Profile::Debug, runtime)
-        .unwrap_or_else(|e| {
-            panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
-        });
+    zeo::build::build_binary(rust_source, &bin, harness_profile(), runtime).unwrap_or_else(|e| {
+        panic!("build_binary failed: {e}\n--- generated Rust ---\n{rust_source}")
+    });
 
     let mut cmd = std::process::Command::new(&bin);
     cmd.args(args);

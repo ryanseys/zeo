@@ -62,9 +62,14 @@ jobs:
         with:
           tool: cargo-nextest
       # The workspace unit + e2e tests. The e2e suite compiles generated
-      # programs against the prebuilt runtime, so build zeo-rt first to keep
+      # programs against the prebuilt RELEASE runtime (small stripped rlib ->
+      # far cheaper per-test link), so build both runtime variants first to keep
       # nextest's parallel test processes from racing the one cargo build.
-      - run: cargo build -p zeo-rt
+      # `cargo nextest` builds crates only in debug, so the release rlib won't
+      # exist unless built explicitly here. The Eval variant lives in its own
+      # target dir (see `build::variant_target_dir`).
+      - run: cargo build -p zeo-rt --release
+      - run: cargo build -p zeo-rt --release --features eval-vm --target-dir target/zeo-rt-eval
       - run: cargo nextest run --workspace
       # nextest doesn't run doctests; keep them covered.
       - run: cargo test --workspace --doc
