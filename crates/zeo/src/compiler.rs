@@ -99,6 +99,16 @@ pub struct ClassInfo {
     /// `HirNode::AliasMethod` and resolved by `mro::resolve_aliases` once the
     /// ancestor chain is linearized. See `HirNode::AliasMethod`'s docs.
     pub pending_aliases: Vec<(String, String)>,
+    /// `(new, old)` aliases whose source is a BUILTIN (no user `Scope`
+    /// anywhere in the ancestor chain -- Kernel's `raise`, Object's `dup`,
+    /// ...): there is no HIR body to clone, so the alias is a NAME
+    /// INDIRECTION instead. `old` is always terminal (an alias of an alias
+    /// resolves through `builtin_alias_target` when recorded). Codegen
+    /// substitutes `old` at statically-resolved call sites and emits a
+    /// validated `register_alias` row for dynamic dispatch -- a source that
+    /// resolves to nothing raises `NameError` at program start, real Ruby's
+    /// timing (a class body executes at runtime). See `mro::resolve_aliases`.
+    pub builtin_aliases: Vec<(String, String)>,
     /// `(name, visibility)` from a `private`/`public`/`protected :m` that
     /// re-declares an INHERITED method's visibility (no local `def` to retag).
     /// Applied by codegen after materialization stamps each method with its
@@ -267,6 +277,7 @@ impl Compiler {
                 extends: Vec::new(),
                 undefined: std::collections::HashSet::new(),
                 pending_aliases: Vec::new(),
+                builtin_aliases: Vec::new(),
                 visibility_overrides: Vec::new(),
                 is_module: false,
                 ivars: Vec::new(),
@@ -520,6 +531,7 @@ impl Compiler {
             extends: Vec::new(),
             undefined: std::collections::HashSet::new(),
             pending_aliases: Vec::new(),
+            builtin_aliases: Vec::new(),
             visibility_overrides: Vec::new(),
             is_module,
             ivars: Vec::new(),
@@ -710,6 +722,21 @@ impl Compiler {
             .iter()
             .find(|&&s| self.scopes[s.0 as usize].name == name)
             .map(|&sid| (self.scopes[sid.0 as usize].defining_class, sid))
+    }
+
+    /// The terminal source name of a BUILTIN alias visible on `class` --
+    /// `Some("raise")` for `raise!` after `alias_method :raise!, :raise`,
+    /// on the aliasing class and every subclass (MRO walk, closest wins).
+    /// Entries are already terminal (see `ClassInfo::builtin_aliases`), so
+    /// no chain-following happens here. `None` for every ordinary name.
+    pub fn builtin_alias_target(&self, class: ClassId, name: &str) -> Option<&str> {
+        self.class(class).ancestors.iter().find_map(|&anc| {
+            self.class(anc)
+                .builtin_aliases
+                .iter()
+                .find(|(new, _)| new == name)
+                .map(|(_, old)| old.as_str())
+        })
     }
 
     /// Same idea as `method_in_chain`, over `class_methods` instead of

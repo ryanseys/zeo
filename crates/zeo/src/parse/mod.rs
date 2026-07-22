@@ -1806,8 +1806,12 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                     cause = RaiseCause::Explicit(lower_node(result, hir, &assoc.value())?);
                 }
             }
-            if positional.len() > 2 {
-                return Err("`raise`/`fail` with more than 2 positional arguments isn't supported yet (spike scope)".to_string().into());
+            if positional.len() > 3 {
+                return Err(format!(
+                    "wrong number of arguments (given {}, expected 0..3)",
+                    positional.len()
+                )
+                .into());
             }
             if positional.is_empty() && matches!(cause, RaiseCause::Explicit(_)) {
                 return Err("only cause is given with no arguments".to_string().into());

@@ -651,6 +651,17 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             });
         }
+        // Aliases of inherited BUILTIN methods (`alias_method :raise!,
+        // :raise` -- see `ClassInfo::builtin_aliases`): name-indirection
+        // rows the send miss paths rewrite through. Subclasses need no
+        // copy -- the runtime probe walks the MRO. `validate_aliases`
+        // (emitted at the head of `run_main`'s closure) raises `NameError`
+        // at startup for a source that resolves nowhere.
+        for (new, old) in &compiler.class(ClassId(id)).builtin_aliases {
+            registrations.push(quote! {
+                __registry.register_alias(zeo_rt::ClassId(#id), #new, #old);
+            });
+        }
         // Every `def self.x` also registers for DYNAMIC dispatch, so a class
         // held in a variable can be sent to (`handler = H1; handler.run(...)`
         // -- the receiver isn't a literal constant, so codegen can't emit a
@@ -833,11 +844,32 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                 );
             }
         });
+        // Aliases of builtin methods recorded on a REOPENED builtin (or on
+        // `Object` itself, where a top-level `alias_method` lands) -- same
+        // rows the user-class loop emits; an overlay's rows land on the
+        // root's entry like its methods do.
+        let alias_target_id = class.builtin_overlay.map_or(id, |root| root.0);
+        let alias_rows = class.builtin_aliases.iter().map(|(new, old)| {
+            quote! {
+                __registry.register_alias(zeo_rt::ClassId(#alias_target_id), #new, #old);
+            }
+        });
         builtin_registrations.push(quote! {
             #register
             #(#value_defs)*
+            #(#alias_rows)*
         });
     }
+
+    // Builtin-alias rows exist -> validate them at startup, inside the
+    // fallible closure (`NameError` for a source that resolves nowhere --
+    // real Ruby's timing, the class body executing). Omitted entirely for
+    // the common aliasless program, whose generated source stays unchanged.
+    let validate_aliases = compiler
+        .classes
+        .iter()
+        .any(|c| !c.builtin_aliases.is_empty())
+        .then(|| quote! { zeo_rt::validate_aliases()?; });
 
     let main_label_counter = Cell::new(0u32);
     // Top-level implicit-self calls dispatch on the global `main_object()`
@@ -930,6 +962,7 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
                     // `?`), builtins before user classes -- the same
                     // "before every top-level statement" order the old
                     // in-`main()` splice had.
+                    #validate_aliases
                     #(#builtin_class_bodies)*
                     #(#user_class_bodies)*
                     #main_body

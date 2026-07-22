@@ -137,10 +137,22 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
                 .copied()
         });
         let Some(sid) = source else {
-            return Err(format!(
-                "undefined method '{old_name}' for class '{}' (aliased as '{new_name}')",
-                compiler.class(class_id).name
-            ));
+            // No user `Scope` anywhere in the chain: the source is a BUILTIN
+            // (Kernel's `raise`, Object's `dup`, ...) -- or a typo. There is
+            // no body to clone either way, so record a NAME indirection
+            // (terminal: an alias of a builtin alias resolves through the
+            // already-recorded entry) and let the emitted `register_alias`
+            // validate at program start -- a nonexistent source is NameError
+            // exactly when real Ruby raises it (the class body executing).
+            // See `ClassInfo::builtin_aliases`.
+            let terminal = compiler
+                .builtin_alias_target(class_id, &old_name)
+                .unwrap_or(&old_name)
+                .to_string();
+            compiler.classes[class_id.0 as usize]
+                .builtin_aliases
+                .push((new_name, terminal));
+            continue;
         };
         let scope = compiler.scope(sid);
         let (params, body, visibility) =

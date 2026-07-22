@@ -1267,7 +1267,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
 /// erroring (confirmed via `ruby -e 'begin; raise; rescue => e; puts
 /// "[#{e.message}]"; end'` -> `"[]"`) -- faithfully mirrored here via
 /// `unwrap_or_else`, not a panic.
-fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCause) -> TokenStream {
+pub(super) fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCause) -> TokenStream {
     let exc = match args {
         [] => {
             // NOT `.unwrap_or_else(|| #fallback)` -- `#fallback` itself
@@ -1290,7 +1290,17 @@ fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCause) -> Toke
         }
         [one] => emit_raise_value(cx, *one, None),
         [class_arg, msg_arg] => emit_raise_value(cx, *class_arg, Some(*msg_arg)),
-        _ => unreachable!("lowering rejects `raise`/`fail` with more than 2 arguments"),
+        // `raise Class, msg, backtrace` -- the third argument ASSIGNS the
+        // exception's custom backtrace in real Ruby. zeo has no backtrace
+        // representation yet, so the expression is evaluated (for its side
+        // effects, e.g. `caller(1)`) and dropped -- a documented divergence
+        // the frame-tracking work retires.
+        [class_arg, msg_arg, bt_arg] => {
+            let exc = emit_raise_value(cx, *class_arg, Some(*msg_arg));
+            let bt = emit_expr(cx, *bt_arg);
+            quote! { { let __exc = #exc; let _ = #bt; __exc } }
+        }
+        _ => unreachable!("lowering rejects `raise`/`fail` with more than 3 arguments"),
     };
     // An OMITTED `cause:` chains automatically: `raise_with_cause` threads the
     // currently-handled exception (`$!`) into the raised exception's `cause`

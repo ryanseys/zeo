@@ -535,6 +535,39 @@ pub fn emit_call(
                     scope.needs_block_param(),
                 );
             }
+            // A name that resolves only as an alias of an inherited BUILTIN
+            // (`alias_method :raise!, :raise` -- no user `Scope` to call, see
+            // `ClassInfo::builtin_aliases`). The `raise`/`fail` family is
+            // parse-special (an aliased spelling lowers as an ordinary
+            // `Call`, never a `HirNode::Raise`), so it substitutes HERE into
+            // exactly what the source spelling emits -- `return Err(...)`
+            // with the same static class checks and `cause:` handling. Every
+            // OTHER builtin alias (`dup!` -> `dup`) needs no static form:
+            // the dynamic fallback below reaches the registry's alias row
+            // (`register_alias`), which rewrites the name and re-dispatches.
+            if !cx.self_is_dynamic && block.is_none() && block_arg.is_none() {
+                if let Some(target) = cx.compiler.builtin_alias_target(cid, name) {
+                    if target == "raise" || target == "fail" {
+                        let cause = match kwargs {
+                            [] => Some(crate::hir::RaiseCause::Absent),
+                            [KwArg::Pair(k, v)]
+                                if matches!(&cx.compiler.hir[*k],
+                                    HirNode::SymbolLit(s) if s == "cause") =>
+                            {
+                                Some(crate::hir::RaiseCause::Explicit(*v))
+                            }
+                            // Any other keyword is `raise`'s ArgumentError --
+                            // let the dynamic path report it at runtime.
+                            _ => None,
+                        };
+                        if let Some(cause) = cause {
+                            if args.len() <= 3 {
+                                return super::expr::emit_raise(cx, args, &cause);
+                            }
+                        }
+                    }
+                }
+            }
         }
         // A no-receiver call from WITHIN another CLASS method's own body
         // (`current_class` is `None` there -- no concrete `self` receiver
