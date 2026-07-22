@@ -32,6 +32,7 @@ mod ffi;
 mod gems_require;
 mod io_files;
 mod language_core;
+mod marshal;
 mod metaprog;
 mod methods;
 mod numerics;
