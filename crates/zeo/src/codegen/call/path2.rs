@@ -46,8 +46,8 @@ pub(super) fn emit_safe_call(
             if __safe_recv.is_nil() {
                 zeo_rt::RubyValue::Nil
             } else {
-                // `&.` doesn't accept a block yet (spike scope,
-                // unrelated to Phase 6 -- narrower than real Ruby, matches
+                // `&.` doesn't accept a block yet (spike scope --
+                // narrower than real Ruby, matches
                 // this call's existing kwargs restriction). `send_value`
                 // handles Object AND builtin receivers
                 // uniformly, so the old non-Object panic is gone.

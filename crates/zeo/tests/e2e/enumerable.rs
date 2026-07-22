@@ -14,7 +14,7 @@ fn load_with_a_wrap_argument_is_a_clean_rejection() {
     assert!(err.contains("wrap"), "unexpected error: {err}");
 }
 
-// ---- Phase 14.4 rev.2: Enumerable implemented in Rust (zeo_rt::enumerable) ----
+// ---- Enumerable implemented in Rust (zeo_rt::enumerable) ----
 
 #[test]
 fn rust_enumerable_matches_real_ruby_across_all_receiver_kinds() {
@@ -118,7 +118,7 @@ fn is_a_walks_the_cruby_chains() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-F -- Enumerable Tier A breadth (the enum.c architecture: every
+// Enumerable Tier A breadth (the enum.c architecture: every
 // method drives the receiver's own #each). Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------
 

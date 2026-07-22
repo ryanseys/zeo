@@ -1,2 +1,2 @@
 "A"
-TypeError: no implicit conversion into an FFI :int_array
+TypeError

@@ -1,7 +1,7 @@
 //! `Comparable` (CRuby compar.c) -- each method drives the receiver's own
 //! `<=>` through FULL dynamic dispatch (`send_value`), so one
 //! implementation serves user objects (registry `<=>`) and builtin values
-//! (`String#<=>`/`Integer#<=>` table rows) alike -- the Phase 17.1 rework
+//! (`String#<=>`/`Integer#<=>` table rows) alike -- a rework
 //! that retired the `&RObj`-only version and made `"abc" < "abd"` resolve
 //! String(no `<`) -> Comparable -> `String#<=>`.
 //!
@@ -11,7 +11,7 @@
 //! ancestor hit.
 //!
 //! Real Ruby raises `ArgumentError: comparison of X with Y failed` when
-//! `<=>` answers nil; with the Phase 17.1 exception factory that is now a
+//! `<=>` answers nil; with the exception factory that is now a
 //! real rescuable raise. A MISSING `<=>` propagates the NoMethodError the
 //! `<=>` dispatch itself raises, real Ruby's own failure shape.
 

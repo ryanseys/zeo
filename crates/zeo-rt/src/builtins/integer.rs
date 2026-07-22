@@ -1,6 +1,6 @@
 //! `Integer` (CRuby numeric.c + bignum.c) -- ONE Ruby class, two payloads:
 //! `RubyValue::Int(i64)` for the fixnum range, `RubyValue::BigInt` beyond
-//! it (Phase 17.1's full-bignum decision). Every operation here takes
+//! it (the full-bignum decision). Every operation here takes
 //! `&RubyValue` pairs whose Integer-ness the caller has proven (statically
 //! via `TyKind::Int`, or dynamically via the table keying) -- the
 //! `#[inline]` small-small fast half costs what the old raw-`i64` helpers

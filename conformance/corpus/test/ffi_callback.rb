@@ -1,53 +1,43 @@
-# ffi_callback declares a C function-pointer type. A method(:name) passed to an
-# argument of that type becomes a compile-time trampoline that converts the C
-# args, calls the compiled method, and converts the result back -- so a Ruby
-# method can be handed to a C API (qsort's comparator, bsearch's, atexit's, ...).
-#
-# A function taking a callback has its extern skipped: the symbol is declared by
-# a system header whose per-argument const qualification we can't reproduce
-# (qsort takes `void *base`, bsearch takes `const void *base`), so we call the
-# header prototype directly and cast pointer-data args to void*. Exercising both
-# qsort and bsearch here proves that design against both const-qualifications.
-# (Spinel-native FFI DSL, not valid CRuby; the .expected is authored against the
-# deterministic libc behavior on a little-endian target.)
+# Ported from spinel's ffi_callback trampoline to the real ffi gem API: a
+# `callback` type declares a C function-pointer type, and a Ruby proc passed
+# to an argument of that type becomes a C-callable trampoline -- so Ruby code
+# can be handed to qsort's comparator and bsearch's. Exercising both qsort
+# (`void *base`) and bsearch (`const void *base`) keeps the original's
+# coverage of both const-qualifications. (The original also registered an
+# atexit callback; ruby-ffi cannot run a Ruby callback during process exit,
+# so that leg is dropped in the port.)
+require "ffi"
+
 module L
-  ffi_callback :cmp,  [:ptr, :ptr], :int
-  ffi_func     :qsort,   [:int_array, :size_t, :size_t, :cmp], :void
-  ffi_func     :bsearch, [:int_array, :int_array, :size_t, :size_t, :cmp], :ptr
-  ffi_read_i32  :val, 0          # read an element's int value through its pointer
-
-  ffi_callback :hook,   [], :void
-  ffi_func     :atexit, [:hook], :int
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  callback :cmp, [:pointer, :pointer], :int
+  attach_function :qsort,   [:pointer, :size_t, :size_t, :cmp], :void
+  attach_function :bsearch, [:pointer, :pointer, :size_t, :size_t, :cmp], :pointer
 end
 
-def cmp(a, b)
-  L.val(a) <=> L.val(b)
-end
+CMP  = proc { |a, b| a.read_int64 <=> b.read_int64 }
+RCMP = proc { |a, b| b.read_int64 <=> a.read_int64 }
 
-def rcmp(a, b)
-  L.val(b) <=> L.val(a)
-end
+arr = FFI::MemoryPointer.new(:int64, 8)
+arr.write_array_of_int64([3, 1, 4, 1, 5, 9, 2, 6])
+L.qsort(arr, 8, 8, CMP)
+p arr.read_array_of_int64(8)                 # ascending
 
-def bye
-  puts "at exit"
-end
+arr2 = FFI::MemoryPointer.new(:int64, 4)
+arr2.write_array_of_int64([10, 20, 30, 40])
+L.qsort(arr2, 4, 8, RCMP)
+p arr2.read_array_of_int64(4)                # descending
 
-arr = [3, 1, 4, 1, 5, 9, 2, 6]
-L.qsort(arr, arr.size, 8, method(:cmp))
-p arr                                        # ascending
+# bsearch over the ascending array. The key is a one-element buffer holding
+# the value to find.
+key = FFI::MemoryPointer.new(:int64, 1)
+key.write_int64(5)
+hit = L.bsearch(key, arr, 8, 8, CMP)
+puts hit == nil ? "miss" : hit.read_int64    # 5
 
-arr2 = [10, 20, 30, 40]
-L.qsort(arr2, arr2.size, 8, method(:rcmp))
-p arr2                                       # descending
+key.write_int64(7)
+miss = L.bsearch(key, arr, 8, 8, CMP)
+puts miss == nil ? "miss" : miss.read_int64  # miss
 
-# bsearch over the ascending array (its `const void *base` differs from qsort's
-# `void *base` -- the reason the extern is skipped rather than synthesized). The
-# key is a one-element buffer holding the value to find.
-hit = L.bsearch([5], arr, arr.size, 8, method(:cmp))
-puts hit.nil? ? "miss" : L.val(hit)          # 5
-
-miss = L.bsearch([7], arr, arr.size, 8, method(:cmp))
-puts miss.nil? ? "miss" : L.val(miss)        # miss
-
-L.atexit(method(:bye))    # the trampoline runs `bye` at program exit
 puts "done"

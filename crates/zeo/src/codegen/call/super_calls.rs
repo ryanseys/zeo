@@ -89,35 +89,50 @@ pub fn emit_super_inline(
     };
 
     let ancestors = &cx.compiler.class(receiver_class).ancestors;
-    let pos = ancestors
-        .iter()
-        .position(|&a| a == defining_class)
-        .unwrap_or_else(|| {
-            panic!(
-                "internal error: {} not found in {}'s own ancestors",
-                cx.compiler.class(defining_class).name,
-                cx.compiler.class(receiver_class).name
-            )
-        });
+    let pos = ancestors.iter().position(|&a| a == defining_class);
+
+    // The method CURRENTLY executing (whose lexical body this `super` call
+    // sits inside) -- needed for bare `super`'s forwarding case (in the splice
+    // AND the runtime-dispatch branches below). Guaranteed to exist: this
+    // `super` is inside `mname`'s own body on `defining_class`. Which pool
+    // that body's scope lives in depends on HOW it became a class method:
+    // an ordinary `def self.x` sits in `own_class_methods`, but in the
+    // `extend M` shape (recognized by `defining_class` being absent from the
+    // receiver's materialized ancestry -- M sits in the receiver's
+    // SINGLETON-class chain, which the flattened class-method model doesn't
+    // build), the emitted body is M's INSTANCE method, so that pool is
+    // consulted first -- M may define BOTH (`def x` and `def self.x`, as
+    // singleton's `SingletonClassProperties` does with `included`), and
+    // picking the wrong scope forwards the wrong parameter names.
+    let extend_shape = pos.is_none() && in_class_method;
+    let scope_of = |pool: &[crate::compiler::ScopeId]| {
+        pool.iter()
+            .find(|&&s| cx.compiler.scope(s).name == mname)
+            .copied()
+    };
+    let current_sid = if extend_shape {
+        scope_of(&cx.compiler.class(defining_class).own_methods)
+    } else {
+        scope_of(&own_pool(cx.compiler, defining_class))
+    }
+    .unwrap_or_else(|| {
+        panic!("internal error: `{mname}` not found in its own defining class's own methods")
+    });
+    let current_params = cx.compiler.scope(current_sid).params.clone();
+
+    let Some(pos) = pos else {
+        // The `extend M` shape from the note above: real Ruby resolves
+        // `super` at call time against the live singleton-class chain
+        // (`vm_search_super_method`), so hand off to the runtime walk
+        // rather than guessing here.
+        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+    };
     let found = ancestors[pos + 1..].iter().find_map(|&anc| {
         own_pool(cx.compiler, anc)
             .iter()
             .find(|&&s| cx.compiler.scope(s).name == mname)
             .map(|&sid| (anc, sid))
     });
-
-    // The method CURRENTLY executing (whose lexical body this `super` call
-    // sits inside) -- needed for bare `super`'s forwarding case (in the splice
-    // AND the runtime-dispatch branches below). Guaranteed to exist: this
-    // `super` is inside `mname`'s own body on `defining_class`.
-    let current_sid = own_pool(cx.compiler, defining_class)
-        .iter()
-        .find(|&&s| cx.compiler.scope(s).name == mname)
-        .copied()
-        .unwrap_or_else(|| {
-            panic!("internal error: `{mname}` not found in its own defining class's own methods")
-        });
-    let current_params = cx.compiler.scope(current_sid).params.clone();
 
     // `super` into an inherited VALUE builtin (D3): a `class Stack < Array`
     // method whose `super` finds NO user definition above targets the native
@@ -280,8 +295,10 @@ fn emit_runtime_super(
     // so box through the same helper an implicit-self call uses rather than
     // passing `self_ident` raw.
     let self_val = super::boxed_implicit_self(cx).unwrap_or_else(|| {
+        // Concrete UFCS -- same `&RubyValue`-binding caveat as
+        // `boxed_implicit_self`'s dynamic arm.
         let slf = &cx.self_ident;
-        quote! { (#slf).clone() }
+        quote! { zeo_rt::RubyValue::clone(&#slf) }
     });
     let def_id = cx.defining_class.expect("`super` outside a method").0;
     let (pushes, block_expr) =
@@ -316,8 +333,10 @@ fn emit_super_dynamic(
     block: Option<NodeId>,
 ) -> TokenStream {
     let self_val = super::boxed_implicit_self(cx).unwrap_or_else(|| {
+        // Concrete UFCS -- same `&RubyValue`-binding caveat as
+        // `boxed_implicit_self`'s dynamic arm.
         let slf = &cx.self_ident;
-        quote! { (#slf).clone() }
+        quote! { zeo_rt::RubyValue::clone(&#slf) }
     });
     let (pushes, block_expr) =
         emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);

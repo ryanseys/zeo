@@ -4,9 +4,9 @@
 //! in source order, refining each local's `TyKind` as it's assigned, so
 //! `codegen` can resolve `x + y` to native `Int` arithmetic when `x`/`y` are
 //! locals previously assigned an `Int`-typed value -- not just
-//! literal-on-literal operands, which is all the pre-Phase-1 spike handled.
+//! literal-on-literal operands, which is all the original spike handled.
 //!
-//! Branches (`if`/`case`, as of Phase 2) are handled by `join_branches`: each
+//! Branches (`if`/`case`) are handled by `join_branches`: each
 //! branch is walked against its own clone of the pre-branch map, and a local
 //! keeps its type after the branch only if every branch's exit state agrees
 //! on it (including a branch that never touches it at all, which "agrees"

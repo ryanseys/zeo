@@ -1,6 +1,6 @@
 use crate::support::run_ruby;
 
-// --- Phase 6: real escaping Proc/closures, yield, block_given?, self-capture ---
+// --- Real escaping Proc/closures, yield, block_given?, self-capture ---
 
 #[test]
 fn yield_and_block_given_branch_on_whether_a_block_was_passed() {
@@ -63,8 +63,8 @@ fn it_works_through_a_real_escaping_proc() {
 
 #[test]
 fn a_block_escaping_from_inside_another_escaping_block_works() {
-    // Phase 6's blanket rejection of Proc-within-Proc was LIFTED in Phase
-    // 13.5 (`Thread.new { m.synchronize { } }` is the canonical threading
+    // The original blanket rejection of Proc-within-Proc was LIFTED
+    // (`Thread.new { m.synchronize { } }` is the canonical threading
     // idiom): method-level captures are shared cells that compose through
     // any nesting depth. This exact snippet was that rejection's own
     // negative test -- now a positive one, oracle-verified.
@@ -400,8 +400,8 @@ fn process_identity_and_scheduling_surface() {
 
 #[test]
 fn blockless_forms_return_real_enumerators() {
-    // The Phase 14.4 "no Enumerator (spike scope)" posture retired by
-    // Phase 17.2: a blockless map returns a real Enumerator whose `each`
+    // The old "no Enumerator (spike scope)" posture was retired:
+    // a blockless map returns a real Enumerator whose `each`
     // re-invokes the captured method. Oracle-verified.
     let result = run_ruby(
         "e = [1, 2].map\n\

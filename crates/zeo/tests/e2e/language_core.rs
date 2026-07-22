@@ -2,7 +2,7 @@ use crate::support::{run_ruby, run_ruby_packages, run_ruby_project};
 
 #[test]
 fn operators_work_on_locals_not_just_literals() {
-    // Pre-Phase-1, only a literal-on-literal `+` compiled at all. This
+    // Originally, only a literal-on-literal `+` compiled at all. This
     // proves the generalization: arithmetic on locals typed `Int` by the
     // forward local-type tracker (`analyze::locals`).
     let result = run_ruby(

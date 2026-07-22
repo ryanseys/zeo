@@ -1,4 +1,4 @@
-//! `Enumerable`, implemented in Rust (Phase 14.4 rev.2) -- the direct
+//! `Enumerable`, implemented in Rust -- the direct
 //! analog of CRuby's `enum.c`, which implements every Enumerable method as
 //! C code driving the receiver's own `each` via
 //! `rb_block_call(obj, id_each, ..., callback, memo)`. Here: each method
@@ -32,7 +32,7 @@
 //! no-auto-splat approximation this runtime's block binding already makes
 //! everywhere else).
 //!
-//! **Blockless forms return real Enumerators** (Phase 17.2, via the
+//! **Blockless forms return real Enumerators** (via the
 //! `block_or_enum!` early return): each captures `(recv, method, args)`
 //! and re-invokes the method when iterated -- see
 //! `builtins::enumerator`'s module docs for the fiber-backed external
@@ -73,7 +73,7 @@ pub(crate) fn enumerable_send(
 }
 
 /// CRuby's `rb_enum_values_pack` rule -- see the module docs. Shared
-/// with `enumerator`'s with_index/with_object wrappers (Phase 17.2).
+/// with `enumerator`'s with_index/with_object wrappers.
 pub(crate) fn pack(args: &[RubyValue]) -> RubyValue {
     match args.len() {
         0 => RubyValue::Nil,
@@ -292,8 +292,8 @@ fn any_all(
     }
 }
 
-/// min/max: blockless compares via `RubyValue::rb_cmp` (Phase 16.2 --
-/// native Int/Float/String fast paths PLUS user-defined `<=>` dispatch,
+/// min/max: blockless compares via `RubyValue::rb_cmp` (native
+/// Int/Float/String fast paths PLUS user-defined `<=>` dispatch,
 /// retiring the documented native-only gap); the block form receives
 /// `(candidate, current)` and must return a negative/zero/positive Int.
 /// First element seeds; empty -> nil. The `n`-smallest/largest forms are
@@ -486,7 +486,7 @@ fn take_drop(recv: &RubyValue, args: &[RubyValue], take: bool) -> Result<RubyVal
     if take {
         // Early termination once n elements are in (CRuby's take_i breaks
         // via rb_iter_break) -- what makes `take` on an INFINITE
-        // Enumerator.new generator terminate (Phase 17.2).
+        // Enumerator.new generator terminate.
         let cap = *n as usize;
         if cap == 0 {
             return Ok(RubyValue::Array(array_new(Vec::new())));

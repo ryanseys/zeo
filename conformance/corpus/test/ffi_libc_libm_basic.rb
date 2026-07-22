@@ -1,12 +1,21 @@
+# Basic libc + libm bindings through the real ffi gem API (ported from
+# spinel's ffi_func): scalar doubles in/out, a string argument measured by
+# strlen, and a no-arg int return.
+require "ffi"
+
 module LibM
-  ffi_func :cos,  [:double], :double
-  ffi_func :sqrt, [:double], :double
-  ffi_func :pow,  [:double, :double], :double
+  extend FFI::Library
+  ffi_lib "m"
+  attach_function :cos,  [:double], :double
+  attach_function :sqrt, [:double], :double
+  attach_function :pow,  [:double, :double], :double
 end
 
 module LibC
-  ffi_func :strlen, [:str], :size_t
-  ffi_func :getpid, [],     :int
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :strlen, [:string], :size_t
+  attach_function :getpid, [],        :int
 end
 
 puts LibM.cos(0.0).to_i

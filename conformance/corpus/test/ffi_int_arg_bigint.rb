@@ -1,6 +1,13 @@
+# An FFI :int argument fed by an integer computed through repeated
+# multiplication (a value a widening analysis could have promoted) still
+# marshals as a plain C int. Ported from spinel's ffi_func to the real ffi
+# gem API.
+require "ffi"
+
 module M
-  ffi_lib "c"
-  ffi_func :abs, [:int], :int
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :abs, [:int], :int
 end
 class P
   def initialize

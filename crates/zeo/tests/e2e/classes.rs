@@ -58,7 +58,7 @@ fn class_new_creates_an_anonymous_runtime_class() {
     );
 }
 
-// --- Phase 7: full MRO (include/extend/prepend), inherited ivars, class
+// --- Full MRO (include/extend/prepend), inherited ivars, class
 // variables, minimal raise/exception foundation -- oracle-verified against
 // real `ruby` first, per this project's established convention.
 
@@ -422,7 +422,7 @@ fn builtin_module_reopen_reaches_all_includers() {
 #[test]
 fn built_in_hierarchy_extension_classes_are_real_and_ancestor_matched() {
     // `KeyError < IndexError` -- exercises the extended built-in hierarchy
-    // (Part 8's Phase 9 addition beyond Part 6's minimal foundation).
+    // (an addition beyond the original minimal foundation).
     let result = run_ruby(
         r#"
         begin
@@ -659,16 +659,16 @@ fn class_shift_self_include_extends_the_enclosing_class() {
     assert_eq!(result.stdout, "hi bob\n");
 }
 
-// --- Phase 12.9: bugs found via a comprehensive sweep (fixed, not deferred) ---
+// --- Bugs found via a comprehensive sweep (fixed, not deferred) ---
 //
-// Found by testing constructs adjacent to Phases 12.1-12.8's own work, not
+// Found by testing constructs adjacent to earlier work, not
 // by design review -- each is a real, previously-undetected defect, not a
 // documented scope-cut. Every test here was run against real `ruby` first,
 // per this project's established convention.
 
 #[test]
 fn implicit_self_call_between_sibling_class_methods_dispatches_correctly() {
-    // Found while testing `class << self` (Phase 12.8): `current_class` is
+    // Found while testing `class << self`: `current_class` is
     // `None` inside a class method's own `Ctx` (no concrete `self` receiver
     // exists there), so a no-receiver call to a SIBLING class method
     // (`def self.a; b; end` calling `def self.b`) always panicked --
@@ -774,7 +774,7 @@ fn reopening_enumerable_reaches_every_includer() {
     assert_eq!(result.stdout, "123\n123\n");
 }
 
-// -- Phase 15.2: correctness fixes (reopening, bare-super forwarding, cycle
+// -- Correctness fixes (reopening, bare-super forwarding, cycle
 // guards, dup/clone). Every positive expectation below is oracle-verified
 // against real ruby 4.0.5.
 
@@ -890,7 +890,7 @@ fn including_a_nested_module_materializes_its_methods() {
     assert_eq!(result.stdout, "hello from nested module\n");
 }
 
-// -- Phase 16.1: first-class Class/Module values. Every expectation
+// -- First-class Class/Module values. Every expectation
 // oracle-verified against real ruby 4.0.5.
 
 #[test]
@@ -1038,7 +1038,7 @@ fn explicit_triple_equals_on_class_values_checks_ancestry() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 16.3 -- builtin-class reopening (root). Every expectation below was
+// Builtin-class reopening (root). Every expectation below was
 // oracle-verified against real `ruby` (4.0.5) before being written down.
 // ---------------------------------------------------------------------------
 
@@ -1276,7 +1276,7 @@ fn builtin_reopen_methods_reachable_via_send() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-A -- the CRuby-exact builtin hierarchy (BasicObject/Kernel/
+// The CRuby-exact builtin hierarchy (BasicObject/Kernel/
 // Numeric/Rational/Complex/Math/Struct/Enumerator in the ABI; declarative
 // superclass/includes seeding). Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-//! `Fiber` (Phase 13.3) -- stackful coroutines via `zeo-fiber`'s
+//! `Fiber` -- stackful coroutines via `zeo-fiber`'s
 //! corosensei shim, mirroring CRuby's own architecture (a userspace stack
 //! switch per `resume`/`yield`, NOT a thread handoff -- see
 //! `coroutine/arm64/Context.S` in the CRuby source; the pthread-parked
@@ -58,8 +58,8 @@ pub struct FiberHandle {
     /// `Fiber#alive?` (`!finished`, matching CRuby's `!FIBER_TERMINATED_P`:
     /// created/suspended/running all count as alive).
     finished: AtomicBool,
-    /// This fiber's OWN `$!`/rescue-nesting stack while it's suspended
-    /// (Phase 13.6) -- swapped into `handling`'s ambient slot for the
+    /// This fiber's OWN `$!`/rescue-nesting stack while it's suspended --
+    /// swapped into `handling`'s ambient slot for the
     /// duration of every `resume` and back out on yield/return, giving each
     /// fiber the isolated execution context CRuby's own per-fiber
     /// `saved_ec.errinfo` provides (`cont.c:238`, verified in the plan's
@@ -251,7 +251,7 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     let Some(mut coro) = FIBERS.with(|f| f.borrow_mut().remove(&handle.id)) else {
         return FiberResume::DoubleResume;
     };
-    // Execution-context swap (Phase 13.6): install the fiber's own
+    // Execution-context swap: install the fiber's own
     // `$!`/rescue-nesting stack for the duration of the switch, exactly as
     // CRuby swaps `th->ec` to the fiber's `saved_ec` -- the resumer's
     // rescue state is invisible inside the fiber and vice versa. Sound

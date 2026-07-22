@@ -1,8 +1,14 @@
+# Ported from spinel's ffi_const to the real ffi gem API: the gem has no
+# ffi_const directive -- C-side flag values are plain Ruby constants on the
+# library module, combinable with the usual Integer bit ops.
+require "ffi"
+
 module Flags
-  ffi_const :READ,  1
-  ffi_const :WRITE, 2
-  ffi_const :EXEC,  4
-  ffi_const :MASK,  0xff
+  extend FFI::Library
+  READ  = 1
+  WRITE = 2
+  EXEC  = 4
+  MASK  = 0xff
 end
 
 puts Flags::READ

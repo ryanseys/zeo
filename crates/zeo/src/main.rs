@@ -13,7 +13,7 @@ struct Args {
     print_rust: bool,
     load_roots: Vec<PathBuf>,
     package_dirs: Vec<PathBuf>,
-    /// `--no-report`: suppress the Phase-2b `zeo-gems.json` disclosure
+    /// `--no-report`: suppress the `zeo-gems.json` disclosure
     /// record. Default is ON for an artifact-producing compile; harnesses that
     /// already know substitutions happen pass this.
     no_report: bool,
@@ -109,7 +109,7 @@ fn parse_args() -> Result<Args, String> {
                 ));
             }
             "-S" => print_rust = true,
-            // Suppress the Phase-2b disclosure record (see `gem_report`).
+            // Suppress the gem disclosure record (see `gem_report`).
             "--no-report" => no_report = true,
             // `--nowarn <slug>` -- suppress a disclosure warning category.
             "--nowarn" => {
@@ -208,7 +208,7 @@ fn run() -> Result<(), String> {
     let mut package_dirs = args.package_dirs.clone();
     package_dirs.extend(default_package_dirs(input_path.as_deref()));
 
-    // Phase 2b: an artifact-producing compile writes `zeo-gems.json` next to
+    // An artifact-producing compile writes `zeo-gems.json` next to
     // its output and warns about substitutions -- UNLESS `--no-report`. The
     // `-e` path is a throwaway differential-harness run, so it stays silent
     // (no file, no warnings) regardless.

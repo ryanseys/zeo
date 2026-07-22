@@ -557,7 +557,7 @@ builtin_methods! {
             return crate::runtime_meta::runtime_module_new(body);
         }
         // `Enumerator.new([size]) { |y| ... }` is the ONE builtin with a
-        // runtime allocator (Phase 17.2); parse deliberately skips the
+        // runtime allocator; parse deliberately skips the
         // static `New` node for it so the block arrives here.
         if cid == zeo_abi::ENUMERATOR_CLASS {
             return crate::builtins::enumerator::enumerator_new(args, block);

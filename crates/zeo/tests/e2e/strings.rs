@@ -27,7 +27,7 @@ fn string_literal_interpolation_indexing_and_mutation() {
     assert_eq!(result.stdout, "hello world, 3 times\n20\nh\ns\nbat\n");
 }
 
-// --- Phase 12.7: Regexp -----------------------------------------------
+// --- Regexp -----------------------------------------------
 //
 // Backed by the `regex` crate, not Ruby's own Onigmo engine -- see
 // `hir::HirNode::RegexpLit`'s docs for the documented semantic gap (no
@@ -133,7 +133,7 @@ fn magic_comment_sets_the_script_encoding() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-D -- String + Symbol Tier A breadth. Oracle: ruby 4.0.5.
+// String + Symbol Tier A breadth. Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------
 
 /// The String Tier A surface: case/strip families, split shapes, chomp,

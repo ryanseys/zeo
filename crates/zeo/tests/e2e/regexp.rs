@@ -151,7 +151,7 @@ fn numeric_breadth_matches_the_oracle() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-G -- Kernel breadth: the multi-arg print family, the sprintf
+// Kernel breadth: the multi-arg print family, the sprintf
 // engine, rand/srand (property-asserted: our PRNG is deliberately not
 // MT19937), catch/throw, and the user-def-wins interception order fix.
 // Oracle: ruby 4.0.5.

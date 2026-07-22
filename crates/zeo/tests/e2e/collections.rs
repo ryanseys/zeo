@@ -150,7 +150,7 @@ fn call_site_splat_on_an_implicit_self_sibling_call() {
     assert_eq!(result.stdout, "6\n");
 }
 
-// Phase 12.6 -- a real Hash table (IndexMap-backed, structural keys for
+// A real Hash table (IndexMap-backed, structural keys for
 // built-in types, insertion-order preserved) and built-in types
 // (Integer/Float/String/Symbol/Array/Hash/Range/NilClass/TrueClass/
 // FalseClass/Proc) wired into the same ClassId/ancestors system every
@@ -307,7 +307,7 @@ fn small_api_matchdata_size_set_join_complex_i_method_source_location() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-E -- Array/Hash/Range Tier A breadth. Oracle: ruby 4.0.5.
+// Array/Hash/Range Tier A breadth. Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------
 
 /// The Array Tier A surface: set ops, mutators, sort family, flatten/

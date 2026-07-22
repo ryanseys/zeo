@@ -35,10 +35,9 @@ pub struct ClassInfo {
     /// Which `Ruby::Box` this class/module is DEFINED in -- `0` is the main
     /// box (where the user's own top-level program runs; builtins and the
     /// built-in exceptions also live at box 0, distinguished by
-    /// `is_builtin`/`is_bootstrap`). Always `0` until Phase 18 populates it
-    /// for box-required/box-eval'd definitions; carried from day one (Phase
-    /// 15.1) so every consumer is already box-shaped -- see
-    /// `Compiler::resolve_class`.
+    /// `is_builtin`/`is_bootstrap`). Set for box-required/box-eval'd
+    /// definitions; carried since day one so every consumer is already
+    /// box-shaped -- see `Compiler::resolve_class`.
     pub box_id: u32,
     /// The class/module this one is namespace-nested inside (`class Item`
     /// written within `class Store`'s body, or the qualified form `class
@@ -334,7 +333,7 @@ impl Compiler {
     /// this name/path mean HERE" question goes through this one function,
     /// keyed by the full resolution context real Ruby uses: the lexical
     /// cref chain (innermost scope LAST -- `cref_of`'s order), and the box
-    /// the referencing code is defined in (always `0` until Phase 18).
+    /// the referencing code is defined in (`0` at the top level).
     ///
     /// `path` may be a multi-segment constant path:
     /// `"Store::Errors::NotFound"` resolves its FIRST segment through the
@@ -350,8 +349,8 @@ impl Compiler {
     /// user program runs" classes every box sees; a box's own definition of
     /// the same name shadows it, exactly like CRuby's per-box constant
     /// overlay). First-registered wins within one scope, same as the old
-    /// flat `class_by_name` (reopening semantics -- Phase 15.2 -- attach to
-    /// that first registration rather than adding duplicates). One
+    /// flat `class_by_name` (reopening semantics attach to that first
+    /// registration rather than adding duplicates). One
     /// documented approximation: the cref head's ANCESTORS are not searched
     /// (real Ruby checks them between the lexical chain and the top level
     /// -- a class nested inside a SUPERCLASS referenced by bare name from a
@@ -433,7 +432,7 @@ impl Compiler {
 
     /// First class/module named `name` defined directly inside
     /// `lexical_parent` (or at the top level for `None`) in `box_id`.
-    /// `pub(crate)` since Phase 15.3: `analyze::register_class`'s
+    /// `pub(crate)` because `analyze::register_class`'s
     /// reopening-detection must be SCOPE-EXACT (a nested `Store::Item` must
     /// never be mistaken for a top-level `Item`, or vice versa), which the
     /// lexical-fallback walk `resolve_class` does would get wrong.
@@ -558,7 +557,7 @@ impl Compiler {
     }
 
     /// Whether this class's methods emit as free functions over a boxed
-    /// `__self: RubyValue` receiver (the Phase 16.3 builtin-reopen shape)
+    /// `__self: RubyValue` receiver (the builtin-reopen shape)
     /// rather than `self: Arc<Concrete>` struct methods. True for every
     /// builtin placeholder AND for `Object` itself: top-level `def`s live
     /// on `Object` (real Ruby's private-on-Object rule), whose instances --

@@ -25,7 +25,7 @@ pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_co
 pub mod parse;
 pub mod types;
 
-/// The compile-time file context Phase 14.1's `require` resolution needs --
+/// The compile-time file context `require` resolution needs --
 /// see `parse::parse_and_lower_with`. `Default` (no path, no roots) keeps
 /// `compile_to_rust`'s pathless behavior: `require_relative` then fails with
 /// CRuby's own "cannot infer basepath", and a plain `require` finds nothing.
@@ -40,7 +40,7 @@ pub struct CompileOptions {
     /// nothing. The CLI defaults to the input file's sibling `packages/`
     /// then the compiler's own bundled `packages/` -- see `main.rs`.
     pub package_dirs: Vec<std::path::PathBuf>,
-    /// Where to write the Phase-2b gem disclosure record (`gem_report`).
+    /// Where to write the gem disclosure record (`gem_report`).
     /// `None` is the `--no-report` opt-out -- and the DEFAULT for the library
     /// API, so in-process callers (the e2e/conformance harnesses) don't litter
     /// the tree. The CLI defaults it to a path next to the output artifact.
@@ -91,7 +91,7 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
         opts.gem_path.as_deref(),
         opts.lockfile.as_deref(),
     )?;
-    // Phase 2b: the disclosure record is fully known once lowering resolved
+    // The disclosure record is fully known once lowering resolved
     // every require. Write it (and warn) BEFORE analyze/codegen, so the ledger
     // lands even if a later stage fails.
     if opts.gem_warnings {

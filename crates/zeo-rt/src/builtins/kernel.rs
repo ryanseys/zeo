@@ -531,7 +531,7 @@ builtin_methods! {
         p.call(std::slice::from_ref(recv))
     }
     // `x.to_enum(:meth, *args)` -- captures exactly (receiver, method,
-    // args), CRuby's obj_to_enum (Phase 17.2). The block-as-size-proc
+    // args), CRuby's obj_to_enum. The block-as-size-proc
     // form is Tier B (rare; the stored-size Enumerator.new form covers
     // the practical cases).
     "to_enum" | "enum_for" => fn to_enum(recv, args, _block) {

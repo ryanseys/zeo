@@ -52,7 +52,7 @@ pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
 /// escaping block, unioning their capture requirements -- but ONLY names
 /// genuinely shared with the enclosing scope: assigned somewhere outside
 /// the block(s), OR one of the enclosing method's OWN PARAMETERS
-/// (`params`). The params half was missing until Phase 14.4's `set`
+/// (`params`). The params half was missing until the `set`
 /// package surfaced it: a parameter referenced ONLY inside an escaping
 /// block (`def add_all(n); each { |x| puts x + n }; end`, or an
 /// Enumerable-shaped `&blk` forwarded into an inner block) failed the
@@ -62,8 +62,8 @@ pub(super) fn own_param_names(params: &Params) -> HashSet<String> {
 /// enclosing-scope state, while `proc { |x| tmp ||= 0; tmp += x }.call`
 /// genuinely resets `tmp` per call (NOT a capture when nothing outside the
 /// block uses the name; see `hoisting::collect_locals`'s `Call` arm, which
-/// -- as of Phase 6 -- no longer descends into an escaping block's body,
-/// making its result exactly "names used outside any escaping block").
+/// no longer descends into an escaping block's body, making its result
+/// exactly "names used outside any escaping block").
 /// `self` has no such distinction (an ivar always means the same object),
 /// so `self_captured` is passed through unfiltered.
 pub fn collect_escaping_captures(
@@ -857,7 +857,7 @@ fn walk(
                 let is_inline = is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty());
                 // A real escaping block nested inside another escaping block
                 // (Proc-within-Proc, e.g. `Thread.new { m.synchronize { } }`,
-                // Phase 13.5's canonical idiom) COMPOSES through this walk
+                // a canonical idiom) COMPOSES through this walk
                 // unchanged: captured-ness is a property of the NAME across
                 // the whole enclosing scope, an inner closure's same-named
                 // `Arc::clone` shadows resolve to the outer closure's

@@ -1,4 +1,4 @@
-//! The real, escaping `Proc`/closure type (Phase 6) -- deliberately a plain
+//! The real, escaping `Proc`/closure type -- deliberately a plain
 //! Rust closure type, not a hand-rolled trait + per-call-site env struct: a
 //! `move |args| { ... }` closure generated at each escaping block's call
 //! site already IS a concrete, heap-allocated environment (Rust's own

@@ -224,7 +224,7 @@ fn emit_counted_block_splice(
 /// must keep propagating. (The unconditional wrap this replaced silently
 /// ate a consumer's iteration-terminating break as it crossed a
 /// `Yielder#<<` call inside an `Enumerator.new` generator -- turning
-/// `infinite_enum.take(3)` into a hang. Phase 17.2.)
+/// `infinite_enum.take(3)` into a hang.)
 fn wrap_dynamic_result(has_block: bool, call: TokenStream) -> TokenStream {
     if has_block {
         quote! { zeo_rt::catch_break(#call)? }
@@ -244,16 +244,19 @@ pub(crate) fn boxed_implicit_self(cx: &Ctx) -> Option<TokenStream> {
     // self call there (`obj.instance_exec { helper }`) must dispatch on the
     // block's actual runtime self, not on whatever `self` meant lexically.
     if cx.self_is_dynamic {
+        // Concrete UFCS: a dynamic self can be bound as `&RubyValue`, where
+        // generic `Clone::clone` would clone the reference -- see
+        // `codegen::expr`'s `SelfRef` arm for the full note.
         let slf = &cx.self_ident;
-        return Some(quote! { (#slf).clone() });
+        return Some(quote! { zeo_rt::RubyValue::clone(&#slf) });
     }
     if let Some(cid) = cx.current_class {
         let slf = &cx.self_ident;
         return Some(if cx.compiler.value_backed(cid) {
-            quote! { (#slf.clone()) }
+            quote! { zeo_rt::RubyValue::clone(&#slf) }
         } else {
             let class_ident = super::ident::class_ident(cx.compiler, cid);
-            quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+            quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#slf))) }
         });
     }
     // A class method/class body: self is the class object. `class_self`
@@ -466,7 +469,7 @@ pub fn emit_call(
                         cx,
                         &super::params::Callee::FreeFn {
                             path: quote! { #mod_ident::#method_ident },
-                            recv: quote! { #slf.clone() },
+                            recv: quote! { Clone::clone(&#slf) },
                         },
                         name,
                         &scope.params,
@@ -519,7 +522,7 @@ pub fn emit_call(
             {
                 let scope = cx.compiler.scope(sid);
                 let slf = &cx.self_ident;
-                let recv_expr = quote! { #slf.clone() };
+                let recv_expr = quote! { Clone::clone(&#slf) };
                 return super::params::emit_call_args(
                     cx,
                     &recv_expr,
@@ -672,10 +675,10 @@ pub fn emit_call(
                 // A reopened builtin's (or `Object`'s) `self` is already a
                 // boxed `RubyValue`.
                 let boxed = if cx.compiler.value_backed(cid) {
-                    quote! { (#slf.clone()) }
+                    quote! { Clone::clone(&#slf) }
                 } else {
                     let class_ident = super::ident::class_ident(cx.compiler, cid);
-                    quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(#slf.clone())) }
+                    quote! { zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#slf))) }
                 };
                 let arg_exprs: Vec<TokenStream> = args
                     .iter()
@@ -953,7 +956,7 @@ pub fn emit_call(
     }
 
     // A receiver STATICALLY TYPED as a class value (`x = Widget;
-    // x.new(...)` / `x.some_class_method` -- Phase 16.1): same Path 1
+    // x.new(...)` / `x.some_class_method`): same Path 1
     // dispatch a literal `Widget.` receiver gets, via the tracked
     // `TyKind::ClassObj`. The receiver expression is still evaluated for
     // side effects (a `let _ =` binding, like `is_a?`'s fold); anything
@@ -1291,7 +1294,7 @@ fn dispatch(
     }
 
     // `.nil?` -- universal, same override-respecting shape as
-    // `freeze`/`frozen?` below (surfaced as a real need by Phase 13.5's
+    // `freeze`/`frozen?` below (surfaced as a real need by the
     // queue-sentinel idiom, `break if q.pop.nil?`, on a Poly receiver). A
     // statically-known Object receiver is never nil (only `RubyValue::Nil`
     // is), but its receiver expression still evaluates for side effects.
@@ -2282,7 +2285,7 @@ fn dispatch(
             | TyKind::Range
             | TyKind::Regexp
             | TyKind::MatchData
-            // Since Phase 17.1's MRO-walking method tables, EVERY value
+            // With MRO-walking method tables, EVERY value
             // kind falls through -- `5.itself`/`"a".between?(...)` resolve
             // Kernel/Comparable rows down the receiver's real ancestor
             // chain at runtime, and a genuinely unknown name raises real
@@ -2323,7 +2326,7 @@ fn dispatch(
     }
 
     // A statically-known class that `include Enumerable` (the RUST-backed
-    // builtin module, Phase 14.4 rev.2) with no own/materialized definition
+    // builtin module) with no own/materialized definition
     // for this name: dispatch dynamically -- `send`'s Enumerable fallback
     // reaches `zeo_rt::enumerable`, which drives this receiver's own
     // `each`. Deliberately NO compile-time list of Enumerable method names

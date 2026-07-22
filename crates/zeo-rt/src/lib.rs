@@ -144,10 +144,10 @@ pub fn puts(value: RubyValue) {
     }
 }
 
-/// `Kernel#p`, single-argument form (Phase 16.1): prints the INSPECT
+/// `Kernel#p`, single-argument form: prints the INSPECT
 /// rendering (`p [1, "x"]` -> `[1, "x"]`, `p Widget` -> `Widget`) and
 /// returns its argument (real Ruby's contract; `puts` returns nil).
-/// Multi-argument/zero-argument forms are Phase 17.1 breadth.
+/// Multi-argument/zero-argument forms are separate breadth.
 pub fn p(value: RubyValue) -> RubyValue {
     println!("{}", value.inspect_string());
     value
@@ -162,8 +162,8 @@ pub fn p(value: RubyValue) -> RubyValue {
 /// receiver (see "A named risk" in the plan), and so every generated struct
 /// is genuinely `Send + Sync` for `Thread`/`Ractor` to eventually use.
 ///
-/// Every method receiver is `self: Arc<Self>`, not `&self` -- Phase 6 needs
-/// this: a real escaping `Proc` closure that references `self`/an ivar has
+/// Every method receiver is `self: Arc<Self>`, not `&self` -- escaping
+/// closures need this: a real escaping `Proc` closure that references `self`/an ivar has
 /// to capture an OWNED, `'static` handle (a `RubyValue`-stored `Proc` has no
 /// lifetime parameter anywhere in this codebase), which a borrowed `&self`
 /// can never provide. Every call site already hands over an `Arc<Concrete>`
@@ -208,7 +208,7 @@ macro_rules! ruby_class {
         // CamelCase; a top-level class's plain name already is.
         #[allow(non_camel_case_types)]
         pub struct $name {
-            /// `.freeze`'s per-object flag (Phase 13.1) -- read through
+            /// `.freeze`'s per-object flag -- read through
             /// `RubyObject::is_frozen` and by the guard codegen emits before
             /// every ivar write (`emit_ivar_write_stmt`). Double-underscore
             /// prefixed, matching the `__blk`/`__self` convention for
@@ -252,7 +252,7 @@ macro_rules! ruby_class {
                 inner
             }
 
-            /// The dynamic constructor (Phase 16.1) -- registered into the
+            /// The dynamic constructor -- registered into the
             /// `ClassRegistry` so `x = Widget; x.new(...)` (a class known
             /// only at runtime as a `RubyValue::Class`) can allocate a
             /// fresh instance and run `initialize` through the SAME
@@ -559,7 +559,7 @@ mod tests {
             Point::__register(&mut registry);
             Greeter::__register(&mut registry);
             Temp::__register(&mut registry);
-            // Builtin entries + reopen VALUE METHODS (Phase 16.3) for the
+            // Builtin entries + reopen VALUE METHODS for the
             // dispatch-precedence tests below. `Array`(5)/`Queue`(17) are
             // chosen because their ids don't collide with the test classes
             // above (Point/Greeter/Temp claimed 1-3, overlapping the low
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(handle.class_id(), Point::CLASS_ID);
     }
 
-    /// Phase 13.1: the freeze tiering `RubyValue::is_frozen`/`freeze_value`
+    /// The freeze tiering `RubyValue::is_frozen`/`freeze_value`
     /// implement -- immediates/`Range` always frozen, mutable types start
     /// unfrozen and latch on `.freeze` (which returns self and no-ops when
     /// repeated), the flagless `Proc` approximation stays `false`.
@@ -710,7 +710,7 @@ mod tests {
         assert_eq!(result.to_display_string(), "no such method: nope");
     }
 
-    /// Phase 15.2: `ruby_class!`-generated `dup_object` -- fresh instance,
+    /// `ruby_class!`-generated `dup_object` -- fresh instance,
     /// ivars copied by value-handle (mutating the copy's ivar leaves the
     /// original untouched), frozen flag copied only by `clone`.
     #[test]
@@ -780,7 +780,7 @@ mod tests {
         assert!(cloned.is_frozen());
     }
 
-    /// Phase 16.1: first-class Class values -- identity equality, the
+    /// First-class Class values -- identity equality, the
     /// universal `.class` reflection through both dispatchers, and the
     /// registry-backed name/ancestors surface.
     #[test]
@@ -868,7 +868,7 @@ mod tests {
         let _ = send(&p, Symbol::intern("nope"), &[], None);
     }
 
-    /// Phase 16.2: Comparable, Rust-backed (the compar.c pattern) --
+    /// Comparable, Rust-backed (the compar.c pattern) --
     /// `send`'s fallback drives the includer's own `<=>`.
     #[test]
     fn comparable_methods_drive_the_includers_spaceship() {
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(g.inspect_string(), s);
     }
 
-    /// Phase 16.3: builtin-reopen value methods. `send_value` consults them
+    /// Builtin-reopen value methods. `send_value` consults them
     /// FIRST -- a user `length` override beats the curated String table row
     /// (real Ruby's rule, oracle-verified) -- and `responds_to` sees them.
     #[test]
@@ -968,7 +968,7 @@ mod tests {
         assert!(responds_to(ARRAY_CLASS, puts, true));
     }
 
-    /// Phase 16.3: `display_with`'s value-method probe -- a builtin `to_s`
+    /// `display_with`'s value-method probe -- a builtin `to_s`
     /// override drives `puts`/interpolation rendering (and `inspect`'s
     /// catch-all for kinds whose inspect delegates to display).
     #[test]

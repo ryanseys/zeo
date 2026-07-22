@@ -84,7 +84,7 @@ mod imp {
         /// which no executed statement has written yet reads as `nil`, exactly
         /// as a declared-but-unassigned Ruby local does.
         locals: HashMap<String, RubyValue>,
-        /// Defining box for constant/global resolution (Phase 18).
+        /// Defining box for constant/global resolution.
         box_id: u32,
     }
 

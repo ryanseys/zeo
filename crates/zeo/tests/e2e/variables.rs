@@ -146,7 +146,7 @@ fn an_unrelated_class_own_cvar_is_independent_storage() {
     assert_eq!(result.stdout, "0\n100\n");
 }
 
-// --- Phase 7: deeper include/extend/prepend/inherited-ivar coverage,
+// --- Deeper include/extend/prepend/inherited-ivar coverage,
 // oracle-verified against real `ruby` first (added after the initial batch
 // above, per the user's request for more comprehensive coverage of these
 // specifically).
@@ -476,7 +476,7 @@ fn class_objects_answer_the_instance_variable_reflection_family() {
     );
 }
 
-// Phase 12.5 -- globals, namespaced constants, compound-assignment and
+// Globals, namespaced constants, compound-assignment and
 // multi-assignment completeness, call-site splats. Every test below is
 // oracle-verified against real `ruby` first, per this project's established
 // convention.
@@ -913,7 +913,7 @@ fn dup_and_clone_on_user_objects_copy_ivars_shallowly() {
     assert_eq!(result.stdout, "1\n99\n2\ntrue\nfalse\n");
 }
 
-// -- Phase 15.3: nested classes/modules + constant paths (namespacing).
+// -- Nested classes/modules + constant paths (namespacing).
 // Every positive expectation oracle-verified against real ruby 4.0.5.
 
 #[test]
@@ -1135,7 +1135,7 @@ fn math_constants_and_kernel_conversions() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-H -- Struct: compile-time class synthesis. Oracle: ruby 4.0.5.
+// Struct: compile-time class synthesis. Oracle: ruby 4.0.5.
 // ---------------------------------------------------------------------------
 
 /// `Point = Struct.new(:x, :y)` mints a native struct class at runtime (Batch

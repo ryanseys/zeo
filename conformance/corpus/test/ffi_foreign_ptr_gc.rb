@@ -1,11 +1,15 @@
-# A foreign pointer (here an ffi_buffer address) kept alive in an ivar must not
-# be traced by the GC as a heap object. Heavy allocation churns GC cycles that
-# scan the holder; before the fix the collector followed the foreign pointer
-# and crashed. (Run under SPINEL_GC_STRESS=1/SPINEL_GC_VERIFY=1 to make it
-# deterministic.)
+# A foreign pointer (malloc'd C memory) kept alive in an ivar must not be
+# traced by the GC as a heap object. Heavy allocation churns GC cycles that
+# scan the holder; a collector that followed the foreign pointer would crash.
+# Ported from spinel's ffi_buffer to the real ffi gem API: the foreign
+# address comes from libc malloc through attach_function.
+require "ffi"
+
 module F
-  ffi_lib "c"
-  ffi_buffer :buf, 64
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :malloc, [:size_t], :pointer
+  attach_function :free,   [:pointer], :void
 end
 
 class Holder
@@ -18,7 +22,7 @@ end
 holders = []
 n = 0
 while n < 200
-  holders.push(Holder.new(F.buf))
+  holders.push(Holder.new(F.malloc(64)))
   n += 1
 end
 
@@ -28,3 +32,5 @@ while i < 200000
   i += 1
 end
 puts "ok #{holders.length}"
+
+holders.each { |h| F.free(h.p) }

@@ -22,8 +22,8 @@
 //!   execution order (A-start, all of B, A-rest).
 //! - `require` appends `.rb` unless already present; a plain feature is
 //!   searched against the ordered `-I` roots as `<root>/<feature>.rb`,
-//!   first hit wins (CRuby's `-I`-before-everything ordering; Phase 14.2
-//!   appends package roots AFTER these).
+//!   first hit wins (CRuby's `-I`-before-everything ordering; package
+//!   roots are appended AFTER these).
 //! - `require_relative` resolves against the requiring FILE's directory
 //!   (never cwd); with no input-path context the error is CRuby's own
 //!   "cannot infer basepath".
@@ -177,9 +177,9 @@ pub(super) struct Loader {
     /// shadowing across dirs (see `discover_packages`).
     packages: Vec<Gem>,
     /// `require` dedup, keyed `(box_id, canonical path)` -- the box
-    /// dimension is always 0 until Phase 14.5 (per-box feature tables are
+    /// dimension is always 0 for now (per-box feature tables are
     /// exactly how real `Ruby::Box` re-executes a file per box, so the key
-    /// shape is decided now to make 14.5 additive).
+    /// shape is decided now to make later box support additive).
     required: HashSet<(u32, PathBuf)>,
     /// Every file currently being spliced (innermost last) -- a `load`
     /// cycle is the one shape with no natural termination (require's dedup
@@ -579,7 +579,7 @@ impl Loader {
             "require_relative" => (resolve_require_relative(feature, dir)?, inherited),
             _ => (self.resolve_load(feature, dir)?, inherited),
         };
-        // Phase 2b disclosure: a plain `require` of a real library (not the
+        // Disclosure: a plain `require` of a real library (not the
         // internal `.so` loader idiom, not `require_relative`/`load` of an
         // owned file) records HOW it was satisfied -- out of a bundled gem's
         // roots (`package: Some`) or off a `-I` stdlib root (`package: None`).
@@ -643,7 +643,7 @@ impl Loader {
             }
             return Err(cannot_load(feature).into());
         }
-        // Phase 2b disclosure: a DIRECT `require` of a statically-linked ext
+        // Disclosure: a DIRECT `require` of a statically-linked ext
         // (no Ruby half on disk, e.g. `require "base64"`). The `.so` loader
         // idiom -- a bundled gem's Ruby half pulling its own native half in --
         // is NOT recorded here: that gem's entry point was already recorded

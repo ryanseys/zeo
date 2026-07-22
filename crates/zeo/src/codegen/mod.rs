@@ -45,9 +45,9 @@ struct Ctx<'a> {
     /// Which `Ruby::Box` the code currently being emitted is DEFINED in --
     /// the AOT analogue of CRuby's `cme->def->box` stamp (a method resolves
     /// names against its DEFINING box, never its caller's). `0` (the main
-    /// box) everywhere until Phase 18 lights it up: a method body carries
-    /// its `defining_class`'s box, a `BoxScope` body overrides it. Consumed
-    /// by `Ctx::resolve_class` (and, from Phase 18, gvar/dispatch emission).
+    /// box) at the top level: a method body carries its `defining_class`'s
+    /// box, a `BoxScope` body overrides it. Consumed by `Ctx::resolve_class`
+    /// (and by gvar/dispatch emission).
     box_id: u32,
     /// The RECEIVER's concrete class -- i.e. which `impl` block (generated
     /// Rust struct) this method body is being emitted into. Stays fixed
@@ -718,9 +718,8 @@ fn codegen(analyzed: &Analyzed) -> TokenStream {
         .iter()
         .enumerate()
         // `Object` (index 0, not `is_builtin`) registers through the same
-        // mapping since Phase 17.1: its ancestors are COMPUTED
-        // (`[Object, Kernel, BasicObject]`), no longer a hardcoded
-        // `vec![Object]` in `main()`.
+        // mapping: its ancestors are COMPUTED (`[Object, Kernel,
+        // BasicObject]`), no longer a hardcoded `vec![Object]` in `main()`.
         //
         // A require-gated builtin whose feature never fired
         // (`feature_active` false) is SKIPPED: no `require` means no code can
@@ -1039,7 +1038,7 @@ fn emit_class_body_stmts(compiler: &Compiler, cid: ClassId) -> TokenStream {
 /// see `codegen::call`'s `ClassRef` handling), so nothing downstream needs
 /// to know which kind of container it is.
 ///
-/// Full `Params` support since P1 (same signature/prologue machinery as
+/// Full `Params` support (same signature/prologue machinery as
 /// instance methods, receiverless). **Remaining scope-cut**: a class
 /// method's own body may not reference `self`/`@ivar` -- there's no
 /// concrete instance for `self` to mean here (a class-level ivar /
@@ -1069,7 +1068,7 @@ fn emit_class_methods(compiler: &Compiler, cid: ClassId) -> TokenStream {
         // function's body referencing any sibling top-level item (another
         // module's functions, a class's `new_handle` for `SomeClass.new`/
         // `raise`) wouldn't resolve without re-importing the root scope.
-        // Found by Phase 14.2's cross-package test (`Greet.hi` calling
+        // Found by a cross-package test (`Greet.hi` calling
         // `Upper.dashed`), but reproducible in one file with any
         // module-function calling another module -- a pre-existing gap.
         quote! {
@@ -1387,7 +1386,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
     // `puts Store::Item` and NoMethodError messages print the real path.
     let fq_name = compiler.fq_name(cid);
     let parent = ci.parent.unwrap_or(OBJECT_CLASS);
-    // A BUILTIN parent (`< Struct`, Phase 17.1-H) has no generated Rust
+    // A BUILTIN parent (`< Struct`) has no generated Rust
     // struct -- structurally the class sits on `Object`; the SEMANTIC
     // chain (ancestors, is_a?, rescue) carries the real parent.
     let parent_ty = if parent == OBJECT_CLASS || compiler.class(parent).is_builtin {

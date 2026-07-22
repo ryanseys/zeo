@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 /// Identifies a Ruby class at runtime. Mirrors zeo's struct-embedded
-/// `cls_id` field (`emit_class_struct`, codegen.c:2496). Since Phase 15.1
-/// this is the SHARED `zeo-abi` type -- the compiler bakes the same
+/// `cls_id` field (`emit_class_struct`, codegen.c:2496). This
+/// is the SHARED `zeo-abi` type -- the compiler bakes the same
 /// numbering into generated code from the same source of truth, so there is
 /// nothing left to keep in sync by hand.
 pub use zeo_abi::ClassId;
@@ -43,7 +43,7 @@ pub trait RubyObject: Any + Send + Sync {
     /// reasoning as `as_any` above.
     fn as_any_rc(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 
-    /// `.frozen?` state (Phase 13.1) -- backed by the `__frozen: AtomicBool`
+    /// `.frozen?` state -- backed by the `__frozen: AtomicBool`
     /// field `ruby_class!` generates on every class struct (the per-object
     /// counterpart of `collections::Freezable`'s flag). On the trait (not
     /// just inherent) so `freeze_value`/`is_frozen_value` can reach it
@@ -56,7 +56,7 @@ pub trait RubyObject: Any + Send + Sync {
     /// is a harmless no-op, matching CRuby's own already-frozen guard.
     fn set_frozen(&self);
 
-    /// A snapshot of every ivar's current value (Phase 13.8) -- the runtime
+    /// A snapshot of every ivar's current value -- the runtime
     /// ivar ENUMERATION `Ractor`'s recursive shareability check and
     /// `make_shareable`'s deep-freeze traversal need. (Ractor sends still
     /// reject an unfrozen Object rather than deep-copying it -- see
@@ -112,7 +112,7 @@ pub trait RubyObject: Any + Send + Sync {
         None
     }
 
-    /// `Kernel#dup`/`#clone`'s per-class shallow copy (Phase 15.2): a fresh
+    /// `Kernel#dup`/`#clone`'s per-class shallow copy: a fresh
     /// instance of the same concrete struct with every ivar's CURRENT value
     /// cloned into it (a `RubyValue` clone is a handle clone, so nested
     /// objects are SHARED -- CRuby's own shallow rule). `copy_frozen` is
@@ -176,7 +176,7 @@ impl Object {
     pub const CLASS_ID: ClassId = ClassId(0);
 }
 
-/// The builtin `Enumerable` MODULE (Phase 14.4 rev.2) -- an ordinary
+/// The builtin `Enumerable` MODULE -- an ordinary
 /// `class_table` row (`builtins::enumerable`'s generated `lookup`), reached
 /// by the MRO walk for any receiver whose ancestors contain this id. Like
 /// every id above, re-exported from the shared `zeo-abi` numbering.
@@ -488,7 +488,7 @@ impl MethodImpl {
     }
 }
 
-/// A class's dynamic constructor (Phase 16.1): allocates a fresh instance
+/// A class's dynamic constructor: allocates a fresh instance
 /// and runs its `initialize` (if any) -- what makes `x = Widget;
 /// x.new(...)` work when the class is only known at runtime as a
 /// `RubyValue::Class` value. Generated per class by `ruby_class!`
@@ -510,14 +510,14 @@ pub type ConstructorFn = fn(ClassId, &[RubyValue], Option<RubyValue>) -> Result<
 /// raises, handled at the call site.
 pub type AllocatorFn = fn(ClassId) -> RObj;
 
-/// A method defined by REOPENING a builtin class (Phase 16.3, `class String;
+/// A method defined by REOPENING a builtin class (`class String;
 /// def blank?; ...`): the receiver is the builtin VALUE itself (`&RubyValue`,
 /// not an `RObj` -- builtins have no generated struct to downcast to), which
 /// is exactly what the generated free-function bodies take as `__self`.
 /// Consulted FIRST by `send_value` (before even the universal `==`/`dup`
 /// arms and the curated tables), because a user redefinition must OVERRIDE
 /// the builtin behavior -- real Ruby's rule, oracle-verified (`class String;
-/// def length; 42; end` wins everywhere). Phase 18 keys per-box overlays off
+/// def length; 42; end` wins everywhere). Per-box overlays key off
 /// this same table.
 pub type ValueMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
@@ -525,7 +525,7 @@ pub type ValueMethodFn =
 struct ClassEntry {
     /// The Ruby-visible, fully-qualified name (`"Store::Item"`) -- what
     /// `Class#name`/`#to_s`/`puts Widget` print, and what `NoMethodError`
-    /// messages cite (Phase 16.1, retiring the class-id-in-the-message
+    /// messages cite (retiring the class-id-in-the-message
     /// approximation).
     name: String,
     is_module: bool,
@@ -538,7 +538,7 @@ struct ClassEntry {
     /// 6), but `is_a`/rescue-by-class matching does.
     ancestors: Vec<ClassId>,
     methods: HashMap<Symbol, MethodImpl>,
-    /// Methods added by reopening a BUILTIN class (Phase 16.3) -- keyed off
+    /// Methods added by reopening a BUILTIN class -- keyed off
     /// the receiver's `class_id()` with no ancestor walk needed (the only
     /// reopenable builtins are leaf value classes; Object/module reopens are
     /// rejected at zeo compile time). Empty for every user class, whose
@@ -709,10 +709,10 @@ impl ClassRegistry {
         }
     }
 
-    /// Registers a builtin-reopen method (Phase 16.3) -- called from
+    /// Registers a builtin-reopen method -- called from
     /// generated `main()` right after the builtin's own `register`, one call
     /// per `def` in a `class String ... end` reopen. `box_id` is the box the
-    /// reopen was written in (Phase 18: 0 for the root program; a box's
+    /// reopen was written in (0 for the root program; a box's
     /// overlay methods register under its id and are visible only from that
     /// box's code). See `ValueMethodFn`'s docs for the precedence contract.
     /// Records `name` as PRIVATE on `id` -- emitted by codegen right after
@@ -1099,7 +1099,7 @@ pub fn instance_variables(recv: &RubyValue) -> RubyValue {
     RubyValue::Array(crate::array_new(names))
 }
 
-/// `recv.respond_to?(:name)` -- MRO-faithful since Phase 17.1: walks the
+/// `recv.respond_to?(:name)` -- MRO-faithful: walks the
 /// receiver's real ancestor chain probing, per ancestor, the registry
 /// (materialized user methods live flat on the OWN class -- the first
 /// ancestor -- and builtin reopens hang off whichever ancestor was
@@ -1578,7 +1578,7 @@ pub fn method_name_symbol(v: &RubyValue) -> Result<Symbol, Signal> {
     }
 }
 
-/// A registry-OPTIONAL probe for a builtin-reopen method (Phase 16.3) --
+/// A registry-OPTIONAL probe for a builtin-reopen method --
 /// `None` when no registry is installed (this crate's own unit tests) or
 /// the class carries no such method. The lookup key is the receiver's own
 /// `class_id()`; see `ValueMethodFn`'s docs for why no ancestor walk is
@@ -1706,7 +1706,7 @@ pub(crate) fn call_user_method(
     None
 }
 
-/// A registry-optional ancestry probe (Phase 16.2) -- `false` when no
+/// A registry-optional ancestry probe -- `false` when no
 /// registry is installed (this crate's own unit tests), where `is_a`'s
 /// hard `registry()` access would panic. Used by `rb_eq`'s Comparable
 /// fallback, which must stay callable from anywhere.
@@ -2040,7 +2040,7 @@ pub fn coerce_raise_arg(value: RubyValue) -> RubyValue {
     }
 }
 
-/// The exhausted-iteration raise (Phase 17.2): a rescuable `StopIteration`
+/// The exhausted-iteration raise: a rescuable `StopIteration`
 /// whose `result` is `result` (a fresh instance per raise -- CRuby rebuilds
 /// one from `stop_exc` each time too). Constructs `StopIteration.new(msg)` via
 /// the registry, then stamps the result through the exception class's own
@@ -2077,7 +2077,7 @@ pub fn raise_stop_iteration(result: RubyValue) -> Signal {
 /// `block` is threaded through to whichever `MethodFn` is actually found --
 /// including the `method_missing` fallback, matching real Ruby's own
 /// `method_missing(name, *args, &block)` protocol.
-/// Dynamic dispatch against ANY `RubyValue` receiver (Phase 14.4, closing
+/// Dynamic dispatch against ANY `RubyValue` receiver (closing
 /// the long-standing "Poly-dispatch gap"): an `Object` goes through `send`'s
 /// registry exactly as before; a BUILT-IN receiver (Array/Hash/String/...)
 /// dispatches against a curated method table over the existing collection
@@ -2101,7 +2101,7 @@ pub fn send_value(
     send_value_in(0, recv, name, args, block)
 }
 
-/// `send_value` with the CALLER's box (Phase 18) -- the statically-known
+/// `send_value` with the CALLER's box -- the statically-known
 /// defining box every codegen dynamic-dispatch site passes, the AOT
 /// translation of CRuby's `cme->def->box` (no frame walk). Only the
 /// per-ancestor value-method probe consumes it: a box's builtin patches
@@ -2211,8 +2211,8 @@ pub fn send_value_in(
             }
         }
     }
-    // THE MRO WALK (Phase 17.1) -- the receiver's real ancestor chain, most
-    // derived first. Per ancestor: user reopens (Phase 16.3's value
+    // THE MRO WALK -- the receiver's real ancestor chain, most
+    // derived first. Per ancestor: user reopens (the value
     // methods) beat that ancestor's builtin table -- real Ruby's placement
     // rule (a `class Numeric; def foo` reopen is found on `5`, but a
     // builtin `Integer#foo` row would beat it). Everything -- including
@@ -2315,7 +2315,7 @@ pub fn send_in(
         return send_value(&snapshot, name, args, block);
     }
 
-    // The SAME MRO walk `send_value` runs (Phase 17.1), over a boxed
+    // The SAME MRO walk `send_value` runs, over a boxed
     // handle: Kernel's universals, BasicObject's `==`, and the
     // Enumerable/Comparable module tables all resolve as real ancestor
     // methods -- which also fixes a fidelity bug: `method_missing` used to
@@ -2371,7 +2371,7 @@ pub fn send_in(
         return f.call(recv, &full_args, block);
     }
 
-    // A real, catchable `NoMethodError` (Phase 13.7, replacing the original
+    // A real, catchable `NoMethodError` (replacing the original
     // eprintln-and-`process::exit(1)` shortcut): propagates like any other
     // raised exception -- rescuable at the call site, re-raised at a
     // Thread's `join`/`value` if uncaught there, and printed by the

@@ -80,8 +80,8 @@ const RUST_PRELUDE_COLLISIONS: &[&str] = &[
 ];
 
 /// A Ruby method name that's a bare operator symbol (`def +`/`def <=>`/
-/// `a + b`/`a <=> b` are the exact same method name either way -- see the
-/// plan's Phase 1 insight that operators are ordinary `Call`s) -- none of
+/// `a + b`/`a <=> b` are the exact same method name either way -- operators
+/// are ordinary `Call`s) -- none of
 /// these are valid Rust identifier TEXT at all (`+`, `<=>`, `[]`, ...), so
 /// unlike `escape_special_suffix`'s plain-name-plus-suffix rewriting, this
 /// is a fixed, exhaustive lookup table, not a general escaping rule. Found
@@ -215,8 +215,8 @@ fn escape_special_suffix(name: &str) -> Option<String> {
 }
 
 /// The Rust identifier for a class/module's generated struct/`mod`/`impl`
-/// -- the ONE place a resolved `ClassId` becomes a Rust name (Phase 15.1;
-/// previously ~11 call sites each derived it from `ClassInfo.name`
+/// -- the ONE place a resolved `ClassId` becomes a Rust name (previously
+/// ~11 call sites each derived it from `ClassInfo.name`
 /// independently). A top-level class keeps the plain `safe_ident(name)`
 /// (generated code for flat programs stays byte-identical); a NESTED class
 /// mangles to `__c<id>_<leaf>` -- the `ClassId` makes it
@@ -224,7 +224,7 @@ fn escape_special_suffix(name: &str) -> Option<String> {
 /// or a namespace path whose `_`-join would be ambiguous, can never
 /// collide), the leaf keeps it readable, and the `__` prefix can't collide
 /// with any top-level class (Ruby constants start with an uppercase
-/// letter). Phase 18 adds the box dimension here the same way.
+/// letter). The box dimension is mangled in here the same way (see below).
 pub(super) fn class_ident(
     compiler: &crate::compiler::Compiler,
     cid: crate::compiler::ClassId,
@@ -236,7 +236,7 @@ pub(super) fn class_ident(
             proc_macro2::Span::call_site(),
         );
     }
-    // A reopened BUILTIN's container `pub mod` (Phase 16.3 -- the only
+    // A reopened BUILTIN's container `pub mod` (the only
     // generated item a builtin ever gets, see `emit_builtin_reopen`) is
     // prefix-mangled: a bare `pub mod String` would shadow the prelude
     // `String` TYPE at the crate root (Rust modules and types share a

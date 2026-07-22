@@ -1,17 +1,20 @@
-# sp_net.c -- ffi exposed to spinel programs.
+# Ported from spinel's bundled sp_net.c FFI surface. sp_net_shell_capture is
+# spinel-private (Kernel backticks are the Ruby spelling of the same thing);
+# getpid stays a real FFI binding through the ffi gem.
 #
-# Cross-platform-deterministic smoke: shell_capture + getpid produce
-# the same output on every POSIX target, so the .expected holds for
-# Linux + macOS CI. (On Windows sp_net is stubbed -- the Makefile
-# filters this test out there; the socket/poll/process surface is
-# exercised by the consumer suites, e.g. tep, which run on POSIX.)
+# Cross-platform-deterministic smoke: shell capture + getpid produce the
+# same output on every POSIX target, so the .expected holds for Linux +
+# macOS CI.
+require "ffi"
+
 module Net
-  ffi_func :sp_net_getpid,        [],           :int
-  ffi_func :sp_net_shell_capture, [:str, :int], :str
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :getpid, [], :int
 end
 
 # Shell capture: stdout of `printf hello` is exactly "hello".
-puts Net.sp_net_shell_capture("printf hello", 64)
+puts `printf hello`
 
 # getpid is always a positive pid (print a stable token, not the pid).
-puts(Net.sp_net_getpid > 0 ? "pid-ok" : "pid-bad")
+puts(Net.getpid > 0 ? "pid-ok" : "pid-bad")

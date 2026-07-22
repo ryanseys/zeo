@@ -30,8 +30,8 @@ fn eval_of_a_class_definition_is_not_a_compile_error() {
 
 #[test]
 fn raise_with_a_bare_class_defaults_the_message_to_the_class_name() {
-    // No `rescue` exists yet (Phase 9) -- assert the UNCAUGHT path instead:
-    // an unhandled `raise MyError` (no explicit message) exits 1 with the
+    // Assert the UNCAUGHT path here (see the `rescue` tests below for the
+    // caught path): an unhandled `raise MyError` (no explicit message) exits 1 with the
     // class's own name as the message (no runtime `self.class` reflection
     // needed -- see `codegen::expr::emit_raise_value`'s docs).
     let result = run_ruby(
@@ -107,7 +107,7 @@ fn bare_raise_with_no_active_rescue_constructs_a_runtime_error() {
     // than erroring (oracle-verified: `ruby -e 'begin; raise; rescue => e;
     // puts "[#{e.message}]"; end'` -> `"[]"`) -- see
     // `codegen::expr::emit_raise`'s docs. This used to be a clean codegen
-    // panic before Phase 9's `zeo_rt::current_exception` fallback shipped.
+    // panic before the `zeo_rt::current_exception` fallback shipped.
     let result = run_ruby(
         r#"
         begin
@@ -235,7 +235,7 @@ fn case_in_with_no_matching_arm_and_no_else_raises() {
     );
 }
 
-// --- Phase 9: exceptions (begin/rescue/else/ensure/retry, raise, custom
+// --- Exceptions (begin/rescue/else/ensure/retry, raise, custom
 // hierarchies), oracle-verified against real `ruby` first. `e`'s method
 // calls (`e.message`) always go through `.send(:message)` -- a rescue
 // binding is deliberately never narrowed to a concrete class (unlike a
@@ -691,9 +691,9 @@ fn unmatched_rescue_class_propagates_to_an_outer_rescue() {
 
 #[test]
 fn break_next_from_inside_begin_rescue_nested_in_a_real_escaping_block_works() {
-    // `Array#each`/general Enumerable iteration isn't implemented (Phase 3's
-    // documented scope-cut), so a custom `yield`-based method is the
-    // supported way to attach a real escaping block here. The begin/rescue
+    // A custom `yield`-based method attaches a real escaping block here
+    // directly, exercising the same closure boundary `Array#each` would.
+    // The begin/rescue
     // closure boundary (see `codegen::exceptions`'s module docs) needs no
     // special handling: the block passed to `each_num` is ALREADY a real
     // escaping `Proc` (its own closure boundary, `in_real_proc` already
@@ -821,7 +821,7 @@ fn break_in_begin_still_leaves_a_raise_free_to_propagate() {
     assert_eq!(result.stdout, "caught: rethrow boom\n");
 }
 
-// --- Phase 9 continued: deeper edge-case and composition coverage, added
+// --- Deeper edge-case and composition coverage, added
 // after the initial batch above per an explicit request for more
 // comprehensive tests. Every scenario oracle-verified against real `ruby`
 // first, per this project's established convention.
@@ -938,10 +938,10 @@ fn re_raise_preserves_the_exact_same_object_not_a_copy() {
     // `rescue` reading the same ivar back. Constructed and raised in ONE
     // expression (`raise Tagged.new(...)`), not first assigned to a named
     // local -- a named local assigned an `Object`-typed value inside a
-    // `begin`'s body (or any branching construct) hits a real, pre-existing,
-    // Phase-9-independent codegen gap when that local's type has to widen
+    // `begin`'s body (or any branching construct) hits a real, pre-existing
+    // codegen gap when that local's type has to widen
     // to `Poly` across branches (confirmed to affect plain `if`/`else` too,
-    // not something this phase introduced or is responsible for fixing).
+    // unrelated to exception handling itself).
     let result = run_ruby(
         r#"
         class Tagged < StandardError
@@ -1053,7 +1053,7 @@ fn plain_string_raise_is_caught_by_an_explicit_runtime_error_rescue() {
 
 #[test]
 fn case_in_pattern_matching_inside_a_rescue_body() {
-    // Composes Phase 8 (pattern matching) with Phase 9 (exceptions) --
+    // Composes pattern matching with exception handling --
     // `e.send(:message)` is a `Poly` expression, matched via `case/in`'s own
     // `#deconstruct`-independent `ClassCheck`/`Capture` path.
     let result = run_ruby(
@@ -1158,7 +1158,7 @@ fn retry_and_ensure_combined_inside_an_enclosing_while_loop() {
 fn unrescued_raise_propagates_through_multiple_method_call_frames() {
     // Three separate objects (not sibling methods on one class) --
     // implicit-self calls to a sibling method aren't supported yet
-    // (a separate, pre-existing, documented gap from Phase 5/6), so each
+    // (a separate, pre-existing, documented gap), so each
     // level calls the next via an explicit receiver instead. Still a
     // genuine 3-frame unwind, crossing object boundaries too.
     let result = run_ruby(
@@ -1548,10 +1548,10 @@ fn float_division_by_zero_returns_infinity_not_an_error() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.1: .freeze / .frozen? -- every snippet oracle-verified against
+// .freeze / .frozen? -- every snippet oracle-verified against
 // real `ruby` first, per this project's standing convention. Semantics
-// grounded in CRuby's actual implementation (see the plan's Part 11
-// addendum): freeze is SHALLOW, returns self, no-ops when repeated;
+// grounded in CRuby's actual implementation: freeze is SHALLOW, returns
+// self, no-ops when repeated;
 // immediates and Ranges are always frozen; mutation of a frozen value
 // raises a catchable FrozenError (a RuntimeError subclass) with the message
 // `can't modify frozen <Class>: <inspect>`, checked at the top of every
@@ -1701,7 +1701,7 @@ fn multi_assignment_into_a_frozen_index_target_raises() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.7: `send`'s missing-method fallback raises a real, catchable
+// `send`'s missing-method fallback raises a real, catchable
 // NoMethodError (via the factory generated main() installs) instead of the
 // original whole-process `exit(1)` -- which would have killed every OTHER
 // running Thread over one bad dispatch. Oracle-verified.

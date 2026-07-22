@@ -446,8 +446,8 @@ builtin_methods! {
             }
         }
     }
-    // `step(limit, step = 1)`; the blockless form returns an Enumerator
-    // (Phase 17.2). Drives the tower generically, so `1.step(2.0, 0.5)`
+    // `step(limit, step = 1)`; the blockless form returns an Enumerator.
+    // Drives the tower generically, so `1.step(2.0, 0.5)`
     // works too.
     "step" => fn step(recv, args, block) {
         arity!(args, 0..=2);

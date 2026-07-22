@@ -1,4 +1,4 @@
-//! `Ractor` (Phase 13.8) -- real OS threads (`std::thread::spawn`, NOT may
+//! `Ractor` -- real OS threads (`std::thread::spawn`, NOT may
 //! coroutines: a Ractor's whole point is genuine parallelism regardless of
 //! the GVL-emulating scheduler config) sharing the SAME global heap.
 //! CRuby's real Ractors already share classes, methods, and the Symbol
@@ -137,7 +137,7 @@ pub fn ractor_outcome(r: &RRactor) -> Result<RubyValue, Signal> {
 /// `Ractor.shareable?` -- the recursive predicate (CRuby's rule: frozen AND
 /// everything reachable shareable; immediates/Symbols/Ractors inherently
 /// shareable; `Regexp` immutable here so always shareable). Cycle-guarded
-/// (Phase 15.2) via the same visited-set mechanism as `inspect_string`'s
+/// (cycle-guarded) via the same visited-set mechanism as `inspect_string`'s
 /// (`value::container_identity`): a container already under examination
 /// contributes `true` at its re-entry point -- the cycle itself never makes
 /// a graph unshareable, only an unfrozen/unshareable NODE does, and every
@@ -164,7 +164,7 @@ fn shareable_guarded(v: &RubyValue, seen: &mut Vec<usize>) -> bool {
         | RubyValue::Symbol(_)
         | RubyValue::Regexp(_)
         | RubyValue::Ractor(_)
-        // A class handle is inherently shareable (Phase 16.1): classes are
+        // A class handle is inherently shareable: classes are
         // process-wide in real Ruby too.
         | RubyValue::Class(_) => true,
         RubyValue::Range(start, end, _) => {
@@ -341,7 +341,7 @@ mod tests {
         );
     }
 
-    /// Phase 15.2 cycle guards: a self-referential graph used to recurse to
+    /// Cycle guards: a self-referential graph used to recurse to
     /// stack overflow in both traversals; now every node is visited once.
     #[test]
     fn make_shareable_handles_a_self_referential_array() {

@@ -1,4 +1,4 @@
-//! `Enumerator` (Phase 17.2) -- fiber-backed external iteration, per
+//! `Enumerator` -- fiber-backed external iteration, per
 //! CRuby's enumerator.c (all mechanisms cited there were read against the
 //! CRuby source and oracle-verified on ruby 4.0.5).
 //!

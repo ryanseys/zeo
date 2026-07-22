@@ -1,4 +1,4 @@
-//! Codegen for Phase 4's loop constructs (`while`/`until`/`loop`/`for`) and
+//! Codegen for loop constructs (`while`/`until`/`loop`/`for`) and
 //! their `break`/`next`/`redo` control flow, plus `a, b = ...` multi-assign.
 //! See `hir.rs`'s docs for why `until` is folded into `While` (a `negate`
 //! flag, exactly like `unless` folds into `If`) and why `loop do..end` isn't
@@ -90,7 +90,7 @@ pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool) -> Toke
 }
 
 /// `loop do ... end` -- see `hir.rs`'s `Loop` docs. No exit test of its own:
-/// only `break` (or, once Phase 9 exists, an uncaught `raise`) ever ends it.
+/// only `break` (or an uncaught `raise`) ever ends it.
 pub fn emit_loop(cx: &Ctx, body: &[NodeId]) -> TokenStream {
     let outer = fresh_label(cx, "loop");
     let redo = fresh_label(cx, "loop_body");

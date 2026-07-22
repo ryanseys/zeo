@@ -17,7 +17,7 @@
 //! documented lowering-time rejection (see `parse/mod.rs`'s `raise`
 //! recognizer).
 //!
-//! **Storage is `may` COROUTINE-local, not `thread_local!`** (Phase 13.6):
+//! **Storage is `may` COROUTINE-local, not `thread_local!`**:
 //! `$!`/rescue-nesting is per-EXECUTION-CONTEXT state, and once multiple
 //! Ruby `Thread`s (may coroutines) multiplex onto one OS worker -- the
 //! default GVL mode -- a `thread_local!` slot would be silently SHARED

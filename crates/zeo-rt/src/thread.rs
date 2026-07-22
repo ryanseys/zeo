@@ -1,4 +1,4 @@
-//! `Thread`/`Mutex`/`Queue` (Phase 13.5) -- thin Ruby-visible wrappers over
+//! `Thread`/`Mutex`/`Queue` -- thin Ruby-visible wrappers over
 //! `may`'s green coroutines and sync primitives. A Ruby `Thread` is a `may`
 //! coroutine, so under the default single scheduler worker (see `exec.rs`)
 //! genuine parallelism is structurally impossible -- CRuby's GVL reality --

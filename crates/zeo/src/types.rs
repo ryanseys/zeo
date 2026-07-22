@@ -143,7 +143,7 @@ pub fn infer_type(compiler: &Compiler, id: NodeId) -> TyKind {
 /// `analyze::locals::infer_locals`), what's its static type? This is what
 /// lets `x + y` resolve to native `Int` arithmetic when `x`/`y` are locals
 /// previously assigned an `Int`-typed value, not just literal-on-literal --
-/// the Phase 1 generalization of the spike's original hardcoded
+/// the generalization of the spike's original hardcoded
 /// literal-`+`-on-`IntegerLit` fast path.
 pub fn infer_type_with_locals(
     compiler: &Compiler,
@@ -155,7 +155,7 @@ pub fn infer_type_with_locals(
     match &compiler.hir[id] {
         HirNode::IntegerLit(_) => TyKind::Int,
         // A bignum literal is still an Integer -- one Ruby class, two
-        // payloads (`TyKind::Int` means exactly that since Phase 17.1).
+        // payloads (`TyKind::Int` means exactly that).
         // Rational/imaginary literals type `Poly`: no static fast paths
         // exist for those kinds (deliberate -- they're rare), so they
         // dispatch through the runtime tower.
@@ -187,7 +187,7 @@ pub fn infer_type_with_locals(
                 // `RubyValue`), matching what `emit_new_with_arg_tokens`
                 // emits for each:
                 //   - a MODULE: `M.new` routes to the dynamic path (which
-                //     raises NoMethodError -- Phase 16.1);
+                //     raises NoMethodError);
                 //   - `Object.new`: the sentinel idiom, a boxed
                 //     `zeo_rt::Object`;
                 //   - a BUILT-IN (`Time.new`, plan P-B): answered by the

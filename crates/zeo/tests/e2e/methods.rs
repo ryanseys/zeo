@@ -194,8 +194,8 @@ fn arithmetic_on_a_plain_method_parameter_works() {
 
 #[test]
 fn a_named_block_parameter_can_be_called_explicitly() {
-    // A `&block` parameter is real syntax now (Phase 6 lifted the Phase-5
-    // rejection this test used to check for).
+    // A `&block` parameter is real syntax now (a rejection this test
+    // used to check for was lifted).
     let result = run_ruby(
         "class Foo\n  def bar(&blk)\n    blk.call(5)\n  end\nend\nputs Foo.new.bar { |x| x * 2 }\n",
     );
@@ -1053,7 +1053,7 @@ fn undef_removes_a_name_including_an_inherited_one() {
     );
 }
 
-// --- Phase 12.8: alias / class << self ---------------------------------
+// --- alias / class << self ---------------------------------
 //
 // `alias` is resolved entirely at LOWERING time (`parse::lower_class_body_statement`):
 // the aliased name's already-lowered `DefMethod` (params/body/visibility)
@@ -1061,7 +1061,7 @@ fn undef_removes_a_name_including_an_inherited_one() {
 // at all -- it's indistinguishable from having written the method body
 // twice under two names. `class << self` similarly desugars its nested
 // `def`s to ordinary `is_class_method: true` `DefMethod`s (reusing
-// `ClassInfo::class_methods` materialization Phase 12.6/Part 6 already
+// `ClassInfo::class_methods` materialization already
 // built). Every test here was run against real `ruby` first, per this
 // project's established convention.
 
@@ -1208,7 +1208,7 @@ fn user_defined_operator_methods_can_be_defined_and_dispatched() {
     // all for a method name that's a bare operator symbol (`+`, `<=>`,
     // `[]`, ...) -- `def +(other)` panicked at CODEGEN time with a raw
     // `proc_macro2` "not a valid Ident" error. This meant user-defined
-    // operator overloading -- claimed since Phase 1 to "work for free"
+    // operator overloading -- claimed to "work for free"
     // once operators became ordinary Calls -- never actually worked for
     // the DEFINING side; every existing operator test exercised only
     // native `Int`/`Float` fast paths, which bypass `safe_ident` entirely.
@@ -1346,7 +1346,7 @@ fn yaml_load_and_dump_match_ruby_via_the_psych_alias() {
 
 #[test]
 fn a_param_referenced_only_inside_an_escaping_block_is_captured() {
-    // The Phase 14.4 capture fix: `n` (a method param) appears ONLY inside
+    // The parameter-capture fix: `n` (a method param) appears ONLY inside
     // the escaping block -- previously misclassified as a block-own local
     // and silently re-declared Nil. Oracle: 11, 12.
     let result = run_ruby(
@@ -1683,7 +1683,7 @@ fn nested_classes_reopen_through_both_definition_forms() {
     assert_eq!(result.stdout, "tagged\nreopened nested\nqualified reopen\n");
 }
 
-// -- Phase 16.2: user-overridable object protocols + Comparable. Every
+// -- User-overridable object protocols + Comparable. Every
 // expectation oracle-verified against real ruby 4.0.5.
 
 #[test]

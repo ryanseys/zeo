@@ -85,7 +85,7 @@ pub(crate) fn emit_proc_or_lambda_value(
         .cloned()
         .collect();
 
-    // Nested-Proc guard (Phase 13.5, replacing the old blanket "no block
+    // Nested-Proc guard (replacing the old blanket "no block
     // escaping inside another escaping block" rejection): names shared with
     // the enclosing METHOD are `Captured` cells and compose through any
     // nesting depth, but an `own_only` name that this INNER block never

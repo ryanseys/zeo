@@ -2,7 +2,7 @@ use crate::support::run_ruby;
 
 #[test]
 fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
-    // Phase 3: `--gem-path` + `--lockfile` against a self-contained fixture
+    // `--gem-path` + `--lockfile` against a self-contained fixture
     // store (tests/fixtures/gem_store/store). Covers all three provider paths:
     // a pure-Ruby gem resolves and compiles; a gem declaring a native
     // extension and a precompiled-platform-only gem are both excluded, with a
@@ -75,7 +75,7 @@ fn file_read_applies_external_and_internal_encodings() {
     );
 }
 
-// -- Phase 17.2: the fiber-backed Enumerator (per CRuby's enumerator.c).
+// -- The fiber-backed Enumerator (per CRuby's enumerator.c).
 // Every positive expectation below is oracle-verified against ruby 4.0.5.
 
 /// The keystone: external iteration over a method-backed enumerator --

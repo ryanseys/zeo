@@ -152,7 +152,7 @@ fn numeric_and_time_fractional_and_rounding_coercions() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-C -- the numeric tower: full-bignum Integer, Rational, Complex,
+// The numeric tower: full-bignum Integer, Rational, Complex,
 // the coercion matrix, literals, Math, Kernel conversions, Float/Math
 // constants. Oracle: ruby 4.0.5, byte-identical.
 // ---------------------------------------------------------------------------

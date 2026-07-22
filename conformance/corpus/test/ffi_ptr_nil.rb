@@ -1,14 +1,13 @@
-module LibC
-  ffi_func :malloc, [:size_t], :ptr
-  ffi_func :free,   [:ptr],    :void
-end
+# Pointer/nil equality through the real ffi gem API (ported from spinel's
+# ffi_read_ptr): a live malloc result is not nil-equal, and a NULL pointer
+# (read out of a zero-filled MemoryPointer) is.
+require "ffi"
 
-module Buf
-  ffi_buffer :scratch, 16
-  # The buffer is zero-init in BSS, so reading 8 bytes at offset 0 as a
-  # pointer gives a deterministic NULL — handy for verifying that
-  # `ptr == nil` actually compares to NULL.
-  ffi_read_ptr :first_ptr, 0
+module LibC
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :malloc, [:size_t], :pointer
+  attach_function :free,   [:pointer], :void
 end
 
 p = LibC.malloc(64)
@@ -19,7 +18,10 @@ else
 end
 LibC.free(p)
 
-zero_ptr = Buf.first_ptr(Buf.scratch)
+# A MemoryPointer is zero-filled, so reading 8 bytes at offset 0 as a pointer
+# gives a deterministic NULL -- handy for verifying that `ptr == nil`
+# actually compares to NULL.
+zero_ptr = FFI::MemoryPointer.new(16).read_pointer
 if zero_ptr == nil
   puts "zero_is_nil"
 else

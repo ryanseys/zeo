@@ -45,7 +45,7 @@ pub(crate) fn lower_box_eval_body(
 }
 
 /// Whether `node` is exactly `Ruby::Box.new` (no args, no block) -- the
-/// only allocation shape Phase 18 supports, recognized by the loader at
+/// only allocation shape supported, recognized by the loader at
 /// top-level `box = Ruby::Box.new` statements.
 pub(crate) fn is_ruby_box_new(node: &Node<'_>) -> bool {
     let Some(call) = node.as_call_node() else {

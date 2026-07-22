@@ -15,7 +15,7 @@ use proc_macro2::TokenStream;
 /// which `zeo_rt::RubyValue` variant wraps their result. Every one of
 /// these is a plain `CallNode` at the `ruby-prism` level (`a + b` and
 /// `a.foo(b)` are the same node shape, just a different `name()`) -- so this
-/// table is the entire generalization of the pre-Phase-1 spike's single
+/// table is the entire generalization of the original spike's single
 /// hardcoded literal-`+`-on-`IntegerLit` fast path: any operand pair
 /// statically known `Int` (not just literals -- see
 /// `analyze::locals`/`types::infer_type_with_locals`) routes through here;
@@ -46,7 +46,7 @@ pub(super) const INT_BINARY_OPS: &[(&str, &str, IntOpKind)] = &[
     ("<=>", "int_cmp", IntOpKind::Cmp),
 ];
 /// How an `INT_BINARY_OPS` row's runtime fn shapes into an emitted
-/// expression (Phase 17.1's bignum migration: the `int_*` family takes
+/// expression (the bignum migration: the `int_*` family takes
 /// `&RubyValue` pairs -- an `Int`-typed value may carry either payload --
 /// and arithmetic returns `RubyValue` directly, promoting on overflow).
 #[derive(Clone, Copy, PartialEq)]

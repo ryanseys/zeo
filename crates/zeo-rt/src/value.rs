@@ -24,7 +24,7 @@ pub enum RubyValue {
     Nil,
     Bool(bool),
     Int(i64),
-    /// An `Integer` beyond `i64` (Phase 17.1's full-bignum decision).
+    /// An `Integer` beyond `i64` (the full-bignum decision).
     /// INVARIANT: never holds an i64-range value -- every construction
     /// funnels through `builtins::integer::int_value`, which demotes to
     /// `Int` whenever the value fits, keeping equality/hashing/matching
@@ -33,10 +33,10 @@ pub enum RubyValue {
     /// Always-frozen immediate tier, like `Int`.
     BigInt(std::sync::Arc<num_bigint::BigInt>),
     Float(f64),
-    /// A `Rational` (Phase 17.1) -- always reduced, `den > 0`, bignum
+    /// A `Rational` -- always reduced, `den > 0`, bignum
     /// components; see `builtins::rational`. Always-frozen immediate tier.
     Rational(crate::builtins::rational::RRational),
-    /// A `Complex` (Phase 17.1) -- two components that keep their own
+    /// A `Complex` -- two components that keep their own
     /// numeric class (Integer|Float|Rational); see `builtins::complex`.
     /// Always-frozen immediate tier.
     Complex(crate::builtins::complex::RComplex),
@@ -50,38 +50,38 @@ pub enum RubyValue {
     /// are enough -- no `Rc<RefCell<_>>` sharing needed.
     Range(Option<Box<RubyValue>>, Option<Box<RubyValue>>, bool),
     Object(RObj),
-    /// A real, escaping block/`Proc` (Phase 6) -- see `rproc`'s module docs.
+    /// A real, escaping block/`Proc` -- see `rproc`'s module docs.
     Proc(RProc),
-    /// A real, `regex`-crate-backed `Regexp` (Phase 12.7) -- see
+    /// A real, `regex`-crate-backed `Regexp` -- see
     /// `regexp`'s module docs.
     Regexp(RRegexp),
-    /// A successful `Regexp#match`/`String#match` result (Phase 12.7).
+    /// A successful `Regexp#match`/`String#match` result.
     MatchData(RMatchData),
-    /// A `Fiber` (Phase 13.3) -- the Send+Sync HANDLE only; the actual
+    /// A `Fiber` -- the Send+Sync HANDLE only; the actual
     /// coroutine is thread-pinned in `fiber::FIBERS` (see that module's
     /// docs for why it can't live here).
     Fiber(RFiber),
-    /// An `Enumerator` (Phase 17.2) -- captures `(receiver, method, args)`
+    /// An `Enumerator` -- captures `(receiver, method, args)`
     /// or an `Enumerator.new` generator block; external iteration state is
     /// a thread-pinned fiber, same split as `Fiber` (see
     /// `builtins::enumerator`'s module docs).
     Enumerator(crate::builtins::enumerator::REnumerator),
-    /// An `Enumerator::Yielder` (Phase 17.2) -- the `y` in
+    /// An `Enumerator::Yielder` -- the `y` in
     /// `Enumerator.new { |y| y << 1 }`, wrapping the each-block currently
     /// being driven (`y << v` / `y.yield v` forward to it).
     Yielder(RProc),
-    /// A `Thread` (Phase 13.5) -- a `may` green coroutine; see
+    /// A `Thread` -- a `may` green coroutine; see
     /// `thread`'s module docs for the cooperative-scheduling divergence.
     Thread(RThread),
-    /// A Ruby `Mutex` (Phase 13.5) -- non-reentrant, per-execution-context
+    /// A Ruby `Mutex` -- non-reentrant, per-execution-context
     /// owned, like CRuby's.
     Mutex(RMutex),
-    /// A `Queue` (Phase 13.5) -- blocking pop, closable.
+    /// A `Queue` -- blocking pop, closable.
     Queue(RQueue),
-    /// A `Ractor` (Phase 13.8) -- a real OS thread with a frozen-or-copy
+    /// A `Ractor` -- a real OS thread with a frozen-or-copy
     /// message boundary; see `ractor`'s module docs.
     Ractor(RRactor),
-    /// A first-class class/module VALUE (Phase 16.1) -- `x = Widget`,
+    /// A first-class class/module VALUE -- `x = Widget`,
     /// `w.class`, a rescue binding's `.class`, classes stored in
     /// collections. `Copy` payload, always frozen (like the immediates);
     /// its Ruby-visible name/module-ness live in the `ClassRegistry`
@@ -157,7 +157,7 @@ fn float_to_display_string(f: f64) -> String {
 /// The pointer identity of a shared, potentially SELF-REFERENTIAL container
 /// -- the one visited-set key every recursive `RubyValue` traversal in this
 /// runtime uses (`to_display_string`/`inspect_string` here,
-/// `ractor::shareable`/`make_shareable` -- Phase 15.2's cycle guards). `Arc`
+/// `ractor::shareable`/`make_shareable`'s cycle guards). `Arc`
 /// identity is exactly Ruby's object identity for these types (aliasing a
 /// collection clones the `Arc`, never the payload -- see `collections`'s
 /// module docs), so "this address is already on the traversal stack" is
@@ -227,7 +227,7 @@ impl RubyValue {
     /// recursion markers (`[...]`/`{...}`) instead of deadlocking on its
     /// own non-reentrant payload `Mutex` (the pre-15.2 behavior).
     fn display_with(&self, seen: &mut Vec<usize>) -> String {
-        // A builtin-reopen `to_s` override wins (Phase 16.3) -- real Ruby's
+        // A builtin-reopen `to_s` override wins -- real Ruby's
         // behavior for `puts`/interpolation, oracle-verified (`class
         // Integer; def to_s; "int"; end` makes `puts 5`/`"v=#{5}"` print
         // "int"). Object receivers keep their own registry probe in the
@@ -324,7 +324,7 @@ impl RubyValue {
                 let op = if *exclusive { "..." } else { ".." };
                 format!("{s}{op}{e}")
             }
-            // A user-defined `to_s` wins (Phase 16.2, dispatched through
+            // A user-defined `to_s` wins (dispatched through
             // the registry so inherited/mixed-in definitions resolve); the
             // default is CRuby's `#<Class:0xADDR>` (no ivars -- that's
             // `inspect`'s job). The address is normalized by the conformance
@@ -398,7 +398,7 @@ impl RubyValue {
     /// enters through a Hash back into an outer Array prints `[...]` at the
     /// Array's re-entry point (`[1, {x: [...]}]`, oracle-verified).
     fn inspect_with(&self, seen: &mut Vec<usize>) -> String {
-        // A builtin-reopen `inspect` override wins (Phase 16.3) -- and it
+        // A builtin-reopen `inspect` override wins -- and it
         // propagates into CONTAINER rendering too (`[5].inspect` ->
         // `[I<5>]` with an `Integer#inspect` override -- real Ruby's
         // `rb_inspect` dispatches per element, oracle-verified), which this
@@ -480,7 +480,7 @@ impl RubyValue {
             }
             RubyValue::Regexp(re) => crate::regexp::regexp_inspect(re).to_display_string(),
             RubyValue::MatchData(m) => crate::regexp::matchdata_inspect(m),
-            // A user-defined `inspect` wins (Phase 16.2); the default is
+            // A user-defined `inspect` wins; the default is
             // CRuby's `#<Class:0xADDR @iv=val, ...>` -- address plus the
             // object's ivars, each inspected, in field-declaration order (see
             // `default_object_repr`). NO fallback to a user `to_s` (real
@@ -731,7 +731,7 @@ impl RubyValue {
         }
     }
 
-    /// `==` -- real Ruby's protocol (Phase 16.2, retiring the documented
+    /// `==` -- real Ruby's protocol (retiring the documented
     /// "conservatively compare unequal" approximation): scalars compare
     /// structurally (`1 == 1.0` across the numeric tower), `Array`/`Hash`
     /// compare ELEMENT-WISE (recursively, cycle-guarded -- see
@@ -753,8 +753,8 @@ impl RubyValue {
     /// nested comparison.
     fn rb_eq_guarded(&self, other: &RubyValue, seen: &mut Vec<(usize, usize)>) -> bool {
         // Real Ruby: `1 == 1.0`, `Rational(2,1) == 2`, `Complex(2,0) == 2`
-        // -- every numeric pair compares through the ONE tower matrix
-        // (Phase 17.1), including the Bignum/Rational/Complex lanes. The
+        // -- every numeric pair compares through the ONE tower matrix,
+        // including the Bignum/Rational/Complex lanes. The
         // (Int, Int) arm below stays as the hot exact fast path.
         if let (RubyValue::Int(a), RubyValue::Int(b)) = (self, other) {
             return a == b;
@@ -781,7 +781,7 @@ impl RubyValue {
             (RubyValue::Nil, RubyValue::Nil) => true,
             (RubyValue::Bool(a), RubyValue::Bool(b)) => a == b,
             (RubyValue::Symbol(a), RubyValue::Symbol(b)) => a == b,
-            // Class identity (Phase 16.1): `Widget == Widget`, and what
+            // Class identity: `Widget == Widget`, and what
             // `Array#include?` on an array of classes consults.
             (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
             (RubyValue::Str(a), RubyValue::Str(b)) => {
@@ -930,14 +930,14 @@ impl RubyValue {
         }
     }
 
-    /// `a <=> b` as a signed ordering (Phase 16.2) -- `None` is Ruby's
+    /// `a <=> b` as a signed ordering -- `None` is Ruby's
     /// `nil` (incomparable). Native Int/Float/String fast paths (CRuby's
     /// OPTIMIZED_CMP), then a user-defined `<=>` on an `Object` receiver;
     /// anything else is incomparable. Consumed by `Enumerable#min`/`#max`
-    /// and `comparable`'s table rows (and Phase 17.1's `sort` family).
+    /// and `comparable`'s table rows (and the `sort` family).
     pub fn rb_cmp(&self, other: &RubyValue) -> Option<i64> {
-        // Every numeric pair orders through the ONE tower matrix (Phase
-        // 17.1): exact Int/Bignum/Rational lanes, Float promotion,
+        // Every numeric pair orders through the ONE tower matrix:
+        // exact Int/Bignum/Rational lanes, Float promotion,
         // NaN -> nil, Complex -> nil.
         if let Some(ord) = crate::builtins::numeric::num_cmp(self, other) {
             return ord;
@@ -985,7 +985,7 @@ impl RubyValue {
         }
     }
 
-    /// `Kernel#frozen?`, universally over every variant (Phase 13.1),
+    /// `Kernel#frozen?`, universally over every variant,
     /// mirroring CRuby's own tiering: immediates (`Integer`/`Float`/
     /// `Symbol`/`nil`/`true`/`false`) are ALWAYS frozen (CRuby stores no
     /// flag for them at all -- `RB_FL_ABLE` is false, frozen is implied);
@@ -1049,7 +1049,7 @@ impl RubyValue {
         self.clone()
     }
 
-    /// `Kernel#dup`/`#clone` -- the per-kind SHALLOW copy (Phase 15.2), the
+    /// `Kernel#dup`/`#clone` -- the per-kind SHALLOW copy, the
     /// one semantic difference between the two being the frozen flag:
     /// `clone` (`copy_frozen: true`) carries it over, `dup` never does
     /// (oracle-verified: `"abc".freeze.dup.frozen?` is `false`,
@@ -1153,7 +1153,7 @@ impl RubyValue {
         if let (RubyValue::Regexp(re), RubyValue::Str(s)) = (self, subject) {
             return re.engine.is_match(&s.lock().to_utf8_lossy());
         }
-        // `Range#===` is `#cover?` (Phase 17.1, fixing `when 1..5` -- which
+        // `Range#===` is `#cover?` (fixing `when 1..5` -- which
         // previously fell to `rb_eq` and silently never matched): each
         // present endpoint compares via `rb_cmp` (numeric tower, strings,
         // user `<=>`), and an incomparable subject is `false`, real Ruby's
@@ -1162,7 +1162,7 @@ impl RubyValue {
         if let RubyValue::Range(start, end, exclusive) = self {
             return range_covers(start.as_deref(), end.as_deref(), *exclusive, subject);
         }
-        // `Module#===` (Phase 16.1): `case x when Integer` / `when Widget`
+        // `Module#===`: `case x when Integer` / `when Widget`
         // is an instance-of-ancestry check, NOT equality (`Widget ===
         // Widget` is false in real Ruby -- a class is not an instance of
         // itself). Registry-backed; only reachable in generated programs,
@@ -1397,7 +1397,7 @@ mod tests {
         assert_eq!(cmp_int(&RubyValue::Nil).unwrap(), None);
     }
 
-    /// Phase 15.2: every expected string below is oracle-verified against
+    /// Every expected string below is oracle-verified against
     /// real ruby 4.0.5 (`p`/`puts` on the same graphs).
     #[test]
     fn inspect_marks_a_self_referential_array() {
@@ -1529,7 +1529,7 @@ mod tests {
         assert_eq!(r.dup_value(false).inspect_string(), "1..3");
     }
 
-    /// Phase 16.2: element-wise `==` (retiring "conservatively compare
+    /// Element-wise `==` (retiring "conservatively compare
     /// unequal"), including nesting and the recursive-pair rule.
     #[test]
     fn arrays_and_hashes_compare_element_wise() {

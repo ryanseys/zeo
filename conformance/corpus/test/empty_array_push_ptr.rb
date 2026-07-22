@@ -1,10 +1,14 @@
-# #688: empty `[]` followed by `.push(:ptr)` must promote to
-# ptr_ptr_array, not silently retain the IntArray default (which
-# would round-trip the pointer through mrb_int).
+# #688 (ported to the real ffi gem API): empty `[]` followed by pushes of
+# FFI :pointer values must behave as an array of pointers, not silently
+# collapse to an int-array representation that would round-trip the pointer
+# through an integer.
+require "ffi"
 
 module LibC
-  ffi_func :malloc, [:size_t], :ptr
-  ffi_func :free,   [:ptr],    :void
+  extend FFI::Library
+  ffi_lib FFI::Library::LIBC
+  attach_function :malloc, [:size_t], :pointer
+  attach_function :free,   [:pointer], :void
 end
 
 p1 = LibC.malloc(64)

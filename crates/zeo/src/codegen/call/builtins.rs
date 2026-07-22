@@ -280,7 +280,7 @@ pub(super) fn try_regexp_dispatch(
         let pattern_is_regexp = infer(cx, args[0]) == TyKind::Regexp;
         // A non-Regexp pattern (String, or dynamically typed) falls
         // through to `send_value`, whose String rows handle String
-        // patterns for split/sub/gsub/match/match? (Phase 17.1 -- the old
+        // patterns for split/sub/gsub/match/match? (the old
         // compile-time "pass a Regexp literal instead" rejection retired).
 
         if pattern_is_regexp {

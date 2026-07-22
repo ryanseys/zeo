@@ -641,8 +641,14 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // (`cfg.instance_eval { self.port = 8080 }`), silently sending to
             // `main` instead of `cfg`.
             if cx.self_is_dynamic {
+                // Concrete UFCS, not `.clone()` method syntax (see the note
+                // at the bottom of this arm) and not generic `Clone::clone`
+                // either: a dynamic self can be bound as `&RubyValue` in
+                // some closure shapes, where the generic form would clone
+                // the REFERENCE -- the concrete form deref-coerces both
+                // `&RubyValue` and owned bindings to the right argument.
                 let slf = &cx.self_ident;
-                return quote! { (#slf).clone() };
+                return quote! { zeo_rt::RubyValue::clone(&#slf) };
             }
             // Only meaningful inside an ordinary instance method body (see
             // `hir::HirNode::SelfRef`'s docs) -- a class method/module
@@ -676,9 +682,13 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             // `recv_expr = emit_expr(cx, recv_id)`). `cx.self_ident` is the
             // capture-alias identifier while emitting a self-capturing
             // escaping block's own body (see `Ctx::self_ident`'s docs), the
-            // literal `self` receiver parameter otherwise.
+            // literal `self` receiver parameter otherwise. UFCS through the
+            // `Clone` trait, NOT `.clone()` method syntax: a user Ruby method
+            // named `clone` becomes an INHERENT `fn clone(self: Arc<Self>)`
+            // on the generated struct, which method syntax would resolve to
+            // instead of the `Arc` refcount bump (inherent beats trait).
             let slf = &cx.self_ident;
-            quote! { #slf.clone() }
+            quote! { Clone::clone(&#slf) }
         }
         HirNode::LocalRead(name) => super::hoisting::emit_local_read(cx, name),
         HirNode::And(l, r) => {
@@ -842,8 +852,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
         // 6 scope-cut -- a clean rejection) or, when `name` isn't actually a
         // registered class, an ordinary lexically-scoped constant READ.
         // A bare/qualified constant naming a class or module used as a
-        // VALUE is a first-class `RubyValue::Class` handle (Phase 16.1,
-        // retiring the long-standing "no first-class Class/Module value"
+        // VALUE is a first-class `RubyValue::Class` handle (retiring the
+        // long-standing "no first-class Class/Module value"
         // rejection); one that names no class stays an ordinary
         // lexically-scoped constant READ.
         HirNode::ClassRef(name) => match cx.resolve_class(name) {
@@ -1323,7 +1333,7 @@ fn emit_raise(cx: &Ctx, args: &[NodeId], cause: &crate::hir::RaiseCause) -> Toke
 /// own uniform-representation needs.
 fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> TokenStream {
     // A literal class reference -- bare (`raise NotFound`) or qualified
-    // (`raise Store::Errors::NotFound` -- Phase 15.3) -- when the path
+    // (`raise Store::Errors::NotFound`) -- when the path
     // actually resolves to a class; a constant-shaped node that DOESN'T
     // resolve falls through to the value cases below (a constant can
     // legitimately hold a pre-built exception).
@@ -1416,7 +1426,7 @@ fn emit_raise_value(cx: &Ctx, node: NodeId, explicit_msg: Option<NodeId>) -> Tok
 /// uniform-representation needs.
 /// The class/module PATH a node names, when it has a constant-reference
 /// SHAPE at all: a bare `ClassRef` or a qualified `Foo::Bar`
-/// (`QualifiedConstRead` -- Phase 15.3). Whether the path actually NAMES a
+/// (`QualifiedConstRead`). Whether the path actually NAMES a
 /// registered class (vs. an ordinary value constant) is the caller's
 /// `resolve_class` check, same as the long-standing bare-`ClassRef` rule
 /// (see `emit_call`'s class-method interception docs).
@@ -1629,16 +1639,20 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
     // write, mirroring CRuby's own `rb_check_frozen` in `vm_setivar_slowpath`.
     // The message interpolates the receiver's real `#<Class:0xaddr @ivar=...>`
     // inspect (`default_object_repr`), built ONLY on the raise path (the
-    // `#slf.clone()` is a cheap `Arc` bump, never taken on a normal write).
+    // `Clone::clone(&#slf)` is a cheap `Arc` bump, never taken on a normal write).
     // `RubyObject::is_frozen` is UFCS-qualified: generated programs never
     // `use` the trait by name. The one atomic load this adds to every ivar
     // write (including inside `initialize`, where it's always false) is
     // negligible.
-    let class_name = cx
-        .current_class
-        .map(|cid| cx.compiler.class(cid).name.clone())
-        .expect("ivar write outside a class context");
+    let current = cx.current_class.expect("ivar write outside a class context");
+    let class_name = cx.compiler.class(current).name.clone();
     let prefix = format!("can't modify frozen {class_name}: ");
+    // Boxed via the concrete `new_handle` (not a bare
+    // `RubyValue::Object(Clone::clone(..))`): the constructor's expected
+    // `Arc<dyn RubyObject>` would drive UFCS-clone inference BACKWARDS into
+    // the generic and defeat the unsize coercion; `new_handle`'s concrete
+    // `Arc<Self>` parameter anchors it.
+    let class_ident = super::ident::class_ident(cx.compiler, current);
     let frozen_error = emit_boxed_new(
         cx,
         "FrozenError",
@@ -1646,7 +1660,8 @@ pub(super) fn emit_ivar_write_stmt(cx: &Ctx, name: &str, value: TokenStream) -> 
             zeo_rt::RubyValue::Str(zeo_rt::string_new(format!(
                 "{}{}",
                 #prefix,
-                zeo_rt::RubyValue::Object(#slf.clone()).inspect_string()
+                zeo_rt::RubyValue::Object(#class_ident::new_handle(Clone::clone(&#slf)))
+                    .inspect_string()
             )))
         }],
     );

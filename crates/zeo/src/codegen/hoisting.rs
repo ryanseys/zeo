@@ -25,7 +25,7 @@
 //! site, untouched by this pass. A method's own parameters are bound via
 //! the Rust function signature/`params::emit_prologue`, not this prelude
 //! -- but a REASSIGNED parameter is rebound here from that existing value
-//! rather than nil-shadowed (Phase 15.2; see
+//! rather than nil-shadowed (see
 //! `emit_hoisted_body_with_extra_roots`'s `param_names` docs).
 
 use super::Ctx;
@@ -38,8 +38,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 /// The three ways a local/parameter name's storage can be emitted -- see
-/// each variant's docs. Replaces a 2-way `is_hoisted` bool now that Phase 6
-/// adds a real, escaping capture case (see `codegen::captures`); every read/
+/// each variant's docs. Replaces a 2-way `is_hoisted` bool now that a real,
+/// escaping capture case exists (see `codegen::captures`); every read/
 /// write site should go through `emit_local_read`/`emit_local_write` below
 /// rather than matching this directly, so the 3-way logic lives in ONE
 /// place instead of being re-derived at each of the (now 4+) sites a local
@@ -103,7 +103,12 @@ pub fn emit_local_read(cx: &Ctx, name: &str) -> TokenStream {
         // wrapper alone does NOT change the guard's drop timing; only
         // binding it to a named local inside the block does.
         LocalStorage::Captured => quote! { { let __g = #ident.lock(); __g.clone() } },
-        LocalStorage::Hoisted | LocalStorage::Shadowed => quote! { #ident.clone() },
+        // UFCS through the `Clone` trait, not `.clone()` method syntax: a
+        // `Shadowed` local can be an `Arc<Concrete>` of a user class that
+        // defines a Ruby `clone` method, which becomes an INHERENT method on
+        // the generated struct and would win the method-syntax resolution
+        // over the `Arc` refcount bump (see `codegen::expr`'s `SelfRef` arm).
+        LocalStorage::Hoisted | LocalStorage::Shadowed => quote! { Clone::clone(&#ident) },
     }
 }
 
@@ -469,8 +474,8 @@ pub fn emit_hoisted_body(cx: &Ctx, body: &[NodeId], wrap_ok: bool) -> TokenStrea
 /// bindings. An assigned name that's also a parameter is REBOUND from that
 /// existing value (`let mut x = x;` / a cell seeded with `x`) instead of
 /// nil-defaulted -- the nil default would SHADOW the parameter, making
-/// `def f(name); name = name.upcase; ...` read `nil` (Phase 15.2,
-/// retiring the module docs' old "reassigning a parameter" gap). A
+/// `def f(name); name = name.upcase; ...` read `nil` (retiring the module
+/// docs' old "reassigning a parameter" gap). A
 /// never-assigned parameter isn't collected at all and keeps its plain
 /// signature binding.
 pub fn emit_hoisted_body_with_extra_roots(

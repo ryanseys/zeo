@@ -17,7 +17,7 @@ pub fn run_ruby(source: &str) -> RunResult {
     run_ruby_configured(source, &[], &[])
 }
 
-/// Multi-file harness for Phase 14.1's compile-time `require` resolution:
+/// Multi-file harness for compile-time `require` resolution:
 /// writes `files` (relative path -> source) into a fresh per-test temp
 /// project directory, compiles `entry` (a key in `files`) with the project
 /// dir itself as the requiring-file base and `roots` (relative to the
@@ -137,7 +137,7 @@ pub fn compile_packages(
 }
 
 /// `run_ruby` plus environment variables and argv for the COMPILED BINARY's
-/// own invocation -- backs the Phase 13.4 scheduler-config tests
+/// own invocation -- backs the scheduler-config tests
 /// (`ZEO_THREADS=N` / `--no-gvl` must change nothing observable for a
 /// well-behaved program).
 #[allow(dead_code)] // each test binary compiles its own copy of this module

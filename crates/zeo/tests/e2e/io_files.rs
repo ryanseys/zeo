@@ -119,7 +119,7 @@ fn multiple_modules_in_one_include_statement_resolve_in_given_order() {
     assert_eq!(result.stdout, "a\nb\n");
 }
 
-// Phase 8: `case/in` pattern matching. Every test below was oracle-verified
+// `case/in` pattern matching. Every test below was oracle-verified
 // against real `ruby` first, per this project's established convention.
 
 #[test]

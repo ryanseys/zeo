@@ -1,4 +1,4 @@
-//! The Phase-2b disclosure record: for every library a program `require`s,
+//! The gem disclosure record: for every library a program `require`s,
 //! how zeo actually satisfied it -- and, where zeo's answer is NOT the
 //! upstream gem/extension, that it DIVERGES, with a note naming the backing.
 //!
@@ -40,7 +40,7 @@ pub enum SatisfiedBy {
     BundledGem { path: String },
     /// A file found on a `-I` load root (the installed Ruby's own stdlib).
     StdlibRoot { path: String },
-    /// Recorded but unavailable -- Phase 3.
+    /// Recorded but unavailable.
     #[allow(dead_code)]
     Excluded { kind: String, reason: String },
 }

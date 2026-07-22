@@ -1,4 +1,4 @@
-//! `$foo`-family global variables -- keyed `(box_id, name)` since Phase 18:
+//! `$foo`-family global variables -- keyed `(box_id, name)`:
 //! every `Ruby::Box` gets a fully SEPARATE global table with no fallback
 //! layer at all, which is empirically faithful to CRuby's box model (a box
 //! reads `nil` for a `$g` main set: its clone-on-first-read pulls from the

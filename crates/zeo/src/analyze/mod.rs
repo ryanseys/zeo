@@ -56,152 +56,14 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
             pin_builtin_exceptions_tail(&mut compiler)?;
             tail_pinned = true;
         }
-        if let HirNode::PreExec(body) = &compiler.hir[stmt] {
-            pre_exec.extend(body.clone());
-            continue;
-        }
-        if let HirNode::ClassDef {
-            name,
-            superclass,
-            body,
-            is_module,
-        } = &compiler.hir[stmt]
-        {
-            let name = name.clone();
-            let superclass = superclass.clone();
-            let body = body.clone();
-            let is_module = *is_module;
-            let before = compiler.classes.len();
-            let scopes_before = compiler.scopes.len();
-            register_class(&mut compiler, name, superclass, is_module, &body, &[], 0)?;
-            // Built-in exception classes are BOOTSTRAP: the "defined before
-            // any user program runs" set every `Ruby::Box` sees (see
-            // `Compiler::resolve_class`'s fallback and `Hir::builtin_exceptions_len`).
-            if idx < builtin_exceptions_len {
-                for c in &mut compiler.classes[before..] {
-                    c.is_bootstrap = true;
-                }
-                // Every method body registered by this bootstrap `ClassDef` IS a
-                // pristine `BUILTIN_EXCEPTIONS_RB` body -- installed at runtime by
-                // `register_exceptions`, so codegen must not re-emit it. A later
-                // USER reopen of the same class registers a FRESH scope (after
-                // this point), which stays `native_default: false` and so emits.
-                for s in &mut compiler.scopes[scopes_before..] {
-                    s.native_default = true;
-                }
-            }
-        } else if let HirNode::BoxScope { box_id, body } = &compiler.hir[stmt] {
-            // A top-level box splice: its `ClassDef`s register
-            // under the BOX (real Ruby: a class defined in a box is a
-            // distinct class object); everything else stays in the
-            // BoxScope for ordinary emission under the box context.
-            let (bx, body) = (*box_id, body.clone());
-            let mut rest = Vec::new();
-            for s in body {
-                if let HirNode::ClassDef {
-                    name,
-                    superclass,
-                    body,
-                    is_module,
-                } = &compiler.hir[s]
-                {
-                    let (name, superclass, body, is_module) =
-                        (name.clone(), superclass.clone(), body.clone(), *is_module);
-                    register_class(&mut compiler, name, superclass, is_module, &body, &[], bx)?;
-                } else {
-                    rest.push(s);
-                }
-            }
-            compiler.hir[stmt] = HirNode::BoxScope {
-                box_id: bx,
-                body: rest,
-            };
-            main_statements.push(stmt);
-        } else if let HirNode::DefMethod {
-            name,
-            params,
-            body,
-            is_class_method,
-            ..
-        } = &compiler.hir[stmt]
-        {
-            // A TOP-LEVEL `def` (regular or endless): real Ruby defines it
-            // as a PRIVATE instance method of `Object` -- registered here on
-            // the arena's slot 0 exactly like a `class Object` reopen would,
-            // so `mro::materialize` spreads it into every class (any method
-            // body can call it via implicit self) and codegen emits
-            // `Object`'s own copy through the builtin-reopen container
-            // (`__bm_Object`), dispatched on the runtime `main` object at
-            // top-level call sites.
-            let (name, params, body, is_class_method) =
-                (name.clone(), params.clone(), body.clone(), *is_class_method);
-            if is_class_method {
-                // A TOP-LEVEL `def self.name` is a SINGLETON method on the
-                // `main` object -- CRuby's asymmetry with `def name` above (a
-                // private `Object` instance method callable via implicit self
-                // anywhere): `def self.name` is callable only where `self` is
-                // `main`, i.e. at the top level itself, NOT from inside another
-                // object's method. Desugar to the same runtime install a
-                // `def obj.name` uses, with `self` (which is `main` here) as the
-                // receiver, so a block-taking body threads its block too (the
-                // `method_body` lambda -- Batch G).
-                let self_ref = compiler.hir.push(HirNode::SelfRef);
-                let lambda = compiler.hir.push(HirNode::Lambda {
-                    params,
-                    body,
-                    method_body: true,
-                });
-                let sym = compiler.hir.push(HirNode::SymbolLit(name));
-                let call = compiler.hir.push(HirNode::Call {
-                    receiver: Some(self_ref),
-                    name: "define_singleton_method".to_string(),
-                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
-                    kwargs: vec![],
-                    block: None,
-                    block_arg: None,
-                    safe: false,
-                });
-                main_statements.push(call);
-            } else {
-                let sid = register_method(
-                    &mut compiler,
-                    OBJECT_CLASS,
-                    OBJECT_CLASS,
-                    name,
-                    params,
-                    body,
-                    crate::hir::Visibility::Private,
-                )?;
-                add_own_method(&mut compiler, OBJECT_CLASS, sid, false);
-            }
-        } else if let HirNode::Include(m) = &compiler.hir[stmt] {
-            // A TOP-LEVEL `include M` mixes M into `Object` (real Ruby: the
-            // main object's class is Object, so `include` there adds M to
-            // every object's ancestry) -- registered here exactly like a
-            // `class Object; include M; end` reopen, so `mro::materialize`
-            // spreads M's instance methods (and constants) program-wide and a
-            // bare `M`-method call resolves through implicit self.
-            let target = resolve_module_target(&compiler, m, &[], 0)?;
-            compiler.classes[OBJECT_CLASS.0 as usize]
-                .includes
-                .push(target);
-        } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
-            // Top-level `undef m` -- Object's reopen, exactly like the
-            // `include` above and like the class-body arm in `walk_class_body`.
-            let names = names.clone();
-            compiler.classes[OBJECT_CLASS.0 as usize]
-                .undefined
-                .extend(names);
-        } else if let HirNode::AliasMethod { new_name, old_name } = &compiler.hir[stmt] {
-            let pair = (new_name.clone(), old_name.clone());
-            compiler.classes[OBJECT_CLASS.0 as usize]
-                .pending_aliases
-                .push(pair);
-        } else {
-            main_statements.push(stmt);
-        }
+        process_top_stmt(
+            &mut compiler,
+            stmt,
+            idx < builtin_exceptions_len,
+            &mut main_statements,
+            &mut pre_exec,
+        )?;
     }
-
     // Every `BEGIN` body runs first, ahead of the main program -- see
     // `pre_exec`'s declaration.
     if !pre_exec.is_empty() {
@@ -246,9 +108,302 @@ pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     })
 }
 
-/// Registers one `class`/`module` definition (or REOPENING -- Phase 15.2)
-/// into the `Compiler`, recursively descending nested `ClassDef`s (Phase
-/// 15.3). `cref` is the ENCLOSING lexical chain (outermost first,
+/// One top-level statement of the program walk: intercepts the
+/// definition-shaped nodes (`ClassDef`/`DefMethod`/`Include`/...) for
+/// compile-time registration and pushes everything else onto
+/// `main_statements` for ordinary emission. `bootstrap` marks the
+/// `BUILTIN_EXCEPTIONS_RB` prefix of the program (see `analyze`'s loop);
+/// recursive calls always pass `false` -- nothing nested is bootstrap.
+///
+/// A top-level `if` whose branch CONTAINS such definition nodes -- the
+/// `if defined?(Ractor) ... module M ... end` idiom gems use to guard
+/// version-dependent definitions -- is handled here too: when the
+/// condition is compile-time decidable (`static_top_cond`), the taken
+/// branch's statements are spliced through this same walk recursively and
+/// the untaken branch is dropped, which is exactly the branch real Ruby
+/// would or wouldn't execute at that point in the program. An undecidable
+/// condition over such a branch is a clean compile error: the definitions
+/// couldn't be registered, and codegen has no expression form for them.
+fn process_top_stmt(
+    compiler: &mut Compiler,
+    stmt: NodeId,
+    bootstrap: bool,
+    main_statements: &mut Vec<NodeId>,
+    pre_exec: &mut Vec<NodeId>,
+) -> Result<(), String> {
+    if let HirNode::PreExec(body) = &compiler.hir[stmt] {
+        pre_exec.extend(body.clone());
+        return Ok(());
+    }
+    if let HirNode::ClassDef {
+        name,
+        superclass,
+        body,
+        is_module,
+    } = &compiler.hir[stmt]
+    {
+        let name = name.clone();
+        let superclass = superclass.clone();
+        let body = body.clone();
+        let is_module = *is_module;
+        let before = compiler.classes.len();
+        let scopes_before = compiler.scopes.len();
+        register_class(compiler, name, superclass, is_module, &body, &[], 0)?;
+        // Built-in exception classes are BOOTSTRAP: the "defined before
+        // any user program runs" set every `Ruby::Box` sees (see
+        // `Compiler::resolve_class`'s fallback and `Hir::builtin_exceptions_len`).
+        if bootstrap {
+            for c in &mut compiler.classes[before..] {
+                c.is_bootstrap = true;
+            }
+            // Every method body registered by this bootstrap `ClassDef` IS a
+            // pristine `BUILTIN_EXCEPTIONS_RB` body -- installed at runtime by
+            // `register_exceptions`, so codegen must not re-emit it. A later
+            // USER reopen of the same class registers a FRESH scope (after
+            // this point), which stays `native_default: false` and so emits.
+            for s in &mut compiler.scopes[scopes_before..] {
+                s.native_default = true;
+            }
+        }
+    } else if let HirNode::BoxScope { box_id, body } = &compiler.hir[stmt] {
+        // A top-level box splice: its `ClassDef`s register
+        // under the BOX (real Ruby: a class defined in a box is a
+        // distinct class object); everything else stays in the
+        // BoxScope for ordinary emission under the box context.
+        let (bx, body) = (*box_id, body.clone());
+        let mut rest = Vec::new();
+        for s in body {
+            if let HirNode::ClassDef {
+                name,
+                superclass,
+                body,
+                is_module,
+            } = &compiler.hir[s]
+            {
+                let (name, superclass, body, is_module) =
+                    (name.clone(), superclass.clone(), body.clone(), *is_module);
+                register_class(compiler, name, superclass, is_module, &body, &[], bx)?;
+            } else {
+                rest.push(s);
+            }
+        }
+        compiler.hir[stmt] = HirNode::BoxScope {
+            box_id: bx,
+            body: rest,
+        };
+        main_statements.push(stmt);
+    } else if let HirNode::DefMethod {
+        name,
+        params,
+        body,
+        is_class_method,
+        ..
+    } = &compiler.hir[stmt]
+    {
+        // A TOP-LEVEL `def` (regular or endless): real Ruby defines it
+        // as a PRIVATE instance method of `Object` -- registered here on
+        // the arena's slot 0 exactly like a `class Object` reopen would,
+        // so `mro::materialize` spreads it into every class (any method
+        // body can call it via implicit self) and codegen emits
+        // `Object`'s own copy through the builtin-reopen container
+        // (`__bm_Object`), dispatched on the runtime `main` object at
+        // top-level call sites.
+        let (name, params, body, is_class_method) =
+            (name.clone(), params.clone(), body.clone(), *is_class_method);
+        if is_class_method {
+            // A TOP-LEVEL `def self.name` is a SINGLETON method on the
+            // `main` object -- CRuby's asymmetry with `def name` above (a
+            // private `Object` instance method callable via implicit self
+            // anywhere): `def self.name` is callable only where `self` is
+            // `main`, i.e. at the top level itself, NOT from inside another
+            // object's method. Desugar to the same runtime install a
+            // `def obj.name` uses, with `self` (which is `main` here) as the
+            // receiver, so a block-taking body threads its block too (the
+            // `method_body` lambda -- Batch G).
+            let self_ref = compiler.hir.push(HirNode::SelfRef);
+            let lambda = compiler.hir.push(HirNode::Lambda {
+                params,
+                body,
+                method_body: true,
+            });
+            let sym = compiler.hir.push(HirNode::SymbolLit(name));
+            let call = compiler.hir.push(HirNode::Call {
+                receiver: Some(self_ref),
+                name: "define_singleton_method".to_string(),
+                args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                kwargs: vec![],
+                block: None,
+                block_arg: None,
+                safe: false,
+            });
+            main_statements.push(call);
+        } else {
+            let sid = register_method(
+                compiler,
+                OBJECT_CLASS,
+                OBJECT_CLASS,
+                name,
+                params,
+                body,
+                crate::hir::Visibility::Private,
+            )?;
+            add_own_method(compiler, OBJECT_CLASS, sid, false);
+        }
+    } else if let HirNode::Include(m) = &compiler.hir[stmt] {
+        // A TOP-LEVEL `include M` mixes M into `Object` (real Ruby: the
+        // main object's class is Object, so `include` there adds M to
+        // every object's ancestry) -- registered here exactly like a
+        // `class Object; include M; end` reopen, so `mro::materialize`
+        // spreads M's instance methods (and constants) program-wide and a
+        // bare `M`-method call resolves through implicit self.
+        let target = resolve_module_target(compiler, m, &[], 0)?;
+        compiler.classes[OBJECT_CLASS.0 as usize]
+            .includes
+            .push(target);
+    } else if let HirNode::Undef(names) = &compiler.hir[stmt] {
+        // Top-level `undef m` -- Object's reopen, exactly like the
+        // `include` above and like the class-body arm in `walk_class_body`.
+        let names = names.clone();
+        compiler.classes[OBJECT_CLASS.0 as usize]
+            .undefined
+            .extend(names);
+    } else if let HirNode::AliasMethod { new_name, old_name } = &compiler.hir[stmt] {
+        let pair = (new_name.clone(), old_name.clone());
+        compiler.classes[OBJECT_CLASS.0 as usize]
+            .pending_aliases
+            .push(pair);
+    } else if let HirNode::If {
+        cond,
+        then_body,
+        else_body,
+    } = &compiler.hir[stmt]
+    {
+        // Only intercept an `if` when a branch holds definition nodes the
+        // walk must register; a plain top-level `if` stays a normal
+        // statement (codegen's `constfold::static_cond` already folds
+        // decidable conditions at emission time).
+        if !branch_has_top_defs(compiler, then_body) && !branch_has_top_defs(compiler, else_body) {
+            main_statements.push(stmt);
+            return Ok(());
+        }
+        let (cond, then_body, else_body) = (*cond, then_body.clone(), else_body.clone());
+        let taken = match static_top_cond(compiler, cond) {
+            Some(true) => then_body,
+            Some(false) => else_body,
+            None => {
+                return Err(
+                    "class/module definition inside a top-level `if` is only supported when \
+                     the condition is compile-time decidable (e.g. `defined?(SomeConstant)`)"
+                        .to_string(),
+                );
+            }
+        };
+        for s in taken {
+            process_top_stmt(compiler, s, false, main_statements, pre_exec)?;
+        }
+    } else {
+        main_statements.push(stmt);
+    }
+    Ok(())
+}
+
+/// Whether any statement in `body` (descending nested `if` branches) is a
+/// node only the top-level walk can register -- exactly the set
+/// `codegen::expr::emit_expr` has no expression form for, minus
+/// `DefMethod` (which has a runtime `define_method` emission and so
+/// survives inside an ordinary undecided `if` unchanged).
+fn branch_has_top_defs(compiler: &Compiler, body: &[NodeId]) -> bool {
+    body.iter().any(|&s| match &compiler.hir[s] {
+        HirNode::ClassDef { .. }
+        | HirNode::Include(_)
+        | HirNode::Extend(_)
+        | HirNode::Prepend(_)
+        | HirNode::Undef(_)
+        | HirNode::AliasMethod { .. }
+        | HirNode::MethodVisibility { .. } => true,
+        HirNode::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            branch_has_top_defs(compiler, then_body) || branch_has_top_defs(compiler, else_body)
+        }
+        _ => false,
+    })
+}
+
+/// `codegen::constfold::static_cond`'s analyze-time sibling: compile-time
+/// truthiness of a top-level `if` condition, decided against the classes
+/// REGISTERED SO FAR in the walk -- which is exactly the set real Ruby has
+/// defined when execution reaches this statement, since the walk mirrors
+/// top-level execution order (a class defined LATER in the file is not
+/// `defined?` yet at this point in real Ruby either, and a require-gated
+/// builtin is invisible before its `require`, matching CRuby's undefined
+/// constant there too).
+///
+/// Differences from the codegen fold, which runs after
+/// `mro::resolve_consts`: VALUE constants aren't registered yet here, so a
+/// name that might be one -- any name the program `ConstWrite`s, or a
+/// qualified read whose scope resolves without a nested class match --
+/// degrades to `None` (undecidable) rather than a confident `false`.
+fn static_top_cond(compiler: &Compiler, id: NodeId) -> Option<bool> {
+    match &compiler.hir[id] {
+        HirNode::Defined(inner) => match &compiler.hir[*inner] {
+            HirNode::ClassRef(name) => {
+                if compiler.resolve_class(name, &[], 0).is_some() {
+                    Some(true)
+                } else if const_ever_written(compiler, name) {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            HirNode::QualifiedConstRead(scope, name) => {
+                match compiler.resolve_class(scope, &[], 0) {
+                    Some(sid) => {
+                        // Same probe order as `constfold::class_const_in`:
+                        // a class nested in `scope`, else (const lookup
+                        // inherits through Object) a top-level class.
+                        let fq = format!("{}::{name}", compiler.fq_name(sid));
+                        if compiler.resolve_class(&fq, &[], 0).is_some()
+                            || compiler.resolve_class(name, &[], 0).is_some()
+                        {
+                            Some(true)
+                        } else {
+                            // Could name a VALUE constant on `scope` -- not
+                            // visible until `resolve_consts` runs.
+                            None
+                        }
+                    }
+                    None if const_ever_written(compiler, scope) => None,
+                    None => Some(false),
+                }
+            }
+            _ => None,
+        },
+        HirNode::And(l, r) => match static_top_cond(compiler, *l) {
+            Some(false) => Some(false),
+            Some(true) => static_top_cond(compiler, *r),
+            None => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether ANY `ConstWrite` in the program targets `name` -- scope ignored,
+/// a deliberate over-approximation used only to keep `static_top_cond`
+/// honest: a name that might be a value constant somewhere can't be
+/// confidently folded to "undefined".
+fn const_ever_written(compiler: &Compiler, name: &str) -> bool {
+    compiler
+        .hir
+        .iter()
+        .any(|n| matches!(n, HirNode::ConstWrite { name: w, .. } if w == name))
+}
+
+/// Registers one `class`/`module` definition (or REOPENING) into the
+/// `Compiler`, recursively descending nested `ClassDef`s. `cref` is the
+/// ENCLOSING lexical chain (outermost first,
 /// `Compiler::cref_of`'s order) -- empty at the top level -- used to
 /// resolve the qualified-form prefix, the superclass, and
 /// include/extend/prepend targets, exactly as real Ruby resolves each of
@@ -409,8 +564,8 @@ fn register_class(
     // fresh, unrelated `Store::String` (real Ruby's rule), which then
     // lexically shadows the builtin inside `Store` -- also real Ruby's
     // rule, falling out of `resolve_class`'s scope walk. Still rejected
-    // (clean errors, spike scope): `Object` (per-box TOP-LEVEL methods are
-    // Phase 18's job -- an Object reopen is top-level `def` by another
+    // (clean errors, spike scope): `Object` (per-box TOP-LEVEL methods
+    // aren't supported yet -- an Object reopen is top-level `def` by another
     // name), `Class`/`Module` (no per-class-value dispatch exists), and
     // the builtin MODULES (`Enumerable`/`Comparable` -- patching one would
     // need re-materialization onto every includer, including the Rust-
@@ -469,7 +624,7 @@ fn register_class(
         }
     }
     let class_id = match existing {
-        // REOPENING (Phase 15.2, replacing the old silent-no-op duplicate
+        // REOPENING (replacing the old silent-no-op duplicate
         // registration): a second `class Foo`/`module Foo` MERGES into the
         // existing `ClassInfo` -- the body loop below appends
         // includes/body-statements and registers methods with real Ruby's
@@ -530,7 +685,7 @@ fn register_class(
                         })?;
                         // Subclassable builtins (D3):
                         //  - `Struct`/`Data`: subclasses are ordinary
-                        //    ivar-carrying objects (generated struct, Phase 17.1-H).
+                        //    ivar-carrying objects (generated struct).
                         //  - `Numeric`: abstract, so a subclass is likewise a plain
                         //    ivar object (user-implemented `<=>`/`coerce`, Comparable
                         //    via the ancestor chain) -- the same struct machinery.
@@ -630,7 +785,7 @@ fn register_class(
                     *visibility,
                 );
                 // An OPERATOR definition on a builtin reopen (`class
-                // Integer; def +`) is rejected outright (Phase 16.3, spike
+                // Integer; def +`) is rejected outright (spike
                 // scope): the native `Int`/`Float`/`Str` operator fast
                 // paths are emitted unconditionally at every static call
                 // site, so a user operator would be silently bypassed
@@ -1410,8 +1565,8 @@ mod tests {
             .unwrap_or_else(|| panic!("class `{name}` not registered"))
     }
 
-    /// Phase 15.2: reopening merges into ONE `ClassInfo` (the pre-15.2
-    /// behavior pushed a shadowed duplicate whose members never dispatched).
+    /// Reopening merges into ONE `ClassInfo` (an earlier version pushed a
+    /// shadowed duplicate whose members never dispatched).
     #[test]
     fn reopening_merges_into_the_existing_class() {
         let a = analyze_src(
@@ -1526,7 +1681,7 @@ mod tests {
     }
 }
 
-/// Phase 16.3: reopening a BUILTIN value class attaches methods/cvars/
+/// Reopening a BUILTIN value class attaches methods/cvars/
 /// consts to the existing builtin `ClassInfo`; the still-rejected set
 /// (Object, Class/Module, builtin modules, superclass clauses, operators,
 /// ivars) rejects with clean messages.
@@ -1648,8 +1803,8 @@ mod builtin_reopen_tests {
 mod namespacing_tests {
     use super::tests::{analyze_err, analyze_src, class_named};
 
-    /// Phase 15.3: nested definitions register with `lexical_parent`,
-    /// resolve scope-exactly, and display fully qualified.
+    /// Nested definitions register with `lexical_parent`, resolve
+    /// scope-exactly, and display fully qualified.
     #[test]
     fn nested_definition_registers_under_its_namespace() {
         let a = analyze_src(
@@ -1711,8 +1866,8 @@ mod namespacing_tests {
         assert_ne!(wa, wb);
     }
 
-    /// Reopening composes with nesting (Phase 15.2 + 15.3): both the
-    /// textual and the qualified reopen merge into the one registration.
+    /// Reopening composes with nesting: both the textual and the
+    /// qualified reopen merge into the one registration.
     #[test]
     fn nested_class_reopens_through_both_forms() {
         let a = analyze_src(
@@ -1777,7 +1932,7 @@ mod class_value_tests {
     };
     use crate::types::TyKind;
 
-    /// Phase 16.1: a local assigned a bare class name is statically typed
+    /// A local assigned a bare class name is statically typed
     /// as a class VALUE of that class -- what keeps `x.new`/class-method
     /// calls through the variable on Path 1.
     #[test]
@@ -1798,8 +1953,8 @@ mod class_value_tests {
 
     /// `Class < Module < Object` (the ABI's declarative parent edges), so
     /// `Widget.is_a?(Module)` answers true through the ordinary ancestry
-    /// machinery -- and since Phase 17.1 the chain carries real Ruby's
-    /// universal tail: `..., Object, Kernel, BasicObject`.
+    /// machinery -- and the chain carries real Ruby's universal tail:
+    /// `..., Object, Kernel, BasicObject`.
     #[test]
     fn class_class_linearizes_under_module() {
         let a = analyze_src("");

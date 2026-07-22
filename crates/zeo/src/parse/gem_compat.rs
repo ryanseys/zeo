@@ -36,7 +36,7 @@ pub enum GemCompatOutcome {
 }
 
 /// Classify every gem in `lockfile` against an installed `store` (`gem env
-/// gemdir`), reusing the Phase-3 provider. The out-of-the-box resolvability
+/// gemdir`), reusing the same provider. The out-of-the-box resolvability
 /// matrix behind `cargo xtask gem-compat`.
 pub fn gem_compat(
     store: &std::path::Path,

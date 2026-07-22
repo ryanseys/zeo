@@ -1,4 +1,4 @@
-//! `Regexp`/`MatchData` (Phase 12.7) -- backed by the `regex` crate, not
+//! `Regexp`/`MatchData` -- backed by the `regex` crate, not
 //! Ruby's own Onigmo engine. A real, documented semantic gap versus real
 //! Ruby, not silent wrongness: no backreferences INSIDE a pattern (`\1` as
 //! part of what's being matched -- as opposed to a `gsub`/`sub` REPLACEMENT

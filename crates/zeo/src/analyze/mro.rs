@@ -500,7 +500,7 @@ fn directly_defines_const(compiler: &Compiler, class_id: ClassId, name: &str) ->
 
 /// Resolves (and memoizes onto `ClassInfo::const_owners`) which class/module
 /// owns a bare constant `name` as referenced from `class_id` -- real Ruby's
-/// resolution order (Phase 15.3, oracle-verified): the referencing scope's
+/// resolution order (oracle-verified): the referencing scope's
 /// OWN definition first, then the ENCLOSING lexical scopes (innermost
 /// first, each checked for a DIRECT definition -- never their inherited/
 /// memoized claims, which is what real Ruby's per-scope const-table check

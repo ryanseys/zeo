@@ -144,7 +144,7 @@ pub(super) fn emit_class_method_call_on(
     let scope = cx.compiler.scope(sid);
     let target_ident = crate::codegen::ident::class_ident(cx.compiler, target);
     let method_ident = crate::codegen::ident::class_method_ident(name);
-    // Full `Params` support (P1): the same binding machinery an instance
+    // Full `Params` support: the same binding machinery an instance
     // call gets, through the receiverless `Callee::Bare` shape.
     crate::codegen::params::emit_call_args_to(
         cx,

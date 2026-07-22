@@ -470,7 +470,7 @@ fn case_in_pattern_matching_dispatches_via_real_regexp_case_eq() {
     assert_eq!(result.stdout, "number\nlower\nother\n");
 }
 
-/// SEMANTICS FLIP (Phase 17.1-D): String patterns to split/gsub used to be
+/// SEMANTICS FLIP: String patterns to split/gsub used to be
 /// compile-time rejections ("pass a Regexp literal instead"); the String
 /// table rows now implement them for real, so the static regexp path falls
 /// through to dynamic dispatch instead. Oracle-verified.

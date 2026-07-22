@@ -180,7 +180,7 @@ pub(crate) fn lower_pattern(
         });
     }
     // A bare constant with no capture (`in Integer`, `in SomeClass`, or a
-    // qualified `in Store::Item` -- Phase 15.3) -- an `is_a?`-style check,
+    // qualified `in Store::Item`) -- an `is_a?`-style check,
     // resolved (built-in tag vs. user-class ancestry) entirely in
     // `codegen::patterns::emit_class_check`.
     if let Some(c) = node.as_constant_read_node() {

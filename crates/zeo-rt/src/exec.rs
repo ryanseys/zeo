@@ -1,6 +1,6 @@
-//! Program entry (Phase 13.4): the generated program's whole top level runs
+//! Program entry: the generated program's whole top level runs
 //! as `may`'s FIRST coroutine, not as a bare `fn main()` body -- so the main
-//! program, every `Thread` (a `may` green coroutine, Phase 13.5), and
+//! program, every `Thread` (a `may` green coroutine), and
 //! `Fiber`'s ambient state all share one uniform execution-context model,
 //! with no "top-level vs. inside-a-Thread" special-casing anywhere in
 //! codegen.
@@ -21,7 +21,7 @@
 //! delegates -- never set a `thread_local!`, cross a `may` scheduling
 //! point, then read it back -- is inherited program-wide and documented
 //! where it bites (the `handling` module's `$!` stack, migrated to
-//! coroutine-local storage in Phase 13.6; `fiber`'s thread-pinned table,
+//! coroutine-local storage; `fiber`'s thread-pinned table,
 //! which fails CLOSED with a real `FiberError` on migration rather than
 //! corrupting -- see that module's docs). Under the default single worker,
 //! no coroutine can ever migrate and the obligation is trivially met.

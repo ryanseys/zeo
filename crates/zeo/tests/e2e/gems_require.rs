@@ -4,7 +4,7 @@ use crate::support::{
 
 #[test]
 fn gem_disclosure_report_records_how_each_library_was_satisfied() {
-    // Phase 2b: the report is the honesty anchor for the compatibility claim,
+    // The report is the honesty anchor for the compatibility claim,
     // so it gets a test that fails when it lies. Runs on the DEFAULT (report-on)
     // path -- the thing --no-report suppresses -- not the harness opt-out.
     let report = std::env::temp_dir().join(format!("zeo-gems-test-{}.json", std::process::id()));
@@ -46,7 +46,7 @@ fn gem_disclosure_report_records_how_each_library_was_satisfied() {
 
 #[test]
 fn gem_compat_classifies_each_locked_gem() {
-    // Phase 4: the classification behind `cargo xtask gem-compat`, over the
+    // The classification behind `cargo xtask gem-compat`, over the
     // self-contained fixture store -- pure Ruby compiles, a native-extension
     // gem and a precompiled-only gem are both native-unsupported.
     use zeo::GemCompatOutcome;
@@ -166,7 +166,7 @@ fn object_typed_local_widened_to_poly_across_branches_boxes_correctly() {
     assert_eq!(result.stdout, "foo\nbar\n");
 }
 
-// ---- Phase 14.1: require/require_relative/load compile-time splicing ----
+// ---- require/require_relative/load compile-time splicing ----
 // Every positive-path expectation below was oracle-verified against real
 // `ruby` (4.0.5) first, per this project's standing convention.
 
@@ -431,7 +431,7 @@ fn a_feature_provided_by_two_packages_is_a_loud_ambiguity_error() {
     );
 }
 
-// ---- Phase 14.3: base64 native-Rust package ----
+// ---- base64 native-Rust package ----
 
 #[test]
 fn base64_package_matches_real_ruby() {
@@ -527,7 +527,7 @@ fn scaffolded_extension_constant_resolves_but_is_a_name_error_without_require() 
     );
 }
 
-// ---- Phase 14.4: the set pure-Ruby package + the dispatch fixes it forced ----
+// ---- The set pure-Ruby package + the dispatch fixes it forced ----
 
 #[test]
 fn set_package_matches_real_rubys_core_set() {
@@ -599,10 +599,10 @@ fn object_new_builds_a_distinct_boxed_sentinel() {
     assert_eq!(result.stdout, "false\ntrue\ntrue\n");
 }
 
-// -- Phase 18: Ruby::Box. Oracle: `RUBY_BOX=1 ruby -W:no-experimental`
-// (verified per the plan's research contract; where our AOT model
-// deliberately diverges -- handle inspect suffix, compile-time rejections
-// -- the expectation below states OUR documented behavior).
+// -- Ruby::Box. Oracle: `RUBY_BOX=1 ruby -W:no-experimental`
+// (where our AOT model deliberately diverges -- handle inspect suffix,
+// compile-time rejections -- the expectation below states OUR documented
+// behavior).
 
 /// The keystone: a box-required file's classes are DISTINCT from main's
 /// (same file, different class objects), builtins are SHARED

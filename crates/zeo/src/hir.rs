@@ -27,9 +27,9 @@ pub struct Hir {
     /// the main file itself is NOT recorded (matching CRuby, where the main
     /// script never enters `$LOADED_FEATURES`). Deliberately per-instance,
     /// not per-canonical-file: `load` re-splices the same file fresh, and
-    /// Phase 14.5's `Ruby::Box` work re-executes a file once per box, so an
+    /// `Ruby::Box` re-executes a file once per box, so an
     /// instance is the unit provenance must track. Nothing downstream
-    /// consumes this yet -- it exists so 14.5's `BoxId` becomes a field
+    /// consumes this yet -- it exists so a future `BoxId` becomes a field
     /// flip on `LoadedFile` plus `(box_id, path)`-keyed dedup instead of a
     /// loader rework (see `parse::loader`).
     pub loaded_files: Vec<LoadedFile>,
@@ -75,16 +75,16 @@ pub struct LoadedFile {
     /// statement pulled this one in; `None` when required directly by the
     /// main file.
     pub required_from: Option<usize>,
-    /// The package (Phase 14.2 `spin.toml` unit) this file belongs to:
+    /// The package (`spin.toml` unit) this file belongs to:
     /// `Some(name)` when the file was resolved out of a package's roots, or
     /// pulled in via `require_relative`/`load` FROM a file already
     /// belonging to that package (attribution is inherited -- a package's
     /// internal files are part of the package). `None` for plain `-I`-root
     /// and main-file-relative files. This is the natural box-boundary
-    /// candidate for Phase 14.5 (real `Ruby::Box` isolation is per
+    /// candidate for `Ruby::Box` isolation (real box isolation is per
     /// require-graph subtree, and a package is exactly such a subtree).
     pub package: Option<String>,
-    /// Always 0 (the root box) until Phase 14.5 -- see `Hir::loaded_files`.
+    /// Always 0 (the root box) for now -- see `Hir::loaded_files`.
     pub box_id: u32,
 }
 
@@ -93,6 +93,13 @@ impl Hir {
     /// the gated builtin's constant program-wide (see `activated_features`).
     pub fn activate_feature(&mut self, feature: &str) {
         self.activated_features.insert(feature.to_string());
+    }
+
+    /// Every node in the arena, for whole-program SYNTACTIC scans -- e.g.
+    /// `analyze`'s "is this name ever assigned as a constant anywhere"
+    /// check, which needs no tree structure, just the full node set.
+    pub fn iter(&self) -> impl Iterator<Item = &HirNode> {
+        self.nodes.iter()
     }
 }
 
@@ -335,7 +342,7 @@ impl Params {
     /// optional, named rest/kwrest/block, post, keywords) -- what
     /// `codegen::hoisting` consults so a REASSIGNED parameter is rebound
     /// from its already-bound value (`let mut x = x;`) instead of shadowed
-    /// by the nil-defaulted hoisting declaration (Phase 15.2: pre-existing
+    /// by the nil-defaulted hoisting declaration (a pre-existing
     /// silent wrongness surfaced by bare-`super` forwarding, where
     /// `def f(name); name = name.upcase; super; end` must forward the
     /// reassigned value).
@@ -695,7 +702,7 @@ pub struct PatternArm {
 }
 
 /// A single multi-assignment target slot (`a, b = ...`'s `a`/`b`, or a
-/// nested `(a, b), c = ...`'s `(a, b)`) -- generalizes the Phase-4-era
+/// nested `(a, b), c = ...`'s `(a, b)`) -- generalizes the original
 /// plain-local-only shape to every real Ruby assignment target kind, mirrored
 /// directly from `MultiWriteNode`/`MultiTargetNode`'s own recursive
 /// `lefts`/`rest`/`rights` grammar (see `MultiTargetGroup`). `Call` covers
@@ -953,7 +960,7 @@ pub struct FfiCall {
 pub enum HirNode {
     Program(Vec<NodeId>),
     IntegerLit(i64),
-    /// An Integer literal beyond i64 (Phase 17.1's bignum) -- carried as
+    /// An Integer literal beyond i64 (the bignum representation) -- carried as
     /// prism's own `(negative, LSB-first u32 digits)` shape so zeo
     /// needs no bigint dependency; codegen emits
     /// `zeo_rt::int_from_u32_digits`. Types as `Int` like `IntegerLit`
@@ -981,7 +988,7 @@ pub enum HirNode {
     FloatLit(f64),
     SymbolLit(String),
     /// `nil` -- previously unrepresentable (no example needed it before
-    /// Phase 8), but `case/in`'s `Pattern::Value` fallback needs `in nil` to
+    /// pattern matching landed), but `case/in`'s `Pattern::Value` fallback needs `in nil` to
     /// lower through the ordinary expression path like any other literal,
     /// so this closes a genuine, narrow, pre-existing gap rather than
     /// special-casing pattern lowering around it.
@@ -1019,7 +1026,7 @@ pub enum HirNode {
     /// matching only (no subject means each `when` value is itself the
     /// boolean condition, like a chained `if`/`elsif`). `case/in` pattern
     /// matching is a distinct prism node (`CaseMatchNode`) and isn't
-    /// lowered to this -- see the plan's Phase 8.
+    /// lowered to this.
     CaseWhen {
         subject: Option<NodeId>,
         /// Each arm's `(conditions, body)`. The conditions are
@@ -1257,9 +1264,9 @@ pub enum HirNode {
     /// (Rust's own `while` is never an expression; see `codegen::loops`).
     /// The do-while form (`begin ... end while cond`, body always runs at
     /// least once) is a distinct prism shape wrapping a `BeginNode`, which
-    /// isn't lowered until Phase 9's `begin`/`rescue` -- it already falls
-    /// through to the generic "unsupported syntax" error untouched, so it
-    /// needs no explicit handling here.
+    /// isn't lowered -- it already falls through to the generic
+    /// "unsupported syntax" error untouched, so it needs no explicit
+    /// handling here.
     While {
         cond: NodeId,
         body: Vec<NodeId>,
@@ -1270,8 +1277,7 @@ pub enum HirNode {
     /// `parse/mod.rs` desugars that call shape to this at lowering time,
     /// mirroring `define_method`'s existing call-shape desugar. An
     /// unconditional labeled Rust `loop { }` with no exit test of its own --
-    /// only `break` (or, once Phase 9 exists, an uncaught `raise`) ever ends
-    /// it.
+    /// only `break` (or an uncaught `raise`) ever ends it.
     Loop {
         body: Vec<NodeId>,
     },
@@ -1301,8 +1307,8 @@ pub enum HirNode {
     /// `break`/`next`/`redo` outside any loop/block is a parse error, not
     /// something lowering has to re-validate). Compiles to a literal Rust
     /// `break 'label value;` -- no `Signal` involved, per the ABI's stated
-    /// scope-cut (see `signal.rs`), since real escaping closures don't exist
-    /// until Part 1.3/Phase 6. A multi-value `break a, b` lowers to a single
+    /// scope-cut (see `signal.rs`), since a `break` inside a real escaping
+    /// closure is handled separately. A multi-value `break a, b` lowers to a single
     /// implicit-array argument (`break [a, b]`), the same as `Return`/`Next`.
     Break(Option<NodeId>),
     /// `next` / `next value` -- ends the current iteration early, jumping to

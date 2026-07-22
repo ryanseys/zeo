@@ -1,6 +1,6 @@
 //! Native numeric helpers backing codegen's generalized numeric-operator
 //! dispatch. The `Integer` family moved to `builtins::integer` with the
-//! Phase 17.1 bignum migration (operands/results are `&RubyValue` now --
+//! bignum migration (operands/results are `&RubyValue` now --
 //! an `Int`-typed value may carry either payload); this module keeps the
 //! plain `f64` family (`Float` stays a single-payload type) and re-exports
 //! the Integer core so generated programs and codegen keep one flat

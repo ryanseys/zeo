@@ -376,7 +376,7 @@ builtin_methods! {
         };
         Ok(RubyValue::Int((last - s + 1).max(0)))
     }
-    // `step(n)`: the blockless form returns an Enumerator (Phase 17.2).
+    // `step(n)`: the blockless form returns an Enumerator.
     "step" | "%"[1] => fn step(recv, args, block) {
         arity!(args, 1);
         let p = block_or_enum!(recv, "step", args, block);

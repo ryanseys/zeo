@@ -379,7 +379,7 @@ fn enumerable_min_max_dispatch_a_user_spaceship() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 17.1-B -- the MRO-walking builtin method tables: Kernel/BasicObject/
+// The MRO-walking builtin method tables: Kernel/BasicObject/
 // Comparable resolve as real ancestors on VALUE receivers, reopens are found
 // per-ancestor, Range#=== is real, and arg-type mismatches raise CRuby's
 // TypeError/ArgumentError shapes. Oracle: ruby 4.0.5.

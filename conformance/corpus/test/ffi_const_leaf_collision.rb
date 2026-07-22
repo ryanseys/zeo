@@ -1,14 +1,19 @@
-# An ffi_const whose leaf name collides with a plain constant in another
-# module must resolve parent-qualified (the plain constant used to claim
-# the leaf-keyed slot, silently rebinding the reference and its type).
+# A constant in an FFI-library module whose leaf name collides with a plain
+# constant in another module must resolve parent-qualified (a leaf-keyed
+# constant table would silently rebind the reference and its type). Ported
+# from spinel's ffi_const to the real ffi gem API: the constant is a plain
+# Ruby constant on the FFI::Library module.
+require "ffi"
+
 module Verbs
   TEXT = "download-text"
 end
 
 module CMath
+  extend FFI::Library
   ffi_lib "m"
-  ffi_const :TEXT, 3
-  ffi_func :fabs, [:double], :double
+  TEXT = 3
+  attach_function :fabs, [:double], :double
 end
 
 t = 3

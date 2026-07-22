@@ -81,7 +81,7 @@ fn thread_current_name_status_and_thread_locals() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.3: Fiber -- corosensei-backed stackful coroutines behind the
+// Fiber -- corosensei-backed stackful coroutines behind the
 // zeo-fiber shim (see that crate's docs for the one quarantined unsafe
 // block and its invariants). Every snippet oracle-verified against real
 // `ruby` first; error messages are CRuby-verbatim (`cont.c`).
@@ -200,7 +200,7 @@ fn nested_fibers_each_yield_to_their_own_resumer() {
     // must suspend the outer one, not touch the inner's suspended yielder.
     // The inner fiber is CREATED outside the outer's block (captured via an
     // ordinary local) because a block literal escaping from inside another
-    // escaping block is a PRE-existing Phase 6 scope-cut unrelated to
+    // escaping block is a PRE-existing scope-cut unrelated to
     // fibers; the nested block-LITERAL form is covered at the Rust level by
     // zeo-fiber's own `nested_fibers_yield_to_their_own_resumers` test.
     let result = run_ruby(
@@ -225,7 +225,7 @@ fn nested_fibers_each_yield_to_their_own_resumer() {
 #[test]
 fn a_fiber_body_captures_and_mutates_enclosing_locals() {
     // The fiber's block goes through the ordinary escaping-Proc capture
-    // machinery (Phase 6's Arc<Mutex> cells), so shared mutation across
+    // machinery (Arc<Mutex> cells), so shared mutation across
     // suspension points works exactly like any other escaping block.
     let result = run_ruby(
         r#"
@@ -246,7 +246,7 @@ fn a_fiber_body_captures_and_mutates_enclosing_locals() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.4: the whole top level runs as `may`'s first coroutine, with the
+// The whole top level runs as `may`'s first coroutine, with the
 // worker count as the GVL switch (see `zeo_rt::run_main`'s docs). The
 // REAL regression test for this change is every other test in this file --
 // all of them now execute through the coroutine-wrapped main. These three
@@ -296,7 +296,7 @@ fn a_malformed_zeo_threads_value_fails_loudly_at_startup() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.5: Thread/Mutex/Queue over may's green coroutines (see
+// Thread/Mutex/Queue over may's green coroutines (see
 // zeo_rt::thread's docs, incl. the documented cooperative-scheduling
 // divergence -- these tests only assert SYNCHRONIZED, deterministic
 // outcomes). Every snippet oracle-verified against real `ruby`; error
@@ -364,8 +364,8 @@ fn an_uncaught_exception_in_a_thread_reraises_at_join_and_value() {
 #[test]
 fn mutex_protected_counter_across_threads_is_exact() {
     // THE canonical threading idiom -- Proc-within-Proc (Thread.new wrapping
-    // synchronize), only possible because Phase 13.5 lifted the nested-
-    // escaping-block rejection. The sum is deterministic regardless of
+    // synchronize), only possible because the nested-
+    // escaping-block rejection was lifted. The sum is deterministic regardless of
     // interleaving; the e2e harness runs this under the default GVL mode,
     // and the same program was manually verified identical under
     // ZEO_THREADS=4 (real parallelism).
@@ -534,7 +534,7 @@ fn queue_length_shovel_and_empty_predicate() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.6: the `$!`/HANDLING stack is may COROUTINE-local (not
+// The `$!`/HANDLING stack is may COROUTINE-local (not
 // thread-local -- multiple Ruby Threads share one OS worker under the GVL
 // default), and Fiber#resume swaps in each fiber's own saved stack, giving
 // fibers the isolated execution context CRuby's per-fiber `saved_ec`
@@ -797,7 +797,7 @@ fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.8: Ractor -- real OS threads sharing the global heap, with the
+// Ractor -- real OS threads sharing the global heap, with the
 // frozen-or-copy boundary discipline (see zeo_rt::ractor's docs, incl.
 // the documented divergences: no Ractor::RemoteError wrapper, RactorError
 // standing in for Ractor::Error, process-shared globals). Oracle-verified.
@@ -951,12 +951,12 @@ fn a_deeply_frozen_object_crosses_a_ractor_boundary_by_reference() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 13.9: the comprehensive cross-feature sweep. Every scenario was
+// The comprehensive cross-feature sweep. Every scenario was
 // FIRST run as one combined program, oracle-verified byte-for-byte against
 // real `ruby`, then confirmed byte-identical under all three scheduler
 // modes (default GVL, ZEO_THREADS=4, --no-gvl) and stable across
 // repeated 8-worker runs. Individual tests below keep failures localized;
-// the composite mode-invariance test at the end is the plan's headline
+// the composite mode-invariance test at the end is the headline
 // "the toggle changes nothing observable" check.
 // ---------------------------------------------------------------------------
 

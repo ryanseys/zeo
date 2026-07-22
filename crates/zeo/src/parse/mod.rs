@@ -49,18 +49,18 @@ use pattern::{lower_in_pattern_and_guard, lower_pattern};
 
 pub(crate) type PResult<T> = Result<T, crate::lower_error::LowerError>;
 
-/// The built-in exception hierarchy (Part 6's minimal "raise/exception
-/// foundation", extended to zeo's own ~20-class set in Phase 9) --
+/// The built-in exception hierarchy (originally a minimal "raise/exception
+/// foundation", extended to zeo's own ~20-class set) --
 /// ordinary Ruby source, spliced into EVERY compiled program ahead of the
 /// user's own code via the exact same `parse_and_lower_into` mechanism
 /// `eval`'s literal-splice already uses (see that recognizer's docs below).
-/// This is the whole point: real classes/inheritance (Phase 7's MRO work)
+/// This is the whole point: real classes/inheritance (the MRO work)
 /// already makes `class X < Y; end` meaningful, so the built-in hierarchy
 /// needs ZERO dedicated Rust construction code -- it's just Ruby, using the
 /// same machinery a user's own classes do. A custom hierarchy (`class MyError
 /// < StandardError; def initialize(x); super(...); @x = x; end; end`) needs
 /// NO new machinery either -- it's just ordinary inheritance + materialized
-/// `super`, already built in Phase 7. `msg` is a plain REQUIRED param,
+/// `super`. `msg` is a plain REQUIRED param,
 /// not a Ruby-level default (`msg = "..."`, which real Ruby's own
 /// `Exception.new` supports) -- every construction site this spike
 /// generates (`raise`'s codegen -- see `codegen::expr::emit_raise_value`)
@@ -266,7 +266,7 @@ fn magic_frozen_string_literal(source: &str) -> bool {
     false
 }
 
-/// `parse_and_lower` plus the file context Phase 14.1's compile-time
+/// `parse_and_lower` plus the file context compile-time
 /// `require` resolution needs: `input_path` (the requiring-file directory
 /// for the main file's own `require_relative` calls -- `None` means any
 /// `require_relative` fails with CRuby's "cannot infer basepath") and the
@@ -1063,7 +1063,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
 
     // `case subject; when ...; else ...; end` -- value matching only.
     // `case/in` pattern matching (`CaseMatchNode`) is a distinct prism node,
-    // not handled here (see the plan's Phase 8).
+    // not handled here (see the `as_case_match_node` arm below).
     if let Some(case_node) = node.as_case_node() {
         let subject = match case_node.predicate() {
             None => None,
@@ -1376,7 +1376,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
                 .receiver()
                 // Only a LITERAL constant/path receiver is a static `New`;
                 // any other receiver (`x.new` on a local holding a class
-                // value -- Phase 16.1) falls through to the generic `Call`
+                // value) falls through to the generic `Call`
                 // lowering and dispatches via `TyKind::ClassObj`/the
                 // runtime constructor.
                 .filter(|r| {
@@ -1883,7 +1883,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             return Ok(hir.push(HirNode::NilLit));
         }
 
-        // Phase 18 guard rails. `Ruby::Box` class-method calls outside the
+        // `Ruby::Box` guard rails. Class-method calls outside the
         // one recognized shape (`box = Ruby::Box.new` at top-level
         // statement position, handled by the loader) are clean rejections:
         // `.current`/`.root`/`.main`/`.enabled?` have no compile-time

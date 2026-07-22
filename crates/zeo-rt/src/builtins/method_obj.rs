@@ -1,7 +1,7 @@
-//! `Method` (P4): the object `Kernel#method(:name)` answers -- a bound
+//! `Method`: the object `Kernel#method(:name)` answers -- a bound
 //! (receiver, name) pair whose `#call` dispatches through the ordinary
-//! `send` machinery. `UnboundMethod`/`bind_call`/source reflection are a
-//! later phase (plan P-D).
+//! `send` machinery. `UnboundMethod`/`bind_call`/source reflection are
+//! not yet implemented.
 
 use std::sync::Arc;
 

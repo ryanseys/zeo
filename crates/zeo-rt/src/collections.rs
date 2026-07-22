@@ -1,4 +1,4 @@
-//! Minimal `Array`/`Hash`/`String` runtime support (Phase 3) -- concrete
+//! Minimal `Array`/`Hash`/`String` runtime support -- concrete
 //! `Arc<parking_lot::Mutex<_>>`-backed collection types, mirroring the same
 //! shared-mutable-identity model `ruby_class!`'s generated structs already
 //! use (`Mutex` ivars) and the `Arc<ConcreteStruct>` wrapping `New`
@@ -11,10 +11,9 @@
 //! `Send`/`Sync` auto-derive through any compound type built entirely from
 //! `Send + Sync` leaves.
 //!
-//! Deliberately NOT a general Enumerable implementation -- see the plan's
-//! Phase 3 scope-cut: `[]`/`[]=`/`length` only. `each`/`map`/`select`/etc.
-//! are written in Ruby once blocks (Part 1.3) and modules (Part 1.2) exist,
-//! not hand-implemented here.
+//! Deliberately NOT a general Enumerable implementation: `[]`/`[]=`/`length`
+//! only. `each`/`map`/`select`/etc. live in `builtins::enumerable`, not
+//! hand-implemented here.
 
 use crate::RubyValue;
 use crate::builtins::type_error;
@@ -24,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The shared storage cell behind every mutable built-in value: the
-/// `Mutex`-guarded payload plus its `.freeze` flag (Phase 13.1), mirroring
+/// `Mutex`-guarded payload plus its `.freeze` flag, mirroring
 /// how CRuby keeps `FL_FREEZE` as one bit on the object header next to the
 /// data rather than as a separate registry. `lock()` is deliberately an
 /// inherent method with the exact signature `Mutex::lock` had when
@@ -96,11 +95,11 @@ pub enum HashKey {
     Str(Vec<u8>, u8),
     Array(Vec<HashKey>),
     Range(Option<Box<HashKey>>, Option<Box<HashKey>>, bool),
-    /// A first-class class/module value (Phase 16.1): keyed by class
+    /// A first-class class/module value: keyed by class
     /// identity, exactly real Ruby's `Class#hash`/`#eql?` (two references
     /// to the same class are one key).
     Class(u32),
-    /// An Object key whose class defines its own `hash` (Phase 16.2): the
+    /// An Object key whose class defines its own `hash`: the
     /// projection of that method's RESULT. Wrapped (not flattened into the
     /// result's own variant) so a user-hashed object never collides with a
     /// plain value that happens to equal its hash. Documented
@@ -110,7 +109,7 @@ pub enum HashKey {
     /// consistently.
     Computed(Box<HashKey>),
     Identity(usize),
-    /// The numeric-tower keys (Phase 17.1) -- `BigInt` never overlaps
+    /// The numeric-tower keys -- `BigInt` never overlaps
     /// `Int` (demotion invariant), `Rational` is always reduced, `Complex`
     /// keys by its component keys.
     BigInt(num_bigint::BigInt),
@@ -181,7 +180,7 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
         // pointer to the data alone (the vtable half is irrelevant to
         // identity).
         //
-        // A user-defined `hash` (Phase 16.2, dispatched once per
+        // A user-defined `hash` (dispatched once per
         // insertion/lookup through the registry) projects the object
         // through its RESULT -- see `HashKey::Computed`'s docs; identity
         // stays the default (real Ruby's own `Object#hash`). A `hash` that
@@ -233,7 +232,7 @@ pub(crate) fn hash_key_in(v: &RubyValue, by_identity: bool) -> HashKey {
     }
 }
 
-/// `Object#hash`'s universal answer (Phase 16.2): an `i64` digest of the
+/// `Object#hash`'s universal answer: an `i64` digest of the
 /// value's own `HashKey` projection -- so `"a".hash == "a".hash`,
 /// `[1, 2].hash` is structural, and an Object without a user `hash` digests
 /// by identity, exactly mirroring which values this module's Hash table
@@ -317,7 +316,7 @@ pub fn array_get(arr: &RArray, index: i64) -> RubyValue {
 /// which `codegen::call`'s `[]=` dispatch (the only caller) turns into a
 /// proper `Signal::Raise(IndexError.new(...))` (exceptions
 /// exist now, so this is no longer the "loud panic in the meantime" it was
-/// before Phase 9 landed). The actual message/exception CONSTRUCTION happens
+/// before exception handling landed). The actual message/exception CONSTRUCTION happens
 /// in codegen, not here, since only codegen has the class registry needed to
 /// build an `IndexError` value.
 pub fn array_set(arr: &RArray, index: i64, value: RubyValue) -> Option<RubyValue> {

@@ -9,7 +9,7 @@
 //! file's own statements, rename that file's top-level locals to
 //! `__f<file_id>_<name>` -- `file_id` is the SPLICE INSTANCE index, not the
 //! canonical file, because `load` re-splices the same file and real Ruby
-//! gives each `load` execution a fresh local scope (and Phase 14.5's
+//! gives each `load` execution a fresh local scope (and `Ruby::Box`'s
 //! per-box re-execution needs the same per-instance freshness).
 //!
 //! Why renaming is sound here, in three load-bearing observations:

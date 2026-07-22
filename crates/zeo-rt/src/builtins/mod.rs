@@ -1,4 +1,4 @@
-//! The builtin method tables (Phase 17.1) -- one Rust module per Ruby core
+//! The builtin method tables -- one Rust module per Ruby core
 //! class/module, mirroring CRuby's file-per-class source layout (string.c,
 //! array.c, compar.c, ...). `struct`/`class`/`module` are Rust keywords, so
 //! Struct follows the crate's existing `rproc.rs` precedent (`rstruct`) and
@@ -73,7 +73,7 @@ pub(crate) mod value_subclass;
 
 /// One builtin method: receiver (guaranteed by the table's ClassId keying
 /// to be the right variant), positional args, optional block. Deliberately
-/// the SAME shape as `ValueMethodFn` (Phase 16.3's reopen trampolines) --
+/// the SAME shape as `ValueMethodFn` (the reopen trampolines) --
 /// one trampoline ABI for everything the MRO walk can find.
 pub type BuiltinMethodFn =
     fn(&RubyValue, &[RubyValue], Option<RubyValue>) -> Result<RubyValue, Signal>;
@@ -712,7 +712,7 @@ macro_rules! arg_str {
 pub(crate) use arg_str;
 
 /// The block -- or, blockless, an early return with the ENUMERATOR every
-/// iteration method answers in real Ruby (Phase 17.2, retiring the
+/// iteration method answers in real Ruby (retiring the
 /// "would return an Enumerator (spike scope)" panics): the enumerator
 /// captures `(recv, method-name, args)` and re-invokes the method when
 /// iterated (`rb_enumeratorize`'s rule).
