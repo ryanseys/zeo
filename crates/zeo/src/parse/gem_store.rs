@@ -54,7 +54,7 @@ pub(super) fn resolve(store: &Path, lockfile: &Lockfile) -> PResult<StoreResolut
         // zeo already provides this under its own name -- a static ext
         // (`json`) or a default gem it reimplements. Its own implementation
         // wins; record the divergence and add no store root.
-        if super::loader::is_builtin_feature(&name) {
+        if super::features::is_builtin_feature(&name) {
             disclosures.push(GemRecord {
                 name: name.clone(),
                 by: SatisfiedBy::BuiltinExt { feature: name },

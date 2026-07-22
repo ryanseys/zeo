@@ -10,9 +10,11 @@
 mod assign;
 mod calls;
 mod consts;
+mod context;
 mod control;
 mod defs;
 mod eval_splice;
+mod features;
 mod ffi;
 pub mod gem_compat;
 mod gem_store;
@@ -1861,11 +1863,11 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             // neither of which a literal can stand in for.
             if name == "require" {
                 if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
-                    if loader::is_builtin_feature(&feature) {
+                    if features::is_builtin_feature(&feature) {
                         let newly_loaded = hir
                             .activated_features
-                            .insert(loader::canonical_ext_feature(&feature).to_string());
-                        let first = newly_loaded && !loader::is_preloaded_at_boot(&feature);
+                            .insert(features::canonical_ext_feature(&feature).to_string());
+                        let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
                         return Ok(hir.push(HirNode::BoolLit(first)));
                     }
                 }
@@ -1906,7 +1908,7 @@ fn lower_node(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PResult<N
             // `eval`, can't define classes/methods.
             if let Some(lv) = recv.as_local_variable_read_node() {
                 let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
-                if let Some(bx) = loader::current_box_binding(&lname) {
+                if let Some(bx) = context::current_box_binding(&lname) {
                     match name.as_str() {
                         "require" | "require_relative" | "load" => {
                             return Err(format!(
@@ -2369,7 +2371,7 @@ fn lower_named_capture_match(
 /// Ruby's own answer for `ruby -e`, and is what a bare
 /// `compile_to_rust(source)` gets.
 fn current_file_str() -> PResult<String> {
-    Ok(match loader::current_source_file() {
+    Ok(match context::current_source_file() {
         Some(p) => p.to_string_lossy().into_owned(),
         None => "-e".to_string(),
     })
@@ -2455,7 +2457,7 @@ fn expand_path_dir_feature(node: &Node<'_>) -> PResult<Option<String>> {
 /// `canonicalize` is that, and it falls back to a plain absolute path when
 /// the file can't be resolved (a source string with no file on disk).
 fn current_dir_str() -> PResult<String> {
-    let path = loader::current_source_file()
+    let path = context::current_source_file()
         .ok_or("`__dir__` needs a real source file (there is none when compiling a bare string)")?;
     let resolved = path.canonicalize().unwrap_or(path);
     let dir = resolved

@@ -3,7 +3,7 @@
 //! `ConstWrite`/`QualifiedConstRead`, and a `box::A::B` path rooted at a
 //! local box handle. Split out of `parse/mod.rs`.
 
-use super::{PResult, loader};
+use super::{PResult, context};
 use ruby_prism::Node;
 
 fn constant_name(node: &Node<'_>) -> PResult<String> {
@@ -69,7 +69,7 @@ pub(crate) fn box_rooted_path(node: &Node<'_>) -> Option<(u32, String)> {
     let parent = cp.parent()?;
     if let Some(lv) = parent.as_local_variable_read_node() {
         let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
-        let bx = loader::current_box_binding(&lname)?;
+        let bx = context::current_box_binding(&lname)?;
         return Some((bx, name));
     }
     let (bx, prefix) = box_rooted_path(&parent)?;
