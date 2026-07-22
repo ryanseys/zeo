@@ -31,7 +31,25 @@ pub struct Frame {
     pub method: &'static str,
 }
 
-may::coroutine_local!(static FRAMES: RefCell<Vec<Frame>> = RefCell::new(Vec::new()));
+// Plain per-OS-thread TLS, NOT `may::coroutine_local!` (whose per-access
+// cost through the coroutine registry made a recursion-heavy benchmark 6x
+// slower -- a frame push/pop pair runs on EVERY method call). Each Ruby
+// `Thread` body swaps in a fresh stack on entry (`swap_stack` from
+// `thread::thread_new`'s wrapper), so a spawned thread's raises capture
+// its own frames. Known, temporary narrowing while threads are `may`
+// coroutines multiplexed on worker OS threads: a thread that YIELDS
+// mid-call leaves its frames beneath whichever coroutine runs next on the
+// same worker, so a backtrace captured exactly there can include a parked
+// sibling's frames below its own. The OS-thread migration (plan P3)
+// makes this per-thread by construction.
+std::thread_local!(static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) });
+
+/// Install `new` as this execution context's frame stack, returning the
+/// previous one -- a Ruby `Thread` body swaps in a fresh stack on entry
+/// and restores its parent's on exit.
+pub fn swap_stack(new: Vec<Frame>) -> Vec<Frame> {
+    FRAMES.with(|f| std::mem::replace(&mut *f.borrow_mut(), new))
+}
 
 /// The RAII half: construction pushes, `Drop` pops -- bind it to a `let`
 /// at the top of a generated method body (`let __frame = ...;`) and every
