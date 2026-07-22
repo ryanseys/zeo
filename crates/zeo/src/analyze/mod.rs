@@ -546,6 +546,8 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
         ("Regexp::TimeoutError", "RegexpError"),
         ("IO::TimeoutError", "IOError"),
         ("Errno::EDOM", "SystemCallError"),
+        ("Errno::ESRCH", "SystemCallError"),
+        ("Errno::EPERM", "SystemCallError"),
     ] {
         register_class(
             compiler,

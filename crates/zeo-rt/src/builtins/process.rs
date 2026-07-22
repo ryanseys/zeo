@@ -25,6 +25,48 @@ builtin_methods! {
         arity!(args, 0);
         Ok(RubyValue::Int(std::process::id() as i64))
     }
+    // `Process.kill(sig, *pids)` -- resolve the signal, deliver to each pid,
+    // answer how many were signaled. Self-delivery of a signal whose `trap`
+    // registered a Proc runs that handler synchronously INSTEAD of a real
+    // OS signal: zeo's `trap` installs no OS handler (see
+    // `builtins::signal`), so `libc::kill` to ourselves would take the
+    // signal's default disposition and terminate the very program that
+    // trapped it. Signal 0 (existence probe) and other-process delivery go
+    // through the real syscall.
+    "kill" => fn kill(_recv, args, _block) {
+        let Some((sig, pids)) = args.split_first() else {
+            return Err(arg_error!("wrong number of arguments (given 0, expected at least 1)"));
+        };
+        let no = crate::builtins::signal::resolve_signal_arg(sig)?;
+        let me = std::process::id() as i64;
+        for pv in pids {
+            let pid = int_arg(pv)?;
+            if pid == me && no != 0 {
+                match crate::builtins::signal::trap_action(no) {
+                    Some(RubyValue::Proc(p)) => {
+                        p.call(&[RubyValue::Int(no as i64)])?;
+                        continue;
+                    }
+                    // An "IGNORE" action swallows the signal entirely.
+                    Some(RubyValue::Str(s)) if &*s.lock().to_utf8_lossy() == "IGNORE" => continue,
+                    // DEFAULT (or never trapped): fall through to the real
+                    // delivery -- the default disposition IS the behavior.
+                    _ => {}
+                }
+            }
+            if unsafe { libc::kill(pid as libc::pid_t, no as libc::c_int) } != 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(match err.raw_os_error() {
+                    Some(libc::ESRCH) => raise_error("Errno::ESRCH", "No such process".to_string()),
+                    Some(libc::EPERM) => {
+                        raise_error("Errno::EPERM", "Operation not permitted".to_string())
+                    }
+                    _ => raise_error("SystemCallError", err.to_string()),
+                });
+            }
+        }
+        Ok(RubyValue::Int(pids.len() as i64))
+    }
     // `Process.ppid` has no portable std equivalent; libc's getppid is the
     // honest answer rather than a fabricated one.
     "ppid" => fn ppid(_recv, args, _block) {

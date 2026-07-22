@@ -1455,6 +1455,20 @@ pub const EXCEPTION_CLASSES: &[ExceptionClass] = &[
         superclass: Some(exc_id(31)),
         is_module: false,
     },
+    // `Errno::ESRCH`/`Errno::EPERM` -- `Process.kill`'s no-such-process and
+    // not-permitted failures, SystemCallErrors like their siblings.
+    ExceptionClass {
+        id: exc_id(58),
+        name: "Errno::ESRCH",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
+    ExceptionClass {
+        id: exc_id(59),
+        name: "Errno::EPERM",
+        superclass: Some(exc_id(31)),
+        is_module: false,
+    },
 ];
 
 /// A core class's `(superclass, includes)` edges, covering `Object`, every

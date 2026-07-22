@@ -81,10 +81,18 @@ thread_local! {
     static TRAP_STATE: RefCell<HashMap<i32, RubyValue>> = RefCell::new(HashMap::new());
 }
 
-/// Resolve `Signal.trap`/`SignalException`'s first argument (a name String/
-/// Symbol, or a number) to a signal number, raising `ArgumentError` for an
-/// unknown name or an out-of-range number exactly as CRuby does.
-fn resolve_signal_arg(arg: &RubyValue) -> Result<i32, Signal> {
+/// The action currently registered for signal `no` -- `None` when never
+/// set (the "DEFAULT" state). Backs `Process.kill`'s synthetic
+/// self-delivery of trapped signals.
+pub(crate) fn trap_action(no: i32) -> Option<RubyValue> {
+    TRAP_STATE.with(|s| s.borrow().get(&no).cloned())
+}
+
+/// Resolve `Signal.trap`/`SignalException`/`Process.kill`'s signal argument
+/// (a name String/Symbol, or a number) to a signal number, raising
+/// `ArgumentError` for an unknown name or an out-of-range number exactly as
+/// CRuby does.
+pub(crate) fn resolve_signal_arg(arg: &RubyValue) -> Result<i32, Signal> {
     match arg {
         RubyValue::Int(i) => {
             let no = *i as i32;
