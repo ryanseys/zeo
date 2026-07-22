@@ -73,10 +73,18 @@ pub fn global_set(box_id: u32, name: &str, value: RubyValue) {
 }
 
 /// The globals that CRuby gives a meaningful default: `$/` (the input record
-/// separator) starts as `"\n"`. The other punctuation globals (`$;`, `$,`, ...)
-/// start nil, which the unset read already answers. Called once at bootstrap.
+/// separator) starts as `"\n"`, and `$0`/`$PROGRAM_NAME` (one aliased slot,
+/// writing either changes both -- CRuby's rule) start as the program path.
+/// For a compiled binary that is the executable itself -- the honest
+/// analogue of CRuby's script path (corpus assertions are portable:
+/// `.length > 0`-style, never the exact text). The other punctuation
+/// globals (`$;`, `$,`, ...) start nil, which the unset read already
+/// answers. Called once at bootstrap.
 pub fn seed_default_globals() {
     global_set(0, "$/", RubyValue::Str(crate::string_new("\n".to_string())));
+    let prog = std::env::args().next().unwrap_or_default();
+    global_set(0, "$0", RubyValue::Str(crate::string_new(prog)));
+    global_alias(0, "$PROGRAM_NAME", "$0");
 }
 
 /// Whether `name` has ever been assigned in this box -- backs
