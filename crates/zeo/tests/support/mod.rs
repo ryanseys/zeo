@@ -131,7 +131,9 @@ pub fn compile_packages(
         Ok(rust) => Ok((rust, dir)),
         Err(e) => {
             let _ = std::fs::remove_dir_all(&dir);
-            Err(e)
+            // The message alone -- negative-path tests assert on the same
+            // text the pre-typed-error harness always saw.
+            Err(String::from(e))
         }
     }
 }

@@ -19,8 +19,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::gem_report::{GemRecord, SatisfiedBy};
-use crate::parse::PResult;
 use crate::parse::lockfile::{GemSource, LockedGem, Lockfile};
+use zeo_hir::lower::PResult;
 
 /// What an installed store yields for a lockfile: the pure-Ruby gems zeo can
 /// compile (as `(name, roots)`), and disclosure entries for the rest.

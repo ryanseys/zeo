@@ -11,8 +11,9 @@ mod gemspec;
 mod loader;
 mod lockfile;
 
+use crate::diagnostics::CompileError;
 use crate::hir::{Hir, HirNode, NodeId};
-use zeo_hir::lower::{PResult, encoding_const_name, parse_and_lower_into};
+use zeo_hir::lower::{encoding_const_name, parse_and_lower_into};
 
 /// The built-in exception hierarchy (originally a minimal "raise/exception
 /// foundation", extended to zeo's own ~20-class set) --
@@ -171,7 +172,7 @@ end
 /// doesn't track a root (it's just an arena), so lowering hands the root id
 /// back explicitly rather than requiring callers to know it's always the
 /// last-pushed node.
-pub fn parse_and_lower(source: &str) -> PResult<(Hir, NodeId)> {
+pub fn parse_and_lower(source: &str) -> Result<(Hir, NodeId), CompileError> {
     let (hir, root, _gem_records) = parse_and_lower_with(source, None, &[], &[], None, None)?;
     Ok((hir, root))
 }
@@ -249,17 +250,34 @@ pub fn parse_and_lower_with(
     package_dirs: &[std::path::PathBuf],
     gem_path: Option<&std::path::Path>,
     lockfile: Option<&std::path::Path>,
-) -> PResult<(Hir, NodeId, Vec<crate::gem_report::GemRecord>)> {
+) -> Result<(Hir, NodeId, Vec<crate::gem_report::GemRecord>), CompileError> {
     let mut hir = Hir::default();
     if let Some(name) = magic_encoding_comment(source) {
-        hir.script_encoding = encoding_const_name(&name)?.map(str::to_string);
+        hir.script_encoding = match encoding_const_name(&name) {
+            Ok(n) => n.map(str::to_string),
+            Err(e) => return Err(CompileError::lower(e, &hir.files)),
+        };
     }
     hir.frozen_string_literal = magic_frozen_string_literal(source);
-    let mut statements = parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB).map_err(|e| {
-        format!("internal error in zeo's built-in exception classes (this is a zeo bug): {e}")
-    })?;
+    let mut statements = match parse_and_lower_into(&mut hir, BUILTIN_EXCEPTIONS_RB) {
+        Ok(stmts) => stmts,
+        Err(e) => {
+            return Err(CompileError::lower(
+                zeo_hir::lower_error::LowerError {
+                    message: format!(
+                        "internal error in zeo's built-in exception classes (this is a zeo bug): {e}"
+                    ),
+                    ..e
+                },
+                &hir.files,
+            ));
+        }
+    };
     hir.builtin_exceptions_len = statements.len();
-    let (main_statements, gem_records) = loader::lower_main_file(
+    // This is THE boundary where a located `LowerError` becomes a renderable
+    // `CompileError`: the error and the `Hir::files` table it points into
+    // are both in scope here and nowhere further out.
+    let (main_statements, gem_records) = match loader::lower_main_file(
         &mut hir,
         source,
         input_path,
@@ -267,7 +285,10 @@ pub fn parse_and_lower_with(
         package_dirs,
         gem_path,
         lockfile,
-    )?;
+    ) {
+        Ok(v) => v,
+        Err(e) => return Err(CompileError::lower(e, &hir.files)),
+    };
     statements.extend(main_statements);
     let root = hir.push(HirNode::Program(statements));
     Ok((hir, root, gem_records))

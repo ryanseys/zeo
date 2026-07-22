@@ -1,0 +1,8 @@
+---
+source: crates/zeo/tests/diagnostics.rs
+expression: render(err)
+---
+zeo::lower::syntax
+
+  × parse error: unexpected end-of-input; expected a `)` to close the parameters
+  help: this source is not valid Ruby -- `ruby -c` rejects it too

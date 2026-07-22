@@ -1,0 +1,7 @@
+---
+source: crates/zeo/tests/diagnostics.rs
+expression: render(err)
+---
+zeo::analyze
+
+  × Foo is not a module

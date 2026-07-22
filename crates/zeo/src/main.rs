@@ -5,6 +5,27 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// What `run` can fail with: a compile error renders as a miette diagnostic
+/// (annotated source excerpt, auto-degrading for pipes/NO_COLOR); everything
+/// else (argument parsing, IO, the `cargo`/`rustc` build step) keeps the
+/// plain `zeo: <msg>` line.
+enum MainError {
+    Plain(String),
+    Compile(zeo::CompileError),
+}
+
+impl From<String> for MainError {
+    fn from(msg: String) -> MainError {
+        MainError::Plain(msg)
+    }
+}
+
+impl From<zeo::CompileError> for MainError {
+    fn from(err: zeo::CompileError) -> MainError {
+        MainError::Compile(err)
+    }
+}
+
 struct Args {
     /// The input source: either a `.rb` file path or, with `-e`, an inline
     /// program string (`ruby -e`'s shape). Exactly one is required.
@@ -194,7 +215,7 @@ fn default_package_dirs(input: Option<&std::path::Path>) -> Vec<PathBuf> {
     dirs
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<(), MainError> {
     let args = parse_args()?;
     let (source, input_path) = match &args.source {
         Source::File(path) => {
@@ -289,14 +310,26 @@ fn run() -> Result<(), String> {
     // `ZEO_RUNTIME_PROFILE` (e.g. to symbolicate a runtime panic).
     let profile = Profile::from_env_or(Profile::Release);
     ensure_runtime_built(profile, runtime)?;
-    build_binary(&compiled.rust_source, &output, profile, runtime)
+    Ok(build_binary(
+        &compiled.rust_source,
+        &output,
+        profile,
+        runtime,
+    )?)
 }
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
+        Err(MainError::Plain(e)) => {
             eprintln!("zeo: {e}");
+            ExitCode::FAILURE
+        }
+        Err(MainError::Compile(e)) => {
+            // miette's report rendering: graphical with the source excerpt
+            // on a terminal, degrading automatically when piped or under
+            // NO_COLOR/TERM=dumb.
+            eprintln!("{:?}", miette::Report::new(e));
             ExitCode::FAILURE
         }
     }

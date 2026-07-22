@@ -41,7 +41,8 @@ fn external_gem_store_resolves_pure_ruby_and_excludes_native() {
         lockfile: Some(store.join("Gemfile.lock")),
         ..Default::default()
     };
-    let err = zeo::compile_to_rust_with("require \"nativelib\"\n", &strict).unwrap_err();
+    let err =
+        String::from(zeo::compile_to_rust_with("require \"nativelib\"\n", &strict).unwrap_err());
     assert!(err.contains("native (C) extension"), "{err}");
 }
 

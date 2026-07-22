@@ -29,7 +29,13 @@ pub struct Analyzed {
     pub main_local_types: HashMap<String, TyKind>,
 }
 
-pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
+pub fn analyze(hir: Hir, root: NodeId) -> Result<Analyzed, crate::diagnostics::CompileError> {
+    analyze_impl(hir, root).map_err(crate::diagnostics::CompileError::analyze)
+}
+
+/// The whole pass, with the `String` errors its sites raise -- typed (and
+/// eventually located) at the public boundary above.
+fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let mut compiler = Compiler::new(hir);
     let HirNode::Program(statements) = &compiler.hir[root] else {
         return Err("expected a Program root".to_string());
@@ -1553,7 +1559,7 @@ mod tests {
         let (hir, root) = crate::parse::parse_and_lower(src).expect("parse");
         match analyze(hir, root) {
             Ok(_) => panic!("expected an analyze error"),
-            Err(e) => e,
+            Err(e) => e.to_string(),
         }
     }
 

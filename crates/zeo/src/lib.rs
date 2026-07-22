@@ -16,7 +16,10 @@ pub mod analyze;
 pub mod build;
 pub mod codegen;
 pub mod compiler;
+pub mod diagnostics;
 pub mod gem_report;
+
+pub use diagnostics::CompileError;
 
 // The front end (HIR + lowering) lives in the `zeo-hir` crate; re-exported
 // under the old module paths so the rest of the compiler reads unchanged.
@@ -79,11 +82,18 @@ pub struct CompileOutput {
 /// Rust source text out. Both `main.rs` (the CLI) and the test harness call
 /// this directly.
 pub fn compile_to_rust(source: &str) -> Result<String, String> {
-    compile_to_rust_with(source, &CompileOptions::default()).map(|out| out.rust_source)
+    compile_to_rust_with(source, &CompileOptions::default())
+        .map(|out| out.rust_source)
+        .map_err(String::from)
 }
 
-/// `compile_to_rust` plus the require-resolution context.
-pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<CompileOutput, String> {
+/// `compile_to_rust` plus the require-resolution context. The typed error
+/// carries the failing stage and (for lowering rejections) the source span --
+/// see `diagnostics`; `String` consumers convert via `From`/`Display`.
+pub fn compile_to_rust_with(
+    source: &str,
+    opts: &CompileOptions,
+) -> Result<CompileOutput, CompileError> {
     let (hir, root, gem_records) = parse::parse_and_lower_with(
         source,
         opts.input_path.as_deref(),
@@ -99,7 +109,8 @@ pub fn compile_to_rust_with(source: &str, opts: &CompileOptions) -> Result<Compi
         gem_report::emit_warnings(&gem_records, &opts.nowarn);
     }
     if let Some(path) = &opts.gem_report {
-        gem_report::write_report(&gem_records, path)?;
+        gem_report::write_report(&gem_records, path)
+            .map_err(|message| CompileError::Report { message })?;
     }
     // Computed from the arena BEFORE `analyze` consumes it: a whole-program
     // fact (does any eval site survive lowering?), so it belongs here rather

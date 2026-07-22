@@ -29,6 +29,12 @@ zeo-fiber = { path = "crates/zeo-fiber" }
 zeo-hir = { path = "crates/zeo-hir" }
 # The parser: prism, CRuby's own default parser since 3.4.
 ruby-prism = "1.9.0"
+# Diagnostics: typed compile errors, rendered as annotated source excerpts
+# by the CLI ("fancy" = the graphical handler, which auto-degrades for
+# pipes/NO_COLOR). insta pins the no-color rendering in snapshot tests.
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+insta = "1"
 # Codegen: Rust emitted as TokenStreams, formatted for humans.
 proc-macro2 = "1"
 quote = "1"

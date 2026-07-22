@@ -13,6 +13,11 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
+miette.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
 
 [lib]
 name = "zeo"
