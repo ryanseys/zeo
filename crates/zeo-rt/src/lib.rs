@@ -22,6 +22,7 @@ pub mod ffi;
 mod fiber;
 mod frames;
 mod globals;
+pub mod gvl;
 mod handling;
 mod lastmatch;
 mod method_params;
