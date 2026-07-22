@@ -1011,6 +1011,23 @@ pub fn overlay_class_name(id: ClassId) -> Option<String> {
     Some(name.unwrap_or_else(|| format!("#<Class:0x{:08x}>", id.0)))
 }
 
+/// Reverse of [`overlay_class_name`]: the runtime class id whose Ruby-visible
+/// name is `name` (so `Marshal.load` can resolve a `Struct.new`-minted or
+/// otherwise runtime-defined class back to its id). Only real, named classes
+/// match -- anonymous ids and pure frozen-class deltas never do.
+pub fn runtime_class_id_by_name(name: &str) -> Option<ClassId> {
+    if !is_live() {
+        return None;
+    }
+    let c = maps().classes.read().unwrap();
+    c.iter().find_map(|(&id, entry)| {
+        if entry.ancestors.is_empty() {
+            return None;
+        }
+        (entry.name.read().unwrap().as_deref() == Some(name)).then_some(ClassId(id))
+    })
+}
+
 /// Whether a runtime id names a module (always `false` -- `Class.new` makes a
 /// class). `None` for a frozen id / pure delta.
 pub fn overlay_is_module(id: ClassId) -> Option<bool> {

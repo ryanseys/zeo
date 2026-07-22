@@ -2018,6 +2018,10 @@ pub fn class_id_by_name(name: &str) -> Option<ClassId> {
         .get()
         .and_then(|r| r.by_name.get(name))
         .map(|&id| ClassId(id))
+        // Runtime-defined classes (e.g. `Struct.new` assigned to a constant)
+        // live in the overlay, not the frozen registry -- fall back so
+        // `Marshal.load` resolves them by name too.
+        .or_else(|| crate::runtime_meta::runtime_class_id_by_name(name))
 }
 
 /// Whether `id` names a MODULE (drives `Widget.class` -> `Class` vs

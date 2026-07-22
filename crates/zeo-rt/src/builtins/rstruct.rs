@@ -96,6 +96,17 @@ pub fn is_struct_class(class_id: ClassId) -> bool {
     meta_of(class_id).is_some()
 }
 
+/// Marshal's `S` dump payload: each member symbol paired with the receiver's
+/// slot value, in declaration order. `None` when `recv` is not a struct
+/// instance (so the caller falls through to the plain-object path).
+pub fn marshal_members(recv: &RubyValue) -> Option<Vec<(Symbol, RubyValue)>> {
+    let RubyValue::Object(o) = recv else {
+        return None;
+    };
+    let meta = meta_of(o.class_id())?;
+    Some(meta.members.iter().copied().zip(slots_of(recv)).collect())
+}
+
 /// The parameter shape of a struct/data member accessor `name` on `class_id`,
 /// for `Method#arity`/`#parameters` (these accessors are dispatched dynamically,
 /// so no `register_params` descriptor exists). A reader (`:x`) takes no args; a

@@ -1,15 +1,28 @@
-//! `Marshal` (#2483) -- object serialization in CRuby's wire format v4.8. A
+//! `Marshal` -- object serialization in CRuby's wire format v4.8. A
 //! `Writer`/`Reader` pair over a shared symbol table (`:`/`;`) and object-link
-//! table (`@`), so shared references and cycles round-trip by identity. Values
-//! whose bytes the conformance corpus compares (symbols, floats, arrays) match
-//! CRuby exactly; the user-object (`o`), user-marshal (`U`: Rational/Complex),
-//! and bignum (`l`) forms are self-consistent (dump/load are the only readers).
+//! table (`@`), so shared references and cycles round-trip by identity.
+//!
+//! Supported tags mirror CRuby's `marshal.c`: `0`/`T`/`F` (nil/bool), `i`
+//! (fixnum), `l` (bignum), `f` (float), `:`/`;` (symbol + link), `"` (string),
+//! `[`/`{` (array/hash), `/` (regexp), `c`/`m` (class/module reference), `o`
+//! (plain object + ivars), `S` (Struct), `U` (`marshal_dump`/`marshal_load`),
+//! `u` (`_dump`/`_load`), and the `I` ivar-wrapper that carries a string's or
+//! regexp's encoding (`E => true` UTF-8, `E => false` US-ASCII, `encoding =>
+//! "<name>"` otherwise; ASCII-8BIT strings carry no wrapper). Rational/Complex
+//! keep their own `U` fast paths so they load without a Ruby-level
+//! `marshal_load`. Not yet handled: `C` (builtin subclass) and `e` (extended),
+//! which need runtime builtin-subclass values.
 
 use crate::builtins::{arg_error, arity, builtin_methods, type_error};
 use crate::collections::{
-    array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set,
+    array_get, array_len, array_new, array_push, hash_new, hash_pairs, hash_set, string_from_bytes,
 };
+use crate::dispatch::{
+    RObj, allocate_of, class_id_by_name, class_is_module, class_name, responds_to, send_value,
+};
+use crate::encoding::{ASCII_8BIT, EncodingId, US_ASCII, UTF_8};
 use crate::signal::Signal;
+use crate::symbol::Symbol;
 use crate::value::RubyValue;
 use num_bigint::{BigInt, Sign};
 use std::collections::HashMap;
@@ -47,6 +60,30 @@ builtin_methods! {
     }
 }
 
+/// An instance variable carried by an `I`-wrapper. Only ever an encoding, since
+/// this runtime's strings/regexps store no user ivars (plain objects write
+/// their ivars inline under the `o` tag instead).
+enum EncIvar {
+    /// `E => true` (UTF-8) or `E => false` (US-ASCII).
+    Bool(bool),
+    /// `encoding => "<name>"` for any other encoding.
+    Name(&'static str),
+}
+
+/// The `I`-wrapper ivar for a string/regexp of encoding `enc`, or `None` for
+/// ASCII-8BIT (which CRuby writes bare, with no wrapper).
+fn encoding_ivar(enc: EncodingId) -> Option<EncIvar> {
+    if enc == UTF_8 {
+        Some(EncIvar::Bool(true))
+    } else if enc == US_ASCII {
+        Some(EncIvar::Bool(false))
+    } else if enc == ASCII_8BIT {
+        None
+    } else {
+        Some(EncIvar::Name(enc.name()))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------
@@ -56,10 +93,11 @@ struct Writer {
     out: Vec<u8>,
     /// Symbol name -> its `:`-write index, for `;` symlinks.
     symbols: HashMap<String, usize>,
-    /// Linkable-object Arc pointer -> its `@`-link index. Only Array/Hash/
-    /// Object are deduped by identity; every linkable object still advances
-    /// `next_link` so indices align with the reader.
+    /// Linkable ref/object Arc pointer (or class id) -> its `@`-link index.
     links: HashMap<usize, usize>,
+    /// Encoding name -> the `@`-link index of the string that first named it,
+    /// so a repeated non-standard encoding dedups like CRuby's shared name.
+    enc_links: HashMap<String, usize>,
     next_link: usize,
 }
 
@@ -86,17 +124,46 @@ impl Writer {
                 self.write_bytes(s.as_bytes());
             }
             RubyValue::Str(rs) => {
-                if self.link(ptr_of(v)) {
+                if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
+                let ivars: Vec<EncIvar> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+                if !ivars.is_empty() {
+                    self.out.push(b'I');
+                }
+                self.register_link(ptr_of(v));
                 self.out.push(b'"');
                 let bytes = rs.lock().bytes().to_vec();
                 self.write_bytes(&bytes);
+                self.write_ivars(&ivars);
             }
-            RubyValue::Array(a) => {
-                if self.link(ptr_of(v)) {
+            RubyValue::Regexp(re) => {
+                if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
+                // Regexp source encoding isn't tracked separately; derive it the
+                // way a literal does -- US-ASCII when the source is 7-bit,
+                // UTF-8 otherwise.
+                let enc = if re.source.is_ascii() {
+                    US_ASCII
+                } else {
+                    UTF_8
+                };
+                let ivars: Vec<EncIvar> = encoding_ivar(enc).into_iter().collect();
+                if !ivars.is_empty() {
+                    self.out.push(b'I');
+                }
+                self.register_link(ptr_of(v));
+                self.out.push(b'/');
+                self.write_bytes(re.source.as_bytes());
+                self.out.push(regexp_options(re));
+                self.write_ivars(&ivars);
+            }
+            RubyValue::Array(a) => {
+                if self.check_link(ptr_of(v)) {
+                    return Ok(());
+                }
+                self.register_link(ptr_of(v));
                 self.out.push(b'[');
                 let len = array_len(a);
                 self.write_long(len);
@@ -106,9 +173,10 @@ impl Writer {
                 }
             }
             RubyValue::Hash(h) => {
-                if self.link(ptr_of(v)) {
+                if self.check_link(ptr_of(v)) {
                     return Ok(());
                 }
+                self.register_link(ptr_of(v));
                 self.out.push(b'{');
                 let pairs = hash_pairs(h);
                 self.write_long(pairs.len() as i64);
@@ -116,6 +184,16 @@ impl Writer {
                     self.write(&k)?;
                     self.write(&val)?;
                 }
+            }
+            RubyValue::Class(cid) => {
+                if self.check_link(cid.0 as usize) {
+                    return Ok(());
+                }
+                self.register_link(cid.0 as usize);
+                let is_mod = class_is_module(*cid).unwrap_or(false);
+                self.out.push(if is_mod { b'm' } else { b'c' });
+                let name = class_name(*cid).unwrap_or_default();
+                self.write_bytes(name.as_bytes());
             }
             RubyValue::Rational(r) => {
                 self.next_link += 1;
@@ -129,21 +207,7 @@ impl Writer {
                 self.write_symbol("Complex");
                 self.write_inline_array(&[c.real.clone(), c.imag.clone()])?;
             }
-            RubyValue::Object(o) => {
-                if self.link(ptr_of(v)) {
-                    return Ok(());
-                }
-                let cid = crate::dispatch::RubyObject::class_id(o.as_ref());
-                let name = crate::dispatch::class_name(cid).unwrap_or_default();
-                self.out.push(b'o');
-                self.write_symbol(&name);
-                let ivars = o.ivar_pairs();
-                self.write_long(ivars.len() as i64);
-                for (iname, ival) in ivars {
-                    self.write_symbol(&iname);
-                    self.write(&ival)?;
-                }
-            }
+            RubyValue::Object(o) => self.write_object(v, o)?,
             other => {
                 return Err(type_error!(
                     "no _dump_data is defined for class {}",
@@ -154,19 +218,92 @@ impl Writer {
         Ok(())
     }
 
-    /// If this Arc pointer was already written, emit an `@`-link and return
-    /// true. Otherwise assign it the next link index and return false (the
-    /// caller writes the body).
-    fn link(&mut self, ptr: usize) -> bool {
-        if let Some(&idx) = self.links.get(&ptr) {
+    /// Serialize a heap object, choosing CRuby's tag by protocol: `marshal_dump`
+    /// -> `U`, else `_dump` -> `u`, else a Struct -> `S`, else a plain `o` with
+    /// inline ivars.
+    fn write_object(&mut self, v: &RubyValue, o: &RObj) -> Result<(), Signal> {
+        let cid = o.class_id();
+        let name = class_name(cid).unwrap_or_default();
+
+        if responds_to(cid, Symbol::intern("marshal_dump"), true) {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            self.register_link(ptr_of(v));
+            self.out.push(b'U');
+            self.write_symbol(&name);
+            let dumped = send_value(v, Symbol::intern("marshal_dump"), &[], None)?;
+            return self.write(&dumped);
+        }
+
+        if responds_to(cid, Symbol::intern("_dump"), true) {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            self.register_link(ptr_of(v));
+            let result = send_value(v, Symbol::intern("_dump"), &[RubyValue::Int(-1)], None)?;
+            let RubyValue::Str(rs) = &result else {
+                return Err(type_error!("_dump() must return string"));
+            };
+            let ivars: Vec<EncIvar> = encoding_ivar(rs.lock().encoding()).into_iter().collect();
+            if !ivars.is_empty() {
+                self.out.push(b'I');
+            }
+            self.out.push(b'u');
+            self.write_symbol(&name);
+            let bytes = rs.lock().bytes().to_vec();
+            self.write_bytes(&bytes);
+            self.write_ivars(&ivars);
+            return Ok(());
+        }
+
+        if let Some(members) = crate::builtins::rstruct::marshal_members(v) {
+            if self.check_link(ptr_of(v)) {
+                return Ok(());
+            }
+            self.register_link(ptr_of(v));
+            self.out.push(b'S');
+            self.write_symbol(&name);
+            self.write_long(members.len() as i64);
+            for (m, val) in members {
+                self.write_symbol(&m.name());
+                self.write(&val)?;
+            }
+            return Ok(());
+        }
+
+        if self.check_link(ptr_of(v)) {
+            return Ok(());
+        }
+        self.register_link(ptr_of(v));
+        self.out.push(b'o');
+        self.write_symbol(&name);
+        let ivars = o.ivar_pairs();
+        self.write_long(ivars.len() as i64);
+        for (iname, ival) in ivars {
+            self.write_symbol(&iname);
+            self.write(&ival)?;
+        }
+        Ok(())
+    }
+
+    /// If this key (Arc pointer or class id) was already written, emit an
+    /// `@`-link and return true.
+    fn check_link(&mut self, key: usize) -> bool {
+        if let Some(&idx) = self.links.get(&key) {
             self.out.push(b'@');
             self.write_long(idx as i64);
             return true;
         }
+        false
+    }
+
+    /// Assign this key the next link index (call once, on the write path, after
+    /// `check_link` misses).
+    fn register_link(&mut self, key: usize) {
         let idx = self.next_link;
         self.next_link += 1;
-        self.links.insert(ptr, idx);
-        false
+        self.links.insert(key, idx);
     }
 
     fn write_symbol(&mut self, name: &str) {
@@ -178,6 +315,42 @@ impl Writer {
         let idx = self.symbols.len();
         self.symbols.insert(name.to_string(), idx);
         self.out.push(b':');
+        self.write_bytes(name.as_bytes());
+    }
+
+    /// The ivar list of an `I`-wrapper: a length then symbol/value pairs. `E`
+    /// takes a bare bool; `encoding` takes a linkable name string.
+    fn write_ivars(&mut self, ivars: &[EncIvar]) {
+        if ivars.is_empty() {
+            return;
+        }
+        self.write_long(ivars.len() as i64);
+        for iv in ivars {
+            match iv {
+                EncIvar::Bool(b) => {
+                    self.write_symbol("E");
+                    self.out.push(if *b { b'T' } else { b'F' });
+                }
+                EncIvar::Name(n) => {
+                    self.write_symbol("encoding");
+                    self.write_encoding_name(n);
+                }
+            }
+        }
+    }
+
+    /// The `encoding => "<name>"` value: a bare (`"`) string that joins the
+    /// object-link table, deduped by name (CRuby shares the one frozen name).
+    fn write_encoding_name(&mut self, name: &str) {
+        if let Some(&idx) = self.enc_links.get(name) {
+            self.out.push(b'@');
+            self.write_long(idx as i64);
+            return;
+        }
+        let idx = self.next_link;
+        self.next_link += 1;
+        self.enc_links.insert(name.to_string(), idx);
+        self.out.push(b'"');
         self.write_bytes(name.as_bytes());
     }
 
@@ -248,6 +421,21 @@ impl Writer {
     }
 }
 
+/// CRuby's regexp option byte: `IGNORECASE=1 | EXTEND=2 | MULTILINE=4`.
+fn regexp_options(re: &crate::regexp::RegexpData) -> u8 {
+    let mut o = 0u8;
+    if re.ignore_case {
+        o |= 1;
+    }
+    if re.extended {
+        o |= 2;
+    }
+    if re.multiline {
+        o |= 4;
+    }
+    o
+}
+
 // ---------------------------------------------------------------------------
 // Reader
 // ---------------------------------------------------------------------------
@@ -270,7 +458,12 @@ impl Reader<'_> {
     }
 
     fn read(&mut self) -> Result<RubyValue, Signal> {
-        match self.byte()? {
+        let tag = self.byte()?;
+        self.read_tag(tag)
+    }
+
+    fn read_tag(&mut self, tag: u8) -> Result<RubyValue, Signal> {
+        match tag {
             b'0' => Ok(RubyValue::Nil),
             b'T' => Ok(RubyValue::Bool(true)),
             b'F' => Ok(RubyValue::Bool(false)),
@@ -300,12 +493,10 @@ impl Reader<'_> {
                 self.objects.push(v.clone());
                 Ok(v)
             }
-            b'"' => {
-                let bytes = self.read_bytes()?;
-                let v = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::UTF_8));
-                self.objects.push(v.clone());
-                Ok(v)
-            }
+            // A bare string carries no encoding wrapper: CRuby only writes it
+            // for ASCII-8BIT (BINARY) data.
+            b'"' => self.read_string(ASCII_8BIT),
+            b'/' => self.read_regexp(),
             b'[' => {
                 let arr = array_new(Vec::new());
                 let v = RubyValue::Array(arr.clone());
@@ -330,10 +521,108 @@ impl Reader<'_> {
                 Ok(v)
             }
             b'l' => self.read_bignum(),
+            b'c' => self.read_class_ref(),
+            b'm' => self.read_class_ref(),
+            b'S' => self.read_struct(),
             b'U' => self.read_user_marshal(),
+            b'u' => self.read_userdef(false),
             b'o' => self.read_object(),
+            b'I' => self.read_ivar(),
             other => Err(arg_error!("dump format error (0x{other:x})")),
         }
+    }
+
+    /// An `I` ivar-wrapper: the wrapped object, then its ivars. For `u`
+    /// (user-def) the ivars retag the `_dump` data string BEFORE `_load`, so it
+    /// is threaded in; every other type takes the ivars after its body.
+    fn read_ivar(&mut self) -> Result<RubyValue, Signal> {
+        let tag = self.byte()?;
+        if tag == b'u' {
+            return self.read_userdef(true);
+        }
+        let v = self.read_tag(tag)?;
+        self.apply_ivars(&v)?;
+        Ok(v)
+    }
+
+    /// Read an ivar list and apply it to `v`: `E`/`encoding` retag a string's
+    /// encoding; any other name is a real instance variable.
+    fn apply_ivars(&mut self, v: &RubyValue) -> Result<(), Signal> {
+        let n = self.read_long()?;
+        for _ in 0..n {
+            let name = self.read_symbol_name()?;
+            let val = self.read()?;
+            match name.as_str() {
+                "E" => set_string_encoding(v, if truthy(&val) { UTF_8 } else { US_ASCII }),
+                "encoding" => {
+                    if let RubyValue::Str(s) = &val {
+                        let nm = s.lock().to_utf8_lossy().into_owned();
+                        if let Some(e) = crate::encoding::find(&nm) {
+                            set_string_encoding(v, e);
+                        }
+                    }
+                }
+                other => {
+                    if let RubyValue::Object(o) = v {
+                        o.ivar_set_named(other.trim_start_matches('@'), val);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_string(&mut self, enc: EncodingId) -> Result<RubyValue, Signal> {
+        let bytes = self.read_bytes()?;
+        let v = RubyValue::Str(string_from_bytes(bytes, enc));
+        self.objects.push(v.clone());
+        Ok(v)
+    }
+
+    fn read_regexp(&mut self) -> Result<RubyValue, Signal> {
+        let idx = self.objects.len();
+        self.objects.push(RubyValue::Nil);
+        let src = self.read_bytes()?;
+        let opts = self.byte()?;
+        let source = String::from_utf8_lossy(&src).into_owned();
+        let re = crate::regexp::regexp_new(&source, opts & 1 != 0, opts & 2 != 0, opts & 4 != 0)
+            .map_err(|e| arg_error!("{e}"))?;
+        let v = RubyValue::Regexp(re);
+        self.objects[idx] = v.clone();
+        Ok(v)
+    }
+
+    fn read_class_ref(&mut self) -> Result<RubyValue, Signal> {
+        let bytes = self.read_bytes()?;
+        let name = String::from_utf8_lossy(&bytes).into_owned();
+        let cid =
+            class_id_by_name(&name).ok_or_else(|| arg_error!("undefined class/module {name}"))?;
+        let v = RubyValue::Class(cid);
+        self.objects.push(v.clone());
+        Ok(v)
+    }
+
+    fn read_struct(&mut self) -> Result<RubyValue, Signal> {
+        let idx = self.objects.len();
+        self.objects.push(RubyValue::Nil);
+        let cls = self.read_symbol_name()?;
+        let cid =
+            class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
+        let meta = crate::builtins::rstruct::meta_of(cid)
+            .ok_or_else(|| type_error!("{cls} is not a Struct"))?;
+        let count = self.read_long()? as usize;
+        let mut values = vec![RubyValue::Nil; meta.members.len()];
+        for _ in 0..count {
+            let mname = self.read_symbol_name()?;
+            let val = self.read()?;
+            let msym = Symbol::intern(&mname);
+            if let Some(pos) = meta.members.iter().position(|m| *m == msym) {
+                values[pos] = val;
+            }
+        }
+        let v = crate::builtins::rstruct::struct_construct(cid, &values, None)?;
+        self.objects[idx] = v.clone();
+        Ok(v)
     }
 
     fn read_symbol_new(&mut self) -> Result<RubyValue, Signal> {
@@ -364,24 +653,70 @@ impl Reader<'_> {
         }
     }
 
+    /// `U`: `marshal_dump`/`marshal_load`. Rational/Complex keep native fast
+    /// paths; every other class allocates then dispatches `marshal_load`.
     fn read_user_marshal(&mut self) -> Result<RubyValue, Signal> {
         let idx = self.objects.len();
         self.objects.push(RubyValue::Nil);
         let cls = self.read_symbol_name()?;
-        let inner = self.read()?;
-        let RubyValue::Array(a) = &inner else {
-            return Err(arg_error!("malformed user marshal"));
-        };
-        let get = |i| array_get(a, i);
         let v = match cls.as_str() {
-            "Rational" => {
-                crate::builtins::rational::rational_new(to_bigint(&get(0))?, to_bigint(&get(1))?)?
+            "Rational" | "Complex" => {
+                let inner = self.read()?;
+                let RubyValue::Array(a) = &inner else {
+                    return Err(arg_error!("malformed user marshal"));
+                };
+                let get = |i| array_get(a, i);
+                if cls == "Rational" {
+                    crate::builtins::rational::rational_new(
+                        to_bigint(&get(0))?,
+                        to_bigint(&get(1))?,
+                    )?
+                } else {
+                    crate::builtins::complex::complex_new(get(0), get(1))?
+                }
             }
-            "Complex" => crate::builtins::complex::complex_new(get(0), get(1))?,
-            other => {
-                return Err(arg_error!("undefined class/module {other}"));
+            _ => {
+                let cid = class_id_by_name(&cls)
+                    .ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
+                let obj =
+                    allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
+                self.objects[idx] = obj.clone();
+                let inner = self.read()?;
+                send_value(&obj, Symbol::intern("marshal_load"), &[inner], None)?;
+                obj
             }
         };
+        self.objects[idx] = v.clone();
+        Ok(v)
+    }
+
+    /// `u`: `_dump`/`_load`. With `has_ivars`, the trailing encoding ivars
+    /// retag the data string before it reaches `Class._load`.
+    fn read_userdef(&mut self, has_ivars: bool) -> Result<RubyValue, Signal> {
+        let idx = self.objects.len();
+        self.objects.push(RubyValue::Nil);
+        let cls = self.read_symbol_name()?;
+        let bytes = self.read_bytes()?;
+        let mut enc = ASCII_8BIT;
+        if has_ivars {
+            let n = self.read_long()?;
+            for _ in 0..n {
+                let name = self.read_symbol_name()?;
+                let val = self.read()?;
+                if let Some(e) = enc_from_ivar(&name, &val) {
+                    enc = e;
+                }
+            }
+        }
+        let data = RubyValue::Str(string_from_bytes(bytes, enc));
+        let cid =
+            class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
+        let v = send_value(
+            &RubyValue::Class(cid),
+            Symbol::intern("_load"),
+            &[data],
+            None,
+        )?;
         self.objects[idx] = v.clone();
         Ok(v)
     }
@@ -390,10 +725,9 @@ impl Reader<'_> {
         let idx = self.objects.len();
         self.objects.push(RubyValue::Nil);
         let cls = self.read_symbol_name()?;
-        let cid = crate::dispatch::class_id_by_name(&cls)
-            .ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
-        let obj = crate::dispatch::allocate_of(cid)
-            .ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
+        let cid =
+            class_id_by_name(&cls).ok_or_else(|| arg_error!("undefined class/module {cls}"))?;
+        let obj = allocate_of(cid).ok_or_else(|| type_error!("allocator undefined for {cls}"))?;
         self.objects[idx] = obj.clone();
         let count = self.read_long()?;
         if let RubyValue::Object(o) = &obj {
@@ -474,12 +808,38 @@ fn fits_i32(n: i64) -> bool {
     (i32::MIN as i64..=i32::MAX as i64).contains(&n)
 }
 
+fn truthy(v: &RubyValue) -> bool {
+    !matches!(v, RubyValue::Nil | RubyValue::Bool(false))
+}
+
+/// Retag a string's encoding in place; a no-op for any other value (a regexp's
+/// encoding isn't stored, and other types carry no `E` ivar).
+fn set_string_encoding(v: &RubyValue, enc: EncodingId) {
+    if let RubyValue::Str(s) = v {
+        s.lock().set_encoding(enc);
+    }
+}
+
+/// The encoding named by an `E`/`encoding` ivar pair, if this is one.
+fn enc_from_ivar(name: &str, val: &RubyValue) -> Option<EncodingId> {
+    match name {
+        "E" => Some(if truthy(val) { UTF_8 } else { US_ASCII }),
+        "encoding" => {
+            let RubyValue::Str(s) = val else { return None };
+            let nm = s.lock().to_utf8_lossy().into_owned();
+            crate::encoding::find(&nm)
+        }
+        _ => None,
+    }
+}
+
 /// The identity of a linkable ref value, as its Arc data-pointer address.
 fn ptr_of(v: &RubyValue) -> usize {
     match v {
         RubyValue::Str(s) => Arc::as_ptr(s) as *const () as usize,
         RubyValue::Array(a) => Arc::as_ptr(a) as *const () as usize,
         RubyValue::Hash(h) => Arc::as_ptr(h) as *const () as usize,
+        RubyValue::Regexp(re) => Arc::as_ptr(re) as *const () as usize,
         RubyValue::Object(o) => Arc::as_ptr(o) as *const () as usize,
         _ => 0,
     }
