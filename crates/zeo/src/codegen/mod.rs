@@ -1120,7 +1120,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
         self_is_dynamic: false,
         runtime_super_params: None,
     };
-    let prologue = params::emit_prologue(&cx, &scope.params);
+    let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
         &cx,
         &scope.body,
@@ -1355,7 +1355,7 @@ fn emit_builtin_method_fn(
         self_is_dynamic: true,
         runtime_super_params: None,
     };
-    let prologue = params::emit_prologue(&cx, &scope.params);
+    let prologue = params::emit_prologue(&cx, &scope.params, &scope.body);
     let body = hoisting::emit_hoisted_body_with_extra_roots(
         &cx,
         &scope.body,
@@ -1425,7 +1425,7 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             self_is_dynamic: false,
             runtime_super_params: None,
         };
-        let prologue = params::emit_prologue(&method_cx, &scope.params);
+        let prologue = params::emit_prologue(&method_cx, &scope.params, &scope.body);
         let body = hoisting::emit_hoisted_body_with_extra_roots(
             &method_cx,
             &scope.body,

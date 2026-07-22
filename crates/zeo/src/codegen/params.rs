@@ -136,75 +136,102 @@ fn emit_destructures(cx: &Ctx, params: &Params) -> TokenStream {
     quote! { #(#decls)* #(#writes)* }
 }
 
-pub fn emit_prologue(cx: &Ctx, params: &Params) -> TokenStream {
-    let optional = params
-        .optional
-        .iter()
-        .map(|(name, default)| emit_lazy_default_shadow(cx, name, *default));
-    let rest = params.rest.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
-        quote! {
-            #[allow(unused_mut)]
-            let mut #ident: zeo_rt::RubyValue =
-                zeo_rt::RubyValue::Array(zeo_rt::array_new(#ident));
-        }
-    });
-    let keywords = params.keywords.iter().map(|kw| match kw {
-        KeywordParam::Required(_) => quote! {},
-        KeywordParam::Optional(name, default) => emit_lazy_default_shadow(cx, name, *default),
-    });
-    let keyword_rest = params.keyword_rest.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
-        quote! {
-            #[allow(unused_mut)]
-            let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Hash(zeo_rt::hash_new(
-                #ident.into_iter().map(|(k, v)| (zeo_rt::RubyValue::Symbol(k), v)).collect()
-            ));
-        }
-    });
-    // `params.block` being `Some(Some(name))` already implies `needs_block`
-    // (see `Scope::needs_block_param`), so no extra gate is needed here --
-    // `.iter().flatten()` alone (same idiom as `rest`/`keyword_rest` above)
-    // naturally yields nothing for `None`/an anonymous `&`.
-    let block = params.block.iter().flatten().map(|name| {
-        let ident = safe_ident(name);
-        quote! {
-            #[allow(unused_mut)]
-            let mut #ident: zeo_rt::RubyValue = __blk.clone().unwrap_or(zeo_rt::RubyValue::Nil);
-        }
-    });
-    // Sorted for deterministic codegen output -- a `HashSet`'s iteration
-    // order is otherwise arbitrary, and these `let`s are independent (order
-    // among themselves doesn't affect behavior), but reproducible output is
-    // still worth having.
-    let own_names = super::captures::own_param_names(params);
-    // Destructured names are excluded: this wrap turns a by-value Rust
-    // PARAMETER into its capture cell, and a destructured name has no
-    // parameter to turn -- only its `__destr_<i>` slot does.
+pub fn emit_prologue(cx: &Ctx, params: &Params, body: &[NodeId]) -> TokenStream {
+    // Destructured names are excluded from capture wraps: a wrap turns a
+    // by-value Rust PARAMETER into its capture cell, and a destructured name
+    // has no parameter to turn -- only its `__destr_<i>` slot does.
     // `emit_destructures` already declares each one directly at its storage
     // class (cell included), so wrapping here would wrap the cell in a cell.
     let destructured: std::collections::HashSet<String> =
         params.destructured_names().into_iter().collect();
-    let mut captured_params: Vec<&String> = own_names
-        .iter()
-        .filter(|name| cx.captured_locals.contains(*name) && !destructured.contains(*name))
-        .collect();
-    captured_params.sort();
-    let captured_param_wraps = captured_params.into_iter().map(|name| {
+    // ASSIGNED names are excluded too: the hoist prelude that follows this
+    // prologue (`emit_hoisted_body_with_extra_roots`, same collection roots)
+    // declares every assigned local itself, and for a captured PARAM its
+    // `Captured if is_param` arm already seeds the cell from the parameter
+    // value -- wrapping here as well re-wrapped the cell in a second cell
+    // (a real E0308: `Mutex::new(message)` fed an `Arc<Mutex<..>>`, from the
+    // timeout gem's captured `message ||= ...`). Ownership is split exactly:
+    // this prologue wraps captured-but-never-assigned params, the prelude
+    // owns everything assigned.
+    let mut assigned: Vec<String> = Vec::new();
+    for &n in body {
+        super::hoisting::collect_locals(cx.compiler, n, &mut assigned);
+    }
+    for id in params.default_ids() {
+        super::hoisting::collect_locals(cx.compiler, id, &mut assigned);
+    }
+    let wrap_if_captured = |name: &str| -> Option<TokenStream> {
+        (cx.captured_locals.contains(name)
+            && !destructured.contains(name)
+            && !assigned.iter().any(|a| a == name))
+        .then(|| {
+            let ident = safe_ident(name);
+            quote! {
+                let #ident: std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
+                    std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+            }
+        })
+    };
+    // Emitted in PARAMETER ORDER, each binding immediately followed by its
+    // capture wrap (deterministic output for free): a later parameter's
+    // DEFAULT expression may read an earlier captured parameter (`def
+    // fill_breakable(sep = ' ', width = sep.length)` with `sep` captured by
+    // a block, prettyprint's shape), and codegen reads a captured local
+    // through its cell -- so the cell must exist by the time that default
+    // evaluates, not at the end of the prologue. Required (and post) params
+    // are bound by the Rust signature itself, so only their wraps emit,
+    // first.
+    let mut pieces: Vec<TokenStream> = Vec::new();
+    for name in params.required.iter().chain(&params.post) {
+        pieces.extend(wrap_if_captured(name));
+    }
+    for (name, default) in &params.optional {
+        pieces.push(emit_lazy_default_shadow(cx, name, *default));
+        pieces.extend(wrap_if_captured(name));
+    }
+    if let Some(Some(name)) = &params.rest {
         let ident = safe_ident(name);
-        quote! {
-            let #ident: std::sync::Arc<zeo_rt::parking_lot::Mutex<zeo_rt::RubyValue>> =
-                std::sync::Arc::new(zeo_rt::parking_lot::Mutex::new(#ident));
+        pieces.push(quote! {
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue =
+                zeo_rt::RubyValue::Array(zeo_rt::array_new(#ident));
+        });
+        pieces.extend(wrap_if_captured(name));
+    }
+    for kw in &params.keywords {
+        match kw {
+            KeywordParam::Required(name) => pieces.extend(wrap_if_captured(name)),
+            KeywordParam::Optional(name, default) => {
+                pieces.push(emit_lazy_default_shadow(cx, name, *default));
+                pieces.extend(wrap_if_captured(name));
+            }
         }
-    });
-    // Destructures split the slots bound above, so they come after those --
-    // but BEFORE `captured_param_wraps`, which reads each captured param's
-    // current value into its cell. A `__destr_<i>` slot wrapped before being
-    // split would leave the split reading a cell as if it were a value.
-    // (The destructured NAMES aren't affected: `emit_destructures` declares
-    // each one at its own storage class, cell included.)
+    }
+    if let Some(Some(name)) = &params.keyword_rest {
+        let ident = safe_ident(name);
+        pieces.push(quote! {
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue = zeo_rt::RubyValue::Hash(zeo_rt::hash_new(
+                #ident.into_iter().map(|(k, v)| (zeo_rt::RubyValue::Symbol(k), v)).collect()
+            ));
+        });
+        pieces.extend(wrap_if_captured(name));
+    }
+    // `params.block` being `Some(Some(name))` already implies `needs_block`
+    // (see `Scope::needs_block_param`), so no extra gate is needed here.
+    if let Some(Some(name)) = &params.block {
+        let ident = safe_ident(name);
+        pieces.push(quote! {
+            #[allow(unused_mut)]
+            let mut #ident: zeo_rt::RubyValue = __blk.clone().unwrap_or(zeo_rt::RubyValue::Nil);
+        });
+        pieces.extend(wrap_if_captured(name));
+    }
+    // Destructures split the `__destr_<i>` slots bound by the signature; the
+    // destructured NAMES are declared by `emit_destructures` itself at their
+    // own storage class (cell included), never wrapped above.
     let destructures = emit_destructures(cx, params);
-    quote! { #(#optional)* #(#rest)* #(#keywords)* #(#keyword_rest)* #(#block)* #destructures #(#captured_param_wraps)* }
+    quote! { #(#pieces)* #destructures }
 }
 
 fn emit_lazy_default_shadow(cx: &Ctx, name: &str, default: NodeId) -> TokenStream {

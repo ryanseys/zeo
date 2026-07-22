@@ -3018,3 +3018,54 @@ fn unknown_and_missing_keywords_collect_all_names_with_no_method_suffix() {
          [1, {x: 9, y: 8}]\n"
     );
 }
+
+#[test]
+fn a_captured_param_reassigned_in_the_body_shares_one_cell() {
+    // A parameter that is BOTH captured by an escaping block AND reassigned
+    // used to get its capture cell declared twice -- once by the prologue's
+    // param wrap and once by the hoist prelude's param-seeded arm -- so the
+    // second declaration wrapped the first cell in another cell (invalid
+    // Rust, from the timeout gem's captured `message ||= ...`). Exactly one
+    // owner now: the prelude for assigned params, the prologue otherwise.
+    let result = run_ruby(
+        r#"
+        def f(x)
+          t = proc { x }
+          x = 2
+          t.call
+        end
+        p f(1)
+        def g(m = nil)
+          m ||= "d"
+          t = proc { m }
+          t.call
+        end
+        p g
+        p g("y")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n\"d\"\n\"y\"\n");
+}
+
+#[test]
+fn a_later_default_may_read_an_earlier_captured_param() {
+    // `def fill_breakable(sep = ' ', width = sep.length)` with `sep`
+    // captured by a block (prettyprint's shape): `width`'s default reads
+    // `sep` through its capture cell, so the cell must exist BEFORE the
+    // later default evaluates -- wraps now interleave with the bindings in
+    // parameter order instead of trailing the whole prologue.
+    let result = run_ruby(
+        r#"
+        def fill(sep = "--", width = sep.length)
+          t = proc { sep }
+          [t.call, width]
+        end
+        p fill
+        p fill("abc")
+        p fill("abc", 9)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"--\", 2]\n[\"abc\", 3]\n[\"abc\", 9]\n");
+}
