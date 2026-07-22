@@ -57,6 +57,13 @@ struct OverlayEntry {
     ancestors: &'static [ClassId],
     /// Instance methods, self = the receiver object (`MethodImpl::Dynamic`).
     methods: HashMap<Symbol, MethodImpl>,
+    /// Explicit RUNTIME visibility marks (`Foo.class_eval { private :m }`,
+    /// an alias inheriting its source's visibility): nearest ancestor's mark
+    /// wins in `instance_method_visibility`'s walk. A name absent here but
+    /// present in `methods` is public (a runtime `define_method` is). Keyed
+    /// separately from `methods` because a mark can target a FROZEN-registry
+    /// or builtin method the overlay never carries a body for.
+    methods_vis: HashMap<Symbol, crate::dispatch::MethodVisibility>,
     /// Class/singleton-on-class methods (`def self.x`, `define_singleton_method`
     /// on a `Class` value): self = the `RubyValue::Class`, which the RObj-shaped
     /// `MethodImpl` can't carry -- so these are the raw `RProc`, invoked via
@@ -74,6 +81,7 @@ impl OverlayEntry {
             is_module: false,
             ancestors: &[],
             methods: HashMap::new(),
+            methods_vis: HashMap::new(),
             class_methods: HashMap::new(),
             constructor: None,
         }
@@ -228,10 +236,11 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
     let m = dynamic_from_proc(id, name, body);
     {
         let mut w = maps().classes.write().unwrap();
-        w.entry(id.0)
-            .or_insert_with(OverlayEntry::delta)
-            .methods
-            .insert(name, m);
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.methods.insert(name, m);
+        // A runtime redefinition is PUBLIC (CRuby's `define_method` at
+        // runtime scope) -- drop any earlier `private :name` mark.
+        e.methods_vis.remove(&name);
     }
     mark_live();
     Ok(RubyValue::Symbol(name))
@@ -243,16 +252,35 @@ pub fn runtime_define_method(id: ClassId, name: Symbol, body: RProc) -> Result<R
 /// The method `old` resolves to for instances of `id` is SNAPSHOTTED and
 /// installed under `new` in the overlay -- CRuby's copy-the-method-entry
 /// semantics (`rb_alias`), so a later runtime redefinition of `old` does
-/// not change the alias. Returns the new name's Symbol.
-///
-/// The alias installs PUBLIC regardless of `old`'s visibility: the overlay
-/// has no per-method visibility model, so a runtime alias of a private
-/// method is callable (divergence catalogued in docs/todo/stdlib-gaps.md).
+/// not change the alias. Returns the new name's Symbol. The alias inherits
+/// `old`'s visibility (CRuby: the copied method entry keeps its flags).
 pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<RubyValue, Signal> {
     if crate::dispatch::class_frozen(id) {
         return Err(crate::dispatch::frozen_class_error(id));
     }
-    let Some(m) = snapshot_instance_method(id, old) else {
+    let snapshot = snapshot_instance_method(id, old).or_else(|| {
+        // A parse-special Kernel source (`alias_method :block_given!,
+        // :block_given?` reached at runtime): statically-resolved call sites
+        // compile these directly, so there is no dispatch row to snapshot --
+        // but the alias itself is valid, exactly as `validate_aliases`
+        // accepts the static form. Accept it with a stub that only raises if
+        // a call actually arrives dynamically (which zeo cannot serve: the
+        // answer lives in the CALLER's compiled frame).
+        crate::dispatch::PARSE_SPECIAL_KERNEL
+            .contains(&old.name().as_str())
+            .then(|| {
+                MethodImpl::Dynamic(Arc::new(
+                    move |_recv: &RObj, _args: &[RubyValue], _block: Option<RubyValue>| {
+                        Err(crate::builtins::not_impl_error!(
+                            "'{}' cannot be called through a runtime alias (zeo limitation: \
+                             it resolves in the caller's compiled frame)",
+                            old.name()
+                        ))
+                    },
+                ))
+            })
+    });
+    let Some(m) = snapshot else {
         let kind = if crate::dispatch::class_is_module(id).unwrap_or(false) {
             "module"
         } else {
@@ -264,15 +292,102 @@ pub fn runtime_alias_method(id: ClassId, new: Symbol, old: Symbol) -> Result<Rub
             old.name()
         ));
     };
+    // The alias inherits its source's CURRENT visibility (CRuby: the copied
+    // method entry keeps its flags) -- resolved before install so a stale
+    // mark under `new` can't shadow it.
+    let vis = crate::dispatch::instance_method_visibility(id, old);
     {
         let mut w = maps().classes.write().unwrap();
-        w.entry(id.0)
-            .or_insert_with(OverlayEntry::delta)
-            .methods
-            .insert(new, m);
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        e.methods.insert(new, m);
+        match vis {
+            Some(v) => e.methods_vis.insert(new, v),
+            None => e.methods_vis.remove(&new),
+        };
     }
     mark_live();
     Ok(RubyValue::Symbol(new))
+}
+
+/// `Module#private`/`public`/`protected` WITH NAME ARGUMENTS reached at
+/// runtime (`Foo.class_eval { private :m }`, ostruct's guarded
+/// `private :block_given!`): validate each name resolves as an instance
+/// method of `id` (NameError otherwise, CRuby's timing) and record the mark
+/// in the overlay, where `instance_method_visibility`'s walk finds it ahead
+/// of the frozen registry's own flags. Returns the arguments as passed: a
+/// lone name verbatim, several names as an Array (Ruby >= 3.1's shape).
+///
+/// The ARGUMENT-LESS form (set the default visibility for subsequent defs
+/// in this scope) is accepted as a nil-returning no-op: the overlay has no
+/// per-scope default, and compiled `def`s took their visibility at compile
+/// time -- divergence limited to a bare `private` inside `class_eval`.
+pub fn runtime_set_visibility(
+    id: ClassId,
+    args: &[RubyValue],
+    vis: crate::dispatch::MethodVisibility,
+) -> Result<RubyValue, Signal> {
+    if args.is_empty() {
+        return Ok(RubyValue::Nil);
+    }
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    // `private [:a, :b]` (one Array argument) marks the contents. The return
+    // value is the ARGUMENT SHAPE as passed -- a lone name (Symbol or
+    // String) comes back verbatim, several names come back as an Array --
+    // per CRuby's `Module#private` docs.
+    let names: Vec<RubyValue> = match args {
+        [RubyValue::Array(a)] => a.lock().clone(),
+        one_or_many => one_or_many.to_vec(),
+    };
+    let result = match args {
+        [one] => one.clone(),
+        many => RubyValue::Array(crate::array_new(many.to_vec())),
+    };
+    let mut syms = Vec::with_capacity(names.len());
+    for name in &names {
+        syms.push(coerce_method_name(Some(name))?);
+    }
+    for &sym in &syms {
+        let resolves = crate::dispatch::instance_method_visibility(id, sym).is_some()
+            || snapshot_instance_method(id, sym).is_some();
+        if !resolves {
+            let kind = if crate::dispatch::class_is_module(id).unwrap_or(false) {
+                "module"
+            } else {
+                "class"
+            };
+            let cls = crate::dispatch::class_name(id).unwrap_or_default();
+            return Err(name_error!(
+                "undefined method '{}' for {kind} '{cls}'",
+                sym.name()
+            ));
+        }
+    }
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        for &sym in &syms {
+            e.methods_vis.insert(sym, vis);
+        }
+    }
+    mark_live();
+    Ok(result)
+}
+
+/// The explicit runtime visibility mark for `name` on class `id`'s OWN
+/// overlay entry -- `instance_method_visibility` probes this per ancestor,
+/// nearest mark winning, ahead of the frozen registry's flags.
+pub(crate) fn overlay_method_visibility(
+    id: ClassId,
+    name: Symbol,
+) -> Option<crate::dispatch::MethodVisibility> {
+    maps()
+        .classes
+        .read()
+        .unwrap()
+        .get(&id.0)
+        .and_then(|e| e.methods_vis.get(&name).copied())
 }
 
 /// The `MethodImpl` that instance method `name` resolves to for instances of
@@ -502,6 +617,7 @@ pub fn runtime_singleton_class(recv: &RubyValue) -> Result<RubyValue, Signal> {
                 is_module: false,
                 ancestors: leaked,
                 methods: HashMap::new(),
+                methods_vis: HashMap::new(),
                 class_methods: HashMap::new(),
                 constructor: None,
             },
@@ -537,6 +653,7 @@ pub fn runtime_module_new(body: Option<RProc>) -> Result<RubyValue, Signal> {
                 is_module: true,
                 ancestors: leaked,
                 methods: HashMap::new(),
+                methods_vis: HashMap::new(),
                 class_methods: HashMap::new(),
                 constructor: None,
             },
@@ -585,6 +702,7 @@ pub fn runtime_class_new(
                 is_module: false,
                 ancestors: leaked,
                 methods: HashMap::new(),
+                methods_vis: HashMap::new(),
                 class_methods: HashMap::new(),
                 constructor: Some(dyn_object_construct),
             },
@@ -626,6 +744,7 @@ pub fn intern_native_class(
                 is_module: false,
                 ancestors: leaked,
                 methods,
+                methods_vis: HashMap::new(),
                 class_methods: HashMap::new(),
                 constructor: Some(constructor),
             },

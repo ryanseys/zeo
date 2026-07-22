@@ -418,6 +418,24 @@ builtin_methods! {
         let old = crate::runtime_meta::coerce_method_name(args.get(1))?;
         crate::runtime_meta::runtime_alias_method(recv_cid(recv), new, old)
     }
+    // `Module#private`/`public`/`protected` reached at RUNTIME (inside a
+    // `class_eval` block or a guarded class-body statement -- the plain
+    // class-body form resolves at compile time): with names, validate and
+    // mark visibility in the runtime overlay; the argument-less
+    // default-visibility form is a documented nil no-op (see
+    // `runtime_set_visibility`).
+    "private" => fn private_m(recv, args, _block) {
+        crate::runtime_meta::runtime_set_visibility(
+            recv_cid(recv), args, crate::dispatch::MethodVisibility::Private)
+    }
+    "public" => fn public_m(recv, args, _block) {
+        crate::runtime_meta::runtime_set_visibility(
+            recv_cid(recv), args, crate::dispatch::MethodVisibility::Public)
+    }
+    "protected" => fn protected_m(recv, args, _block) {
+        crate::runtime_meta::runtime_set_visibility(
+            recv_cid(recv), args, crate::dispatch::MethodVisibility::Protected)
+    }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
     // to the module/class value, returning the block's value. A
     // `def`/`define_method` inside installs on the receiver via the dynamic-

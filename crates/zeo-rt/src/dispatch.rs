@@ -1355,8 +1355,18 @@ pub fn responds_to(recv_class: ClassId, name: Symbol, include_all: bool) -> bool
     for &anc in ancestors_of_value(recv_class) {
         // A method defined at runtime (#97: `define_method`, a runtime class's
         // own method) answers `respond_to?` on every ancestor it lands on.
-        if overlay_live && crate::runtime_meta::overlay_has_instance_method(anc, name) {
-            return true;
+        // An explicit runtime visibility mark (`class_eval { private :m }`)
+        // is checked first: it can target a frozen-registry or builtin
+        // method the overlay carries no body for, and only ever exists for
+        // a name that resolved when the mark was made -- so it is
+        // authoritative for both existence and visibility.
+        if overlay_live {
+            if let Some(v) = crate::runtime_meta::overlay_method_visibility(anc, name) {
+                return include_all || v == MethodVisibility::Public;
+            }
+            if crate::runtime_meta::overlay_has_instance_method(anc, name) {
+                return true;
+            }
         }
         if let Some(r) = REGISTRY.get() {
             // `undef` TERMINATES the walk at the class that wrote it --
@@ -1563,6 +1573,18 @@ pub fn instance_method_visibility(class: ClassId, name: Symbol) -> Option<Method
     let reg = REGISTRY.get()?;
     let name_str = name.name();
     for anc in ancestors_of_value(class) {
+        // Runtime marks first: an explicit `class_eval { private :m }` (or an
+        // alias's inherited visibility) on the nearest ancestor beats the
+        // frozen registry's compile-time flags, and a runtime-defined method
+        // with no mark is public.
+        if crate::runtime_meta::is_live() {
+            if let Some(vis) = crate::runtime_meta::overlay_method_visibility(*anc, name) {
+                return Some(vis);
+            }
+            if crate::runtime_meta::overlay_has_instance_method(*anc, name) {
+                return Some(MethodVisibility::Public);
+            }
+        }
         // A user/reopen definition on this ancestor carries its own visibility;
         // `undef` here terminates the search with "no such method".
         if reg.is_undefined(*anc, name) {
@@ -2437,7 +2459,7 @@ pub(crate) fn alias_target(id: ClassId, name: Symbol) -> Option<Symbol> {
 /// Parse-special Kernel names with NO runtime dispatch row: statically-
 /// resolved call sites compile them directly, so an alias of one is valid
 /// even though no table can prove it. `validate_aliases` skips them.
-const PARSE_SPECIAL_KERNEL: &[&str] = &[
+pub(crate) const PARSE_SPECIAL_KERNEL: &[&str] = &[
     "block_given?",
     "iterator?",
     "__method__",

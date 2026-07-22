@@ -359,3 +359,77 @@ fn runtime_alias_method_covers_user_and_builtin_sources() {
         "hi\nT\nT\n:v2\n\"old\"\n\"new\"\nundefined method 'nope' for class 'T'\ncan't modify frozen Class: Fz\ndone\n"
     );
 }
+
+/// Runtime `Module#private`/`public`/`protected` with name arguments
+/// (`class_eval { private :m }`): marks land in the overlay and govern the
+/// DYNAMIC paths -- `respond_to?`, `public_send`, plain `send` -- with the
+/// return shapes, NameError timing, and an alias inheriting its source's
+/// runtime-marked visibility all oracle-verified verbatim. (Static call
+/// sites with literal names resolve visibility at compile time and don't
+/// see runtime marks -- the documented AOT boundary -- so every probe here
+/// uses a computed name.)
+#[test]
+fn runtime_visibility_marks_govern_dynamic_dispatch() {
+    let result = run_ruby(
+        r#"
+        class C
+          def m
+            1
+          end
+          def m2
+            2
+          end
+        end
+        p C.class_eval { private :m }
+        p C.class_eval { private :m, :m2 }
+        sym = :m
+        p C.new.respond_to?(sym)
+        begin
+          C.new.public_send(sym)
+        rescue NoMethodError => e
+          puts e.message
+        end
+        p C.new.send(sym)
+        p C.class_eval { public "m" }
+        p C.new.respond_to?(sym)
+        p C.new.public_send(sym)
+        class D
+          def p1
+            3
+          end
+        end
+        D.class_eval { protected :p1 }
+        psym = :p1
+        begin
+          D.new.public_send(psym)
+        rescue NoMethodError => e
+          puts e.message
+        end
+        begin
+          C.class_eval { private :nope }
+        rescue NameError => e
+          puts e.message
+        end
+        class Al
+          def hidden
+            4
+          end
+        end
+        Al.class_eval { private :hidden }
+        Al.class_eval { [[:hidden2, :hidden]].each { |a, b| alias_method(a, b) } }
+        h2 = :hidden2
+        begin
+          Al.new.public_send(h2)
+        rescue NoMethodError => e
+          puts e.message
+        end
+        p Al.new.send(h2)
+        puts "done"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        ":m\n[:m, :m2]\nfalse\nprivate method 'm' called for an instance of C\n1\n\"m\"\ntrue\n1\nprotected method 'p1' called for an instance of D\nundefined method 'nope' for class 'C'\nprivate method 'hidden2' called for an instance of Al\n4\ndone\n"
+    );
+}
