@@ -145,16 +145,24 @@ builtin_methods! {
     pub(crate) fn lookup_tcpserver;
 
     // `#accept` -- block until a client connects, answering a TCPSocket.
+    // The blocking accept(2) runs on a dup(2) of the listener with the
+    // mutex DROPPED (holding it for the whole wait deadlocked a sibling's
+    // `#addr`/`#close` on this very server) and Gvl-released (an armed
+    // `ZEO_GVL=1` holder parked here would stall the very sibling that
+    // was about to connect).
     "accept" => fn accept(recv, args, _block) {
         arity!(args, 0);
         let server = recv_server(recv)?;
-        let stream = {
+        let listener = {
             let guard = server.listener.lock();
             let Some(listener) = guard.as_ref() else {
                 return Err(io_error!("closed stream"));
             };
-            listener.accept().map_err(|e| map_io_err(&e, "accept(2)"))?.0
+            listener.try_clone().map_err(|e| map_io_err(&e, "accept(2)"))?
         };
+        let stream = crate::gvl::without_gvl(|| listener.accept())
+            .map(|(s, _)| s)
+            .map_err(|e| map_io_err(&e, "accept(2)"))?;
         // SAFETY: `into_raw_fd` transfers ownership of the fd to the File.
         let file = unsafe { std::fs::File::from_raw_fd(stream.into_raw_fd()) };
         Ok(crate::builtins::io::socket_value(file, TCPSOCKET_CLASS))
@@ -209,7 +217,8 @@ builtin_methods! {
     // `TCPSocket.new(host, port)` -- connect; the result reads/writes as an IO.
     "new" | "open" => fn socket_new(_recv, args, _block) {
         let (host, port) = host_port(args, "127.0.0.1")?;
-        let stream = std::net::TcpStream::connect((host.as_str(), port))
+        // Gvl-released: connect(2) blocks until the peer answers.
+        let stream = crate::gvl::without_gvl(|| std::net::TcpStream::connect((host.as_str(), port)))
             .map_err(|e| map_io_err(&e, "connect(2)"))?;
         // SAFETY: `into_raw_fd` transfers ownership of the fd to the File.
         let file = unsafe { std::fs::File::from_raw_fd(stream.into_raw_fd()) };

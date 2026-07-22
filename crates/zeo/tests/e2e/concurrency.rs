@@ -1013,6 +1013,38 @@ fn an_armed_gvl_holder_waiting_on_a_child_process_does_not_stall_its_siblings() 
 }
 
 #[test]
+fn a_thread_blocked_in_accept_does_not_stall_the_connecting_sibling() {
+    // The socket-family probe: the acceptor parks in accept(2) BEFORE any
+    // client exists (the sleep guarantees it), then main must still be
+    // able to ask `server.addr` and connect. This pinned TWO bugs at
+    // once: accept holding the listener MUTEX across the blocking wait
+    // deadlocked main's `addr` in every mode, and in ZEO_GVL=1 mode the
+    // parked holder additionally needed to release the Gvl. The echo
+    // round trip also rides the with_file seam for the socket gets/puts.
+    let source = r#"
+        require "socket"
+        server = TCPServer.new("127.0.0.1", 0)
+        echo = Thread.new do
+          c = server.accept
+          c.puts c.gets
+          c.close
+        end
+        sleep 0.2
+        s = TCPSocket.new("127.0.0.1", server.addr[1])
+        s.puts "ping"
+        p s.gets
+        echo.join
+        s.close
+        server.close
+        "#;
+    for env in [&[][..], &[("ZEO_GVL", "1")][..]] {
+        let result = run_ruby_configured(source, env, &[]);
+        assert!(result.status.success(), "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "\"ping\\n\"\n", "env: {env:?}");
+    }
+}
+
+#[test]
 fn one_threads_bad_dispatch_no_longer_kills_the_other_threads() {
     // THE motivating scenario for this phase: the failure surfaces at the
     // bad thread's own join; the healthy worker completes normally.
