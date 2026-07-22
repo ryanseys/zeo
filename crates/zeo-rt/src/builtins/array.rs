@@ -301,7 +301,12 @@ builtin_methods! {
         if std::sync::Arc::ptr_eq(me, other) {
             return Ok(RubyValue::Bool(true));
         }
-        let (a, b) = (me.lock().clone(), other.lock().clone());
+        // Sequential snapshots -- a tuple `(x.lock().., y.lock()..)` keeps
+        // BOTH guards alive to the end of the statement, and two threads
+        // running `a.eql?(b)` / `b.eql?(a)` in parallel would deadlock on
+        // the opposite lock orders.
+        let a = me.lock().clone();
+        let b = other.lock().clone();
         let eq = a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| values_eql(x, y));
         Ok(RubyValue::Bool(eq))
     }

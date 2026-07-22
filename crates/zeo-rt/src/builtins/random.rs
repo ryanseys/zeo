@@ -295,7 +295,10 @@ crate::builtins::builtin_methods! {
         if Arc::ptr_eq(&me, &other) {
             return Ok(RubyValue::Bool(true));
         }
-        let (my_state, other_state) = (*me.state.lock(), *other.state.lock());
+        // Sequential (the tuple form would hold both guards to statement
+        // end -- an opposite-order deadlock under parallel threads).
+        let my_state = *me.state.lock();
+        let other_state = *other.state.lock();
         let eq = me.seed.rb_eq(&other.seed) && my_state == other_state;
         Ok(RubyValue::Bool(eq))
     }

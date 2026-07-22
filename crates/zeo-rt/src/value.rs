@@ -804,7 +804,23 @@ impl RubyValue {
             // `Array#include?` on an array of classes consults.
             (RubyValue::Class(a), RubyValue::Class(b)) => a == b,
             (RubyValue::Str(a), RubyValue::Str(b)) => {
-                std::sync::Arc::ptr_eq(a, b) || *a.lock() == *b.lock()
+                // Address-ordered locking: two threads comparing `a == b` /
+                // `b == a` must not take the locks in opposite orders
+                // (parallel-mode deadlock); eq is symmetric, so which guard
+                // comes first is free. Identity short-circuits (and keeps
+                // the same-Arc case from self-deadlocking).
+                if std::sync::Arc::ptr_eq(a, b) {
+                    true
+                } else {
+                    let (x, y) = if std::sync::Arc::as_ptr(a) < std::sync::Arc::as_ptr(b) {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    };
+                    let gx = x.lock();
+                    let gy = y.lock();
+                    *gx == *gy
+                }
             }
             // Real Ruby `Regexp#==`: same source pattern AND same flags.
             (RubyValue::Regexp(a), RubyValue::Regexp(b)) => {
@@ -975,7 +991,11 @@ impl RubyValue {
             // `Hash#sort` work, since the generic comparison drivers use
             // `rb_cmp` rather than dispatching `Array#<=>`.
             (RubyValue::Array(a), RubyValue::Array(b)) => {
-                let (a, b) = (a.lock().clone(), b.lock().clone());
+                // Sequential snapshots (the tuple form holds both guards to
+                // statement end -- opposite-order deadlock under parallel
+                // threads).
+                let a = a.lock().clone();
+                let b = b.lock().clone();
                 for (x, y) in a.iter().zip(b.iter()) {
                     match x.rb_cmp(y) {
                         Some(0) => continue,

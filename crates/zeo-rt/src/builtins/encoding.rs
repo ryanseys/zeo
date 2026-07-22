@@ -239,22 +239,32 @@ fn compat_of(a: &RubyValue, b: &RubyValue) -> Option<EncodingId> {
             if std::sync::Arc::ptr_eq(a, b) {
                 return Some(a.lock().encoding());
             }
-            let (a, b) = (a.lock(), b.lock());
-            if a.encoding() == b.encoding() {
-                return Some(a.encoding());
+            // One side's facts at a time -- never both guards at once, so
+            // concurrent `compatible?(a, b)` / `compatible?(b, a)` on two
+            // threads can't deadlock on opposite lock orders.
+            let (ea, a_empty, a_ascii) = {
+                let g = a.lock();
+                (g.encoding(), g.is_empty(), g.ascii_only())
+            };
+            let (eb, b_empty, b_ascii) = {
+                let g = b.lock();
+                (g.encoding(), g.is_empty(), g.ascii_only())
+            };
+            if ea == eb {
+                return Some(ea);
             }
-            if b.is_empty() {
-                return Some(a.encoding());
+            if b_empty {
+                return Some(ea);
             }
-            if a.is_empty() {
-                return Some(b.encoding());
+            if a_empty {
+                return Some(eb);
             }
-            if a.encoding().ascii_compatible() && b.encoding().ascii_compatible() {
-                if a.ascii_only() {
-                    return Some(b.encoding());
+            if ea.ascii_compatible() && eb.ascii_compatible() {
+                if a_ascii {
+                    return Some(eb);
                 }
-                if b.ascii_only() {
-                    return Some(a.encoding());
+                if b_ascii {
+                    return Some(ea);
                 }
             }
             None
