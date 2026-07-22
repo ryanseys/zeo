@@ -68,6 +68,7 @@ pub(crate) mod stat;
 pub(crate) mod string;
 pub(crate) mod symbol;
 pub(crate) mod thread;
+pub(crate) mod thread_group;
 pub(crate) mod time;
 pub(crate) mod value_subclass;
 
@@ -118,6 +119,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound,
         zeo_abi::FIBER_CLASS => fiber::lookup,
         zeo_abi::THREAD_CLASS => thread::lookup,
+        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup,
         zeo_abi::RANDOM_CLASS => random::lookup,
         zeo_abi::TIME_CLASS => time::lookup,
         zeo_abi::PROCESS_STATUS_CLASS => process::lookup_status,
@@ -195,6 +197,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_arity,
         zeo_abi::FIBER_CLASS => fiber::lookup_arity,
         zeo_abi::THREAD_CLASS => thread::lookup_arity,
+        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup_arity,
         zeo_abi::RANDOM_CLASS => random::lookup_arity,
         zeo_abi::TIME_CLASS => time::lookup_arity,
         zeo_abi::PROCESS_STATUS_CLASS => process::lookup_status_arity,
@@ -354,6 +357,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::UNBOUND_METHOD_CLASS => method_obj::lookup_unbound_names(),
         zeo_abi::FIBER_CLASS => fiber::lookup_names(),
         zeo_abi::THREAD_CLASS => thread::lookup_names(),
+        zeo_abi::THREAD_GROUP_CLASS => thread_group::lookup_names(),
         zeo_abi::RANDOM_CLASS => random::lookup_names(),
         zeo_abi::TIME_CLASS => time::lookup_names(),
         zeo_abi::PROCESS_STATUS_CLASS => process::lookup_status_names(),

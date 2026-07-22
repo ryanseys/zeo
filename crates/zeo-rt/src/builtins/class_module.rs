@@ -16,6 +16,37 @@ fn recv_cid(recv: &RubyValue) -> crate::ClassId {
     }
 }
 
+/// The shared body of `private_constant`/`public_constant` (see their table
+/// rows): validate every name against the receiver's OWN constants -- a value
+/// constant in the runtime map, or a nested class/module registered under the
+/// receiver's namespace -- and answer the module. The visibility flag itself
+/// is a documented no-op.
+fn constant_visibility_no_op(
+    recv: &RubyValue,
+    args: &[RubyValue],
+) -> Result<RubyValue, crate::Signal> {
+    let cid = recv_cid(recv);
+    let owner = crate::dispatch::class_name(cid).unwrap_or_else(|| "Object".to_string());
+    for arg in args {
+        let name = match arg {
+            RubyValue::Symbol(s) => s.name().to_string(),
+            RubyValue::Str(s) => s.lock().to_utf8_lossy().into_owned(),
+            other => {
+                return Err(type_error!(
+                    "{} is not a symbol nor a string",
+                    other.inspect_string()
+                ));
+            }
+        };
+        let defined = crate::constants::const_get(cid.0, &name).is_some()
+            || crate::dispatch::class_id_by_name(&format!("{owner}::{name}")).is_some();
+        if !defined {
+            return Err(name_error!("constant {owner}::{name} not defined"));
+        }
+    }
+    Ok(recv.clone())
+}
+
 /// Whether `name_arg` names an instance method of `recv` with exactly `want`
 /// visibility -- shared by `public/private/protected_method_defined?`.
 fn method_defined_with_vis(
@@ -106,6 +137,20 @@ builtin_methods! {
         };
         crate::constants::const_set(cid.0, &name, args[1].clone());
         Ok(args[1].clone())
+    }
+    // `Module#private_constant(:A, ...)` / `Module#public_constant(:A, ...)` --
+    // argument-validated like CRuby (each name must be an OWN constant of the
+    // receiver, else "constant M::A not defined"), answering the module.
+    // DIVERGENCE: the visibility itself is not enforced -- a privatized
+    // constant stays reachable (compile-time constant resolution binds
+    // references statically, so a runtime-only flag could not be honored
+    // consistently anyway). Gems call this to hide internals (timeout's
+    // `private_constant :GET_TIME`); accepting-without-enforcing loads them.
+    "private_constant" => fn private_constant(recv, args, _block) {
+        constant_visibility_no_op(recv, args)
+    }
+    "public_constant" => fn public_constant(recv, args, _block) {
+        constant_visibility_no_op(recv, args)
     }
     // `Module#const_get(name)` -- resolve a constant on this module (walking the
     // ancestry), a NameError "uninitialized constant <name>" on a miss.

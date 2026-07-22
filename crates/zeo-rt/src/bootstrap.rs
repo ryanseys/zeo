@@ -64,6 +64,13 @@ pub fn install_core_constants() {
     crate::builtins::file::seed_file();
     crate::builtins::argf::seed_argf();
     crate::globals::seed_default_globals();
+    // `ThreadGroup::Default` -- the one shared group every thread reports
+    // (see `builtins::thread_group`).
+    crate::constants::const_set(
+        zeo_abi::THREAD_GROUP_CLASS.0,
+        "Default",
+        crate::builtins::thread_group::default_group(),
+    );
     seed_ruby_constants();
 }
 

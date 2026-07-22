@@ -1578,3 +1578,31 @@ fn blockless_thread_and_fiber_raise() {
          7\n",
     );
 }
+
+#[test]
+fn thread_group_surface_matches_the_default_group_model() {
+    // The always-on `ThreadGroup` surface the timeout gem needs:
+    // `Thread#group` answers the shared `ThreadGroup::Default`, which is
+    // never enclosed, accepts `#add`, and type-checks its argument.
+    let result = run_ruby(
+        r#"
+        g = Thread.current.group
+        p g.equal?(ThreadGroup::Default)
+        p g.enclosed?
+        t = Thread.new { 1 }
+        p ThreadGroup::Default.add(t).equal?(g)
+        t.join
+        begin
+          g.add(42)
+        rescue TypeError => e
+          puts e.message
+        end
+        p Thread.handle_interrupt(Exception => :never) { :ran }
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "true\nfalse\ntrue\nwrong argument type Integer (expected VM/thread)\n:ran\n"
+    );
+}

@@ -305,6 +305,13 @@ pub const TCPSOCKET_CLASS: ClassId = ClassId(78);
 /// block (`FIRST_EXCEPTION_ID`) follows the last builtin.
 pub const TCPSERVER_CLASS: ClassId = ClassId(79);
 
+/// `ThreadGroup` -- always-on core (no require), like `Thread` itself. The
+/// runtime models the DEFAULT group only (every thread belongs to
+/// `ThreadGroup::Default`; `enclose`/re-grouping are not implemented) --
+/// enough for the stdlib idiom of checking `thread.group.enclosed?` and
+/// re-adding to `ThreadGroup::Default` (timeout does both).
+pub const THREAD_GROUP_CLASS: ClassId = ClassId(80);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -958,6 +965,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(TCPSOCKET_CLASS),
         includes: &[],
         feature: Some("socket"),
+    },
+    BuiltinClass {
+        id: THREAD_GROUP_CLASS,
+        name: "ThreadGroup",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: None,
     },
 ];
 

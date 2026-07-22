@@ -85,6 +85,16 @@ fn t_name(
     Ok(thread::thread_name(&recv.as_thread_unchecked()))
 }
 
+/// `Thread#group` -- always `ThreadGroup::Default` (the only group this
+/// runtime models; see `builtins::thread_group`).
+fn t_group(
+    _recv: &RubyValue,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    Ok(crate::builtins::thread_group::default_group())
+}
+
 fn t_set_name(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -276,6 +286,7 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "status" => t_status,
         "name" => t_name,
         "name=" => t_set_name,
+        "group" => t_group,
         "report_on_exception" => t_report_on_exception,
         "report_on_exception=" => t_set_report_on_exception,
         "[]" => t_aref,
@@ -305,6 +316,7 @@ pub fn lookup_names() -> &'static [&'static str] {
         "status",
         "name",
         "name=",
+        "group",
         "report_on_exception",
         "report_on_exception=",
         "[]",
@@ -374,12 +386,37 @@ fn c_set_report_on_exception(
     Ok(args[0].clone())
 }
 
+/// `Thread.handle_interrupt(hash) { ... }` -- CRuby defers/unmasks async
+/// interrupt (`Thread#raise`/`#kill`) delivery inside the block per the
+/// `ExceptionClass => :immediate/:on_blocking/:never` mask. This scheduler
+/// is cooperative (`may` coroutines): an async raise is only ever delivered
+/// at a blocking point the target itself reaches, which is `:on_blocking`
+/// behavior already -- so the mask itself is a no-op and the block just
+/// runs. Argument shapes are validated like CRuby (a Hash, and the block is
+/// mandatory). Revisit when the OS-thread GVL migration gives interrupts a
+/// real delivery mechanism to mask.
+fn c_handle_interrupt(
+    _recv: &RubyValue,
+    args: &[RubyValue],
+    blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    crate::builtins::arity!(args, 1);
+    if !matches!(&args[0], RubyValue::Hash(_)) {
+        return Err(crate::builtins::arg_error!("unknown mask signature"));
+    }
+    let Some(b) = blk else {
+        return Err(crate::builtins::arg_error!("block is needed"));
+    };
+    b.as_proc_unchecked().call(&[])
+}
+
 pub fn lookup_class(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
     Some(match name {
         "current" => c_current,
         "main" => c_main,
         "list" => c_list,
         "pass" => c_pass,
+        "handle_interrupt" => c_handle_interrupt,
         "report_on_exception" => c_report_on_exception,
         "report_on_exception=" => c_set_report_on_exception,
         _ => return None,
@@ -392,6 +429,7 @@ pub fn lookup_class_names() -> &'static [&'static str] {
         "main",
         "list",
         "pass",
+        "handle_interrupt",
         "report_on_exception",
         "report_on_exception=",
     ]

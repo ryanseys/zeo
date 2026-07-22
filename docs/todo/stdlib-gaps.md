@@ -14,8 +14,8 @@ now surfaced honestly instead of `cannot load such file`:
 | English | blocked | `alias $FULL_MATCH $&` -- alias of punctuation globals (lowering accepts only plain `$name` pairs) |
 | forwardable | blocked | a multi-assignment splat-target shape lowering rejects (`expected *name as a multi-assignment's splat target`) |
 | pp | blocked | `require` in non-top-level position (inside method/conditional) |
-| timeout | blocked | generated Rust fails rustc -- codegen bug, triage via the kept temp source |
-| prettyprint | blocked | generated Rust fails rustc -- codegen bug, triage via the kept temp source |
+| timeout | compiles; partial | ex-invalid-Rust, fixed (duplicate captured-param cell; exception-subclass typing) plus new runtime surface (ThreadGroup/Thread#group/handle_interrupt/private_constant/Process.method). `Timeout.timeout(n) { }` works when the block finishes; actually INTERRUPTING a running block needs `Thread#raise` delivery into a sleeping/blocked coroutine -- lands with the OS-thread + GVL migration (interruptible `kernel_sleep`) |
+| prettyprint | **works** | ex-invalid-Rust, fixed: a later param default reading an earlier CAPTURED param (`width = sep.length`) now sees its capture cell (wraps interleave with bindings in parameter order); breakable/group line-breaking oracle-verified |
 | singleton | blocked (compiles) | ex-PANIC, now fixed: top-level `if defined?(Ractor)` guards fold at analyze time, extended-module `super` resolves the singleton chain, and Ruby methods named `clone` no longer hijack internal Arc clones. Remaining: `include Singleton` must fire the `Module.included` HOOK at runtime, `extend` on a CLASS receiver must install class methods (runtime_meta::runtime_extend only handles per-object singletons), and class OBJECTS need ivar storage (`@singleton__instance__` lives on the class) -- runtime-redesign territory (hybrid model / MRO fallback) |
 
 Grind order suggestion: the two rustc-failure codegen bugs, then the
