@@ -88,6 +88,100 @@ fn thread_current_name_status_and_thread_locals() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn a_throw_inside_a_fiber_cannot_see_the_resumers_catch() {
+    // The ec-swap's catch-tag slice, oracle-verified: a fiber has its own
+    // execution context, so the resumer's live `catch` frame is invisible
+    // inside it (UncaughtThrowError AT the throw) -- while a catch/throw
+    // pair fully inside the fiber works normally.
+    let result = run_ruby(
+        r#"
+        r = catch(:tag) do
+          f = Fiber.new do
+            begin
+              throw :tag, 1
+              :not_reached
+            rescue UncaughtThrowError => e
+              "uncaught: #{e.message}"
+            end
+          end
+          f.resume
+        end
+        p r
+        f2 = Fiber.new { catch(:in) { throw :in, :works } }
+        p f2.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "\"uncaught: uncaught throw :tag\"\n:works\n");
+}
+
+#[test]
+fn a_raise_inside_a_fiber_backtraces_only_the_fibers_own_frames() {
+    // The ec-swap's frame slice, oracle-verified: the fiber starts on a
+    // FRESH backtrace stack, so a raise through a method inside it sees
+    // exactly [the method, the fiber block] -- none of main's frames --
+    // and `caller` at the block top is empty.
+    let result = run_ruby(
+        r#"
+        def deep_raise
+          raise "boom"
+        end
+        f = Fiber.new do
+          begin
+            deep_raise
+          rescue => e
+            e.backtrace.length
+          end
+        end
+        p f.resume
+        f2 = Fiber.new { caller.length }
+        p f2.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n0\n");
+}
+
+#[test]
+fn a_proc_return_home_survives_fiber_suspension() {
+    // The ec-swap's home-stack slice, oracle-verified: a method running
+    // inside a fiber suspends mid-body, and after resumption its
+    // return-proc still unwinds to it (the home stayed alive across the
+    // suspension because the whole stack was parked, not shared); a proc
+    // that ESCAPES its dead activation still gets the LocalJumpError.
+    let result = run_ruby(
+        r#"
+        def maker
+          pr = proc { return :via_proc }
+          Fiber.yield :suspended
+          pr.call
+          :after_call
+        end
+        f = Fiber.new { maker }
+        p f.resume
+        p f.resume
+        def escape_maker
+          proc { return :late }
+        end
+        f2 = Fiber.new do
+          pr = escape_maker
+          begin
+            pr.call
+          rescue LocalJumpError => e
+            "LJE: #{e.message}"
+          end
+        end
+        p f2.resume
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        ":suspended\n:via_proc\n\"LJE: unexpected return\"\n"
+    );
+}
+
+#[test]
 fn fiber_yields_values_in_order_then_returns_the_body_value_and_dies() {
     let result = run_ruby(
         r#"

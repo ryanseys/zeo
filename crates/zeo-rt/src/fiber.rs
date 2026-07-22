@@ -58,14 +58,15 @@ pub struct FiberHandle {
     /// `Fiber#alive?` (`!finished`, matching CRuby's `!FIBER_TERMINATED_P`:
     /// created/suspended/running all count as alive).
     finished: AtomicBool,
-    /// This fiber's OWN `$!`/rescue-nesting stack while it's suspended --
-    /// swapped into `handling`'s ambient slot for the
-    /// duration of every `resume` and back out on yield/return, giving each
-    /// fiber the isolated execution context CRuby's own per-fiber
-    /// `saved_ec.errinfo` provides (`cont.c:238`, verified in the plan's
-    /// research addendum). Starts empty: a fresh fiber has no exception in
-    /// flight regardless of what its creator was rescuing.
-    handling: parking_lot::Mutex<Vec<RubyValue>>,
+    /// This fiber's OWN execution context while it's suspended -- the
+    /// `$!`/rescue stack, proc return-homes, live `catch` tags, and
+    /// backtrace frames, swapped into the ambient cells for the duration
+    /// of every `resume` and back out on yield/return (see `crate::ec`),
+    /// giving each fiber the isolated context CRuby's own per-fiber
+    /// `saved_ec` provides (`cont.c`). Starts fresh: a new fiber has no
+    /// exception in flight, homes, catch frames, or backtrace,
+    /// regardless of what its creator was doing.
+    saved_ec: parking_lot::Mutex<crate::ec::Ec>,
     /// `Fiber[]`/`Fiber.[]=` / `#storage` -- inheritable fiber-local storage.
     /// `None` until the first write, so `#storage` reads nil rather than an
     /// empty Hash (CRuby lazily allocates it). A new fiber COPIES its
@@ -135,7 +136,7 @@ fn root_fiber() -> RFiber {
                     id: 0,
                     owner: std::thread::current().id(),
                     finished: AtomicBool::new(false),
-                    handling: parking_lot::Mutex::new(Vec::new()),
+                    saved_ec: parking_lot::Mutex::new(crate::ec::Ec::default()),
                     storage: parking_lot::Mutex::new(None),
                     entered_by_transfer: AtomicBool::new(false),
                     frozen: AtomicBool::new(false),
@@ -189,7 +190,7 @@ pub fn fiber_new(block: RubyValue) -> RubyValue {
         id,
         owner: std::thread::current().id(),
         finished: AtomicBool::new(false),
-        handling: parking_lot::Mutex::new(Vec::new()),
+        saved_ec: parking_lot::Mutex::new(crate::ec::Ec::default()),
         storage: parking_lot::Mutex::new(inherited),
         entered_by_transfer: AtomicBool::new(false),
         frozen: AtomicBool::new(false),
@@ -206,7 +207,7 @@ pub fn dup_uninitialized(src: &FiberHandle) -> RFiber {
         id: NEXT_FIBER_ID.fetch_add(1, Ordering::Relaxed),
         owner: std::thread::current().id(),
         finished: AtomicBool::new(false),
-        handling: parking_lot::Mutex::new(Vec::new()),
+        saved_ec: parking_lot::Mutex::new(crate::ec::Ec::default()),
         storage: parking_lot::Mutex::new(src.storage.lock().clone()),
         entered_by_transfer: AtomicBool::new(false),
         frozen: AtomicBool::new(false),
@@ -302,16 +303,16 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     let Some(mut coro) = FIBERS.with(|f| f.borrow_mut().remove(&handle.id)) else {
         return FiberResume::DoubleResume;
     };
-    // Execution-context swap: install the fiber's own
-    // `$!`/rescue-nesting stack for the duration of the switch, exactly as
-    // CRuby swaps `th->ec` to the fiber's `saved_ec` -- the resumer's
-    // rescue state is invisible inside the fiber and vice versa. Sound
-    // because a fiber never runs CONCURRENTLY with its resumer (both swaps
-    // happen here, on the resumer's own stack, either side of the switch).
-    // A Rust panic propagating out of the resume skips the swap-back --
-    // acceptable: a runtime panic is already a dying process in this
-    // runtime's posture.
-    let resumer_stack = crate::handling::swap_handling(std::mem::take(&mut handle.handling.lock()));
+    // Execution-context swap: install the fiber's own saved context
+    // ($!/rescue stack, proc homes, catch tags, backtrace frames) for the
+    // duration of the switch, exactly as CRuby swaps `th->ec` to the
+    // fiber's `saved_ec` -- the resumer's state is invisible inside the
+    // fiber and vice versa (see `crate::ec`). Sound because a fiber never
+    // runs CONCURRENTLY with its resumer (both swaps happen here, on the
+    // resumer's own stack, either side of the switch). A Rust panic
+    // propagating out of the resume skips the swap-back -- acceptable: a
+    // runtime panic is already a dying process in this runtime's posture.
+    let resumer_ec = crate::ec::swap(std::mem::take(&mut handle.saved_ec.lock()));
     // Mark THIS fiber as current for the duration of the switch, so
     // `Fiber.current` inside the body finds it (and nested resumes stack).
     CURRENT_FIBER.with(|s| s.borrow_mut().push(handle.clone()));
@@ -319,7 +320,7 @@ fn fiber_drive(handle: &RFiber, input: FiberInput) -> FiberResume {
     CURRENT_FIBER.with(|s| {
         s.borrow_mut().pop();
     });
-    *handle.handling.lock() = crate::handling::swap_handling(resumer_stack);
+    *handle.saved_ec.lock() = crate::ec::swap(resumer_ec);
     match result {
         CoroutineResult::Yield(v) => {
             FIBERS.with(|f| f.borrow_mut().insert(handle.id, coro));

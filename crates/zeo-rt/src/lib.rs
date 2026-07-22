@@ -11,6 +11,7 @@ mod collections;
 mod constants;
 mod cvars;
 mod dispatch;
+mod ec;
 pub mod encoding;
 // Runtime string `eval` (#97 stage 2). Always compiled -- the module's public
 // `eval_string` is the stub-or-real entry, gating only its prism-backed

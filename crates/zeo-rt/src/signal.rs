@@ -98,3 +98,9 @@ pub fn home_current() -> Option<ProcHome> {
 pub fn proc_home_alive(home: &ProcHome) -> bool {
     home.load(Ordering::Relaxed)
 }
+
+/// Install `new` as this context's home stack, returning the previous one
+/// -- the fiber ec-swap's slice of this cell (see `crate::ec`).
+pub fn swap_home_stack(new: Vec<ProcHome>) -> Vec<ProcHome> {
+    HOME_STACK.with(|s| s.replace(new))
+}

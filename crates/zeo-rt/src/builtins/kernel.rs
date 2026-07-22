@@ -1268,6 +1268,14 @@ pub fn kernel_srand(args: &[RubyValue]) -> Result<RubyValue, Signal> {
 // level. Coroutine-local: each `Thread`/`Fiber` unwinds its own catch frames.
 std::thread_local!(static CATCH_TAGS: std::cell::RefCell<Vec<RubyValue>> = const { std::cell::RefCell::new(Vec::new()) });
 
+/// Install `new` as this context's live-catch-tag stack, returning the
+/// previous one -- the fiber ec-swap's slice of this cell (see
+/// `crate::ec`). Oracle-pinned: a `throw` inside a fiber cannot see the
+/// resumer's `catch`.
+pub(crate) fn swap_catch_tags(new: Vec<RubyValue>) -> Vec<RubyValue> {
+    CATCH_TAGS.with(|s| s.replace(new))
+}
+
 /// `Kernel#catch(tag) { ... }` / `Kernel#throw(tag[, value])`.
 pub fn kernel_catch(tag: RubyValue, block: RubyValue) -> Result<RubyValue, Signal> {
     let RubyValue::Proc(p) = &block else {

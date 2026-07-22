@@ -16,9 +16,10 @@
 //! formats anything. Backtraces are FORMATTED at capture (raise) time.
 //!
 //! Thread-local, and each Ruby `Thread` is its own OS thread -- a raise in
-//! one `Thread` never sees another's frames, by construction. Fibers
-//! currently share their owner thread's stack (the ec-swap covers `$!`
-//! only) -- a documented approximation, same boundary `signal` has.
+//! one `Thread` never sees another's frames, by construction. Fibers swap
+//! in their OWN frame stack via the ec-swap (`crate::ec`), so a raise
+//! inside a fiber backtraces only the fiber's frames -- CRuby's own
+//! per-fiber stack semantics, oracle-verified.
 
 use std::cell::RefCell;
 

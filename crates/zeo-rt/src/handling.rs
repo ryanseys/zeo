@@ -24,10 +24,11 @@
 //! `Fiber` needs one more twist (also this phase): CRuby gives each fiber
 //! its OWN execution context (`fiber->cont.saved_ec.errinfo` -- rescue
 //! state inside a fiber is invisible to its resumer and vice versa), but a
-//! fiber here runs ON its resumer's coroutine. `fiber::fiber_resume` swaps
-//! this stack out for the fiber's own saved one around every switch (see
-//! [`swap_handling`]) -- sufficient BECAUSE a fiber never runs concurrently
-//! with its resumer, mirroring how CRuby itself just swaps `th->ec`.
+//! fiber here runs ON its resumer's coroutine. The fiber ec-swap
+//! (`crate::ec`, of which [`swap_handling`] is one slice) exchanges this
+//! stack for the fiber's own saved one around every switch -- sufficient
+//! BECAUSE a fiber never runs concurrently with its resumer, mirroring
+//! how CRuby itself just swaps `th->ec`.
 
 use crate::RubyValue;
 use std::cell::RefCell;

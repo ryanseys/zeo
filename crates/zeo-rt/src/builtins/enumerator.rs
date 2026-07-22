@@ -17,7 +17,7 @@
 //! element (`next_i`/`next_ii`, enumerator.c:772/758). The coroutine is
 //! the EXACT same `zeo_fiber` instantiation `fiber.rs` uses -- same
 //! Send+Sync split (handle in the value, coroutine thread-pinned in a TLS
-//! table), same `$!`-stack swap, and, because the `(input, yield)`
+//! table), same ec-swap (see `crate::ec`), and, because the `(input, yield)`
 //! TypeIds match, a `Fiber.yield` inside an enumerated `each` suspends
 //! the enumerator's own fiber -- which is literally CRuby's semantics
 //! (the enumerator's fiber IS the current fiber there).
@@ -108,9 +108,10 @@ struct ExternState {
     /// every subsequent `next` re-raises `StopIteration` carrying it
     /// (CRuby rebuilds a fresh exception each time, from `stop_exc`).
     done: Option<RubyValue>,
-    /// The iteration fiber's own `$!`/rescue-nesting stack while
-    /// suspended -- same execution-context swap as `fiber.rs`.
-    handling: Vec<RubyValue>,
+    /// The iteration fiber's own execution context while suspended
+    /// ($!/rescue stack, proc homes, catch tags, backtrace frames) --
+    /// same ec-swap as `fiber.rs` (see `crate::ec`).
+    saved_ec: crate::ec::Ec,
 }
 
 pub struct EnumeratorData {
@@ -440,9 +441,9 @@ fn get_next_values(e: &REnumerator) -> Result<Vec<RubyValue>, Signal> {
     // The fed value (if `#feed` set one) crosses in as the resume payload --
     // the shuttle returns it from the paused `y.yield`. Cleared once consumed.
     let feed_in: Vec<RubyValue> = e.state.lock().feed.take().into_iter().collect();
-    let saved = crate::handling::swap_handling(std::mem::take(&mut e.state.lock().handling));
+    let caller_ec = crate::ec::swap(std::mem::take(&mut e.state.lock().saved_ec));
     let outcome = zeo_fiber::resume(&mut coro, feed_in);
-    e.state.lock().handling = crate::handling::swap_handling(saved);
+    e.state.lock().saved_ec = crate::ec::swap(caller_ec);
     match outcome {
         // The shuttle's arity-preserving Array payload -- the normal case.
         CoroutineResult::Yield(RubyValue::Array(a)) => {
@@ -744,7 +745,7 @@ builtin_methods! {
         st.owner = None;
         st.lookahead = None;
         st.done = None;
-        st.handling.clear();
+        st.saved_ec = crate::ec::Ec::default();
         // CRuby also calls the receiver's own `rewind` hook when it
         // responds -- Tier B (rare protocol; documented).
         Ok(recv.clone())
