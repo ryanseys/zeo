@@ -263,6 +263,23 @@ mod tests {
         assert!(matches!(r, RubyValue::Float(f) if f == 2.0));
     }
 
+    /// All shapes oracle-verified against ruby 4.0.5.
+    #[test]
+    fn rationalize_finds_the_simplest_rational_within_eps() {
+        let go = |r: RubyValue, e: RubyValue| parts(&rationalize(&r, &[e], None).unwrap());
+        assert_eq!(go(rat(1, 3), rat(1, 10)), (1, 3));
+        assert_eq!(go(rat(5000, 10001), rat(1, 100)), (1, 2));
+        assert_eq!(go(rat(3, 4), rat(1, 10)), (2, 3));
+        // Float eps reads exactly (dyadic), negative receivers negate through.
+        assert_eq!(go(rat(22, 7), RubyValue::Float(0.01)), (22, 7));
+        assert_eq!(go(rat(-1, 3), rat(1, 10)), (-1, 3));
+        // Zero/absent eps answer self; a span past an integer picks ceil(a).
+        assert_eq!(go(rat(1, 3), RubyValue::Int(0)), (1, 3));
+        assert_eq!(parts(&rationalize(&rat(1, 3), &[], None).unwrap()), (1, 3));
+        assert_eq!(go(rat(1, 3), RubyValue::Int(2)), (-1, 1));
+        assert_eq!(go(rat(1, 3), rat(1, 2)), (0, 1));
+    }
+
     #[test]
     fn cmp_is_exact_and_rendering_matches() {
         assert_eq!(rat_cmp(&rat(1, 2), &rat(2, 3)), -1);
@@ -392,6 +409,60 @@ fn round_with_precision(r: &RRationalData, n: i64, mode: RoundMode) -> Result<Ru
     rational_new(q, p)
 }
 
+/// `rationalize`'s epsilon as an exact non-negative `(num, den)` ratio:
+/// exact numerics as themselves, a Float by its dyadic decomposition (a
+/// non-finite Float keeps `Float#to_r`'s FloatDomainError). Anything else
+/// gets CRuby's NoMethodError -- the C code's first touch is `f_abs(eps)`.
+fn eps_ratio(v: &RubyValue) -> Result<(BigInt, BigInt), Signal> {
+    match v {
+        RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Rational(_) => {
+            let (n, d) = as_ratio(v);
+            Ok((n.abs(), d))
+        }
+        RubyValue::Float(f) => {
+            if !f.is_finite() {
+                return Err(crate::dispatch::raise_error(
+                    "FloatDomainError",
+                    RubyValue::Float(*f).to_display_string(),
+                ));
+            }
+            let (n, d) = crate::builtins::float::float_exact_parts(*f);
+            Ok((n.abs(), d))
+        }
+        other => Err(crate::dispatch::raise_error(
+            "NoMethodError",
+            format!(
+                "undefined method 'abs' for an instance of {}",
+                crate::builtins::class_name_of(other)
+            ),
+        )),
+    }
+}
+
+/// CRuby's `nurat_rationalize_internal` (rational.c): the continued-fraction
+/// walk for the simplest rational `p/q` with `a <= p/q <= b`, run in exact
+/// `(num, den)` arithmetic (`den > 0`, `a < b`).
+fn simplest_ratio(mut a: (BigInt, BigInt), mut b: (BigInt, BigInt)) -> (BigInt, BigInt) {
+    let (mut p0, mut p1) = (BigInt::from(0), BigInt::from(1));
+    let (mut q0, mut q1) = (BigInt::from(1), BigInt::from(0));
+    loop {
+        let c = a.0.div_ceil(&a.1);
+        if &c * &b.1 <= b.0 {
+            return (&c * &p1 + &p0, &c * &q1 + &q0);
+        }
+        let k = &c - 1;
+        let p2 = &k * &p1 + &p0;
+        let q2 = &k * &q1 + &q0;
+        // a' = 1/(b - k), b' = 1/(a - k) -- both differences are positive
+        // (`k = ceil(a) - 1 < a <= b`), so the flips keep den > 0.
+        let t = (b.1.clone(), &b.0 - &k * &b.1);
+        b = (a.1.clone(), &a.0 - &k * &a.1);
+        a = t;
+        (p0, q0) = (p1, q1);
+        (p1, q1) = (p2, q2);
+    }
+}
+
 builtin_methods! {
     pub(crate) fn lookup;
 
@@ -444,9 +515,29 @@ builtin_methods! {
         let r = recv_rational(recv);
         Ok(crate::builtins::integer::int_value(&r.num / &r.den))
     }
-    "to_r"[0] | "rationalize" => fn to_r(recv, args, _block) {
+    "to_r"[0] => fn to_r(recv, args, _block) {
         arity!(args, 0);
         Ok(recv.clone())
+    }
+    // `rationalize(eps)`: the simplest rational within `eps` of self
+    // (CRuby's `nurat_rationalize`); the no-argument form is exact already
+    // and answers self.
+    "rationalize" => fn rationalize(recv, args, _block) {
+        arity!(args, 0..=1);
+        let Some(eps) = args.first() else { return Ok(recv.clone()) };
+        let (en, ed) = eps_ratio(eps)?;
+        if en.is_zero() {
+            return Ok(recv.clone());
+        }
+        // Negative receivers rationalize their absolute value and negate
+        // the result (rational.c's negation dance).
+        let r = recv_rational(recv);
+        let neg = r.num.is_negative();
+        let (sn, sd) = (r.num.abs(), r.den.clone());
+        let a = (&sn * &ed - &en * &sd, &sd * &ed);
+        let b = (&sn * &ed + &en * &sd, &sd * &ed);
+        let (p, q) = simplest_ratio(a, b);
+        rational_new(if neg { -p } else { p }, q)
     }
     // `floor`/`ceil`/`round`/`truncate` accept an optional precision: a
     // positive `ndigits` answers a Rational, zero/negative an Integer.
