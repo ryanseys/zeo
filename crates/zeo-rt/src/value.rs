@@ -1381,6 +1381,10 @@ pub fn case_eq(pattern: &RubyValue, subject: &RubyValue) -> Result<bool, crate::
             )?;
             Ok(matched.truthy())
         }
+        // `Proc#===` calls the proc/lambda with the subject (`case x when
+        // ->(v) { ... }`) -- the subject can be any value (e.g. a Class), so
+        // this rides the normal `call`, not the integer fast-path ABI.
+        RubyValue::Proc(p) => Ok(p.call(std::slice::from_ref(subject))?.truthy()),
         _ => Ok(pattern.rb_case_eq(subject)),
     }
 }
@@ -1432,20 +1436,22 @@ pub(crate) fn range_covers(
     exclusive: bool,
     subject: &RubyValue,
 ) -> bool {
+    // A `nil` endpoint (`(nil.."m")`, or an unset ivar range bound) is an OPEN
+    // side, exactly like a missing one -- never compared, always widens.
     let lower_ok = match start {
-        Some(s) => matches!(subject.rb_cmp(s), Some(c) if c >= 0),
-        None => true,
+        Some(s) if !s.is_nil() => matches!(subject.rb_cmp(s), Some(c) if c >= 0),
+        _ => true,
     };
     if !lower_ok {
         return false;
     }
     match end {
-        Some(e) => match subject.rb_cmp(e) {
+        Some(e) if !e.is_nil() => match subject.rb_cmp(e) {
             Some(c) if exclusive => c < 0,
             Some(c) => c <= 0,
             None => false,
         },
-        None => true,
+        _ => true,
     }
 }
 

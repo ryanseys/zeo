@@ -1,5 +1,5 @@
-# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=1a860b2
-# PASS=2195 FAIL_OUTPUT=98 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
+# suite=spinel corpus=2295 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=7e2334a
+# PASS=2198 FAIL_OUTPUT=95 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2295
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -461,8 +461,8 @@ data_bare_new_in_factory	PASS	-	-
 data_define	PASS	-	-
 data_define_duplicate_member	PASS	-	-
 data_define_inline_receiver	PASS	-	-
-data_dup_clone_frozen	FAIL_OUTPUT	expect	-
-data_hash_key	FAIL_OUTPUT	expect	-
+data_dup_clone_frozen	PASS	-	-
+data_hash_key	PASS	-	-
 data_inspect_in_container	PASS	-	-
 data_instance_frozen	PASS	-	-
 data_is_a_data	PASS	-	-
@@ -472,7 +472,7 @@ data_reopen_reader	PASS	-	-
 data_respond_to	PASS	-	-
 data_struct_ivar_get_nil	PASS	-	-
 data_super_kwarg	PASS	-	-
-data_value_eq_container	FAIL_OUTPUT	expect	-
+data_value_eq_container	PASS	-	-
 data_with	PASS	-	-
 data_with_poly_member_coerce	PASS	-	-
 data_with_unknown_kw	PASS	-	-

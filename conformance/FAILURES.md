@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **100 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `1a860b2`
+Suite `spinel` — **97 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `7e2334a`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -1363,58 +1363,6 @@ first difference at line 1
 
 ---
 
-## `data_dup_clone_frozen` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_dup_clone_frozen.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_dup_clone_frozen.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (6 lines)
-true
-true
-true
-1
-false
-false
-
---- actual (6 lines)
-false
-false
-true
-1
-false
-false
-```
-
----
-
-## `data_hash_key` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_hash_key.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_hash_key.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-"a"
-"a"
-
---- actual (2 lines)
-nil
-nil
-```
-
----
-
 ## `data_new_validation` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_new_validation.rb`
@@ -1437,42 +1385,6 @@ first difference at line 4
 "argerror"
 "argerror"
 "no error"
-```
-
----
-
-## `data_value_eq_container` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_value_eq_container.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/data_value_eq_container.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (9 lines)
-true
-true
-1
-1
-true
-true
-true
-true
-false
-
---- actual (9 lines)
-false
-false
-nil
-2
-false
-false
-false
-true
-false
 ```
 
 ---
@@ -2254,10 +2166,10 @@ true
 
 --- actual (5 lines)
 C
-509093622321895642
+-6031675459494645702
 S
 P
-false
+true
 ```
 
 ---
@@ -3337,7 +3249,7 @@ nil
 stderr:
 ```
 
-thread 'main' (111038489) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111162808) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -3411,7 +3323,7 @@ first difference at line 1
 
 --- actual (4 lines)
 
-thread 'main' (111038489) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
+thread 'main' (111162808) panicked at crates/zeo-rt/src/builtins/numeric.rs:73:18:
 expected a numeric value, got 2+3i
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 ```
@@ -4008,7 +3920,7 @@ diff
 aGVsbG8
 hello
 Eg_CtsOPw7zDuMKzLEPDpyJSVsOEw7g3wqhlSMOJLMOMNUgIBcKYfMK3C8Ohew
-31
+34
 diff
 ```
 

@@ -192,9 +192,13 @@ impl RubyObject for StructInstance {
         true
     }
     fn dup_object(&self, copy_frozen: bool) -> RObj {
+        // A `Data` instance is frozen by construction and stays frozen through
+        // every copy -- dup and clone(freeze: false) alike (#2716); a `Struct`
+        // copy follows the ordinary rule (dup never freezes, clone copies it).
+        let is_data = meta_of(self.class_id).is_some_and(|m| m.is_data);
         Arc::new(StructInstance {
             class_id: self.class_id,
-            frozen: AtomicBool::new(copy_frozen && self.is_frozen()),
+            frozen: AtomicBool::new(is_data || (copy_frozen && self.is_frozen())),
             slots: Mutex::new(self.slots.lock().clone()),
             ivars: Mutex::new(self.ivars.lock().clone()),
         })
@@ -520,8 +524,12 @@ builtin_methods! {
     }
 
     "hash" => fn data_hash(recv, _args, _block) {
-        let h = build_to_h(recv);
-        send_value(&h, Symbol::intern("hash"), &[], None)
+        // Hash the slots ARRAY (structural), NOT a fresh `to_h` Hash -- a Hash
+        // keys by object identity here, so equal Data would otherwise hash
+        // apart, breaking their use as Hash keys and their `Array#==`/`uniq`.
+        // Matches `struct`'s own value-based `hash` and `struct_equal`.
+        let arr = RubyValue::Array(array_new(slots_of(recv)));
+        send_value(&arr, Symbol::intern("hash"), &[], None)
     }
 
     "inspect" | "to_s" => fn data_inspect(recv, _args, _block) {
@@ -761,7 +769,12 @@ fn define_value_class(
     // they win, forwarding to the one shared `class_table` implementation.
     let table: fn(&str) -> Option<crate::builtins::BuiltinMethodFn> =
         if is_data { lookup_data } else { lookup };
-    for shadowed in ["inspect", "to_s", "hash"] {
+    // `==`/`eql?` are installed as overlays too so the low-level
+    // `call_user_method` fallback (`RubyValue::rb_eq`, and thus `Array#==`/
+    // `#include?`/`#index`/`Hash#==`) reaches the struct's VALUE comparison
+    // instead of `Object#==`'s reference identity -- the class_table row alone
+    // isn't consulted by that path (only registry/overlay methods are).
+    for shadowed in ["inspect", "to_s", "hash", "==", "eql?"] {
         if let Some(f) = table(shadowed) {
             methods.insert(
                 Symbol::intern(shadowed),
