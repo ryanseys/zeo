@@ -10,7 +10,7 @@ use ruby_prism::{Node, ParseResult};
 /// Maps a magic-comment encoding name to its `Encoding::` constant spelling
 /// (`None` = the UTF-8 default, needing no override), rejecting an
 /// unsupported encoding with a clean compile error.
-pub(crate) fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
+pub fn encoding_const_name(name: &str) -> PResult<Option<&'static str>> {
     let norm: String = name
         .chars()
         .filter(|c| *c != '-' && *c != '_' && *c != '.')

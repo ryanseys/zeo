@@ -35,9 +35,9 @@
 //! benefit. A consumed attribute whose RHS is *not* a literal is a loud error
 //! naming the attribute, because that one zeo would otherwise get wrong.
 
-use super::PResult;
 use crate::lower_error::LowerError;
 use std::path::Path;
+use zeo_hir::lower::PResult;
 
 /// The gemspec fields that determine load-path resolution. Deliberately the
 /// same shape `Gem::StubSpecification` exposes.

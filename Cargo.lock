@@ -1187,6 +1187,7 @@ dependencies = [
  "ruby-prism",
  "syn 2.0.118",
  "zeo-abi",
+ "zeo-hir",
 ]
 
 [[package]]
@@ -1198,6 +1199,14 @@ name = "zeo-fiber"
 version = "0.1.0"
 dependencies = [
  "corosensei",
+]
+
+[[package]]
+name = "zeo-hir"
+version = "0.1.0"
+dependencies = [
+ "ruby-prism",
+ "zeo-abi",
 ]
 
 [[package]]

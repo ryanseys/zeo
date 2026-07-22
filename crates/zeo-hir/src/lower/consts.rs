@@ -21,7 +21,7 @@ fn constant_name(node: &Node<'_>) -> PResult<String> {
 /// anchor skips the lexical chain at resolution time). A dynamic parent
 /// (`something::Foo` where `something` isn't itself a constant) stays a
 /// clean rejection.
-pub(crate) fn constant_path_name(node: &Node<'_>) -> PResult<String> {
+pub fn constant_path_name(node: &Node<'_>) -> PResult<String> {
     if node.as_constant_read_node().is_some() {
         return constant_name(node);
     }

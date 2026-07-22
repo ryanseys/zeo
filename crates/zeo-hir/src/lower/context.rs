@@ -36,22 +36,22 @@ thread_local! {
 
 /// The box bound to local `name` in the file currently being lowered, if
 /// any -- consulted by the `box::X`/`box.eval` recognizers.
-pub(super) fn current_box_binding(name: &str) -> Option<u32> {
+pub fn current_box_binding(name: &str) -> Option<u32> {
     BOX_BINDINGS.with(|b| b.borrow().last().and_then(|m| m.get(name).copied()))
 }
 
 /// The file currently being lowered -- `None` when compiling a source
 /// string with no path at all (`compile_to_rust`'s bare form, and the
 /// exception prelude), where real Ruby's own answer would be `"-e"`.
-pub(super) fn current_source_file() -> Option<PathBuf> {
+pub fn current_source_file() -> Option<PathBuf> {
     SOURCE_FILE.with(|f| f.borrow().last().cloned())
 }
 
 /// Pushes the file being lowered; pops on drop (including the error path).
 /// Same RAII shape as `BindingsFrame`.
-pub(super) struct SourceFileFrame;
+pub struct SourceFileFrame;
 impl SourceFileFrame {
-    pub(super) fn push(path: Option<&Path>) -> Option<SourceFileFrame> {
+    pub fn push(path: Option<&Path>) -> Option<SourceFileFrame> {
         let path = path?;
         SOURCE_FILE.with(|f| f.borrow_mut().push(path.to_path_buf()));
         Some(SourceFileFrame)
@@ -67,13 +67,13 @@ impl Drop for SourceFileFrame {
 
 /// Pushes a fresh bindings frame for one file's lowering; pops on drop
 /// (including the error path).
-pub(super) struct BindingsFrame;
+pub struct BindingsFrame;
 impl BindingsFrame {
-    pub(super) fn push() -> BindingsFrame {
+    pub fn push() -> BindingsFrame {
         BOX_BINDINGS.with(|b| b.borrow_mut().push(HashMap::new()));
         BindingsFrame
     }
-    pub(super) fn bind(&self, name: String, box_id: u32) {
+    pub fn bind(&self, name: String, box_id: u32) {
         BOX_BINDINGS.with(|b| {
             b.borrow_mut()
                 .last_mut()

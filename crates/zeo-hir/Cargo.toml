@@ -1,0 +1,16 @@
+[package]
+name = "zeo-hir"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ruby-prism.workspace = true
+# `lower_node`'s require-fold recognizes the runtime's built-in `ext/`
+# features straight from the ABI table, so the loader and the constant
+# resolver never drift -- see `lower::features`.
+zeo-abi.workspace = true
+
+[lints]
+workspace = true

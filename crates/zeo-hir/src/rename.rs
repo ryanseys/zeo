@@ -55,7 +55,7 @@ use std::collections::HashSet;
 /// unreachable from these subtrees) local variables to
 /// `__f<file_id>_<name>`. Two passes over the same walker: collect the
 /// file's assigned-name set, then rename every reference to it.
-pub(super) fn isolate_file_locals(hir: &mut Hir, roots: &[NodeId], file_id: usize) {
+pub fn isolate_file_locals(hir: &mut Hir, roots: &[NodeId], file_id: usize) {
     let mut w = Walker {
         collecting: true,
         names: HashSet::new(),

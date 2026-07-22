@@ -9,7 +9,7 @@
 /// collapse to a single feature: `cgi`/`cgi/util` -> `cgi/escape`,
 /// `digest/sha2` -> `digest`, and `yaml` -> `psych` (Ruby's `yaml.rb` is just
 /// `YAML = Psych`). Everything else maps to itself.
-pub(super) fn canonical_ext_feature(feature: &str) -> &str {
+pub fn canonical_ext_feature(feature: &str) -> &str {
     match feature {
         "cgi" | "cgi/util" | "cgi/escape" => "cgi/escape",
         "yaml" => "psych",
@@ -26,7 +26,7 @@ pub(super) fn canonical_ext_feature(feature: &str) -> &str {
 /// Deliberately NOT folded into `Hir::activated_features`: that set also
 /// gates CONSTANT visibility, so pre-seeding `monitor` there would make
 /// `Monitor` resolve without its require.
-pub(super) fn is_preloaded_at_boot(feature: &str) -> bool {
+pub fn is_preloaded_at_boot(feature: &str) -> bool {
     matches!(feature, "set" | "monitor")
 }
 
@@ -38,7 +38,7 @@ pub(super) fn is_preloaded_at_boot(feature: &str) -> bool {
 /// ABI table (`zeo_abi::is_ext_feature`) so the loader and the constant
 /// resolver never drift; `require`ing one both short-circuits the filesystem
 /// search AND activates its gated constant (see `lower_require_statement`).
-pub(super) fn is_builtin_feature(feature: &str) -> bool {
+pub fn is_builtin_feature(feature: &str) -> bool {
     // `time` names no gated class: `Time` is an always-on builtin here, so
     // the require is a pure no-op. CRuby's real gate is finer -- `Time` is
     // core but `Time#iso8601` only exists after `require "time"` -- and

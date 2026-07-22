@@ -13,7 +13,7 @@ use ruby_prism::{CallNode, Node, ParseResult};
 /// `Box#eval` compiles a top-level iseq) and `lower_node`'s
 /// expression-position one (which additionally rejects defs, same as root
 /// `eval`).
-pub(crate) fn lower_box_eval_body(
+pub fn lower_box_eval_body(
     hir: &mut Hir,
     _result: &ruby_prism::ParseResult,
     call: &ruby_prism::CallNode<'_>,
@@ -47,7 +47,7 @@ pub(crate) fn lower_box_eval_body(
 /// Whether `node` is exactly `Ruby::Box.new` (no args, no block) -- the
 /// only allocation shape supported, recognized by the loader at
 /// top-level `box = Ruby::Box.new` statements.
-pub(crate) fn is_ruby_box_new(node: &Node<'_>) -> bool {
+pub fn is_ruby_box_new(node: &Node<'_>) -> bool {
     let Some(call) = node.as_call_node() else {
         return false;
     };
@@ -92,7 +92,7 @@ pub(crate) fn single_literal_string_arg(
 /// needs (a `StringLit` is compile-time-constant iff every `StrPart` is
 /// `Lit`, never `Interp`). Reusable for any future "must be a literal"
 /// construct.
-pub(crate) fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
+pub fn literal_string_text(hir: &Hir, id: NodeId) -> Option<String> {
     let HirNode::StringLit(parts) = &hir[id] else {
         return None;
     };

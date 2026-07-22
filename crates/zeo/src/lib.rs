@@ -16,10 +16,11 @@ pub mod analyze;
 pub mod build;
 pub mod codegen;
 pub mod compiler;
-pub mod constpath;
 pub mod gem_report;
-pub mod hir;
-pub mod lower_error;
+
+// The front end (HIR + lowering) lives in the `zeo-hir` crate; re-exported
+// under the old module paths so the rest of the compiler reads unchanged.
+pub use zeo_hir::{constpath, hir, lower_error};
 
 pub use parse::gem_compat::{GemCompatEntry, GemCompatOutcome, gem_compat, gem_compat_installed};
 pub mod parse;

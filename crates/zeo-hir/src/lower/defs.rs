@@ -190,7 +190,7 @@ pub(crate) fn const_is_class_def(hir: &Hir, name: &str) -> bool {
 /// practice (confirmed via `Prism.parse`: both the bareword `alias new old`
 /// and symbol `alias :new :old` spellings produce the identical node shape),
 /// but checked defensively (a clean `Err`, not a panic) rather than assumed.
-pub(crate) fn alias_target_name(node: &Node<'_>) -> PResult<String> {
+pub fn alias_target_name(node: &Node<'_>) -> PResult<String> {
     let sym = node
         .as_symbol_node()
         .ok_or("`alias`'s target must be a plain method name (spike scope)")?;
