@@ -854,6 +854,40 @@ impl ClassRegistry {
         self.entries.get(&id.0)?.methods.get(&name)
     }
 
+    /// `lookup` with CRuby's real resolution shape behind it: the flat
+    /// materialized probe first (the hot path -- compile-time
+    /// materialization flattens every reachable method onto each class, so
+    /// this hit rate is ~100%), then a genuine ANCESTOR WALK over the
+    /// registry entries as insurance for any row materialization missed.
+    /// An `undef`'d name TERMINATES the walk at the class that undefined
+    /// it (CRuby inserts a lookup-stopping "undefined" entry, it never
+    /// deletes) -- checked per ancestor, so an ancestor's undef shadows a
+    /// definition above it while the receiver's own materialized set stays
+    /// authoritative below it. This is the dispatch shape `Ruby::Box`'s
+    /// per-box overlays extend later (the walk gains a box dimension).
+    fn lookup_mro(&self, id: ClassId, name: Symbol) -> Option<&MethodImpl> {
+        if let Some(e) = self.entries.get(&id.0) {
+            if let Some(m) = e.methods.get(&name) {
+                return Some(m);
+            }
+            if e.undefined_methods.contains(&name) {
+                return None;
+            }
+        }
+        for &anc in self.ancestors_of(id).iter().skip(1) {
+            let Some(e) = self.entries.get(&anc.0) else {
+                continue;
+            };
+            if let Some(m) = e.methods.get(&name) {
+                return Some(m);
+            }
+            if e.undefined_methods.contains(&name) {
+                return None;
+            }
+        }
+        None
+    }
+
     /// Whether `name` is defined DIRECTLY on `id` (a `def` here, or a builtin
     /// reopen), as opposed to materialized in from an ancestor. This is the
     /// signal `Method#owner` needs: materialization copies an inherited method
@@ -1736,7 +1770,7 @@ pub(crate) fn call_user_method(
     let id = recv.class_id();
     if let Some(f) = REGISTRY
         .get()
-        .and_then(|r| r.lookup(id, Symbol::intern(name)))
+        .and_then(|r| r.lookup_mro(id, Symbol::intern(name)))
     {
         return Some(f.call(recv, args, None));
     }
@@ -1790,7 +1824,7 @@ pub fn run_initialize(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<(), Signal> {
-    if let Some(f) = registry().lookup(class, Symbol::intern("initialize")) {
+    if let Some(f) = registry().lookup_mro(class, Symbol::intern("initialize")) {
         f.call(recv, args, block)?;
         return Ok(());
     }
@@ -2441,7 +2475,7 @@ pub fn send_in(
             return f(&boxed, args, block);
         }
     }
-    if let Some(f) = registry().lookup(id, name) {
+    if let Some(f) = registry().lookup_mro(id, name) {
         return f.call(recv, args, block);
     }
 
