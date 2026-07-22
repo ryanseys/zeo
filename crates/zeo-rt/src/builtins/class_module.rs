@@ -607,6 +607,13 @@ builtin_methods! {
         if cid == zeo_abi::ENUMERATOR_CLASS {
             return crate::builtins::enumerator::enumerator_new(args, block);
         }
+        // `BasicObject.new` -- instantiable in real Ruby: the same blank
+        // instance `Object.new` builds, tagged with the root class's own id.
+        // Its `initialize` (the true root's) takes no arguments.
+        if cid == zeo_abi::BASIC_OBJECT_CLASS {
+            crate::builtins::arity!(args, 0);
+            return Ok(crate::runtime_meta::blank_instance(cid));
+        }
         match crate::dispatch::constructor_of(cid) {
             Some(ctor) => ctor(cid, args, block),
             None => {

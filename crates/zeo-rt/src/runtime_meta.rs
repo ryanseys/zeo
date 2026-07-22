@@ -794,6 +794,13 @@ fn dyn_object_construct(
     Ok(RubyValue::Object(obj))
 }
 
+/// A blank name-keyed instance tagged with `id` -- what `BasicObject.new`
+/// answers (the root class is instantiable in real Ruby, and its instance is
+/// exactly the blank object `Object.new` builds, under its own id).
+pub(crate) fn blank_instance(id: ClassId) -> RubyValue {
+    RubyValue::Object(Arc::new(DynObject::new(id)))
+}
+
 /// An instance of a runtime-created class. Like the root `Object`, its ivars
 /// are name-keyed (a runtime class has no compile-time-materialized field
 /// list), plus a stored `class_id` (unlike `Object`'s hardcoded `0`) and a
