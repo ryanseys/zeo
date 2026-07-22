@@ -98,15 +98,19 @@ impl WeakMap {
         })
     }
 
-    /// Drop every entry whose key OR value has been collected. Called before
-    /// any read so a dead entry is never observed, and eagerly at `GC.start`.
+    /// Drop every entry whose KEY has been collected -- the entry-liveness the
+    /// internal table (and `length`/`size`) reflects. An entry whose key still
+    /// lives but whose VALUE was collected stays counted, matching CRuby's
+    /// key-driven WeakMap table; the value-alive filter is applied separately
+    /// by the read methods (`keys`/`values`/`each`/`[]`). Called before any
+    /// read and eagerly at `GC.start`.
     fn prune(&self) {
-        self.entries
-            .lock()
-            .retain(|(k, v)| k.upgrade().is_some() && v.upgrade().is_some());
+        self.entries.lock().retain(|(k, _)| k.upgrade().is_some());
     }
 
-    /// The live `(key, value)` pairs, both upgraded.
+    /// The pairs with BOTH key and value still alive -- the view `keys`,
+    /// `values`, `each`, and `key?` expose (a key whose value died reads as
+    /// absent, exactly like CRuby: `keys` drops it though `length` counts it).
     fn live_pairs(&self) -> Vec<(RubyValue, RubyValue)> {
         self.entries
             .lock()
@@ -115,6 +119,8 @@ impl WeakMap {
             .collect()
     }
 
+    /// The value for `key`, or `None` if the key is absent OR its value has
+    /// been collected (`m[key]` reads nil, `key?` reads false, in that case).
     fn get(&self, key: &RubyValue) -> Option<RubyValue> {
         self.entries.lock().iter().find_map(|(k, v)| {
             let kv = k.upgrade()?;
@@ -124,10 +130,10 @@ impl WeakMap {
 
     fn set(&self, key: &RubyValue, val: &RubyValue) {
         let mut es = self.entries.lock();
-        // Prune dead entries and any prior mapping for this key in one pass.
-        es.retain(|(k, v)| {
-            let Some(kv) = k.upgrade() else { return false };
-            v.upgrade().is_some() && !same_object(&kv, key)
+        // Drop key-dead entries and any prior mapping for this key in one pass.
+        es.retain(|(k, _)| match k.upgrade() {
+            Some(kv) => !same_object(&kv, key),
+            None => false,
         });
         es.push((WeakTarget::downgrade(key), WeakTarget::downgrade(val)));
     }
@@ -422,7 +428,9 @@ fn wm_each_pair(
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     for (k, v) in as_weakmap(recv)?.live_pairs() {
-        yield_block(&blk, vec![k, v])?;
+        // A pair yield (`{ |k, v| }` binds both; `{ |x| }` binds `[k, v]`),
+        // like `Hash#each` -- yield_tuple's array-wrap is exactly that shape.
+        yield_pair(&blk, k, v)?;
     }
     Ok(RubyValue::Object(recv.clone()))
 }
@@ -433,7 +441,7 @@ fn wm_each_key(
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     for (k, _) in as_weakmap(recv)?.live_pairs() {
-        yield_block(&blk, vec![k])?;
+        yield_one(&blk, k)?;
     }
     Ok(RubyValue::Object(recv.clone()))
 }
@@ -444,7 +452,7 @@ fn wm_each_value(
     blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     for (_, v) in as_weakmap(recv)?.live_pairs() {
-        yield_block(&blk, vec![v])?;
+        yield_one(&blk, v)?;
     }
     Ok(RubyValue::Object(recv.clone()))
 }
@@ -466,11 +474,20 @@ fn wm_inspect(
     ))))
 }
 
-/// Yield `elems` to the block (a `Proc`), auto-splatting a lone Array across
-/// multi-param blocks like every other iterator. `None` block -> LocalJumpError.
-fn yield_block(blk: &Option<RubyValue>, elems: Vec<RubyValue>) -> Result<RubyValue, Signal> {
+/// Yield a `[key, value]` PAIR to the block -- `{ |k, v| }` binds both,
+/// `{ |x| }` binds the `[k, v]` array (`Hash#each`'s shape). `None` block ->
+/// LocalJumpError.
+fn yield_pair(blk: &Option<RubyValue>, k: RubyValue, v: RubyValue) -> Result<RubyValue, Signal> {
     match blk {
-        Some(RubyValue::Proc(p)) => crate::rproc::yield_tuple(p, elems),
+        Some(RubyValue::Proc(p)) => crate::rproc::yield_tuple(p, vec![k, v]),
+        _ => Err(local_jump_error!("no block given (yield)")),
+    }
+}
+
+/// Yield a SINGLE value to the block (`{ |v| }` binds it directly).
+fn yield_one(blk: &Option<RubyValue>, v: RubyValue) -> Result<RubyValue, Signal> {
+    match blk {
+        Some(RubyValue::Proc(p)) => p.call(&[v]),
         _ => Err(local_jump_error!("no block given (yield)")),
     }
 }

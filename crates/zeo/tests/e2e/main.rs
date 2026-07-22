@@ -29,6 +29,7 @@ mod control_flow;
 mod enumerable;
 mod exceptions;
 mod ffi;
+mod gc_weak;
 mod gems_require;
 mod io_files;
 mod language_core;
