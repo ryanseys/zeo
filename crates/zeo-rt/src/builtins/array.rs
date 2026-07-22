@@ -70,6 +70,11 @@ builtin_methods! {
     }
     "[]=" => fn index_set(recv, args, _block) {
         arity!(args, 2..=3);
+        // The frozen check comes FIRST -- before length/index validation --
+        // matching CRuby's `rb_ary_modify_check` at the top of the mutator
+        // (oracle-verified ordering: FrozenError wins over a negative
+        // length, a too-small index, and an out-of-range range alike).
+        check_frozen(recv_array!(recv), recv)?;
         // `arr[start, len] = val` / `arr[range] = val` -- CRuby's splice
         // (rb_ary_splice): the removed span is replaced by the VALUE's
         // `to_ary` coercion's elements (a plain Array as-is; an object
@@ -89,6 +94,15 @@ builtin_methods! {
                 }
                 None => 0,
             };
+            // A range whose begin lands before the front is a RangeError
+            // (`rb_range_beg_len`'s err path), NOT the scalar forms'
+            // IndexError -- rendered with the range's own inspect.
+            if start < 0 {
+                return Err(crate::builtins::range_error!(
+                    "{} out of range",
+                    args[0].inspect_string()
+                ));
+            }
             let end = match e.as_deref() {
                 Some(v) => {
                     let v = convert::to_index(v)?;
