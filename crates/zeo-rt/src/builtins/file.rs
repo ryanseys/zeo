@@ -158,7 +158,7 @@ fn build_read_string(
         Some(int) if int != external => {
             let opts = crate::encoding::TranscodeOptions::default();
             let out = crate::encoding::transcode(&bytes, external, int, &opts, None)
-                .map_err(|e| e.into_signal())?;
+                .map_err(crate::encoding::transcode_signal)?;
             Ok(crate::string_from_bytes(out, int))
         }
         _ => Ok(crate::string_from_bytes(bytes, external)),

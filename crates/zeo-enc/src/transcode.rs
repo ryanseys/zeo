@@ -1,0 +1,246 @@
+//! Transcoding (`String#encode`): decode the source encoding into Unicode
+//! units, re-encode into the target, applying the `:invalid`/`:undef`/
+//! `:replace`/`:xml`/`:newline` options.
+
+use crate::table::{EncKind, EncodingId};
+
+/// The `encode` keyword options, already extracted from the Ruby hash.
+/// `:fallback` is handled by the caller (it may invoke arbitrary Ruby), so
+/// it arrives as a closure rather than living here.
+#[derive(Default)]
+pub struct TranscodeOptions {
+    /// `:invalid => :replace` -- swallow malformed SOURCE bytes.
+    pub invalid_replace: bool,
+    /// `:undef => :replace` -- swallow characters absent from the TARGET.
+    pub undef_replace: bool,
+    /// `:replace => "..."` -- the replacement text (default per encoding).
+    pub replace: Option<String>,
+    pub xml: Option<XmlMode>,
+    pub newline: Option<NewlineMode>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum XmlMode {
+    Text,
+    Attr,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum NewlineMode {
+    Cr,
+    Crlf,
+    Universal,
+}
+
+/// The two ways a transcode can refuse a unit, matching CRuby's two error
+/// classes.
+#[derive(Debug)]
+pub enum TranscodeError {
+    /// A malformed byte sequence in the SOURCE encoding.
+    InvalidByteSequence(String),
+    /// A valid source character with no representation in the TARGET.
+    UndefinedConversion(String),
+}
+
+/// One decoded source unit on the way from `from` to `to`.
+pub(crate) enum Unit {
+    /// A decoded Unicode scalar.
+    Char(char),
+    /// Bytes the SOURCE encoding couldn't decode (`:invalid` territory).
+    Invalid(Vec<u8>),
+}
+
+/// Decodes `bytes` under `from` into a sequence of units.
+fn decode(bytes: &[u8], from: EncodingId) -> Vec<Unit> {
+    match from.kind() {
+        EncKind::Latin1 => bytes.iter().map(|b| Unit::Char(*b as char)).collect(),
+        EncKind::Ascii | EncKind::Binary => bytes
+            .iter()
+            .map(|b| {
+                if *b < 0x80 {
+                    Unit::Char(*b as char)
+                } else {
+                    Unit::Invalid(vec![*b])
+                }
+            })
+            .collect(),
+        EncKind::Utf8 => decode_utf8(bytes),
+    }
+}
+
+pub(crate) fn decode_utf8(bytes: &[u8]) -> Vec<Unit> {
+    let mut units = Vec::new();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(s) => {
+                units.extend(s.chars().map(Unit::Char));
+                break;
+            }
+            Err(e) => {
+                let good = e.valid_up_to();
+                // SAFETY: `good` is a validated UTF-8 boundary.
+                let valid = unsafe { std::str::from_utf8_unchecked(&rest[..good]) };
+                units.extend(valid.chars().map(Unit::Char));
+                let bad_len = e.error_len().unwrap_or(rest.len() - good).max(1);
+                units.push(Unit::Invalid(rest[good..good + bad_len].to_vec()));
+                rest = &rest[good + bad_len..];
+            }
+        }
+    }
+    units
+}
+
+/// Encodes one scalar into `to`'s bytes, or `None` if `to` can't represent
+/// it (an undefined conversion).
+fn encode_char(c: char, to: EncodingId) -> Option<Vec<u8>> {
+    let cp = c as u32;
+    match to.kind() {
+        EncKind::Utf8 => Some(c.to_string().into_bytes()),
+        EncKind::Ascii => (cp < 0x80).then(|| vec![cp as u8]),
+        EncKind::Latin1 => (cp < 0x100).then(|| vec![cp as u8]),
+        // Binary accepts any ASCII char verbatim; a non-ASCII scalar has no
+        // binary byte (it isn't a byte).
+        EncKind::Binary => (cp < 0x80).then(|| vec![cp as u8]),
+    }
+}
+
+/// The replacement string for undefined/invalid units: the caller's
+/// `:replace`, else U+FFFD for a Unicode target and `"?"` otherwise.
+fn replacement(opts: &TranscodeOptions, to: EncodingId) -> Vec<u8> {
+    if let Some(r) = &opts.replace {
+        // The replacement is given as text; render it into the target.
+        return r
+            .chars()
+            .flat_map(|c| encode_char(c, to).unwrap_or_default())
+            .collect();
+    }
+    match to.kind() {
+        EncKind::Utf8 => "\u{FFFD}".as_bytes().to_vec(),
+        _ => b"?".to_vec(),
+    }
+}
+
+/// A `:fallback` handler: given an undefined character's UTF-8 text, answers
+/// replacement text, or `None` to fall through to the error/replace path.
+/// `&mut dyn FnMut` because the handler may invoke arbitrary Ruby (a Proc).
+pub type TranscodeFallback<'a> = &'a mut dyn FnMut(&str) -> Option<String>;
+
+/// Transcodes `bytes` from `from` to `to`, applying `opts`. `fallback` (if
+/// any) is consulted for otherwise-undefined characters BEFORE the error/
+/// replace path -- it returns replacement text or `None` to fall through.
+pub fn transcode(
+    bytes: &[u8],
+    from: EncodingId,
+    to: EncodingId,
+    opts: &TranscodeOptions,
+    fallback: Option<TranscodeFallback<'_>>,
+) -> Result<Vec<u8>, TranscodeError> {
+    let mut fallback = fallback;
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    for unit in decode(bytes, from) {
+        match unit {
+            Unit::Invalid(raw) => {
+                if opts.invalid_replace {
+                    out.extend_from_slice(&replacement(opts, to));
+                } else {
+                    return Err(TranscodeError::InvalidByteSequence(format!(
+                        "\"{}\" on {}",
+                        raw.iter()
+                            .map(|b| format!("\\x{b:02X}"))
+                            .collect::<String>(),
+                        from.name()
+                    )));
+                }
+            }
+            Unit::Char(c) => {
+                if let Some(bytes) = encode_char(c, to) {
+                    apply_xml(&mut out, c, &bytes, opts, to);
+                    if opts.xml.is_none() {
+                        maybe_newline(&mut out, c, &bytes, opts);
+                    }
+                    continue;
+                }
+                // Undefined in the target: fallback, then :undef, then error.
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                if let Some(f) = fallback.as_deref_mut() {
+                    if let Some(rep) = f(s) {
+                        out.extend(
+                            rep.chars()
+                                .flat_map(|c| encode_char(c, to).unwrap_or_default()),
+                        );
+                        continue;
+                    }
+                }
+                if let Some(xml) = opts.xml {
+                    push_xml_ref(&mut out, c, xml);
+                } else if opts.undef_replace {
+                    out.extend_from_slice(&replacement(opts, to));
+                } else {
+                    return Err(TranscodeError::UndefinedConversion(format!(
+                        "U+{:04X} from {} to {}",
+                        c as u32,
+                        from.name(),
+                        to.name()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Applies the `:xml` escaping to a REPRESENTABLE character, or emits its
+/// bytes verbatim. Undefined characters are handled by `push_xml_ref`.
+fn apply_xml(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions, _to: EncodingId) {
+    match opts.xml {
+        None => out.extend_from_slice(bytes),
+        Some(mode) => {
+            let escaped = match c {
+                '&' => Some("&amp;"),
+                '<' => Some("&lt;"),
+                '>' => Some("&gt;"),
+                '"' if mode == XmlMode::Attr => Some("&quot;"),
+                _ => None,
+            };
+            match escaped {
+                Some(e) => out.extend_from_slice(e.as_bytes()),
+                None => out.extend_from_slice(bytes),
+            }
+        }
+    }
+}
+
+/// A numeric character reference for an undefined char under `:xml`.
+fn push_xml_ref(out: &mut Vec<u8>, c: char, _mode: XmlMode) {
+    out.extend_from_slice(format!("&#x{:X};", c as u32).as_bytes());
+}
+
+/// Rewrites a just-emitted `\n` per the newline option.
+fn maybe_newline(out: &mut Vec<u8>, c: char, bytes: &[u8], opts: &TranscodeOptions) {
+    if c != '\n' {
+        return;
+    }
+    if let Some(mode) = opts.newline {
+        // Undo the `\n` just pushed by the caller and replace it.
+        out.truncate(out.len() - bytes.len());
+        match mode {
+            NewlineMode::Cr => out.push(b'\r'),
+            NewlineMode::Crlf => out.extend_from_slice(b"\r\n"),
+            NewlineMode::Universal => out.push(b'\n'),
+        }
+    }
+}
+
+/// The byte length a UTF-8 sequence claims from its leading byte (1 for an
+/// ASCII or continuation/invalid byte, else 2..4).
+pub(crate) fn utf8_seq_len(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 1,
+    }
+}

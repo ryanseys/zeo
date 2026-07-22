@@ -1314,7 +1314,7 @@ builtin_methods! {
         opts.replace = repl;
         // Scrub = transcode to self's own encoding, replacing invalids.
         let out = crate::encoding::transcode(s.bytes(), s.encoding(), s.encoding(), &opts, None)
-            .map_err(|e| e.into_signal())?;
+            .map_err(crate::encoding::transcode_signal)?;
         Ok(RubyValue::Str(crate::string_from_bytes(out, s.encoding())))
     }
     // `scrub!` scrubs in place and ALWAYS answers the receiver (unlike the
@@ -2548,7 +2548,7 @@ fn encode_impl(recv: &RubyValue, args: &[RubyValue], in_place: bool) -> Result<R
         fb.as_mut()
             .map(|f| f as &mut dyn FnMut(&str) -> Option<String>),
     )
-    .map_err(|e| e.into_signal())?;
+    .map_err(crate::encoding::transcode_signal)?;
 
     if in_place {
         src.lock().replace_bytes(out, to_enc);

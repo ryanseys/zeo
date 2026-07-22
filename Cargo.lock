@@ -1445,6 +1445,10 @@ name = "zeo-abi"
 version = "0.1.0"
 
 [[package]]
+name = "zeo-enc"
+version = "0.1.0"
+
+[[package]]
 name = "zeo-fiber"
 version = "0.1.0"
 dependencies = [
@@ -1487,6 +1491,7 @@ dependencies = [
  "unicode-segmentation",
  "yaml-rust2",
  "zeo-abi",
+ "zeo-enc",
  "zeo-fiber",
 ]
 
