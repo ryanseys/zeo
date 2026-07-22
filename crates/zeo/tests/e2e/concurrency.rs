@@ -283,23 +283,18 @@ fn scheduler_config_knobs_change_nothing_observable() {
 }
 
 #[test]
-fn a_malformed_zeo_threads_value_fails_loudly_at_startup() {
-    // ZEO_THREADS is a may-scheduler knob (it retires with may), so the
-    // loud-validation contract is pinned WITH the mode forced -- the
-    // OS-thread mode never reads it.
+fn retired_scheduler_knobs_are_silently_ignored() {
+    // ZEO_THREADS/--no-gvl configured the deleted may scheduler's worker
+    // count; both retired with it (threads are always real OS threads
+    // now). A stale value -- even a malformed one -- is silently ignored
+    // rather than a startup error, so existing scripts keep running.
     let result = run_ruby_configured(
         "puts 1\n",
-        &[("ZEO_THREADS", "not-a-number"), ("ZEO_EXEC", "may")],
-        &[],
+        &[("ZEO_THREADS", "not-a-number")],
+        &["--no-gvl"],
     );
-    assert!(!result.status.success());
-    assert!(
-        result
-            .stderr
-            .contains("ZEO_THREADS must be a positive integer"),
-        "stderr: {}",
-        result.stderr
-    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1\n");
 }
 
 // ---------------------------------------------------------------------------

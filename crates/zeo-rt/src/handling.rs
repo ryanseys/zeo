@@ -39,8 +39,8 @@
 use crate::RubyValue;
 use std::cell::RefCell;
 
-crate::exec::exec_local! {
-    static HANDLING: RefCell<Vec<RubyValue>> = RefCell::new(Vec::new())
+std::thread_local! {
+    static HANDLING: RefCell<Vec<RubyValue>> = const { RefCell::new(Vec::new()) }
 }
 
 /// Called on entry to a `rescue` clause's own body, with the exception it's

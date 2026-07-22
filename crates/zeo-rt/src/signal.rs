@@ -70,7 +70,7 @@ pub type ProcHome = Arc<AtomicBool>;
 // The per-coroutine stack of live method-activation homes, innermost on top.
 // Coroutine-local (each `Thread`/`Fiber` is its own coroutine, so its frames
 // never mingle with another's); the top-level program is itself a coroutine.
-crate::exec::exec_local!(static HOME_STACK: RefCell<Vec<ProcHome>> = RefCell::new(Vec::new()));
+std::thread_local!(static HOME_STACK: RefCell<Vec<ProcHome>> = const { RefCell::new(Vec::new()) });
 
 /// Enter a method activation: push a fresh live home. Balanced by `home_pop`.
 pub fn home_push() {

@@ -61,7 +61,7 @@ enum InterruptKind {
 /// CRuby's `ec_serial` analogue, backing `Mutex` ownership.
 fn execution_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
-    crate::exec::exec_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
+    std::thread_local!(static ID: u64 = NEXT.fetch_add(1, Ordering::Relaxed));
     ID.with(|id| *id)
 }
 
@@ -69,15 +69,8 @@ fn execution_id() -> u64 {
 // Thread
 // ---------------------------------------------------------------------------
 
-/// A running thread's join handle -- one variant per execution substrate
-/// (see `exec::ExecMode`; the May variant dies with the may deletion).
-enum ThreadHandle {
-    May(may::coroutine::JoinHandle<Result<RubyValue, Signal>>),
-    Os(std::thread::JoinHandle<Result<RubyValue, Signal>>),
-}
-
 enum ThreadState {
-    Running(ThreadHandle),
+    Running(std::thread::JoinHandle<Result<RubyValue, Signal>>),
     /// Cached after the first `join`/`value`, so repeats see the same
     /// outcome (CRuby: `join` on a dead thread returns immediately; the
     /// stored exception re-raises on EVERY join).
@@ -192,7 +185,7 @@ fn main_thread() -> RThread {
         .clone()
 }
 
-crate::exec::exec_local!(static CURRENT: PlMutex<Option<RThread>> = PlMutex::new(None));
+std::thread_local!(static CURRENT: PlMutex<Option<RThread>> = const { PlMutex::new(None) });
 
 /// `Thread.current` -- the running thread's object, or the main thread's when
 /// called outside any spawned coroutine.
@@ -214,21 +207,10 @@ pub fn thread_main() -> RubyValue {
 /// relies on for the target to reach its blocking point (and its own
 /// `begin`) before the interrupt lands.
 pub fn thread_pass() -> RubyValue {
-    match crate::exec::exec_mode() {
-        crate::exec::ExecMode::Os => {
-            // Armed Gvl: rejoin the back of the FIFO queue (a real handoff);
-            // parallel: a plain OS yield is all "pass" can mean.
-            crate::gvl::process_gvl().yield_now();
-            std::thread::yield_now();
-        }
-        crate::exec::ExecMode::May => {
-            if may::coroutine::is_coroutine() {
-                may::coroutine::yield_now();
-            } else {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-    }
+    // Armed Gvl: rejoin the back of the FIFO queue (a real handoff);
+    // parallel: a plain OS yield is all "pass" can mean.
+    crate::gvl::process_gvl().yield_now();
+    std::thread::yield_now();
     RubyValue::Nil
 }
 
@@ -259,23 +241,17 @@ pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
             result
         }
     };
-    let handle = match crate::exec::exec_mode() {
-        // A real OS thread: CRuby-sized 8MiB stack, its own scheduling ctx
-        // attached to the process Gvl, the (usually disabled, hence free)
-        // Gvl held for the body's duration -- released even on panic via
-        // the guard.
-        crate::exec::ExecMode::Os => ThreadHandle::Os(
-            std::thread::Builder::new()
-                .stack_size(8 * 1024 * 1024)
-                .spawn(move || {
-                    let _ctx = crate::gvl::install_ctx();
-                    let _held = crate::gvl::process_gvl().hold();
-                    run()
-                })
-                .expect("spawning a Ruby Thread's OS thread"),
-        ),
-        crate::exec::ExecMode::May => ThreadHandle::May(may::go!(run)),
-    };
+    // A real OS thread: CRuby-sized 8MiB stack, its own scheduling ctx
+    // attached to the process Gvl, the (usually disabled, hence free) Gvl
+    // held for the body's duration -- released even on panic via the guard.
+    let handle = std::thread::Builder::new()
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let _ctx = crate::gvl::install_ctx();
+            let _held = crate::gvl::process_gvl().hold();
+            run()
+        })
+        .expect("spawning a Ruby Thread's OS thread");
     *data.state.lock() = Some(ThreadState::Running(handle));
     RubyValue::Thread(data)
 }
@@ -458,13 +434,10 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
     let taken = t.state.lock().take();
     match taken {
         Some(ThreadState::Running(handle)) => {
-            let joined = match handle {
-                ThreadHandle::May(h) => h.join(),
-                // The joiner must not sit on an ARMED Gvl across the
-                // blocking join -- the target needs it to finish (the
-                // release is free when the Gvl is disabled, the default).
-                ThreadHandle::Os(h) => crate::gvl::process_gvl().without(|| h.join()),
-            };
+            // The joiner must not sit on an ARMED Gvl across the blocking
+            // join -- the target needs it to finish (the release is free
+            // when the Gvl is disabled, the default).
+            let joined = crate::gvl::process_gvl().without(|| handle.join());
             let outcome = match joined {
                 Ok(result) => result,
                 Err(panic_payload) => std::panic::resume_unwind(panic_payload),
@@ -487,12 +460,8 @@ pub fn thread_outcome(t: &RThread) -> Result<RubyValue, Signal> {
             if let Some(ThreadState::Done(outcome)) = &*t.state.lock() {
                 return outcome.clone();
             }
-            if may::coroutine::is_coroutine() {
-                may::coroutine::sleep(std::time::Duration::from_millis(2));
-            } else {
-                crate::gvl::process_gvl()
-                    .without(|| std::thread::sleep(std::time::Duration::from_millis(2)));
-            }
+            crate::gvl::process_gvl()
+                .without(|| std::thread::sleep(std::time::Duration::from_millis(2)));
         },
     }
 }
@@ -828,7 +797,7 @@ mod tests {
     // plain threads. If any of these fail, the migration must be a single
     // cutover instead of a flag-staged one.
 
-    /// `execution_id` (the Mutex-ownership key) is a coroutine-local read:
+    /// `execution_id` (the Mutex-ownership key) is a thread-local read:
     /// stable within one OS thread, distinct across OS threads.
     #[test]
     fn execution_ids_isolate_per_bare_os_thread() {
@@ -840,22 +809,6 @@ mod tests {
         assert_ne!(t1, main_a);
         assert_ne!(t2, main_a);
         assert_ne!(t1, t2);
-    }
-
-    /// A mutated `RefCell`-valued coroutine-local (the shape of the
-    /// handling/catch-tag/proc-home stacks) must NOT leak into a fresh OS
-    /// thread, and the writer's own slot must survive the other thread.
-    #[test]
-    fn refcell_coroutine_locals_do_not_leak_across_os_threads() {
-        may::coroutine_local!(
-            static PROBE: std::cell::RefCell<Vec<u64>> = std::cell::RefCell::new(Vec::new())
-        );
-        PROBE.with(|p| p.borrow_mut().push(1));
-        let seen = std::thread::spawn(|| PROBE.with(|p| p.borrow().len()))
-            .join()
-            .unwrap();
-        assert_eq!(seen, 0, "a fresh OS thread must get a fresh slot");
-        assert_eq!(PROBE.with(|p| p.borrow().len()), 1);
     }
 
     /// An empty `Queue#pop` parks a bare OS thread; a push from ANOTHER
