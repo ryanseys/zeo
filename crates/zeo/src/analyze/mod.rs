@@ -893,47 +893,8 @@ fn register_class(
 
     for &stmt in body {
         match &compiler.hir[stmt] {
-            HirNode::DefMethod {
-                name,
-                params,
-                body,
-                is_class_method,
-                visibility,
-                is_def: _,
-            } => {
-                let (name, params, body, is_class_method, visibility) = (
-                    name.clone(),
-                    params.clone(),
-                    body.clone(),
-                    *is_class_method,
-                    *visibility,
-                );
-                // An OPERATOR definition on a builtin reopen (`class
-                // Integer; def +`) is rejected outright (zeo
-                // limitation): the native `Int`/`Float`/`Str` operator fast
-                // paths are emitted unconditionally at every static call
-                // site, so a user operator would be silently bypassed
-                // there -- a loud rejection beats dispatch that only
-                // sometimes honors the override.
-                if compiler.class(class_id).is_builtin
-                    && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
-                {
-                    return Err(format!(
-                        "defining operator `{name}` on the built-in class `{}` isn't supported yet (zeo limitation: static operator fast paths would bypass it)",
-                        compiler.class(class_id).name
-                    ));
-                }
-                let sid = register_method(
-                    compiler,
-                    class_id,
-                    class_id,
-                    name,
-                    Some(stmt),
-                    params,
-                    body,
-                    visibility,
-                )?;
-                add_own_method(compiler, class_id, sid, is_class_method);
+            HirNode::DefMethod { .. } => {
+                register_body_def_method(compiler, class_id, stmt)?;
             }
             // A nested `class`/`module` definition -- registered
             // recursively under this class's own cref. The `ClassDef` node
@@ -1021,6 +982,13 @@ fn register_class(
             // DROPPED, so a class-body `[:a].each { define_method(...) }`
             // never ran.
             _ => {
+                // A `def` nested in an `if`/`case` branch also runs at document
+                // position (the taken branch's runtime `define_method` gives the
+                // real body), but must ALSO be registered as an own method so
+                // `instance_methods`/`extend` -- both resolved at COMPILE time --
+                // can see it. This is what lets fileutils' platform-conditional
+                // `StreamUtils_#fu_windows?` reach `FileUtils` via `extend`.
+                register_conditional_defs(compiler, class_id, &[stmt])?;
                 compiler.classes[class_id.0 as usize]
                     .class_body_stmts
                     .push(stmt);
@@ -1063,6 +1031,105 @@ fn add_own_method(
         Some(i) => list[i] = sid,
         None => list.push(sid),
     }
+}
+
+/// Registers one class/module-body `def` as an own method: builds its `Scope`
+/// and files it under `own_methods`/`own_class_methods`. Shared by the
+/// top-level class-body walk and `register_conditional_defs` (a `def` nested in
+/// an `if`/`case` branch). A no-op if `stmt` isn't a `DefMethod`.
+fn register_body_def_method(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    stmt: NodeId,
+) -> Result<(), String> {
+    let HirNode::DefMethod {
+        name,
+        params,
+        body,
+        is_class_method,
+        visibility,
+        is_def: _,
+    } = &compiler.hir[stmt]
+    else {
+        return Ok(());
+    };
+    let (name, params, body, is_class_method, visibility) = (
+        name.clone(),
+        params.clone(),
+        body.clone(),
+        *is_class_method,
+        *visibility,
+    );
+    // An OPERATOR definition on a builtin reopen (`class Integer; def +`) is
+    // rejected outright (zeo limitation): the native `Int`/`Float`/`Str`
+    // operator fast paths are emitted unconditionally at every static call
+    // site, so a user operator would be silently bypassed there -- a loud
+    // rejection beats dispatch that only sometimes honors the override.
+    if compiler.class(class_id).is_builtin
+        && !name.starts_with(|c: char| c.is_alphabetic() || c == '_')
+    {
+        return Err(format!(
+            "defining operator `{name}` on the built-in class `{}` isn't supported yet (zeo limitation: static operator fast paths would bypass it)",
+            compiler.class(class_id).name
+        ));
+    }
+    let sid = register_method(
+        compiler,
+        class_id,
+        class_id,
+        name,
+        Some(stmt),
+        params,
+        body,
+        visibility,
+    )?;
+    add_own_method(compiler, class_id, sid, is_class_method);
+    Ok(())
+}
+
+/// Registers every `def` reachable through `if`/`case` (`when`) branches in
+/// `stmts` as an own method. A conditional `def` still runs at document
+/// position via its runtime `define_method` emission (which supplies the taken
+/// branch's body); this makes its NAME visible to `instance_methods`/`extend`,
+/// which are resolved at compile time and would otherwise miss it. When more
+/// than one branch defines the same name, last-wins picks the branch the
+/// static target takes (fileutils' RbConfig is a compile-time shim). Loops and
+/// blocks are deliberately NOT descended -- a `def` whose branch may never run
+/// stays runtime-only, matching CRuby.
+fn register_conditional_defs(
+    compiler: &mut Compiler,
+    class_id: ClassId,
+    stmts: &[NodeId],
+) -> Result<(), String> {
+    for &s in stmts {
+        // Clone child bodies before recursing: `register_body_def_method`
+        // borrows `compiler` mutably.
+        match &compiler.hir[s] {
+            HirNode::DefMethod { .. } => register_body_def_method(compiler, class_id, s)?,
+            HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                let (then_body, else_body) = (then_body.clone(), else_body.clone());
+                register_conditional_defs(compiler, class_id, &then_body)?;
+                register_conditional_defs(compiler, class_id, &else_body)?;
+            }
+            HirNode::CaseWhen {
+                arms, else_body, ..
+            } => {
+                let arm_bodies: Vec<Vec<NodeId>> =
+                    arms.iter().map(|(_, body)| body.clone()).collect();
+                let else_body = else_body.clone();
+                for body in &arm_bodies {
+                    register_conditional_defs(compiler, class_id, body)?;
+                }
+                register_conditional_defs(compiler, class_id, &else_body)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn resolve_module_target(

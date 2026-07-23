@@ -1095,3 +1095,31 @@ fn dynamic_load_compiles_and_raises_loaderror_only_when_executed() {
         "guard_ok\ncannot load such file -- /no/such/file.rb\ncannot load such file -- definitely_missing_lib_xyz\ndone\n"
     );
 }
+
+#[test]
+fn fileutils_core_commands_run_from_the_vendored_gem() {
+    // `require "fileutils"` compiles the real vendored gem (gems/fileutils),
+    // including its load-time module metaprogramming (module_function, extend
+    // self, class << self, a platform-conditional StreamUtils_), and the core
+    // file operations bundler relies on work.
+    let result = run_ruby(
+        r##"
+        require "fileutils"
+        puts FileUtils::VERSION
+        puts FileUtils.respond_to?(:mkdir_p)
+        d = "/tmp/zeo_fu_e2e_#{Process.pid}"
+        FileUtils.rm_rf(d)
+        FileUtils.mkdir_p("#{d}/a/b")
+        puts Dir.exist?("#{d}/a/b")
+        File.write("#{d}/a/f", "hi")
+        FileUtils.cp("#{d}/a/f", "#{d}/a/g")
+        puts File.read("#{d}/a/g")
+        FileUtils.mv("#{d}/a/g", "#{d}/a/h")
+        puts File.exist?("#{d}/a/h")
+        FileUtils.rm_rf(d)
+        puts Dir.exist?(d)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "1.8.0\ntrue\ntrue\nhi\ntrue\nfalse\n");
+}

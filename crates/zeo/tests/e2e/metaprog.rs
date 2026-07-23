@@ -645,3 +645,33 @@ fn define_method_accepts_a_method_object_body() {
         ":hail\n\"hi x\"\n\"hi y\"\n10\nbind argument must be a subclass of A\n\"pong z\"\n36\ndone\n"
     );
 }
+
+#[test]
+fn a_conditionally_defined_method_is_visible_to_reflection_and_extend() {
+    // A `def` nested in a `case`/`if` branch (a platform-conditional definition,
+    // as in fileutils' StreamUtils_) is registered as an own method, so
+    // `instance_methods` and `extend` -- both resolved at compile time in zeo --
+    // can see it. A branch the compiler folds away (`if false`) still defines
+    // nothing, matching CRuby.
+    let result = run_ruby(
+        r#"
+        module Inner
+          case 1
+          when 2 then def flavor; "two"; end
+          else def flavor; "other"; end
+          end
+          if false
+            def gated; "on"; end
+          end
+        end
+        p Inner.instance_methods(false).sort
+        module Host
+          extend Inner
+          puts flavor
+        end
+        p Host.respond_to?(:gated)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[:flavor]\nother\nfalse\n");
+}

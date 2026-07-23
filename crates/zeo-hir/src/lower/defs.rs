@@ -794,6 +794,7 @@ fn lower_class_body_statement(
                 Method,
                 Passthrough,
                 Extend(String),
+                Skip,
                 Reject,
             }
             let item = match &hir[id] {
@@ -801,11 +802,13 @@ fn lower_class_body_statement(
                 HirNode::ConstWrite { .. } => Item::Passthrough,
                 HirNode::Include(m) => Item::Extend(m.clone()),
                 // A visibility directive (`public :a`) or a runtime call
-                // (`public(*METHODS)`) inside `class << self` runs at load in
-                // the enclosing body's context -- best-effort: it retags the
-                // instance-method channel, not the singleton one (a documented
-                // divergence, exercised by fileutils' Verbose/NoWrite/DryRun).
-                HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Passthrough,
+                // (`public(*METHODS)`) inside `class << self` would run at load
+                // in the enclosing MODULE's context, not the singleton's -- so
+                // `public(*METHODS)` over names the singleton doesn't yet carry
+                // would wrongly raise. It is a documented best-effort NO-OP
+                // (fileutils' Verbose/NoWrite/DryRun are load-time convenience
+                // wrappers; the singleton-visibility nuance is bundler-irrelevant).
+                HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Skip,
                 _ => Item::Reject,
             };
             match item {
@@ -815,6 +818,7 @@ fn lower_class_body_statement(
                 }
                 Item::Passthrough => out.push(id),
                 Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
+                Item::Skip => {}
                 Item::Reject => {
                     return Err(
                         "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, visibility directives, and `attr_*`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
