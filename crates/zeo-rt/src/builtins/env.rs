@@ -156,6 +156,34 @@ builtin_methods! {
         let k = key(&args[0])?;
         Ok(RubyValue::Bool(std::env::var(&k).is_ok()))
     }
+    // These would otherwise reach the Hash snapshot (which silently accepts a
+    // non-String key); ENV validates the key to a String first, so a Symbol
+    // raises TypeError -- matching CRuby.
+    "assoc" => fn env_assoc(_recv, args, _block) {
+        crate::builtins::arity!(args, 1);
+        let k = key(&args[0])?;
+        Ok(std::env::var(&k).map_or(RubyValue::Nil, |v| {
+            RubyValue::Array(crate::array_new(vec![str_val(k), str_val(v)]))
+        }))
+    }
+    "values_at" => fn env_values_at(_recv, args, _block) {
+        let mut out = Vec::with_capacity(args.len());
+        for a in args {
+            let k = key(a)?;
+            out.push(std::env::var(&k).map_or(RubyValue::Nil, str_val));
+        }
+        Ok(RubyValue::Array(crate::array_new(out)))
+    }
+    "slice" => fn env_slice(_recv, args, _block) {
+        let mut pairs = Vec::new();
+        for a in args {
+            let k = key(a)?;
+            if let Ok(v) = std::env::var(&k) {
+                pairs.push((str_val(k), str_val(v)));
+            }
+        }
+        Ok(RubyValue::Hash(crate::collections::hash_new(pairs)))
+    }
     "delete" => fn env_delete(_recv, args, block) {
         crate::builtins::arity!(args, 1);
         let k = key(&args[0])?;
