@@ -525,7 +525,19 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
         EnumSource::Method { recv, meth, args } => {
             let mut s = format!("#<Enumerator: {}:{meth}", recv.inspect_string());
             if !args.is_empty() {
-                let rendered: Vec<String> = args.iter().map(|a| a.inspect_string()).collect();
+                let last = args.len() - 1;
+                let rendered: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| match a {
+                        // A trailing symbol-keyed Hash is keyword arguments:
+                        // render its pairs bare (`chomp: true`), not `{…}`.
+                        RubyValue::Hash(h) if i == last => {
+                            render_kwargs(h).unwrap_or_else(|| a.inspect_string())
+                        }
+                        _ => a.inspect_string(),
+                    })
+                    .collect();
                 s.push('(');
                 s.push_str(&rendered.join(", "));
                 s.push(')');
@@ -534,6 +546,24 @@ pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
             s
         }
     }
+}
+
+/// Render a symbol-keyed Hash as bare keyword arguments (`k: v, ...`) for an
+/// enumerator's inspect; `None` if any key is not a Symbol (so it prints as a
+/// normal `{…}` positional hash instead).
+fn render_kwargs(h: &crate::RHash) -> Option<String> {
+    let g = h.lock();
+    if g.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for (k, v) in g.values() {
+        let RubyValue::Symbol(s) = k else {
+            return None;
+        };
+        parts.push(format!("{}: {}", s.name(), v.inspect_string()));
+    }
+    Some(parts.join(", "))
 }
 
 /// Lazy size (never iterates, CRuby's rule): the generator's stored hint,
