@@ -611,11 +611,25 @@ fn io_read_val(
     };
     with_file(recv, |f, path| {
         use std::io::Read;
+        // A socket peer that closes with unread data sends RST, so a read can
+        // return ECONNRESET AFTER delivering the bytes already buffered; CRuby
+        // keeps that data and treats the reset as EOF. `Interrupted` is the
+        // standard retry. Neither ever arises for a regular file, so handling
+        // them as end/retry here is harmless off a socket.
+        use std::io::ErrorKind::{ConnectionReset, Interrupted};
         match n {
             None => {
                 let mut buf = Vec::new();
-                f.read_to_end(&mut buf)
-                    .map_err(|e| crate::builtins::file::raise_errno(&e, "read", path))?;
+                let mut chunk = [0u8; 8192];
+                loop {
+                    match f.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(k) => buf.extend_from_slice(&chunk[..k]),
+                        Err(e) if e.kind() == ConnectionReset => break,
+                        Err(e) if e.kind() == Interrupted => continue,
+                        Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
+                    }
+                }
                 Ok(RubyValue::Str(crate::collections::string_new(
                     String::from_utf8_lossy(&buf).into_owned(),
                 )))
@@ -629,6 +643,8 @@ fn io_read_val(
                     match f.read(&mut buf[got..]) {
                         Ok(0) => break,
                         Ok(k) => got += k,
+                        Err(e) if e.kind() == ConnectionReset => break,
+                        Err(e) if e.kind() == Interrupted => continue,
                         Err(e) => return Err(crate::builtins::file::raise_errno(&e, "read", path)),
                     }
                 }
