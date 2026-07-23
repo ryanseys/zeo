@@ -975,10 +975,28 @@ fn lower_class_body_statement(
         if *visibility != Visibility::Public {
             hir.set_method_visibility(id, *visibility);
         }
-        // Under a bare `module_function`, every following `def` is promoted
-        // to a module method (see the recognizer above).
+        // Under a bare `module_function`, every following `def` becomes a
+        // MODULE method AND a PRIVATE instance method (real Ruby keeps both,
+        // so an `include`d module's method is callable bare). The original
+        // `def` stays as the private instance method; a class-method copy is
+        // added alongside it.
         if *module_function {
-            hir.set_method_is_class_method(id);
+            if let HirNode::DefMethod {
+                name, params, body, ..
+            } = &hir[id]
+            {
+                let (name, params, body) = (name.clone(), params.clone(), body.clone());
+                hir.set_method_visibility(id, Visibility::Private);
+                out.push(id);
+                out.push(hir.push(HirNode::DefMethod {
+                    name,
+                    params,
+                    body,
+                    is_class_method: true,
+                    visibility: Visibility::Public,
+                }));
+                return Ok(());
+            }
         }
         out.push(id);
         return Ok(());
