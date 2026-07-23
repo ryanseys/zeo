@@ -178,9 +178,15 @@ fn recv_f64(recv: &RubyValue) -> f64 {
 /// A numeric argument as `f64` for `coerce`/`div`; a non-numeric argument is
 /// a TypeError with the given verb (`can't coerce X into Float`).
 fn numeric_f64_arg(v: &RubyValue, verb: &str) -> Result<f64, Signal> {
+    use crate::builtins::numeric::num_to_f64_unchecked;
     match v {
         RubyValue::Int(_) | RubyValue::BigInt(_) | RubyValue::Float(_) | RubyValue::Rational(_) => {
-            Ok(crate::builtins::numeric::num_to_f64_unchecked(v))
+            Ok(num_to_f64_unchecked(v))
+        }
+        // A real-valued Complex (imaginary part zero) coerces to its real part;
+        // a non-real one can't become a Float.
+        RubyValue::Complex(c) if num_to_f64_unchecked(&c.imag) == 0.0 => {
+            Ok(num_to_f64_unchecked(&c.real))
         }
         other => Err(type_error!(
             "{verb} {} into Float",

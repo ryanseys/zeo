@@ -145,9 +145,17 @@ pub(crate) fn symbol_to_proc(name: Symbol) -> RubyValue {
 builtin_methods! {
     pub(crate) fn lookup;
 
-    "to_s"[0] | "id2name"[0] | "name"[0] => fn to_s(recv, args, _block) {
+    "to_s"[0] | "id2name"[0] => fn to_s(recv, args, _block) {
         arity!(args, 0);
         Ok(RubyValue::Str(crate::string_new(recv_sym(recv).name())))
+    }
+    // `Symbol#name` returns a FROZEN String (unlike `to_s`, which is a fresh
+    // mutable copy) -- CRuby caches and freezes it.
+    "name"[0] => fn name(recv, args, _block) {
+        arity!(args, 0);
+        let s = crate::string_new(recv_sym(recv).name());
+        s.set_frozen();
+        Ok(RubyValue::Str(s))
     }
     "to_sym"[0] | "intern"[0] => fn to_sym(recv, args, _block) {
         arity!(args, 0);
