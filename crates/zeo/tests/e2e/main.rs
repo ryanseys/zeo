@@ -41,6 +41,7 @@ mod object_protocol;
 mod pattern_match;
 mod process_exit;
 mod regexp;
+mod securerandom;
 mod strings;
 mod time;
 mod variables;

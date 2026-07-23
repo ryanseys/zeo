@@ -958,6 +958,7 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
     match feature {
         "rbconfig" => Some(include_str!("shims/rbconfig.rb")),
+        "securerandom" => Some(include_str!("shims/securerandom.rb")),
         _ => None,
     }
 }

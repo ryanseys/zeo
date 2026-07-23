@@ -334,6 +334,15 @@ pub const WEAKMAP_CLASS: ClassId = ClassId(83);
 /// `Object` is the pragmatic parent.
 pub const WEAKREF_CLASS: ClassId = ClassId(84);
 
+/// `Random::Formatter` -- the mixin (CRuby's `random/formatter.rb`) that turns
+/// a source of random bytes into `hex`/`base64`/`urlsafe_base64`/`uuid`/
+/// `random_number`/`alphanumeric`. `require`-gated on `"random/formatter"`; the
+/// same module both `SecureRandom` and rubygems' vendored `Gem::SecureRandom`
+/// `extend`. Its methods draw bytes by re-dispatching `gen_random` to the
+/// receiver (like `Comparable` drives the receiver's `<=>`), so one native
+/// impl serves every host module.
+pub const RANDOM_FORMATTER_MODULE: ClassId = ClassId(85);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1027,6 +1036,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: None,
+    },
+    BuiltinClass {
+        id: RANDOM_FORMATTER_MODULE,
+        name: "Random::Formatter",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("random/formatter"),
     },
 ];
 

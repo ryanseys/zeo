@@ -4,10 +4,13 @@
 milestones `bundle --version` → `bundle install --local` → network install.
 
 **Status (2026-07-23): does NOT compile yet, but the architecture is now in
-place.** The two dominant architectural blockers — `rbconfig` and non-top-level
-`require` — are fixed; rubygems now loads its require graph until it hits a
-MISSING STDLIB (`securerandom`). What remains is the grind: implement/vendor the
-stdlib + `Gem`/`Bundler` runtime surface, one missing feature at a time.
+place.** The dominant architectural blockers — `rbconfig`, non-top-level
+`require`, and now `securerandom` (with `Random::Formatter` + OS-entropy
+`Random.urandom` + `extend`-onto-class/module) — are fixed. rubygems now loads
+its require graph past atomic_file_writer, stopping at a dynamic `load`
+(`rubygems.rb:293`). What remains is the grind: one compiler over-approximation
+(dynamic `load`) then vendoring/implementing the missing stdlib
+(`fileutils`/`pathname`/... — see the worklist), one feature at a time.
 
 ## Setup
 
@@ -67,26 +70,87 @@ nested requires. `load` and non-literal targets stay rejections.
 The loader already eager-splices `autoload :C, path` targets (a pre-pass that
 mirrors #3) and folds the `autoload` call to nil. Verified during this probe.
 
-## New / remaining blockers — the grind begins
+## `securerandom` — ✅ FIXED (2026-07-23)
 
-- **Missing stdlib `securerandom`** (current blocker) — there is no
-  `SecureRandom` in zeo at all (the plan's "SecureRandom → OS entropy" is
-  unimplemented). Needs a builtin (`getrandom` is already linked for openssl) or
-  a vendored stdlib file.
-- **`loc, = expr`** — a single-target multi-assignment with a trailing comma
-  (destructure first element), `gems/forwardable/lib/forwardable.rb:213`. A small
-  lowering gap, surfaced now that nested requires actually load forwardable.
-- **#2 `expr::CONST`** (ScopedConstRead) — still open, 1 site, small.
+Landed as a faithful, DRY port of the stdlib shape rather than a monolithic
+native module:
+
+1. **`Random.urandom` now draws real OS entropy** (`getrandom(2)` /
+   `SecRandomCopyBytes`, Gvl-released) instead of the old clock-seeded xorshift
+   — a security AND fidelity fix (`builtins/random.rs::os_urandom`). SecureRandom
+   sits on this leaf.
+2. **Native `Random::Formatter`** (`builtins/formatter.rs`, ABI id 85,
+   `require`-gated on `"random/formatter"`) — the mixin providing `hex`/`base64`/
+   `urlsafe_base64`/`uuid`/`random_number`/`random_bytes`/`alphanumeric`. Like
+   `Comparable` drives `<=>`, every method re-dispatches its entropy leaf
+   (`gen_random`) to the RECEIVER via `send_value`, so ONE impl serves
+   `SecureRandom`, rubygems' vendored `Gem::SecureRandom`, and a `Random`
+   instance. Native (value-receiver) is REQUIRED: only value-receiver bodies can
+   run with a Class `self` and redispatch to it (see the extend note below).
+3. **`securerandom` shim** (`parse/shims/securerandom.rb`, wired into
+   `synthetic_shim_source`) — the thin stdlib wrapper: defines the `gen_random`/
+   `bytes` leaf over `Random.urandom` and `extend`s the native formatter.
+4. **`extend` now works on Class/Module receivers** (`runtime_meta::
+   runtime_extend`, was "can't extend this value"). A native module's methods
+   install as the receiver's class methods and run with the Class as `self`
+   (redispatch works); a user module's install too (self-contained methods work;
+   a user method that redispatches to the host's `def self.x` is the one
+   documented limit — zeo represents modules as class values, not objects). Own
+   `def self.x` outranks the mixin (`dispatch::class_defines_own_class_method`).
+
+Verified vs oracle: full API shapes match; 3 unit + 11 e2e tests +
+`examples/securerandom.rb` + `examples/extend_class_and_module.rb`.
+
+## The grind, in the order zeo hits it (post-securerandom)
+
+**Current blocker (compiler, NOT stdlib):** dynamic `load` with a non-literal
+target — `load ENV["BUNDLE_BIN_PATH"] if ...` (`rubygems.rb:293`). Whole-program
+AOT can't splice a runtime-computed path. Fix: lower a non-literal `load`/
+`require` to a runtime op that raises `LoadError` when actually executed (an
+over-approximation), instead of rejecting the whole compile. The site is guarded
+(`if ENV[...]`), so at runtime it's a no-op on the normal path.
+
+**Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
+Process/IO that zeo largely has; ordered by the `bundle --version` → install
+path):
+
+| Feature | Why | Notes |
+|---|---|---|
+| `fileutils` | gem install core; **40** requires | biggest; `mkdir_p`/`cp_r`/`rm_rf`/`mv` over File/Dir |
+| `pathname` | bundler uses `Pathname` pervasively (`Bundler.root`) | pure Ruby over File |
+| `tempfile` | atomic writes, downloads | sits on `Dir.mktmpdir` (already present) |
+| `open3` | subprocess with pipes (`capture3`) | over Process/IO |
+| `find` | dir walker | small |
+| `logger` | Bundler's logging | pure Ruby |
+| `erb` | template rendering | pure Ruby, non-trivial |
+| `uri` (top-level) | bundler sources | rubygems uses its OWN vendored copy; bundler wants top-level |
+| `open-uri` + `net/http` + `resolv` | **M3** network install | biggest; TLS via ext-openssl growth |
+
+**Missing NATIVE ext stdlib:**
+- `etc` — `Etc.sysconf`/passwd/`nprocessors` (rubygems reads the user gem dir).
+- `io/wait` — `IO#wait_readable`/`#wait_writable` (net/http).
+- `mkmf` — native-extension Makefile generation. **M2/M3**, large; only needed to
+  install gems with C extensions, not for `bundle --version`.
+
+**Lowering gaps in ALREADY-vendored gems** (surfaced now that the graph reaches
+them; each small):
+- `shellwords.rb:66` — a module-level construct not lowered (triage).
+- `delegate.rb:47` — `alias __raise__ raise` (alias of an inherited builtin —
+  the partially-handled alias family).
+- `forwardable.rb:213` — `loc, = caller_locations(2,1)` (single-target
+  multi-assign with a trailing comma).
+- `expr::CONST` / ScopedConstRead — still open, 1 site, small.
 
 ## Sequencing recommendation
 
-1. **Grind the missing stdlib + `Gem`/`Bundler` runtime surface** one blocker at
-   a time (`securerandom` next), re-probing after each. This is the M1
-   `bundle --version` path; catalog each here as it appears.
-2. **#2 ScopedConstRead** and **`loc, =`** — small lowering gaps, do
-   opportunistically when hit.
-3. rbconfig target-arch fidelity (compile-time-generated) — needed for real gem
-   install (M2/M3), not for `--version`.
+1. **Dynamic `load` → runtime-LoadError lowering** (unblocks the current probe).
+2. **Grind the missing pure-Ruby stdlib**, vendoring one at a time and re-probing
+   (`fileutils` and `pathname` are the highest-leverage for the bundle path).
+3. **Small lowering gaps** (`loc, =`, alias-of-builtin, ScopedConstRead,
+   shellwords) opportunistically as the graph hits them.
+4. **Native `etc`/`io/wait`** when the graph demands them.
+5. `mkmf`, `open-uri`/`net/http` and rbconfig target-arch fidelity are **M2/M3**
+   (real gem/network install), not `bundle --version`.
 
 Milestones stay independent of the conformance percentage; track the first-N
 error trend here as the graph opens up.

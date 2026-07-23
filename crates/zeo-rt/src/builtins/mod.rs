@@ -33,6 +33,7 @@ pub(crate) mod convert;
 pub(crate) mod dir;
 pub(crate) mod encoding;
 pub(crate) mod enumerable;
+pub(crate) mod formatter;
 pub(crate) mod enumerator;
 pub(crate) mod env;
 pub(crate) mod exception;
@@ -109,6 +110,7 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup,
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup,
         zeo_abi::COMPARABLE_CLASS => comparable::lookup,
+        zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup,
         zeo_abi::ENUMERATOR_CLASS
         | zeo_abi::ENUMERATOR_CHAIN_CLASS
         | zeo_abi::ENUMERATOR_PRODUCT_CLASS => enumerator::lookup,
@@ -184,6 +186,7 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::NIL_CLASS => object::lookup_nil_arity,
         zeo_abi::TRUE_CLASS | zeo_abi::FALSE_CLASS => object::lookup_bool_arity,
         zeo_abi::COMPARABLE_CLASS => comparable::lookup_arity,
+        zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup_arity,
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_arity,
         zeo_abi::KERNEL_CLASS => kernel::lookup_arity,
         zeo_abi::BASIC_OBJECT_CLASS => basic_object::lookup_arity,
@@ -377,6 +380,7 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::MUTEX_CLASS => mutex::lookup_names(),
         zeo_abi::ENUMERABLE_CLASS => enumerable::lookup_names(),
         zeo_abi::COMPARABLE_CLASS => comparable::lookup_names(),
+        zeo_abi::RANDOM_FORMATTER_MODULE => formatter::lookup_names(),
         zeo_abi::MATH_CLASS => math::NAMES,
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
