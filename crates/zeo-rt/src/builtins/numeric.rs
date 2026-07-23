@@ -252,6 +252,12 @@ fn num_floor_exact(v: &RubyValue) -> RubyValue {
     crate::builtins::integer::int_value(n.div_floor(&d))
 }
 
+/// Truncate toward zero to an exact Integer (`BigInt`'s `/` truncates).
+fn num_trunc_exact(v: &RubyValue) -> RubyValue {
+    let (n, d) = as_ratio(v);
+    crate::builtins::integer::int_value(n / d)
+}
+
 /// `a <=> b` across the tower. Outer `None` = not a numeric pair; inner
 /// `None` = Ruby's `nil` (a NaN comparison, or any Complex operand --
 /// complexes have no ordering).
@@ -501,6 +507,16 @@ builtin_methods! {
             _ => {
                 if lane(&args[0]).is_none() {
                     return Err(coercion_error(recv, &args[0]));
+                }
+                // Exact on the Rational lane (no Float operand): a - b*(a/b).truncate,
+                // so `(7/2).remainder(1/3)` is `(1/6)`, not a Float.
+                let hi = lane(recv).zip(lane(&args[0])).map(|(a, b)| a.max(b));
+                if hi == Some(NumLane::Rat) {
+                    let coerce = || coercion_error(recv, &args[0]);
+                    let q = num_div(recv, &args[0]).ok_or_else(coerce)??;
+                    let t = num_trunc_exact(&q);
+                    let bt = num_mul(&args[0], &t).ok_or_else(coerce)??;
+                    return num_sub(recv, &bt).ok_or_else(coerce)?;
                 }
                 let (a, b) = (num_to_f64_unchecked(recv), num_to_f64_unchecked(&args[0]));
                 Ok(RubyValue::Float(a - b * (a / b).trunc()))

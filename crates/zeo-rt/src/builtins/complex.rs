@@ -747,6 +747,26 @@ builtin_methods! {
         let imag = scale_numerator(&c.imag, &cd)?;
         complex_new(real, imag)
     }
+    // `Complex#<=>`: only real-valued complexes are ordered. If self's
+    // imaginary part is zero and the operand is real (a real-valued Complex or
+    // a plain real Numeric), compare the real parts; otherwise nil.
+    "<=>"[1] => fn spaceship(recv, args, _block) {
+        arity!(args, 1);
+        let c = recv_complex(recv);
+        if !is_exact_zero(&c.imag) {
+            return Ok(RubyValue::Nil);
+        }
+        let other_real = match &args[0] {
+            RubyValue::Complex(o) if is_exact_zero(&o.imag) => o.real.clone(),
+            RubyValue::Complex(_) => return Ok(RubyValue::Nil),
+            v if is_component(v) => v.clone(),
+            _ => return Ok(RubyValue::Nil),
+        };
+        Ok(match c.real.rb_cmp(&other_real) {
+            Some(n) => RubyValue::Int(n),
+            None => RubyValue::Nil,
+        })
+    }
     // `Complex#fdiv(other)` -- complex division carried out in floating point,
     // so `(2+3i).fdiv(2)` is `(1.0+1.5i)` (each component divided) and a
     // Complex divisor gets the full `(ar*br+ai*bi + (ai*br-ar*bi)i)/|b|^2`.
