@@ -86,6 +86,8 @@ fn desugar_singleton_items(
         Const,
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Alias(String, String),
+        SingletonSelf,
         SelfSend,
         Skip,
     }
@@ -132,13 +134,25 @@ fn desugar_singleton_items(
             // -- drop it (compile-only best-effort: the method is still defined
             // on the singleton, just not marked private there).
             HirNode::MethodVisibility { .. } => Item::Skip,
+            // `alias new old` inside a singleton (`class << IPSocket; alias
+            // getaddress_orig getaddress; ...`, ipaddr) aliases a method on the
+            // object's singleton class -- rebind it to
+            // `recv.singleton_class.alias_method(:new, :old)`, the same runtime
+            // form the runtime-class-body transform emits for an `alias`.
+            HirNode::AliasMethod {
+                new_name, old_name, ..
+            } => Item::Alias(new_name.clone(), old_name.clone()),
+            // `class << obj; self; end` -- the idiom that RETURNS the object's
+            // singleton class (`self` inside the singleton body IS that class,
+            // e.g. bundler's `def gem_class; class << Gem; self; end; end`).
+            HirNode::SelfRef => Item::SingletonSelf,
             // A receiver-less call (`class << self; undef_method(:options)`,
             // optparse) runs with the singleton class as `self` in real Ruby --
             // rebind it onto `recv.singleton_class` so it targets the object's
             // singleton, not the enclosing method's self.
             HirNode::Call { receiver: None, .. } => Item::SelfSend,
             _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, and conditionals here (zeo limitation)".to_string().into());
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, aliases, and conditionals here (zeo limitation)".to_string().into());
             }
         };
         match item {
@@ -171,6 +185,41 @@ fn desugar_singleton_items(
                     cond,
                     then_body,
                     else_body,
+                }));
+            }
+            Item::Alias(new_name, old_name) => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let singleton = hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                let new_sym = hir.push(HirNode::SymbolLit(new_name));
+                let old_sym = hir.push(HirNode::SymbolLit(old_name));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(singleton),
+                    name: "alias_method".to_string(),
+                    args: vec![ArrayElem::Single(new_sym), ArrayElem::Single(old_sym)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::SingletonSelf => {
+                let recv = lower_node(result, hir, recv_node)?;
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
                 }));
             }
             Item::SelfSend => {

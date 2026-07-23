@@ -124,6 +124,45 @@ fn a_constant_inside_class_of_an_object_resolves_in_its_singleton_methods() {
 }
 
 #[test]
+fn an_alias_inside_class_of_an_object_lowers() {
+    // `class << Foo; alias greet orig; end` aliases a method on Foo's singleton
+    // class (ipaddr's `class << IPSocket; alias getaddress_orig getaddress`).
+    // It lowers to `Foo.singleton_class.alias_method(:greet, :orig)` and
+    // COMPILES -- which is what the rubygems graph needs (this construct is
+    // runtime-dead there). Its RUNTIME behavior depends on class methods being
+    // reachable as singleton-class instance methods, which zeo's static
+    // class-method model doesn't yet provide; tracked separately.
+    let src = r#"
+        class Foo
+          def self.orig; "hi"; end
+        end
+        class << Foo
+          alias greet orig
+        end
+    "#;
+    assert!(
+        zeo::compile_to_rust(src).is_ok(),
+        "class << obj with an alias should compile"
+    );
+}
+
+#[test]
+fn class_of_an_object_with_a_self_body_lowers() {
+    // `class << obj; self; end` -- the idiom that RETURNS the object's singleton
+    // class (bundler's `def gem_class; class << Gem; self; end; end`). It lowers
+    // to `obj.singleton_class` and COMPILES (runtime-dead in the rubygems graph;
+    // `Class#singleton_class` fidelity is tracked separately).
+    let src = r#"
+        class Foo; end
+        def gem_class; class << Foo; self; end; end
+    "#;
+    assert!(
+        zeo::compile_to_rust(src).is_ok(),
+        "class << obj with a self body should compile"
+    );
+}
+
+#[test]
 fn an_alias_inside_class_self_is_a_class_method_alias() {
     // `alias new old` inside `class << self` aliases a SINGLETON method: it
     // must resolve against the class-method table and register `new` as a class
