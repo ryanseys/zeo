@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **24 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `69f0c9d`
+Suite `spinel` — **18 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `6026d44`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -35,38 +35,6 @@ yes
 yes
 ["high", "low", "high", "low"]
 3
-```
-
----
-
-## `const_aliased_class_reopen_include` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:wordy` (cluster `P`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (2 lines)
-wordy_42
-hi from greeter
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-test/const_aliased_class_reopen_include.rb:18:in '<main>': undefined method 'wordy' for an instance of Integer (NoMethodError)
 ```
 
 ---
@@ -236,71 +204,6 @@ uncaught exception: undefined method 'ffi_func' for module C (NoMethodError)
 
 ---
 
-## `frozen_string_literal_per_file` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (5 lines)
-true
-false
-false
-can't modify frozen String: "helper buf"
-"plain!"
-
---- actual (5 lines)
-false
-false
-false
-BUG: no raise
-"plain!"
-```
-
----
-
-## `frozen_string_literal_per_file_rev` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011` (cluster `?`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/conformance/corpus/test/frozen_string_literal_per_file/helper_plain.rb:7:in 'Object#plain_helper_build': can't modify frozen String: "plain" (FrozenError)
-	from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/frozen_string_literal_per_file_rev.rb:8:in '<main>'
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 2
---- expected (3 lines)
-true
-false
-"plain!"
-
---- actual (2 lines)
-true
-true
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (2 lines)
-/Users/ryanseys/dev/zeo/conformance/corpus/test/frozen_string_literal_per_file/helper_plain.rb:7:in 'Object#plain_helper_build': can't modify frozen String: "plain" (FrozenError)
-	from test/frozen_string_literal_per_file_rev.rb:8:in '<main>'
-```
-
----
-
 ## `hash_each_with_object` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/hash_each_with_object.rb`
@@ -419,32 +322,6 @@ true
 
 ---
 
-## `issue_3037` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3037.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3037.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (4 lines)
-caught NameError
-undefined local variable or method 'undefined_bareword_thing' for main
-"fallback"
-42
-
---- actual (4 lines)
-caught NoMethodError
-undefined method 'undefined_bareword_thing' for main
-"fallback"
-42
-```
-
----
-
 ## `issue_3098` — FAIL_OUTPUT
 
 - source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3098.rb`
@@ -465,40 +342,6 @@ false
 false
 false
 false
-```
-
----
-
-## `issue_3226` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3226.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/issue_3226.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 5
---- expected (8 lines)
-{a: 1, b: 2}
-{a: 1, b: 3}
-[:a, :b]
-{a: 1, b: 2}
-NameError
-[1, 2]
-2
-{a: 1, b: 2}
-
---- actual (8 lines)
-{a: 1, b: 2}
-{a: 1, b: 3}
-[:a, :b]
-{a: 1, b: 2}
-NoMethodError
-[1, 2]
-2
-{a: 1, b: 2}
 ```
 
 ---
@@ -848,44 +691,6 @@ first difference at line 1
 
 --- actual (1 lines)
 uninitialized constant Line (NameError)
-```
-
----
-
-## `toplevel_include_module_function` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `missing-method:hello` (cluster `P`)
-
-stderr:
-```
-/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError)
-```
-
-diff:
-```
-=== stdout diff ===
-first difference at line 1
---- expected (8 lines)
-hello, world!
-bye
-hi-from-Outer-Inner
-shared-from-Second
-only-First
-only-Second
-user-defined
-tail-only
-
---- actual (0 lines)
-
-=== stderr diff ===
-first difference at line 1
---- expected (0 lines)
-
---- actual (1 lines)
-test/toplevel_include_module_function.rb:20:in '<main>': undefined method 'hello' for main (NoMethodError)
 ```
 
 ---

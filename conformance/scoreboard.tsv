@@ -1,5 +1,5 @@
-# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=69f0c9d
-# PASS=2312 FAIL_OUTPUT=23 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
+# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=6026d44
+# PASS=2318 FAIL_OUTPUT=17 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -422,7 +422,7 @@ concat_print_poly_unbox	PASS	-	-
 cond_poly_truthy	PASS	-	-
 const_alias_method_call	PASS	-	-
 const_alias_path_receiver	PASS	-	-
-const_aliased_class_reopen_include	FAIL_OUTPUT	expect	missing-method:wordy
+const_aliased_class_reopen_include	PASS	-	-
 const_compound_assign	PASS	-	-
 const_defined_invalid_name	PASS	-	-
 const_env_defined_parity	PASS	-	-
@@ -719,8 +719,8 @@ frozen_nul_literal_cache	PASS	-	-
 frozen_string_append_guard	PASS	-	-
 frozen_string_global_survives_gc	PASS	-	-
 frozen_string_literal_gc_root	PASS	-	-
-frozen_string_literal_per_file	FAIL_OUTPUT	expect	-
-frozen_string_literal_per_file_rev	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-7011
+frozen_string_literal_per_file	PASS	-	-
+frozen_string_literal_per_file_rev	PASS	-	-
 frozen_string_literal_pragma	PASS	-	-
 gc_grandparent_ivar_scan	PASS	-	-
 gc_poly_local_int	PASS	-	-
@@ -1180,7 +1180,7 @@ issue_3033	PASS	-	-
 issue_3034	PASS	-	-
 issue_3035	PASS	-	-
 issue_3036	PASS	-	-
-issue_3037	FAIL_OUTPUT	expect	-
+issue_3037	PASS	-	-
 issue_3038	PASS	-	-
 issue_3039	PASS	-	-
 issue_3040	PASS	-	-
@@ -1354,7 +1354,7 @@ issue_3222	PASS	-	-
 issue_3223	PASS	-	-
 issue_3224	PASS	-	-
 issue_3225	PASS	-	-
-issue_3226	FAIL_OUTPUT	expect	-
+issue_3226	PASS	-	-
 issue_3227	PASS	-	-
 issue_3228	PASS	-	-
 issue_3229	PASS	-	-
@@ -2250,7 +2250,7 @@ time_xmlschema	PASS	-	-
 time_zone_inplace	PASS	-	-
 to_enum_enum_for	PASS	-	-
 to_h_with_block	PASS	-	-
-toplevel_include_module_function	FAIL_OUTPUT	expect	missing-method:hello
+toplevel_include_module_function	PASS	-	-
 toplevel_ivar_opassign	PASS	-	-
 toplevel_kwrest_block_param	PASS	-	-
 transform_keys_combined_cmp_wave10	PASS	-	-
