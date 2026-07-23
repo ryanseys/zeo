@@ -1392,26 +1392,35 @@ builtin_methods! {
         let mut out: Vec<RubyValue> = Vec::new();
         let mut cur_key: Option<RubyValue> = None;
         let mut cur: Vec<RubyValue> = Vec::new();
+        let flush = |key: Option<RubyValue>, cur: &mut Vec<RubyValue>, out: &mut Vec<RubyValue>| {
+            if let Some(k) = key {
+                out.push(RubyValue::Array(array_new(vec![
+                    k,
+                    RubyValue::Array(array_new(std::mem::take(cur))),
+                ])));
+            }
+        };
         for e in items {
             let key = blk.call(std::slice::from_ref(&e))?;
-            let same = cur_key.as_ref().is_some_and(|k| k.rb_eq(&key));
+            let sym = matches!(&key, RubyValue::Symbol(s) if matches!(s.name().as_str(), "_separator" | "_alone"));
+            // `nil`/`:_separator` DROP the element and end the current run; the
+            // next element starts a fresh chunk (CRuby's chunk semantics).
+            if matches!(&key, RubyValue::Nil)
+                || matches!(&key, RubyValue::Symbol(s) if s.name() == "_separator")
+            {
+                flush(cur_key.take(), &mut cur, &mut out);
+                continue;
+            }
+            // `:_alone` never merges, even with an adjacent `:_alone`.
+            let alone = sym && matches!(&key, RubyValue::Symbol(s) if s.name() == "_alone");
+            let same = !alone && cur_key.as_ref().is_some_and(|k| k.rb_eq(&key));
             if !same {
-                if let Some(k) = cur_key.take() {
-                    out.push(RubyValue::Array(array_new(vec![
-                        k,
-                        RubyValue::Array(array_new(std::mem::take(&mut cur))),
-                    ])));
-                }
+                flush(cur_key.take(), &mut cur, &mut out);
                 cur_key = Some(key);
             }
             cur.push(e);
         }
-        if let Some(k) = cur_key {
-            out.push(RubyValue::Array(array_new(vec![
-                k,
-                RubyValue::Array(array_new(cur)),
-            ])));
-        }
+        flush(cur_key.take(), &mut cur, &mut out);
         Ok(RubyValue::Array(array_new(out)))
     }
     // `zip(*others)` -- pairs each element of the receiver with the same-index
