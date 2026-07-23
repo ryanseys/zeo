@@ -312,6 +312,50 @@ fn missing_require_is_a_compile_error_with_crubys_message() {
 }
 
 #[test]
+fn a_require_under_a_statically_false_engine_guard_is_pruned_not_spliced() {
+    // `require X if RUBY_ENGINE == "jruby"` names another engine's code; a
+    // whole-program AOT compiler eager-splices every literal require it sees,
+    // but this one's guard folds statically false on CRuby-targeting zeo, so
+    // the target must be PRUNED, not spliced (splicing would fail to resolve
+    // it). The program compiles and the guarded require is simply dead.
+    let result = run_ruby(
+        "require \"no_such_engine_lib_xyz\" if RUBY_ENGINE == \"jruby\"\nputs \"ok\"\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "ok\n");
+}
+
+#[test]
+fn open3_lowers_from_the_vendored_gem_with_its_jruby_require_pruned() {
+    // open3's last line is `require 'open3/jruby_windows' if RUBY_ENGINE ==
+    // 'jruby' && ...`; that file is JRuby-native (`require 'jruby'`, java_import)
+    // and must be pruned rather than spliced. Loading open3 and reflecting on
+    // its API needs no subprocess, so this exercises the load path end-to-end.
+    let result = run_ruby(
+        "require \"open3\"\nputs Open3.respond_to?(:capture3)\nputs Open3.respond_to?(:popen3)\n",
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "true\ntrue\n");
+}
+
+#[test]
+fn shellwords_class_method_aliases_run_from_the_vendored_gem() {
+    // shellwords defines its module methods (`module_function`) then aliases
+    // them inside `class << self` (`alias split shellsplit`) -- a class-method
+    // alias that resolves against the singleton table, not instance methods.
+    let result = run_ruby(
+        r#"
+        require "shellwords"
+        p Shellwords.split('a "b c"')
+        puts Shellwords.escape("a b")
+        puts Shellwords.join(["a", "b c"])
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[\"a\", \"b c\"]\na\\ b\na b\\ c\n");
+}
+
+#[test]
 fn requires_that_cannot_be_resolved_at_compile_time() {
     // A NON-LITERAL require target can't be resolved at compile time, so it
     // lowers to a runtime `Kernel#require` raising LoadError (matching CRuby),

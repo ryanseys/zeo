@@ -19,6 +19,28 @@ fn dynamic_send_with_a_non_literal_target() {
 }
 
 #[test]
+fn an_alias_inside_class_self_is_a_class_method_alias() {
+    // `alias new old` inside `class << self` aliases a SINGLETON method: it
+    // must resolve against the class-method table and register `new` as a class
+    // method, not an instance method.
+    let result = run_ruby(
+        r#"
+        module M
+          def self.original = 42
+          class << self
+            alias renamed original
+          end
+        end
+        puts M.renamed
+        puts M.respond_to?(:renamed)
+        puts M.singleton_methods.include?(:renamed)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\ntrue\ntrue\n");
+}
+
+#[test]
 fn eval_of_a_literal_string_runs_inline() {
     let result = run_ruby(r#"puts eval("1 + 2")"#);
     assert!(result.status.success(), "stderr: {}", result.stderr);

@@ -94,11 +94,13 @@ pub struct ClassInfo {
     /// class, which is what makes an INHERITED name disappear here while
     /// staying live on the ancestor that defined it.
     pub undefined: std::collections::HashSet<String>,
-    /// `(new, old)` aliases whose source method is INHERITED (not defined in
-    /// this class's own body) -- recorded by `analyze::register_class` from a
-    /// `HirNode::AliasMethod` and resolved by `mro::resolve_aliases` once the
-    /// ancestor chain is linearized. See `HirNode::AliasMethod`'s docs.
-    pub pending_aliases: Vec<(String, String)>,
+    /// `(new, old, is_class_method)` aliases whose source method is INHERITED
+    /// (not defined in this class's own body) -- recorded by
+    /// `analyze::register_class` from a `HirNode::AliasMethod` and resolved by
+    /// `mro::resolve_aliases` once the ancestor chain is linearized.
+    /// `is_class_method` (an `alias` inside `class << self`) resolves against
+    /// `own_class_methods`. See `HirNode::AliasMethod`'s docs.
+    pub pending_aliases: Vec<(String, String, bool)>,
     /// `(new, old)` aliases whose source is a BUILTIN (no user `Scope`
     /// anywhere in the ancestor chain -- Kernel's `raise`, Object's `dup`,
     /// ...): there is no HIR body to clone, so the alias is a NAME

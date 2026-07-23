@@ -384,6 +384,7 @@ impl Loader {
                 let id = hir.push(crate::hir::HirNode::AliasMethod {
                     new_name: zeo_hir::lower::defs::alias_target_name(&alias.new_name())?,
                     old_name: zeo_hir::lower::defs::alias_target_name(&alias.old_name())?,
+                    is_class_method: false,
                 });
                 combined.push(id);
                 own.push(id);
@@ -1204,6 +1205,119 @@ impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
             }
         }
     }
+
+    // A `require` under a statically-false guard (`require 'open3/jruby_windows'
+    // if RUBY_ENGINE == 'jruby'`) names another engine's native code (its own
+    // `require 'jruby'` cannot resolve/lower) and must NOT be spliced. Unlike
+    // the default descent, this prunes a provably-dead branch: only the live
+    // branch(es) are visited. The predicate is still visited (a `require` inside
+    // the guard EXPRESSION is pathological but stays collected). The guard is
+    // only decidable for the platform-detection idioms `eval_static_guard`
+    // models; every runtime-conditional require descends exactly as before.
+    fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
+        self.visit(&node.predicate());
+        let guard = eval_static_guard(&node.predicate());
+        if guard != Some(false) {
+            if let Some(stmts) = node.statements() {
+                self.visit(&stmts.as_node());
+            }
+        }
+        if guard != Some(true) {
+            if let Some(sub) = node.subsequent() {
+                self.visit(&sub);
+            }
+        }
+    }
+
+    // `unless C` runs `statements` when C is FALSE and `else_clause` when TRUE
+    // -- the mirror of `visit_if_node`.
+    fn visit_unless_node(&mut self, node: &ruby_prism::UnlessNode<'pr>) {
+        self.visit(&node.predicate());
+        let guard = eval_static_guard(&node.predicate());
+        if guard != Some(true) {
+            if let Some(stmts) = node.statements() {
+                self.visit(&stmts.as_node());
+            }
+        }
+        if guard != Some(false) {
+            if let Some(els) = node.else_clause() {
+                self.visit(&els.as_node());
+            }
+        }
+    }
+}
+
+/// zeo's compile-time `RUBY_ENGINE`. Mirrors `zeo_rt::bootstrap`'s
+/// `ENGINE = "ruby"`: zeo targets CRuby semantics, so an engine-gated require
+/// (`require X if RUBY_ENGINE == 'jruby'`) is statically decidable here.
+const RUBY_ENGINE: &str = "ruby";
+
+/// Three-valued evaluation of a `require`-guard expression. `Some(true)`/
+/// `Some(false)` when a platform guard is statically decidable; `None` when it
+/// depends on runtime state (the branch stays live and its requires splice as
+/// before). Only the idioms that gate platform-specific requires in the stdlib/
+/// gem graph are modeled -- literal `true`/`false`/`nil`, `RUBY_ENGINE == "..."`
+/// (and `!=`), `!x`, and `&&`/`||` over those. Everything else is `None`, so
+/// this only ever PRUNES a provably-dead branch; it never drops a live require.
+fn eval_static_guard(node: &ruby_prism::Node<'_>) -> Option<bool> {
+    if node.as_true_node().is_some() {
+        return Some(true);
+    }
+    if node.as_false_node().is_some() || node.as_nil_node().is_some() {
+        return Some(false);
+    }
+    if let Some(paren) = node.as_parentheses_node() {
+        let stmts = paren.body()?.as_statements_node()?;
+        let body: Vec<_> = stmts.body().iter().collect();
+        return match body.as_slice() {
+            [only] => eval_static_guard(only),
+            _ => None,
+        };
+    }
+    if let Some(and) = node.as_and_node() {
+        return match (eval_static_guard(&and.left()), eval_static_guard(&and.right())) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        };
+    }
+    if let Some(or) = node.as_or_node() {
+        return match (eval_static_guard(&or.left()), eval_static_guard(&or.right())) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        };
+    }
+    if let Some(call) = node.as_call_node() {
+        let name = call.name().as_slice();
+        if name == b"!" && call.arguments().is_none() {
+            return call.receiver().and_then(|r| eval_static_guard(&r)).map(|b| !b);
+        }
+        if matches!(name, b"==" | b"!=") {
+            if let (Some(recv), Some(args)) = (call.receiver(), call.arguments()) {
+                let arg_list: Vec<_> = args.arguments().iter().collect();
+                if let [only] = arg_list.as_slice() {
+                    let eq =
+                        engine_string_eq(&recv, only).or_else(|| engine_string_eq(only, &recv));
+                    if let Some(eq) = eq {
+                        return Some(if name == b"==" { eq } else { !eq });
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// `Some(RUBY_ENGINE == lit)` when `a` reads the `RUBY_ENGINE` constant and `b`
+/// is a string literal; `None` otherwise. Order-sensitive -- the caller tries
+/// both operand orders so `RUBY_ENGINE == 'x'` and `'x' == RUBY_ENGINE` both
+/// resolve.
+fn engine_string_eq(a: &ruby_prism::Node<'_>, b: &ruby_prism::Node<'_>) -> Option<bool> {
+    if a.as_constant_read_node()?.name().as_slice() != b"RUBY_ENGINE" {
+        return None;
+    }
+    Some(b.as_string_node()?.unescaped() == RUBY_ENGINE.as_bytes())
 }
 
 fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::CallNode<'a>>) {

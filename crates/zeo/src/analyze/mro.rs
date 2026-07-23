@@ -126,17 +126,33 @@ pub fn materialize(compiler: &mut Compiler, main_statements: &[NodeId]) -> Resul
 /// `NameError: undefined method`.
 fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), String> {
     let pending = std::mem::take(&mut compiler.classes[class_id.0 as usize].pending_aliases);
-    for (new_name, old_name) in pending {
+    for (new_name, old_name, is_class_method) in pending {
         let ancestors = compiler.class(class_id).ancestors.clone();
+        // A class-method alias (`class << self; alias split shellsplit`)
+        // resolves against `own_class_methods`; an ordinary alias against
+        // `own_methods`.
         let source = ancestors.iter().find_map(|&anc| {
-            compiler
-                .class(anc)
-                .own_methods
-                .iter()
+            let anc = compiler.class(anc);
+            let list = if is_class_method {
+                &anc.own_class_methods
+            } else {
+                &anc.own_methods
+            };
+            list.iter()
                 .find(|&&s| compiler.scope(s).name == old_name)
                 .copied()
         });
         let Some(sid) = source else {
+            if is_class_method {
+                // No user class-method scope in the chain: the source would be
+                // a builtin singleton method. zeo's builtin-alias fallback
+                // targets the INSTANCE table, so it can't model this; a clean
+                // compile error (NameError-equivalent) beats a wrong-table
+                // registration. Not exercised on the bundler path.
+                return Err(format!(
+                    "`alias {new_name} {old_name}` inside `class << self`: no class method `{old_name}` to alias (zeo limitation -- aliasing a builtin singleton method isn't supported)"
+                ));
+            }
             // No user `Scope` anywhere in the chain: the source is a BUILTIN
             // (Kernel's `raise`, Object's `dup`, ...) -- or a typo. There is
             // no body to clone either way, so record a NAME indirection
@@ -164,7 +180,7 @@ fn resolve_aliases(compiler: &mut Compiler, class_id: ClassId) -> Result<(), Str
         let new_sid = super::register_method(
             compiler, class_id, class_id, new_name, def_node, params, body, visibility,
         )?;
-        super::add_own_method(compiler, class_id, new_sid, false);
+        super::add_own_method(compiler, class_id, new_sid, is_class_method);
     }
     Ok(())
 }

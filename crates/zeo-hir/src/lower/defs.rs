@@ -268,7 +268,11 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
             is_def,
         }));
     } else {
-        out.push(hir.push(HirNode::AliasMethod { new_name, old_name }));
+        out.push(hir.push(HirNode::AliasMethod {
+            new_name,
+            old_name,
+            is_class_method: false,
+        }));
     }
 }
 
@@ -792,6 +796,7 @@ fn lower_class_body_statement(
             // mutations below (`include` re-pushes a fresh `Extend` node).
             enum Item {
                 Method,
+                ClassAlias,
                 Passthrough,
                 Extend(String),
                 Skip,
@@ -799,6 +804,13 @@ fn lower_class_body_statement(
             }
             let item = match &hir[id] {
                 HirNode::DefMethod { .. } => Item::Method,
+                // `alias new old` here aliases a SINGLETON method (`class <<
+                // self; alias split shellsplit`) -- retag it so analyze/mro
+                // resolve it against `own_class_methods`. A same-body target
+                // was already cloned as a class-method `DefMethod` by
+                // `push_alias` (it preserves `is_class_method`); only a
+                // cross-body/inherited source reaches here as an `AliasMethod`.
+                HirNode::AliasMethod { .. } => Item::ClassAlias,
                 HirNode::ConstWrite { .. } => Item::Passthrough,
                 HirNode::Include(m) => Item::Extend(m.clone()),
                 // A visibility directive (`public :a`) or a runtime call
@@ -814,6 +826,10 @@ fn lower_class_body_statement(
             match item {
                 Item::Method => {
                     hir.set_method_is_class_method(id);
+                    out.push(id);
+                }
+                Item::ClassAlias => {
+                    hir.set_alias_is_class_method(id);
                     out.push(id);
                 }
                 Item::Passthrough => out.push(id),

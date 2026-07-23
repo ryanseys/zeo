@@ -301,11 +301,16 @@ fn process_top_stmt(
         compiler.classes[OBJECT_CLASS.0 as usize]
             .undefined
             .extend(names);
-    } else if let HirNode::AliasMethod { new_name, old_name } = &compiler.hir[stmt] {
-        let pair = (new_name.clone(), old_name.clone());
+    } else if let HirNode::AliasMethod {
+        new_name,
+        old_name,
+        is_class_method,
+    } = &compiler.hir[stmt]
+    {
+        let entry = (new_name.clone(), old_name.clone(), *is_class_method);
         compiler.classes[OBJECT_CLASS.0 as usize]
             .pending_aliases
-            .push(pair);
+            .push(entry);
     } else if let HirNode::If {
         cond,
         then_body,
@@ -943,11 +948,15 @@ fn register_class(
             // A deferred `alias`/`alias_method` of an INHERITED method --
             // resolved by `mro::resolve_aliases` once ancestors are computed.
             // See `HirNode::AliasMethod`.
-            HirNode::AliasMethod { new_name, old_name } => {
-                let pair = (new_name.clone(), old_name.clone());
+            HirNode::AliasMethod {
+                new_name,
+                old_name,
+                is_class_method,
+            } => {
+                let entry = (new_name.clone(), old_name.clone(), *is_class_method);
                 compiler.classes[class_id.0 as usize]
                     .pending_aliases
-                    .push(pair);
+                    .push(entry);
             }
             // A `private`/`public`/`protected :m` re-declaring an INHERITED
             // method's visibility -- applied by codegen after materialization.

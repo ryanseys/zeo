@@ -1,0 +1,8 @@
+0.2.2
+["here", "are", "two words"]
+["ruby", "prog.rb", "|", "less"]
+a\ b\'c
+plain
+echo a\ b c
+["one", "two", "three"]
+a\ b

@@ -286,6 +286,19 @@ impl Hir {
         *is_class_method = true;
     }
 
+    /// Corrects an `AliasMethod` to a class-method alias, for an `alias` inside
+    /// `class << self` (see `HirNode::AliasMethod::is_class_method`). Panics if
+    /// `id` isn't an `AliasMethod` -- the caller only reaches this for one.
+    pub fn set_alias_is_class_method(&mut self, id: NodeId) {
+        let HirNode::AliasMethod {
+            is_class_method, ..
+        } = &mut self.nodes[id.0 as usize]
+        else {
+            panic!("set_alias_is_class_method: node isn't an AliasMethod");
+        };
+        *is_class_method = true;
+    }
+
     /// A fresh, arena-wide-unique synthetic identifier, for a compiler-
     /// introduced hidden local that never appears in real Ruby source (e.g.
     /// binding a compound-assignment target's receiver/index expression to a
@@ -1759,9 +1772,14 @@ pub enum HirNode {
     /// so it then materializes onto this class AND its subclasses normally.
     /// The same-body case stays a lowering-time `DefMethod` clone (no runtime
     /// target needed), exactly like `alias` on a locally-defined method.
+    ///
+    /// `is_class_method` marks an `alias` written inside `class << self` (`alias
+    /// split shellsplit`): it aliases a SINGLETON method, so it resolves against
+    /// the MRO's `own_class_methods` and registers as an own class method.
     AliasMethod {
         new_name: String,
         old_name: String,
+        is_class_method: bool,
     },
     /// `private :m` / `public :m` / `protected :m` naming a method NOT defined
     /// earlier in the same class/module body -- an INHERITED method whose
