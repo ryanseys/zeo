@@ -1372,6 +1372,14 @@ pub enum HirNode {
         body: Vec<NodeId>,
         is_class_method: bool,
         visibility: Visibility,
+        /// `true` for a real `def` keyword; `false` for a literal
+        /// `define_method(:sym){...}` call desugared into this node. Only
+        /// matters in EXPRESSION position (inside a block): a real `def`
+        /// installs on the runtime default definee (a singleton method under an
+        /// `instance_exec` on a plain object), whereas an explicit
+        /// `define_method` is an ordinary `Module#define_method` call that
+        /// raises `NoMethodError` when `self` isn't a Module/Class.
+        is_def: bool,
     },
     /// `include Mod` -- one node per module argument, in left-to-right
     /// source order, when multiple are given (`include A, B` lowers to two

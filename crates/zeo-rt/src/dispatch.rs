@@ -2505,6 +2505,30 @@ pub fn send_value(
     send_value_in(0, recv, name, args, block)
 }
 
+/// A `def` in expression position (inside a block) installs on the block's
+/// runtime "default definee": for a Class/Module `self` (a `class_eval` /
+/// `Class.new` body) an ordinary instance method; for any other `self` (an
+/// `instance_exec` on a plain object) a SINGLETON method on that object. Which
+/// one only the runtime `self` decides, so codegen routes an instance `def`
+/// here rather than committing to `define_method`.
+pub fn define_in_default_definee(
+    recv: &RubyValue,
+    name: Symbol,
+    body: RubyValue,
+) -> Result<RubyValue, Signal> {
+    let installer = if matches!(recv, RubyValue::Class(_)) {
+        "define_method"
+    } else {
+        "define_singleton_method"
+    };
+    send_value(
+        recv,
+        Symbol::intern(installer),
+        &[RubyValue::Symbol(name), body],
+        None,
+    )
+}
+
 /// `recv.class` for the codegen `.class` fast path on a dynamically-typed
 /// receiver: normally the receiver's class value, but a Struct/Data instance
 /// with a member literally named `class` (`Data.define(:class, :hash)`) has

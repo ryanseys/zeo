@@ -403,6 +403,7 @@ fn lower_attach_function(
         body,
         is_class_method: true,
         visibility: Visibility::Public,
+        is_def: true,
     }))
 }
 

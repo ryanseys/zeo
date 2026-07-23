@@ -1207,6 +1207,7 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             params,
             body,
             is_class_method,
+            is_def,
             ..
         } => {
             // A `def` in value position installs on: the block's DYNAMIC self
@@ -1244,18 +1245,39 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             let mut body_cx = cx.clone();
             body_cx.runtime_super_params = Some(std::rc::Rc::new(params.clone()));
             let proc = super::call::emit_proc_or_lambda_value(&body_cx, params, body, true, true);
-            let installer = if *is_class_method {
-                "define_singleton_method"
+            if *is_class_method {
+                // `def self.x` always installs a singleton method on `self`.
+                quote! {
+                    zeo_rt::send_value(
+                        &#self_val,
+                        zeo_rt::Symbol::intern("define_singleton_method"),
+                        &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)), #proc],
+                        None,
+                    )?
+                }
+            } else if *is_def {
+                // A real `def` installs on the runtime default definee: an
+                // instance method on a Class/Module self, a singleton method on
+                // any other (`instance_exec { def m; end }`).
+                quote! {
+                    zeo_rt::define_in_default_definee(
+                        &#self_val,
+                        zeo_rt::Symbol::intern(#name),
+                        #proc,
+                    )?
+                }
             } else {
-                "define_method"
-            };
-            quote! {
-                zeo_rt::send_value(
-                    &#self_val,
-                    zeo_rt::Symbol::intern(#installer),
-                    &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)), #proc],
-                    None,
-                )?
+                // A literal `define_method(:m){...}` call: an ordinary
+                // Module#define_method dispatch, which raises NoMethodError when
+                // self isn't a Module/Class (`instance_exec { define_method... }`).
+                quote! {
+                    zeo_rt::send_value(
+                        &#self_val,
+                        zeo_rt::Symbol::intern("define_method"),
+                        &[zeo_rt::RubyValue::Symbol(zeo_rt::Symbol::intern(#name)), #proc],
+                        None,
+                    )?
+                }
             }
         }
         HirNode::Program(_)

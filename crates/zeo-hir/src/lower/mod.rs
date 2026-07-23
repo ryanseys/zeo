@@ -1081,6 +1081,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // `lower_class_body_statement` retroactively mutates this same
             // node's `visibility` field once it sees the enclosing call).
             visibility: Visibility::Public,
+            is_def: true,
         }));
     }
 
@@ -1316,6 +1317,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                                 body: vec![call],
                                 is_class_method: false,
                                 visibility: Visibility::Public,
+                                // An explicit `define_method` call, not a `def`.
+                                is_def: false,
                             }));
                         }
                         let block = block_node
@@ -1337,6 +1340,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             body,
                             is_class_method: false,
                             visibility: Visibility::Public,
+                            // An explicit `define_method` call, not a `def`.
+                            is_def: false,
                         }));
                     }
                 }
@@ -1400,6 +1405,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                             body,
                             is_class_method: true,
                             visibility: Visibility::Public,
+                            // A class-method desugar; installs via
+                            // define_singleton_method regardless of is_def.
+                            is_def: true,
                         });
                         return Ok(match target {
                             None => def,

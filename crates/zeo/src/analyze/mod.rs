@@ -899,6 +899,7 @@ fn register_class(
                 body,
                 is_class_method,
                 visibility,
+                is_def: _,
             } => {
                 let (name, params, body, is_class_method, visibility) = (
                     name.clone(),

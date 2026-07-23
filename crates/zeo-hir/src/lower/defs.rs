@@ -251,19 +251,21 @@ fn push_alias(hir: &mut Hir, out: &mut Vec<NodeId>, new_name: String, old_name: 
             body,
             is_class_method,
             visibility,
+            is_def,
             ..
         } = &hir[old_id]
         else {
             unreachable!("guarded by the `find` above")
         };
-        let (params, body, is_class_method, visibility) =
-            (params.clone(), body.clone(), *is_class_method, *visibility);
+        let (params, body, is_class_method, visibility, is_def) =
+            (params.clone(), body.clone(), *is_class_method, *visibility, *is_def);
         out.push(hir.push(HirNode::DefMethod {
             name: new_name,
             params,
             body,
             is_class_method,
             visibility,
+            is_def,
         }));
     } else {
         out.push(hir.push(HirNode::AliasMethod { new_name, old_name }));
@@ -981,6 +983,7 @@ fn lower_class_body_statement(
                                     body: vec![read],
                                     is_class_method: false,
                                     visibility: *visibility,
+                                    is_def: true,
                                 }));
                             }
                             if matches!(name.as_str(), "attr_writer" | "attr_accessor") {
@@ -996,6 +999,7 @@ fn lower_class_body_statement(
                                     body: vec![write],
                                     is_class_method: false,
                                     visibility: *visibility,
+                                    is_def: true,
                                 }));
                             }
                         }
@@ -1033,6 +1037,7 @@ fn lower_class_body_statement(
                     body,
                     is_class_method: true,
                     visibility: Visibility::Public,
+                    is_def: true,
                 }));
                 return Ok(());
             }
