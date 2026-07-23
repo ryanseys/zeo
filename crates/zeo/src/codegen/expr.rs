@@ -1836,6 +1836,37 @@ pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> Toke
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
     // deferred to runtime so a dead/guarded branch still compiles.
     let Some(owner) = const_owner_id_opt(cx, scope, name) else {
+        // A single-segment scope that isn't a compile-time class may still be a
+        // RUNTIME constant holding a class (`Line = Struct.new(...)` /
+        // `Data.define`), so resolve the path at runtime: read the scope
+        // constant, then the leaf on the class it names. `uninitialized
+        // constant Line::FLAGS` (leaf missing) vs `uninitialized constant Line`
+        // (scope missing) then matches CRuby.
+        if let Some(s) = scope.filter(|s| !s.contains("::")) {
+            let scope_owner = const_owner_id_opt(cx, None, s).unwrap_or(0);
+            let qualified = format!("{s}::{name}");
+            return quote! {
+                match zeo_rt::const_get(#scope_owner, #s) {
+                    Some(zeo_rt::RubyValue::Class(__cid)) => match zeo_rt::const_get_scoped(__cid.0, #name) {
+                        Some(__v) => __v,
+                        None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
+                            format!("uninitialized constant {}", #qualified),
+                            #name,
+                            zeo_rt::RubyValue::Class(__cid),
+                        )))),
+                    },
+                    Some(__other) => return Err(zeo_rt::raise_error(
+                        "TypeError",
+                        format!("{} is not a class/module", __other.inspect_string()),
+                    )),
+                    None => return Err(zeo_rt::Signal::Raise(zeo_rt::stamp_backtrace(zeo_rt::make_name_error(
+                        format!("uninitialized constant {}", #s),
+                        #s,
+                        zeo_rt::RubyValue::Nil,
+                    )))),
+                }
+            };
+        }
         let missing = scope.unwrap_or(name);
         // Yields `RubyValue` on its unreachable `Ok` arm, so this type-checks
         // in every position a const read appears (incl. a borrowed argument

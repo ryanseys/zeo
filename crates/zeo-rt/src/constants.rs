@@ -40,6 +40,28 @@ pub fn const_get(owner_class_id: u32, name: &str) -> Option<RubyValue> {
     None
 }
 
+/// Explicit-scope constant lookup (`Scope::NAME`): the scope class and its
+/// ancestors, but NOT a bare top-level (`Object`-owned) constant unless the
+/// scope IS `Object`. CRuby's `Foo::BAR` raises `NameError` rather than
+/// resolving a top-level `BAR` through `Object` merely being an ancestor of
+/// `Foo` (a `Struct.new` block's constant lands at top level, so `Line::FLAGS`
+/// must not find it).
+pub fn const_get_scoped(owner_class_id: u32, name: &str) -> Option<RubyValue> {
+    let map = CONSTANTS.lock();
+    if let Some(v) = map.get(&(owner_class_id, name.to_string())) {
+        return Some(v.clone());
+    }
+    for &anc in crate::dispatch::ancestors_of_value(crate::ClassId(owner_class_id)) {
+        if anc.0 == owner_class_id || (anc.0 == 0 && owner_class_id != 0) {
+            continue;
+        }
+        if let Some(v) = map.get(&(anc.0, name.to_string())) {
+            return Some(v.clone());
+        }
+    }
+    None
+}
+
 /// The constant names owned DIRECTLY by `owner_class_id` (not its ancestors)
 /// -- the per-class half of `Module#constants`. Order is unspecified (a
 /// `HashMap` iteration), matching CRuby's own id-table nondeterminism; callers

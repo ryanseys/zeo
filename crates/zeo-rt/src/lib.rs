@@ -59,7 +59,7 @@ pub use builtins::value_subclass::{register_value_subclass, value_super};
 pub use builtins::weak::run_finalizers;
 pub use civars::{class_ivar_get, class_ivar_names, class_ivar_set};
 pub use collections::*;
-pub use constants::{const_get, const_set};
+pub use constants::{const_get, const_get_scoped, const_set};
 pub use cvars::{cvar_defined, cvar_get, cvar_names_of, cvar_set};
 pub use dispatch::{
     ARRAY_CLASS, AllocatorFn, BASIC_OBJECT_CLASS, CLASS_CLASS, COMPARABLE_CLASS, COMPLEX_CLASS,
