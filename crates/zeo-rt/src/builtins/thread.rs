@@ -72,8 +72,14 @@ fn t_inspect(
     let t = recv.as_thread_unchecked();
     let status = if thread_alive(&t) { "run" } else { "dead" };
     let addr = std::sync::Arc::as_ptr(&t) as usize;
+    // CRuby includes the `Thread.new` call site (`#<Thread:0xADDR file:line
+    // status>`); the main thread has none.
+    let loc = match thread::thread_origin(&t) {
+        Some(o) => format!(" {o}"),
+        None => String::new(),
+    };
     Ok(RubyValue::Str(crate::string_new(format!(
-        "#<Thread:0x{addr:016x} {status}>"
+        "#<Thread:0x{addr:016x}{loc} {status}>"
     ))))
 }
 

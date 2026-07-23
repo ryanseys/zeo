@@ -92,6 +92,13 @@ pub fn set_line(line: u32) {
     });
 }
 
+/// The innermost frame's `file:line`, for a caller-location label like
+/// `Thread#inspect`'s creation site. A builtin C function has no frame of its
+/// own, so the top frame is its caller.
+pub fn current_location() -> Option<(&'static str, u32)> {
+    FRAMES.with(|f| f.borrow().last().map(|fr| (fr.file, fr.line)))
+}
+
 /// `FILE:LINE:in 'METHOD'` -- CRuby's backtrace-entry shape.
 fn format_frame(fr: &Frame) -> String {
     format!("{}:{}:in '{}'", fr.file, fr.line, fr.method)

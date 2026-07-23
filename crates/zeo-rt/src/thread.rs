@@ -98,12 +98,15 @@ pub struct ThreadData {
     /// answers reflection in CRuby; only `#[]=`/`#name=`-style mutations
     /// check it, audited with the mutator family).
     frozen: AtomicBool,
+    /// `file:line` where `Thread.new` was called -- shown in `#inspect`
+    /// (`#<Thread:0xADDR file:line status>`). `None` for the main thread.
+    origin: Option<String>,
 }
 
 pub type RThread = Arc<ThreadData>;
 
 impl ThreadData {
-    fn build(state: Option<ThreadState>, is_main: bool) -> RThread {
+    fn build(state: Option<ThreadState>, is_main: bool, origin: Option<String>) -> RThread {
         Arc::new(ThreadData {
             state: PlMutex::new(state),
             name: PlMutex::new(None),
@@ -115,6 +118,7 @@ impl ThreadData {
             ctx: PlMutex::new(None),
             was_killed: AtomicBool::new(false),
             frozen: AtomicBool::new(false),
+            origin,
         })
     }
 
@@ -169,7 +173,7 @@ static MAIN_THREAD: OnceLock<RThread> = OnceLock::new();
 fn main_thread() -> RThread {
     MAIN_THREAD
         .get_or_init(|| {
-            let m = ThreadData::build(None, true);
+            let m = ThreadData::build(None, true, None);
             register_live(&m);
             m
         })
@@ -204,7 +208,8 @@ pub fn thread_pass() -> RubyValue {
 /// matching CRuby.
 pub fn thread_new(block: RubyValue, args: Vec<RubyValue>) -> RubyValue {
     let body = block.as_proc_unchecked();
-    let data = ThreadData::build(None, false);
+    let origin = crate::frames::current_location().map(|(f, l)| format!("{f}:{l}"));
+    let data = ThreadData::build(None, false, origin);
     register_live(&data);
     let for_thread = data.clone();
     let run = move || {
@@ -350,6 +355,12 @@ pub fn thread_name(t: &RThread) -> RubyValue {
 
 pub fn thread_set_name(t: &RThread, name: Option<String>) {
     *t.name.lock() = name;
+}
+
+/// The `Thread.new` call site (`file:line`) shown in `#inspect`; `None` for
+/// the main thread.
+pub fn thread_origin(t: &RThread) -> Option<String> {
+    t.origin.clone()
 }
 
 pub fn thread_report_on_exception(t: &RThread) -> bool {
