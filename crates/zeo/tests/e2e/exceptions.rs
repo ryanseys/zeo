@@ -519,6 +519,26 @@ fn rescue_with_multiple_classes_in_one_clause() {
 }
 
 #[test]
+fn rescue_with_a_computed_exception_class_expression() {
+    // A rescue-list entry that is a COMPUTED expression (not a bare constant or
+    // splat) is evaluated and matched at runtime -- net/http's `rescue
+    // defined?(OpenSSL::SSL) ? OpenSSL::SSL::SSLError : IOError`.
+    let result = run_ruby(
+        r#"
+        class MyErr < StandardError; end
+        def go
+          raise MyErr, "boom"
+        rescue IOError, (defined?(Nope) ? Nope : MyErr) => e
+          "caught #{e.class}: #{e.send(:message)}"
+        end
+        puts go
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "caught MyErr: boom\n");
+}
+
+#[test]
 fn bare_raise_re_raises_preserving_a_custom_exceptions_own_ivars() {
     let result = run_ruby(
         r#"

@@ -74,13 +74,13 @@ pub(crate) fn static_bool(node: &Node<'_>) -> Option<bool> {
 
 /// `begin body rescue R1 rescue R2 ... else ... ensure ... end` -- `rescue`
 /// clauses arrive as a singly-linked chain (`RescueNode::subsequent()`), not
-/// a list, mirroring `if`/`elsif`'s own `subsequent()` chaining. `exceptions()`
-/// entries are expected to be plain constants (`rescue Foo, Bar => e`) --
-/// anything else (a splatted exception list, `rescue *errs`) falls through
-/// to `constant_name`'s existing "expected a plain constant name" rejection,
-/// same posture as `superclass`/`include`/`extend`/`prepend` resolution
-/// elsewhere in this file. `reference()` (the `=> e` binding) is always a
-/// plain local-variable target in real Ruby's own grammar for this position.
+/// a list, mirroring `if`/`elsif`'s own `subsequent()` chaining. An
+/// `exceptions()` entry that is a plain constant (`rescue Foo, Bar => e`)
+/// resolves to a compile-time class; a splat (`rescue *errs`) or any other
+/// COMPUTED expression (`rescue defined?(X) ? A : B`) is lowered and matched at
+/// runtime instead (`zeo_rt::rescue_matches_any`). `reference()` (the `=> e`
+/// binding) is always a plain local-variable target in real Ruby's own grammar
+/// for this position.
 pub(crate) fn lower_begin(
     result: &ParseResult,
     hir: &mut Hir,
@@ -103,8 +103,16 @@ pub(crate) fn lower_begin(
                     .expression()
                     .ok_or("`rescue *` needs an expression after the `*`")?;
                 splats.push(lower_node(result, hir, &expr)?);
-            } else {
+            } else if n.as_constant_read_node().is_some() || n.as_constant_path_node().is_some() {
                 classes.push(constant_path_name(&n)?);
+            } else {
+                // A COMPUTED exception class -- e.g. net/http's `rescue
+                // defined?(OpenSSL::SSL) ? OpenSSL::SSL::SSLError : IOError`.
+                // There is no compile-time class to resolve, so lower the
+                // expression and match it at runtime exactly like a splat
+                // (`rescue_matches_any` matches a single class as well as an
+                // array).
+                splats.push(lower_node(result, hir, &n)?);
             }
         }
         let binding = match r.reference() {
