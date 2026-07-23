@@ -1,10 +1,20 @@
 # zeo's vendored batteries: git-sourced pure-Ruby stdlib gems.
 # Managed by `cargo run -p xtask -- gem`. `rev` is the reproducible pin.
 
+[gems.erb]
+github = "ruby/erb"
+tag    = "v6.0.4"
+rev    = "4d2b45e140044f464794c0463d838d5cb4bba96c"
+
 [gems.fileutils]
 github = "ruby/fileutils"
 tag    = "v1.8.0"
 rev    = "29de582f683bbf5d8d153599459f2b44372ac7b4"
+
+[gems.ipaddr]
+github = "ruby/ipaddr"
+tag    = "v1.2.9"
+rev    = "f17f68bcab9cfb256cceac4546bf4e11876b2aa8"
 
 [gems.open3]
 github = "ruby/open3"
@@ -20,3 +30,8 @@ rev    = "297bdf2c8d959d4455360134152d33d2bea8bf54"
 github = "ruby/tmpdir"
 tag    = "v0.3.1"
 rev    = "0245079c2489f9806f8556aa74e01540adaa3278"
+
+[gems.uri]
+github = "ruby/uri"
+tag    = "v1.1.1"
+rev    = "f1b05c89ab38667e7564896f994d4d6cfbc67149"
