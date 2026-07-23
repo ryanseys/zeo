@@ -64,16 +64,40 @@ pub(crate) fn desugar_singleton_class_defs(
 ) -> PResult<Vec<NodeId>> {
     let recv_node = singleton.expression();
     let inner = lower_class_body(result, hir, singleton.body(), None)?;
-    let mut out = Vec::with_capacity(inner.len());
-    for &id in &inner {
-        let (mname, params, body) = match &hir[id] {
+    desugar_singleton_items(result, hir, &recv_node, inner)
+}
+
+/// Maps each lowered `class << obj` body node onto `recv`: a `def` becomes
+/// `recv.define_singleton_method(:name) { body }`; a constant/nested class is
+/// HOISTED to the enclosing scope (zeo has no per-object singleton-class
+/// namespace -- the singleton methods reference them lexically); a conditional
+/// guarding definitions keeps its runtime `if` with each branch mapped the same
+/// way. Recursive so a nested `if RUBY_VERSION < "3.2"; module PathAttr; end`
+/// (tempfile) composes.
+fn desugar_singleton_items(
+    result: &ruby_prism::ParseResult,
+    hir: &mut Hir,
+    recv_node: &Node<'_>,
+    ids: Vec<NodeId>,
+) -> PResult<Vec<NodeId>> {
+    // Classify without holding the `&hir[id]` borrow across the node-building.
+    enum Item {
+        Def(String, Params, Vec<NodeId>),
+        Const,
+        Nested(String, Option<String>, Vec<NodeId>, bool),
+        Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Skip,
+    }
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let item = match &hir[id] {
             HirNode::DefMethod {
                 name,
                 params,
                 body,
                 is_class_method: false,
                 ..
-            } => (name.clone(), params.clone(), body.clone()),
+            } => Item::Def(name.clone(), params.clone(), body.clone()),
             // A constant inside `class << obj` (`class << RANDOM; MAX = ...;
             // def next; MAX; end; end`, tmpdir) lives on the object's singleton
             // class in real Ruby. zeo has no per-object singleton-class
@@ -82,30 +106,69 @@ pub(crate) fn desugar_singleton_class_defs(
             // the same place a bare `MAX` reference in this scope looks (see the
             // `singleton_class_constant` e2e). Documented divergence: it also
             // becomes reachable as `Enclosing::MAX`.
-            HirNode::ConstWrite { .. } => {
-                out.push(id);
-                continue;
-            }
+            HirNode::ConstWrite { .. } => Item::Const,
+            // A nested class/module in a singleton (`class << Tempfile; module
+            // PathAttr; ...; end; end`, tempfile) -- rebuilt as a runtime
+            // `Const = Class.new/Module.new { body }`, same as in a runtime
+            // class body, and hoisted to the enclosing scope (the singleton-
+            // class namespace divergence the constant hoist above documents).
+            HirNode::ClassDef {
+                name,
+                superclass,
+                body,
+                is_module,
+            } => Item::Nested(name.clone(), superclass.clone(), body.clone(), *is_module),
+            // A conditional guarding definitions (`if RUBY_VERSION < "3.2"; ...`)
+            // -- map each branch and keep the runtime `if`.
+            HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => Item::Cond(*cond, then_body.clone(), else_body.clone()),
+            // A `private def foo` already lowered the def WITH its visibility
+            // and matches the `Def` arm above; a bare `private`/`private :m`
+            // leaves a `MethodVisibility` with no per-object singleton spelling
+            // -- drop it (compile-only best-effort: the method is still defined
+            // on the singleton, just not marked private there).
+            HirNode::MethodVisibility { .. } => Item::Skip,
             _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s and constants here (zeo limitation)".to_string().into());
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, and conditionals here (zeo limitation)".to_string().into());
             }
         };
-        let recv = lower_node(result, hir, &recv_node)?;
-        let lambda = hir.push(HirNode::Lambda {
-            params,
-            body,
-            method_body: true,
-        });
-        let sym = hir.push(HirNode::SymbolLit(mname));
-        out.push(hir.push(HirNode::Call {
-            receiver: Some(recv),
-            name: "define_singleton_method".to_string(),
-            args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
-            kwargs: vec![],
-            block: None,
-            block_arg: None,
-            safe: false,
-        }));
+        match item {
+            Item::Def(mname, params, body) => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let lambda = hir.push(HirNode::Lambda {
+                    params,
+                    body,
+                    method_body: true,
+                });
+                let sym = hir.push(HirNode::SymbolLit(mname));
+                out.push(hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "define_singleton_method".to_string(),
+                    args: vec![ArrayElem::Single(sym), ArrayElem::Single(lambda)],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+            Item::Const => out.push(id),
+            Item::Nested(name, superclass, body, is_module) => {
+                out.push(runtime_nested_class(hir, name, superclass, body, is_module)?);
+            }
+            Item::Cond(cond, then_body, else_body) => {
+                let then_body = desugar_singleton_items(result, hir, recv_node, then_body)?;
+                let else_body = desugar_singleton_items(result, hir, recv_node, else_body)?;
+                out.push(hir.push(HirNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                }));
+            }
+            Item::Skip => {}
+        }
     }
     Ok(out)
 }
@@ -573,29 +636,179 @@ fn lower_runtime_class_body(
         )
         .into());
     }
-    // The body runs as a block, so every statement in it has to be an
-    // ordinary expression. These lower to nodes only the static class path can
-    // emit -- reject them by name rather than reaching codegen's
-    // "top-level-only node in expression position" panic.
-    if let Some(construct) = body.iter().find_map(|&n| match hir[n] {
-        HirNode::Include(_) => Some("include"),
-        HirNode::Extend(_) => Some("extend"),
-        HirNode::Prepend(_) => Some("prepend"),
-        HirNode::Undef(_) => Some("undef"),
-        HirNode::AliasMethod { .. } => Some("alias"),
-        HirNode::MethodVisibility { .. } => Some("a visibility modifier"),
-        HirNode::ClassDef { .. } => Some("a nested class/module"),
-        _ => None,
-    }) {
-        return Err(format!(
-            "`{construct}` in the body of `class {name}` is not supported when {name} \
-             is built at runtime"
-        )
-        .into());
-    }
+    // The body runs as a BLOCK with the new class as `self`, so a statement
+    // that only the static class path can emit (`include`, a visibility
+    // directive, `alias`, a nested class) would reach codegen's "top-level-only
+    // node in expression position" panic. Rewrite each into its runtime
+    // spelling -- a self-send the runtime class receiver serves -- so the class
+    // builds at runtime. See `transform_runtime_class_body`.
+    let body = transform_runtime_class_body(hir, body)?;
     Ok(hir.push(HirNode::Block {
         params: Params::default(),
         body,
+    }))
+}
+
+/// Rewrites the static-only nodes a lowered class body can hold into the
+/// runtime self-sends a `Class.new { ... }`/`class_eval { ... }` block serves,
+/// so a class with a DYNAMIC superclass (`class Tempfile < DelegateClass(File)`)
+/// or a runtime reopen can carry the same bodies a statically-registered class
+/// can. `def`/`ConstWrite`/`class << self`'s class-method `def`s pass through
+/// untouched (codegen already emits those in block position). A nested class/
+/// module is desugared to a runtime `Const = Class.new(Super) { body }` (its
+/// body transformed the same way, recursively).
+///
+/// This is the COMPILE path: the rewritten sends resolve at runtime through the
+/// class/module builtins (`include`/`alias_method`/visibility/...). A construct
+/// with no runtime builtin still lowers (it becomes a self-send that raises
+/// NoMethodError only if actually executed) -- acceptable for a runtime class
+/// on an otherwise-unreachable path, and never worse than the previous hard
+/// compile error.
+fn transform_runtime_class_body(hir: &mut Hir, body: Vec<NodeId>) -> PResult<Vec<NodeId>> {
+    // Classify without holding the `&hir[id]` borrow across the node-building
+    // mutations below (each rewrite pushes fresh nodes).
+    enum Rewrite {
+        Mixin(&'static str, String),
+        Alias(String, String),
+        Visibility(&'static str, String),
+        Undef(Vec<String>),
+        Nested(String, Option<String>, Vec<NodeId>, bool),
+        Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        Keep,
+    }
+    let mut out = Vec::with_capacity(body.len());
+    for id in body {
+        let rewrite = match &hir[id] {
+            HirNode::Include(m) => Rewrite::Mixin("include", m.clone()),
+            HirNode::Extend(m) => Rewrite::Mixin("extend", m.clone()),
+            HirNode::Prepend(m) => Rewrite::Mixin("prepend", m.clone()),
+            HirNode::AliasMethod {
+                new_name, old_name, ..
+            } => Rewrite::Alias(new_name.clone(), old_name.clone()),
+            HirNode::MethodVisibility { name, visibility } => {
+                Rewrite::Visibility(visibility_name(*visibility), name.clone())
+            }
+            HirNode::Undef(names) => Rewrite::Undef(names.clone()),
+            HirNode::ClassDef {
+                name,
+                superclass,
+                body,
+                is_module,
+            } => Rewrite::Nested(name.clone(), superclass.clone(), body.clone(), *is_module),
+            // A conditional guarding definitions (`if RUBY_VERSION < "3.2";
+            // module PathAttr; ...; end`, tempfile): transform each branch the
+            // same way and KEEP the runtime `if`, so the conditional still
+            // decides at runtime which definitions execute.
+            HirNode::If {
+                cond,
+                then_body,
+                else_body,
+            } => Rewrite::Cond(*cond, then_body.clone(), else_body.clone()),
+            _ => Rewrite::Keep,
+        };
+        let node = match rewrite {
+            Rewrite::Mixin(method, m) => {
+                let arg = class_ref(hir, &m);
+                runtime_self_send(hir, method, vec![arg])
+            }
+            Rewrite::Alias(new_name, old_name) => {
+                let args = vec![sym_lit(hir, new_name), sym_lit(hir, old_name)];
+                runtime_self_send(hir, "alias_method", args)
+            }
+            Rewrite::Visibility(vis, name) => {
+                let args = vec![sym_lit(hir, name)];
+                runtime_self_send(hir, vis, args)
+            }
+            Rewrite::Undef(names) => {
+                let args = names.into_iter().map(|n| sym_lit(hir, n)).collect();
+                runtime_self_send(hir, "undef_method", args)
+            }
+            Rewrite::Nested(name, superclass, inner, is_module) => {
+                runtime_nested_class(hir, name, superclass, inner, is_module)?
+            }
+            Rewrite::Cond(cond, then_body, else_body) => {
+                let then_body = transform_runtime_class_body(hir, then_body)?;
+                let else_body = transform_runtime_class_body(hir, else_body)?;
+                hir.push(HirNode::If {
+                    cond,
+                    then_body,
+                    else_body,
+                })
+            }
+            Rewrite::Keep => id,
+        };
+        out.push(node);
+    }
+    Ok(out)
+}
+
+/// A receiver-less (implicit-`self`) runtime call node -- the class body block's
+/// `self` is the runtime class, so this dispatches to its class/module builtin.
+fn runtime_self_send(hir: &mut Hir, name: &str, args: Vec<NodeId>) -> NodeId {
+    hir.push(HirNode::Call {
+        receiver: None,
+        name: name.to_string(),
+        args: args.into_iter().map(ArrayElem::Single).collect(),
+        kwargs: Vec::new(),
+        block: None,
+        block_arg: None,
+        safe: false,
+    })
+}
+
+fn class_ref(hir: &mut Hir, name: &str) -> NodeId {
+    hir.push(HirNode::ClassRef(name.to_string()))
+}
+
+fn sym_lit(hir: &mut Hir, name: String) -> NodeId {
+    hir.push(HirNode::SymbolLit(name))
+}
+
+fn visibility_name(v: Visibility) -> &'static str {
+    match v {
+        Visibility::Private => "private",
+        Visibility::Protected => "protected",
+        Visibility::Public => "public",
+    }
+}
+
+/// A nested `class C < S; body; end` (or `module`) inside a runtime class body,
+/// rebuilt as a runtime `C = Class.new(S) { body }` / `C = Module.new { body }`
+/// const-assignment -- an ordinary expression that lives in block position. The
+/// nested body is transformed the same way, so nesting composes.
+fn runtime_nested_class(
+    hir: &mut Hir,
+    name: String,
+    superclass: Option<String>,
+    body: Vec<NodeId>,
+    is_module: bool,
+) -> PResult<NodeId> {
+    let inner = transform_runtime_class_body(hir, body)?;
+    let block = hir.push(HirNode::Block {
+        params: Params::default(),
+        body: inner,
+    });
+    let (builder, args) = if is_module {
+        ("Module", Vec::new())
+    } else {
+        let parent = class_ref(hir, &superclass.unwrap_or_else(|| "Object".to_string()));
+        ("Class", vec![ArrayElem::Single(parent)])
+    };
+    let builder_ref = hir.push(HirNode::ClassRef(builder.to_string()));
+    let new_call = hir.push(HirNode::Call {
+        receiver: Some(builder_ref),
+        name: "new".to_string(),
+        args,
+        kwargs: Vec::new(),
+        block: Some(block),
+        block_arg: None,
+        safe: false,
+    });
+    let path = crate::constpath::ConstPath::parse(&name);
+    Ok(hir.push(HirNode::ConstWrite {
+        scope: path.scope().map(str::to_string),
+        name: path.base().to_string(),
+        value: new_call,
     }))
 }
 

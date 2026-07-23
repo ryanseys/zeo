@@ -1795,22 +1795,18 @@ fn singleton_methods_on_objects_constants_and_modules() {
 /// exactly these bodies, so it takes that instead of rejecting -- see
 /// `reopening_a_runtime_class_falls_back_rather_than_failing_to_compile`.
 #[test]
-fn unsupported_constructs_in_a_runtime_class_body_are_rejected_not_panics() {
-    for (body, want) in [
-        ("include Greet", "`include` in the body of `class Foo`"),
-        (
-            "y = 1",
-            "local variable assignment in the body of `class Foo`",
-        ),
-    ] {
-        let src = format!("module Greet; end\ny = 99\nclass Foo < Struct.new(:a)\n  {body}\nend\n");
-        let err = compile_project(&[("main.rb", src.as_str())], "main.rb", &[])
-            .expect_err("expected a compile-time rejection");
-        assert!(
-            err.contains(want),
-            "expected `{want}` for `{body}`, got: {err}"
-        );
-    }
+fn a_local_write_in_a_runtime_class_body_is_a_clean_rejection_not_a_panic() {
+    // A local assignment in a runtime-built class body would see the enclosing
+    // scope's locals rather than its own, so it stays a clean compile error
+    // (`include`/`alias`/a nested class are now REWRITTEN to runtime self-sends
+    // -- see `transform_runtime_class_body` -- rather than rejected).
+    let src = "y = 99\nclass Foo < Struct.new(:a)\n  y = 1\nend\n";
+    let err = compile_project(&[("main.rb", src)], "main.rb", &[])
+        .expect_err("expected a compile-time rejection");
+    assert!(
+        err.contains("local variable assignment in the body of `class Foo`"),
+        "got: {err}"
+    );
 }
 
 #[test]

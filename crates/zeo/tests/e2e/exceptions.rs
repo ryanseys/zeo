@@ -1,6 +1,30 @@
 use crate::support::{compile_packages, run_ruby};
 
 #[test]
+fn raise_with_a_splat_argument_reraises_the_class_and_message() {
+    // `raise(*exc)` -- a splat whose element count is a runtime value -- routes
+    // through the runtime `Kernel#raise` (optparse's `{|*exc| raise(*exc)}`),
+    // rather than the static 0..3-arg form.
+    let result = run_ruby(
+        r##"
+        def relay
+          yield
+        rescue => e
+          exc = [ArgumentError, "wrapped: #{e.message}"]
+          raise(*exc)
+        end
+        begin
+          relay { raise "orig" }
+        rescue ArgumentError => e
+          puts e.message
+        end
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "wrapped: orig\n");
+}
+
+#[test]
 fn parse_error_is_a_clean_error_not_a_panic() {
     let err = zeo::compile_to_rust("def foo(\n").unwrap_err();
     assert!(

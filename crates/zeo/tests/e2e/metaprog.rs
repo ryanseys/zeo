@@ -19,6 +19,38 @@ fn dynamic_send_with_a_non_literal_target() {
 }
 
 #[test]
+fn a_runtime_class_body_carries_nested_classes_mixins_aliases_and_visibility() {
+    // A class with a DYNAMIC superclass (`class Foo < base`, base a method) is
+    // built at runtime; its body can now hold a nested class, `include`, a
+    // constant, `alias`, and a visibility directive -- each rewritten to the
+    // runtime self-send the class-value receiver serves (the same machinery
+    // that lets `class Tempfile < DelegateClass(File)` compile).
+    let result = run_ruby(
+        r#"
+        def base; Object; end
+        module Mx; def mixed; "mx"; end; end
+        class Foo < base
+          VAL = 7
+          include Mx
+          def a; VAL; end
+          alias b a
+          protected :b
+          class Inner
+            def deep; "deep"; end
+          end
+          def use_inner; Inner.new.deep; end
+        end
+        puts Foo.new.a
+        puts Foo.new.use_inner
+        puts Foo.new.mixed
+        puts Foo.ancestors.include?(Mx)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "7\ndeep\nmx\ntrue\n");
+}
+
+#[test]
 fn include_inside_a_class_new_block_mixes_the_module_at_runtime() {
     // `Class.new { include M }` mixes M's instance methods into the runtime
     // class's ancestry, so instances dispatch them (and reflection sees M).

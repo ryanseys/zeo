@@ -1567,7 +1567,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // `cause:` keyword form isn't lowered yet (see `HirNode::Raise`'s
         // docs) -- rejected here rather than silently dropped, matching
         // this project's "clean rejection over silent wrongness" rule.
-        if (name == "raise" || name == "fail") && call.receiver().is_none() {
+        // `raise(*exc)` -- a splat arg has no static positional shape (its count
+        // is a runtime value), so the special static-form lowering can't build
+        // `HirNode::Raise`'s fixed 0..3 args. Skip it here; the general call
+        // lowering handles it via `emit_splat_call` over the runtime
+        // `Kernel#raise` builtin (`optparse.rb`'s `{|*exc| raise(*exc)}`).
+        let raise_has_splat = || {
+            call.arguments()
+                .is_some_and(|a| a.arguments().iter().any(|n| n.as_splat_node().is_some()))
+        };
+        if (name == "raise" || name == "fail") && call.receiver().is_none() && !raise_has_splat() {
             let arg_list: Vec<_> = call
                 .arguments()
                 .map(|a| a.arguments().iter().collect())
