@@ -768,21 +768,61 @@ pub fn kernel_float(args: &[RubyValue]) -> Result<RubyValue, Signal> {
         }
         RubyValue::Str(s) => {
             let text = s.lock().to_utf8_lossy().into_owned();
-            let clean: String = text.trim().chars().filter(|c| *c != '_').collect();
+            let trimmed = text.trim();
+            let invalid = || arg_error!("invalid value for Float(): {:?}", text);
+            // Underscores are only legal BETWEEN two digits (hex digits for a
+            // `0x` float): a leading/trailing/doubled `_`, or one adjacent to
+            // `.`/`e`/`p`/a sign, is rejected (`"1__0"`, `"1_"`, `"1_e3"`).
+            let Some(clean) = strip_valid_underscores(trimmed) else {
+                return Err(invalid());
+            };
+            // Rust's parser accepts the words "inf"/"infinity"/"nan"; CRuby's
+            // Float() does not (only numeric literals). A valid numeric string
+            // never contains those substrings.
+            let lower = clean.to_ascii_lowercase();
+            if lower.contains("inf") || lower.contains("nan") {
+                return Err(invalid());
+            }
             clean
                 .parse::<f64>()
                 .ok()
-                .filter(|f| f.is_finite() || clean.to_ascii_lowercase().contains("inf"))
                 // C99 hex-float (`"0x1p4"` = 16.0), which `str::parse` rejects.
                 .or_else(|| parse_hex_float(&clean))
                 .map(RubyValue::Float)
-                .ok_or_else(|| arg_error!("invalid value for Float(): {:?}", text))
+                .ok_or_else(invalid)
         }
         other => Err(type_error!(
             "can't convert {} into Float",
             crate::builtins::convert_name_of(other)
         )),
     }
+}
+
+/// Validates that every `_` in a `Float()` string sits between two digits and
+/// returns the string with the underscores removed; `None` if any is misplaced.
+/// A `0x`-prefixed value uses hex-digit adjacency (so `0x1_1` is fine) while a
+/// decimal value uses `0-9` (so the `e` in `1_e3` doesn't count as a digit).
+fn strip_valid_underscores(s: &str) -> Option<String> {
+    let body = s.strip_prefix(['+', '-']).unwrap_or(s);
+    let is_hex = body.starts_with("0x") || body.starts_with("0X");
+    let is_digit = |c: u8| {
+        if is_hex {
+            c.is_ascii_hexdigit()
+        } else {
+            c.is_ascii_digit()
+        }
+    };
+    let bytes = s.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'_' {
+            let prev_ok = i > 0 && is_digit(bytes[i - 1]);
+            let next_ok = i + 1 < bytes.len() && is_digit(bytes[i + 1]);
+            if !(prev_ok && next_ok) {
+                return None;
+            }
+        }
+    }
+    Some(s.chars().filter(|c| *c != '_').collect())
 }
 
 /// Parse a C99 hexadecimal float (`[±]0x<hex>.<hex>p<dec-exp>`, the exponent a
