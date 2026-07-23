@@ -2859,6 +2859,34 @@ pub(crate) fn split_lines(text: &str) -> Vec<RubyValue> {
 
 /// `sub`/`gsub`'s shared core: String or Regexp pattern, String
 /// replacement or block.
+/// Expands the replacement-string escapes CRuby honors for a String-pattern
+/// `sub`/`gsub`: `\\` -> `\`, `\&`/`\0` -> the match, `` \` `` -> the text
+/// before it, `\'` -> the text after; `\1`..`\9` insert nothing (a String
+/// pattern captures no groups). Any other `\X` stays literal.
+fn expand_str_replacement(template: &str, prematch: &str, matched: &str, postmatch: &str) -> String {
+    let mut out = String::new();
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('0') | Some('&') => out.push_str(matched),
+            Some(d) if d.is_ascii_digit() => {}
+            Some('`') => out.push_str(prematch),
+            Some('\'') => out.push_str(postmatch),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 fn sub_gsub(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -2936,20 +2964,47 @@ fn sub_gsub(
         (RubyValue::Str(pattern), None) => {
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
             // A String pattern matches literally, so its "matched substring" is
-            // always the pattern itself; a Hash replacement looks that up (a
-            // missing key stringifies to ""), a String replacement is literal.
-            let replacement = match &args[1] {
-                RubyValue::Hash(h) => {
-                    let key = RubyValue::Str(crate::string_new(pattern.clone()));
-                    crate::hash_get(h, &key).to_display_string()
+            // always the pattern itself. A Hash replacement looks that up (a
+            // missing key stringifies to "") and is inserted literally.
+            if let RubyValue::Hash(h) = &args[1] {
+                let key = RubyValue::Str(crate::string_new(pattern.clone()));
+                let replacement = crate::hash_get(h, &key).to_display_string();
+                return Ok(RubyValue::Str(crate::string_new(if global {
+                    text.replace(&pattern, &replacement)
+                } else {
+                    text.replacen(&pattern, &replacement, 1)
+                })));
+            }
+            // A String replacement still processes replacement escapes (`\\`,
+            // `\&`/`\0`, `\``, `\'`) per match, exactly like the Regexp form;
+            // `\1`..`\9` insert nothing (a String pattern has no groups).
+            let template = convert::to_rstr(&args[1])?.lock().to_utf8_lossy().into_owned();
+            let mut out = String::new();
+            let mut rest = text.as_str();
+            let mut consumed = 0usize;
+            loop {
+                match rest.find(&pattern) {
+                    Some(pos) if !pattern.is_empty() => {
+                        out.push_str(&rest[..pos]);
+                        let mstart = consumed + pos;
+                        let mend = mstart + pattern.len();
+                        out.push_str(&expand_str_replacement(
+                            &template,
+                            &text[..mstart],
+                            &pattern,
+                            &text[mend..],
+                        ));
+                        rest = &rest[pos + pattern.len()..];
+                        consumed = mend;
+                        if !global {
+                            break;
+                        }
+                    }
+                    _ => break,
                 }
-                other => convert::to_rstr(other)?.lock().to_utf8_lossy().into_owned(),
-            };
-            Ok(RubyValue::Str(crate::string_new(if global {
-                text.replace(&pattern, &replacement)
-            } else {
-                text.replacen(&pattern, &replacement, 1)
-            })))
+            }
+            out.push_str(rest);
+            Ok(RubyValue::Str(crate::string_new(out)))
         }
         (RubyValue::Str(pattern), Some(p)) => {
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
