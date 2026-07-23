@@ -1814,7 +1814,7 @@ fn qualified_const_class(cx: &Ctx, scope: &str, name: &str) -> Option<ClassId> {
         })
 }
 
-fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
+pub(super) fn emit_const_read(cx: &Ctx, scope: Option<&str>, name: &str) -> TokenStream {
     // An explicit `Scope::NAME` whose scope class isn't registered is a
     // `NameError` on the missing SCOPE (`uninitialized constant OpenSSL`),
     // deferred to runtime so a dead/guarded branch still compiles.

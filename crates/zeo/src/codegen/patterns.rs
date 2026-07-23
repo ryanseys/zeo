@@ -248,12 +248,15 @@ fn emit_class_check(
         return check;
     }
     let Some(cid) = cx.resolve_class(name) else {
-        // `in UndefinedConst` -- CRuby evaluates a pattern's constant when the
-        // pattern is checked, and an undefined one is a runtime NameError.
-        // Deferred here (this check runs only when the arm is tried) so a
-        // never-matched pattern arm still compiles.
-        let err = super::expr::uninitialized_constant_error(cx, name);
-        return super::expr::raise_in_expr_position(err, quote! { bool });
+        // Not a statically-known class -- but the constant may hold a RUNTIME
+        // class (`Struct.new`/`Data.define` bound to a constant), which
+        // `resolve_class` (a class lookup) misses though the constant exists.
+        // Read it at pattern-check time and match by case-equality
+        // (`Const === scrutinee`, real Ruby's protocol); a genuinely unset
+        // constant raises NameError from the read, matching CRuby's
+        // evaluate-the-pattern's-constant-when-checked rule.
+        let const_read = super::expr::emit_const_read(cx, None, name);
+        return quote! { zeo_rt::case_eq(&(#const_read), &(#scrutinee))? };
     };
     match scrutinee_ty {
         // The receiver's class is already statically known -- constant-folds
