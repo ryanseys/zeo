@@ -752,12 +752,24 @@ fn parse_int_lenient(text: &str, default_base: u32) -> RubyValue {
     };
     let mut val = BigInt::from(0);
     let big_base = BigInt::from(base);
-    for c in s.chars() {
+    // A single `_` is allowed ONLY between two digits; a leading, trailing,
+    // doubled, or post-prefix underscore stops the parse (CRuby's rule).
+    let mut prev_digit = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
         if c == '_' {
-            continue;
+            let next_is_digit = chars.peek().is_some_and(|n| n.to_digit(base).is_some());
+            if prev_digit && next_is_digit {
+                prev_digit = false; // so a second `_` in a row stops the parse
+                continue;
+            }
+            break;
         }
         match c.to_digit(base) {
-            Some(d) => val = val * &big_base + BigInt::from(d),
+            Some(d) => {
+                val = val * &big_base + BigInt::from(d);
+                prev_digit = true;
+            }
             None => break,
         }
     }
@@ -1739,6 +1751,9 @@ builtin_methods! {
                 let suffix = suffix.lock().to_utf8_lossy().into_owned();
                 text.strip_suffix(&suffix).unwrap_or(&text).to_string()
             }
+            // `chomp(nil)` is a no-op (CRuby returns the string unchanged),
+            // distinct from the no-arg form which strips the line separator.
+            Some(RubyValue::Nil) => text,
             _ => text
                 .strip_suffix("\r\n")
                 .or_else(|| text.strip_suffix('\n'))
@@ -2215,13 +2230,22 @@ builtin_methods! {
             // its LAST mapping (`rposition`), matching CRuby (`"_".tr("___",
             // ".+-") == "-"`), and a `to` shorter than `from` repeats its final
             // char.
-            .map(|c| {
+            // An EMPTY `to` makes `tr` DELETE the matched characters (CRuby's
+            // rule), so translate with a filter_map that drops them.
+            .filter_map(|c| {
                 if from_neg {
-                    if from.contains(&c) { c } else { to.last().copied().unwrap_or(c) }
+                    if from.contains(&c) {
+                        Some(c)
+                    } else if to.is_empty() {
+                        None
+                    } else {
+                        Some(to.last().copied().unwrap_or(c))
+                    }
                 } else {
                     match from.iter().rposition(|&f| f == c) {
-                        Some(i) => *to.get(i).or(to.last()).unwrap_or(&c),
-                        None => c,
+                        Some(_) if to.is_empty() => None,
+                        Some(i) => Some(*to.get(i).or(to.last()).unwrap_or(&c)),
+                        None => Some(c),
                     }
                 }
             })
@@ -2256,19 +2280,18 @@ builtin_methods! {
         Ok(str_value(out))
     }
     "squeeze" => fn squeeze(recv, args, _block) {
-        arity!(args, 0..=1);
-        let set = args
-            .first()
-            .map(|a| match a {
-                RubyValue::Str(s) => tr_charset(&s.lock().to_utf8_lossy()),
-                _ => (Vec::new(), false),
-            });
+        // CRuby accepts MULTIPLE charset args: only chars in the INTERSECTION
+        // of every set are squeezable. No args squeezes every run (unlike
+        // count/delete, squeeze permits zero arguments).
+        let sets = if args.is_empty() {
+            Vec::new()
+        } else {
+            charset_specs(args)?
+        };
         let mut out = String::new();
         let mut prev: Option<char> = None;
         for c in recv_str!(recv).lock().chars() {
-            let squeezable = set
-                .as_ref()
-                .is_none_or(|(s, neg)| s.contains(&c) != *neg);
+            let squeezable = sets.is_empty() || in_all_charsets(c, &sets);
             if prev == Some(c) && squeezable {
                 continue;
             }
@@ -2887,6 +2910,15 @@ fn expand_str_replacement(template: &str, prematch: &str, matched: &str, postmat
     out
 }
 
+/// Every character boundary of `text` as `(byte_offset, Some(char))`, plus a
+/// final `(text.len(), None)` for the end-of-string boundary. Drives the
+/// empty-pattern `sub`/`gsub` insertion (a match at every boundary).
+fn char_boundaries(text: &str) -> impl Iterator<Item = (usize, Option<char>)> + '_ {
+    text.char_indices()
+        .map(|(i, c)| (i, Some(c)))
+        .chain(std::iter::once((text.len(), None)))
+}
+
 fn sub_gsub(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -2979,6 +3011,21 @@ fn sub_gsub(
             // `\&`/`\0`, `\``, `\'`) per match, exactly like the Regexp form;
             // `\1`..`\9` insert nothing (a String pattern has no groups).
             let template = convert::to_rstr(&args[1])?.lock().to_utf8_lossy().into_owned();
+            // An empty pattern matches (emptily) at every character boundary and
+            // at the end: gsub inserts the replacement before each char and at
+            // the end (`"hi".gsub("", "-") == "-h-i-"`); sub only at the start.
+            if pattern.is_empty() {
+                let mut out = String::new();
+                for (k, (pos, ch)) in char_boundaries(&text).enumerate() {
+                    if global || k == 0 {
+                        out.push_str(&expand_str_replacement(&template, &text[..pos], "", &text[pos..]));
+                    }
+                    if let Some(ch) = ch {
+                        out.push(ch);
+                    }
+                }
+                return Ok(RubyValue::Str(crate::string_new(out)));
+            }
             let mut out = String::new();
             let mut rest = text.as_str();
             let mut consumed = 0usize;
@@ -3008,6 +3055,19 @@ fn sub_gsub(
         }
         (RubyValue::Str(pattern), Some(p)) => {
             let pattern = pattern.lock().to_utf8_lossy().into_owned();
+            if pattern.is_empty() {
+                let mut out = String::new();
+                for (k, (_, ch)) in char_boundaries(&text).enumerate() {
+                    if global || k == 0 {
+                        let replaced = p.call(&[RubyValue::Str(crate::string_new(String::new()))])?;
+                        out.push_str(&replaced.to_display_string());
+                    }
+                    if let Some(ch) = ch {
+                        out.push(ch);
+                    }
+                }
+                return Ok(RubyValue::Str(crate::string_new(out)));
+            }
             let mut out = String::new();
             let mut rest = text.as_str();
             loop {
