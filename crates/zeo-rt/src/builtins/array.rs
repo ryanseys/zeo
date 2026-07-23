@@ -875,9 +875,9 @@ builtin_methods! {
                     if s < 0 { s + cur_len } else { s }
                 }
             };
-            if start < 0 {
-                return Err(index_error!("index {} too small for array; minimum: {}", start - cur_len, -cur_len));
-            }
+            // A negative start beyond the array's length clamps to 0 -- fill
+            // never raises here, unlike the `arr[i]=` assignment forms.
+            let start = start.max(0);
             let end = match span.get(1) {
                 None | Some(RubyValue::Nil) => cur_len,
                 Some(v) => start + convert::to_index(v)?.max(0),
@@ -973,13 +973,17 @@ builtin_methods! {
     // Shares Kernel#rand's PRNG (srand-reseedable; documented MT19937
     // divergence -- tests assert membership/length, not values).
     "sample" => fn sample(recv, args, _block) {
+        // A trailing `random:` keyword supplies the RNG (a Random-like object
+        // responding to `rand`); without it the shared PRNG is used.
+        let (args, random) = take_random_kwarg(args);
         arity!(args, 0..=1);
         let mut items = recv_array!(recv).lock().clone();
         let Some(v) = args.first() else {
             return Ok(if items.is_empty() {
                 RubyValue::Nil
             } else {
-                items[(crate::builtins::kernel::prng_next() % items.len() as u64) as usize].clone()
+                let i = rand_below(&random, items.len())?;
+                items[i].clone()
             });
         };
         // `sample`'s own negative message, checked AFTER conversion (so
@@ -990,7 +994,7 @@ builtin_methods! {
         }
         let take = (n as usize).min(items.len());
         for i in 0..take {
-            let j = i + (crate::builtins::kernel::prng_next() as usize % (items.len() - i));
+            let j = i + rand_below(&random, items.len() - i)?;
             items.swap(i, j);
         }
         items.truncate(take);
@@ -1298,6 +1302,34 @@ fn union_of(recv: &crate::collections::RArray, others: &[Vec<RubyValue>]) -> Vec
         }
     }
     out
+}
+
+/// Split off a trailing `random:` keyword argument (Array#sample accepts it).
+fn take_random_kwarg(args: &[RubyValue]) -> (&[RubyValue], Option<RubyValue>) {
+    if let Some(RubyValue::Hash(h)) = args.last() {
+        let key = RubyValue::Symbol(crate::Symbol::intern("random"));
+        if crate::hash_has_key(h, &key) {
+            return (&args[..args.len() - 1], Some(crate::hash_get(h, &key)));
+        }
+    }
+    (args, None)
+}
+
+/// A random index in `0..bound`, from the supplied RNG (`random.rand(bound)`)
+/// or the shared PRNG. `bound` is assumed nonzero by the callers.
+fn rand_below(random: &Option<RubyValue>, bound: usize) -> Result<usize, crate::Signal> {
+    match random {
+        Some(rng) => {
+            let r = crate::dispatch::send_value(
+                rng,
+                crate::Symbol::intern("rand"),
+                &[RubyValue::Int(bound as i64)],
+                None,
+            )?;
+            Ok((convert::to_index(&r)?.rem_euclid(bound as i64)) as usize)
+        }
+        None => Ok((crate::builtins::kernel::prng_next() % bound as u64) as usize),
+    }
 }
 
 /// Raise `FrozenError` if `recv` (an Array) is frozen -- the guard every
