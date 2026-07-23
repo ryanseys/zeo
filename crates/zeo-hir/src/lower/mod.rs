@@ -35,8 +35,8 @@ use calls::{lower_block, lower_block_like_params, lower_call_args};
 use consts::{box_rooted_path, constant_path_name, constant_path_scope_and_name};
 use control::{lower_begin, lower_if_chain, lower_single_optional_argument};
 use defs::{
-    const_is_assigned, const_is_class_def, desugar_singleton_class_defs, lower_class_body,
-    lower_params, lower_runtime_class, lower_runtime_class_reopen,
+    const_holds_runtime_class, const_is_assigned, const_is_class_def, desugar_singleton_class_defs,
+    lower_class_body, lower_params, lower_runtime_class, lower_runtime_class_reopen,
     runtime_class_body_is_expressible,
 };
 use eval_splice::{lower_box_eval, reject_top_level_defs, single_literal_string_arg};
@@ -974,7 +974,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             if runtime_parent {
                 return lower_runtime_class(result, hir, &name, &sc, class.body());
             }
-        } else if const_is_assigned(hir, &name)
+        } else if const_holds_runtime_class(hir, &name)
             && !const_is_class_def(hir, &name)
             && runtime_class_body_is_expressible(class.body())
         {

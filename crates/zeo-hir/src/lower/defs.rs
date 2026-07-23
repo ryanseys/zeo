@@ -178,6 +178,42 @@ pub(crate) fn runtime_class_body_is_expressible(body: Option<Node<'_>>) -> bool 
     })
 }
 
+/// Whether a constant of this name is assigned a value that MINTS a class at
+/// RUNTIME (`Data.define`, `Struct.new`, `Class.new`) -- the only shapes a bare
+/// `class Name ... end` should REOPEN (via `class_eval`) rather than define
+/// fresh. Stricter than [`const_is_assigned`]: an ordinary value constant
+/// (`C = 7`) is ignored, so a same-named constant in an UNRELATED lexical scope
+/// (a bare `C = 7` inside `module B`, which lowers to a scope-less `ConstWrite`)
+/// does not misroute a fresh nested `class C` onto the runtime-reopen path.
+pub(crate) fn const_holds_runtime_class(hir: &Hir, name: &str) -> bool {
+    hir.nodes().iter().any(|node| match node {
+        HirNode::ConstWrite { scope, name: n, value } => {
+            let matches_name = match scope {
+                Some(s) => format!("{s}::{n}") == name,
+                None => n == name,
+            };
+            matches_name && value_mints_runtime_class(hir, *value)
+        }
+        _ => false,
+    })
+}
+
+/// Whether `value` is a `Data.define(...)` / `Struct.new(...)` / `Class.new(...)`
+/// call -- an expression that produces a class object at runtime.
+fn value_mints_runtime_class(hir: &Hir, value: NodeId) -> bool {
+    let HirNode::Call { receiver: Some(r), name, .. } = &hir[value] else {
+        return false;
+    };
+    let HirNode::ClassRef(recv) = &hir[*r] else {
+        return false;
+    };
+    let recv = recv.strip_prefix("::").unwrap_or(recv);
+    matches!(
+        (recv, name.as_str()),
+        ("Data", "define") | ("Struct", "new") | ("Class", "new")
+    )
+}
+
 /// Whether an already-lowered `class`/`module` DEFINES this name, making it a
 /// compile-time class even if some later statement also assigns the constant.
 pub(crate) fn const_is_class_def(hir: &Hir, name: &str) -> bool {
