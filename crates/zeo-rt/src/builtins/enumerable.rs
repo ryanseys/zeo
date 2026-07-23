@@ -1238,9 +1238,20 @@ builtin_methods! {
         }
         let blk = block_or_enum!(recv, "each_with_object", args, block);
         let memo = args[0].clone();
-        let items = collect_packed(recv)?;
-        for e in items {
-            blk.call(&[e, memo.clone()])?;
+        // Drive the receiver's own `each` (rather than collect-then-iterate) so
+        // the block runs INSIDE that `each` frame: a block-raised exception then
+        // shows both the receiver's `each` C-frame and this
+        // 'Enumerable#each_with_object' one, exactly as CRuby's backtrace does.
+        let _frame = crate::frames::synthetic_c_frame("Enumerable#each_with_object");
+        let memo2 = memo.clone();
+        let brk: Arc<Mutex<Option<RubyValue>>> = Arc::new(Mutex::new(None));
+        let brk2 = brk.clone();
+        for_each(recv, move |yielded| {
+            yield_block(&blk, &[pack(yielded), memo2.clone()], &brk2)?;
+            Ok(RubyValue::Nil)
+        })?;
+        if let Some(v) = user_break(&brk) {
+            return Ok(v);
         }
         Ok(memo)
     }

@@ -2322,6 +2322,9 @@ builtin_methods! {
         Ok(str_value(out))
     }
     "count" => fn count(recv, args, _block) {
+        // A no-arg `count` raises ArgumentError; CRuby attributes it to the
+        // 'String#count' C-frame, so surface that in the backtrace.
+        let _frame = crate::frames::synthetic_c_frame("String#count");
         let sets = charset_specs(args)?;
         let n = recv_str!(recv)
             .lock()

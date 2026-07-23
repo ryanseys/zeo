@@ -1,7 +1,0 @@
-count: no implicit conversion of nil into String
-"foo"
-nil
-6
-send-lshift: can't modify frozen String: "foo"
-literal not frozen: b
-b

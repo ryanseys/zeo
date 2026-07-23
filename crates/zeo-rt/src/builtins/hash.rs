@@ -605,6 +605,9 @@ builtin_methods! {
     "each"[0] | "each_pair"[0] => fn each(recv, args, block) {
         arity!(args, 0);
         let p = block_or_enum!(recv, "each", args, block);
+        // A block-raised exception shows a 'Hash#each' C-frame between the
+        // block and the caller in CRuby's backtrace.
+        let _frame = crate::frames::synthetic_c_frame("Hash#each");
         let pairs: Vec<(RubyValue, RubyValue)> =
             recv_hash!(recv).lock().values().cloned().collect();
         for (k, v) in pairs {
