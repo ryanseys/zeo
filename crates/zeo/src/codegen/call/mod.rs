@@ -341,6 +341,7 @@ pub(super) fn emit_block_option(
 // nav), not incidental duplication a struct would meaningfully collapse --
 // bundling them would just move the same count behind one more layer.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn emit_call(
     cx: &Ctx,
     receiver: Option<NodeId>,
@@ -350,6 +351,7 @@ pub fn emit_call(
     block: Option<NodeId>,
     block_arg: Option<NodeId>,
     safe: bool,
+    is_vcall: bool,
 ) -> TokenStream {
     let __bx = cx.box_id;
     // A call-site `*expr`/`**h` splat can't take any of the arity-checked
@@ -782,6 +784,13 @@ pub fn emit_call(
         // Keyword arguments ride the G2 trailing-Hash convention.
         arg_exprs.extend(emit_kwargs_trailing_hash(cx, kwargs));
         let blk = emit_block_option(cx, block, block_arg);
+        // A bareword VCALL that misses must raise NameError, not NoMethodError
+        // (it could have been a local). is_vcall implies no args and no block.
+        if is_vcall {
+            return quote! {
+                zeo_rt::send_value_vcall_in(#__bx, &#recv, zeo_rt::Symbol::intern(#name))?
+            };
+        }
         return quote! {
             zeo_rt::send_value_in(#__bx,
                 &#recv,

@@ -63,6 +63,11 @@ pub struct Hir {
     nodes: Vec<HirNode>,
     /// Per-node provenance, parallel to `nodes` -- see `Span`.
     spans: Vec<Span>,
+    /// `Call` nodes that are VCALLS (prism's `is_variable_call`: a bare
+    /// identifier, implicit self, no args/parens -- something that could have
+    /// been a local). A miss on one raises `NameError`, not `NoMethodError`;
+    /// codegen routes these through `send_value_vcall_in`.
+    pub vcall_nodes: std::collections::HashSet<NodeId>,
     /// The span of the prism node currently being lowered (innermost last);
     /// `Hir::push` stamps from the top of this stack. Maintained by the
     /// `lower_node` wrapper, empty outside lowering.

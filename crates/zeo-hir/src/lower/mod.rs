@@ -1749,7 +1749,8 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 }
             }
         };
-        return Ok(hir.push(HirNode::Call {
+        let is_vcall = call.is_variable_call();
+        let node = hir.push(HirNode::Call {
             receiver,
             name,
             args,
@@ -1757,7 +1758,11 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             block,
             block_arg,
             safe: call.is_safe_navigation(),
-        }));
+        });
+        if is_vcall {
+            hir.vcall_nodes.insert(node);
+        }
+        return Ok(node);
     }
 
     if let Some(s) = node.as_string_node() {

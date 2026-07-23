@@ -2625,8 +2625,31 @@ pub fn send_value_in(
     args: &[RubyValue],
     block: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
+    send_value_in_reason(box_id, recv, name, args, block, MissingReason::NoEntry)
+}
+
+/// A bareword VCALL (`foo` -- implicit self, no args, no parens, could have
+/// been a local): a miss raises `NameError`, not `NoMethodError`, per Ruby.
+/// Everything else (method_missing, alias re-dispatch) is identical to a
+/// normal send; only the terminal "nothing matched" raise differs.
+pub fn send_value_vcall_in(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+) -> Result<RubyValue, Signal> {
+    send_value_in_reason(box_id, recv, name, &[], None, MissingReason::VCall)
+}
+
+fn send_value_in_reason(
+    box_id: u32,
+    recv: &RubyValue,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    reason: MissingReason,
+) -> Result<RubyValue, Signal> {
     if let RubyValue::Object(o) = recv {
-        return send_in(box_id, o, name, args, block);
+        return send_in_reason(box_id, o, name, args, block, reason);
     }
     note_dispatch(name);
     let n = name.name();
@@ -2727,17 +2750,12 @@ pub fn send_value_in(
     // definition of the alias name always wins -- and rows are terminal, so
     // the re-entry can't loop. See `alias_target`.
     if let Some(old) = alias_target(recv.class_id(), name) {
-        return send_value_in(box_id, recv, old, args, block);
+        return send_value_in_reason(box_id, recv, old, args, block, reason);
     }
     // Every receiver shape -- class, module, immediate, object -- gets its
     // message from the one method-missing raiser, so the class/module form
     // ("for class Widget") and the instance form stay in step.
-    Err(raise_method_missing(
-        recv,
-        &name.to_string(),
-        args,
-        MissingReason::NoEntry,
-    ))
+    Err(raise_method_missing(recv, &name.to_string(), args, reason))
 }
 
 pub fn send(
@@ -2756,6 +2774,17 @@ pub fn send_in(
     name: Symbol,
     args: &[RubyValue],
     block: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    send_in_reason(box_id, recv, name, args, block, MissingReason::NoEntry)
+}
+
+fn send_in_reason(
+    box_id: u32,
+    recv: &RObj,
+    name: Symbol,
+    args: &[RubyValue],
+    block: Option<RubyValue>,
+    reason: MissingReason,
 ) -> Result<RubyValue, Signal> {
     let id = recv.class_id();
     note_dispatch(name);
@@ -2849,7 +2878,7 @@ pub fn send_in(
     // alias name wins) and BEFORE `method_missing` (an alias is a real
     // method in Ruby). Rows are terminal, so the re-entry can't loop.
     if let Some(old) = alias_target(id, name) {
-        return send_in(box_id, recv, old, args, block);
+        return send_in_reason(box_id, recv, old, args, block, reason);
     }
     // method_missing fallback, with `name` prepended to args (mirrors
     // CRuby's own protocol) -- AFTER every real method, per real Ruby.
@@ -2871,7 +2900,7 @@ pub fn send_in(
         &RubyValue::Object(recv.clone()),
         &name.to_string(),
         args,
-        MissingReason::NoEntry,
+        reason,
     ))
 }
 

@@ -925,7 +925,17 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             block,
             block_arg,
             safe,
-        } => emit_call(cx, *receiver, name, args, kwargs, *block, *block_arg, *safe),
+        } => emit_call(
+            cx,
+            *receiver,
+            name,
+            args,
+            kwargs,
+            *block,
+            *block_arg,
+            *safe,
+            cx.compiler.hir.vcall_nodes.contains(&id),
+        ),
         HirNode::Block { .. } => {
             panic!(
                 "internal error: a Block node should only be reached via the Call that invokes it"
