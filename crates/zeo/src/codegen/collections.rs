@@ -175,12 +175,14 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
         return quote! {
             zeo_rt::RubyValue::Str(zeo_rt::string_from_bytes(
                 vec![#(#bytes),*],
-                zeo_rt::encoding::ASCII_8BIT,
+                zeo_rt::encoding::UTF_8,
             ))
         };
     }
-    // Any raw-byte segment makes the WHOLE literal byte-built (ASCII-8BIT,
-    // Ruby's rule); a purely-UTF-8 literal keeps the readable String path.
+    // Any raw-byte segment makes the WHOLE literal byte-built, tagged with the
+    // SOURCE encoding (UTF-8 by default -- an invalid `\xNN` literal stays
+    // UTF-8-and-invalid, matching CRuby; the `# encoding:` magic comment case
+    // is handled above). A purely-UTF-8 literal keeps the readable String path.
     if parts.iter().any(|p| matches!(p, StrPart::Bytes(_))) {
         let pieces = parts.iter().map(|p| string_lit_bytes_piece(cx, p));
         return quote! {
@@ -189,7 +191,7 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
                 let mut __b: Vec<u8> = Vec::new();
                 #(#pieces)*
                 __b
-            }, zeo_rt::encoding::ASCII_8BIT))
+            }, zeo_rt::encoding::UTF_8))
         };
     }
     let pieces = parts.iter().map(|p| match p {
