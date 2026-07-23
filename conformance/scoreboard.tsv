@@ -1,5 +1,5 @@
-# suite=spinel corpus=2341 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=2d5efaa
-# PASS=2244 FAIL_OUTPUT=95 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2341
+# suite=spinel corpus=2341 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=0136644
+# PASS=2269 FAIL_OUTPUT=70 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2341
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -783,7 +783,7 @@ hash_fetch_keyerror	PASS	-	-
 hash_fetch_keyerror_message	PASS	-	-
 hash_fetch_values_delete_block_subset	PASS	-	-
 hash_filter_bang_return	PASS	-	-
-hash_flatten_depth	FAIL_OUTPUT	expect	-
+hash_flatten_depth	PASS	-	-
 hash_flatten_rassoc_compact	PASS	-	-
 hash_float_value_preserved	PASS	-	-
 hash_index_assign_expression	PASS	-	-
@@ -842,7 +842,7 @@ hash_values_at_fetch_values	PASS	-	-
 hash_values_inject_sym	PASS	-	-
 hash_variant_call_boundary_sym	PASS	-	-
 hash_variant_eq	PASS	-	-
-hash_variant_returns	FAIL_OUTPUT	expect	-
+hash_variant_returns	PASS	-	-
 hash_variant_unify	PASS	-	-
 heterogeneous_tuple_return	PASS	-	-
 i1006	PASS	-	-
@@ -913,7 +913,7 @@ inline_yield_nested_self_ivar	PASS	-	-
 inline_yield_return_side_effect	PASS	-	-
 inlined_yield_block_param_type	PASS	-	-
 inlined_yield_self_locals	PASS	-	-
-inspect	FAIL_OUTPUT	expect	-
+inspect	PASS	-	-
 instance_eval_block_params	PASS	-	-
 instance_eval_builtin_receiver	PASS	-	-
 instance_eval_rescue_modifier	PASS	-	-
@@ -980,7 +980,7 @@ int_to_enum_times	PASS	-	-
 integer_argument_error	PASS	-	-
 integer_bignum_batch2	PASS	-	-
 integer_bit_index_clamped	PASS	-	-
-integer_chr_encoding	FAIL_OUTPUT	expect	-
+integer_chr_encoding	PASS	-	-
 integer_clamp_float_bound	PASS	-	-
 integer_digits_base	PASS	-	-
 integer_digits_invalid_radix	PASS	-	-
@@ -1112,7 +1112,7 @@ issue_2958	PASS	-	-
 issue_2959	PASS	-	-
 issue_2960	PASS	-	-
 issue_2961	PASS	-	-
-issue_2962	FAIL_OUTPUT	expect	-
+issue_2962	PASS	-	-
 issue_2963	PASS	-	-
 issue_2964	PASS	-	-
 issue_2965	PASS	-	-
@@ -1148,7 +1148,7 @@ issue_2995	PASS	-	-
 issue_2996	PASS	-	-
 issue_2997	PASS	-	-
 issue_2998	PASS	-	-
-issue_3000	FAIL_OUTPUT	expect	-
+issue_3000	PASS	-	-
 issue_3001	PASS	-	-
 issue_3002	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-4d1b
 issue_3003	PASS	-	-
@@ -1172,8 +1172,8 @@ issue_3020	PASS	-	-
 issue_3021	PASS	-	-
 issue_3022	PASS	-	-
 issue_3023	PASS	-	-
-issue_3024	FAIL_OUTPUT	expect	-
-issue_3024b	FAIL_OUTPUT	expect	-
+issue_3024	PASS	-	-
+issue_3024b	PASS	-	-
 issue_3026	PASS	-	-
 issue_3027	PASS	-	-
 issue_3028	PASS	-	-
@@ -1198,10 +1198,10 @@ issue_3046	PASS	-	-
 issue_3047	PASS	-	-
 issue_3047b	PASS	-	-
 issue_3048	PASS	-	-
-issue_3049	FAIL_OUTPUT	expect	-
-issue_3049b	FAIL_OUTPUT	expect	-
+issue_3049	PASS	-	-
+issue_3049b	PASS	-	-
 issue_3050	PASS	-	-
-issue_3051	FAIL_OUTPUT	expect	-
+issue_3051	PASS	-	-
 issue_3053	PASS	-	-
 issue_3054	PASS	-	-
 issue_3055	PASS	-	-
@@ -1210,7 +1210,7 @@ issue_3057	PASS	-	-
 issue_3058	PASS	-	-
 issue_3059	PASS	-	-
 issue_3060	PASS	-	-
-issue_3061	FAIL_OUTPUT	expect	-
+issue_3061	PASS	-	-
 issue_3062	PASS	-	-
 issue_3063	PASS	-	-
 issue_3064	PASS	-	-
@@ -1218,7 +1218,7 @@ issue_3065	PASS	-	-
 issue_3066	PASS	-	-
 issue_3067	PASS	-	-
 issue_3068	PASS	-	-
-issue_3069	FAIL_OUTPUT	expect	-
+issue_3069	PASS	-	-
 issue_3070	PASS	-	-
 issue_3071	PASS	-	-
 issue_3072	PASS	-	-
@@ -1268,7 +1268,7 @@ issue_3120	PASS	-	-
 issue_3121	PASS	-	-
 issue_3124	PASS	-	-
 issue_3125	PASS	-	-
-issue_3126	FAIL_OUTPUT	expect	-
+issue_3126	PASS	-	-
 issue_3127	PASS	-	-
 issue_3128	PASS	-	-
 issue_3129	PASS	-	-
@@ -1302,7 +1302,7 @@ issue_3159	PASS	-	-
 issue_3160	PASS	-	-
 issue_3161	PASS	-	-
 issue_3162	PASS	-	-
-issue_3163	FAIL_OUTPUT	expect	-
+issue_3163	PASS	-	-
 issue_3164	PASS	-	-
 issue_3165	PASS	-	-
 issue_3166	PASS	-	-
@@ -1373,7 +1373,7 @@ issue_3240	PASS	-	-
 issue_3241	PASS	-	-
 issue_3243	PASS	-	-
 issue_3250	PASS	-	-
-issue_3251	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-a2be
+issue_3251	PASS	-	-
 issue_3252	PASS	-	-
 issue_3253	PASS	-	-
 issue_3254	PASS	-	-
@@ -1603,7 +1603,7 @@ nullable_poly_hash_arg_unbox	PASS	-	-
 numbered_param_arity	PASS	-	-
 numeric_coerce	PASS	-	-
 numeric_conformance_batch2	PASS	-	-
-numeric_edges_wave10	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-a92a
+numeric_edges_wave10	PASS	-	-
 numeric_tower_methods	PASS	-	-
 numeric_tower_remainder	PASS	-	-
 obj_array_param_accumulator	PASS	-	-
@@ -1618,7 +1618,7 @@ object_freeze_flag	PASS	-	-
 object_freeze_module_isa	PASS	-	-
 object_id_basic	PASS	-	-
 object_id_nil_true	PASS	-	-
-object_identity_cluster	FAIL_OUTPUT	expect	-
+object_identity_cluster	PASS	-	-
 object_identity_eq	PASS	-	-
 object_identity_predicates	PASS	-	-
 object_method_gaps_callee_clone_itself	PASS	-	-
@@ -1869,7 +1869,7 @@ range	PASS	-	-
 range_and_array_range_args	PASS	-	-
 range_begin_end_polyarr_include_delete_bang	PASS	-	-
 range_bsearch	PASS	-	-
-range_bsearch_float	FAIL_OUTPUT	expect	-
+range_bsearch_float	PASS	-	-
 range_case_eq_range	PASS	-	-
 range_case_eq_type_mismatch	PASS	-	-
 range_comparable_wave8	PASS	-	-
@@ -1899,10 +1899,10 @@ range_to_s_inspect	PASS	-	-
 rational_arithmetic	PASS	-	-
 rational_cmp_float_hash	PASS	-	-
 rational_complex_literals	PASS	-	-
-rational_complex_wave9	FAIL_OUTPUT	expect	auto-expected-numeric-value-got-ni-4730
+rational_complex_wave9	PASS	-	-
 rational_ctor_exact	PASS	-	-
 rational_div_family	PASS	-	-
-rational_i_to_complex	FAIL_OUTPUT	expect	-
+rational_i_to_complex	PASS	-	-
 rational_mod_cmp_slice_default_wave10	FAIL_OUTPUT	expect	-
 rational_step	PASS	-	-
 recursive_block_forward_value	PASS	-	-
@@ -2004,7 +2004,7 @@ set_bracket_ctor	PASS	-	-
 set_conformance_batch2	PASS	-	-
 set_delete	PASS	-	-
 set_divide	PASS	-	-
-set_full_api	FAIL_OUTPUT	expect	-
+set_full_api	PASS	-	-
 set_operations	PASS	-	-
 setbyte_nul_bytes	PASS	-	-
 shareable_constant	PASS	-	-
@@ -2099,7 +2099,7 @@ string_encoding	PASS	-	-
 string_enum_arg_forms	PASS	-	-
 string_enum_block_returns_self	FAIL_OUTPUT	expect	-
 string_enum_inspect_source	FAIL_OUTPUT	expect	-
-string_equal_identity	FAIL_OUTPUT	expect	-
+string_equal_identity	PASS	-	-
 string_format_poly_array_rhs	PASS	-	-
 string_format_polyarr	PASS	-	-
 string_format_scalar_operands	PASS	-	-
@@ -2172,7 +2172,7 @@ struct_methods	PASS	-	-
 struct_string_member_gc_root	PASS	-	-
 struct_to_a_values	PASS	-	-
 struct_to_h	PASS	-	-
-struct_to_h_block	FAIL_OUTPUT	expect	-
+struct_to_h_block	PASS	-	-
 struct_value_equality	PASS	-	-
 struct_valuesat_hash_set_init_wave10	PASS	-	-
 struct_yield_initialize	PASS	-	-
@@ -2291,7 +2291,7 @@ value_obj_boxing_clamp	PASS	-	-
 value_position_misc	PASS	-	-
 value_type_frozen	PASS	-	-
 value_type_hash_id	PASS	-	-
-value_type_identity	FAIL_OUTPUT	expect	-
+value_type_identity	PASS	-	-
 value_type_interp_to_s	PASS	-	-
 value_type_tuple_gc_scan	PASS	-	-
 valued_break	PASS	-	-
