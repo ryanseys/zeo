@@ -6,7 +6,7 @@
 //! iteration method (`map`/`select`/`count`/...) drives the `each` row below;
 //! only the set-specific surface lives here.
 
-use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods, frozen_error};
+use crate::builtins::{arg_error, arity, block_or_enum, builtin_methods};
 use crate::dispatch::{RObj, RubyObject};
 use crate::{RHash, RubyValue, Signal};
 use std::sync::Arc;
@@ -143,7 +143,11 @@ fn arg_elements(v: &RubyValue) -> Result<Vec<RubyValue>, Signal> {
 /// mutating row runs first (CRuby's `rb_check_frozen`).
 fn check_frozen(recv: &RubyValue) -> Result<(), Signal> {
     if set_of(recv).is_frozen() {
-        return Err(frozen_error!("can't modify frozen Set"));
+        return Err(crate::dispatch::raise_error_details(
+            "FrozenError",
+            "can't modify frozen Set".to_string(),
+            &[("receiver", recv.clone())],
+        ));
     }
     Ok(())
 }

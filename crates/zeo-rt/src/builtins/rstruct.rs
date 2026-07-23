@@ -37,7 +37,7 @@ use parking_lot::Mutex;
 use zeo_abi::{ClassId, DATA_CLASS, STRUCT_CLASS};
 
 use crate::builtins::{
-    arg_error, arity, block_or_enum, builtin_methods, frozen_error, index_error, name_error,
+    arg_error, arity, block_or_enum, builtin_methods, index_error, name_error,
     type_error,
 };
 use crate::dispatch::{MethodImpl, RObj, RubyObject, class_name, raise_error, send_in, send_value};
@@ -572,7 +572,11 @@ builtin_methods! {
 
 fn frozen_error(recv: &RubyValue) -> Signal {
     let name = class_name(recv.class_id()).unwrap_or_else(|| "Struct".to_string());
-    frozen_error!("can't modify frozen {name}")
+    crate::dispatch::raise_error_details(
+        "FrozenError",
+        format!("can't modify frozen {name}"),
+        &[("receiver", recv.clone())],
+    )
 }
 
 /// The default member-setter shared by `Struct#initialize`/`Data#initialize`:

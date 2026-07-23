@@ -4,7 +4,7 @@
 
 use crate::RubyValue;
 use crate::builtins::{
-    arg_error, arg_int, arity, block_or_enum, builtin_methods, convert, frozen_error, index_error,
+    arg_error, arg_int, arity, block_or_enum, builtin_methods, convert, index_error,
     recv_array, type_error,
 };
 
@@ -1307,9 +1307,10 @@ fn check_frozen(
     recv: &RubyValue,
 ) -> Result<(), crate::Signal> {
     if handle.is_frozen() {
-        return Err(frozen_error!(
-            "can't modify frozen Array: {}",
-            recv.inspect_string()
+        return Err(crate::dispatch::raise_error_details(
+            "FrozenError",
+            format!("can't modify frozen Array: {}", recv.inspect_string()),
+            &[("receiver", recv.clone())],
         ));
     }
     Ok(())
