@@ -1293,8 +1293,17 @@ fn lower_class_body_statement(
     // `lower_node` path (reached below) always sets `Public` (it has no
     // notion of a class body's running default; see its own docs), so this
     // corrects it retroactively when the current default isn't `Public`.
-    if node.as_def_node().is_some() {
+    if let Some(def) = node.as_def_node() {
         let id = lower_node(result, hir, node)?;
+        // The running visibility default and `module_function` promotion apply
+        // only to a bare `def name` (an instance method). A SINGLETON def
+        // (`def self.name` / `def Recv.name`) defines a method on another
+        // object, is unaffected by either in real Ruby, and doesn't lower to a
+        // plain instance `DefMethod` -- so leave it exactly as lowered.
+        if def.receiver().is_some() {
+            out.push(id);
+            return Ok(());
+        }
         if *visibility != Visibility::Public {
             hir.set_method_visibility(id, *visibility);
         }
