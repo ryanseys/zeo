@@ -1,5 +1,5 @@
-# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=a294f49
-# PASS=2333 FAIL_OUTPUT=2 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
+# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=b50cd4d
+# PASS=2335 FAIL_OUTPUT=1 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -622,7 +622,7 @@ ffi_array_specs_decl	PASS	-	-
 ffi_binstr_recv	PASS	-	-
 ffi_binstr_ws_frame	PASS	-	-
 ffi_buffer_reader	PASS	-	-
-ffi_callback	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249
+ffi_callback	PASS	-	-
 ffi_cflags_fold_forms	PASS	-	-
 ffi_const	PASS	-	-
 ffi_const_leaf_collision	PASS	-	-
@@ -638,7 +638,7 @@ ffi_ptr_int_literal	PASS	-	-
 ffi_ptr_nil	PASS	-	-
 ffi_str_arg_poly_value	PASS	-	-
 ffi_struct	PASS	-	-
-ffi_variadic	FAIL_COMPILE	compile	auto-territory-not-syntaxerror-ed71
+ffi_variadic	PASS	-	-
 ffi_void_return	PASS	-	-
 ffi_write_roundtrip	PASS	-	-
 fiber_capture_no_leak_to_sibling	PASS	-	-

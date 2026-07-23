@@ -1,12 +1,12 @@
 # Conformance scoreboard
 
-Suite `spinel` — **2333/2336 passing (99.9%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `a294f49`
+Suite `spinel` — **2335/2336 passing (100.0%)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `b50cd4d`
 
 | verdict | count |
 |---|---|
-| PASS | 2333 |
-| FAIL_OUTPUT | 2 |
-| FAIL_COMPILE | 1 |
+| PASS | 2335 |
+| FAIL_OUTPUT | 1 |
+| FAIL_COMPILE | 0 |
 | FAIL_RUSTC | 0 |
 | FAIL_RUN | 0 |
 | TIMEOUT_COMPILE | 0 |
@@ -17,10 +17,7 @@ Suite `spinel` — **2333/2336 passing (99.9%)** — oracle `ruby 4.0.5 (2026-05
 
 ## Top failure categories
 
-| blocked | bucket | cluster | sample test | sample message |
-|---|---|---|---|---|
-| 1 | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249 | ? | ffi_callback | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>' |
-| 1 | auto-territory-not-syntaxerror-ed71 | ? | ffi_variadic | territory, not a SyntaxError) |
+(none)
 
 ## Skipped tests
 
