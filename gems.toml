@@ -1,0 +1,7 @@
+# zeo's vendored batteries: git-sourced pure-Ruby stdlib gems.
+# Managed by `cargo run -p xtask -- gem`. `rev` is the reproducible pin.
+
+[gems.fileutils]
+github = "ruby/fileutils"
+tag    = "v1.8.0"
+rev    = "29de582f683bbf5d8d153599459f2b44372ac7b4"

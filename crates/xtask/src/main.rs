@@ -20,6 +20,7 @@
 
 mod bench;
 mod conformance;
+mod gem;
 mod gem_compat;
 mod stdlib_status;
 
@@ -141,9 +142,10 @@ fn main() -> ExitCode {
         Some("conformance") => conformance::main(&root, &args),
         Some("stdlib-status") => stdlib_status::main(&root, &args),
         Some("gem-compat") => gem_compat::main(&root, &args),
+        Some("gem") => gem::main(&root, &args),
         _ => {
             eprintln!(
-                "usage: cargo run -p xtask -- <test|regen|bench|conformance|stdlib-status|gem-compat>"
+                "usage: cargo run -p xtask -- <test|regen|bench|conformance|stdlib-status|gem-compat|gem>"
             );
             ExitCode::FAILURE
         }
