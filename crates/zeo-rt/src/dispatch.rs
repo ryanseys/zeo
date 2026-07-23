@@ -1373,6 +1373,21 @@ fn class_receiver_responds(cid: ClassId, name: Symbol) -> bool {
         && crate::builtins::rstruct::class_lookup(n).is_some()
 }
 
+/// Whether `cid` has an OWN class method `name` -- a `def self.x` materialized
+/// into the registry, or a runtime singleton def -- as opposed to one merely
+/// inherited from `Class`/`Module`. `extend` consults this so a receiver's own
+/// singleton methods keep outranking a mixed-in module's copy (CRuby's "closest
+/// singleton" rule); the inherited builtin `Class`/`Module` methods deliberately
+/// don't count, because an extended module SHOULD override those.
+pub fn class_defines_own_class_method(cid: ClassId, name: Symbol) -> bool {
+    (crate::runtime_meta::is_live()
+        && crate::runtime_meta::overlay_class_method(cid, name).is_some())
+        || REGISTRY
+            .get()
+            .and_then(|r| r.entries.get(&cid.0))
+            .is_some_and(|e| e.class_methods.contains_key(&name))
+}
+
 /// `Module#method_defined?` -- true when `name` resolves to a public OR
 /// protected instance method of `recv_class` (private and nonexistent answer
 /// false). Unlike `respond_to?`'s default, protected counts. `instance_method_

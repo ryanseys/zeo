@@ -587,11 +587,21 @@ pub fn runtime_define_singleton_method(
     }
 }
 
-/// `obj.extend(Mod)` -- mix a module's instance methods into the receiver's
-/// singleton, so they resolve on `obj` (and only `obj`). Implemented by
-/// copying the module's own public/protected methods into the identity-keyed
-/// singleton table `resolve_dynamic` already consults first -- no new dispatch
-/// path. An existing singleton method (`def obj.x`) is not clobbered.
+/// `recv.extend(Mod)` -- mix a module's instance methods into the receiver's
+/// singleton, so they resolve on `recv`. Works for every receiver kind Ruby
+/// allows:
+///
+/// * an ORDINARY object -- methods land in the identity-keyed singleton table
+///   `resolve_dynamic` consults first (`obj.foo` only for this object).
+/// * a CLASS or MODULE (`SecureRandom.extend(Random::Formatter)`) -- methods
+///   become the receiver's CLASS/module methods (its singleton class), so
+///   `SecureRandom.hex` resolves. A native module's method runs with the Class
+///   as `self` verbatim (redispatching e.g. `gen_random` back to the receiver);
+///   a user module's method, whose compiled body wants an object receiver, runs
+///   against a fresh instance of the receiver class.
+///
+/// An existing singleton/class method (`def self.x`) is never clobbered -- own
+/// singletons outrank an extended module, exactly as in CRuby's ancestry.
 pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyValue, Signal> {
     let RubyValue::Class(mid) = module_val else {
         return Err(type_error!(
@@ -599,35 +609,101 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
             crate::builtins::class_name_of(module_val)
         ));
     };
-    let RubyValue::Object(o) = recv else {
-        // Immediates have no singleton storage in this runtime (same posture as
-        // `define_singleton_method`).
-        return Err(type_error!("can't extend {}", immediate_kind(recv)));
-    };
-    // CRuby's rb_check_frozen: a frozen object refuses `extend` (its
-    // singleton table is what would change).
-    crate::builtins::check_frozen(recv)?;
-    let mut names =
-        crate::dispatch::instance_method_names(*mid, crate::dispatch::VisFilter::NotPrivate, false);
-    // A runtime module (`Module.new` + `define_method`) keeps its methods in the
-    // overlay, which the registry-based enumeration above can't see -- add them.
-    for n in overlay_own_method_names(*mid) {
-        if !names.contains(&n) {
-            names.push(n);
-        }
-    }
-    let key = obj_identity(o);
-    {
-        let mut w = maps().singletons.write().unwrap();
-        let table = w.entry(key).or_default();
-        for name in names {
-            if let Some(m) = module_own_method_impl(*mid, name) {
-                table.insert(name, m);
+    let names = module_extendable_method_names(*mid);
+    match recv {
+        RubyValue::Object(o) => {
+            // CRuby's rb_check_frozen: a frozen object refuses `extend` (its
+            // singleton table is what would change).
+            crate::builtins::check_frozen(recv)?;
+            let key = obj_identity(o);
+            let mut w = maps().singletons.write().unwrap();
+            let table = w.entry(key).or_default();
+            for name in names {
+                if let Some(m) = module_own_method_impl(*mid, name) {
+                    table.insert(name, m);
+                }
             }
+        }
+        RubyValue::Class(cid) => {
+            if crate::dispatch::class_frozen(*cid) {
+                return Err(crate::dispatch::frozen_class_error(*cid));
+            }
+            // Build every wrapper BEFORE taking the overlay write lock:
+            // `extended_class_method` reads the overlay (module_own_method_impl),
+            // so building under the lock would deadlock.
+            let installs: Vec<(Symbol, RProc)> = names
+                .into_iter()
+                // Own `def self.x` (materialized into the registry) outranks the
+                // module, so leave it be -- also what keeps SecureRandom's own
+                // `gen_random` from being shadowed by the mixin's bridge copy.
+                .filter(|&name| !crate::dispatch::class_defines_own_class_method(*cid, name))
+                .filter_map(|name| extended_class_method(*mid, name).map(|p| (name, p)))
+                .collect();
+            let mut w = maps().classes.write().unwrap();
+            let entry = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+            for (name, proc_) in installs {
+                // A later `extend` layers ABOVE an earlier one (CRuby ancestry),
+                // so it wins on a name collision between two mixins.
+                entry.class_methods.insert(name, proc_);
+            }
+        }
+        _ => {
+            // Immediates have no singleton storage in this runtime (same posture
+            // as `define_singleton_method`).
+            return Err(type_error!("can't extend {}", immediate_kind(recv)));
         }
     }
     mark_live();
     Ok(recv.clone())
+}
+
+/// The public/protected instance-method names a module contributes to a host
+/// via `extend`/`include` -- registry methods plus any runtime-overlay ones a
+/// `Module.new` added.
+fn module_extendable_method_names(mid: ClassId) -> Vec<Symbol> {
+    let mut names =
+        crate::dispatch::instance_method_names(mid, crate::dispatch::VisFilter::NotPrivate, false);
+    for n in overlay_own_method_names(mid) {
+        if !names.contains(&n) {
+            names.push(n);
+        }
+    }
+    names
+}
+
+/// One `extend`ed module method, wrapped as a class method (a value-receiver
+/// `RProc`, invoked with the Class as `self`).
+fn extended_class_method(mid: ClassId, name: Symbol) -> Option<RProc> {
+    let sname = name.name();
+    // A NATIVE module method (`Random::Formatter`, `Comparable`, ...) takes a
+    // value receiver, so it runs correctly with a Class `self` and can
+    // redispatch to it. Pass `self` straight through.
+    if let Some(f) = crate::builtins::class_table(mid).and_then(|t| t(&sname)) {
+        return Some(RProc::with_self_and_block(f, RubyValue::Nil, -1, true));
+    }
+    // A USER module method is a compiled `&RObj` body: it needs an object
+    // receiver. When invoked with a Class `self` (the module value itself),
+    // run it against a fresh blank instance of that class. Self-contained
+    // methods work; a method that reaches a Class-level sibling or ivar is a
+    // documented limitation (zeo represents modules as class values, not
+    // objects, so there is no module instance to bind).
+    let m = module_own_method_impl(mid, name)?;
+    Some(RProc::with_self_and_block(
+        move |self_val, args, block| match self_val {
+            RubyValue::Object(o) => m.call(o, args, block),
+            RubyValue::Class(cid) => {
+                let surrogate: crate::dispatch::RObj = Arc::new(DynObject::new(*cid));
+                m.call(&surrogate, args, block)
+            }
+            other => Err(type_error!(
+                "can't run an extended method with {} as self",
+                immediate_kind(other)
+            )),
+        },
+        RubyValue::Nil,
+        -1,
+        true,
+    ))
 }
 
 /// The `MethodImpl` a module id defines for `name` directly -- overlay delta
