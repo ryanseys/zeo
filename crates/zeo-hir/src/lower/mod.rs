@@ -636,6 +636,33 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 body: vec![inner],
             }));
         }
+        // A DYNAMIC scope (`self.class::Reason`, `@rbconfig::CONFIG`): the path's
+        // parent isn't a constant path/read, so there's no static owner to
+        // resolve. Evaluate the scope as a value and read the constant off it at
+        // runtime via `Module#const_get` (which walks the scope's ancestry --
+        // matching `::`'s lookup for a class/module scope). optparse's
+        // `self.class::Reason`.
+        if let Some(parent) = cp.parent() {
+            let dynamic_scope = parent.as_constant_path_node().is_none()
+                && parent.as_constant_read_node().is_none();
+            if dynamic_scope {
+                let name = cp.name().ok_or(
+                    "a `::` constant path with a dynamic/computed name isn't supported (zeo limitation)",
+                )?;
+                let name = String::from_utf8_lossy(name.as_slice()).into_owned();
+                let scope = lower_node(result, hir, &parent)?;
+                let sym = hir.push(HirNode::SymbolLit(name));
+                return Ok(hir.push(HirNode::Call {
+                    receiver: Some(scope),
+                    name: "const_get".to_string(),
+                    args: vec![ArrayElem::Single(sym)],
+                    kwargs: Vec::new(),
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                }));
+            }
+        }
         let (scope, name) = constant_path_scope_and_name(&cp)?;
         return Ok(hir.push(HirNode::QualifiedConstRead(scope, name)));
     }

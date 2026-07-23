@@ -86,6 +86,7 @@ fn desugar_singleton_items(
         Const,
         Nested(String, Option<String>, Vec<NodeId>, bool),
         Cond(NodeId, Vec<NodeId>, Vec<NodeId>),
+        SelfSend,
         Skip,
     }
     let mut out = Vec::with_capacity(ids.len());
@@ -131,6 +132,11 @@ fn desugar_singleton_items(
             // -- drop it (compile-only best-effort: the method is still defined
             // on the singleton, just not marked private there).
             HirNode::MethodVisibility { .. } => Item::Skip,
+            // A receiver-less call (`class << self; undef_method(:options)`,
+            // optparse) runs with the singleton class as `self` in real Ruby --
+            // rebind it onto `recv.singleton_class` so it targets the object's
+            // singleton, not the enclosing method's self.
+            HirNode::Call { receiver: None, .. } => Item::SelfSend,
             _ => {
                 return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s, constants, nested classes, and conditionals here (zeo limitation)".to_string().into());
             }
@@ -166,6 +172,22 @@ fn desugar_singleton_items(
                     then_body,
                     else_body,
                 }));
+            }
+            Item::SelfSend => {
+                let recv = lower_node(result, hir, recv_node)?;
+                let singleton = hir.push(HirNode::Call {
+                    receiver: Some(recv),
+                    name: "singleton_class".to_string(),
+                    args: vec![],
+                    kwargs: vec![],
+                    block: None,
+                    block_arg: None,
+                    safe: false,
+                });
+                if let HirNode::Call { receiver, .. } = &mut hir[id] {
+                    *receiver = Some(singleton);
+                }
+                out.push(id);
             }
             Item::Skip => {}
         }

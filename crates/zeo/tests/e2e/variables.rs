@@ -523,6 +523,30 @@ fn constant_declared_in_a_superclass_resolves_from_a_subclass_method() {
 }
 
 #[test]
+fn a_constant_path_off_a_dynamic_scope_resolves_at_runtime() {
+    // `expr::NAME` where the scope is a runtime value (`self.class::Reason`,
+    // optparse) resolves the constant off that value at runtime, walking its
+    // ancestry -- so a subclass sees its own override.
+    let result = run_ruby(
+        r#"
+        class Base
+          Reason = "base"
+          def reason; self.class::Reason; end
+        end
+        class Sub < Base
+          Reason = "sub"
+        end
+        puts Base.new.reason
+        puts Sub.new.reason
+        holder = Base
+        puts holder::Reason
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "base\nsub\nbase\n");
+}
+
+#[test]
 fn namespaced_constant_read_via_double_colon() {
     let result = run_ruby(
         r#"
