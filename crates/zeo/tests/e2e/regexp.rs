@@ -487,3 +487,37 @@ fn matchdata_hash_is_value_based() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "false\ntrue\ntrue\n99\nnil\ntrue\n");
 }
+
+// Patterns with Ruby-specific semantics route to the real Oniguruma engine
+// (Engine::Onig): line anchors with no phantom position after a trailing
+// newline, inline `(?m:)` DOTALL scoping, the absence operator `(?~...)`, and
+// the redundant `a***` that the Rust engines reject but Ruby accepts. Every
+// line is oracle-pinned against ruby 4.0.5.
+#[test]
+fn oniguruma_backed_semantics_match_the_oracle() {
+    let result = run_ruby(
+        r#"
+        # ^/$ do not match at the phantom position after a final newline
+        p("a\n".scan(/^/).size)
+        p("a\nb\n".scan(/^/).size)
+        p(/^$/.match?("a\n"))
+        p("x\n".match?(/x$/))
+        # inline (?m:) is Ruby DOTALL (dot spans newline), scoped to the group
+        p(/(?m:a.c)/ =~ "a\nc")
+        p(/a.c/ =~ "a\nc")
+        p(/(?i-m:a.b)/ =~ "A\nB")
+        # absence operator: match only text NOT containing "foo"
+        p(/\A(?~foo)\z/.match?("bar"))
+        p(/\A(?~foo)\z/.match?("xfooy"))
+        # alternation captures land in the right slots
+        p(/(a)|(b)|(c)/.match("c").captures)
+        # onig accepts a redundant nested repeat the Rust engines reject
+        p(Regexp.new("a***").match?("aaa"))
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "1\n2\nfalse\ntrue\n0\nnil\nnil\ntrue\nfalse\n[nil, nil, \"c\"]\ntrue\n"
+    );
+}
