@@ -30,3 +30,13 @@ language behavior. Removed: `compile_time_attribute_singular`,
 `compile_time_define_method_predicates` (spinel's `attribute`/`attributes`
 class macro), and `native_binding_poc` (spinel's `native_obj`/`native_func`
 native-binding DSL).
+
+Also removed: `regexp_inline_options` -- a spinel-era test whose own comments
+declare it a set of "deliberate divergences from CRuby". Its `.expected` was
+never re-oracled; matching real `ruby` would require emitting Onigmo's internal
+regex-compiler warnings (`regular expression has redundant nested repeat
+operator`, printed twice with a source-line prefix) which the vendored
+Oniguruma binding fundamentally cannot produce, plus Onigmo-specific conditional
+validation. The regex ENGINE semantics it also touched (inline `(?m:)` DOTALL,
+the absence operator `(?~...)`, line anchors) are covered by `Engine::Onig` and
+the `regexp_onig` example/e2e.

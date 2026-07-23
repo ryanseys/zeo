@@ -1,5 +1,5 @@
-# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=b50cd4d
-# PASS=2335 FAIL_OUTPUT=1 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
+# suite=spinel corpus=2335 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=f314b51
+# PASS=2335 FAIL_OUTPUT=0 FAIL_COMPILE=0 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2335
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1928,7 +1928,6 @@ regexp_encoding_introspection	PASS	-	-
 regexp_error_catchable	PASS	-	-
 regexp_gsub_zero_width	PASS	-	-
 regexp_inline_comment	PASS	-	-
-regexp_inline_options	FAIL_OUTPUT	expect	-
 regexp_last_match_capture	PASS	-	-
 regexp_line_anchors	PASS	-	-
 regexp_local_if_else_union	PASS	-	-
