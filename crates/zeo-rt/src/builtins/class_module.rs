@@ -91,6 +91,16 @@ builtin_methods! {
     "superclass" => fn superclass(recv, args, _block) {
         arity!(args, 0);
         let cid = recv_cid(recv);
+        // `superclass` is a `Class` method; a Module receiver has none
+        // (`Enumerable.superclass` raises NoMethodError, not nil).
+        if crate::dispatch::class_is_module(cid).unwrap_or(false) {
+            return Err(crate::dispatch::raise_method_missing(
+                recv,
+                "superclass",
+                args,
+                crate::dispatch::MissingReason::NoEntry,
+            ));
+        }
         let ancestors = crate::dispatch::ancestors_of_value(cid);
         for &anc in ancestors.iter().skip_while(|&&a| a != cid).skip(1) {
             if !crate::dispatch::class_is_module(anc).unwrap_or(false) {

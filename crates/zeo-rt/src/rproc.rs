@@ -19,7 +19,7 @@
 //! based, the closures codegen generates satisfy this bound with no manual
 //! annotation needed at the construction site.
 
-use crate::builtins::{local_jump_error, type_error};
+use crate::builtins::type_error;
 use crate::{RubyValue, Signal};
 use std::sync::Arc;
 
@@ -232,7 +232,14 @@ impl RProc {
             // a live home is a genuine non-local return in flight.
             Err(Signal::Return(v)) if !self.0.is_lambda => match &self.0.home {
                 Some(home) if !crate::signal::proc_home_alive(home) => {
-                    Err(local_jump_error!("unexpected return"))
+                    Err(crate::dispatch::raise_error_details(
+                        "LocalJumpError",
+                        "unexpected return".to_string(),
+                        &[
+                            ("reason", RubyValue::Symbol(crate::Symbol::intern("return"))),
+                            ("exit_value", v),
+                        ],
+                    ))
                 }
                 _ => Err(Signal::Return(v)),
             },

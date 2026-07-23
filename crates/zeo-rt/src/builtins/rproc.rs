@@ -37,11 +37,14 @@ builtin_methods! {
             // directly, NOT this dispatch row, so a legitimate iterator break
             // still propagates as `Signal::Break`. (A lambda folds its own
             // `break` into a normal return and never surfaces one here.)
-            Err(crate::Signal::Break(_)) if !p.is_lambda() => {
+            Err(crate::Signal::Break(v)) if !p.is_lambda() => {
                 Err(crate::dispatch::raise_error_details(
                     "LocalJumpError",
                     "break from proc-closure".to_string(),
-                    &[("reason", RubyValue::Symbol(crate::Symbol::intern("break")))],
+                    &[
+                        ("reason", RubyValue::Symbol(crate::Symbol::intern("break"))),
+                        ("exit_value", v),
+                    ],
                 ))
             }
             other => other,
