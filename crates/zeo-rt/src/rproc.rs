@@ -303,6 +303,14 @@ impl RProc {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// `Proc#==`/`#eql?`: two procs are equal when they wrap the SAME block --
+    /// which `dup`/`clone` preserve (they share the closure allocation while
+    /// minting a fresh `ProcData`), so `l.dup == l` is true even though
+    /// `l.dup.equal?(l)` (allocation identity) is false.
+    pub fn block_eq(&self, other: &RProc) -> bool {
+        Arc::ptr_eq(&self.0.f, &other.0.f)
+    }
+
     /// This proc's allocation address, as `Hash`-key identity and
     /// `#object_id` need it -- the same notion `ptr_eq` compares, exposed as
     /// a value. (Previously spelled `&**p` at the call sites, via a `Deref`

@@ -18,6 +18,13 @@ fn recv_proc(recv: &RubyValue) -> &crate::RProc {
 builtin_methods! {
     pub(crate) fn lookup;
 
+    // `Proc#==`/`#eql?`: same underlying block. `dup`/`clone` share the block,
+    // so a copy compares equal (unlike `equal?`, which is allocation identity).
+    "=="[1] | "eql?"[1] => fn proc_eq(recv, args, _block) {
+        let eq = matches!(&args[0], RubyValue::Proc(other) if recv_proc(recv).block_eq(other));
+        Ok(RubyValue::Bool(eq))
+    }
+
     "call" | "()" | "[]" | "yield" | "===" => fn call(recv, args, block) {
         let p = recv_proc(recv);
         // Forward the call-site block to the proc's own `&block` param
