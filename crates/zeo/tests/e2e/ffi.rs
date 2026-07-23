@@ -378,3 +378,92 @@ fn ffi_struct_layout_fields_and_c_call() {
         "16\n8\n[:tv_sec, :tv_usec]\n123\n456\n24\n8\n16\ntrue\n"
     );
 }
+
+// A variadic `attach_function [.., :varargs]` builds its call interface at
+// runtime through libffi: `snprintf` formats mixed int/string/double varargs
+// into a buffer (and a call with no varargs at all still works). Oracle-pinned
+// against ruby 4.0.5 + the real `ffi` gem.
+#[test]
+fn variadic_attach_function_matches_the_oracle() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module C
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          attach_function :snprintf, [:pointer, :size_t, :string, :varargs], :int
+        end
+        buf = FFI::MemoryPointer.new(:char, 64)
+        n = C.snprintf(buf, 64, "%d/%s/%.1f", :int, 42, :string, "hi", :double, 2.5)
+        puts n
+        puts buf.read_string
+        buf2 = FFI::MemoryPointer.new(:char, 16)
+        C.snprintf(buf2, 16, "plain")
+        puts buf2.read_string
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "9\n42/hi/2.5\nplain\n");
+}
+
+// A `callback` type + a Ruby Proc passed for that argument becomes a libffi
+// closure the C side calls back into: `qsort` and `bsearch` are driven by Ruby
+// comparators, ascending and descending.
+#[test]
+fn callback_proc_drives_qsort_and_bsearch() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          callback :cmp, [:pointer, :pointer], :int
+          attach_function :qsort,   [:pointer, :size_t, :size_t, :cmp], :void
+          attach_function :bsearch, [:pointer, :pointer, :size_t, :size_t, :cmp], :pointer
+        end
+        cmp = proc { |a, b| a.read_int64 <=> b.read_int64 }
+        arr = FFI::MemoryPointer.new(:int64, 5)
+        arr.write_array_of_int64([9, 3, 7, 1, 5])
+        L.qsort(arr, 5, 8, cmp)
+        p arr.read_array_of_int64(5)
+        arr2 = FFI::MemoryPointer.new(:int64, 4)
+        arr2.write_array_of_int64([10, 20, 30, 40])
+        L.qsort(arr2, 4, 8, proc { |a, b| b.read_int64 <=> a.read_int64 })
+        p arr2.read_array_of_int64(4)
+        key = FFI::MemoryPointer.new(:int64, 1)
+        key.write_int64(7)
+        hit = L.bsearch(key, arr, 5, 8, cmp)
+        puts(hit == nil ? "miss" : hit.read_int64)
+        key.write_int64(4)
+        puts(L.bsearch(key, arr, 5, 8, cmp) == nil ? "miss" : "hit")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "[1, 3, 5, 7, 9]\n[40, 30, 20, 10]\n7\nmiss\n");
+}
+
+// An exception raised inside a callback cannot unwind through the C frames, so
+// it is stashed and re-raised once the C function returns.
+#[test]
+fn exception_in_callback_is_reraised_after_the_c_call() {
+    let result = run_ruby(
+        r#"
+        require "ffi"
+        module L
+          extend FFI::Library
+          ffi_lib FFI::Library::LIBC
+          callback :cmp, [:pointer, :pointer], :int
+          attach_function :qsort, [:pointer, :size_t, :size_t, :cmp], :void
+        end
+        arr = FFI::MemoryPointer.new(:int32, 3)
+        arr.write_array_of_int32([3, 1, 2])
+        begin
+          L.qsort(arr, 3, 4, proc { |a, b| raise "boom from callback" })
+        rescue => e
+          puts "rescued: #{e.message}"
+        end
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "rescued: boom from callback\n");
+}
