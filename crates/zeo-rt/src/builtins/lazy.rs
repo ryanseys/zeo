@@ -38,6 +38,9 @@ enum LazyOp {
     Grep(RubyValue, bool, Option<RProc>),
     Uniq(Option<RProc>),
     Compact,
+    /// Pairs each value with an incrementing index (`with_index([offset])`),
+    /// yielding `[value, index]`.
+    WithIndex(i64),
 }
 
 /// The per-run mutable state for the stateful ops (a fresh set is built at the
@@ -52,7 +55,7 @@ enum OpState {
 impl OpState {
     fn for_op(op: &LazyOp) -> OpState {
         match op {
-            LazyOp::Take(_) | LazyOp::Drop(_) => OpState::Count(0),
+            LazyOp::Take(_) | LazyOp::Drop(_) | LazyOp::WithIndex(_) => OpState::Count(0),
             LazyOp::DropWhile(_) => OpState::Dropping(true),
             LazyOp::Uniq(_) => OpState::Seen(HashSet::new()),
             _ => OpState::None,
@@ -132,6 +135,7 @@ fn clone_ops(ops: &[LazyOp]) -> Vec<LazyOp> {
             LazyOp::Grep(pat, inv, blk) => LazyOp::Grep(pat.clone(), *inv, blk.clone()),
             LazyOp::Uniq(k) => LazyOp::Uniq(k.clone()),
             LazyOp::Compact => LazyOp::Compact,
+            LazyOp::WithIndex(n) => LazyOp::WithIndex(*n),
         })
         .collect()
 }
@@ -273,6 +277,18 @@ fn push(
                 push(ops, st, idx + 1, val, sink)
             }
         }
+        LazyOp::WithIndex(offset) => {
+            let i = match &mut st[idx] {
+                OpState::Count(c) => {
+                    let cur = *c;
+                    *c += 1;
+                    cur
+                }
+                _ => unreachable!("WithIndex state"),
+            };
+            let paired = RubyValue::Array(array_new(vec![val, RubyValue::Int(offset + i)]));
+            push(ops, st, idx + 1, paired, sink)
+        }
         LazyOp::TakeWhile(p) => {
             if p.call(std::slice::from_ref(&val))?.truthy() {
                 push(ops, st, idx + 1, val, sink)
@@ -412,6 +428,21 @@ builtin_methods! {
     "map" | "collect" => fn map(recv, args, block) {
         arity!(args, 0);
         Ok(extend(recv, LazyOp::Map(need_block(block, "map")?)))
+    }
+    // `with_index([offset]) { |item, idx| ... }` -- lazily pairs each value with
+    // an incrementing index; blockless it yields the `[item, idx]` pairs, with a
+    // block it maps each pair through it (the block auto-splats the pair).
+    "with_index" | "each_with_index" => fn with_index(recv, args, block) {
+        arity!(args, 0..=1);
+        let offset = match args.first() {
+            Some(v) => crate::builtins::convert::to_index(v)?,
+            None => 0,
+        };
+        let indexed = extend(recv, LazyOp::WithIndex(offset));
+        match block {
+            Some(RubyValue::Proc(p)) => Ok(extend(&indexed, LazyOp::Map(p))),
+            _ => Ok(indexed),
+        }
     }
     "flat_map" | "collect_concat" => fn flat_map(recv, args, block) {
         arity!(args, 0);
