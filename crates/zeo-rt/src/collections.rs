@@ -413,6 +413,18 @@ pub fn hash_new_with_default(default: RubyValue, default_proc: Option<RubyValue>
     }))
 }
 
+/// Copy `src`'s per-instance default (value/proc) and `compare_by_identity`
+/// flag onto `dst`. `Hash#dup`/`#clone` preserve these, and `Hash#merge`
+/// inherits them from the left receiver -- both of which build a fresh hash
+/// via `hash_new` (default-less) and would otherwise lose them.
+pub fn copy_hash_meta(src: &RHash, dst: &RHash) {
+    let s = src.lock();
+    let mut d = dst.lock();
+    d.default = s.default.clone();
+    d.default_proc = s.default_proc.clone();
+    d.compare_by_identity = s.compare_by_identity;
+}
+
 /// A plain lookup: the stored value, or `nil` for a missing key -- WITHOUT
 /// triggering any per-instance default. This is the internal read used by
 /// `merge`/`dig`/keyword extraction/pattern matching, none of which invoke a

@@ -1181,6 +1181,7 @@ impl RubyValue {
             RubyValue::Hash(h) => {
                 let pairs: Vec<(RubyValue, RubyValue)> = h.lock().values().cloned().collect();
                 let fresh = crate::hash_new(pairs);
+                crate::collections::copy_hash_meta(h, &fresh);
                 if keep_frozen {
                     fresh.set_frozen();
                 }

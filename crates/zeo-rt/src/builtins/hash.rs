@@ -190,9 +190,10 @@ builtin_methods! {
     // `merge` (fresh hash) with an optional conflict block;
     // `merge!`/`update` write into the receiver.
     "merge" => fn merge(recv, args, block) {
-        let out = RubyValue::Hash(crate::hash_new(
-            recv_hash!(recv).lock().values().cloned().collect(),
-        ));
+        let base = recv_hash!(recv);
+        let fresh = crate::hash_new(base.lock().values().cloned().collect());
+        crate::collections::copy_hash_meta(base, &fresh); // inherit the receiver's default
+        let out = RubyValue::Hash(fresh);
         merge_into(&out, args, &block)?;
         Ok(out)
     }
