@@ -19,6 +19,35 @@ fn dynamic_send_with_a_non_literal_target() {
 }
 
 #[test]
+fn include_inside_a_class_new_block_mixes_the_module_at_runtime() {
+    // `Class.new { include M }` mixes M's instance methods into the runtime
+    // class's ancestry, so instances dispatch them (and reflection sees M).
+    // Last-included wins on a name collision, matching CRuby's ancestry.
+    let result = run_ruby(
+        r##"
+        module Greet
+          def hello = "hi #{name}"
+        end
+        module A; def who = "A"; end
+        module B; def who = "B"; end
+        c = Class.new do
+          include Greet
+          include A
+          include B
+          def name = "x"
+        end
+        obj = c.new
+        puts obj.hello
+        puts obj.who
+        puts c.ancestors.include?(Greet)
+        puts c.include?(A)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi x\nB\ntrue\ntrue\n");
+}
+
+#[test]
 fn alias_keyword_inside_a_class_eval_block_aliases_at_runtime() {
     // `alias new old` in a general (non-class-body) context -- here a module's
     // `class_eval` block, where `self` is the module -- desugars to a runtime

@@ -703,6 +703,66 @@ pub fn runtime_extend(recv: &RubyValue, module_val: &RubyValue) -> Result<RubyVa
     Ok(recv.clone())
 }
 
+/// `Module#include(M, ...)` reached AT RUNTIME on a Class/Module receiver --
+/// e.g. `Class.new { include M }`. Splices each module (and its own ancestors
+/// not already present) into the receiver's overlay ancestry right after the
+/// receiver itself, matching CRuby's insertion point, so instances dispatch the
+/// module's methods through `dispatch::send_in`'s ancestor walk (which finds a
+/// compiled module's `emit_user_module_bridges` value-methods by id, and a
+/// runtime `Module.new`'s overlay methods).
+///
+/// Only effective for a receiver whose ancestry lives in the overlay (a runtime
+/// `Class.new`/`Module.new`); a FROZEN compiled class's registry ancestry is
+/// immutable, so a runtime `include` on it is a documented no-op on dispatch
+/// (rare -- static `include` is the compiled path).
+pub fn runtime_include(recv: &RubyValue, modules: &[RubyValue]) -> Result<RubyValue, Signal> {
+    let RubyValue::Class(cid) = recv else {
+        return Err(type_error!("can't include into {}", immediate_kind(recv)));
+    };
+    if crate::dispatch::class_frozen(*cid) {
+        return Err(crate::dispatch::frozen_class_error(*cid));
+    }
+    // `include A, B` inserts each right after self, so the LAST argument ends
+    // up closest to self -- process right-to-left to reproduce that order.
+    for module_val in modules.iter().rev() {
+        let RubyValue::Class(mid) = module_val else {
+            return Err(type_error!(
+                "wrong argument type {} (expected Module)",
+                crate::builtins::class_name_of(module_val)
+            ));
+        };
+        include_module_into(*cid, *mid);
+    }
+    mark_live();
+    Ok(recv.clone())
+}
+
+/// Splices `mid`'s ancestry into `cid`'s overlay ancestry directly after `cid`
+/// itself, skipping any ancestor already present (CRuby's dedup). Computes the
+/// new chain BEFORE taking the overlay write lock (`ancestors_of_value` reads
+/// it). The freshly-leaked slice replaces the field; the old one leaks, matching
+/// this runtime's no-GC policy for interned ancestries.
+fn include_module_into(cid: ClassId, mid: ClassId) {
+    let current: Vec<ClassId> = ancestors_of_value(cid).to_vec();
+    let mid_chain: Vec<ClassId> = ancestors_of_value(mid).to_vec();
+    let (Some(&this), rest) = (current.first(), &current[current.len().min(1)..]) else {
+        return;
+    };
+    let present: std::collections::HashSet<ClassId> = current.iter().copied().collect();
+    let mut new_anc = Vec::with_capacity(current.len() + mid_chain.len());
+    new_anc.push(this);
+    for m in mid_chain {
+        if !present.contains(&m) {
+            new_anc.push(m);
+        }
+    }
+    new_anc.extend_from_slice(rest);
+    let leaked: &'static [ClassId] = Box::leak(new_anc.into_boxed_slice());
+    let mut w = maps().classes.write().unwrap();
+    let entry = w.entry(cid.0).or_insert_with(OverlayEntry::delta);
+    entry.ancestors = leaked;
+}
+
 /// The public/protected instance-method names a module contributes to a host
 /// via `extend`/`include` -- registry methods plus any runtime-overlay ones a
 /// `Module.new` added.

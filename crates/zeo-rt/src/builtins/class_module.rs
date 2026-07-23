@@ -436,6 +436,13 @@ builtin_methods! {
         let old = crate::runtime_meta::coerce_method_name(args.get(1))?;
         crate::runtime_meta::runtime_alias_method(recv_cid(recv), new, old)
     }
+    // `Module#include(M, ...)` reached at RUNTIME on a Class/Module receiver
+    // (`Class.new { include M }`, `mod.class_eval { include Other }`): mix each
+    // module's instance methods into the receiver's runtime ancestry. The plain
+    // class-body form resolves statically; this serves the runtime shapes.
+    "include" => fn include_m(recv, args, _block) {
+        crate::runtime_meta::runtime_include(recv, args)
+    }
     // `Module#private`/`public`/`protected` reached at RUNTIME (inside a
     // `class_eval` block or a guarded class-body statement -- the plain
     // class-body form resolves at compile time): with names, validate and
