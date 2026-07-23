@@ -458,6 +458,10 @@ builtin_methods! {
                 };
                 return Err(crate::dispatch::raise_error("FloatDomainError", msg.to_string()));
             }
+            // A Rational quotient floors to an Integer too (CRuby's divmod
+            // quotient is always an Integer): `(7/2).divmod(1/3)` is
+            // `[10, (1/6)]`, not `[(21/2), (1/6)]`.
+            RubyValue::Rational(_) => num_floor_exact(&q),
             other => other,
         };
         Ok(RubyValue::Array(crate::array_new(vec![q, r])))
