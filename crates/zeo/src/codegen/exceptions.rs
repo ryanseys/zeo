@@ -202,7 +202,7 @@ pub fn emit_begin(
 fn emit_rescue_chain(closure_cx: &Ctx, rescues: &[RescueClause]) -> TokenStream {
     let mut chain = quote! { Err(zeo_rt::Signal::Raise(__exc.clone())) };
     for r in rescues.iter().rev() {
-        let cond = emit_rescue_match_cond(closure_cx, &r.classes);
+        let cond = emit_rescue_match_cond(closure_cx, &r.classes, &r.splats);
         // NOT narrowed to a concrete `Arc<Class>` the way a pattern's
         // `Integer => n`/`case/in`'s class-guard capture is (see
         // `codegen::patterns::collect_narrowing`'s docs): unlike a builtin
@@ -242,15 +242,20 @@ fn emit_rescue_chain(closure_cx: &Ctx, rescues: &[RescueClause]) -> TokenStream 
 /// descendants -- real Ruby's own default, deliberately narrower than
 /// "catches literally anything" (a bare `rescue` does NOT catch a raised
 /// `Exception`/`ScriptError` that isn't also a `StandardError`).
-fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
-    let owned;
-    let targets: &[String] = if classes.is_empty() {
-        owned = vec!["StandardError".to_string()];
-        &owned
-    } else {
-        classes
-    };
-    let checks = targets.iter().map(|name| {
+fn emit_rescue_match_cond(cx: &Ctx, classes: &[String], splats: &[NodeId]) -> TokenStream {
+    // A bare `rescue` (no listed classes AND no splats) matches `StandardError`
+    // and its descendants -- CRuby's default. A `rescue *errs` with no static
+    // classes does NOT get this default: only the splat list matters.
+    if classes.is_empty() && splats.is_empty() {
+        let id = cx
+            .resolve_class("StandardError")
+            .expect("StandardError is a builtin")
+            .0;
+        return quote! {
+            zeo_rt::is_a(__exc.as_object_unchecked().class_id(), zeo_rt::ClassId(#id))
+        };
+    }
+    let static_checks = classes.iter().map(|name| {
         let Some(cid) = cx.resolve_class(name) else {
             // A `rescue UndefinedConst` names a constant that isn't a class
             // here. CRuby evaluates a rescue clause's class expression only
@@ -269,6 +274,20 @@ fn emit_rescue_match_cond(cx: &Ctx, classes: &[String]) -> TokenStream {
         let id = cid.0;
         quote! { zeo_rt::is_a(__exc.as_object_unchecked().class_id(), zeo_rt::ClassId(#id)) }
     });
+    // `rescue *errs => e`: evaluate the splat expression (an array of classes,
+    // or a single class) and match `__exc` against it at runtime. Its own
+    // error (a non-Module element, an undefined const while evaluating)
+    // propagates like the undefined-static-const case above.
+    let splat_checks = splats.iter().map(|&node| {
+        let val = super::expr::emit_expr(cx, node);
+        quote! {
+            match zeo_rt::rescue_matches_any(&__exc, &(#val)) {
+                Ok(__m) => __m,
+                Err(__s) => return Err(__s),
+            }
+        }
+    });
+    let checks = static_checks.chain(splat_checks);
     quote! { #(#checks)||* }
 }
 

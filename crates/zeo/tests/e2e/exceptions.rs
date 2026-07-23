@@ -3312,3 +3312,95 @@ fn arity_errors_attribute_to_the_callee_frame_like_cruby() {
          -e:29:in 'Object#kw'\n"
     );
 }
+
+// `rescue *exprs => e` -- a rescue clause whose exception list is a SPLATTED
+// runtime array of classes (or a single class), rather than literal constants.
+// This is the `rescue *yaml_errors => e` shape rubygems uses. Matched at
+// runtime; composes with static classes, multiple clauses, ensure, retry, and
+// module-include matching.
+#[test]
+fn rescue_with_a_splatted_exception_list() {
+    let result = run_ruby(
+        r#"
+        ERRS = [ArgumentError, TypeError]
+
+        # A constant array of classes.
+        begin
+          raise TypeError, "t"
+        rescue *ERRS => e
+          puts "const #{e.class}"
+        end
+
+        # A local array; no `=> e` capture.
+        errs = [KeyError]
+        begin
+          raise KeyError, "k"
+        rescue *errs
+          puts "local no-capture"
+        end
+
+        # Static class mixed with a splat, in either order.
+        extra = [TypeError]
+        begin; raise TypeError, "t"; rescue ArgumentError, *extra => e; puts "mixed1 #{e.class}"; end
+        lead = [KeyError]
+        begin; raise TypeError, "t"; rescue *lead, TypeError => e; puts "mixed2 #{e.class}"; end
+
+        # Splatting a single class (not an array) wraps it: `*one` == `[one]`.
+        one = RuntimeError
+        begin; raise "r"; rescue *one => e; puts "single #{e.class}"; end
+
+        # An empty array catches nothing -> propagates.
+        empty = []
+        begin
+          begin; raise TypeError, "t"; rescue *empty; puts "wrong"; end
+        rescue TypeError
+          puts "empty catches nothing"
+        end
+
+        # A non-matching splat re-raises to an outer handler.
+        only_arg = [ArgumentError]
+        begin
+          begin; raise TypeError, "t"; rescue *only_arg; puts "wrong"; end
+        rescue TypeError => e2
+          puts "propagated #{e2.class}"
+        end
+
+        # ensure still runs; $! is the caught exception; module-include matches.
+        module Alertable; end
+        class Alarmed < StandardError; include Alertable; end
+        mods = [Alertable]
+        begin
+          raise Alarmed, "a"
+        rescue *mods
+          puts "module-match #{$!.class}"
+        ensure
+          puts "ensure ran"
+        end
+
+        # Splat rescue as a method-body clause, with retry.
+        E = [RuntimeError]
+        def flaky
+          @n = (@n || 0) + 1
+          raise "x" if @n < 2
+          "ok n=#{@n}"
+        rescue *E
+          retry if @n < 2
+        end
+        puts flaky
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "const TypeError\n\
+         local no-capture\n\
+         mixed1 TypeError\n\
+         mixed2 TypeError\n\
+         single RuntimeError\n\
+         empty catches nothing\n\
+         propagated TypeError\n\
+         module-match Alarmed\n\
+         ensure ran\n\
+         ok n=2\n"
+    );
+}

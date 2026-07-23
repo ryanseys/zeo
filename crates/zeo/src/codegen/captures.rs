@@ -738,6 +738,11 @@ fn walk(
                 walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
             }
             for r in rescues {
+                // A splatted exception list (`rescue *errs`) reads outer locals
+                // -- they must be captured when this `begin` is inside a closure.
+                for &n in &r.splats {
+                    walk(compiler, n, in_escaping, param_exclusions, caps, self_class);
+                }
                 // A rescue binding is a fresh name, same treatment as
                 // `LocalWrite`/a pattern's bound names just above.
                 if in_escaping {

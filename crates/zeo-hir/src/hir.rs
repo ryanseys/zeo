@@ -988,7 +988,18 @@ impl MultiTargetGroup {
 /// `codegen::hoisting`'s whole-scope local collection needs to see it up
 /// front, same treatment as `Pattern::for_each_bound_name`'s callers.
 pub struct RescueClause {
+    /// The clause's STATIC exception classes -- plain constant references
+    /// (`rescue Foo, Bar => e`), resolved to `ClassId`s and matched with a
+    /// compile-time `is_a` ancestry check.
     pub classes: Vec<String>,
+    /// Splatted exception lists (`rescue *errs => e`): each is a runtime
+    /// expression evaluating to an Array of exception classes (or a single
+    /// class). Matched at runtime via `zeo_rt::rescue_matches_any`, OR'd in
+    /// after `classes`. NOTE: a side-effecting splat expr placed BEFORE a
+    /// matching literal class evaluates slightly out of CRuby's strict
+    /// left-to-right short-circuit order -- a documented, negligible divergence
+    /// (the boolean MATCH result is always identical).
+    pub splats: Vec<NodeId>,
     pub binding: Option<String>,
     pub body: Vec<NodeId>,
 }

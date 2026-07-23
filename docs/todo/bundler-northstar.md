@@ -7,10 +7,11 @@ milestones `bundle --version` → `bundle install --local` → network install.
 place.** The dominant architectural blockers — `rbconfig`, non-top-level
 `require`, and now `securerandom` (with `Random::Formatter` + OS-entropy
 `Random.urandom` + `extend`-onto-class/module) — are fixed, as are the dynamic
-`load`/`require` and `a, = rhs` multi-assign compiler gaps. rubygems now loads
-its require graph to `rubygems.rb:410`, a `rescue *splat` lowering gap. What
-remains is the grind: a few small lowering gaps then vendoring/implementing the
-missing stdlib (`fileutils`/`pathname`/... — see the worklist), one at a time.
+`load`/`require`, `a, = rhs` multi-assign, and `rescue *splat` compiler gaps.
+The require graph now clears rubygems.rb/specification.rb/config_file.rb and
+stops at a MISSING STDLIB (`etc`) — the compiler wall is behind us. What remains
+is the grind: implement native `etc`/`io/wait` and vendor the pure-Ruby stdlib
+(`fileutils`/`pathname`/... — see the worklist), one at a time.
 
 ## Setup
 
@@ -124,11 +125,23 @@ maps to the same anonymous-splat `Some(None)` a written `a, *_ = rhs` uses. 42
 zeo-vs-oracle probes (trailing comma × nested/ivar/index/splat-rhs/return
 contexts) all pass; e2e added; zero conformance regressions.
 
-**Current blocker (compiler, NOT stdlib):** `rescue *yaml_errors => e`
-(`rubygems.rb:410`) — a **splat-rescue**: a `rescue` clause whose exception-class
-list is a splatted array (`rescue *array => e`), rather than literal class
-constants. zeo's rescue lowering expects literal class references; it needs to
-accept a runtime array of classes to rescue.
+**Splat-rescue (`rescue *errs => e`) — ✅ FIXED (2026-07-23).** A `rescue`
+clause whose exception list is a splatted runtime array of classes (or a single
+class), e.g. `rescue *yaml_errors => e` (`rubygems.rb:410`). `RescueClause` gained
+a `splats: Vec<NodeId>` field; the lowering partitions the exception list into
+static constants (compile-time `is_a`, fast path unchanged) and splats (runtime
+`zeo_rt::rescue_matches_any`), OR'd together. Composes with static classes,
+multiple clauses, ensure, retry, `$!`, and module-include matching. 22
+zeo-vs-oracle probes pass; e2e added; zero conformance regressions. Documented
+edge: a non-Module element (`rescue *[42]`) raises the right `TypeError` but
+attributes it to the raise line without the cause-chain (a pathological input).
+
+**Current blocker (STDLIB):** `cannot load such file -- etc` (via
+`rubygems/config_file.rb`) — the native **`Etc`** module (`Etc.sysconf`,
+`Etc.systmpdir`, passwd lookups). rubygems reads it to find the user's home/gem
+dir. The require graph now advances through rubygems.rb → specification.rb →
+config_file.rb before hitting it — the compiler wall is behind us; this is the
+STDLIB grind (native ext, see the worklist).
 
 **Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
 Process/IO that zeo largely has; ordered by the `bundle --version` → install
@@ -147,15 +160,15 @@ path):
 | `open-uri` + `net/http` + `resolv` | **M3** network install | biggest; TLS via ext-openssl growth |
 
 **Missing NATIVE ext stdlib:**
-- `etc` — `Etc.sysconf`/passwd/`nprocessors` (rubygems reads the user gem dir).
+- `etc` — `Etc.sysconf`/`systmpdir`/passwd/`nprocessors` (**current blocker**;
+  rubygems' config_file reads it for the user's home/gem dir).
 - `io/wait` — `IO#wait_readable`/`#wait_writable` (net/http).
 - `mkmf` — native-extension Makefile generation. **M2/M3**, large; only needed to
   install gems with C extensions, not for `bundle --version`.
 
 **Lowering gaps in ALREADY-vendored gems** (surfaced now that the graph reaches
 them; each small):
-- `rescue *yaml_errors => e` (`rubygems.rb:410`) — splat-rescue (current
-  blocker; a `rescue` over a runtime array of exception classes).
+- `rescue *yaml_errors => e` (`rubygems.rb:410`) — ✅ FIXED (splat-rescue).
 - `shellwords.rb:66` — a module-level construct not lowered (triage).
 - `delegate.rb:47` — `alias __raise__ raise` (alias of an inherited builtin —
   the partially-handled alias family).

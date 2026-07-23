@@ -785,6 +785,11 @@ fn collect_const_refs(
                 collect_const_refs(compiler, n, cref, out);
             }
             for r in rescues {
+                // A splatted exception list (`rescue *ERRS`) can reference
+                // constants that must resolve like any other const use.
+                for &n in &r.splats {
+                    collect_const_refs(compiler, n, cref, out);
+                }
                 for &n in &r.body {
                     collect_const_refs(compiler, n, cref, out);
                 }

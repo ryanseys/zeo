@@ -351,6 +351,9 @@ impl Walker {
             } => {
                 self.visit_all(hir, &body.clone());
                 for r in rescues.iter_mut() {
+                    // Splatted exception exprs (`rescue *errs`) read the OUTER
+                    // scope -- visit them before the clause binds `=> e`.
+                    self.visit_all(hir, &r.splats.clone());
                     if let Some(binding) = &mut r.binding {
                         self.bind(binding);
                     }

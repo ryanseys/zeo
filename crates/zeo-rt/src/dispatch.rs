@@ -1090,6 +1090,36 @@ pub fn is_a(recv_class: ClassId, target: ClassId) -> bool {
     ancestors_of_value(recv_class).contains(&target)
 }
 
+/// `rescue *list => e` matching: does the raised `exc` match any class in the
+/// splatted `list`? `list` is the EVALUATED splat expression -- an Array of
+/// exception classes (`rescue *errs`), or, splatting a non-array, a single
+/// class (`rescue *ArgumentError`). An empty array matches nothing. A
+/// non-Module element is CRuby's `TypeError: class or module required for
+/// rescue clause`. OR'd in after a clause's static class list by codegen.
+pub fn rescue_matches_any(exc: &RubyValue, list: &RubyValue) -> Result<bool, Signal> {
+    match list {
+        RubyValue::Array(a) => {
+            for el in a.lock().to_vec() {
+                if rescue_class_matches(&el, exc)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        single => rescue_class_matches(single, exc),
+    }
+}
+
+fn rescue_class_matches(cls: &RubyValue, exc: &RubyValue) -> Result<bool, Signal> {
+    match cls {
+        RubyValue::Class(cid) => Ok(is_a(exc.as_object_unchecked().class_id(), *cid)),
+        _ => Err(raise_error(
+            "TypeError",
+            "class or module required for rescue clause".to_string(),
+        )),
+    }
+}
+
 /// `Module#<=>`-style ordering of two class/module ids by the ancestry
 /// relation (CRuby `rb_class_cmp`): `Less` when `a` is a proper descendant of
 /// `b`, `Greater` when a proper ancestor, `Equal` when the same class, and

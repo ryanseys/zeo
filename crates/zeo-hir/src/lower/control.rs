@@ -91,11 +91,22 @@ pub(crate) fn lower_begin(
     let mut rescues = Vec::new();
     let mut next = begin.rescue_clause();
     while let Some(r) = next {
-        let classes = r
-            .exceptions()
-            .iter()
-            .map(|n| constant_path_name(&n))
-            .collect::<PResult<Vec<_>>>()?;
+        // Partition the clause's exception list into STATIC constant references
+        // (`rescue Foo, Bar`) and SPLATS (`rescue *errs`). A splat has no
+        // compile-time class to resolve, so its expression is lowered and
+        // matched at runtime (`zeo_rt::rescue_matches_any`).
+        let mut classes = Vec::new();
+        let mut splats = Vec::new();
+        for n in r.exceptions().iter() {
+            if let Some(splat) = n.as_splat_node() {
+                let expr = splat
+                    .expression()
+                    .ok_or("`rescue *` needs an expression after the `*`")?;
+                splats.push(lower_node(result, hir, &expr)?);
+            } else {
+                classes.push(constant_path_name(&n)?);
+            }
+        }
         let binding = match r.reference() {
             None => None,
             Some(n) => Some(local_target_name(&n)?),
@@ -103,6 +114,7 @@ pub(crate) fn lower_begin(
         let rescue_body = lower_body(result, hir, r.statements().map(|s| s.as_node()))?;
         rescues.push(RescueClause {
             classes,
+            splats,
             binding,
             body: rescue_body,
         });

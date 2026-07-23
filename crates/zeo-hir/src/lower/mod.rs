@@ -1465,6 +1465,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                                 body: vec![native_loop],
                                 rescues: vec![crate::hir::RescueClause {
                                     classes: vec!["StopIteration".to_string()],
+                                    splats: Vec::new(),
                                     binding: Some("__loop_stop".to_string()),
                                     body: vec![result_call],
                                 }],
@@ -2035,6 +2036,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             body,
             rescues: vec![RescueClause {
                 classes: Vec::new(),
+                splats: Vec::new(),
                 binding: None,
                 body: fallback,
             }],
