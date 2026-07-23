@@ -573,6 +573,52 @@ fn pin_builtin_exceptions_tail(compiler: &mut Compiler) -> Result<(), String> {
     Ok(())
 }
 
+/// If a top-level `CONST = <class value>` constant aliases an existing class
+/// (`CONST = SomeClass`, `CONST = A::B`, or `CONST = <literal>.class`), the
+/// aliased `ClassId`. Real Ruby's `class CONST; ...; end` REOPENS that class
+/// (the #1036 `INTEGER_KLASS = 1.class; class INTEGER_KLASS; ...` shape),
+/// rather than minting a fresh one named `CONST`.
+fn const_alias_target(compiler: &Compiler, leaf: &str, box_id: u32) -> Option<ClassId> {
+    let value = compiler.hir.nodes().iter().find_map(|n| match n {
+        HirNode::ConstWrite {
+            scope: None,
+            name,
+            value,
+        } if name == leaf => Some(*value),
+        _ => None,
+    })?;
+    match &compiler.hir[value] {
+        HirNode::ClassRef(n) => compiler.resolve_class(n, &[], box_id),
+        HirNode::QualifiedConstRead(scope, n) => {
+            compiler.resolve_class(&format!("{scope}::{n}"), &[], box_id)
+        }
+        // `CONST = <literal>.class`
+        HirNode::Call {
+            receiver: Some(r),
+            name,
+            args,
+            ..
+        } if name == "class" && args.is_empty() => literal_class_id(&compiler.hir[*r]),
+        _ => None,
+    }
+}
+
+/// The builtin `ClassId` of a literal value (`1.class` -> Integer, etc.).
+fn literal_class_id(node: &HirNode) -> Option<ClassId> {
+    Some(match node {
+        HirNode::IntegerLit(_) | HirNode::BigIntegerLit { .. } => zeo_abi::INTEGER_CLASS,
+        HirNode::FloatLit(_) => zeo_abi::FLOAT_CLASS,
+        HirNode::StringLit(_) => zeo_abi::STRING_CLASS,
+        HirNode::SymbolLit(_) => zeo_abi::SYMBOL_CLASS,
+        HirNode::ArrayLit(_) => zeo_abi::ARRAY_CLASS,
+        HirNode::HashLit(_) => zeo_abi::HASH_CLASS,
+        HirNode::NilLit => zeo_abi::NIL_CLASS,
+        HirNode::BoolLit(true) => zeo_abi::TRUE_CLASS,
+        HirNode::BoolLit(false) => zeo_abi::FALSE_CLASS,
+        _ => return None,
+    })
+}
+
 // Every parameter is a distinct piece of the definition site (same
 // posture as `register_method`); `def_node` is the site's own `ClassDef`
 // marker for document-order body execution (`Compiler::class_body_sites`).
@@ -620,7 +666,17 @@ fn register_class(
     // the builtin MODULES (`Enumerable`/`Comparable` -- patching one would
     // need re-materialization onto every includer, including the Rust-
     // backed builtin fallbacks).
-    let existing = compiler.class_in_scope(lexical_parent, &leaf, box_id);
+    let existing = compiler
+        .class_in_scope(lexical_parent, &leaf, box_id)
+        // A bare `class CONST` where CONST aliases an existing class reopens
+        // it (`INT_ALIAS = 1.class; class INT_ALIAS; include M; end`).
+        .or_else(|| {
+            if qualified_def {
+                None
+            } else {
+                const_alias_target(compiler, &leaf, box_id)
+            }
+        });
     // A top-level `class String ... end` INSIDE a box with no
     // same-box definition to attach to: when the name reaches a builtin
     // through the bootstrap fallback, this is a PER-BOX builtin reopen --
