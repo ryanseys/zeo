@@ -1620,31 +1620,37 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         if call.receiver().is_none()
             && matches!(name.as_str(), "require" | "require_relative" | "load")
         {
-            // ...EXCEPT when the feature is one zeo already provides
-            // natively. Then there is nothing to splice and nothing to
-            // search for: the whole effect of the require is to activate a
-            // gated builtin, which is a compile-time act that works from any
-            // position. CRuby's `require` returns true the first time a
-            // feature is loaded and false thereafter (`load.c:1413`), and
-            // `activated_features` doubles as that loaded-features table --
-            // so the call folds to the bool `insert` reports.
+            // A non-top-level `require`/`require_relative` of a LITERAL
+            // feature is a compile-time no-op here: the loader's eager
+            // pre-pass (`Loader::lower_file_statements`) has already spliced
+            // the target file -- the same compile-time-require treatment
+            // `autoload` gets -- so the CALL only has to report a load result.
             //
-            // Only `require` folds. `load` re-executes unconditionally and
-            // `require_relative` names a file that must actually be spliced,
-            // neither of which a literal can stand in for.
-            if name == "require" {
+            // A native builtin has nothing to splice; its whole effect is to
+            // activate a gated feature (a compile-time act from any position),
+            // and `activated_features` doubles as CRuby's loaded-features
+            // table, so `require` folds to the bool `insert` reports
+            // (`load.c:1413`: true the first time, false thereafter). A file
+            // feature folds to `true`: it is loaded eagerly at program start,
+            // so the `unless defined?`/`if <cond>` guards around these requires
+            // short-circuit at runtime and the return value is rarely read.
+            //
+            // `load` re-executes unconditionally and a NON-literal argument
+            // can't be resolved at compile time, so both stay rejections.
+            if matches!(name.as_str(), "require" | "require_relative") {
                 if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
-                    if features::is_builtin_feature(&feature) {
+                    if name == "require" && features::is_builtin_feature(&feature) {
                         let newly_loaded = hir
                             .activated_features
                             .insert(features::canonical_ext_feature(&feature).to_string());
                         let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
                         return Ok(hir.push(HirNode::BoolLit(first)));
                     }
+                    return Ok(hir.push(HirNode::BoolLit(true)));
                 }
             }
             return Err(format!(
-                "`{name}` is only supported as a top-level statement with a single string-literal argument (zeo limitation) -- it's resolved at compile time, so it can't appear inside a method, block, conditional, `begin`, or `eval` body"
+                "`{name}` here needs a single string-literal argument (zeo limitation) -- a compile-time-resolvable target like `{name} \"some/feature\"`; `load` (which re-executes) and a non-literal target are only rejected because they have no compile-time meaning"
             ).into());
         }
         // `autoload :Const, "feature"` -- the loader's eager pre-pass

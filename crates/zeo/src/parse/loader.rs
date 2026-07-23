@@ -410,7 +410,42 @@ impl Loader {
                 self.splice_feature(hir, &feature, "require", dir, file_idx, current_box)?;
             combined.extend(spliced);
         }
-        Ok(combined)
+
+        // Non-top-level `require`/`require_relative` (inside a method,
+        // conditional, `begin`, block -- anywhere the file-level loop above
+        // does NOT resolve): whole-program AOT can't defer them to runtime, so,
+        // exactly like `autoload`, splice each literal target eagerly here (the
+        // CALL itself folds to a bool no-op in `lower_call_general`). By the
+        // time this runs, lowering has already validated every reachable
+        // require's argument is a literal (else it errored), so
+        // `lower_require_statement` never rejects one here. Deduped through the
+        // shared `required` table, so a target already loaded at top level (or
+        // shared across sites) splices exactly once. Over-approximation: a
+        // require in a never-taken branch still loads -- benign, since every
+        // extension is statically linked anyway.
+        let mut requires = RequireCollector::default();
+        {
+            use ruby_prism::Visit as _;
+            for n in body.iter() {
+                requires.visit(&n);
+            }
+        }
+        let mut hoisted = Vec::new();
+        for call in &requires.calls {
+            let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
+            let spliced =
+                self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?;
+            hoisted.extend(spliced);
+        }
+        // The hoisted targets run BEFORE this file's own statements, so a method
+        // that `require`s-and-uses one of them works even when it is called
+        // during this same file's top-level load (top-level requires the file
+        // itself makes are already inside `combined`, spliced by the loop
+        // above). Narrow over-approximation: a hoisted target that depends on a
+        // SAME-FILE top-level require would see it unloaded -- unheard of in
+        // practice (nested requires name self-contained lazy deps).
+        hoisted.append(&mut combined);
+        Ok(hoisted)
     }
 
     /// One recognized require/require_relative/load statement: validate the
@@ -1129,6 +1164,30 @@ fn is_native_feature(feature: &str) -> bool {
 /// genuinely runtime-dynamic, like a non-top-level `require`); it lowers to a
 /// no-op without a splice, so its constant stays undefined -- a loud
 /// NameError on reference, not silent, and documented.
+/// Collects every receiver-less `require`/`require_relative` call ANYWHERE in a
+/// file's tree -- method bodies, conditionals, `begin`, blocks included -- via
+/// prism's generic traversal (`Visit`), so the loader can eager-splice targets
+/// a non-top-level require names. Top-level requires are collected too but are
+/// harmless: they were already spliced by the file-level loop and dedup skips
+/// the second attempt. `load` and receiver-bearing (`box.require`) forms are
+/// excluded -- they are not eager-splice-able.
+#[derive(Default)]
+struct RequireCollector<'a> {
+    calls: Vec<ruby_prism::CallNode<'a>>,
+}
+
+impl<'pr> ruby_prism::Visit<'pr> for RequireCollector<'pr> {
+    fn visit_branch_node_enter(&mut self, node: ruby_prism::Node<'pr>) {
+        if let Some(call) = node.as_call_node() {
+            if call.receiver().is_none()
+                && matches!(call.name().as_slice(), b"require" | b"require_relative")
+            {
+                self.calls.push(call);
+            }
+        }
+    }
+}
+
 fn collect_autoloads<'a>(node: &ruby_prism::Node<'a>, out: &mut Vec<ruby_prism::CallNode<'a>>) {
     if let Some(stmts) = node.as_statements_node() {
         for n in stmts.body().iter() {

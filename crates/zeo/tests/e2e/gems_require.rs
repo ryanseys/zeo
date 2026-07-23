@@ -1022,3 +1022,36 @@ fn rbconfig_shim_is_built_in() {
         "4.0.0\ndarwin25\n\"\"\narm64-darwin25\nconstant\n"
     );
 }
+
+// A `require` no longer has to be a top-level statement. Whole-program AOT
+// hoists a non-top-level literal `require`/`require_relative` to a compile-time
+// splice (loaded before the file's own code, like the rubygems/bundler
+// `require "x" unless defined?(X)` idiom), so it works inside a method, a
+// top-level conditional, and a begin/rescue-LoadError guard. Oracle-pinned.
+#[test]
+fn require_works_in_non_top_level_positions() {
+    let result = run_ruby(
+        r#"
+        def make_struct
+          require "ostruct"
+          OpenStruct.new(a: 1, b: 2).b
+        end
+        puts make_struct
+
+        require "set" if RUBY_VERSION
+        puts Set.new([1, 1, 2, 3]).size
+
+        def with_json
+          begin
+            require "json"
+          rescue LoadError
+            return "no json"
+          end
+          JSON.generate({ "k" => 1 })
+        end
+        puts with_json
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "2\n3\n{\"k\":1}\n");
+}
