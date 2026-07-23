@@ -819,9 +819,17 @@ pub fn emit_call(
     // FiberError construction happens here, not in `zeo_rt::fiber_*`
     // (the `array_set`->`IndexError` division of labor; messages verbatim
     // from CRuby `cont.c`).
-    if let HirNode::ClassRef(target_name) = &cx.compiler.hir[recv_id] {
+    // The receiver names a class either bare (`Proc`) or as an absolute
+    // top-level path (`::Proc`, which lowers to a QualifiedConstRead against
+    // Object) -- both feed the builtin `.new`/etc. special cases below.
+    let class_target: Option<&str> = match &cx.compiler.hir[recv_id] {
+        HirNode::ClassRef(n) => Some(n.as_str()),
+        HirNode::QualifiedConstRead(scope, n) if scope == "Object" => Some(n.as_str()),
+        _ => None,
+    };
+    if let Some(target_name) = class_target {
         if !safe && kwargs.is_empty() {
-            match (target_name.as_str(), name) {
+            match (target_name, name) {
                 // `Proc.new { ... }` IS its block (CRuby: `proc_new` just
                 // wraps the given block) -- the same value `proc { ... }`
                 // builds, so it routes to the same emitter and carries the

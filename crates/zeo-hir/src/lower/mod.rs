@@ -1189,7 +1189,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 if !has_dynamic_args
                     && !block_pass
                     && !matches!(
-                        class_name.as_str(),
+                        // An absolute `::Proc`/`::Fiber` path names the same
+                        // builtin; match on the leaf so it keeps its block too.
+                        class_name.strip_prefix("::").unwrap_or(class_name.as_str()),
                         // `Class.new(Super) { body }` (#97 F4) keeps its block --
                         // the block IS the anonymous class's body; `HirNode::New`
                         // has no slot for it, so it falls through to the generic
