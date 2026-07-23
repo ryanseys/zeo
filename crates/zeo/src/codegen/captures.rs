@@ -124,168 +124,174 @@ pub fn block_captures(
     caps
 }
 
-/// Whether `body` (a WHOLE method's own body) lexically contains at least
-/// one escaping block, ANYWHERE (including nested inside `if`/`while`/an
-/// inline `.times` block/etc) -- decides whether `codegen::mod`'s per-
-/// method `Signal::Return` catch is needed at all.
+/// Whether `body` (a WHOLE method's own body) contains a `return` that is
+/// lexically INSIDE an escaping (non-inline, non-lambda) block -- the only
+/// shape that raises a `Signal::Return` homed to THIS method, which its
+/// `codegen::mod` per-method catch must intercept.
 ///
-/// Confirmed the hard way this can't be "wrap every method unconditionally"
-/// (the original, simpler design): a method with NO escaping block of its
-/// own (e.g. `each_num`, which just yields to whatever block it's given)
-/// must NOT catch `Signal::Return` -- doing so would incorrectly intercept
-/// a `return` that belongs to a DIFFERENT method (wherever the block it's
-/// currently invoking was actually WRITTEN, e.g. `find_even`), silently
-/// turning "return from find_even" into "each_num returns normally instead"
-/// instead of propagating further. Only a method whose OWN body contains an
-/// escaping block can ever be the right place to catch a `Signal::Return`
-/// that block raises.
-pub fn body_contains_escaping_block(compiler: &Compiler, body: &[NodeId]) -> bool {
+/// A `return` written directly in the method body (or in an inline `.times`
+/// block, which shares the method's Rust scope) compiles to a literal Rust
+/// `return`, needs no catch, and does not count. A `return` inside a real
+/// escaping block compiles to `Err(Signal::Return(..))` homed here. A `return`
+/// inside a nested LAMBDA belongs to the lambda (it catches its own), so the
+/// walk stops at a lambda boundary.
+///
+/// Confirmed the hard way this can't be "any escaping block, return or not":
+/// a pure relay like `each_item` -- which yields to a caller's block and has
+/// its OWN escaping block but no `return` lexically inside it -- must NOT
+/// catch, or it intercepts a `return` homed to the CALLER (turning the
+/// caller's non-local return into a normal one). See the
+/// `inline_yield_method_with_return` conformance case.
+pub fn body_contains_escaping_return(compiler: &Compiler, body: &[NodeId]) -> bool {
     body.iter()
-        .any(|&n| node_contains_escaping_block(compiler, n))
+        .any(|&n| node_contains_escaping_return(compiler, n, false))
 }
 
-fn node_contains_escaping_block(compiler: &Compiler, id: NodeId) -> bool {
+/// Body-list helper threading the `in_escaping` state (whether we are already
+/// lexically inside an escaping block).
+fn body_contains_escaping_return_in(compiler: &Compiler, body: &[NodeId], in_escaping: bool) -> bool {
+    body.iter()
+        .any(|&n| node_contains_escaping_return(compiler, n, in_escaping))
+}
+
+fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: bool) -> bool {
+    let sub = |n: NodeId| node_contains_escaping_return(compiler, n, in_escaping);
     match &compiler.hir[id] {
         // An FFI wrapper body (#204) contains no block.
         HirNode::Ffi(_) => false,
-        // A lambda literal's own body is a fully self-contained closure
-        // boundary (it ALWAYS catches its own `Signal::Return`/`Break`,
-        // unconditionally, unlike an ordinary method -- see
-        // `hir::HirNode::Lambda`'s docs) -- its mere presence never requires
-        // the ENCLOSING method to install its own catch, so this is a leaf.
+        // A lambda literal catches its own `Signal::Return` unconditionally --
+        // a `return` inside it belongs to the lambda, never the enclosing
+        // method (see `hir::HirNode::Lambda`'s docs), so the walk stops here.
         HirNode::Lambda { .. } => false,
         HirNode::Call { receiver, name, args, kwargs, block, block_arg, .. } => {
             if let Some(b) = block {
                 let HirNode::Block { body, .. } = &compiler.hir[*b] else {
                     panic!("internal error: a Block node should only be reached via the Call that invokes it");
                 };
-                if !is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty()) {
-                    return true;
-                }
-                // Still inline (`.times`) -- keep looking inside it (and in
-                // every other position this call touches).
-                if body_contains_escaping_block(compiler, body) {
+                // An escaping (non-inline) block's body runs as a proc homed to
+                // this method, so a `return` anywhere inside it needs the catch;
+                // an inline `.times` block shares this scope, so its `return` is
+                // literal and only counts if we were already inside one.
+                let block_escaping =
+                    !is_inline_block_fast_path(compiler, *receiver, name, kwargs.is_empty());
+                if body_contains_escaping_return_in(compiler, body, in_escaping || block_escaping) {
                     return true;
                 }
             }
-            receiver.is_some_and(|r| node_contains_escaping_block(compiler, r))
+            receiver.is_some_and(&sub)
                 || args.iter().any(|a| {
                     let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = a;
-                    node_contains_escaping_block(compiler, *n)
+                    sub(*n)
                 })
-                || kwargs
-                    .iter()
-                    .flat_map(|kw| kw.node_ids())
-                    .any(|n| node_contains_escaping_block(compiler, n))
-                || block_arg.is_some_and(|b| node_contains_escaping_block(compiler, b))
+                || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
+                || block_arg.is_some_and(&sub)
         }
         HirNode::LocalWrite(_, v) | HirNode::IvarWrite(_, v) | HirNode::ClassVarWrite(_, v) | HirNode::Defined(v) => {
-            node_contains_escaping_block(compiler, *v)
+            sub(*v)
         }
-        HirNode::And(l, r) | HirNode::Or(l, r) => {
-            node_contains_escaping_block(compiler, *l) || node_contains_escaping_block(compiler, *r)
-        }
+        HirNode::And(l, r) | HirNode::Or(l, r) => sub(*l) || sub(*r),
         HirNode::If { cond, then_body, else_body } => {
-            node_contains_escaping_block(compiler, *cond)
-                || body_contains_escaping_block(compiler, then_body)
-                || body_contains_escaping_block(compiler, else_body)
+            sub(*cond)
+                || body_contains_escaping_return_in(compiler, then_body, in_escaping)
+                || body_contains_escaping_return_in(compiler, else_body, in_escaping)
         }
         HirNode::CaseWhen { subject, arms, else_body } => {
-            subject.is_some_and(|s| node_contains_escaping_block(compiler, s))
+            subject.is_some_and(&sub)
                 || arms.iter().any(|(values, body)| {
                     values.iter().any(|e| {
                         let (ArrayElem::Single(v) | ArrayElem::Splat(v)) = e;
-                        node_contains_escaping_block(compiler, *v)
+                        sub(*v)
                     })
-                        || body_contains_escaping_block(compiler, body)
+                        || body_contains_escaping_return_in(compiler, body, in_escaping)
                 })
-                || body_contains_escaping_block(compiler, else_body)
+                || body_contains_escaping_return_in(compiler, else_body, in_escaping)
         }
         HirNode::While { cond, body, .. } => {
-            node_contains_escaping_block(compiler, *cond) || body_contains_escaping_block(compiler, body)
+            sub(*cond) || body_contains_escaping_return_in(compiler, body, in_escaping)
         }
-        HirNode::Loop { body } => body_contains_escaping_block(compiler, body),
+        HirNode::Loop { body } => body_contains_escaping_return_in(compiler, body, in_escaping),
         HirNode::For { target, iterable, body } => {
             let mut found = false;
-            target.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
+            target.for_each_node(&mut |n| found |= sub(n));
             found
-                || node_contains_escaping_block(compiler, *iterable)
-                || body_contains_escaping_block(compiler, body)
+                || sub(*iterable)
+                || body_contains_escaping_return_in(compiler, body, in_escaping)
         }
-        HirNode::Break(v) | HirNode::Next(v) | HirNode::Return(v) => {
-            v.is_some_and(|v| node_contains_escaping_block(compiler, v))
-        }
+        // The one that matters: a `return` inside an escaping block needs the
+        // catch. Its value expression is walked too (it may hold another).
+        HirNode::Return(v) => in_escaping || v.is_some_and(&sub),
+        HirNode::Break(v) | HirNode::Next(v) => v.is_some_and(&sub),
         HirNode::MultiWrite { targets, value } => {
             let mut found = false;
-            targets.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
-            found || node_contains_escaping_block(compiler, *value)
+            targets.for_each_node(&mut |n| found |= sub(n));
+            found || sub(*value)
         }
-        HirNode::GlobalWrite(_, value) => node_contains_escaping_block(compiler, *value),
-        HirNode::ConstWrite { value, .. } => node_contains_escaping_block(compiler, *value),
+        HirNode::GlobalWrite(_, value) => sub(*value),
+        HirNode::ConstWrite { value, .. } => sub(*value),
         HirNode::Yield(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-            node_contains_escaping_block(compiler, *n)
+            sub(*n)
         }),
         HirNode::Raise(args, cause) => args
             .iter()
             .chain(crate::hir::raise_cause_node(cause).iter())
-            .any(|&a| node_contains_escaping_block(compiler, a)),
-        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => body_contains_escaping_block(compiler, body),
-        HirNode::New { args, block, .. } => {
-            block.is_some()
-                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
+            .any(|&a| sub(a)),
+        HirNode::PreExec(body) | HirNode::Seq(body) | HirNode::Eval(body) | HirNode::BoxScope { body, .. } => {
+            body_contains_escaping_return_in(compiler, body, in_escaping)
         }
-        // A literal `super { ... }` block always escapes (see `walk`'s
-        // `SuperCall` arm).
+        // A block attached to `.new` / `super` runs as a proc that may be homed
+        // to this method, so its body is walked as escaping.
+        HirNode::New { args, block, .. } => {
+            block.is_some_and(|b| {
+                matches!(&compiler.hir[b], HirNode::Block { body, .. }
+                    if body_contains_escaping_return_in(compiler, body, true))
+            }) || args.iter().any(|&a| sub(a))
+        }
         HirNode::SuperCall { args, kwargs, block, .. } => {
-            block.is_some()
-                || args.iter().any(|&a| node_contains_escaping_block(compiler, a))
-                || kwargs
-                    .iter()
-                    .flat_map(|kw| kw.node_ids())
-                    .any(|a| node_contains_escaping_block(compiler, a))
+            block.is_some_and(|b| {
+                matches!(&compiler.hir[b], HirNode::Block { body, .. }
+                    if body_contains_escaping_return_in(compiler, body, true))
+            }) || args.iter().any(|&a| sub(a))
+                || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
-            node_contains_escaping_block(compiler, *n)
+            sub(*n)
         }),
-        HirNode::HashLit(pairs) => pairs
-            .iter()
-            .flat_map(|kw| kw.node_ids())
-            .any(|n| node_contains_escaping_block(compiler, n)),
+        HirNode::HashLit(pairs) => pairs.iter().flat_map(|kw| kw.node_ids()).any(&sub),
         HirNode::RangeLit { start, end, .. } => {
-            start.is_some_and(|s| node_contains_escaping_block(compiler, s))
-                || end.is_some_and(|e| node_contains_escaping_block(compiler, e))
+            start.is_some_and(&sub) || end.is_some_and(&sub)
         }
         HirNode::StringLit(parts) | HirNode::RegexpLit(parts, _) => parts.iter().any(|p| match p {
-            StrPart::Interp(n) => node_contains_escaping_block(compiler, *n),
+            StrPart::Interp(n) => sub(*n),
             StrPart::Lit(_) | StrPart::Bytes(_) => false,
         }),
         HirNode::CaseIn { subject, arms, else_body } => {
-            node_contains_escaping_block(compiler, *subject)
+            sub(*subject)
                 || arms.iter().any(|arm| {
                     let mut pattern_found = false;
-                    arm.pattern
-                        .for_each_node(&mut |n| pattern_found |= node_contains_escaping_block(compiler, n));
+                    arm.pattern.for_each_node(&mut |n| pattern_found |= sub(n));
                     pattern_found
-                        || arm.guard.is_some_and(|(g, _)| node_contains_escaping_block(compiler, g))
-                        || body_contains_escaping_block(compiler, &arm.body)
+                        || arm.guard.is_some_and(|(g, _)| sub(g))
+                        || body_contains_escaping_return_in(compiler, &arm.body, in_escaping)
                 })
-                || else_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
+                || else_body
+                    .as_deref()
+                    .is_some_and(|b| body_contains_escaping_return_in(compiler, b, in_escaping))
         }
         HirNode::MatchPredicate { subject, pattern } | HirNode::MatchRequired { subject, pattern } => {
-            if node_contains_escaping_block(compiler, *subject) {
+            if sub(*subject) {
                 return true;
             }
             let mut found = false;
-            pattern.for_each_node(&mut |n| found |= node_contains_escaping_block(compiler, n));
+            pattern.for_each_node(&mut |n| found |= sub(n));
             found
         }
         HirNode::Begin { body, rescues, else_body, ensure_body } => {
-            body_contains_escaping_block(compiler, body)
-                || rescues.iter().any(|r| body_contains_escaping_block(compiler, &r.body))
-                || else_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
-                || ensure_body.as_deref().is_some_and(|b| body_contains_escaping_block(compiler, b))
+            body_contains_escaping_return_in(compiler, body, in_escaping)
+                || rescues.iter().any(|r| body_contains_escaping_return_in(compiler, &r.body, in_escaping))
+                || else_body.as_deref().is_some_and(|b| body_contains_escaping_return_in(compiler, b, in_escaping))
+                || ensure_body.as_deref().is_some_and(|b| body_contains_escaping_return_in(compiler, b, in_escaping))
         }
         HirNode::Retry
         | HirNode::Redo

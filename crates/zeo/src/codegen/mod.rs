@@ -1562,7 +1562,7 @@ fn emit_class_method_fn(compiler: &Compiler, sid: crate::compiler::ScopeId) -> T
     // needs the SAME per-method `Signal::Return` catch an ordinary instance
     // method gets when it contains either.
     let needs_return_catch = captures::body_contains_begin(compiler, &scope.body)
-        || captures::body_contains_escaping_block(compiler, &scope.body);
+        || captures::body_contains_escaping_return(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, body);
     let frame = scope_frame_guard(compiler, scope, true);
     // `check_ints` after the frame push: the method-prologue interruption
@@ -1799,7 +1799,7 @@ fn emit_builtin_method_fn(
     );
     // Same needs-a-`Signal::Return`-catch rule as `emit_class`'s methods --
     // see the long comment there.
-    let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
+    let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
         || captures::body_contains_begin(compiler, &scope.body);
     let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
     let frame = scope_frame_guard(compiler, scope, false);
@@ -1873,19 +1873,20 @@ fn emit_class(compiler: &Compiler, cid: ClassId) -> TokenStream {
             true,
         );
         // The `Signal::Return` catch is needed ONLY when this method's OWN
-        // body lexically contains an escaping block OR a `begin`/`rescue`
-        // construct -- confirmed the hard way NOT to be "wrap every method
-        // unconditionally" (a simpler design tried first): a method with
-        // neither (e.g. one that just does `yield` to whatever block it's
-        // handed) must NOT catch `Signal::Return` in transit, or it would
-        // incorrectly intercept a `return` meant for a DIFFERENT method --
-        // wherever the block it's currently invoking was actually written --
-        // turning "return from the caller" into "this method returns
-        // normally instead". See `codegen::captures::body_contains_escaping_block`'s
-        // docs, and `codegen::exceptions`'s module docs for why `begin`/
-        // `rescue` ALSO needs this (it introduces its own closure boundary a
-        // literal `return` can't cross either).
-        let needs_return_catch = captures::body_contains_escaping_block(compiler, &scope.body)
+        // body lexically contains a `return` INSIDE an escaping block OR a
+        // `begin`/`rescue` construct -- confirmed the hard way NOT to be "wrap
+        // every method unconditionally", nor even "any escaping block": a pure
+        // relay (e.g. one that just does `yield` to whatever block it's handed,
+        // even while holding its own return-less escaping block) must NOT catch
+        // `Signal::Return` in transit, or it would incorrectly intercept a
+        // `return` meant for a DIFFERENT method -- wherever the block it's
+        // currently invoking was actually written -- turning "return from the
+        // caller" into "this method returns normally instead". See
+        // `codegen::captures::body_contains_escaping_return`'s docs, and
+        // `codegen::exceptions`'s module docs for why `begin`/`rescue` ALSO
+        // needs this (it introduces its own closure boundary a literal
+        // `return` can't cross either).
+        let needs_return_catch = captures::body_contains_escaping_return(compiler, &scope.body)
             || captures::body_contains_begin(compiler, &scope.body);
         let body_tokens = wrap_method_return(needs_return_catch, quote! { #prologue #body });
         let frame = scope_frame_guard(compiler, scope, false);
