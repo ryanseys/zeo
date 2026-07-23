@@ -186,6 +186,27 @@ pub(crate) fn enumerator_for(recv: &RubyValue, meth: &str, args: &[RubyValue]) -
     }))
 }
 
+/// A Generator-backed Enumerator that yields each precomputed value in
+/// `values`. `chunk_while`/`slice_when`/`chunk` (block form) answer one of
+/// these -- CRuby wraps the runs in a Generator, so `#inspect` shows
+/// `#<Enumerator::Generator:...>` and `.to_a`/`.each` replay the runs.
+pub(crate) fn generator_of(values: Vec<RubyValue>) -> RubyValue {
+    let generator = crate::RProc::new(move |a: &[RubyValue]| {
+        if let Some(RubyValue::Yielder(y)) = a.first() {
+            for v in &values {
+                y.call(std::slice::from_ref(v))?;
+            }
+        }
+        Ok(RubyValue::Nil)
+    });
+    RubyValue::Enumerator(Arc::new(EnumeratorData {
+        source: EnumSource::Generator { block: generator },
+        size_hint: None,
+        state: Mutex::new(ExternState::default()),
+        frozen: std::sync::atomic::AtomicBool::new(false),
+    }))
+}
+
 /// `Enumerator::Chain` over `sources`, iterated back to back. The public
 /// constructor behind `Enumerator#+` and `Enumerable#chain`.
 pub(crate) fn chain_of(sources: Vec<RubyValue>) -> RubyValue {
@@ -513,9 +534,12 @@ fn list(vals: &[RubyValue]) -> String {
 
 pub(crate) fn enum_inspect(e: &EnumeratorData) -> String {
     match &e.source {
-        // CRuby prints the generator with its address; addresses are
-        // omitted crate-wide (the 16.2 posture).
-        EnumSource::Generator { .. } => "#<Enumerator: #<Enumerator::Generator>:each>".to_string(),
+        // CRuby prints the generator with its address (the conformance test
+        // normalizes it to `0xADDR`), so this one carries one.
+        EnumSource::Generator { .. } => format!(
+            "#<Enumerator: #<Enumerator::Generator:0x{:016x}>:each>",
+            e as *const EnumeratorData as usize
+        ),
         EnumSource::Produce { .. } => "#<Enumerator: #<Enumerator::Producer>:each>".to_string(),
         // A chain/product prints its sources verbatim (CRuby renders the
         // held array, so `[1,2].chain([3])` shows the arrays themselves

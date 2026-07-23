@@ -629,9 +629,9 @@ fn grep(
 /// An empty receiver answers `[]`, and a one-element one `[[x]]` -- the
 /// block never runs in either case (there is no adjacent pair).
 ///
-/// Real Ruby answers a lazy Enumerator here; this answers an Array, which
-/// `.to_a`/`.each`/`.map` (the overwhelmingly common uses) can't tell apart.
-/// Documented divergence, same posture as the rest of this module.
+/// With a block, answers a Generator-backed Enumerator over the eagerly
+/// materialized runs (CRuby's shape: first-class Enumerator, Generator
+/// inspect); blockless returns a Method enumerator via `block_or_enum!`.
 fn chunk_while(
     recv: &RubyValue,
     args: &[RubyValue],
@@ -655,7 +655,9 @@ fn chunk_while(
     if !cur.is_empty() {
         out.push(RubyValue::Array(array_new(cur)));
     }
-    Ok(RubyValue::Array(array_new(out)))
+    // CRuby wraps the runs in a Generator-backed Enumerator (lazy); we
+    // materialize eagerly but present the same first-class Enumerator.
+    Ok(crate::builtins::enumerator::generator_of(out))
 }
 
 /// `slice_before` / `slice_after`, in both their block and pattern-argument
