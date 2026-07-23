@@ -1356,6 +1356,10 @@ pub enum HirNode {
         cond: NodeId,
         body: Vec<NodeId>,
         negate: bool,
+        /// `begin ... end while cond` (prism's begin-modifier flag): a
+        /// POST-test loop whose body runs once before the condition is first
+        /// checked. `false` for the ordinary pre-test `while`/`until`.
+        post: bool,
     },
     /// `loop do ... end` -- NOT a distinct `ruby-prism` node (it's an
     /// ordinary zero-arg, no-receiver `Kernel#loop` call with a block);

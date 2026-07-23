@@ -1923,10 +1923,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
 
     // `while`/`until`, both statement and modifier form -- `until` is `While`
     // with `negate: true`, exactly like `unless` swaps `If`'s branches above.
-    // The do-while form (`begin...end while cond`) wraps an unhandled
-    // `BeginNode` in its `statements`, so it already surfaces as a clean
-    // "unsupported syntax" error from the recursive `lower_body` call below,
-    // with no special detection needed here.
+    // The do-while form (`begin...end while cond`) is prism's begin-modifier
+    // flag on the same node -- carried through as `post` so codegen runs the
+    // body once before the first condition test.
     if let Some(while_node) = node.as_while_node() {
         let cond = lower_node(result, hir, &while_node.predicate())?;
         let body = lower_body(result, hir, while_node.statements().map(|s| s.as_node()))?;
@@ -1934,6 +1933,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             cond,
             body,
             negate: false,
+            post: while_node.is_begin_modifier(),
         }));
     }
     if let Some(until_node) = node.as_until_node() {
@@ -1943,6 +1943,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             cond,
             body,
             negate: true,
+            post: until_node.is_begin_modifier(),
         }));
     }
 

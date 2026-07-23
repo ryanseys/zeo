@@ -72,7 +72,7 @@ pub(super) fn emit_redo_wrapped_body(
 /// docs for the `negate` flag. The exit test runs at the TOP of the outer
 /// loop (before the body), matching Ruby: a `while false` body never
 /// executes at all.
-pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool) -> TokenStream {
+pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool, post: bool) -> TokenStream {
     let outer = fresh_label(cx, "while");
     let redo = fresh_label(cx, "while_body");
     let loop_cx = cx.in_loop(redo.clone(), outer.clone());
@@ -86,10 +86,27 @@ pub fn emit_while(cx: &Ctx, cond: NodeId, body: &[NodeId], negate: bool) -> Toke
     } else {
         quote! { (#cond_expr).truthy() }
     };
-    quote! {
-        #outer: loop {
-            if !(#test) { break #outer zeo_rt::RubyValue::Nil; }
-            #inner
+    if post {
+        // `begin ... end while cond`: POST-test -- the body runs once before
+        // the first check. The test sits at the TOP but is skipped on the
+        // first pass, so `next` (a `continue #outer`) still re-evaluates the
+        // condition, while `redo` (the inner label) re-runs the body only.
+        quote! {
+            {
+                let mut __post_first = true;
+                #outer: loop {
+                    if !__post_first && !(#test) { break #outer zeo_rt::RubyValue::Nil; }
+                    __post_first = false;
+                    #inner
+                }
+            }
+        }
+    } else {
+        quote! {
+            #outer: loop {
+                if !(#test) { break #outer zeo_rt::RubyValue::Nil; }
+                #inner
+            }
         }
     }
 }
