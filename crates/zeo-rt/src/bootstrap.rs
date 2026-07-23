@@ -63,6 +63,8 @@ pub fn install_core_constants() {
     crate::builtins::env::seed_env();
     crate::builtins::process::seed_process();
     crate::builtins::file::seed_file();
+    #[cfg(feature = "ext-etc")]
+    crate::ext::etc::seed_etc();
     crate::builtins::argf::seed_argf();
     crate::globals::seed_default_globals();
     // `ThreadGroup::Default` -- the one shared group every thread reports

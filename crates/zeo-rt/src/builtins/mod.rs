@@ -158,6 +158,10 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::TCPSERVER_CLASS => crate::ext::socket::lookup_tcpserver,
         #[cfg(feature = "ext-ffi")]
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => crate::ext::ffi::lookup,
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_lookup,
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group,
         _ => return None,
     })
 }
@@ -235,6 +239,10 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::FFI_POINTER_CLASS | zeo_abi::FFI_MEMORY_POINTER_CLASS => {
             crate::ext::ffi::lookup_arity
         }
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::lookup_passwd_arity,
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_arity,
         _ => return None,
     })
 }
@@ -292,6 +300,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         // feature (see `ext/mod.rs`), so a feature-off build drops the arm.
         #[cfg(feature = "ext-base64")]
         zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
         #[cfg(feature = "ext-monitor")]
@@ -439,6 +449,12 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::MUTEX_CLASS => mutex::lookup_class_names(),
         #[cfg(feature = "ext-base64")]
         zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class_names(),
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class_names(),
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_names(),
+        #[cfg(feature = "ext-etc")]
+        zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
         #[cfg(feature = "ext-monitor")]

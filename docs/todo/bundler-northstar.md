@@ -7,11 +7,11 @@ milestones `bundle --version` → `bundle install --local` → network install.
 place.** The dominant architectural blockers — `rbconfig`, non-top-level
 `require`, and now `securerandom` (with `Random::Formatter` + OS-entropy
 `Random.urandom` + `extend`-onto-class/module) — are fixed, as are the dynamic
-`load`/`require`, `a, = rhs` multi-assign, and `rescue *splat` compiler gaps.
-The require graph now clears rubygems.rb/specification.rb/config_file.rb and
-stops at a MISSING STDLIB (`etc`) — the compiler wall is behind us. What remains
-is the grind: implement native `etc`/`io/wait` and vendor the pure-Ruby stdlib
-(`fileutils`/`pathname`/... — see the worklist), one at a time.
+`load`/`require`, `a, = rhs` multi-assign, and `rescue *splat` compiler gaps,
+and native **`etc`** is DONE. The require graph now clears config_file.rb and
+stops at a MISSING STDLIB (`fileutils`). What remains is the grind: vendor the
+pure-Ruby stdlib (`fileutils`/`pathname`/... — see the worklist) and implement
+native `io/wait`, one at a time.
 
 ## Setup
 
@@ -136,12 +136,22 @@ zeo-vs-oracle probes pass; e2e added; zero conformance regressions. Documented
 edge: a non-Module element (`rescue *[42]`) raises the right `TypeError` but
 attributes it to the raise line without the cause-chain (a pathological input).
 
-**Current blocker (STDLIB):** `cannot load such file -- etc` (via
-`rubygems/config_file.rb`) — the native **`Etc`** module (`Etc.sysconf`,
-`Etc.systmpdir`, passwd lookups). rubygems reads it to find the user's home/gem
-dir. The require graph now advances through rubygems.rb → specification.rb →
-config_file.rb before hitting it — the compiler wall is behind us; this is the
-STDLIB grind (native ext, see the worklist).
+**Native `Etc` — ✅ FIXED (2026-07-23).** A full native `ext/etc` module
+(`crates/zeo-rt/src/ext/etc.rs`, ABI ids 86/87/88, `require`-gated on `"etc"`,
+cargo `ext-etc`). Implements the WHOLE surface over libc, not just bundler's
+needs: `getpwnam`/`getpwuid`/`getgrnam`/`getgrgid` + the `getpwent`/`getgrent`
+cursors and `passwd`/`group` block iterators; `Etc::Passwd`/`Etc::Group` value
+structs (all portable members + the BSD `change`/`uclass`/`expire` on Darwin)
+with the Struct-like `members`/`to_a`/`to_h`/`each`/`[]`; `sysconf`/`confstr`/
+`uname`/`nprocessors`/`getlogin`/`sysconfdir`/`systmpdir`; and the portable
+`SC_*`/`PC_*`/`CS_*` constant set libc exposes. 5 unit + 7 e2e tests +
+`examples/etc.rb`, oracle-matched. Doc divergence: `sysconfdir` -> `/etc` (build
+prefix, like rbconfig) vs CRuby's install-prefix path — rubygems rescues it.
+
+**Current blocker (STDLIB):** `cannot load such file -- fileutils` (via
+`rubygems/config_file.rb`). The require graph now clears config_file.rb past
+`Etc`; **`fileutils`** is the biggest pure-Ruby stdlib (40 requires; `mkdir_p`/
+`cp_r`/`rm_rf`/`mv` over File/Dir) — vendor it into `gems/`.
 
 **Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
 Process/IO that zeo largely has; ordered by the `bundle --version` → install
@@ -160,8 +170,7 @@ path):
 | `open-uri` + `net/http` + `resolv` | **M3** network install | biggest; TLS via ext-openssl growth |
 
 **Missing NATIVE ext stdlib:**
-- `etc` — `Etc.sysconf`/`systmpdir`/passwd/`nprocessors` (**current blocker**;
-  rubygems' config_file reads it for the user's home/gem dir).
+- `etc` — ✅ DONE (full native `ext/etc`).
 - `io/wait` — `IO#wait_readable`/`#wait_writable` (net/http).
 - `mkmf` — native-extension Makefile generation. **M2/M3**, large; only needed to
   install gems with C extensions, not for `bundle --version`.

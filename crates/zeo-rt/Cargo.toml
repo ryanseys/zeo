@@ -123,8 +123,10 @@ ext-all = [
     "ext-socket",
     "ext-openssl",
     "ext-ffi",
+    "ext-etc",
 ]
 ext-base64 = []
+ext-etc = []
 ext-monitor = []
 ext-stringio = []
 ext-strscan = []

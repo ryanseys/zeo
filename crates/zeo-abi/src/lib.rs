@@ -343,6 +343,19 @@ pub const WEAKREF_CLASS: ClassId = ClassId(84);
 /// impl serves every host module.
 pub const RANDOM_FORMATTER_MODULE: ClassId = ClassId(85);
 
+/// The `Etc` module (CRuby's `ext/etc`) -- access to the system user/group
+/// databases, `sysconf`/`confstr`, `uname`, `nprocessors`, and the install-path
+/// constants. `require`-gated on `"etc"`. Namespaces `Etc::Passwd`/`Etc::Group`.
+pub const ETC_MODULE: ClassId = ClassId(86);
+
+/// `Etc::Passwd` -- one row of the system password database (name/uid/gid/dir/
+/// shell/...), what `Etc.getpwnam`/`getpwuid`/`getpwent` answer.
+pub const ETC_PASSWD_CLASS: ClassId = ClassId(87);
+
+/// `Etc::Group` -- one row of the system group database (name/gid/members),
+/// what `Etc.getgrnam`/`getgrgid`/`getgrent` answer.
+pub const ETC_GROUP_CLASS: ClassId = ClassId(88);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1044,6 +1057,30 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: None,
         includes: &[],
         feature: Some("random/formatter"),
+    },
+    BuiltinClass {
+        id: ETC_MODULE,
+        name: "Etc",
+        is_module: true,
+        superclass: None,
+        includes: &[],
+        feature: Some("etc"),
+    },
+    BuiltinClass {
+        id: ETC_PASSWD_CLASS,
+        name: "Etc::Passwd",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("etc"),
+    },
+    BuiltinClass {
+        id: ETC_GROUP_CLASS,
+        name: "Etc::Group",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[],
+        feature: Some("etc"),
     },
 ];
 

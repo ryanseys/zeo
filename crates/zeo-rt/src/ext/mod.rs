@@ -68,6 +68,8 @@ pub(crate) mod cgi;
 pub(crate) mod date;
 #[cfg(feature = "ext-digest")]
 pub(crate) mod digest;
+#[cfg(feature = "ext-etc")]
+pub(crate) mod etc;
 #[cfg(feature = "ext-ffi")]
 pub(crate) mod ffi;
 #[cfg(feature = "ext-json")]
