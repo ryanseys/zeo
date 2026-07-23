@@ -74,8 +74,20 @@ pub(crate) fn desugar_singleton_class_defs(
                 is_class_method: false,
                 ..
             } => (name.clone(), params.clone(), body.clone()),
+            // A constant inside `class << obj` (`class << RANDOM; MAX = ...;
+            // def next; MAX; end; end`, tmpdir) lives on the object's singleton
+            // class in real Ruby. zeo has no per-object singleton-class
+            // namespace, so it HOISTS the constant to the enclosing lexical
+            // scope -- where the singleton methods' bodies resolve it lexically,
+            // the same place a bare `MAX` reference in this scope looks (see the
+            // `singleton_class_constant` e2e). Documented divergence: it also
+            // becomes reachable as `Enclosing::MAX`.
+            HirNode::ConstWrite { .. } => {
+                out.push(id);
+                continue;
+            }
             _ => {
-                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s here (zeo limitation)".to_string().into());
+                return Err("`class << obj` (a per-instance singleton class) supports only instance `def`s and constants here (zeo limitation)".to_string().into());
             }
         };
         let recv = lower_node(result, hir, &recv_node)?;

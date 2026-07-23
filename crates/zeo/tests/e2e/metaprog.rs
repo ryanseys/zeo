@@ -19,6 +19,50 @@ fn dynamic_send_with_a_non_literal_target() {
 }
 
 #[test]
+fn alias_keyword_inside_a_class_eval_block_aliases_at_runtime() {
+    // `alias new old` in a general (non-class-body) context -- here a module's
+    // `class_eval` block, where `self` is the module -- desugars to a runtime
+    // `alias_method`, the same path delegate.rb's `kernel.class_eval do alias
+    // __raise__ raise end` needs.
+    let result = run_ruby(
+        r#"
+        class Foo
+          def greet = "hi"
+        end
+        Foo.class_eval do
+          alias hello greet
+        end
+        puts Foo.new.hello
+        puts Foo.new.greet
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "hi\nhi\n");
+}
+
+#[test]
+fn a_constant_inside_class_of_an_object_resolves_in_its_singleton_methods() {
+    // `class << obj; MAX = ...; def m; MAX; end; end` -- a constant on an
+    // object's singleton class (tmpdir's `class << RANDOM`). zeo hoists the
+    // constant to the enclosing lexical scope, where the singleton method
+    // resolves it.
+    let result = run_ruby(
+        r#"
+        module Holder
+          GEN = Object.new
+          class << GEN
+            STEP = 6
+            def emit = STEP * 7
+          end
+        end
+        puts Holder::GEN.emit
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "42\n");
+}
+
+#[test]
 fn an_alias_inside_class_self_is_a_class_method_alias() {
     // `alias new old` inside `class << self` aliases a SINGLETON method: it
     // must resolve against the class-method table and register `new` as a class

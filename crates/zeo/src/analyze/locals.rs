@@ -128,14 +128,17 @@ fn track_node(
                 track_node(compiler, defining, box_id, locals, *b);
             }
         }
-        HirNode::SuperCall { args, kwargs, block, .. } => {
-            for &a in args {
-                track_node(compiler, defining, box_id, locals, a);
+        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
+            for a in args {
+                track_node(compiler, defining, box_id, locals, a.node_id());
             }
             for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 track_node(compiler, defining, box_id, locals, a);
             }
             if let Some(b) = block {
+                track_node(compiler, defining, box_id, locals, *b);
+            }
+            if let Some(b) = block_arg {
                 track_node(compiler, defining, box_id, locals, *b);
             }
         }

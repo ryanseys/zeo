@@ -264,12 +264,15 @@ impl Walker {
                 args,
                 kwargs,
                 block,
+                block_arg,
                 ..
             } => {
-                self.visit_all(hir, &args.clone());
+                let arg_ids: Vec<_> = args.iter().map(|a| a.node_id()).collect();
+                self.visit_all(hir, &arg_ids);
                 let kw_ids: Vec<_> = kwargs.iter().flat_map(|kw| kw.node_ids()).collect();
                 self.visit_all(hir, &kw_ids);
                 self.visit_opt(hir, block);
+                self.visit_opt(hir, block_arg);
             }
             HirNode::Block { params, body } | HirNode::Lambda { params, body, .. } => {
                 let suspended = self.suspend_params(params);

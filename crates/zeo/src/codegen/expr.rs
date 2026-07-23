@@ -895,7 +895,8 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             kwargs,
             zsuper,
             block,
-        } => super::call::emit_super(cx, args, kwargs, *zsuper, *block),
+            block_arg,
+        } => super::call::emit_super(cx, args, kwargs, *zsuper, *block, *block_arg),
         HirNode::While {
             cond,
             body,

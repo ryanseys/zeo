@@ -1332,7 +1332,7 @@ fn scan_bare_block_use(hir: &Hir, id: NodeId) -> bool {
                 // A literal `super { ... }` block's own `yield` refers to
                 // THIS method's block, same as any nested block literal.
                 Some(b) => {
-                    let mut found = args.iter().any(|&a| scan_bare_block_use(hir, a))
+                    let mut found = args.iter().any(|a| scan_bare_block_use(hir, a.node_id()))
                         || kwargs
                             .iter()
                             .flat_map(|kw| kw.node_ids())
@@ -1861,12 +1861,15 @@ pub(crate) fn collect_ivars(hir: &Hir, id: NodeId, out: &mut Vec<String>) {
                 collect_ivars(hir, *b, out);
             }
         }
-        HirNode::SuperCall { args, kwargs, .. } => {
-            for &a in args {
-                collect_ivars(hir, a, out);
+        HirNode::SuperCall { args, kwargs, block_arg, .. } => {
+            for a in args {
+                collect_ivars(hir, a.node_id(), out);
             }
             for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_ivars(hir, a, out);
+            }
+            if let Some(b) = block_arg {
+                collect_ivars(hir, *b, out);
             }
         }
         HirNode::Block { body, .. } | HirNode::Lambda { body, .. } => {

@@ -919,19 +919,35 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                 if let Some(kw) = n.as_keyword_hash_node() {
                     kwargs = lower_kwargs(result, hir, &kw.elements().iter().collect::<Vec<_>>())?;
                 } else {
-                    args.push(lower_node(result, hir, &n)?);
+                    // Positional args carry splats (`super(m, *args)`) the same
+                    // way a call's do -- an `ArrayElem::Splat` forwards through
+                    // the runtime arg vector.
+                    args.push(lower_array_elem(result, hir, &n)?);
                 }
             }
         }
-        let block = match sup.block() {
-            None => None,
-            Some(b) => Some(lower_block(result, hir, &b)?),
+        // A literal `super(x) { ... }` block vs a `super(x, &blk)` block-pass --
+        // the same either/or a call carries (`BlockNode` vs `BlockArgumentNode`).
+        let (block, block_arg) = match sup.block() {
+            None => (None, None),
+            Some(b) => {
+                if let Some(barg) = b.as_block_argument_node() {
+                    let expr = match barg.expression() {
+                        Some(e) => lower_node(result, hir, &e)?,
+                        None => hir.push(HirNode::LocalRead("__anon_blk".to_string())),
+                    };
+                    (None, Some(expr))
+                } else {
+                    (Some(lower_block(result, hir, &b)?), None)
+                }
+            }
         };
         return Ok(hir.push(HirNode::SuperCall {
             args,
             kwargs,
             zsuper: false,
             block,
+            block_arg,
         }));
     }
 
@@ -950,6 +966,7 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             kwargs: Vec::new(),
             zsuper: true,
             block,
+            block_arg: None,
         }));
     }
 
@@ -2057,6 +2074,30 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         let targets = lower_multi_target_group(result, hir, mw.lefts(), mw.rest(), mw.rights())?;
         let value = lower_node(result, hir, &mw.value())?;
         return Ok(hir.push(HirNode::MultiWrite { targets, value }));
+    }
+
+    // `alias new old` reached in a GENERAL context -- inside a `class_eval`/
+    // `module_eval` block (delegate.rb's `kernel.class_eval do alias __raise__
+    // raise end`), where `self` is the module being reopened. Class-body and
+    // top-level `alias` are intercepted earlier (`defs::lower_class_body`,
+    // `loader`) and never arrive here. Desugar to a runtime `alias_method(:new,
+    // :old)` self-send -- the same runtime path the CALL form already takes
+    // (`zeo_rt::runtime_meta::runtime_alias_method`, as ostruct's dynamic
+    // aliasing does). Correct when the default definee IS `self` (an eval
+    // block); the pathological in-method `alias` (definee = the owner class,
+    // not self) stays unmodeled -- it was a hard error here before too.
+    if let Some(alias) = node.as_alias_method_node() {
+        let new_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(&alias.new_name())?));
+        let old_sym = hir.push(HirNode::SymbolLit(defs::alias_target_name(&alias.old_name())?));
+        return Ok(hir.push(HirNode::Call {
+            receiver: None,
+            name: "alias_method".to_string(),
+            args: vec![ArrayElem::Single(new_sym), ArrayElem::Single(old_sym)],
+            kwargs: Vec::new(),
+            block: None,
+            block_arg: None,
+            safe: false,
+        }));
     }
 
     Err(format!(

@@ -357,6 +357,16 @@ pub enum ArrayElem {
     Splat(NodeId),
 }
 
+impl ArrayElem {
+    /// The single child node this element wraps (`Single`'s value or `Splat`'s
+    /// operand) -- lets HIR walkers visit an arg list without re-matching the
+    /// variant. The `Single`/`Splat` distinction only matters at codegen.
+    pub fn node_id(&self) -> NodeId {
+        let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = self;
+        *n
+    }
+}
+
 /// A method/block's declared parameter list -- mirrors `ParametersNode`'s own
 /// grouping directly (Ruby's grammar already enforces required->optional->
 /// rest->post->keyword->keyword_rest->block ordering, so grouping by kind
@@ -1339,7 +1349,11 @@ pub enum HirNode {
     /// the parent's optionals take their defaults. `args` is always empty
     /// when `zsuper` is true.
     SuperCall {
-        args: Vec<NodeId>,
+        /// Explicit positional args (`super(a, *rest)`) as `ArrayElem`s, so a
+        /// splat argument forwards through the runtime arg vector -- the same
+        /// shape a `Call`'s args have. Always empty for bare `super`
+        /// (`zsuper`), which forwards the current method's own params instead.
+        args: Vec<ArrayElem>,
         /// Explicit keyword arguments (`super(x: 1, y: 2)`); bound to the
         /// parent's keyword params by NAME. Always empty for bare
         /// `super` (`zsuper`), which forwards the current method's own
@@ -1353,6 +1367,10 @@ pub enum HirNode {
         /// (real Ruby forwards it), which the splice gets for free since
         /// `__blk` is already in scope there.
         block: Option<NodeId>,
+        /// A block-PASS argument (`super(x, &blk)`) -- an expression coerced to
+        /// a block via `to_proc` at the call. Mutually exclusive with `block`
+        /// (Ruby's grammar forbids both), same either/or a `Call` carries.
+        block_arg: Option<NodeId>,
     },
     Block {
         params: Params,

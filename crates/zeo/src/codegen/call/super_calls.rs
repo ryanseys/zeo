@@ -16,7 +16,7 @@ use quote::quote;
 use crate::codegen::Ctx;
 use crate::codegen::expr::emit_expr;
 use crate::codegen::ident::safe_ident;
-use crate::hir::{KwArg, NodeId, Params};
+use crate::hir::{ArrayElem, KwArg, NodeId, Params};
 use proc_macro2::TokenStream;
 
 /// `super` always resolves against the receiver's REAL, full linearized
@@ -34,10 +34,11 @@ use proc_macro2::TokenStream;
 /// forwards the right arguments.
 pub fn emit_super(
     cx: &Ctx,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     // A `super` inside a RUNTIME-defined method body (a `def`/`define_method`
     // installed in a `Class.new`/`Struct.new`/`Data.define` block) has no
@@ -46,7 +47,7 @@ pub fn emit_super(
     // method-frame stack (`zeo_rt::send_super_dynamic`) instead of splicing a
     // compile-time ancestor's HIR.
     if let Some(params) = cx.runtime_super_params.clone() {
-        return emit_super_dynamic(cx, &params, args, kwargs, zsuper, block);
+        return emit_super_dynamic(cx, &params, args, kwargs, zsuper, block, block_arg);
     }
 
     // A CLASS method (`def self.foo`) has no `self: Arc<Self>` receiver, so
@@ -126,7 +127,7 @@ pub fn emit_super(
                  defining class's own pool"
             )
         }
-        return emit_runtime_super(cx, mname, &Params::default(), args, kwargs, false, block);
+        return emit_runtime_super(cx, mname, &Params::default(), args, kwargs, false, block, block_arg);
     };
     let current_params = cx.compiler.scope(current_sid).params.clone();
 
@@ -164,7 +165,7 @@ pub fn emit_super(
     // extend shape: a class-method `super` never targets a value builtin's
     // INSTANCE method -- it keeps its runtime handoff below.)
     if found.is_none() && pos.is_some() && cx.compiler.is_value_subclass(receiver_class) {
-        return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+        return emit_value_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg);
     }
 
     // No user definition above the defining class. Real Ruby has NO
@@ -178,7 +179,7 @@ pub fn emit_super(
     // scan misses -- an included module's, or one registered at runtime. Hand
     // off to the runtime walk, which finds those and raises correctly if not.
     let Some((new_defining_class, _sid, target_is_module_instance)) = found else {
-        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block);
+        return emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg);
     };
 
     // The resolved target dispatches at RUNTIME -- the parent's HIR is
@@ -193,7 +194,7 @@ pub fn emit_super(
         let target_id = new_defining_class.0;
         let recv_id = receiver_class.0;
         let (pushes, block_expr) =
-            emit_runtime_super_args(cx, &current_params, args, kwargs, zsuper, block);
+            emit_runtime_super_args(cx, &current_params, args, kwargs, zsuper, block, block_arg);
         return quote! {
             {
                 let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
@@ -209,7 +210,7 @@ pub fn emit_super(
             }
         };
     }
-    emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block)
+    emit_runtime_super(cx, mname, &current_params, args, kwargs, zsuper, block, block_arg)
 }
 
 /// `super` resolution for a method that reached the receiver as a CLASS
@@ -284,14 +285,15 @@ fn emit_runtime_super(
     cx: &Ctx,
     mname: &str,
     current_params: &Params,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     let def_id = cx.defining_class.expect("`super` outside a method").0;
     let (pushes, block_expr) =
-        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block, block_arg);
     // A CLASS-method `super` (`current_class` deliberately `None` there --
     // see `emit_super`) has a class-object receiver, which
     // `send_super_from`'s object channel can't take: dispatch through the
@@ -347,10 +349,11 @@ fn emit_runtime_super(
 fn emit_super_dynamic(
     cx: &Ctx,
     current_params: &Params,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     let self_val = super::boxed_implicit_self(cx).unwrap_or_else(|| {
         // Concrete UFCS -- same `&RubyValue`-binding caveat as
@@ -359,7 +362,7 @@ fn emit_super_dynamic(
         quote! { zeo_rt::RubyValue::clone(&#slf) }
     });
     let (pushes, block_expr) =
-        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block, block_arg);
     quote! {
         {
             let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
@@ -377,14 +380,15 @@ fn emit_value_super(
     cx: &Ctx,
     mname: &str,
     current_params: &Params,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> TokenStream {
     let self_ident = &cx.self_ident;
     let (pushes, block_expr) =
-        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block);
+        emit_runtime_super_args(cx, current_params, args, kwargs, zsuper, block, block_arg);
     quote! {
         {
             let mut __super_args: Vec<zeo_rt::RubyValue> = Vec::new();
@@ -407,10 +411,11 @@ fn emit_value_super(
 fn emit_runtime_super_args(
     cx: &Ctx,
     current_params: &Params,
-    args: &[NodeId],
+    args: &[ArrayElem],
     kwargs: &[KwArg],
     zsuper: bool,
     block: Option<NodeId>,
+    block_arg: Option<NodeId>,
 ) -> (Vec<TokenStream>, TokenStream) {
     let mut pushes: Vec<TokenStream> = Vec::new();
     if zsuper {
@@ -478,10 +483,23 @@ fn emit_runtime_super_args(
             });
         }
     } else {
-        for &a in args {
-            let e = emit_expr(cx, a);
-            let e = crate::codegen::expr::box_if_object_typed(cx, a, e);
-            pushes.push(quote! { __super_args.push(#e); });
+        // Explicit `super(a, *rest)` args -- a `Splat` extends the arg vector
+        // with the array's elements, the same idiom a call site's splat uses
+        // (`emit_splat_call`); a `Single` pushes one value.
+        for a in args {
+            match a {
+                ArrayElem::Single(n) => {
+                    let e = emit_expr(cx, *n);
+                    let e = crate::codegen::expr::box_if_object_typed(cx, *n, e);
+                    pushes.push(quote! { __super_args.push(#e); });
+                }
+                ArrayElem::Splat(n) => {
+                    let e = emit_expr(cx, *n);
+                    pushes.push(quote! {
+                        __super_args.extend((#e).as_array_unchecked().lock().iter().cloned());
+                    });
+                }
+            }
         }
         if !kwargs.is_empty() {
             let inserts =
@@ -495,18 +513,25 @@ fn emit_runtime_super_args(
             });
         }
     }
-    let block_expr = match block {
-        Some(b) => {
+    let block_expr = match (block, block_arg) {
+        (Some(b), _) => {
             let proc_value = super::procs::emit_proc_value(cx, b);
             quote! { Some(#proc_value) }
         }
-        // No literal block: real Ruby forwards the CURRENT method's block
+        // `super(x, &blk)` -- coerce the passed value to a block the same way a
+        // call's `&arg` does (Proc passes, Symbol via `to_proc`, nil = no block).
+        (None, Some(e)) => {
+            let v = emit_expr(cx, e);
+            let v = crate::codegen::expr::box_if_object_typed(cx, e, v);
+            quote! { zeo_rt::block_arg_to_proc(#v)? }
+        }
+        // No block written: real Ruby forwards the CURRENT method's block
         // (the splice saw `__blk` in scope for free; the runtime dispatch
         // must pass it explicitly). Inside a real Proc the method's `__blk`
         // isn't in scope -- `None` keeps that shape compiling, matching the
         // splice's own reach.
-        None if !cx.in_real_proc => quote! { __blk.clone() },
-        None => quote! { None },
+        (None, None) if !cx.in_real_proc => quote! { __blk.clone() },
+        (None, None) => quote! { None },
     };
     (pushes, block_expr)
 }

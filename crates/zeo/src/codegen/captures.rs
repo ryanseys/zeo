@@ -247,12 +247,13 @@ fn node_contains_escaping_return(compiler: &Compiler, id: NodeId, in_escaping: b
                     if body_contains_escaping_return_in(compiler, body, true))
             }) || args.iter().any(|&a| sub(a))
         }
-        HirNode::SuperCall { args, kwargs, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
             block.is_some_and(|b| {
                 matches!(&compiler.hir[b], HirNode::Block { body, .. }
                     if body_contains_escaping_return_in(compiler, body, true))
-            }) || args.iter().any(|&a| sub(a))
+            }) || args.iter().any(|a| sub(a.node_id()))
                 || kwargs.iter().flat_map(|kw| kw.node_ids()).any(&sub)
+                || block_arg.is_some_and(|b| sub(b))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
@@ -435,12 +436,13 @@ fn node_contains_begin(compiler: &Compiler, id: NodeId) -> bool {
             .chain(crate::hir::raise_cause_node(cause).iter())
             .any(|&a| node_contains_begin(compiler, a)),
         HirNode::New { args, .. } => args.iter().any(|&a| node_contains_begin(compiler, a)),
-        HirNode::SuperCall { args, kwargs, block, .. } => {
-            args.iter().any(|&a| node_contains_begin(compiler, a))
+        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
+            args.iter().any(|a| node_contains_begin(compiler, a.node_id()))
                 || kwargs
                     .iter()
                     .flat_map(|kw| kw.node_ids())
                     .any(|a| node_contains_begin(compiler, a))
+                || block_arg.is_some_and(|b| node_contains_begin(compiler, b))
                 || block.is_some_and(|b| match &compiler.hir[b] {
                     HirNode::Block { body, .. } => body_contains_begin(compiler, body),
                     _ => false,
@@ -790,7 +792,7 @@ fn walk(
                 }
             }
         }
-        HirNode::SuperCall { args, kwargs, block, .. } => {
+        HirNode::SuperCall { args, kwargs, block, block_arg, .. } => {
             // `super` implicitly dispatches on the receiver, so an escaping
             // block containing one must capture `self` -- same flag `SelfRef`/
             // `IvarRead` set above. Without this a `super` in a method-body
@@ -799,11 +801,14 @@ fn walk(
             if in_escaping {
                 caps.self_captured = true;
             }
-            for &a in args {
-                walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            for a in args {
+                walk(compiler, a.node_id(), in_escaping, param_exclusions, caps, self_class);
             }
             for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 walk(compiler, a, in_escaping, param_exclusions, caps, self_class);
+            }
+            if let Some(b) = block_arg {
+                walk(compiler, *b, in_escaping, param_exclusions, caps, self_class);
             }
             // A literal `super { ... }` block is always a real, escaping
             // Proc (no `.times`-style inline fast path exists for `super`)

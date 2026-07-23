@@ -291,12 +291,23 @@ pub(super) fn collect_locals(compiler: &Compiler, id: NodeId, out: &mut Vec<Stri
                 collect_locals(compiler, *b, out);
             }
         }
-        HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
+        HirNode::New { args, kwargs, .. } => {
             for &a in args {
                 collect_locals(compiler, a, out);
             }
             for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
                 collect_locals(compiler, a, out);
+            }
+        }
+        HirNode::SuperCall { args, kwargs, block_arg, .. } => {
+            for a in args {
+                collect_locals(compiler, a.node_id(), out);
+            }
+            for a in kwargs.iter().flat_map(|kw| kw.node_ids()) {
+                collect_locals(compiler, a, out);
+            }
+            if let Some(b) = block_arg {
+                collect_locals(compiler, *b, out);
             }
         }
         HirNode::Block { body, .. } => {

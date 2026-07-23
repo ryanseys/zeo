@@ -448,13 +448,22 @@ fn node_contains_bubbling_loop_jump(compiler: &Compiler, id: NodeId) -> bool {
         HirNode::Raise(args, _) => args
             .iter()
             .any(|&a| node_contains_bubbling_loop_jump(compiler, a)),
-        HirNode::New { args, kwargs, .. } | HirNode::SuperCall { args, kwargs, .. } => {
+        HirNode::New { args, kwargs, .. } => {
             args.iter()
                 .any(|&a| node_contains_bubbling_loop_jump(compiler, a))
                 || kwargs
                     .iter()
                     .flat_map(|kw| kw.node_ids())
                     .any(|a| node_contains_bubbling_loop_jump(compiler, a))
+        }
+        HirNode::SuperCall { args, kwargs, block_arg, .. } => {
+            args.iter()
+                .any(|a| node_contains_bubbling_loop_jump(compiler, a.node_id()))
+                || kwargs
+                    .iter()
+                    .flat_map(|kw| kw.node_ids())
+                    .any(|a| node_contains_bubbling_loop_jump(compiler, a))
+                || block_arg.is_some_and(|b| node_contains_bubbling_loop_jump(compiler, b))
         }
         HirNode::ArrayLit(elems) => elems.iter().any(|e| {
             let (ArrayElem::Single(n) | ArrayElem::Splat(n)) = e;
