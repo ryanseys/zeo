@@ -444,6 +444,19 @@ impl Compiler {
                 return Some(cid);
             }
         }
+        // After the lexical nesting, Ruby consults the ANCESTRY of the
+        // innermost lexical module -- a constant nested in an INCLUDED module
+        // resolves unqualified. `ancestors` is linearized by mro before
+        // codegen (empty during analyze, so this is a no-op there).
+        if let Some(&innermost) = cref.last() {
+            for &anc in &self.class(innermost).ancestors {
+                if anc != innermost {
+                    if let Some(cid) = self.class_in_scope(Some(anc), name, box_id) {
+                        return Some(cid);
+                    }
+                }
+            }
+        }
         if let Some(cid) = self
             .class_in_scope(None, name, box_id)
             .filter(|&c| self.feature_active(c))
