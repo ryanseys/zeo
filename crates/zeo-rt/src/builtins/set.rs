@@ -545,6 +545,26 @@ builtin_methods! {
         let other = set_of(&args[0]);
         Ok(RubyValue::Bool(a.len() == other.len() && a.elements().iter().all(|e| other.contains(e))))
     }
+    // `Set#<=>`: -1 if a proper subset, 1 if a proper superset, 0 if equal,
+    // nil if neither set contains the other (or the argument isn't a Set).
+    "<=>"[1] => fn spaceship(recv, args, _block) {
+        arity!(args, 1);
+        let RubyValue::Object(o) = &args[0] else {
+            return Ok(RubyValue::Nil);
+        };
+        if o.class_id() != SET_CLASS {
+            return Ok(RubyValue::Nil);
+        }
+        let a = set_of(recv);
+        let b = set_of(&args[0]);
+        let r = match a.len().cmp(&b.len()) {
+            std::cmp::Ordering::Less if a.elements().iter().all(|e| b.contains(e)) => Some(-1),
+            std::cmp::Ordering::Greater if b.elements().iter().all(|e| a.contains(e)) => Some(1),
+            std::cmp::Ordering::Equal if a.elements().iter().all(|e| b.contains(e)) => Some(0),
+            _ => None,
+        };
+        Ok(r.map_or(RubyValue::Nil, RubyValue::Int))
+    }
     "subset?"[1] | "<="[1] => fn subset_p(recv, args, _block) {
         arity!(args, 1);
         let other = coerce_set(&args[0])?;
