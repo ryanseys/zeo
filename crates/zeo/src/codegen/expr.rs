@@ -723,7 +723,9 @@ pub fn emit_expr(cx: &Ctx, id: NodeId) -> TokenStream {
             end,
             exclusive,
         } => emit_range_lit(cx, *start, *end, *exclusive),
-        HirNode::StringLit(parts) => emit_string_lit(cx, parts),
+        HirNode::StringLit(parts) => {
+            emit_string_lit(cx, parts, super::collections::literal_file_frozen(cx, id))
+        }
         HirNode::RegexpLit(parts, flags) => super::collections::emit_regexp_lit(cx, parts, *flags),
         HirNode::If {
             cond,

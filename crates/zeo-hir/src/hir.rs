@@ -56,6 +56,37 @@ impl Span {
 pub struct SourceFile {
     pub name: String,
     pub source: String,
+    /// This file's OWN `# frozen_string_literal: true` magic comment (each
+    /// required file carries its own, not the entry file's).
+    pub frozen_string_literal: bool,
+}
+
+/// A `# frozen_string_literal: true` magic comment in the leading comment
+/// block (after an optional shebang). CRuby only honors it there, before any
+/// code; a blank or code line ends the region.
+pub fn magic_frozen_string_literal(source: &str) -> bool {
+    for (i, line) in source.lines().enumerate() {
+        let line = line.trim_start();
+        if i == 0 && line.starts_with("#!") {
+            continue;
+        }
+        if !line.starts_with('#') {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(idx) = lower.find("frozen_string_literal") {
+            let rest = line[idx + "frozen_string_literal".len()..].trim_start();
+            if let Some(rest) = rest.strip_prefix(':') {
+                let value: String = rest
+                    .trim_start()
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .collect();
+                return value.eq_ignore_ascii_case("true");
+            }
+        }
+    }
+    false
 }
 
 #[derive(Default)]
@@ -197,9 +228,12 @@ impl Hir {
     /// Registers a source file for span provenance; the caller then sets
     /// `lowering_file` while that file's statements lower.
     pub fn add_file(&mut self, name: impl Into<String>, source: impl Into<String>) -> FileId {
+        let source = source.into();
+        let frozen_string_literal = magic_frozen_string_literal(&source);
         self.files.push(SourceFile {
             name: name.into(),
-            source: source.into(),
+            source,
+            frozen_string_literal,
         });
         FileId((self.files.len() - 1) as u32)
     }

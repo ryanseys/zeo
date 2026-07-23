@@ -136,11 +136,25 @@ pub fn emit_range_lit(
     quote! { zeo_rt::RubyValue::Range(#start_expr, #end_expr, #exclusive) }
 }
 
+/// Whether string literals in `id`'s SOURCE FILE are frozen -- its OWN
+/// `# frozen_string_literal: true` pragma, not the entry file's. Synthetic
+/// nodes (the exception prelude, `eval` bodies -- no file) fall back to the
+/// program-wide flag.
+pub fn literal_file_frozen(cx: &Ctx, id: NodeId) -> bool {
+    cx.compiler
+        .hir
+        .span(id)
+        .and_then(|s| (s.file.0 != u32::MAX).then_some(s.file))
+        .and_then(|f| cx.compiler.hir.files.get(f.0 as usize))
+        .map(|sf| sf.frozen_string_literal)
+        .unwrap_or(cx.compiler.hir.frozen_string_literal)
+}
+
 /// A (possibly-interpolated) string literal -- a single `Lit` part (the
 /// common, no-`#{}` case) skips the `String`-builder scaffolding entirely.
 /// An interpolated `#{expr}` part is stringified via `to_display_string`
 /// (mirrors real Ruby: interpolation calls `to_s`, not `inspect`).
-pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
+pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart], frozen: bool) -> TokenStream {
     // A `# encoding:` magic comment tags EVERY literal in the file with that
     // encoding (byte-built); otherwise a raw-byte segment forces ASCII-8BIT,
     // and a purely-UTF-8 literal keeps the readable String path.
@@ -161,7 +175,7 @@ pub fn emit_string_lit(cx: &Ctx, parts: &[StrPart]) -> TokenStream {
         // `# frozen_string_literal: true`: a non-interpolated literal is its
         // interned, frozen twin (equal literals share one object, and
         // mutation raises). Interpolated literals below stay mutable.
-        if cx.compiler.hir.frozen_string_literal {
+        if frozen {
             return quote! {
                 zeo_rt::RubyValue::Str(zeo_rt::intern_frozen(
                     zeo_rt::encoding::StrBuf::from_utf8(#s.to_string()),
