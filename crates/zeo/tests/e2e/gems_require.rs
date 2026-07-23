@@ -999,3 +999,26 @@ fn a_gems_ruby_half_supplies_the_exception_class_its_native_half_raises() {
         "\"JSON::ParserError\"\ntrue\n\"JSON::JSONError\"\ntrue\n"
     );
 }
+
+// `require "rbconfig"` resolves zeo's built-in synthetic shim (real Ruby
+// generates rbconfig at build time; zeo ships a static stand-in), so
+// RbConfig::CONFIG answers the version/platform/layout keys rubygems and
+// bundler read.
+#[test]
+fn rbconfig_shim_is_built_in() {
+    let result = run_ruby(
+        r#"
+        require "rbconfig"
+        puts RbConfig::CONFIG["ruby_version"]
+        puts RbConfig::CONFIG.fetch("host_os")
+        puts RbConfig::CONFIG["EXEEXT"].inspect
+        puts RbConfig::CONFIG["arch"]
+        puts defined?(RbConfig::CONFIG)
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "4.0.0\ndarwin25\n\"\"\narm64-darwin25\nconstant\n"
+    );
+}

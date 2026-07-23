@@ -505,8 +505,17 @@ impl Loader {
             // filesystem search could find it.
             "require" => match self.resolve_require(feature)? {
                 Some(found) => found,
-                // Not on disk. A statically linked extension, then?
-                None => return self.activate_static_ext(hir, feature),
+                // Not on disk. A synthesized stdlib shim built into zeo (e.g.
+                // `rbconfig`, which real Ruby generates at build time), then a
+                // statically linked extension?
+                None => {
+                    if let Some(spliced) =
+                        self.splice_synthetic_shim(hir, feature, current_box)?
+                    {
+                        return Ok(spliced);
+                    }
+                    return self.activate_static_ext(hir, feature);
+                }
             },
             "require_relative" => (resolve_require_relative(feature, dir)?, inherited),
             _ => (self.resolve_load(feature, dir)?, inherited),
@@ -546,6 +555,41 @@ impl Loader {
             }
         }
         self.splice_file(hir, &canonical, file_idx, package, current_box)
+    }
+
+    /// A `require` that found nothing on disk MAY be one of the stdlib features
+    /// zeo synthesizes in-tree (currently just `rbconfig`, which real Ruby
+    /// generates at build time). Splice the embedded shim source, deduped per
+    /// box like any other require. Returns `None` when `feature` names no shim,
+    /// so the caller falls through to the static-ext table.
+    fn splice_synthetic_shim(
+        &mut self,
+        hir: &mut Hir,
+        feature: &str,
+        box_id: u32,
+    ) -> PResult<Option<Vec<NodeId>>> {
+        let Some(source) = synthetic_shim_source(feature) else {
+            return Ok(None);
+        };
+        // A virtual path (no file on disk) standing in for `__FILE__`/provenance.
+        let canonical = PathBuf::from(format!("<zeo-shim>/{feature}.rb"));
+        if !self.required.insert((box_id, canonical.clone())) {
+            return Ok(Some(Vec::new()));
+        }
+        self.record_gem(crate::gem_report::GemRecord {
+            name: feature.to_string(),
+            by: crate::gem_report::SatisfiedBy::BuiltinExt {
+                feature: feature.to_string(),
+            },
+        });
+        Ok(Some(self.splice_source(
+            hir,
+            &canonical,
+            source.to_string(),
+            None,
+            None,
+            box_id,
+        )?))
     }
 
     /// The static-ext fallthrough: a `require` that found nothing on disk.
@@ -619,6 +663,22 @@ impl Loader {
         }
         let source = std::fs::read_to_string(canonical)
             .map_err(|e| format!("reading {}: {e}", canonical.display()))?;
+        self.splice_source(hir, canonical, source, required_from, package, box_id)
+    }
+
+    /// The lowering half of [`Self::splice_file`], over already-read `source`.
+    /// Split out so a SYNTHESIZED feature (an embedded shim like `rbconfig`,
+    /// which has no file on disk) can splice through the same path, under a
+    /// virtual `canonical` name that stands in for `__FILE__`/provenance.
+    fn splice_source(
+        &mut self,
+        hir: &mut Hir,
+        canonical: &Path,
+        source: String,
+        required_from: Option<usize>,
+        package: Option<String>,
+        box_id: u32,
+    ) -> PResult<Vec<NodeId>> {
         let idx = hir.loaded_files.len();
         hir.loaded_files.push(LoadedFile {
             canonical: canonical.to_path_buf(),
@@ -856,6 +916,17 @@ fn lexically_normalize(path: &Path) -> PathBuf {
 /// wins" rule, the same shape as Bundler's lockfile picking exactly one
 /// version). A missing/unreadable packages dir contributes nothing (the
 /// CLI passes default candidate locations that often don't exist).
+/// The embedded source for a stdlib feature zeo synthesizes instead of loading
+/// from disk. Real Ruby generates these at build time (`rbconfig`); zeo ships a
+/// static stand-in describing the target it emulates. `None` for any other
+/// feature.
+fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
+    match feature {
+        "rbconfig" => Some(include_str!("shims/rbconfig.rb")),
+        _ => None,
+    }
+}
+
 /// The `gems/` directory shipped with the compiler, if it exists.
 ///
 /// Baked in via `CARGO_MANIFEST_DIR` -- honest for a dev-tree compiler (both
