@@ -153,28 +153,53 @@ impl Engine {
         }
     }
 
-    /// Every non-overlapping match's group spans, left to right.
-    fn captures_all(&self, haystack: &str) -> Vec<Caps> {
+    /// The leftmost match whose start is at or after `start`, with group spans.
+    fn captures_at(&self, haystack: &str, start: usize) -> Option<Caps> {
         match self {
-            Engine::Fast(r) => r
-                .captures_iter(haystack)
-                .map(|c| Caps {
-                    spans: (0..c.len())
-                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                        .collect(),
-                })
-                .collect(),
-            Engine::Fancy(r) => r
-                .captures_iter(haystack)
-                .filter_map(|c| c.ok())
-                .map(|c| Caps {
-                    spans: (0..c.len())
-                        .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                        .collect(),
-                })
-                .collect(),
-            Engine::Unmatchable => Vec::new(),
+            Engine::Fast(r) => r.captures_at(haystack, start).map(|c| Caps {
+                spans: (0..c.len())
+                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                    .collect(),
+            }),
+            Engine::Fancy(r) => r.captures_from_pos(haystack, start).ok().flatten().map(|c| Caps {
+                spans: (0..c.len())
+                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
+                    .collect(),
+            }),
+            Engine::Unmatchable => None,
         }
+    }
+
+    /// Every non-overlapping match's group spans, left to right, reproducing
+    /// CRuby/Onig's zero-width iteration: after an EMPTY match the search
+    /// advances one character, but an empty match abutting the PREVIOUS match's
+    /// end is still yielded (`"abc".gsub(/b*/, "X") == "XaXXcX"`,
+    /// `"aaaa".scan(/a{0,2}/) == ["aa", "aa", ""]`) -- the rust/fancy-regex
+    /// `captures_iter` drops that abutting empty, so it can't be used here.
+    fn captures_all(&self, haystack: &str) -> Vec<Caps> {
+        if matches!(self, Engine::Unmatchable) {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let mut from = 0usize;
+        while from <= haystack.len() {
+            let Some(caps) = self.captures_at(haystack, from) else {
+                break;
+            };
+            let (s, e) = caps.spans[0].expect("group 0 is always the whole match");
+            out.push(caps);
+            if e == s {
+                // Zero-width match: step one character so the search makes
+                // progress, but the next position may still match empty.
+                if e >= haystack.len() {
+                    break;
+                }
+                from = e + haystack[e..].chars().next().map_or(1, char::len_utf8);
+            } else {
+                from = e;
+            }
+        }
+        out
     }
 
     fn captures_len(&self) -> usize {
