@@ -1,17 +1,21 @@
-use crate::support::{compile_project, run_ruby, run_ruby_packages};
+use crate::support::{run_ruby, run_ruby_packages, run_ruby_project};
 
 #[test]
-fn load_with_a_wrap_argument_is_a_clean_rejection() {
-    // (`autoload` is now supported via the loader's eager splice -- see the
-    // `autoload_*` tests above.) `load "file", wrap` still needs load-time
-    // anonymous-module scoping this compiler lacks.
-    let err = compile_project(
+fn load_with_a_wrap_argument_lowers_to_a_runtime_loaderror() {
+    // `load "file", wrap` needs load-time anonymous-module scoping this compiler
+    // lacks, so the wrap form lowers to a runtime `Kernel#load` that raises
+    // LoadError (the literal no-wrap form is spliced and executed instead).
+    let result = run_ruby_project(
         &[("w.rb", "puts 1\n"), ("main.rb", "load \"./w.rb\", true\n")],
         "main.rb",
         &[],
-    )
-    .unwrap_err();
-    assert!(err.contains("wrap"), "unexpected error: {err}");
+    );
+    assert!(!result.status.success(), "stdout: {}", result.stdout);
+    assert!(
+        result.stderr.contains("cannot load such file"),
+        "stderr: {}",
+        result.stderr
+    );
 }
 
 // ---- Enumerable implemented in Rust (zeo_rt::enumerable) ----

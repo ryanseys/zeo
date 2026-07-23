@@ -312,30 +312,30 @@ fn missing_require_is_a_compile_error_with_crubys_message() {
 }
 
 #[test]
-fn non_literal_and_non_top_level_requires_are_clean_compile_errors() {
-    let err = compile_project(
-        &[("main.rb", "name = \"x\"\nrequire name\n")],
-        "main.rb",
-        &[],
-    )
-    .unwrap_err();
-    assert!(err.contains("non-literal"), "unexpected error: {err}");
-
-    // Inside a method body -- reaches lower_node's rejection.
-    let err = zeo::compile_to_rust("def m\n  require \"x\"\nend\n").unwrap_err();
+fn requires_that_cannot_be_resolved_at_compile_time() {
+    // A NON-LITERAL require target can't be resolved at compile time, so it
+    // lowers to a runtime `Kernel#require` raising LoadError (matching CRuby),
+    // rather than failing the compile.
+    let result = run_ruby("name = \"nope_xyz\"\nrequire name\n");
     assert!(
-        err.contains("only supported as a top-level statement"),
-        "unexpected error: {err}"
+        !result.status.success() && result.stderr.contains("cannot load such file -- nope_xyz"),
+        "stderr: {}",
+        result.stderr
     );
 
-    // Inside begin/rescue -- the optional-dependency idiom is a LOUD
-    // compile error under compile-time resolution, never a silent skip.
-    let err = zeo::compile_to_rust("begin\n  require \"optional_dep\"\nrescue LoadError\nend\n")
-        .unwrap_err();
-    assert!(
-        err.contains("only supported as a top-level statement"),
-        "unexpected error: {err}"
-    );
+    // A LITERAL require of a feature that can't be found is a clean compile
+    // error -- in a method body or a begin/rescue alike. (A RESOLVABLE feature
+    // is spliced even off top level; see the positive-path tests below.)
+    for src in [
+        "def m\n  require \"x\"\nend\n",
+        "begin\n  require \"optional_dep\"\nrescue LoadError\nend\n",
+    ] {
+        let err = zeo::compile_to_rust(src).unwrap_err();
+        assert!(
+            err.contains("cannot load such file"),
+            "unexpected error: {err}"
+        );
+    }
 }
 
 // ---- gems: .gemspec manifests + search-path resolution ----

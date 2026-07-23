@@ -1713,13 +1713,13 @@ fn raise_cause_is_three_state() {
     );
 }
 
-/// A non-builtin feature still can't be resolved from a non-top-level
-/// position -- there is genuinely a file to splice and nowhere to splice it.
+/// A LITERAL require whose feature can't be found is a clean compile error
+/// even off top level (a RESOLVABLE feature is spliced there instead).
 #[test]
-fn require_of_a_file_feature_is_still_a_clean_rejection_off_top_level() {
+fn require_of_a_missing_feature_off_top_level_is_a_clean_compile_error() {
     let err = zeo::compile_to_rust("if true\n  require \"some_lib\"\nend\n").unwrap_err();
     assert!(
-        err.contains("only supported as a top-level statement"),
+        err.contains("cannot load such file"),
         "unexpected error: {err}"
     );
 }
