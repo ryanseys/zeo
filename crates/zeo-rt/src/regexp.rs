@@ -63,10 +63,11 @@ impl RegexpData {
     }
 }
 
-/// Link-path proof for the vendored-Oniguruma migration: compiles and runs an
+/// Link-path proof for the vendored Oniguruma C archive: compiles and runs an
 /// onig pattern so generated programs (linked by bare `rustc` against the
 /// prebuilt rlib, `zeo::build`) demonstrably resolve the bundled C archive.
-/// Exercised by an e2e link test; retired when the real onig engine lands.
+/// Onig now backs the `Engine::Onig` matching path (see `Engine`); this stays
+/// as a cheap, dependency-free link smoke test exercised by an e2e.
 pub fn onig_linkcheck() -> bool {
     let re = onig::Regex::with_options(
         r"(a+)\1",
@@ -79,15 +80,27 @@ pub fn onig_linkcheck() -> bool {
     }
 }
 
-/// The two backing engines. `Fast` is the linear-time `regex` crate (the
-/// overwhelmingly common case); `Fancy` is the backtracking `fancy-regex`,
-/// selected only when a pattern uses a construct `regex` structurally can't do
-/// (in-pattern backreferences, look-around, atomic/possessive groups,
-/// `(?#comment)`). Both are `Send + Sync` and immutable after construction.
+/// The backing engines, in preference order. `Fast` is the linear-time
+/// `regex` crate (the overwhelmingly common case); `Fancy` is the backtracking
+/// `fancy-regex`, selected when a pattern uses a construct `regex` structurally
+/// can't do (in-pattern backreferences, look-around, atomic/possessive groups,
+/// `(?#comment)`); `Onig` is real Oniguruma (CRuby's own engine, via the
+/// vendored C library) reserved for patterns whose SEMANTICS the Rust engines
+/// get wrong or can't express -- Ruby's line anchors `^`/`$` (which, unlike
+/// `regex`'s `multi_line`, do not match at the phantom position after a
+/// trailing newline), inline flag groups where Ruby's `/m` means DOTALL rather
+/// than multi-line (`(?m:a.c)` spanning `\n`), the absence operator `(?~...)`,
+/// and anything both Rust engines reject but Onig accepts (e.g. the redundant
+/// `a***`). Onig receives the RAW Ruby source (`Syntax::ruby()` parses it
+/// directly -- no escape translation). All variants are `Send + Sync` and
+/// immutable after construction (`onig::Regex` is `Send + Sync` and read-only
+/// during a search that fills a per-call `Region`, so an `Arc` gives it the
+/// same cheap-clone value semantics the other engines have natively).
 #[derive(Clone)]
 pub enum Engine {
     Fast(regex::Regex),
     Fancy(fancy_regex::Regex),
+    Onig(Arc<onig::Regex>),
     /// A pattern Onigmo (CRuby) accepts but neither Rust engine can compile --
     /// specifically a FORWARD numbered backreference (`/[\]]\1(a)/`, where `\1`
     /// precedes the group it names). It constructs so introspection
@@ -132,25 +145,22 @@ impl Engine {
             // A runtime error (e.g. backtrack-limit) counts as "no match" --
             // rare, documented; CRuby would raise on catastrophic backtracking.
             Engine::Fancy(r) => r.is_match(haystack).unwrap_or(false),
+            Engine::Onig(r) => r
+                .search_with_options(
+                    haystack,
+                    0,
+                    haystack.len(),
+                    onig::SearchOptions::SEARCH_OPTION_NONE,
+                    None,
+                )
+                .is_some(),
             Engine::Unmatchable => false,
         }
     }
 
     /// The first match's group spans, or `None` when the pattern doesn't match.
     fn captures_first(&self, haystack: &str) -> Option<Caps> {
-        match self {
-            Engine::Fast(r) => r.captures(haystack).map(|c| Caps {
-                spans: (0..c.len())
-                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                    .collect(),
-            }),
-            Engine::Fancy(r) => r.captures(haystack).ok().flatten().map(|c| Caps {
-                spans: (0..c.len())
-                    .map(|i| c.get(i).map(|m| (m.start(), m.end())))
-                    .collect(),
-            }),
-            Engine::Unmatchable => None,
-        }
+        self.captures_at(haystack, 0)
     }
 
     /// The leftmost match whose start is at or after `start`, with group spans.
@@ -166,6 +176,24 @@ impl Engine {
                     .map(|i| c.get(i).map(|m| (m.start(), m.end())))
                     .collect(),
             }),
+            // Search the WHOLE `haystack` starting at byte `start` (not a
+            // `haystack[start..]` slice): Onig reads the real character before
+            // `start` from the full buffer, so `^`/`$`/`\A`/`\Z`/`\G` anchor
+            // against the true string, and a fresh `Region` holds the byte
+            // spans of every group (`None` for a non-participating group).
+            Engine::Onig(r) => {
+                let mut region = onig::Region::new();
+                r.search_with_options(
+                    haystack,
+                    start,
+                    haystack.len(),
+                    onig::SearchOptions::SEARCH_OPTION_NONE,
+                    Some(&mut region),
+                )?;
+                Some(Caps {
+                    spans: (0..region.len()).map(|i| region.pos(i)).collect(),
+                })
+            }
             Engine::Unmatchable => None,
         }
     }
@@ -206,6 +234,10 @@ impl Engine {
         match self {
             Engine::Fast(r) => r.captures_len(),
             Engine::Fancy(r) => r.captures_len(),
+            // Onig's `captures_len` counts capturing groups WITHOUT the
+            // whole-match slot; `+1` matches the Rust engines' convention
+            // (group 0 included).
+            Engine::Onig(r) => r.captures_len() + 1,
             // Only the whole-match slot: an unmatchable regex never produces
             // captures, so this is consulted only for shape decisions.
             Engine::Unmatchable => 1,
@@ -213,10 +245,24 @@ impl Engine {
     }
 
     pub fn capture_names(&self) -> Vec<(String, usize)> {
+        if let Engine::Onig(r) = self {
+            // Onig reports each name with the group indices that carry it; a
+            // duplicated name resolves to its LAST group (Ruby's rule for a
+            // named backreference / `MatchData[name]`).
+            let mut out = Vec::new();
+            r.foreach_name(|name, groups| {
+                if let Some(&last) = groups.iter().max() {
+                    out.push((name.to_string(), last as usize));
+                }
+                true
+            });
+            out.sort_by_key(|(_, i)| *i);
+            return out;
+        }
         let names: Vec<Option<String>> = match self {
             Engine::Fast(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
             Engine::Fancy(r) => r.capture_names().map(|n| n.map(str::to_string)).collect(),
-            Engine::Unmatchable => Vec::new(),
+            _ => Vec::new(),
         };
         names
             .into_iter()
@@ -449,6 +495,82 @@ fn build_fancy(
     fancy_regex::Regex::new(&format!("(?{flags}){translated}")).map_err(|e| e.to_string())
 }
 
+/// Builds the real Oniguruma engine over the RAW Ruby `source` -- onig speaks
+/// Ruby's regex dialect natively through `Syntax::ruby()` (inline flag groups,
+/// line anchors, the absence operator, `\Z`/`\z`/`\A`/`\G`, octal, in-pattern
+/// backreferences), so NO escape translation is applied. Ruby's `/m` (dot
+/// matches newline) maps to onig's `MULTILINE`; `^`/`$` are line anchors by
+/// default under `Syntax::ruby()`.
+fn build_onig(
+    source: &str,
+    ignore_case: bool,
+    extended: bool,
+    multiline: bool,
+) -> Result<onig::Regex, String> {
+    let mut opts = onig::RegexOptions::REGEX_OPTION_NONE;
+    if ignore_case {
+        opts |= onig::RegexOptions::REGEX_OPTION_IGNORECASE;
+    }
+    if extended {
+        opts |= onig::RegexOptions::REGEX_OPTION_EXTEND;
+    }
+    if multiline {
+        opts |= onig::RegexOptions::REGEX_OPTION_MULTILINE;
+    }
+    onig::Regex::with_options(source, opts, onig::Syntax::ruby()).map_err(|e| e.to_string())
+}
+
+/// Whether `source` uses a Ruby-specific construct that the Rust engines
+/// mis-handle, so real Oniguruma must back it: a line anchor `^`/`$` (whose
+/// trailing-newline semantics `regex`'s `multi_line` gets wrong), an inline
+/// flag group `(?flags)` / `(?flags:...)` / `(?-flags...)` (Ruby's `/m` is
+/// DOTALL, not multi-line, and the Rust crates read `m` the opposite way), or
+/// the absence operator `(?~...)`. Scanned on the RAW source, honoring escapes
+/// and character classes so an escaped `\^`/`\$` or a `[$^]` set never counts.
+fn needs_onig(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    let mut i = 0;
+    let mut in_class = false;
+    let mut class_start = false;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'\\' {
+            i += 2; // an escaped char is never an anchor / group opener
+            continue;
+        }
+        if in_class {
+            match c {
+                b']' if !class_start => in_class = false,
+                _ => class_start = false,
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'[' => {
+                in_class = true;
+                class_start = true;
+            }
+            b'^' | b'$' => return true,
+            b'(' if bytes.get(i + 1) == Some(&b'?') => {
+                // An inline flag group / absence operator begins with a flag
+                // letter, `-`, or `~` right after `(?` -- distinct from the
+                // non-capturing/assertion forms (`(?:`, `(?=`, `(?!`, `(?<`,
+                // `(?>`, `(?#`, `(?'`, `(?P`).
+                if matches!(
+                    bytes.get(i + 2),
+                    Some(b'i' | b'm' | b'x' | b'a' | b'd' | b'u' | b'-' | b'~')
+                ) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
 /// The POSIX bracket class names Onigmo/CRuby accept inside `[[:name:]]`. An
 /// unknown one is a `RegexpError` at compile time, not a silent literal set.
 const POSIX_CLASSES: &[&str] = &[
@@ -524,6 +646,21 @@ pub fn regexp_new(
     multiline: bool,
 ) -> Result<RRegexp, String> {
     validate_posix_classes(source)?;
+    // A pattern with Ruby-specific semantics goes straight to Oniguruma (the
+    // raw source, no escape translation).
+    if needs_onig(source) {
+        return match build_onig(source, ignore_case, extended, multiline) {
+            Ok(r) => Ok(Arc::new(RegexpData {
+                engine: Engine::Onig(Arc::new(r)),
+                source: source.to_string(),
+                ignore_case,
+                extended,
+                multiline,
+                frozen: std::sync::atomic::AtomicBool::new(false),
+            })),
+            Err(e) => Err(cruby_regex_error(source, &e)),
+        };
+    }
     let translated = translate_ruby_escapes(source);
     let engine = if needs_fancy(&translated) {
         match build_fancy(&translated, ignore_case, extended, multiline) {
@@ -537,7 +674,12 @@ pub fn regexp_new(
                 let _ = e;
                 Engine::Unmatchable
             }
-            Err(e) => return Err(cruby_regex_error(source, &e)),
+            // fancy-regex rejected a look-around/backref construct it can't do;
+            // real Oniguruma (Ruby's engine) may still accept it.
+            Err(e) => match build_onig(source, ignore_case, extended, multiline) {
+                Ok(r) => Engine::Onig(Arc::new(r)),
+                Err(_) => return Err(cruby_regex_error(source, &e)),
+            },
         }
     } else {
         match regex::RegexBuilder::new(&translated)
@@ -549,11 +691,17 @@ pub fn regexp_new(
         {
             Ok(r) => Engine::Fast(r),
             // The pre-scan missed something the fast engine still rejects
-            // (e.g. a construct only its parser flags): fall back to fancy.
-            Err(fast_err) => Engine::Fancy(
-                build_fancy(&translated, ignore_case, extended, multiline)
-                    .map_err(|_| cruby_regex_error(source, &fast_err.to_string()))?,
-            ),
+            // (e.g. a construct only its parser flags): fall back to fancy,
+            // then to real Oniguruma, which is more permissive than either
+            // Rust engine (e.g. it accepts the redundant `a***`). Only when
+            // Onig ALSO rejects it is the pattern a genuine RegexpError.
+            Err(fast_err) => match build_fancy(&translated, ignore_case, extended, multiline) {
+                Ok(r) => Engine::Fancy(r),
+                Err(_) => match build_onig(source, ignore_case, extended, multiline) {
+                    Ok(r) => Engine::Onig(Arc::new(r)),
+                    Err(_) => return Err(cruby_regex_error(source, &fast_err.to_string())),
+                },
+            },
         }
     };
     Ok(Arc::new(RegexpData {
