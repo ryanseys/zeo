@@ -262,6 +262,18 @@ fn random_bytes(state: &Mutex<u64>, n: usize) -> RubyValue {
     RubyValue::Str(crate::string_from_bytes(out, ASCII_8BIT))
 }
 
+/// `n` bytes from the OS cryptographic entropy source (getrandom(2) /
+/// SecRandomCopyBytes), as a BINARY string. Backs `Random.urandom` and,
+/// through it, SecureRandom. Gvl-released because the pool can block right
+/// after boot. A CRuby `RuntimeError` on failure matches `Random.urandom`'s
+/// "no random device" surface (securerandom.rb rescues exactly that).
+fn os_urandom(n: usize) -> Result<RubyValue, Signal> {
+    let mut buf = vec![0u8; n];
+    crate::gvl::without_gvl(|| getrandom::fill(&mut buf))
+        .map_err(|e| raise_error("RuntimeError", format!("failed to read random device: {e}")))?;
+    Ok(RubyValue::Str(crate::string_from_bytes(buf, ASCII_8BIT)))
+}
+
 fn as_random(recv: &RubyValue) -> Arc<RandomObj> {
     downcast_robj::<RandomObj>(&recv.as_object_unchecked())
         .expect("Random method received a non-Random receiver")
@@ -355,14 +367,17 @@ crate::builtins::builtin_methods! {
         }
         Ok(random_bytes(&default_state().state, *n as usize))
     }
-    // `Random.urandom(n)` -- n bytes from a persistent advancing stream (the
-    // process default generator). Real CRuby draws from OS entropy; the tests
-    // only require the stream to ADVANCE (successive draws differ) and the
-    // result's bytesize to match, both of which this satisfies.
+    // `Random.urandom(n)` -- n bytes drawn from the OS CSPRNG (getrandom(2) /
+    // SecRandomCopyBytes), NOT the seedable PRNG. This is the entropy source
+    // SecureRandom sits on, so it must be genuinely cryptographic; a seeded
+    // generator would make SecureRandom predictable.
     "urandom" => fn urandom_c(_recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let n = &bytes_count(&args[0])?;
-        Ok(random_bytes(&default_state().state, (*n).max(0) as usize))
+        if *n < 0 {
+            return Err(arg_error!("negative string size (or size too big)"));
+        }
+        os_urandom(*n as usize)
     }
     // `Random.new_seed` -- a fresh random seed value (a nonzero Integer),
     // suitable for `Random.new`. Drawn from the default generator.
