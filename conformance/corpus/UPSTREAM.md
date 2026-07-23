@@ -19,3 +19,14 @@ are added, ported (e.g. spinel's `ffi_*` intrinsic tests moving to the real
 `ffi` gem API), or re-oracled. It is discovered by default by
 `cargo run -p xtask -- conformance run`; `--dir` / `$SPINEL_TEST_DIR`
 still override for running against an external checkout.
+
+## Removed tests
+
+Tests exercising spinel-only **compile-time** DSL macros with no CRuby
+analog were removed: both real `ruby` and zeo raise `NoMethodError`
+identically, so they only ever pinned spinel compiler intrinsics, not
+language behavior. Removed: `compile_time_attribute_singular`,
+`compile_time_attribute_wrapped_record`, `compile_time_attributes`,
+`compile_time_define_method_predicates` (spinel's `attribute`/`attributes`
+class macro), and `native_binding_poc` (spinel's `native_obj`/`native_func`
+native-binding DSL).

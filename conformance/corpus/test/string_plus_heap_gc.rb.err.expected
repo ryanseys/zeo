@@ -1,0 +1,1 @@
+test/string_plus_heap_gc.rb:20:in '<main>': undefined method '>' for nil (NoMethodError)

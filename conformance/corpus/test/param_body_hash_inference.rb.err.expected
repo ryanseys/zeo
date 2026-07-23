@@ -1,0 +1,2 @@
+test/param_body_hash_inference.rb:43:in 'Object#consume': undefined method '[]' for nil (NoMethodError)
+	from test/param_body_hash_inference.rb:51:in '<main>'

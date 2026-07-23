@@ -1,0 +1,2 @@
+test/param_include_body_widen.rb:16:in 'Object#consume': undefined method 'include?' for nil (NoMethodError)
+	from test/param_include_body_widen.rb:24:in '<main>'

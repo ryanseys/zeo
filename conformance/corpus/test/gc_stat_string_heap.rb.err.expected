@@ -1,0 +1,1 @@
+test/gc_stat_string_heap.rb:13:in '<main>': undefined method '>=' for nil (NoMethodError)
