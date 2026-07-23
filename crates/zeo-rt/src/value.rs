@@ -960,6 +960,25 @@ impl RubyValue {
             (RubyValue::Thread(a), RubyValue::Thread(b)) => std::sync::Arc::ptr_eq(a, b),
             (RubyValue::Mutex(a), RubyValue::Mutex(b)) => std::sync::Arc::ptr_eq(a, b),
             (RubyValue::Queue(a), RubyValue::Queue(b)) => std::sync::Arc::ptr_eq(a, b),
+            // A numeric compared with a (non-numeric, non-builtin) object
+            // reflects: CRuby's Integer#==/Float#== fall back to `other == self`
+            // (rb_equal), so `5 == Wrapper.new(5)` reaches Wrapper#==. A raising
+            // reflection is stashed like the Object-receiver arm above.
+            (
+                RubyValue::Int(_)
+                | RubyValue::BigInt(_)
+                | RubyValue::Float(_)
+                | RubyValue::Rational(_)
+                | RubyValue::Complex(_),
+                RubyValue::Object(o),
+            ) => match crate::dispatch::call_user_method(o, "==", std::slice::from_ref(self)) {
+                Some(Ok(v)) => v.truthy(),
+                Some(Err(sig)) => {
+                    stash_cmp_signal(sig);
+                    false
+                }
+                None => false,
+            },
             _ => false,
         }
     }
