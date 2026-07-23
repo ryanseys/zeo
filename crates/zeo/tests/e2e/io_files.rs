@@ -962,20 +962,22 @@ fn dash_i_roots_shadow_packages_and_earlier_package_dirs_shadow_later_ones() {
 
 #[test]
 fn a_directory_without_a_manifest_is_not_a_gem() {
-    // No `.gemspec` -> ignored entirely; the feature is simply not found.
-    let err = compile_packages(
-        &[
-            ("packages/plain/lib/plain.rb", "puts 1\n"),
-            ("main.rb", "require \"plain\"\n"),
-        ],
-        "main.rb",
-        &[],
-        &["packages"],
-    )
-    .unwrap_err();
+    // No `.gemspec` -> the directory is ignored entirely, so `require "plain"`
+    // resolves to nothing. Under whole-program AOT that is not a compile error:
+    // the unresolvable require lowers to a runtime `Kernel#require` (raising
+    // LoadError), so it COMPILES -- `plain.rb` is never spliced (it isn't a gem).
     assert!(
-        err.contains("cannot load such file -- plain"),
-        "unexpected error: {err}"
+        compile_packages(
+            &[
+                ("packages/plain/lib/plain.rb", "puts 1\n"),
+                ("main.rb", "require \"plain\"\n"),
+            ],
+            "main.rb",
+            &[],
+            &["packages"],
+        )
+        .is_ok(),
+        "a require of a non-gem directory should compile (defers to runtime)"
     );
 }
 
@@ -1758,11 +1760,13 @@ fn raise_cause_is_three_state() {
 /// A LITERAL require whose feature can't be found is a clean compile error
 /// even off top level (a RESOLVABLE feature is spliced there instead).
 #[test]
-fn require_of_a_missing_feature_off_top_level_is_a_clean_compile_error() {
-    let err = zeo::compile_to_rust("if true\n  require \"some_lib\"\nend\n").unwrap_err();
+fn require_of_a_missing_feature_off_top_level_defers_to_runtime() {
+    // A plain `require` of an unresolvable feature -- anywhere, including a
+    // non-top-level position -- lowers to a runtime `Kernel#require` (raising
+    // LoadError), so it COMPILES rather than failing the build.
     assert!(
-        err.contains("cannot load such file"),
-        "unexpected error: {err}"
+        zeo::compile_to_rust("if true\n  require \"some_lib\"\nend\n").is_ok(),
+        "a missing require off top level should compile (defers to runtime)"
     );
 }
 
@@ -1775,11 +1779,12 @@ fn an_explicit_so_require_resolves_a_statically_linked_extension() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "\"a\"\n");
 
-    // A .so naming no static ext is still a clean LoadError, not a silent no-op.
-    let err = zeo::compile_to_rust("require \"nope.so\"\n").unwrap_err();
+    // A .so naming no static ext resolves to nothing, so (like any unresolvable
+    // plain require) it lowers to a runtime `Kernel#require` raising LoadError --
+    // it COMPILES rather than failing the build.
     assert!(
-        err.contains("cannot load such file -- nope.so"),
-        "unexpected: {err}"
+        zeo::compile_to_rust("require \"nope.so\"\n").is_ok(),
+        "an unresolvable .so require should compile (defers to runtime)"
     );
 }
 

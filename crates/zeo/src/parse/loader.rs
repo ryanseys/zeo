@@ -33,12 +33,16 @@
 //!   local rename gives each execution the fresh local scope real Ruby
 //!   gives it). A `load` cycle -- infinite recursion at runtime in real
 //!   Ruby -- is a loud compile error here instead.
-//! - A missing file is a compile error with CRuby's message (`cannot load
-//!   such file -- <name>`), the reference project's halt-the-compile
-//!   choice: at AOT-resolution time there is no runtime `rescue LoadError`
-//!   to defer to, so the optional-dependency idiom is a LOUD error (the
-//!   `require` inside `begin` is rejected as non-top-level first), never a
-//!   silent skip.
+//! - A plain `require "feature"` zeo can't resolve is NOT a compile error: a
+//!   resolvability pre-scan records it (`Hir::unresolvable_requires`) and its
+//!   CALL lowers to a runtime `Kernel#require` (raising CRuby's `LoadError`,
+//!   `cannot load such file -- <name>`). So a genuinely-missing feature crashes
+//!   at its require site and the optional-dependency idiom (`begin; require
+//!   "x"; rescue LoadError`) is caught at RUNTIME -- exactly CRuby's semantics
+//!   (zeo has a runtime loader that raises; it does not resolve `require` names
+//!   at compile time only). A missing `require_relative` DOES stay a compile
+//!   error: it names a project-local file that must exist, never an optional
+//!   dependency.
 //!
 //! GEMS sit on top of that: a `.gemspec`-manifested directory
 //! contributing one or more search roots (`require_paths`, default
@@ -257,6 +261,47 @@ impl Loader {
         let frame = BindingsFrame::push();
         let mut combined = Vec::new();
         let mut own = Vec::new();
+
+        // Collect every require/require_relative in the file (any nesting) once,
+        // for two uses below: (1) a resolvability pre-scan HERE, and (2) the
+        // eager splice of non-top-level requires AFTER the statement loop.
+        let mut requires = RequireCollector::default();
+        {
+            use ruby_prism::Visit as _;
+            for n in body.iter() {
+                requires.visit(&n);
+            }
+        }
+        // Resolvability pre-scan (MUST precede the statement loop, which folds
+        // require calls in `lower_call_general`): a plain `require "feature"`
+        // zeo can't resolve to a file, builtin, or shim is recorded so its CALL
+        // lowers to a runtime `Kernel#require` (raising `LoadError`) instead of
+        // a loaded-no-op `true`. That makes a genuinely-missing feature crash at
+        // its require site and the `begin; require "x"; rescue LoadError` idiom
+        // catch at runtime -- CRuby's semantics. (A missing `require_relative`
+        // stays a compile error, resolved in the loop / hoist below.)
+        for call in &requires.calls {
+            if call.name().as_slice() != b"require" {
+                continue;
+            }
+            // Extract the literal feature EXACTLY as `lower_require_statement`
+            // and `lower_call_general` do (lower the arg, read its folded string
+            // literal), so all three agree on which requires are literal. The
+            // throwaway arg node is harmless append-only arena bookkeeping.
+            let arg_list: Vec<_> = call
+                .arguments()
+                .map(|a| a.arguments().iter().collect())
+                .unwrap_or_default();
+            let [arg] = arg_list.as_slice() else { continue };
+            let arg_id = lower_node(result, hir, arg)?;
+            let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
+                continue;
+            };
+            if !self.require_resolvable(&feature) {
+                hir.unresolvable_requires.insert(feature);
+            }
+        }
+
         for n in body.iter() {
             if let Some(call) = n.as_call_node() {
                 let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
@@ -423,29 +468,18 @@ impl Loader {
 
         // Non-top-level `require`/`require_relative` (inside a method,
         // conditional, `begin`, block -- anywhere the file-level loop above
-        // does NOT resolve): whole-program AOT can't defer them to runtime, so,
-        // exactly like `autoload`, splice each literal target eagerly here (the
-        // CALL itself folds to a bool no-op in `lower_call_general`). By the
-        // time this runs, lowering has already validated every reachable
-        // require's argument is a literal (else it errored), so
-        // `lower_require_statement` never rejects one here. Deduped through the
-        // shared `required` table, so a target already loaded at top level (or
-        // shared across sites) splices exactly once. Over-approximation: a
-        // require in a never-taken branch still loads -- benign, since every
-        // extension is statically linked anyway.
-        let mut requires = RequireCollector::default();
-        {
-            use ruby_prism::Visit as _;
-            for n in body.iter() {
-                requires.visit(&n);
-            }
-        }
+        // does NOT resolve): exactly like `autoload`, splice each RESOLVABLE
+        // literal target eagerly here (the CALL itself folds to a bool no-op in
+        // `lower_call_general`). An unresolvable plain `require` isn't hoisted
+        // (`lower_require_statement` returns `None` for it, from the pre-scan
+        // set); its CALL lowers to a runtime `Kernel#require` instead. Deduped
+        // through the shared `required` table, so a target already loaded at top
+        // level (or shared across sites) splices exactly once. Over-
+        // approximation: a require in a never-taken branch still loads -- benign,
+        // since every extension is statically linked anyway.
         let mut hoisted = Vec::new();
         for call in &requires.calls {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-            // A non-literal nested `require` returns None here: it isn't hoisted,
-            // and is lowered in place as a runtime `Kernel#require` call (raises
-            // LoadError) by the general call lowering.
             if let Some(spliced) =
                 self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?
             {
@@ -503,6 +537,14 @@ impl Loader {
         let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
             return Ok(None);
         };
+        // A plain `require` the resolvability pre-scan marked unresolvable is not
+        // spliced: `Ok(None)` leaves the CALL in place, and `lower_call_general`
+        // lowers it to a runtime `Kernel#require` (raising `LoadError`). A
+        // missing `require_relative` is NOT in that set and still fails loudly
+        // in `splice_feature` below (a missing project file is a real error).
+        if name == "require" && hir.unresolvable_requires.contains(&feature) {
+            return Ok(None);
+        }
         Ok(Some(self.splice_feature(
             hir,
             &feature,
@@ -511,6 +553,38 @@ impl Loader {
             file_idx,
             current_box,
         )?))
+    }
+
+    /// Whether a plain `require "feature"` has a compile-time VERDICT -- either
+    /// it resolves to something zeo can splice or activate (a file on a load-path
+    /// root, a synthesized shim, a statically linked extension), OR it names a
+    /// gem the external store located but zeo must REJECT (a native extension or
+    /// wrong-platform gem, `store_exclusions`), which stays a loud compile error
+    /// with its specific reason. Only a require with NEITHER verdict has nothing
+    /// to say at compile time and defers to a runtime `Kernel#require` (raising
+    /// `LoadError`). Mirrors `splice_feature`'s `require` resolution.
+    fn require_resolvable(&self, feature: &str) -> bool {
+        match self.resolve_require(feature) {
+            // Resolves to a file on a load-path/gem root.
+            Ok(Some(_)) => true,
+            // A definite resolution ERROR (e.g. a feature found in multiple gems
+            // -- `Gem::LoadError "found in multiple gems"`): a verdict, so it
+            // stays a loud compile error via `splice_feature`, never a defer.
+            Err(_) => true,
+            // Not on disk: a synthesized shim, a statically linked extension, or
+            // a store-located-but-rejected gem (native ext / wrong platform) all
+            // count; anything else has no compile-time verdict and defers.
+            Ok(None) => {
+                synthetic_shim_source(feature).is_some() || {
+                    let bare = feature
+                        .strip_suffix(".so")
+                        .or_else(|| feature.strip_suffix(".bundle"))
+                        .or_else(|| feature.strip_suffix(".o"))
+                        .unwrap_or(feature);
+                    is_builtin_feature(bare) || self.store_exclusions.contains_key(bare)
+                }
+            }
+        }
     }
 
     /// The resolve-and-splice core shared by `require`/`require_relative`/
@@ -596,6 +670,19 @@ impl Loader {
         let canonical = path
             .canonicalize()
             .map_err(|e| format!("resolving {}: {e}", path.display()))?;
+
+        // A rubygems-/bundler-vendored copy of a library zeo already provides
+        // natively is redirected to zeo's own shim rather than lowered from the
+        // vendored source. `vendor/securerandom` is a verbatim copy of the
+        // securerandom gem whose load-time entropy probe (a `class << self`
+        // begin/rescue installing one of two `gen_random` aliases) zeo can't
+        // express -- and zeo ships securerandom natively anyway. See
+        // `shims/gem_securerandom.rb`.
+        if let Some(shim) = vendored_shim_feature(&canonical) {
+            if let Some(spliced) = self.splice_synthetic_shim(hir, shim, current_box)? {
+                return Ok(spliced);
+            }
+        }
 
         if name != "load" {
             // Insert BEFORE lowering (CRuby's loading-table rule): a
@@ -977,8 +1064,21 @@ fn synthetic_shim_source(feature: &str) -> Option<&'static str> {
     match feature {
         "rbconfig" => Some(include_str!("shims/rbconfig.rb")),
         "securerandom" => Some(include_str!("shims/securerandom.rb")),
+        "gem-securerandom" => Some(include_str!("shims/gem_securerandom.rb")),
         _ => None,
     }
+}
+
+/// A rubygems-/bundler-vendored file that duplicates a library zeo already
+/// provides natively, mapped to the synthetic shim that stands in for it (see
+/// `synthetic_shim_source`). Currently just the vendored `securerandom` copy,
+/// whose load-time `class << self` entropy probe zeo can't lower; matched by
+/// path suffix so both the rubygems and bundler copies (identical files under
+/// different `vendor/` roots) redirect to the same native-backed shim.
+fn vendored_shim_feature(canonical: &Path) -> Option<&'static str> {
+    let path = canonical.to_string_lossy().replace('\\', "/");
+    path.ends_with("vendor/securerandom/lib/securerandom.rb")
+        .then_some("gem-securerandom")
 }
 
 /// The `gems/` directory shipped with the compiler, if it exists.

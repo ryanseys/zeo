@@ -131,6 +131,14 @@ pub struct Hir {
     /// this loader already splices requires program-wide. See
     /// `activate_feature`.
     pub activated_features: std::collections::HashSet<String>,
+    /// Plain `require "feature"` targets zeo could NOT resolve to a file,
+    /// builtin, or shim -- recorded by the loader's resolvability pre-scan.
+    /// Their `require` CALL lowers to a runtime `Kernel#require` (which raises
+    /// `LoadError`) instead of a loaded-no-op `true`, so a genuinely-missing
+    /// feature crashes at its require site and the optional-dependency idiom
+    /// (`begin; require "x"; rescue LoadError`) is caught at runtime -- exactly
+    /// CRuby's semantics. (A missing `require_relative` stays a compile error.)
+    pub unresolvable_requires: std::collections::HashSet<String>,
     /// How many of the root `Program`'s leading statements came from the
     /// built-in exception classes (`parse::BUILTIN_EXCEPTIONS_RB`), set by
     /// `parse_and_lower_with`. `analyze` marks the classes

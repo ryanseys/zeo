@@ -298,16 +298,20 @@ fn autoload_with_a_dynamic_feature_is_a_clean_compile_error() {
 }
 
 #[test]
-fn missing_require_is_a_compile_error_with_crubys_message() {
-    let err = compile_project(
-        &[("main.rb", "require \"definitely_missing\"\n")],
-        "main.rb",
-        &[],
-    )
-    .unwrap_err();
+fn a_plain_missing_require_defers_to_a_runtime_load_error() {
+    // A plain `require "feature"` zeo can't resolve is NOT a compile error under
+    // whole-program AOT: it lowers to a runtime `Kernel#require` (raising CRuby's
+    // `cannot load such file -- definitely_missing` LoadError), so it COMPILES.
+    // The runtime crash / rescue behavior is covered by
+    // `requires_that_cannot_be_resolved_at_compile_time`.
     assert!(
-        err.contains("cannot load such file -- definitely_missing"),
-        "unexpected error: {err}"
+        compile_project(
+            &[("main.rb", "require \"definitely_missing\"\n")],
+            "main.rb",
+            &[],
+        )
+        .is_ok(),
+        "a missing plain require should compile (defers to runtime)"
     );
 }
 
@@ -323,6 +327,31 @@ fn a_require_under_a_statically_false_engine_guard_is_pruned_not_spliced() {
     );
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "ok\n");
+}
+
+#[test]
+fn an_unresolvable_require_inside_rescue_loaderror_defers_to_runtime() {
+    // The optional-dependency idiom: `begin; require 'missing'; rescue
+    // LoadError`. A literal require that can't be resolved but is lexically
+    // inside a `rescue LoadError` is deferred to a runtime `Kernel#require`
+    // (raising the LoadError the rescue handles), not a loud compile error.
+    // net/http's `begin; require 'win32/sspi'; rescue LoadError` needs this.
+    let result = run_ruby(
+        r#"
+        begin
+          require "definitely_missing_optdep_xyz"
+          puts "loaded"
+        rescue LoadError => e
+          puts "rescued: #{e.send(:message)}"
+        end
+        puts "after"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "rescued: cannot load such file -- definitely_missing_optdep_xyz\nafter\n"
+    );
 }
 
 #[test]
@@ -367,19 +396,29 @@ fn requires_that_cannot_be_resolved_at_compile_time() {
         result.stderr
     );
 
-    // A LITERAL require of a feature that can't be found is a clean compile
-    // error -- in a method body or a begin/rescue alike. (A RESOLVABLE feature
-    // is spliced even off top level; see the positive-path tests below.)
+    // A LITERAL plain `require` of a feature that can't be found is NOT a
+    // compile error: it lowers to a runtime `Kernel#require` raising LoadError,
+    // exactly like the non-literal case above -- so it COMPILES, and the
+    // optional-dependency idiom `begin; require "x"; rescue LoadError` catches
+    // at runtime. (A RESOLVABLE feature is spliced even off top level; see the
+    // positive-path tests below.)
     for src in [
         "def m\n  require \"x\"\nend\n",
         "begin\n  require \"optional_dep\"\nrescue LoadError\nend\n",
     ] {
-        let err = zeo::compile_to_rust(src).unwrap_err();
         assert!(
-            err.contains("cannot load such file"),
-            "unexpected error: {err}"
+            zeo::compile_to_rust(src).is_ok(),
+            "expected {src:?} to compile (unresolvable require defers to runtime)"
         );
     }
+
+    // A missing `require_relative`, by contrast, IS a compile error: it names a
+    // project-local file that must exist, never an optional dependency.
+    let err = zeo::compile_to_rust("require_relative \"no_such_sibling\"\n").unwrap_err();
+    assert!(
+        err.contains("cannot load such file") || err.contains("cannot infer basepath"),
+        "unexpected error: {err}"
+    );
 }
 
 // ---- gems: .gemspec manifests + search-path resolution ----

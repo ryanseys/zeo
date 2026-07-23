@@ -1661,16 +1661,17 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
         // compile-time rejection.
         // `require`/`require_relative`/`load` reaching THIS function means
         // the statement was NOT in direct top-level statement position (the
-        // one place `parse::loader`'s file-level loop recognizes and
-        // resolves them at compile time) -- a method body, a `begin` block,
-        // a conditional, an `eval` body, a class body. Rejected
-        // unconditionally, same reasoning as `eval` below: there is no
-        // runtime loader, so falling through as a plain `Call` would
-        // compile cleanly and only fail at RUNTIME with a confusing
-        // `NoMethodError`. Notably this makes the `begin; require "x";
-        // rescue LoadError; end` optional-dependency idiom a LOUD compile
-        // error -- a documented divergence (a compile-time resolver has no
-        // runtime LoadError to rescue).
+        // one place `parse::loader`'s file-level loop recognizes and resolves
+        // them) -- a method body, a `begin` block, a conditional, an `eval`
+        // body, a class body. A LITERAL, RESOLVABLE `require`/`require_relative`
+        // folds to its load-result bool (its target was already spliced by the
+        // loader's pre-pass, or a builtin feature activated). Everything else --
+        // `load`, a non-literal target, or a plain `require` the loader's
+        // resolvability pre-scan marked UNRESOLVABLE -- falls through to the
+        // runtime `Kernel#{require,load}` below, which raises CRuby's `LoadError`
+        // if and when it executes. That is what makes the optional-dependency
+        // idiom (`begin; require "x"; rescue LoadError`) behave at runtime
+        // exactly as in CRuby, rather than a compile error.
         if call.receiver().is_none()
             && matches!(name.as_str(), "require" | "require_relative" | "load")
         {
@@ -1701,7 +1702,12 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                         let first = newly_loaded && !features::is_preloaded_at_boot(&feature);
                         return Ok(hir.push(HirNode::BoolLit(first)));
                     }
-                    return Ok(hir.push(HirNode::BoolLit(true)));
+                    // A plain `require` the loader couldn't resolve is NOT spliced;
+                    // fall through to the runtime `Kernel#require` (raising
+                    // `LoadError`) instead of folding to a loaded-no-op `true`.
+                    if !(name == "require" && hir.unresolvable_requires.contains(&feature)) {
+                        return Ok(hir.push(HirNode::BoolLit(true)));
+                    }
                 }
             }
             // `load`, or a `require` of a NON-literal (runtime-computed) target:
