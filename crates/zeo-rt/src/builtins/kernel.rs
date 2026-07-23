@@ -622,6 +622,33 @@ builtin_methods! {
         let p = block_or_enum!(recv, "then", args, block);
         p.call(std::slice::from_ref(recv))
     }
+    // `Kernel#loop` -- blockless is an infinite Enumerator; with a block it
+    // loops forever, rescuing StopIteration and returning its `#result`
+    // (a literal `loop do…end` is desugared in the lowerer, so this handles
+    // the blockless and block-pass forms + the Enumerator re-invoke).
+    "loop" => fn loop_m(recv, args, block) {
+        arity!(args, 0);
+        let Some(RubyValue::Proc(p)) = &block else {
+            return Ok(crate::builtins::enumerator::enumerator_for(recv, "loop", args));
+        };
+        loop {
+            match p.call(&[]) {
+                Ok(_) => {}
+                Err(Signal::Break(v)) => return Ok(v),
+                Err(Signal::Raise(exc))
+                    if crate::dispatch::is_a(exc.class_id(), zeo_abi::STOP_ITERATION_CLASS) =>
+                {
+                    return crate::dispatch::send_value(
+                        &exc,
+                        Symbol::intern("result"),
+                        &[],
+                        None,
+                    );
+                }
+                Err(sig) => return Err(sig),
+            }
+        }
+    }
     // `x.to_enum(:meth, *args)` -- captures exactly (receiver, method,
     // args), CRuby's obj_to_enum. The block-as-size-proc
     // form is Tier B (rare; the stored-size Enumerator.new form covers

@@ -1078,15 +1078,19 @@ builtin_methods! {
             crate::encoding::StrBuf::from_bytes(bytes, enc),
         )))
     }
-    "bytes"[0] => fn bytes(recv, args, _block) {
+    "bytes"[0] => fn bytes(recv, args, block) {
         arity!(args, 0);
-        let out = recv_str!(recv)
-            .lock()
-            .bytes()
-            .iter()
-            .map(|b| RubyValue::Int(*b as i64))
-            .collect();
-        Ok(RubyValue::Array(crate::array_new(out)))
+        let bytes: Vec<i64> = recv_str!(recv).lock().bytes().iter().map(|b| *b as i64).collect();
+        // With a block, `bytes` behaves like `each_byte`: yield each, return self.
+        if let Some(RubyValue::Proc(p)) = &block {
+            for b in bytes {
+                p.call(&[RubyValue::Int(b)])?;
+            }
+            return Ok(recv.clone());
+        }
+        Ok(RubyValue::Array(crate::array_new(
+            bytes.into_iter().map(RubyValue::Int).collect(),
+        )))
     }
     "each_byte"[0] => fn each_byte(recv, args, block) {
         arity!(args, 0);
@@ -1582,22 +1586,35 @@ builtin_methods! {
         arity!(args, 0);
         Ok(str_value(recv_str!(recv).lock().to_utf8_lossy().trim_end_matches(is_rb_strip).to_string()))
     }
-    "chars"[0] => fn chars(recv, args, _block) {
+    "chars"[0] => fn chars(recv, args, block) {
         arity!(args, 0);
-        let out = recv_str!(recv)
-            .lock()
-            .chars()
-            .map(|c| str_value(c.to_string()))
-            .collect();
-        Ok(RubyValue::Array(crate::array_new(out)))
+        let chars: Vec<String> = recv_str!(recv).lock().chars().map(|c| c.to_string()).collect();
+        // With a block, `chars` behaves like `each_char`: yield each, return self.
+        if let Some(RubyValue::Proc(p)) = &block {
+            for c in chars {
+                p.call(&[str_value(c)])?;
+            }
+            return Ok(recv.clone());
+        }
+        Ok(RubyValue::Array(crate::array_new(
+            chars.into_iter().map(str_value).collect(),
+        )))
     }
     // `lines` keeps each separator (`["a\n", "b\n", "c"]`).
     // `lines(sep = "\n", chomp: false)` -- split into lines, keeping the
     // separator unless `chomp:` strips it.
-    "lines" => fn lines(recv, args, _block) {
+    "lines" => fn lines(recv, args, block) {
         arity!(args, 0..=2);
         let text = recv_str!(recv).lock().to_utf8_lossy().into_owned();
-        Ok(RubyValue::Array(crate::array_new(lines_from_args(&text, args))))
+        let ls = lines_from_args(&text, args);
+        // With a block, `lines` behaves like `each_line`: yield each, return self.
+        if let Some(RubyValue::Proc(p)) = &block {
+            for l in ls {
+                p.call(&[l])?;
+            }
+            return Ok(recv.clone());
+        }
+        Ok(RubyValue::Array(crate::array_new(ls)))
     }
     "each_char"[0] => fn each_char(recv, args, block) {
         arity!(args, 0);
@@ -1872,15 +1889,19 @@ builtin_methods! {
     }
     // The integer codepoints of each character (`each_codepoint` is the
     // block/enumerator form over the same values).
-    "codepoints"[0] => fn codepoints(recv, args, _block) {
+    "codepoints"[0] => fn codepoints(recv, args, block) {
         arity!(args, 0);
-        let out = recv_str!(recv)
-            .lock()
-            .to_utf8_lossy()
-            .chars()
-            .map(|c| RubyValue::Int(c as i64))
-            .collect();
-        Ok(RubyValue::Array(crate::array_new(out)))
+        let cps: Vec<i64> = recv_str!(recv).lock().to_utf8_lossy().chars().map(|c| c as i64).collect();
+        // With a block, `codepoints` behaves like `each_codepoint`.
+        if let Some(RubyValue::Proc(p)) = &block {
+            for c in cps {
+                p.call(&[RubyValue::Int(c)])?;
+            }
+            return Ok(recv.clone());
+        }
+        Ok(RubyValue::Array(crate::array_new(
+            cps.into_iter().map(RubyValue::Int).collect(),
+        )))
     }
     "each_codepoint"[0] => fn each_codepoint(recv, args, block) {
         arity!(args, 0);
