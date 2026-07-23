@@ -207,12 +207,17 @@ fn emit_counted_block_splice(
     quote! {
         {
             let mut __i: i64 = #start;
+            // Step at the TOP so `next` (a `continue #outer`) still advances --
+            // a bottom step is skipped by `next`, spinning forever. `redo`
+            // continues the INNER label and never reaches here.
+            let mut __first = true;
             #outer: loop {
+                if !__first { __i += 1; }
+                __first = false;
                 if #done { break #outer #result; }
                 #bind
                 #(#block_locals)*
                 #inner
-                __i += 1;
             }
         }
     }

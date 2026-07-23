@@ -157,11 +157,16 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 let __coll = #iter_expr;
                 let __iter = __coll.as_array_unchecked().lock().clone();
                 let mut __idx: usize = 0;
+                // The step is at the TOP so `next` (a `continue #outer`) still
+                // advances -- a bottom step is skipped by `next`, spinning
+                // forever. `redo` continues the INNER label and never reaches here.
+                let mut __first = true;
                 #outer: loop {
+                    if !__first { __idx += 1; }
+                    __first = false;
                     if __idx >= __iter.len() { break #outer __coll.clone(); }
                     #bind_array
                     #inner
-                    __idx += 1;
                 }
             }
         },
@@ -171,12 +176,15 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                 let __exclusive = __coll.range_exclude_end();
                 let __end = __coll.range_last().as_int_unchecked();
                 let mut __i = __coll.range_first().as_int_unchecked();
+                // Top-of-loop step so `next` advances (see the Array arm).
+                let mut __first = true;
                 #outer: loop {
+                    if !__first { __i += 1; }
+                    __first = false;
                     let __in_range = if __exclusive { __i < __end } else { __i <= __end };
                     if !__in_range { break #outer __coll.clone(); }
                     #bind_range
                     #inner
-                    __i += 1;
                 }
             }
         },
@@ -196,11 +204,14 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                     })
                     .collect();
                 let mut __idx: usize = 0;
+                // Top-of-loop step so `next` advances (see the Array arm).
+                let mut __first = true;
                 #outer: loop {
+                    if !__first { __idx += 1; }
+                    __first = false;
                     if __idx >= __iter.len() { break #outer __coll.clone(); }
                     #bind_array
                     #inner
-                    __idx += 1;
                 }
             }
         },
@@ -223,11 +234,14 @@ pub fn emit_for(cx: &Ctx, target: &MultiTarget, iterable: NodeId, body: &[NodeId
                     let __coll = #coll;
                     let __iter = zeo_rt::each_values(&__coll)?;
                     let mut __idx: usize = 0;
+                    // Top-of-loop step so `next` advances (see the Array arm).
+                    let mut __first = true;
                     #outer: loop {
+                        if !__first { __idx += 1; }
+                        __first = false;
                         if __idx >= __iter.len() { break #outer __coll.clone(); }
                         #bind_array
                         #inner
-                        __idx += 1;
                     }
                 }
             }
