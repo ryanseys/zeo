@@ -107,14 +107,13 @@ pub(crate) fn lower_ffi_directive(
             Ok(true)
         }
         b"callback" => {
-            // `callback :tag, [arg_types], ret_type` -- register `:tag` as a
-            // usable type name. A C callback IS a function pointer, so the tag
-            // resolves to `:pointer`; the signature is validated (so a typo in
-            // it is still an error) but not otherwise carried, since marshalling
-            // a Ruby Proc into a C function pointer is a follow-on.
-            let (tag, params) = match (args.first(), args.get(1), args.get(2)) {
-                (Some(t), Some(p), Some(_)) if t.as_symbol_node().is_some() => {
-                    (ffi_symbol_str(t)?, p)
+            // `callback :tag, [arg_types], ret_type` -- register `:tag` as a C
+            // function-pointer type, carrying its full signature so a Ruby Proc
+            // passed for a `:tag` argument can be marshaled into a libffi closure
+            // (see codegen's `ffi_marshal_in`).
+            let (tag, params, ret) = match (args.first(), args.get(1), args.get(2)) {
+                (Some(t), Some(p), Some(r)) if t.as_symbol_node().is_some() => {
+                    (ffi_symbol_str(t)?, p, r)
                 }
                 _ => {
                     return Err("callback expects `:tag, [arg_types], return_type`"
@@ -122,8 +121,12 @@ pub(crate) fn lower_ffi_directive(
                         .into());
                 }
             };
-            ffi_type_array(params, aliases)?;
-            aliases.insert(tag, crate::hir::FfiType::Pointer);
+            let arg_types = ffi_type_array(params, aliases)?;
+            let ret_ty = ffi_type_of(&ffi_symbol_str(ret)?, aliases)?;
+            aliases.insert(
+                tag,
+                crate::hir::FfiType::Callback(arg_types, Box::new(ret_ty)),
+            );
             Ok(true)
         }
         b"attach_function" => {
@@ -374,11 +377,12 @@ fn lower_attach_function(
             .into());
         }
     };
-    let arg_types = ffi_type_array(types_node, aliases)?;
+    let (arg_types, variadic) = ffi_arg_types(types_node, aliases)?;
     let ret = ffi_type_of(&ffi_symbol_str(ret_node)?, aliases)?;
 
-    // The wrapper's params: one required positional per C argument, named so a
-    // `LocalRead` in the `Ffi` body reaches it.
+    // The wrapper's params: one required positional per FIXED C argument, named
+    // so a `LocalRead` in the `Ffi` body reaches it; a variadic function also
+    // gets a `*__ffi_rest` that collects the trailing (type, value) pairs.
     let param_names: Vec<String> = (0..arg_types.len())
         .map(|i| format!("__ffi_a{i}"))
         .collect();
@@ -387,14 +391,17 @@ fn lower_attach_function(
         .zip(arg_types)
         .map(|(name, ty)| (hir.push(HirNode::LocalRead(name.clone())), ty))
         .collect();
+    let variadic_read = variadic.then(|| hir.push(HirNode::LocalRead("__ffi_rest".to_string())));
     let body = vec![hir.push(HirNode::Ffi(crate::hir::FfiCall {
         symbol: c_symbol,
         lib,
         args: call_args,
         ret,
+        variadic: variadic_read,
     }))];
     let params = Params {
         required: param_names,
+        rest: variadic.then(|| Some("__ffi_rest".to_string())),
         ..Default::default()
     };
     Ok(hir.push(HirNode::DefMethod {
@@ -413,6 +420,36 @@ fn ffi_symbol_str(node: &Node<'_>) -> PResult<String> {
     node.as_symbol_node()
         .map(|s| String::from_utf8_lossy(s.unescaped()).into_owned())
         .ok_or_else(|| "expected a literal symbol in an FFI declaration".into())
+}
+
+/// The argument-type list of an `attach_function`, splitting a trailing
+/// `:varargs` marker: `[:string, :varargs]` -> `([Str], true)`. `:varargs` is
+/// only legal as the final element (a variadic function's fixed prototype ends
+/// before it); anywhere else is a clean rejection.
+fn ffi_arg_types(
+    node: &Node<'_>,
+    aliases: &std::collections::HashMap<String, crate::hir::FfiType>,
+) -> PResult<(Vec<crate::hir::FfiType>, bool)> {
+    let array = node
+        .as_array_node()
+        .ok_or_else(|| "attach_function's argument list must be a literal array".to_string())?;
+    let elems: Vec<Node<'_>> = array.elements().iter().collect();
+    let mut types = Vec::new();
+    let mut variadic = false;
+    for (i, el) in elems.iter().enumerate() {
+        let sym = ffi_symbol_str(el)?;
+        if sym == "varargs" {
+            if i != elems.len() - 1 {
+                return Err("`:varargs` must be the last FFI argument type"
+                    .to_string()
+                    .into());
+            }
+            variadic = true;
+        } else {
+            types.push(ffi_type_of(&sym, aliases)?);
+        }
+    }
+    Ok((types, variadic))
 }
 
 /// `[:int, :string]` -> `[Int(32), Str]`. The argument-type list of an
@@ -459,7 +496,7 @@ fn ffi_type_of(
             Some(t) => t.clone(),
             None => {
                 return Err(format!(
-                    "unsupported FFI type `:{other}` (#204 scalar subset; pointer/struct/callback types are follow-ons)"
+                    "unsupported FFI type `:{other}` (expected a scalar keyword, `:pointer`, `:string`, or a declared `typedef`/`enum`/`callback` name)"
                 ).into())
             }
         },

@@ -1953,10 +1953,21 @@ pub(super) fn emit_const_write_stmt(
 // ---------------------------------------------------------------------------
 
 fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
+    let link = match &call.lib {
+        Some(lib) => quote! { #[link(name = #lib)] },
+        None => quote! {},
+    };
+    // A variadic function's argument list is shaped at runtime, so it goes
+    // through libffi rather than a fixed `extern "C"` signature.
+    if let Some(rest_id) = call.variadic {
+        return emit_ffi_variadic(cx, call, rest_id, &link);
+    }
+
     let sym = quote::format_ident!("{}", call.symbol);
     let mut extern_params = Vec::new();
     let mut bindings = Vec::new();
     let mut call_idents = Vec::new();
+    let mut has_callback = false;
     for (i, (arg_id, ty)) in call.args.iter().enumerate() {
         let pname = quote::format_ident!("__ffi_arg{}", i);
         let cty = ffi_c_type(ty);
@@ -1964,13 +1975,17 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
         let val = emit_expr(cx, *arg_id);
         bindings.push(ffi_marshal_in(ty, &pname, val));
         call_idents.push(quote! { #pname });
+        has_callback |= matches!(ty, crate::hir::FfiType::Callback(..));
     }
     let ret_cty = ffi_c_type(&call.ret);
-    let link = match &call.lib {
-        Some(lib) => quote! { #[link(name = #lib)] },
-        None => quote! {},
-    };
     let wrap = ffi_wrap_ret(&call.ret);
+    // An exception raised inside a callback can't unwind through C; it was
+    // stashed and is re-raised here, after the C function returns.
+    let cb_check = if has_callback {
+        quote! { zeo_rt::ffi::take_callback_error()?; }
+    } else {
+        quote! {}
+    };
     quote! {
         {
             #link
@@ -1979,9 +1994,69 @@ fn emit_ffi_call(cx: &Ctx, call: &crate::hir::FfiCall) -> TokenStream {
             }
             #(#bindings)*
             let __ffi_ret = unsafe { #sym(#(#call_idents),*) };
+            #cb_check
             #wrap
         }
     }
+}
+
+/// A variadic `attach_function` call: resolve the C symbol's address, marshal
+/// the fixed arguments plus the runtime `*rest` (type, value) pairs, and call
+/// through libffi's variadic CIF.
+fn emit_ffi_variadic(
+    cx: &Ctx,
+    call: &crate::hir::FfiCall,
+    rest_id: crate::hir::NodeId,
+    link: &TokenStream,
+) -> TokenStream {
+    let sym = quote::format_ident!("{}", call.symbol);
+    let fixed_count = call.args.len();
+    let fixed_pushes = call.args.iter().map(|(arg_id, ty)| {
+        let kind = ffi_kind_tokens(ty);
+        let val = emit_expr(cx, *arg_id);
+        quote! { __ffi_vals.push(zeo_rt::ffi::va_fixed(#kind, &(#val))?); }
+    });
+    let rest_expr = emit_expr(cx, rest_id);
+    let ret_kind = ffi_kind_tokens(&call.ret);
+    quote! {
+        {
+            #link
+            extern "C" {
+                fn #sym();
+            }
+            let __ffi_fn: unsafe extern "C" fn() = #sym;
+            let __ffi_addr = __ffi_fn as *const ::std::os::raw::c_void;
+            let mut __ffi_vals: ::std::vec::Vec<zeo_rt::ffi::VaVal> = ::std::vec::Vec::new();
+            #(#fixed_pushes)*
+            __ffi_vals.extend(zeo_rt::ffi::va_parse_pairs(&(#rest_expr))?);
+            unsafe { zeo_rt::ffi::call_variadic(__ffi_addr, #fixed_count, __ffi_vals, #ret_kind)? }
+        }
+    }
+}
+
+/// The `zeo_rt::ffi::FfiKind` variant for a scalar C type -- the runtime tag
+/// codegen emits for variadic-argument marshaling and callback signatures.
+fn ffi_kind_tokens(ty: &crate::hir::FfiType) -> TokenStream {
+    use crate::hir::FfiType::*;
+    let variant = match ty {
+        Void => quote! { Void },
+        Int(8) => quote! { I8 },
+        Int(16) => quote! { I16 },
+        Int(64) => quote! { I64 },
+        Uint(8) => quote! { U8 },
+        Uint(16) => quote! { U16 },
+        Uint(32) => quote! { U32 },
+        Uint(64) => quote! { U64 },
+        Float(32) => quote! { F32 },
+        Float(64) => quote! { F64 },
+        Bool => quote! { Bool },
+        Str => quote! { Str },
+        Pointer | Callback(..) => quote! { Pointer },
+        // Enums are C `int`; `Int(32)` and any residual width default the same.
+        Enum(_) | Int(_) => quote! { I32 },
+        Uint(_) | Float(_) => quote! { I32 },
+    };
+    quote! { zeo_rt::ffi::FfiKind::#variant }
 }
 
 /// The Rust type mirroring one C ABI type (LP64: `i32`==C `int`, `i64`==C
@@ -2007,6 +2082,8 @@ fn ffi_c_type(ty: &crate::hir::FfiType) -> TokenStream {
         Pointer => quote! { *mut ::std::os::raw::c_void },
         // An enum's underlying C type is `int`, the gem's default.
         Enum(_) => quote! { ::std::os::raw::c_int },
+        // A callback is a C function pointer -- passed as an opaque address.
+        Callback(..) => quote! { *const ::std::os::raw::c_void },
     }
 }
 
@@ -2045,6 +2122,18 @@ fn ffi_marshal_in(
             let table = ffi_enum_members(members);
             quote! { let #pname: #cty = zeo_rt::ffi::enum_to_int(&#val, #table)? as #cty; }
         }
+        // Marshal a Ruby Proc into a libffi closure; its code pointer is the C
+        // argument. The `_cb` handle (the live closure) is a block-local kept
+        // alive across the call and dropped after it.
+        Callback(arg_types, ret_type) => {
+            let owner = quote::format_ident!("{}_cb", pname);
+            let arg_kinds = arg_types.iter().map(ffi_kind_tokens);
+            let ret_kind = ffi_kind_tokens(ret_type);
+            quote! {
+                let #owner = zeo_rt::ffi::make_callback(&#val, &[#(#arg_kinds),*], #ret_kind)?;
+                let #pname: #cty = #owner.code_ptr();
+            }
+        }
         Void => quote! { compile_error!("`:void` is not a valid FFI argument type"); },
     }
 }
@@ -2063,5 +2152,6 @@ fn ffi_wrap_ret(ty: &crate::hir::FfiType) -> TokenStream {
             let table = ffi_enum_members(members);
             quote! { zeo_rt::ffi::int_to_enum(__ffi_ret as i64, #table) }
         }
+        Callback(..) => quote! { compile_error!("an FFI callback is not a valid return type") },
     }
 }

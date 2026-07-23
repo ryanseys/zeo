@@ -57,6 +57,9 @@ encoding_rs = "0.8"
 regex = "1"
 fancy-regex = "0.14"
 onig = { version = "6.5", default-features = false }
+# libffi vendors and builds its own C library (like onig), for the runtime
+# variadic-call / callback-closure paths of the `ffi` gem (ext-ffi only).
+libffi = "5"
 # Numeric tower.
 num-bigint = "0.5"
 num-integer = "0.1"

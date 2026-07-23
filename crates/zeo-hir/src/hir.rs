@@ -1035,13 +1035,14 @@ pub struct RegexpFlags {
 }
 
 /// A C ABI type for one FFI argument or return value (#204, the real `ffi`
-/// gem's type keywords). The scalar subset: enough for a faithful
-/// `attach_function` over libc/libm and most C entry points. Each maps to a C
-/// type codegen declares in the `extern "C"` block and to the RubyValue↔C
-/// marshaling it emits. Pointers/structs/callbacks are follow-on increments.
-/// `Clone`, not `Copy`: the `Enum` variant carries its member table (a `Vec`),
-/// resolved at parse time and embedded so codegen can emit an inline
-/// symbol↔int match with no runtime enum registry.
+/// gem's type keywords): the scalars, `:pointer`/`:string`, named `enum`s, and
+/// `callback` function-pointer types -- enough for a faithful `attach_function`
+/// over libc/libm and most C entry points. Each maps to a C type codegen
+/// declares in the `extern "C"` block (or, for variadic calls and callbacks,
+/// to the libffi marshaling it emits) and to the RubyValue↔C conversion.
+/// `Clone`, not `Copy`: the `Enum` and `Callback` variants carry owned data
+/// (a member table / a nested signature), resolved at parse time and embedded
+/// so codegen needs no runtime type registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FfiType {
     Void,
@@ -1067,6 +1068,12 @@ pub enum FfiType {
     /// Integer), exactly as the gem's `Enum` data-converter does. The `Vec`
     /// holds `(symbol_name, value)` members in declaration order.
     Enum(Vec<(String, i64)>),
+    /// A `callback :tag, [arg_types], ret_type` -- a C function-pointer type. As
+    /// an argument, a Ruby Proc is marshaled into a libffi closure trampolining
+    /// into the Proc, and the closure's code pointer is passed. Holds the
+    /// callback's `(arg_types, return_type)` so the closure's own CIF can be
+    /// built. (As a C ABI type it is a `void *`.)
+    Callback(Vec<FfiType>, Box<FfiType>),
 }
 
 /// One C function a module `attach_function`'d (#204). The synthesized wrapper
@@ -1081,10 +1088,17 @@ pub struct FfiCall {
     /// The library to `#[link(name = ..)]`; `None` relies on the always-linked
     /// libc/libSystem.
     pub lib: Option<String>,
-    /// Each argument: the wrapper param to read (`LocalRead`) and its C type.
+    /// Each FIXED argument: the wrapper param to read (`LocalRead`) and its C
+    /// type. For a variadic function these are only the declared leading
+    /// arguments (the ones before `:varargs`).
     pub args: Vec<(NodeId, FfiType)>,
     /// The C return type -- governs the wrap back to a `RubyValue`.
     pub ret: FfiType,
+    /// `Some(rest)` for a variadic function (`attach_function [.., :varargs]`),
+    /// where `rest` reads the wrapper's `*rest` param -- a flat Array of
+    /// alternating `type_symbol, value` pairs marshaled at runtime via libffi.
+    /// `None` for an ordinary fixed-arity call.
+    pub variadic: Option<NodeId>,
 }
 
 /// A small, real enum instead of zeo's ~115 string-typed `SP_NODE_KINDS`

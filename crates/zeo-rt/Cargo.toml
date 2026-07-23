@@ -73,6 +73,12 @@ serde_json = { workspace = true, optional = true }
 # parser+emitter (serde_yaml is deprecated/archived). Pulled in only by
 # `ext-psych`.
 yaml-rust2 = { workspace = true, optional = true }
+# `ffi` extension: libffi builds a call interface at runtime for variadic C
+# functions (attach_function [..., :varargs]) and allocates closures so a Ruby
+# Proc can be handed to a C callback argument. It vendors and builds its own C
+# library, resolved through the same bare-rustc link as onig. Pulled in only by
+# `ext-ffi`.
+libffi = { workspace = true, optional = true }
 # The P-B core classes: `Process.clock_gettime`'s clock ids, and (for Time)
 # `localtime_r`/`timegm`/`tzset` -- the zone database and DST rules the OS
 # already owns. Deliberately libc rather than chrono: Time's strftime and
@@ -130,7 +136,7 @@ ext-zlib = ["dep:flate2"]
 ext-psych = ["dep:yaml-rust2"]
 ext-socket = []
 ext-openssl = []
-ext-ffi = []
+ext-ffi = ["dep:libffi"]
 
 [lints]
 workspace = true
