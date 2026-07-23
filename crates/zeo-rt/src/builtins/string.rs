@@ -814,6 +814,24 @@ fn slice_bang_impl(recv: &RubyValue, args: &[RubyValue]) -> Result<RubyValue, Si
                 None => return Ok(RubyValue::Nil),
             }
         }
+        // `slice!(regexp)` / `slice!(regexp, capture)`: remove and return the
+        // whole match (or the named/numbered capture group).
+        (RubyValue::Regexp(re), cap) => {
+            let text: String = chars.iter().collect();
+            let RubyValue::MatchData(m) = crate::regexp_match(re, &text) else {
+                return Ok(RubyValue::Nil);
+            };
+            let key = cap.cloned().unwrap_or(RubyValue::Int(0));
+            let RubyValue::Array(off) = crate::matchdata_offset(&m, &key, false)? else {
+                return Ok(RubyValue::Nil);
+            };
+            let off = off.lock();
+            match (&off[0], &off[1]) {
+                (RubyValue::Int(lo), RubyValue::Int(hi)) => (*lo as usize, *hi as usize),
+                // A non-participating capture group removes nothing.
+                _ => return Ok(RubyValue::Nil),
+            }
+        }
         _ => return Ok(RubyValue::Nil),
     };
     let removed: String = chars[start..end].iter().collect();
@@ -1930,7 +1948,9 @@ builtin_methods! {
         // NUM2LONG. The replacement converts via `to_str` in every form.
         let is_range_form = args.len() == 2
             || !matches!(&args[0], RubyValue::Int(_) | RubyValue::BigInt(_));
-        let (start, len, repl) = if is_range_form {
+        // `orig_index` is the caller's index BEFORE negative normalization,
+        // which is what CRuby's out-of-range message reports.
+        let (start, len, repl, orig_index) = if is_range_form {
             let RubyValue::Range(begin, end, exclusive) = &args[0] else {
                 return Err(type_error!("wrong argument type {} (expected Range)",
                         crate::builtins::class_name_of(&args[0])));
@@ -1950,14 +1970,19 @@ builtin_methods! {
                 }
                 None => total,
             };
-            (start, (end_i - start).max(0), convert::to_rstr(&args[1])?)
+            (start, (end_i - start).max(0), convert::to_rstr(&args[1])?, start)
         } else {
-            let start = convert::to_index(&args[0])?;
-            let start = if start < 0 { start + total } else { start };
-            (start, convert::to_index(&args[1])?, convert::to_rstr(&args[2])?)
+            let orig = convert::to_index(&args[0])?;
+            let start = if orig < 0 { orig + total } else { orig };
+            (start, convert::to_index(&args[1])?, convert::to_rstr(&args[2])?, orig)
         };
-        if start < 0 || start > total || len < 0 {
-            return Err(index_error!("index {start} out of string"));
+        // Start bounds first (message names the caller's original index), then
+        // the length, whose own message is distinct.
+        if start < 0 || start > total {
+            return Err(index_error!("index {orig_index} out of string"));
+        }
+        if len < 0 {
+            return Err(index_error!("negative length {len}"));
         }
         let start = start as usize;
         let end = (start + len as usize).min(total as usize);
@@ -1965,7 +1990,8 @@ builtin_methods! {
         let repl_bytes = repl.lock().bytes().to_vec();
         bytes.splice(start..end, repl_bytes);
         s.lock().replace_bytes(bytes, enc);
-        Ok(RubyValue::Str(repl))
+        // `bytesplice` returns the receiver (mutated self), not the replacement.
+        Ok(recv.clone())
     }
     "index" => fn index(recv, args, _block) {
         // `index(substr_or_regexp[, start])` -- the optional start is a CHAR
