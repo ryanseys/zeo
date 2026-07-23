@@ -128,6 +128,18 @@ pub fn accessor_params(
     meta.members.iter().any(|m| m.name() == n).then(Vec::new)
 }
 
+/// If `recv` is a Struct/Data instance with a member literally named `name`,
+/// that member's current slot value. Lets a member named after a Kernel
+/// universal (`Struct.new(:class)` / `Data.define(:hash)`) shadow the builtin
+/// when the universal is otherwise served by a codegen fast path that never
+/// reaches the accessor.
+pub fn member_value_named(recv: &RObj, name: &str) -> Option<RubyValue> {
+    let inst = recv.as_any().downcast_ref::<StructInstance>()?;
+    let meta = meta_of(inst.class_id)?;
+    let i = meta.index_of(Symbol::intern(name))?;
+    Some(inst.slots.lock()[i].clone())
+}
+
 // ---------------------------------------------------------------------------
 // The instance
 // ---------------------------------------------------------------------------
@@ -635,6 +647,25 @@ fn bind_members(recv: &RubyValue, args: &[RubyValue], is_data: bool) -> Result<(
         return Ok(());
     }
 
+    // Mixed positional + keyword (`P.new(1, y: 2)`): a trailing symbol-keyed
+    // Hash alongside leading positional args is an illegal mix for Data and
+    // keyword_init Structs -- CRuby routes keywords to the keyword initializer,
+    // which accepts no positional args, so it reports "given N, expected 0".
+    if (is_data || meta.keyword_init == Some(true)) && args.len() > 1 {
+        if let Some(RubyValue::Hash(h)) = args.last() {
+            let all_symbol_keys = {
+                let g = h.lock();
+                g.len() > 0 && g.values().all(|(k, _)| matches!(k, RubyValue::Symbol(_)))
+            };
+            if all_symbol_keys {
+                return Err(arg_error!(
+                    "wrong number of arguments (given {}, expected 0)",
+                    args.len()
+                ));
+            }
+        }
+    }
+
     // Positional. A plain Struct nil-fills a short arg list; keyword_init and
     // Data require exact arity.
     if meta.keyword_init == Some(true) && !args.is_empty() {
@@ -812,6 +843,12 @@ fn define_value_class(
     // instead of `Object#==`'s reference identity -- the class_table row alone
     // isn't consulted by that path (only registry/overlay methods are).
     for shadowed in ["inspect", "to_s", "hash", "==", "eql?"] {
+        // A member named after one of these (`Struct.new(:hash)` /
+        // `Data.define(:hash)`) keeps its accessor: the member reader must
+        // shadow the struct's builtin, matching CRuby.
+        if members.contains(&Symbol::intern(shadowed)) {
+            continue;
+        }
         if let Some(f) = table(shadowed) {
             methods.insert(
                 Symbol::intern(shadowed),

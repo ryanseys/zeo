@@ -1339,7 +1339,10 @@ fn dispatch(
                     let id = cid.0;
                     quote! { { let _ = #recv_expr; zeo_rt::RubyValue::Class(zeo_rt::ClassId(#id)) } }
                 }
-                _ => quote! { zeo_rt::RubyValue::Class((#recv_expr).class_id()) },
+                // `value_class` (not a bare `class_id()`) so a Struct/Data
+                // member literally named `class` shadows Kernel#class -- the
+                // runtime-minted accessor is invisible to this fold.
+                _ => quote! { zeo_rt::value_class(&(#recv_expr)) },
             };
         }
     }

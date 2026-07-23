@@ -2505,6 +2505,21 @@ pub fn send_value(
     send_value_in(0, recv, name, args, block)
 }
 
+/// `recv.class` for the codegen `.class` fast path on a dynamically-typed
+/// receiver: normally the receiver's class value, but a Struct/Data instance
+/// with a member literally named `class` (`Data.define(:class, :hash)`) has
+/// that accessor shadow Kernel#class -- the fold that emits this can't see the
+/// runtime-minted member, so the shadow is resolved here. Infallible (a member
+/// read), so the fold stays a plain expression.
+pub fn value_class(recv: &RubyValue) -> RubyValue {
+    if let RubyValue::Object(o) = recv {
+        if let Some(v) = crate::builtins::rstruct::member_value_named(o, "class") {
+            return v;
+        }
+    }
+    RubyValue::Class(recv.class_id())
+}
+
 /// The `old` name behind a builtin-alias row visible to instances of `id` --
 /// closest ancestor wins, so a subclass resolves an alias its parent (or an
 /// included module) declared. `None` for every ordinary name; consulted only
