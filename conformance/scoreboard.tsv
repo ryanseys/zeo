@@ -1,5 +1,5 @@
-# suite=spinel corpus=2341 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=0136644
-# PASS=2269 FAIL_OUTPUT=70 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2341
+# suite=spinel corpus=2341 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=3e7dffe
+# PASS=2277 FAIL_OUTPUT=62 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=1 ORACLE_FAIL=0 SKIP=0 TOTAL=2341
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -806,7 +806,7 @@ hash_new_block_container	PASS	-	-
 hash_new_block_key_type	PASS	-	-
 hash_new_default_block_assign	PASS	-	-
 hash_new_default_empty	PASS	-	-
-hash_numeric_wave11	FAIL_OUTPUT	expect	-
+hash_numeric_wave11	PASS	-	-
 hash_param_each_kv_inference	PASS	-	-
 hash_param_each_kv_weak_default	PASS	-	-
 hash_param_widen_from_callee_slot	PASS	-	-
@@ -1393,13 +1393,13 @@ ivar_polymorphic	PASS	-	-
 ivar_ternary_mixed	PASS	-	-
 ivar_widen_poly_writer	PASS	-	-
 kernel_array_coercion	PASS	-	-
-kernel_array_format_negx_wave10	FAIL_OUTPUT	expect	-
+kernel_array_format_negx_wave10	PASS	-	-
 kernel_caller_wired	PASS	-	-
 kernel_complex	PASS	-	-
 kernel_conversions	PASS	-	-
 kernel_dir	PASS	-	-
 kernel_fail_alias	PASS	-	-
-kernel_float_integer_strict	FAIL_OUTPUT	expect	-
+kernel_float_integer_strict	PASS	-	-
 kernel_float_strict	PASS	-	-
 kernel_integer_float_errors	PASS	-	-
 kernel_integer_float_strict_nil	PASS	-	-
@@ -1903,7 +1903,7 @@ rational_complex_wave9	PASS	-	-
 rational_ctor_exact	PASS	-	-
 rational_div_family	PASS	-	-
 rational_i_to_complex	PASS	-	-
-rational_mod_cmp_slice_default_wave10	FAIL_OUTPUT	expect	-
+rational_mod_cmp_slice_default_wave10	PASS	-	-
 rational_step	PASS	-	-
 recursive_block_forward_value	PASS	-	-
 recursive_block_method	PASS	-	-
@@ -2084,7 +2084,7 @@ string_chomp_bang_mutates	PASS	-	-
 string_clone_frozen	PASS	-	-
 string_conformance_batch	PASS	-	-
 string_conformance_batch3	PASS	-	-
-string_conformance_batch4	FAIL_OUTPUT	expect	-
+string_conformance_batch4	PASS	-	-
 string_conformance_batch6	PASS	-	-
 string_crypt	PASS	-	-
 string_dedup_frozen_self	PASS	-	-
@@ -2138,13 +2138,13 @@ string_shl_identity	PASS	-	-
 string_slice_bang_value	PASS	-	-
 string_slice_casecmp_succ	PASS	-	-
 string_slice_range	PASS	-	-
-string_splice_family	FAIL_OUTPUT	expect	-
+string_splice_family	PASS	-	-
 string_split_block	PASS	-	-
 string_split_capture	PASS	-	-
 string_split_inline_arg_gc_root	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-0827
 string_squeeze_no_trailing_nul	PASS	-	-
 string_sub_hash_replacement	PASS	-	-
-string_succ_scan_slice_tilde_wave10	FAIL_OUTPUT	expect	-
+string_succ_scan_slice_tilde_wave10	PASS	-	-
 string_sum_bits	PASS	-	-
 string_to_i_base	PASS	-	-
 string_to_i_base_zero	PASS	-	-
@@ -2194,7 +2194,7 @@ symbol_id2name_ruby_desc_minmax	PASS	-	-
 symbol_inspect_nonascii	PASS	-	-
 symbol_inspect_quoting	PASS	-	-
 symbol_multibyte_length	PASS	-	-
-symbol_nil_bool_float_batch	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc
+symbol_nil_bool_float_batch	PASS	-	-
 symbol_nil_truthiness	PASS	-	-
 symbol_range_enum	PASS	-	-
 symbol_string_methods	PASS	-	-

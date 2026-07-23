@@ -28,7 +28,6 @@ families. Oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darw
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-e249 | 1 | ffi_callback | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/ffi_callback.rb:24:in '<main>' |
 | ? | auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-faa9 | 1 | param_include_body_widen | from /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/param_include_body_widen.rb:24:in '<main>' |
 | ? | auto-territory-not-syntaxerror-ed71 | 1 | ffi_variadic | territory, not a SyntaxError) |
-| ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-84cc | 1 | symbol_nil_bool_float_batch | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/symbol_nil_bool_float_batch.rb:61:in '<main>': can't coerce Complex into Float (TypeError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-c5a2 | 1 | constant_path | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/constant_path.rb:29:in '<main>': tried to create Proc object without a block (ArgumentError) |
 | ? | auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-cac9 | 1 | socket_tcp_thread | /Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/socket_tcp_thread.rb:14:in '<main>': Unknown error @ read -  (SystemCallError) |
 | P | missing-const:A | 1 | issue_3179 | uninitialized constant A (NameError) |
