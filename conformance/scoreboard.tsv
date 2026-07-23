@@ -1,5 +1,5 @@
-# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=c64ebe6
-# PASS=2332 FAIL_OUTPUT=3 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
+# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=a294f49
+# PASS=2333 FAIL_OUTPUT=2 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -1938,7 +1938,7 @@ regexp_named_backref	PASS	-	-
 regexp_named_capture_match	PASS	-	-
 regexp_names_meta	PASS	-	-
 regexp_new_literal	PASS	-	-
-regexp_pike_capture_and_bol	FAIL_OUTPUT	expect	-
+regexp_pike_capture_and_bol	PASS	-	-
 regexp_quantifier_alt_loopback	PASS	-	-
 regexp_reflection	PASS	-	-
 regexp_render_source_variable	PASS	-	-

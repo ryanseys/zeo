@@ -1,6 +1,6 @@
 # Conformance failures — full detail
 
-Suite `spinel` — **4 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `c64ebe6`
+Suite `spinel` — **3 failing test(s)** — oracle `ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]` — zeo `a294f49`
 
 Every non-passing test with its source path, the reference it is diffed
 against, verdict/bucket, captured stderr, and the full expected-vs-actual
@@ -92,7 +92,7 @@ uncaught exception: undefined method 'ffi_func' for module C (NoMethodError)
 diff:
 ```
 === stdout diff ===
-first difference at line 10
+first difference at line 16
 --- expected (30 lines)
 1
 0
@@ -135,9 +135,9 @@ nil
 nil
 0
 nil
+0
 nil
-nil
-nil
+0
 nil
 0
 0
@@ -146,7 +146,7 @@ ws-x: compiled
 +: RegexpError
 ?: RegexpError
 a***: compiled
-(?~foo): RegexpError
+(?~foo): compiled
 (?(a)b): compiled
 (?q)a: RegexpError
 (?x:ab): compiled
@@ -156,44 +156,6 @@ nil
 3
 "いうえ"
 nil
-```
-
----
-
-## `regexp_pike_capture_and_bol` — FAIL_OUTPUT
-
-- source: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_pike_capture_and_bol.rb`
-- expected stdout: `/Users/ryanseys/dev/zeo/crates/xtask/../../conformance/corpus/test/regexp_pike_capture_and_bol.rb.expected`
-- expected stderr: *(must be empty)*
-- verdict: FAIL_OUTPUT (stage `expect`) · bucket `-` (cluster `-`)
-
-diff:
-```
-=== stdout diff ===
-first difference at line 6
---- expected (10 lines)
-["1", nil]
-[nil, "b", nil]
-[nil, nil, "c"]
-"baz"
-[[nil, "a"], ["1", nil], [nil, "b"], ["2", nil]]
-1
-2
-false
-true
-["a", "b"]
-
---- actual (10 lines)
-["1", nil]
-[nil, "b", nil]
-[nil, nil, "c"]
-"baz"
-[[nil, "a"], ["1", nil], [nil, "b"], ["2", nil]]
-2
-3
-true
-true
-["a", "b"]
 ```
 
 ---
