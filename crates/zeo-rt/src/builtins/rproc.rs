@@ -130,6 +130,9 @@ builtin_methods! {
     ">>" => fn compose_forward(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let f = recv_proc(recv).clone();
+        // The composed proc's lambda-ness follows the FIRST function to run:
+        // for `f >> g` that is the receiver `f` (CRuby's proc_compose).
+        let is_lambda = f.is_lambda();
         let g = args[0].clone();
         Ok(RubyValue::Proc(crate::RProc::with_meta(
             move |a: &[RubyValue]| {
@@ -137,20 +140,27 @@ builtin_methods! {
                 crate::dispatch::send_value(&g, crate::Symbol::intern("call"), &[mid], None)
             },
             -1,
-            true,
+            is_lambda,
         )))
     }
     "<<" => fn compose_backward(recv, args, _block) {
         crate::builtins::arity!(args, 1);
         let f = recv_proc(recv).clone();
         let g = args[0].clone();
+        // For `f << g`, `g` runs first, so the composition follows the
+        // ARGUMENT's lambda-ness (a non-Proc callable, e.g. a Method, is
+        // lambda-like -> true).
+        let is_lambda = match &g {
+            RubyValue::Proc(p) => p.is_lambda(),
+            _ => true,
+        };
         Ok(RubyValue::Proc(crate::RProc::with_meta(
             move |a: &[RubyValue]| {
                 let mid = crate::dispatch::send_value(&g, crate::Symbol::intern("call"), a, None)?;
                 f.call(&[mid])
             },
             -1,
-            true,
+            is_lambda,
         )))
     }
 }
@@ -172,6 +182,9 @@ builtin_methods! {
 /// One step of `Proc#curry`: a proc that either invokes the target (enough
 /// arguments collected) or answers the next curried step.
 fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> RubyValue {
+    // A curried proc keeps the target's lambda-ness (`proc{}.curry.lambda?` is
+    // false, `lambda{}.curry.lambda?` is true -- oracle-verified).
+    let is_lambda = target.is_lambda();
     RubyValue::Proc(crate::RProc::with_meta(
         move |args: &[RubyValue]| {
             let mut have = collected.clone();
@@ -184,10 +197,9 @@ fn curried(target: crate::RProc, collected: Vec<RubyValue>, want: usize) -> Ruby
         // Every curry STEP reports var-args arity, not the count still
         // outstanding: CRuby builds each one with `rb_proc_new` over a C
         // function taking `*args` (`make_curry_proc`), so `.curry.arity`
-        // and `.curry[1].arity` are both -1 -- oracle-verified. It is still
-        // a lambda.
+        // and `.curry[1].arity` are both -1 -- oracle-verified.
         -1,
-        true,
+        is_lambda,
     ))
 }
 
