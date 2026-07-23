@@ -632,16 +632,58 @@ fn uncaught_throw_initialize(
         e.set_detail("tag", args[0].clone());
         e.set_detail("value", args[1].clone());
     }
-    let msg = match args.get(2) {
-        Some(m) => m.clone(),
-        None if internal_msg_only => args[0].clone(),
-        None => RubyValue::Str(crate::string_new(format!(
-            "uncaught throw {}",
-            args[0].inspect_string()
-        ))),
-    };
-    *e.mesg.lock() = msg.clone();
-    Ok(msg)
+    match args.get(2) {
+        // An explicit message wins and is stored in the `mesg` slot.
+        Some(m) => {
+            *e.mesg.lock() = m.clone();
+            Ok(m.clone())
+        }
+        None if internal_msg_only => {
+            *e.mesg.lock() = args[0].clone();
+            Ok(args[0].clone())
+        }
+        // `.new(tag, value)` with no explicit message: leave `mesg` nil so the
+        // message is derived from the tag by `uncaught_throw_to_s` and equality
+        // stays tag-agnostic, matching the uncaught-throw raise path.
+        None => Ok(RubyValue::Nil),
+    }
+}
+
+/// Build (and package as a raise `Signal`) the `UncaughtThrowError` an uncaught
+/// `throw` raises. The internal message slot is left NIL: CRuby's `exc_equal`
+/// compares that slot, so two uncaught-throw errors raised on the same source
+/// line compare equal even though their tags (and rendered messages) differ.
+/// The human-readable "uncaught throw <tag>" text is produced on demand by
+/// [`uncaught_throw_to_s`]. `tag`/`value` populate the hidden accessor slots,
+/// and cause + backtrace are attached at raise time (as for any raise).
+pub fn raise_uncaught_throw(tag: RubyValue, value: RubyValue) -> Signal {
+    let e = RubyException::new(UNCAUGHT_THROW_ERROR_CLASS);
+    e.set_detail("tag", tag);
+    e.set_detail("value", value);
+    let exc = RubyValue::Object(e);
+    attach_cause(&exc);
+    attach_backtrace(&exc);
+    Signal::Raise(exc)
+}
+
+/// `UncaughtThrowError#to_s`: an explicit message (`.new(tag, val, "m")`) wins;
+/// otherwise the message is derived from the tag as `uncaught throw <tag>` --
+/// keeping the internal `mesg` slot nil so equality compares tag-agnostically
+/// (see [`raise_uncaught_throw`]). `#message` routes here via `to_s`.
+fn uncaught_throw_to_s(
+    recv: &RObj,
+    _args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    let e = exc(recv);
+    if e.mesg.lock().truthy() {
+        return exc_to_s(recv, &[], None);
+    }
+    let tag = e.detail("tag");
+    Ok(RubyValue::Str(string_new(format!(
+        "uncaught throw {}",
+        tag.inspect_string()
+    ))))
 }
 
 /// `UncaughtThrowError#tag` -- the tag of the uncaught `throw`.
@@ -1112,6 +1154,7 @@ pub fn register_exception_subclass(
     }
     if is_uncaught_throw {
         registry.define_method_own(id, Symbol::intern("initialize"), uncaught_throw_initialize);
+        registry.define_method_own(id, Symbol::intern("to_s"), uncaught_throw_to_s);
         registry.define_method_own(id, Symbol::intern("tag"), exc_tag);
         registry.define_method_own(id, Symbol::intern("value"), exc_value);
     }

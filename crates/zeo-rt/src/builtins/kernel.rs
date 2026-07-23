@@ -1389,13 +1389,9 @@ pub fn kernel_throw(args: &[RubyValue]) -> Result<RubyValue, Signal> {
             args.get(1).cloned().unwrap_or(RubyValue::Nil),
         ))
     } else {
-        Err(crate::dispatch::raise_error_details(
-            "UncaughtThrowError",
-            format!("uncaught throw {}", tag.inspect_string()),
-            &[
-                ("tag", tag.clone()),
-                ("value", args.get(1).cloned().unwrap_or(RubyValue::Nil)),
-            ],
+        Err(crate::builtins::exception::raise_uncaught_throw(
+            tag.clone(),
+            args.get(1).cloned().unwrap_or(RubyValue::Nil),
         ))
     }
 }
