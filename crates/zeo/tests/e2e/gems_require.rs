@@ -1055,3 +1055,43 @@ fn require_works_in_non_top_level_positions() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "2\n3\n{\"k\":1}\n");
 }
+
+// A dynamic `load`/`require` (a runtime-computed target) no longer fails the
+// COMPILE -- whole-program AOT can't splice a path it only learns at runtime,
+// so the call is lowered to a runtime `Kernel#{load,require}` that raises
+// CRuby's `LoadError` if and when it actually executes. A guarded dynamic load
+// (the `load ENV["X"] if ENV["X"]` idiom rubygems uses) compiles and no-ops
+// when its guard is false.
+#[test]
+fn dynamic_load_compiles_and_raises_loaderror_only_when_executed() {
+    let result = run_ruby(
+        r#"
+        # Guarded dynamic load: guard false -> never executes -> no error.
+        path = nil
+        load path if path
+        puts "guard_ok"
+
+        # A dynamic load that DOES execute raises a rescuable LoadError.
+        missing = "/no/such/file.rb"
+        begin
+          load missing
+        rescue LoadError => e
+          puts e.message
+        end
+
+        # A dynamic require behaves the same, and the program continues.
+        name = "definitely_missing_lib_" + "xyz"
+        begin
+          require name
+        rescue LoadError => e
+          puts e.message
+        end
+        puts "done"
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "guard_ok\ncannot load such file -- /no/such/file.rb\ncannot load such file -- definitely_missing_lib_xyz\ndone\n"
+    );
+}

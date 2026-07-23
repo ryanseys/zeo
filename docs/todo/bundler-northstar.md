@@ -6,11 +6,11 @@ milestones `bundle --version` → `bundle install --local` → network install.
 **Status (2026-07-23): does NOT compile yet, but the architecture is now in
 place.** The dominant architectural blockers — `rbconfig`, non-top-level
 `require`, and now `securerandom` (with `Random::Formatter` + OS-entropy
-`Random.urandom` + `extend`-onto-class/module) — are fixed. rubygems now loads
-its require graph past atomic_file_writer, stopping at a dynamic `load`
-(`rubygems.rb:293`). What remains is the grind: one compiler over-approximation
-(dynamic `load`) then vendoring/implementing the missing stdlib
-(`fileutils`/`pathname`/... — see the worklist), one feature at a time.
+`Random.urandom` + `extend`-onto-class/module) — are fixed, as is the dynamic
+`load`/`require` compiler gap. rubygems now loads its require graph to
+`rubygems.rb:940`, a `loc, = expr` multi-assignment lowering gap. What remains is
+the grind: a few small lowering gaps then vendoring/implementing the missing
+stdlib (`fileutils`/`pathname`/... — see the worklist), one feature at a time.
 
 ## Setup
 
@@ -103,12 +103,24 @@ Verified vs oracle: full API shapes match; 3 unit + 11 e2e tests +
 
 ## The grind, in the order zeo hits it (post-securerandom)
 
-**Current blocker (compiler, NOT stdlib):** dynamic `load` with a non-literal
-target — `load ENV["BUNDLE_BIN_PATH"] if ...` (`rubygems.rb:293`). Whole-program
-AOT can't splice a runtime-computed path. Fix: lower a non-literal `load`/
-`require` to a runtime op that raises `LoadError` when actually executed (an
-over-approximation), instead of rejecting the whole compile. The site is guarded
-(`if ENV[...]`), so at runtime it's a no-op on the normal path.
+**Dynamic `load`/`require` — ✅ FIXED (2026-07-23).** `load ENV["BUNDLE_BIN_PATH"]
+if ...` (`rubygems.rb:293`) and any `require`/`load` with a runtime-computed
+target no longer fail the compile. Whole-program AOT can't splice a path it only
+learns at runtime, so the call now lowers to the runtime `Kernel#{require,
+require_relative,load}` (`builtins/kernel.rs`), which raises CRuby's `LoadError`
+("cannot load such file -- <path>") if and when it actually executes. A guarded
+dynamic load short-circuits at runtime; the `begin; require dyn; rescue
+LoadError` idiom works. `lower_call_general` and `Loader::lower_require_statement`
+(now `Option`-returning) fall through instead of erroring; literal requires still
+splice at compile time. Zero conformance regressions (2335/2335). e2e +
+oracle-verified messages.
+
+**Current blocker (compiler, NOT stdlib):** `spec_tuples, = fetcher.spec_for_
+dependency dependency` (`rubygems.rb:940`) — the **`loc, = expr`** gap: a
+single-target multi-assignment with a trailing comma (destructure the first
+element). Same construct as `forwardable.rb:213`. `expected `*name` as a
+multi-assignment's splat target` — the lowering needs to accept an EMPTY splat
+tail (`a, = rhs` ≡ `a, *_ = rhs`, taking `rhs[0]`).
 
 **Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
 Process/IO that zeo largely has; ordered by the `bundle --version` → install

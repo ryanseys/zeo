@@ -263,7 +263,7 @@ impl Loader {
                 if call.receiver().is_none()
                     && matches!(name.as_str(), "require" | "require_relative" | "load")
                 {
-                    combined.extend(self.lower_require_statement(
+                    if let Some(spliced) = self.lower_require_statement(
                         hir,
                         result,
                         &call,
@@ -271,8 +271,13 @@ impl Loader {
                         dir,
                         file_idx,
                         current_box,
-                    )?);
-                    continue;
+                    )? {
+                        combined.extend(spliced);
+                        continue;
+                    }
+                    // A dynamic `load`/`require` (computed target): not spliced.
+                    // Fall through to the general lowering so it becomes a
+                    // runtime `Kernel#{require,load}` call (raises LoadError).
                 }
                 // `box.require "f"` / `box.require_relative` / `box.load`
                 // / `box.eval "src"` at top-level statement position
@@ -286,9 +291,13 @@ impl Loader {
                         let lname = String::from_utf8_lossy(lv.name().as_slice()).into_owned();
                         if let Some(bx) = current_box_binding(&lname) {
                             if matches!(name.as_str(), "require" | "require_relative" | "load") {
-                                let spliced = self.lower_require_statement(
+                                let Some(spliced) = self.lower_require_statement(
                                     hir, result, &call, &name, dir, file_idx, bx,
-                                )?;
+                                )? else {
+                                    return Err(format!(
+                                        "`box.{name}` needs a compile-time-resolvable literal target (zeo limitation) -- a box's require graph is spliced at compile time"
+                                    ).into());
+                                };
                                 combined.push(hir.push(HirNode::BoxScope {
                                     box_id: bx,
                                     body: spliced,
@@ -433,9 +442,14 @@ impl Loader {
         let mut hoisted = Vec::new();
         for call in &requires.calls {
             let name = String::from_utf8_lossy(call.name().as_slice()).into_owned();
-            let spliced =
-                self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?;
-            hoisted.extend(spliced);
+            // A non-literal nested `require` returns None here: it isn't hoisted,
+            // and is lowered in place as a runtime `Kernel#require` call (raises
+            // LoadError) by the general call lowering.
+            if let Some(spliced) =
+                self.lower_require_statement(hir, result, call, &name, dir, file_idx, current_box)?
+            {
+                hoisted.extend(spliced);
+            }
         }
         // The hoisted targets run BEFORE this file's own statements, so a method
         // that `require`s-and-uses one of them works even when it is called
@@ -462,7 +476,7 @@ impl Loader {
         dir: Option<&Path>,
         file_idx: Option<usize>,
         current_box: u32,
-    ) -> PResult<Vec<NodeId>> {
+    ) -> PResult<Option<Vec<NodeId>>> {
         if call.block().is_some() {
             return Err(format!("`{name}` doesn't take a block").into());
         }
@@ -470,17 +484,15 @@ impl Loader {
             .arguments()
             .map(|a| a.arguments().iter().collect())
             .unwrap_or_default();
-        if name == "load" && arg_list.len() == 2 {
-            return Err(
-                "`load` with a `wrap` argument isn't supported (zeo limitation) -- a wrap module needs load-time anonymous-module scoping, which doesn't exist yet"
-                    .to_string().into(),
-            );
-        }
+        // A non-resolvable shape -- a computed argument, or `load`'s two-arg
+        // `wrap` form -- has no compile-time meaning. `Ok(None)` signals the
+        // caller to leave the call in place so the ordinary lowering dispatches
+        // it to the runtime `Kernel#{require,load}` (which raises `LoadError`
+        // when actually run); the whole compile no longer fails on a guarded
+        // dynamic load. A LITERAL one-arg `require`/`require_relative`/`load`
+        // still resolves and splices at compile time below.
         if arg_list.len() != 1 {
-            return Err(format!(
-                "`{name}` is only supported with exactly one string-literal argument (zeo limitation)"
-            )
-            .into());
+            return Ok(None);
         }
         // Lower the argument through the ordinary path first (same trick as
         // `eval`'s recognizer): prism's adjacent-literal folding is picked
@@ -488,11 +500,16 @@ impl Loader {
         // harmless append-only arena bookkeeping.
         let arg_id = lower_node(result, hir, &arg_list[0])?;
         let Some(feature) = zeo_hir::lower::eval_splice::literal_string_text(hir, arg_id) else {
-            return Err(format!(
-                "`{name}` with a non-literal argument isn't supported (zeo limitation) -- the target must be resolvable at compile time, e.g. `{name} \"some/feature\"`"
-            ).into());
+            return Ok(None);
         };
-        self.splice_feature(hir, &feature, name, dir, file_idx, current_box)
+        Ok(Some(self.splice_feature(
+            hir,
+            &feature,
+            name,
+            dir,
+            file_idx,
+            current_box,
+        )?))
     }
 
     /// The resolve-and-splice core shared by `require`/`require_relative`/

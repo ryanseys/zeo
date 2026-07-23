@@ -1635,8 +1635,9 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
             // so the `unless defined?`/`if <cond>` guards around these requires
             // short-circuit at runtime and the return value is rarely read.
             //
-            // `load` re-executes unconditionally and a NON-literal argument
-            // can't be resolved at compile time, so both stay rejections.
+            // A LITERAL `require`/`require_relative` folds to its load-result
+            // bool (the file was already spliced by the pre-pass, or a builtin
+            // feature was activated).
             if matches!(name.as_str(), "require" | "require_relative") {
                 if let Some(feature) = single_literal_string_arg(result, hir, &call)? {
                     if name == "require" && features::is_builtin_feature(&feature) {
@@ -1649,9 +1650,16 @@ fn lower_node_inner(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) -> PRe
                     return Ok(hir.push(HirNode::BoolLit(true)));
                 }
             }
-            return Err(format!(
-                "`{name}` here needs a single string-literal argument (zeo limitation) -- a compile-time-resolvable target like `{name} \"some/feature\"`; `load` (which re-executes) and a non-literal target are only rejected because they have no compile-time meaning"
-            ).into());
+            // `load`, or a `require` of a NON-literal (runtime-computed) target:
+            // whole-program AOT can't splice a path it only learns at runtime.
+            // Rather than fail the whole compile, FALL THROUGH to the ordinary
+            // implicit-self `Call` lowering below (the same trick a non-literal
+            // `eval` uses), which dispatches to the runtime `Kernel#{require,
+            // require_relative,load}` -- raising CRuby's `LoadError` if and when
+            // the call actually executes (zeo has no runtime Ruby loader). This
+            // lets a guarded dynamic load -- `load ENV["X"] if ENV["X"]` -- and
+            // the `begin; require dyn; rescue LoadError` idiom COMPILE, with the
+            // guard/rescue behaving at runtime.
         }
         // `autoload :Const, "feature"` -- the loader's eager pre-pass
         // (`Loader::lower_file_statements`) has already SPLICED the feature

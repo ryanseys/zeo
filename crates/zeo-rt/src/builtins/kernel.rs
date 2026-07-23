@@ -68,6 +68,25 @@ builtin_methods! {
             block,
         )
     }
+    // `require`/`require_relative`/`load` in a NON-resolvable position reach
+    // here at runtime. Whole-program AOT already spliced every
+    // compile-time-resolvable require, so the only calls that land here are
+    // genuinely dynamic (a computed path, or `load`). zeo has no runtime Ruby
+    // loader, so an actually-executed dynamic load raises CRuby's LoadError
+    // shape -- honest, and rescuable by `begin; require dyn; rescue LoadError`
+    // -- rather than a silent no-op. A non-String-convertible argument raises
+    // the same TypeError CRuby's path coercion does.
+    "require" | "require_relative" | "load" => fn kernel_require(_recv, args, _block) {
+        arity!(args, 1..=2);
+        let path = crate::builtins::convert::to_rstr(&args[0])?
+            .lock()
+            .to_utf8_lossy()
+            .into_owned();
+        Err(crate::dispatch::raise_error(
+            "LoadError",
+            format!("cannot load such file -- {path}"),
+        ))
+    }
     "pp" => fn pp(_recv, args, _block) {
         kernel_pp(args)
     }
