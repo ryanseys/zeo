@@ -522,6 +522,17 @@ builtin_methods! {
         }
         Ok(set_from(out))
     }
+    // `Set#hash` delegates to the internal Hash in CRuby, whose hash is
+    // order-independent; XOR-folding the element hashes reproduces that, so two
+    // sets with the same members hash equal regardless of insertion order.
+    "hash"[0] => fn set_hash(recv, args, _block) {
+        arity!(args, 0);
+        let mut acc: i64 = 0x5e7 ^ (SET_CLASS.0 as i64);
+        for e in set_of(recv).elements() {
+            acc ^= crate::collections::value_hash_code(&e);
+        }
+        Ok(RubyValue::Int(acc))
+    }
     "=="[1] => fn eq(recv, args, _block) {
         arity!(args, 1);
         let RubyValue::Object(o) = &args[0] else {
