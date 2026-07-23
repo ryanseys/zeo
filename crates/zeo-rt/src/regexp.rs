@@ -315,6 +315,10 @@ fn translate_escape_outside(out: &mut String, chars: &mut Chars) {
     match chars.next() {
         Some('e') => out.push_str("\\x1b"),
         Some('0') => push_octal(out, 0, chars),
+        // Ruby `\Z` = end of string, or just before a single trailing newline.
+        // Neither Rust engine knows `\Z`; the equivalent lookahead does the
+        // same job and (via its `(?=`) routes the pattern to the fancy engine.
+        Some('Z') => out.push_str("(?=\\n?\\z)"),
         Some(next) => {
             out.push('\\');
             out.push(next);
