@@ -1550,6 +1550,14 @@ mod tests {
         RubyValue::Array(array_new(vals.iter().map(|v| RubyValue::Int(*v)).collect()))
     }
 
+    /// Drive a lazy Enumerator (e.g. `chunk_while`'s Generator) to its Array and
+    /// return that Array's `#inspect`.
+    fn drive(e: RubyValue) -> String {
+        crate::dispatch::send_value(&e, crate::Symbol::intern("to_a"), &[], None)
+            .unwrap()
+            .inspect_string()
+    }
+
     /// `min(n)`/`max(n)` answer the n smallest/largest as an Array --
     /// ascending for `min`, DESCENDING for `max` (CRuby's nsmallest/
     /// nlargest). Oracle-verified.
@@ -1660,9 +1668,10 @@ mod tests {
     }
 
     /// `chunk_while` and `slice_when` are exact negations -- the same cut
-    /// points, chosen on opposite truth values. Oracle-verified:
-    ///   [1,2,4,9,10,11,12,15].slice_when  { |i,j| i+1 != j }
-    ///   [1,2,4,9,10,11,12,15].chunk_while { |i,j| i+1 == j }
+    /// points, chosen on opposite truth values. Both return a lazy Enumerator
+    /// (driven here with `to_a`). Oracle-verified:
+    ///   [1,2,4,9,10,11,12,15].slice_when  { |i,j| i+1 != j }.to_a
+    ///   [1,2,4,9,10,11,12,15].chunk_while { |i,j| i+1 == j }.to_a
     /// both => [[1,2],[4],[9,10,11,12],[15]]
     #[test]
     fn chunk_while_and_slice_when_are_negations_of_each_other() {
@@ -1683,15 +1692,16 @@ mod tests {
         let c = enumerable_send(&a, "chunk_while", &[], Some(RubyValue::Proc(adjacent)))
             .unwrap()
             .unwrap();
-        assert_eq!(c.inspect_string(), want);
+        assert_eq!(drive(c), want);
         let s = enumerable_send(&a, "slice_when", &[], Some(RubyValue::Proc(gap)))
             .unwrap()
             .unwrap();
-        assert_eq!(s.inspect_string(), want);
+        assert_eq!(drive(s), want);
     }
 
     /// Neither an empty nor a one-element receiver ever runs the block
-    /// (there is no adjacent pair to test).
+    /// (there is no adjacent pair to test); the resulting Enumerator drives to
+    /// `[]` and `[[7]]`.
     #[test]
     fn chunk_while_on_short_receivers_never_calls_the_block() {
         let never = || RProc::new(|_: &[RubyValue]| unreachable!("no adjacent pair exists"));
@@ -1703,7 +1713,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(e.inspect_string(), "[]");
+        assert_eq!(drive(e), "[]");
         let one = enumerable_send(
             &ints(&[7]),
             "chunk_while",
@@ -1712,7 +1722,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(one.inspect_string(), "[[7]]");
+        assert_eq!(drive(one), "[[7]]");
     }
 
     /// A `slice_before` match at the very START opens the first slice
