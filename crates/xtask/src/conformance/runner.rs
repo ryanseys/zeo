@@ -285,10 +285,16 @@ impl Runner {
             }
         };
 
-        let actual_out = normalize_crlf(&run.stdout);
-        let actual_err = normalize_crlf(&run.stderr);
-        let expected_out = normalize_crlf(&expected_out);
-        let expected_err = normalize_crlf(&expected_err);
+        // The compiled binary and the oracle both embed `case.source` verbatim
+        // in `__FILE__`/backtraces. That absolute path is machine-specific, so a
+        // committed snapshot of a path-bearing backtrace would not be portable.
+        // Normalize it to the run_cwd-relative form (`test/<name>.rb`) in BOTH
+        // expected and actual before diffing, so error snapshots travel.
+        let norm = |b: &[u8]| normalize_source_path(normalize_crlf(b), case);
+        let actual_out = norm(&run.stdout);
+        let actual_err = norm(&run.stderr);
+        let expected_out = norm(&expected_out);
+        let expected_err = norm(&expected_err);
 
         if actual_out == expected_out && actual_err == expected_err {
             return result; // PASS
@@ -417,6 +423,26 @@ fn parse_summary(line: &str) -> Option<(u64, u64, u64)> {
         }
     }
     Some((examples?, failures?, errors?))
+}
+
+/// Replace the machine-specific `case.source` path (as it appears verbatim in
+/// `__FILE__`/backtraces) with its run_cwd-relative form (`test/<name>.rb`), so
+/// snapshots of path-bearing output are portable. A no-op for the vast majority
+/// of cases whose output never mentions the source path.
+fn normalize_source_path(bytes: Vec<u8>, case: &TestCase) -> Vec<u8> {
+    let abs = case.source.to_string_lossy();
+    let rel = case
+        .source
+        .strip_prefix(&case.run_cwd)
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| {
+            case.source
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| abs.clone().into_owned());
+    super::util::replace_bytes(&bytes, abs.as_bytes(), rel.as_bytes())
 }
 
 fn harness_error(mut result: TestResult, stage: &'static str, msg: &str) -> TestResult {

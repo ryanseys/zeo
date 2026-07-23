@@ -27,6 +27,26 @@ pub fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Replace every occurrence of `needle` in `haystack` with `repl`, byte-exact
+/// (the process output may not be valid UTF-8, so this works on raw bytes).
+pub fn replace_bytes(haystack: &[u8], needle: &[u8], repl: &[u8]) -> Vec<u8> {
+    if needle.is_empty() {
+        return haystack.to_vec();
+    }
+    let mut out = Vec::with_capacity(haystack.len());
+    let mut i = 0;
+    while i < haystack.len() {
+        if haystack[i..].starts_with(needle) {
+            out.extend_from_slice(repl);
+            i += needle.len();
+        } else {
+            out.push(haystack[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// A test id as a flat filename (`analyze_fail/foo` -> `analyze_fail__foo`).
 pub fn sanitize_id(id: &str) -> String {
     id.replace('/', "__")
@@ -79,5 +99,15 @@ mod tests {
     fn escape_roundtrip() {
         let s = "line1\nline2\twith\\slash";
         assert_eq!(unescape_line(&escape_line(s)), s);
+    }
+
+    #[test]
+    fn replace_bytes_swaps_every_occurrence() {
+        assert_eq!(
+            replace_bytes(b"/abs/test/x.rb:3 and /abs/test/x.rb:9", b"/abs/test/x.rb", b"test/x.rb"),
+            b"test/x.rb:3 and test/x.rb:9"
+        );
+        assert_eq!(replace_bytes(b"no match", b"/abs", b"rel"), b"no match");
+        assert_eq!(replace_bytes(b"anything", b"", b"x"), b"anything");
     }
 }
