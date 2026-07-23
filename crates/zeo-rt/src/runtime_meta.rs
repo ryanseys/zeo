@@ -424,6 +424,52 @@ fn snapshot_instance_method(id: ClassId, name: Symbol) -> Option<MethodImpl> {
     crate::dispatch::alias_target(id, name).and_then(|old| snapshot_instance_method(id, old))
 }
 
+/// `Module#module_function(*names)` reached at RUNTIME -- fileutils calls
+/// `module_function name` with a COMPUTED name inside its own
+/// `private_module_function` helper (the plain literal form resolves at compile
+/// time in `lower/defs.rs`). Promotes each named instance method to a
+/// class/module method using the same wrapper `extend self` builds
+/// (`extended_class_method`), so `Mod.name` and bare calls in class-method
+/// context resolve. The bare (no-arg) mode form has no runtime spelling here
+/// and is a documented nil no-op. Unlike CRuby it leaves the instance copy
+/// public -- a harmless over-permissiveness; callers use the module method.
+pub fn runtime_module_function(id: ClassId, args: &[RubyValue]) -> Result<RubyValue, Signal> {
+    if args.is_empty() {
+        return Ok(RubyValue::Nil);
+    }
+    if crate::dispatch::class_frozen(id) {
+        return Err(crate::dispatch::frozen_class_error(id));
+    }
+    let mut syms = Vec::with_capacity(args.len());
+    for a in args {
+        syms.push(coerce_method_name(Some(a))?);
+    }
+    // Build the wrappers BEFORE taking the overlay write lock:
+    // `extended_class_method` itself reads the overlay (see `runtime_extend`).
+    let mut installs = Vec::with_capacity(syms.len());
+    for &sym in &syms {
+        let proc_ = extended_class_method(id, sym).ok_or_else(|| {
+            let cls = crate::dispatch::class_name(id).unwrap_or_default();
+            name_error!("undefined method '{}' for module '{cls}'", sym.name())
+        })?;
+        installs.push((sym, proc_));
+    }
+    {
+        let mut w = maps().classes.write().unwrap();
+        let e = w.entry(id.0).or_insert_with(OverlayEntry::delta);
+        for (sym, proc_) in installs {
+            e.class_methods.insert(sym, proc_);
+        }
+    }
+    mark_live();
+    Ok(match syms.as_slice() {
+        [one] => RubyValue::Symbol(*one),
+        many => RubyValue::Array(crate::array_new(
+            many.iter().map(|s| RubyValue::Symbol(*s)).collect(),
+        )),
+    })
+}
+
 /// `define_method(name, method_obj)` -- install an instance method on `id`
 /// whose body IS the `Method`/`UnboundMethod`'s source definition (`owner`
 /// class, `src_name`). CRuby requires `id` be the source's owner or a

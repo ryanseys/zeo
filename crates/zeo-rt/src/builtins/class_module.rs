@@ -454,6 +454,22 @@ builtin_methods! {
         crate::runtime_meta::runtime_set_visibility(
             recv_cid(recv), args, crate::dispatch::MethodVisibility::Protected)
     }
+    // `Module#module_function(name)` reached at RUNTIME (a computed argument --
+    // fileutils' `private_module_function` calls `module_function name`). The
+    // literal form resolves at compile time in `lower/defs.rs`. Promotes the
+    // named instance method to a module method (see `runtime_module_function`).
+    "module_function" => fn module_function_m(recv, args, _block) {
+        crate::runtime_meta::runtime_module_function(recv_cid(recv), args)
+    }
+    // `private_class_method`/`public_class_method` at RUNTIME: zeo does not
+    // track class-method visibility in the overlay, so this is a best-effort
+    // no-op returning the receiver -- the named class method stays callable (a
+    // documented over-permissiveness; bundler only invokes PUBLIC commands, and
+    // fileutils' `private_module_function` relies on the `module_function`
+    // promotion above, not on the privatization).
+    "private_class_method" | "public_class_method" => fn class_method_visibility(recv, _args, _block) {
+        Ok(recv.clone())
+    }
     // `Module#class_eval`/`module_eval` -- run the block with `self` rebound
     // to the module/class value, returning the block's value. A
     // `def`/`define_method` inside installs on the receiver via the dynamic-

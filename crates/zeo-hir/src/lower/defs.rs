@@ -800,6 +800,12 @@ fn lower_class_body_statement(
                 HirNode::DefMethod { .. } => Item::Method,
                 HirNode::ConstWrite { .. } => Item::Passthrough,
                 HirNode::Include(m) => Item::Extend(m.clone()),
+                // A visibility directive (`public :a`) or a runtime call
+                // (`public(*METHODS)`) inside `class << self` runs at load in
+                // the enclosing body's context -- best-effort: it retags the
+                // instance-method channel, not the singleton one (a documented
+                // divergence, exercised by fileutils' Verbose/NoWrite/DryRun).
+                HirNode::MethodVisibility { .. } | HirNode::Call { .. } => Item::Passthrough,
                 _ => Item::Reject,
             };
             match item {
@@ -811,7 +817,7 @@ fn lower_class_body_statement(
                 Item::Extend(m) => out.push(hir.push(HirNode::Extend(m))),
                 Item::Reject => {
                     return Err(
-                        "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, and `attr_*`/`private`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
+                        "unsupported statement in `class << self` (zeo limitation) -- only `def`s, constants, `include`, visibility directives, and `attr_*`/`alias` are handled here; `extend`/`prepend`/ivars/a nested `class << self` aren't supported yet".to_string().into(),
                     );
                 }
             }
@@ -943,19 +949,26 @@ fn lower_class_body_statement(
             if matches!(name.as_str(), "include" | "extend" | "prepend") {
                 if let Some(args) = call.arguments() {
                     let arg_list: Vec<_> = args.arguments().iter().collect();
-                    if !arg_list.is_empty() {
-                        let names = arg_list
-                            .iter()
-                            .map(constant_path_name)
-                            .collect::<PResult<Vec<_>>>()?;
-                        out.extend(names.into_iter().map(|n| {
-                            hir.push(match name.as_str() {
-                                "include" => HirNode::Include(n),
-                                "extend" => HirNode::Extend(n),
-                                _ => HirNode::Prepend(n),
-                            })
-                        }));
-                        return Ok(());
+                    // Only the all-constant form (`include Mod`) has a
+                    // compile-time module name. A non-constant argument
+                    // (`extend self`, a computed module expression) falls
+                    // through to a runtime `Call` -- e.g. `extend self` mixes a
+                    // module's own instance methods into its singleton at load.
+                    if let Ok(names) = arg_list
+                        .iter()
+                        .map(constant_path_name)
+                        .collect::<PResult<Vec<_>>>()
+                    {
+                        if !names.is_empty() {
+                            out.extend(names.into_iter().map(|n| {
+                                hir.push(match name.as_str() {
+                                    "include" => HirNode::Include(n),
+                                    "extend" => HirNode::Extend(n),
+                                    _ => HirNode::Prepend(n),
+                                })
+                            }));
+                            return Ok(());
+                        }
                     }
                 }
             }
