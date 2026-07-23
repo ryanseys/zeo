@@ -198,6 +198,25 @@ fn emit_counted_block_splice(
             }
         }
     });
+    // Implicit block-locals (a name first-assigned inside the body) are fresh
+    // on every invocation in Ruby. Since this splice shares the enclosing Rust
+    // scope, those names were hoisted to a single enclosing `let` -- reset them
+    // to nil at the top of each iteration so a conditional first-assignment
+    // (`x = v if cond`) does not carry into the next. A name captured from the
+    // enclosing scope (`sum` in `sum = 0; n.times { sum += i }`) is NOT in this
+    // set (prism scopes it to the enclosing method), so it still accumulates.
+    // A block-local a NESTED escaping block captures is cell-wrapped
+    // (`Arc<Mutex>`) rather than a plain local, so it is excluded here -- its
+    // freshness is the nested-capture machinery's job, not a scalar reset.
+    let implicit_resets = params
+        .implicit_block_locals
+        .iter()
+        .filter(|name| !nested_captured.contains(*name))
+        .map(|name| {
+            let ident = safe_ident(name);
+            quote! { #ident = zeo_rt::RubyValue::Nil; }
+        });
+    let implicit_resets = quote! { #[allow(unused_assignments)] { #(#implicit_resets)* } };
     let inner = super::loops::emit_redo_wrapped_body(&loop_cx, body, &redo);
     let done = if inclusive {
         quote! { __i > #stop }
@@ -217,6 +236,7 @@ fn emit_counted_block_splice(
                 if #done { break #outer #result; }
                 #bind
                 #(#block_locals)*
+                #implicit_resets
                 #inner
             }
         }
@@ -2134,7 +2154,17 @@ fn dispatch(
     // simply dropped on that fallback path, matching the same documented
     // scope-cut as a method declaring keyword params being unreachable via
     // `send` at all.
-    if (name == "send" || name == "public_send") && !args.is_empty() {
+    // A class that defines its OWN `send`/`public_send` uses THAT method (Ruby
+    // dispatches it as an ordinary call); only the builtin Kernel#send/#public_send
+    // reinterprets the first argument as a method name. So when the receiver's
+    // class defines the name, skip this reinterpretation entirely and fall
+    // through to the ordinary Path-1 call below (mirroring the Ractor#send
+    // shadow arm above).
+    let send_is_user_defined = (name == "send" || name == "public_send")
+        && recv_class
+            .and_then(|c| cx.compiler.method_in_chain(c, name))
+            .is_some();
+    if (name == "send" || name == "public_send") && !args.is_empty() && !send_is_user_defined {
         if let HirNode::SymbolLit(target) = &cx.compiler.hir[args[0]] {
             let target = target.clone();
             if let Some(cid) = recv_class {

@@ -417,6 +417,9 @@ pub(crate) fn lower_params(
         // ParametersNode. Always empty for a method's params -- the syntax
         // doesn't exist there.
         block_locals: Vec::new(),
+        // Populated by `lower_block` from prism's block-scope local table;
+        // always empty for a method's params.
+        implicit_block_locals: Vec::new(),
     })
 }
 

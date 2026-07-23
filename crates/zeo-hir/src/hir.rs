@@ -417,6 +417,15 @@ pub struct Params {
     /// `captures::own_param_names` (capture classification), `Ctx::in_proc`
     /// (static-type/cell shadowing) and hoisting all read.
     pub block_locals: Vec<String>,
+    /// The block's IMPLICIT block-locals: names in prism's block-scope local
+    /// table that are first-assigned inside the body (so not parameters and not
+    /// the explicit `;`-block-locals above). Ruby re-initializes them to nil on
+    /// EVERY invocation, so a conditional first-assignment (`x = v if cond`)
+    /// must not leak into the next iteration. The inline `.times`/range-each
+    /// splice (which shares the enclosing Rust scope rather than allocating a
+    /// closure) resets them per iteration; escaping blocks reset via their
+    /// own-locals prelude instead. Empty for methods.
+    pub implicit_block_locals: Vec<String>,
 }
 
 /// A method's visibility, as of the point in the class body where its `def`

@@ -59,7 +59,18 @@ pub(crate) fn lower_block(result: &ParseResult, hir: &mut Hir, node: &Node<'_>) 
     let block = node
         .as_block_node()
         .ok_or("expected a block (`{ }` or `do..end`)")?;
-    let params = lower_block_like_params(result, hir, block.parameters())?;
+    let mut params = lower_block_like_params(result, hir, block.parameters())?;
+    // Prism's block-scope local table minus the names this block binds as
+    // parameters (and explicit `;`-block-locals) yields exactly the IMPLICIT
+    // block-locals -- names first-assigned inside the body, which Ruby resets
+    // to nil per invocation. See `Params::implicit_block_locals`.
+    let bound: std::collections::HashSet<String> = params.bound_names().into_iter().collect();
+    params.implicit_block_locals = block
+        .locals()
+        .iter()
+        .map(|c| String::from_utf8_lossy(c.as_slice()).into_owned())
+        .filter(|n| !bound.contains(n))
+        .collect();
     let body = lower_body(result, hir, block.body())?;
     Ok(hir.push(HirNode::Block { params, body }))
 }
