@@ -690,6 +690,13 @@ fn register_class(
                     if is_module { "module" } else { "class" }
                 ));
             }
+            // A user `module OpenSSL; ...; end` reopening a feature-gated
+            // builtin slot MATERIALIZES the constant: clear the gate so the
+            // name resolves even though the ext was never `require`d (the
+            // behavior comes from the user's own methods registered here).
+            if compiler.class(cid).feature_gate.is_some() {
+                compiler.classes[cid.0 as usize].feature_gate = None;
+            }
             if let Some(s) = &superclass {
                 let want = compiler.resolve_class(s, cref, box_id).ok_or_else(|| {
                     format!("unknown superclass `{s}` (must be defined earlier in the file)")
