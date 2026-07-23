@@ -10,3 +10,6 @@ conformance/gemlist.txt
 
 # Generated per-compile gem-disclosure records (zeo CLI)
 zeo-gems.json
+
+# Vendored upstream sources for the bundler north-star (not part of the build)
+/vendor/
