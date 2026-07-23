@@ -1965,21 +1965,51 @@ fn io_class_pipe(
     out
 }
 
-/// `IO.copy_stream(src, dst)` -- copy the whole file `src` to `dst`, answering
-/// the byte count.
+/// Whether `v` is an IO-like object (`IO`/`File`/`StringIO`) rather than a
+/// filename. CRuby's `copy_stream` uses an IO argument at its CURRENT position;
+/// only a String/`to_path` argument names a file to open.
+fn is_io_object(v: &RubyValue) -> bool {
+    matches!(
+        v,
+        RubyValue::Object(o)
+            if matches!(
+                o.class_id(),
+                IO_CLASS | zeo_abi::FILE_CLASS | zeo_abi::STRINGIO_CLASS
+            )
+    )
+}
+
+/// `IO.copy_stream(src, dst)` -- copy `src` to `dst`, answering the byte count.
+/// Each end is either an IO-like object (read from / written to at its current
+/// position, via `read`/`write`) or a filename (String/`to_path`).
 fn io_class_copy_stream(
     _recv: &RubyValue,
     args: &[RubyValue],
     _blk: Option<RubyValue>,
 ) -> Result<RubyValue, Signal> {
     crate::builtins::arity!(args, 2..=4);
-    let src = crate::builtins::file::path_arg(&args[0], "copy_stream")?;
-    let dst = crate::builtins::file::path_arg(&args[1], "copy_stream")?;
-    let bytes = crate::gvl::without_gvl(|| std::fs::read(&src))
-        .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?;
+
+    let bytes = if is_io_object(&args[0]) {
+        match crate::dispatch::send_value(&args[0], crate::Symbol::intern("read"), &[], None)? {
+            RubyValue::Str(s) => s.lock().bytes().to_vec(),
+            RubyValue::Nil => Vec::new(), // EOF
+            other => crate::builtins::convert::to_rstr(&other)?.lock().bytes().to_vec(),
+        }
+    } else {
+        let src = crate::builtins::file::path_arg(&args[0], "copy_stream")?;
+        crate::gvl::without_gvl(|| std::fs::read(&src))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &src))?
+    };
     let n = bytes.len();
-    crate::gvl::without_gvl(|| std::fs::write(&dst, &bytes))
-        .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
+
+    if is_io_object(&args[1]) {
+        let s = RubyValue::Str(crate::string_from_bytes(bytes, crate::encoding::ASCII_8BIT));
+        crate::dispatch::send_value(&args[1], crate::Symbol::intern("write"), &[s], None)?;
+    } else {
+        let dst = crate::builtins::file::path_arg(&args[1], "copy_stream")?;
+        crate::gvl::without_gvl(|| std::fs::write(&dst, &bytes))
+            .map_err(|e| crate::builtins::file::raise_errno(&e, "copy_stream", &dst))?;
+    }
     Ok(RubyValue::Int(n as i64))
 }
 

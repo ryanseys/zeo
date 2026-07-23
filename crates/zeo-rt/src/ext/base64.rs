@@ -31,13 +31,21 @@ fn str_arg(v: &RubyValue, _method: &str) -> Result<String, Signal> {
         .into_owned())
 }
 
+/// The RAW bytes of a String argument -- what the encoders must operate on.
+/// Reading through `to_utf8_lossy` would inflate every BINARY high byte
+/// (`0xB3` -> `U+00B3` -> `C2 B3`), so a binary digest would encode as the
+/// wrong, longer Base64. `to_str`-coerced, like CRuby's `Array#pack("m")`.
+fn bytes_arg(v: &RubyValue) -> Result<Vec<u8>, Signal> {
+    Ok(crate::builtins::convert::to_rstr(v)?.lock().bytes().to_vec())
+}
+
 builtin_methods! {
     pub(crate) fn lookup_class;
 
     "encode64" => fn encode64(_recv, args, _block) {
         arity!(args, 1);
-        let data = str_arg(&args[0], "encode64")?;
-        let raw = encode(data.as_bytes(), STD);
+        let data = bytes_arg(&args[0])?;
+        let raw = encode(&data, STD);
         let mut out = String::with_capacity(raw.len() + raw.len() / 60 + 1);
         for chunk in raw.as_bytes().chunks(60) {
             out.push_str(std::str::from_utf8(chunk).expect("base64 output is ASCII"));
@@ -47,13 +55,13 @@ builtin_methods! {
     }
     "strict_encode64" => fn strict_encode64(_recv, args, _block) {
         arity!(args, 1);
-        let data = str_arg(&args[0], "strict_encode64")?;
-        Ok(RubyValue::Str(string_new(encode(data.as_bytes(), STD))))
+        let data = bytes_arg(&args[0])?;
+        Ok(RubyValue::Str(string_new(encode(&data, STD))))
     }
     "urlsafe_encode64" => fn urlsafe_encode64(_recv, args, _block) {
         arity!(args, 1..=2);
-        let data = str_arg(&args[0], "urlsafe_encode64")?;
-        let mut out = encode(data.as_bytes(), URL);
+        let data = bytes_arg(&args[0])?;
+        let mut out = encode(&data, URL);
         // A `padding: false` keyword strips the trailing '=' padding.
         if let Some(RubyValue::Hash(h)) = args.get(1) {
             let pad = crate::hash_get(h, &RubyValue::Symbol(crate::Symbol::intern("padding")));
