@@ -2120,3 +2120,22 @@ fn stdout_receives_a_binary_strings_raw_byte() {
     assert!(result.status.success(), "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "\u{FFFD}\n1\n");
 }
+
+#[test]
+fn io_wait_readable_and_writable_over_a_pipe() {
+    // `require "io/wait"` is a native no-op feature (like io/console): IO gains
+    // `#wait_readable`/`#wait_writable`, real `poll(2)` over the fd. A pipe with
+    // a byte buffered is readable; its write end is writable. net/protocol's
+    // BufferedIO drives its read/write timeouts through exactly these.
+    let result = run_ruby(
+        r#"
+        require "io/wait"
+        r, w = IO.pipe
+        w.write("x")
+        puts(r.wait_readable(1) ? "readable" : "timeout")
+        puts(w.wait_writable(1) ? "writable" : "timeout")
+        "#,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "readable\nwritable\n");
+}

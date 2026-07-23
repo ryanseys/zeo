@@ -47,7 +47,9 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // `#iso8601` WITHOUT the require works here and raises in CRuby.
     // `io/console` names no gated constant either -- `IO` is core and its
     // `#winsize` is an unconditional row on the IO table, so the require is
-    // pure ceremony. Same shape of divergence as `time` above.
+    // pure ceremony. Same shape of divergence as `time` above. `io/wait` is
+    // identical: `IO#wait_readable`/`#wait_writable` are unconditional rows on
+    // the IO table (real `poll(2)`), so its require is pure ceremony too.
     // `ffi` is now an `is_ext_feature` (the `FFI` module + `Pointer`/
     // `MemoryPointer`/`Struct` rows carry `feature: Some("ffi")`), so
     // `require "ffi"` activates that feature and those constants resolve. The
@@ -59,6 +61,6 @@ pub fn is_builtin_feature(feature: &str) -> bool {
     // requires are pure no-ops -- their classes resolve unconditionally.
     matches!(
         feature,
-        "tmpdir" | "set" | "time" | "io/console" | "weakref" | "objspace"
+        "tmpdir" | "set" | "time" | "io/console" | "io/wait" | "weakref" | "objspace"
     ) || zeo_abi::is_ext_feature(canonical_ext_feature(feature))
 }

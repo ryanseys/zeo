@@ -506,6 +506,55 @@ fn io_winsize(
     ])))
 }
 
+/// Shared body of `IO#wait_readable`/`#wait_writable` (from `require "io/wait"`)
+/// -- block until the stream is ready for `events` (`POLLIN`/`POLLOUT`) or the
+/// optional `timeout` (seconds; `nil`/absent = block indefinitely) elapses.
+/// Answers `self` when ready, `nil` on timeout, via real `poll(2)` over the fd
+/// -- the same libc-over-`io_fileno` shape as `io_winsize`.
+fn io_wait_for(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    events: libc::c_short,
+) -> Result<RubyValue, Signal> {
+    let timeout_ms = match args.first() {
+        None | Some(RubyValue::Nil) => -1,
+        Some(v) => {
+            let secs = crate::builtins::numeric::num_to_f64_unchecked(v);
+            if secs <= 0.0 {
+                0
+            } else {
+                (secs * 1000.0) as libc::c_int
+            }
+        }
+    };
+    let RubyValue::Int(fd) = io_fileno(recv, &[], None)? else {
+        unreachable!("io_fileno answers an Int");
+    };
+    let mut pfd = libc::pollfd {
+        fd: fd as libc::c_int,
+        events,
+        revents: 0,
+    };
+    let ready = unsafe { libc::poll(&mut pfd, 1, timeout_ms) } > 0;
+    Ok(if ready { recv.clone() } else { RubyValue::Nil })
+}
+
+fn io_wait_readable(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    io_wait_for(recv, args, libc::POLLIN)
+}
+
+fn io_wait_writable(
+    recv: &RubyValue,
+    args: &[RubyValue],
+    _blk: Option<RubyValue>,
+) -> Result<RubyValue, Signal> {
+    io_wait_for(recv, args, libc::POLLOUT)
+}
+
 fn io_inspect(
     recv: &RubyValue,
     _args: &[RubyValue],
@@ -1810,6 +1859,8 @@ pub fn lookup(name: &str) -> Option<crate::builtins::BuiltinMethodFn> {
         "fileno" | "to_i" => io_fileno,
         "tty?" | "isatty" => io_tty,
         "winsize" => io_winsize,
+        "wait_readable" => io_wait_readable,
+        "wait_writable" => io_wait_writable,
         "inspect" | "to_s" => io_inspect,
         "sync" => io_sync,
         "sync=" => io_sync_set,
@@ -1881,6 +1932,8 @@ pub fn lookup_names() -> &'static [&'static str] {
         "tty?",
         "isatty",
         "winsize",
+        "wait_readable",
+        "wait_writable",
         "inspect",
         "to_s",
         "sync",
