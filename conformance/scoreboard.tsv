@@ -1,5 +1,5 @@
-# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=6026d44
-# PASS=2318 FAIL_OUTPUT=17 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
+# suite=spinel corpus=2336 ruby="ruby 4.0.5 (2026-05-20 revision 64336ffd0e) +PRISM [arm64-darwin25] [--disable-error_highlight --disable-did_you_mean]" zeo=c64ebe6
+# PASS=2332 FAIL_OUTPUT=3 FAIL_COMPILE=1 FAIL_RUSTC=0 FAIL_RUN=0 TIMEOUT_COMPILE=0 TIMEOUT_RUN=0 ORACLE_FAIL=0 SKIP=0 TOTAL=2336
 abstract_raise_override_return	PASS	-	-
 alias_attr_reader_source	PASS	-	-
 alias_global	PASS	-	-
@@ -170,7 +170,7 @@ block_forward_value_callable	PASS	-	-
 block_given_block_param	PASS	-	-
 block_given_inline_call_site	PASS	-	-
 block_kwrest_param	PASS	-	-
-block_local_fresh_per_iteration	FAIL_OUTPUT	expect	-
+block_local_fresh_per_iteration	PASS	-	-
 block_local_shadow	PASS	-	-
 block_nil_fill	PASS	-	-
 block_optional_unused	PASS	-	-
@@ -435,7 +435,7 @@ const_path_deep_nesting	PASS	-	-
 const_path_unresolved_require	PASS	-	-
 const_recv_yield_inline	PASS	-	-
 const_self_ref_raises_name_error	PASS	-	-
-constant_path	FAIL_OUTPUT	expect	missing-const:M::C
+constant_path	PASS	-	-
 constant_path_write	PASS	-	-
 constant_path_write_undeclared	PASS	-	-
 constants	PASS	-	-
@@ -463,7 +463,7 @@ data_inspect_in_container	PASS	-	-
 data_instance_frozen	PASS	-	-
 data_is_a_data	PASS	-	-
 data_new_kwsplat	PASS	-	-
-data_new_validation	FAIL_OUTPUT	expect	-
+data_new_validation	PASS	-	-
 data_reopen_reader	PASS	-	-
 data_respond_to	PASS	-	-
 data_struct_ivar_get_nil	PASS	-	-
@@ -764,7 +764,7 @@ hash_double_splat	PASS	-	-
 hash_each_enumerator	PASS	-	-
 hash_each_key_value	PASS	-	-
 hash_each_value_key_enumerator	PASS	-	-
-hash_each_with_object	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-2467
+hash_each_with_object	PASS	-	-
 hash_empty_block_methods	PASS	-	-
 hash_empty_literal_and_map	PASS	-	-
 hash_enum_with_index_chain	PASS	-	-
@@ -904,7 +904,7 @@ inject_symbol_to_proc	PASS	-	-
 inject_symbol_variable	PASS	-	-
 inline_nested_yield_ivar_self	PASS	-	-
 inline_yield_deep_nested_self	PASS	-	-
-inline_yield_method_with_return	FAIL_OUTPUT	expect	-
+inline_yield_method_with_return	PASS	-	-
 inline_yield_nested_self_ivar	PASS	-	-
 inline_yield_return_side_effect	PASS	-	-
 inlined_yield_block_param_type	PASS	-	-
@@ -919,7 +919,7 @@ instance_exec_autosplat	PASS	-	-
 instance_exec_break	PASS	-	-
 instance_exec_capture	PASS	-	-
 instance_exec_const_receiver	PASS	-	-
-instance_exec_def_singleton	FAIL_OUTPUT	expect	auto-from-users-ryanseys-dev-zeo-crates-xtask-conformance-4add
+instance_exec_def_singleton	PASS	-	-
 instance_exec_define_method_privacy	PASS	-	-
 instance_exec_direct	PASS	-	-
 instance_exec_direct_splat	PASS	-	-
@@ -1121,7 +1121,7 @@ issue_2971	PASS	-	-
 issue_2972	PASS	-	-
 issue_2973	PASS	-	-
 issue_2974	PASS	-	-
-issue_2975	FAIL_OUTPUT	expect	-
+issue_2975	PASS	-	-
 issue_2976	PASS	-	-
 issue_2977	PASS	-	-
 issue_2978	PASS	-	-
@@ -1241,7 +1241,7 @@ issue_3094	PASS	-	-
 issue_3095	PASS	-	-
 issue_3096	PASS	-	-
 issue_3097	PASS	-	-
-issue_3098	FAIL_OUTPUT	expect	-
+issue_3098	PASS	-	-
 issue_3099	PASS	-	-
 issue_3100	PASS	-	-
 issue_3101	PASS	-	-
@@ -1921,12 +1921,12 @@ regex_posix_class	PASS	-	-
 regex_sub_backref	PASS	-	-
 regex_unanchored_class_seq	PASS	-	-
 regexp_alternation_priority	PASS	-	-
-regexp_brace_zero_lower	FAIL_OUTPUT	expect	-
+regexp_brace_zero_lower	PASS	-	-
 regexp_capture_ivar_hash	PASS	-	-
 regexp_captures_family	PASS	-	-
 regexp_encoding_introspection	PASS	-	-
 regexp_error_catchable	PASS	-	-
-regexp_gsub_zero_width	FAIL_OUTPUT	expect	-
+regexp_gsub_zero_width	PASS	-	-
 regexp_inline_comment	PASS	-	-
 regexp_inline_options	FAIL_OUTPUT	expect	-
 regexp_last_match_capture	PASS	-	-
@@ -1992,7 +1992,7 @@ self_class_divergent_returns	PASS	-	-
 self_class_new_construction	PASS	-	-
 self_operator_subclass_dispatch	PASS	-	-
 send_dead_code	PASS	-	-
-send_literal_and_user	FAIL_OUTPUT	expect	missing-method:hi
+send_literal_and_user	PASS	-	-
 send_traceable_name	PASS	-	-
 set_basic	PASS	-	-
 set_bracket_ctor	PASS	-	-
@@ -2015,7 +2015,7 @@ slice_before_after_block	PASS	-	-
 slice_when_first_class	PASS	-	-
 socket_requires_require	PASS	-	-
 socket_tcp_basic	PASS	-	-
-socket_tcp_thread	FAIL_OUTPUT	expect	auto-users-ryanseys-dev-zeo-crates-xtask-conformance-corpus-cac9
+socket_tcp_thread	PASS	-	-
 sort_by_array_key	PASS	-	-
 sort_min_max_block_comparator	PASS	-	-
 sort_mixed_type_raises	PASS	-	-
@@ -2052,7 +2052,7 @@ str_delete_count_negation	PASS	-	-
 str_force_encoding_return	PASS	-	-
 str_int_hash_missing_key_nil	PASS	-	-
 str_match_position	PASS	-	-
-str_method_nil_arg_no_segv	FAIL_OUTPUT	expect	arity-panic
+str_method_nil_arg_no_segv	PASS	-	-
 str_oct_prefix	PASS	-	-
 str_ord_empty	PASS	-	-
 str_poly_hash_dup_widen	PASS	-	-
@@ -2150,7 +2150,7 @@ string_with_embedded_nul	PASS	-	-
 strip_nul	PASS	-	-
 struct	PASS	-	-
 struct_bare_super_initialize	PASS	-	-
-struct_block_constant_init	FAIL_OUTPUT	expect	missing-const:Line
+struct_block_constant_init	PASS	-	-
 struct_custom_initialize_super	PASS	-	-
 struct_data_deconstruct	PASS	-	-
 struct_data_inspect	PASS	-	-
