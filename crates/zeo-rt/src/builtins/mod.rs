@@ -162,6 +162,8 @@ pub(crate) fn class_table(id: ClassId) -> Option<fn(&str) -> Option<BuiltinMetho
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_lookup,
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group,
+        #[cfg(feature = "ext-pathname")]
+        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup,
         _ => return None,
     })
 }
@@ -243,6 +245,8 @@ pub(crate) fn class_arity_table(id: ClassId) -> Option<fn(&str) -> Option<i64>> 
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::lookup_passwd_arity,
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_arity,
+        #[cfg(feature = "ext-pathname")]
+        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_arity,
         _ => return None,
     })
 }
@@ -302,6 +306,8 @@ pub(crate) fn class_method_table(id: ClassId) -> Option<fn(&str) -> Option<Built
         zeo_abi::BASE64_MODULE => crate::ext::base64::lookup_class,
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_MODULE => crate::ext::etc::lookup_class,
+        #[cfg(feature = "ext-pathname")]
+        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class,
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class,
         #[cfg(feature = "ext-monitor")]
@@ -394,6 +400,8 @@ pub(crate) fn class_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::MATH_CLASS => math::NAMES,
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_names(),
+        #[cfg(feature = "ext-pathname")]
+        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_names(),
         #[cfg(feature = "ext-monitor")]
         zeo_abi::MONITOR_CLASS => crate::ext::monitor::lookup_names(),
         #[cfg(feature = "ext-strscan")]
@@ -455,6 +463,8 @@ pub(crate) fn class_method_table_names(id: ClassId) -> &'static [&'static str] {
         zeo_abi::ETC_PASSWD_CLASS => crate::ext::etc::passwd_names(),
         #[cfg(feature = "ext-etc")]
         zeo_abi::ETC_GROUP_CLASS => crate::ext::etc::lookup_group_names(),
+        #[cfg(feature = "ext-pathname")]
+        zeo_abi::PATHNAME_CLASS => crate::ext::pathname::lookup_class_names(),
         #[cfg(feature = "ext-stringio")]
         zeo_abi::STRINGIO_CLASS => crate::ext::stringio::lookup_class_names(),
         #[cfg(feature = "ext-monitor")]

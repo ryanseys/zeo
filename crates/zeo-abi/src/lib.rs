@@ -356,6 +356,11 @@ pub const ETC_PASSWD_CLASS: ClassId = ClassId(87);
 /// what `Etc.getgrnam`/`getgrgid`/`getgrent` answer.
 pub const ETC_GROUP_CLASS: ClassId = ClassId(88);
 
+/// `Pathname` -- the `pathname` stdlib class (a value wrapping a path String).
+/// `require`-gated on `"pathname"`; a focused native implementation over
+/// `File`/`Dir`/`std::path`.
+pub const PATHNAME_CLASS: ClassId = ClassId(89);
+
 /// Every reserved built-in class/module except `Object` (see
 /// [`OBJECT_CLASS`]), in id order -- ids are contiguous from 1 by
 /// construction (asserted by the unit test below), which is what lets the
@@ -1081,6 +1086,14 @@ pub const BUILTINS: &[BuiltinClass] = &[
         superclass: Some(OBJECT_CLASS),
         includes: &[],
         feature: Some("etc"),
+    },
+    BuiltinClass {
+        id: PATHNAME_CLASS,
+        name: "Pathname",
+        is_module: false,
+        superclass: Some(OBJECT_CLASS),
+        includes: &[COMPARABLE_CLASS],
+        feature: Some("pathname"),
     },
 ];
 

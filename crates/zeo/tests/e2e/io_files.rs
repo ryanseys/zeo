@@ -3,6 +3,48 @@ use crate::support::{
 };
 
 #[test]
+fn native_pathname_path_operations_match_the_oracle() {
+    // The `pathname` native class: path manipulation (`+`/`join` resolve `..`
+    // lexically like CRuby's `plus`), predicates, and reflection.
+    let result = run_ruby(
+        r##"
+        require "pathname"
+        p = Pathname.new("/usr/local/bin/ruby")
+        puts p.to_s
+        puts p.basename
+        puts p.dirname
+        puts p.extname.inspect
+        puts p.absolute?
+        puts (p + "..").to_s
+        puts (Pathname.new("/usr") / "bin").to_s
+        puts p.basename(".rb")
+        puts Pathname.new("foo/bar.txt").sub_ext(".md")
+        puts Pathname.new("/a/b/c").relative_path_from(Pathname.new("/a")).to_s
+        puts p == Pathname.new("/usr/local/bin/ruby")
+        puts p.is_a?(Comparable)
+        "##,
+    );
+    assert!(result.status.success(), "stderr: {}", result.stderr);
+    assert_eq!(
+        result.stdout,
+        "/usr/local/bin/ruby\nruby\n/usr/local/bin\n\"\"\ntrue\n/usr/local/bin\n/usr/bin\nruby\nfoo/bar.md\nb/c\ntrue\ntrue\n"
+    );
+}
+
+#[test]
+fn pathname_is_a_name_error_without_its_require() {
+    // The class is `require`-gated: no `require "pathname"`, no `Pathname`.
+    let result = run_ruby("puts Pathname.new(\"/x\")\n");
+    assert!(!result.status.success());
+    assert!(
+        result.stderr.contains("uninitialized constant Pathname")
+            || result.stderr.contains("Pathname"),
+        "stderr: {}",
+        result.stderr
+    );
+}
+
+#[test]
 fn ivars_store_real_per_instance_state() {
     let result = run_ruby(
         r#"

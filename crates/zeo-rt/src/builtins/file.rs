@@ -263,7 +263,7 @@ fn fnmatch(pattern: &str, name: &str) -> bool {
 /// `File.basename(path)` / `File.basename(path, suffix)`. Pure string work:
 /// trailing slashes are stripped first (`File.basename("/a/b/")` is `"b"`),
 /// and a `".*"` suffix means "any extension".
-fn basename_of(path: &str, suffix: Option<&str>) -> String {
+pub(crate) fn basename_of(path: &str, suffix: Option<&str>) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
         // The path was "/" (or all slashes) -- basename is "/".
@@ -290,7 +290,7 @@ fn basename_of(path: &str, suffix: Option<&str>) -> String {
 
 /// `File.dirname` -- everything before the last `/`, or `"."` when there is
 /// no `/` at all.
-fn dirname_of(path: &str) -> String {
+pub(crate) fn dirname_of(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
         return if path.starts_with('/') {
@@ -313,7 +313,7 @@ fn dirname_of(path: &str) -> String {
 /// A TRAILING dot is an extension of its own: `File.extname("foo.")` is
 /// `"."` (oracle-verified -- and worth stating, because it reads like an
 /// off-by-one; `".."` and `"."` are still empty, since their dots lead).
-fn extname_of(path: &str) -> String {
+pub(crate) fn extname_of(path: &str) -> String {
     let base = basename_of(path, None);
     // A name of nothing but dots has no extension (`.`, `..`).
     if base.chars().all(|c| c == '.') {
@@ -328,7 +328,7 @@ fn extname_of(path: &str) -> String {
 /// `File.expand_path` -- absolutize against `base` (default: cwd), resolving
 /// `~`, `.` and `..` LEXICALLY (no symlink resolution, which is
 /// `realpath`'s job, matching CRuby).
-fn expand_path_of(path: &str, base: Option<&str>) -> Result<String, Signal> {
+pub(crate) fn expand_path_of(path: &str, base: Option<&str>) -> Result<String, Signal> {
     let start = if path.starts_with('/') {
         String::new()
     } else if let Some(rest) = path.strip_prefix('~') {

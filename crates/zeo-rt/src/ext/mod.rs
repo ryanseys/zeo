@@ -78,6 +78,8 @@ pub(crate) mod json;
 pub(crate) mod monitor;
 #[cfg(feature = "ext-openssl")]
 pub(crate) mod openssl;
+#[cfg(feature = "ext-pathname")]
+pub(crate) mod pathname;
 #[cfg(feature = "ext-psych")]
 pub(crate) mod psych;
 #[cfg(feature = "ext-socket")]
