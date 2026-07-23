@@ -6,11 +6,11 @@ milestones `bundle --version` → `bundle install --local` → network install.
 **Status (2026-07-23): does NOT compile yet, but the architecture is now in
 place.** The dominant architectural blockers — `rbconfig`, non-top-level
 `require`, and now `securerandom` (with `Random::Formatter` + OS-entropy
-`Random.urandom` + `extend`-onto-class/module) — are fixed, as is the dynamic
-`load`/`require` compiler gap. rubygems now loads its require graph to
-`rubygems.rb:940`, a `loc, = expr` multi-assignment lowering gap. What remains is
-the grind: a few small lowering gaps then vendoring/implementing the missing
-stdlib (`fileutils`/`pathname`/... — see the worklist), one feature at a time.
+`Random.urandom` + `extend`-onto-class/module) — are fixed, as are the dynamic
+`load`/`require` and `a, = rhs` multi-assign compiler gaps. rubygems now loads
+its require graph to `rubygems.rb:410`, a `rescue *splat` lowering gap. What
+remains is the grind: a few small lowering gaps then vendoring/implementing the
+missing stdlib (`fileutils`/`pathname`/... — see the worklist), one at a time.
 
 ## Setup
 
@@ -115,12 +115,20 @@ LoadError` idiom works. `lower_call_general` and `Loader::lower_require_statemen
 splice at compile time. Zero conformance regressions (2335/2335). e2e +
 oracle-verified messages.
 
-**Current blocker (compiler, NOT stdlib):** `spec_tuples, = fetcher.spec_for_
-dependency dependency` (`rubygems.rb:940`) — the **`loc, = expr`** gap: a
-single-target multi-assignment with a trailing comma (destructure the first
-element). Same construct as `forwardable.rb:213`. `expected `*name` as a
-multi-assignment's splat target` — the lowering needs to accept an EMPTY splat
-tail (`a, = rhs` ≡ `a, *_ = rhs`, taking `rhs[0]`).
+**Multi-assign trailing comma — ✅ FIXED (2026-07-23).** `spec_tuples, = expr`
+(`rubygems.rb:940`), `loc, = caller_locations` (`forwardable.rb:213`), and every
+`a, = rhs` / `a, b, = rhs` form: prism models the bare trailing comma as an
+`ImplicitRestNode` (an anonymous rest that takes the named lefts and discards
+the tail), which `lower_multi_target_group` (`zeo-hir/src/lower/assign.rs`) now
+maps to the same anonymous-splat `Some(None)` a written `a, *_ = rhs` uses. 42
+zeo-vs-oracle probes (trailing comma × nested/ivar/index/splat-rhs/return
+contexts) all pass; e2e added; zero conformance regressions.
+
+**Current blocker (compiler, NOT stdlib):** `rescue *yaml_errors => e`
+(`rubygems.rb:410`) — a **splat-rescue**: a `rescue` clause whose exception-class
+list is a splatted array (`rescue *array => e`), rather than literal class
+constants. zeo's rescue lowering expects literal class references; it needs to
+accept a runtime array of classes to rescue.
 
 **Missing pure-Ruby stdlib — vendor into `gems/`** (each sits on File/Dir/
 Process/IO that zeo largely has; ordered by the `bundle --version` → install
@@ -146,11 +154,13 @@ path):
 
 **Lowering gaps in ALREADY-vendored gems** (surfaced now that the graph reaches
 them; each small):
+- `rescue *yaml_errors => e` (`rubygems.rb:410`) — splat-rescue (current
+  blocker; a `rescue` over a runtime array of exception classes).
 - `shellwords.rb:66` — a module-level construct not lowered (triage).
 - `delegate.rb:47` — `alias __raise__ raise` (alias of an inherited builtin —
   the partially-handled alias family).
-- `forwardable.rb:213` — `loc, = caller_locations(2,1)` (single-target
-  multi-assign with a trailing comma).
+- `forwardable.rb:213` — `loc, = caller_locations(2,1)` — ✅ FIXED (the multi-
+  assign trailing-comma fix above).
 - `expr::CONST` / ScopedConstRead — still open, 1 site, small.
 
 ## Sequencing recommendation

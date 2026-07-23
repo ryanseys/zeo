@@ -421,6 +421,12 @@ pub(crate) fn lower_multi_target_group(
                 ))
             }))
         }
+        // A bare trailing comma with no splat -- `a, = rhs`, `a, b, = rhs` --
+        // is prism's `ImplicitRestNode`: an anonymous rest that takes the
+        // `before` elements and discards the tail. Identical meaning to a
+        // written `a, *_ = rhs` / `a, * = rhs`, so it lowers to the same
+        // anonymous-splat `Some(None)`.
+        Some(n) if n.as_implicit_rest_node().is_some() => Some(None),
         Some(n) => {
             let splat = n
                 .as_splat_node()
