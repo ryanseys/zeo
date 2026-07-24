@@ -393,6 +393,10 @@ fn process_top_stmt(
         for s in live {
             process_top_stmt(compiler, s, false, main_statements, pre_exec)?;
         }
+    } else if try_prepend_call_edit(compiler, stmt) {
+        // A reachable `C.prepend(M)` -- recorded as a compile-time ancestry edit
+        // (see `try_prepend_call_edit`); the call emits nothing, exactly as a
+        // class-body `prepend M` produces no runtime statement.
     } else {
         main_statements.push(stmt);
     }
@@ -438,6 +442,88 @@ fn splice_dead_rescues(compiler: &Compiler, stmts: &[NodeId]) -> Vec<NodeId> {
         }
     }
     out
+}
+
+/// Recognizes a reachable `C.prepend(M, ...)` CALL and applies it as the same
+/// compile-time ancestry edit a class-body `prepend M` makes -- pushing each
+/// module onto `C`'s `prepends`, which `mro` flattens BEFORE `C` (so `M`'s
+/// instance methods override `C`'s own and `super` inside `M` reaches `C`).
+///
+/// A whole-program AOT target has a FIXED load-time reachability, so a reachable
+/// `prepend` call is a static structural fact about the class ancestry, not a
+/// runtime metaprogramming event -- exactly as static as the class-body form,
+/// which lowers to the identical `prepends` edit. Recognizing the call form here
+/// (instead of leaving it a runtime send, which zeo has no static MRO to honor)
+/// means dispatch and `super` see the prepend through the ordinary flattened MRO.
+///
+/// Precise: the receiver must resolve to a known class/module and EVERY argument
+/// must be a bare module constant (no splat, block, kwargs, or `&.`). Anything
+/// else returns `false`, leaving it an ordinary runtime call. Returns `true` when
+/// it recorded the edit, so the caller drops the call from the emitted stream
+/// (`prepend` returns its receiver, virtually never used at these statement-
+/// position load-time sites). Ordering matches the class-body form: arguments are
+/// pushed left-to-right, identical to `prepend A, B` lowering to `[Prepend(A),
+/// Prepend(B)]`.
+fn try_prepend_call_edit(compiler: &mut Compiler, stmt: NodeId) -> bool {
+    // Resolve the receiver class and every module argument while `compiler` is
+    // only shared-borrowed (reading the HIR + the class registry), then apply
+    // the ancestry edit under a fresh mutable borrow.
+    let (target, modules) = {
+        let HirNode::Call {
+            receiver: Some(recv),
+            name,
+            args,
+            kwargs,
+            block,
+            block_arg,
+            safe,
+        } = &compiler.hir[stmt]
+        else {
+            return false;
+        };
+        if name != "prepend"
+            || !kwargs.is_empty()
+            || block.is_some()
+            || block_arg.is_some()
+            || *safe
+        {
+            return false;
+        }
+        let Some(target) = const_node_class(compiler, *recv) else {
+            return false;
+        };
+        let mut modules = Vec::with_capacity(args.len());
+        for a in args {
+            let ArrayElem::Single(node) = a else {
+                return false;
+            };
+            match const_node_class(compiler, *node) {
+                Some(cid) => modules.push(cid),
+                None => return false,
+            }
+        }
+        if modules.is_empty() {
+            return false;
+        }
+        (target, modules)
+    };
+    for m in modules {
+        compiler.classes[target.0 as usize].prepends.push(m);
+    }
+    true
+}
+
+/// The class/module a bare-constant expression names, or `None` for anything
+/// that isn't a compile-time-resolvable class reference. Used to statically
+/// resolve a `prepend` call's receiver and module arguments.
+fn const_node_class(compiler: &Compiler, node: NodeId) -> Option<ClassId> {
+    match &compiler.hir[node] {
+        HirNode::ClassRef(name) => compiler.resolve_class(name, &[], 0),
+        HirNode::QualifiedConstRead(scope, name) => {
+            compiler.resolve_class(&format!("{scope}::{name}"), &[], 0)
+        }
+        _ => None,
+    }
 }
 
 /// Inline a class-body `if`/`unless` whose guard is compile-time decidable
