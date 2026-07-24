@@ -1,0 +1,28 @@
+[package]
+name = "zeo-macros"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# The `ruby_class! { ... }` proc-macro: parses the DSL with the shared
+# zeo-class-spec grammar and emits the runtime code (method fns, ClassId-keyed
+# lookup tables, constant installers, and the linkme registration). See
+# src/lib.rs.
+zeo-class-spec.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+
+[dev-dependencies]
+# The isolated expand test mirrors the runtime contract (BuiltinClassTable +
+# the BUILTIN_TABLES distributed slice) with stubs, so linkme is needed to
+# prove the emitted registration actually collects at link time.
+linkme.workspace = true
+
+[lints]
+workspace = true

@@ -4,6 +4,7 @@ members = [
     "crates/zeo",
     "crates/zeo-abi",
     "crates/zeo-class-spec",
+    "crates/zeo-macros",
     "crates/zeo-enc",
     "crates/zeo-hir",
     "crates/zeo-rt",
@@ -28,6 +29,7 @@ license = "MIT OR Apache-2.0"
 zeo = { path = "crates/zeo" }
 zeo-abi = { path = "crates/zeo-abi" }
 zeo-class-spec = { path = "crates/zeo-class-spec" }
+zeo-macros = { path = "crates/zeo-macros" }
 zeo-enc = { path = "crates/zeo-enc" }
 zeo-fiber = { path = "crates/zeo-fiber" }
 zeo-hir = { path = "crates/zeo-hir" }
@@ -58,6 +60,10 @@ parking_lot = "0.12"
 indexmap = "2"
 libc = "0.2"
 pastey = "0.1"
+# Link-time auto-registration: the `ruby_class!` macro registers each class's
+# method/constant table into a `BUILTIN_TABLES` distributed slice the runtime
+# collects, replacing the hand-written `ClassId`->lookup match tables.
+linkme = "0.3"
 getrandom = "0.3"
 corosensei = "0.3"
 # The multibyte CJK mapping backend (zeo-enc): Shift_JIS/EUC-JP/GBK/Big5
