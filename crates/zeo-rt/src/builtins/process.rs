@@ -51,6 +51,39 @@ ruby_module! {
         }
         Ok(RubyValue::Int(pid as i64))
     }
+    // `Process.fork [{ block }]` -- the high-level fork, defined in terms of the
+    // `_fork` primitive: it DISPATCHES `_fork` through the receiver, so a
+    // prepended override (connection_pool's `ForkTracker`, whose `super` reaches
+    // the native `_fork` above) is honored -- which is the whole reason gems
+    // hook `_fork` rather than `fork`. Parent: the child pid. Child WITH a
+    // block: run it, then exit through the SAME at_exit/finalizer epilogue the
+    // top level uses (a `SystemExit` status is respected; any other uncaught
+    // exception is reported and exits 1). Child with NO block: `nil`, so the
+    // caller drives the child itself.
+    def self.fork(recv, args, block) {
+        arity!(args, 0);
+        let pid = crate::dispatch::send_value(recv, crate::Symbol::intern("_fork"), &[], None)?;
+        if matches!(pid, RubyValue::Int(0)) {
+            if let Some(RubyValue::Proc(p)) = block {
+                let outcome = p.call(&[]);
+                crate::exec::run_at_exit();
+                crate::builtins::weak::run_finalizers();
+                match outcome {
+                    Ok(_) => std::process::exit(0),
+                    Err(Signal::Raise(exc)) => {
+                        if let Some(code) = crate::builtins::kernel::system_exit_status(&exc) {
+                            std::process::exit(code);
+                        }
+                        crate::builtins::exception::report_uncaught(&exc);
+                        std::process::exit(1);
+                    }
+                    Err(_) => std::process::exit(1),
+                }
+            }
+            return Ok(RubyValue::Nil);
+        }
+        Ok(pid)
+    }
     // `Process.kill(sig, *pids)` -- resolve the signal, deliver to each pid,
     // answer how many were signaled. Self-delivery of a signal whose `trap`
     // registered a Proc runs that handler synchronously INSTEAD of a real
