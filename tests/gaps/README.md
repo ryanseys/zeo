@@ -18,13 +18,15 @@ in **`Mode::Xfail`**:
 - A gap that still **diverges** from its golden → the test **PASSES** (the
   known failure is still there — expected).
 - A gap that starts **matching** ruby → the test **FAILS** with a "GAP FIXED —
-  promote" message. That's the signal to move it into the corpus:
+  promote" message. Promote it into the zeo-authored suite (`tests/`) with:
 
   ```sh
-  git mv tests/gaps/foo.rb* tests/spinel/
-  # if foo's output embeds its source path, re-bless under its new home:
-  ZEO_BLESS=1 cargo test -p zeo --test spinel -- foo
+  scripts/promote-gap.sh foo   # moves foo.rb + sidecars to tests/, verifies it
   ```
+
+  Promote to **`tests/`**, not `tests/spinel/` — that dir mirrors the vendored
+  spinel corpus, and a spinel-origin gap re-promotes on its own the next time
+  `scripts/import-spinel-corpus.sh` triages it.
 
 ## Goldens are recorded from ruby, never hand-written
 

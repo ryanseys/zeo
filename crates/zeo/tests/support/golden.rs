@@ -344,9 +344,14 @@ pub fn run_golden(
         Mode::Pass if matched => Ok(()),
         Mode::Pass => Err(mismatch_message(rb, &actual, &expected_out, &expected_err, run_cwd).into()),
         Mode::Xfail if matched => Err(format!(
-            "GAP FIXED -- {} now matches ruby. Promote it: move its .rb (+ sidecars) \
-             from tests/gaps/ to tests/spinel/.",
-            rb.file_name().unwrap_or(rb.as_os_str()).to_string_lossy()
+            "GAP FIXED -- {stem} now matches ruby. Promote it: \
+             `scripts/promote-gap.sh {stem}` (moves it + its sidecars into tests/, \
+             the zeo-authored suite -- NOT tests/spinel/, which mirrors the vendored \
+             spinel corpus).",
+            stem = rb
+                .file_stem()
+                .unwrap_or(rb.as_os_str())
+                .to_string_lossy()
         )
         .into()),
         Mode::Xfail => Ok(()), // still diverges: expected.
