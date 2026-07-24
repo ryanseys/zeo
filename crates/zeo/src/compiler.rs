@@ -287,6 +287,16 @@ pub struct Compiler {
     /// head exactly as before. A NESTED `ClassDef` appears as a marker in
     /// its parent's site list, so inner bodies run mid-parent-body.
     pub class_body_sites: Vec<ClassBodySite>,
+    /// Whole-program map `(box_id, fully-qualified name) -> is_module`, built
+    /// by `analyze` from a read-only scan of EVERY `class`/`module` definition
+    /// (all `if` branches included -- it is only a lookup table). Lets
+    /// `register_class` resolve a compact-path container that is defined LATER
+    /// in the flattened statement list than the definition referencing it
+    /// (`class Gem::Security::Policy` reopened by a deferred require before its
+    /// `module Gem::Security` forward-declaration registers): the container's
+    /// KIND is known, so a shell is created on demand. A container absent from
+    /// this map is genuinely undefined and still errors.
+    pub shell_kinds: HashMap<(u32, String), bool>,
 }
 
 /// See [`Compiler::class_body_sites`].
@@ -333,6 +343,7 @@ impl Compiler {
             scopes: Vec::new(),
             box_surrogates: HashMap::new(),
             class_body_sites: Vec::new(),
+            shell_kinds: HashMap::new(),
         };
         // The CRuby-exact hierarchy is DECLARED in the ABI table (Phase
         // 17.1): superclass edges (`Integer < Numeric`, `Class < Module`,

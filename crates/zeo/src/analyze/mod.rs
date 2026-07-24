@@ -43,6 +43,14 @@ fn analyze_impl(hir: Hir, root: NodeId) -> Result<Analyzed, String> {
     let statements = statements.clone();
     let builtin_exceptions_len = compiler.hir.builtin_exceptions_len;
 
+    // Whole-program kind map for forward-container resolution (see
+    // `Compiler::shell_kinds` and `resolve_or_create_container`): a read-only
+    // scan of every class/module definition, run before the ordered
+    // registration walk below.
+    let mut shell_kinds = HashMap::new();
+    collect_shell_kinds(&compiler.hir, &statements, &[], 0, &mut shell_kinds);
+    compiler.shell_kinds = shell_kinds;
+
     let mut main_statements = Vec::new();
     // `BEGIN { ... }` bodies, hoisted to run before ANY main statement --
     // collected in source order here and prepended below, which is the
@@ -753,6 +761,90 @@ fn literal_class_id(node: &HirNode) -> Option<ClassId> {
     })
 }
 
+/// Read-only scan populating `Compiler::shell_kinds`: records every
+/// `class`/`module` definition's fully-qualified name -> `is_module`,
+/// descending through nested bodies, BOTH `if` branches (over-collection is
+/// harmless -- it is only a lookup table, and shells are created on demand by
+/// TAKEN definitions), box scopes, and statement-group wrappers.
+fn collect_shell_kinds(
+    hir: &Hir,
+    stmts: &[NodeId],
+    scope: &[String],
+    box_id: u32,
+    out: &mut HashMap<(u32, String), bool>,
+) {
+    for &id in stmts {
+        match &hir[id] {
+            HirNode::ClassDef {
+                name,
+                body,
+                is_module,
+                ..
+            } => {
+                let fq = if scope.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{}::{}", scope.join("::"), name)
+                };
+                out.insert((box_id, fq), *is_module);
+                let mut inner = scope.to_vec();
+                inner.push(name.clone());
+                collect_shell_kinds(hir, body, &inner, box_id, out);
+            }
+            HirNode::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_shell_kinds(hir, then_body, scope, box_id, out);
+                collect_shell_kinds(hir, else_body, scope, box_id, out);
+            }
+            // A box's body is a fresh top-level scope under the box's id.
+            HirNode::BoxScope { box_id: bx, body } => {
+                collect_shell_kinds(hir, body, &[], *bx, out);
+            }
+            HirNode::Seq(body) | HirNode::PreExec(body) | HirNode::Eval(body) => {
+                collect_shell_kinds(hir, body, scope, box_id, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Resolve a compact-path CONTAINER (`Gem::Security` in `Gem::Security::Policy`)
+/// or, when it is defined ELSEWHERE in the program (present in
+/// `Compiler::shell_kinds`) but not yet registered at this list position,
+/// create it -- and any missing ancestor segment -- as a bare SHELL. A later
+/// real definition reopens the shell through `register_class`'s reopen arm,
+/// establishing its superclass/body (the same bare-open-then-reopen path a
+/// `class Sub` held only to nest a class already takes). Returns `None` for a
+/// genuinely-undefined container, so the caller keeps the "unknown
+/// class/module" error that catches typos.
+fn resolve_or_create_container(compiler: &mut Compiler, path: &str, box_id: u32) -> Option<ClassId> {
+    if let Some(cid) = compiler.resolve_class(path, &[], box_id) {
+        return Some(cid);
+    }
+    // Only a name the program defines somewhere gets a forward shell; a truly
+    // unknown container falls through to the caller's error.
+    let is_module = *compiler.shell_kinds.get(&(box_id, path.to_string()))?;
+    let cp = crate::constpath::ConstPath::parse(path);
+    let (lexical_parent, leaf, qualified) = match cp.scope() {
+        Some(prefix) => {
+            let parent = resolve_or_create_container(compiler, prefix, box_id)?;
+            (Some(parent), cp.base().to_string(), true)
+        }
+        None if cp.is_top_anchored() => (None, cp.base().to_string(), true),
+        None => (None, path.to_string(), false),
+    };
+    let parent = if is_module { None } else { Some(OBJECT_CLASS) };
+    let cid = compiler.add_class(leaf, parent, is_module);
+    let ci = &mut compiler.classes[cid.0 as usize];
+    ci.lexical_parent = lexical_parent;
+    ci.qualified_def = qualified;
+    ci.box_id = box_id;
+    Some(cid)
+}
+
 // Every parameter is a distinct piece of the definition site (same
 // posture as `register_method`); `def_node` is the site's own `ClassDef`
 // marker for document-order body execution (`Compiler::class_body_sites`).
@@ -772,11 +864,18 @@ fn register_class(
         // `A::B` / `::A::B` -- defined INSIDE a named scope, which must
         // already exist.
         Some(prefix) => {
-            let parent = compiler.resolve_class(prefix, cref, box_id).ok_or_else(|| {
-                format!(
-                    "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
-                )
-            })?;
+            let parent = compiler
+                .resolve_class(prefix, cref, box_id)
+                // A container defined LATER in the flattened statement list
+                // than this definition (a deferred require's reopen preceding
+                // the forward-declaration it depends on) is created on demand as
+                // a shell -- see `resolve_or_create_container`.
+                .or_else(|| resolve_or_create_container(compiler, prefix, box_id))
+                .ok_or_else(|| {
+                    format!(
+                        "unknown class/module `{prefix}` in `{name}` (must be defined earlier in the file)"
+                    )
+                })?;
             (Some(parent), path.base().to_string(), true)
         }
         // `::Foo` -- anchored at the top level, so NOT nested in the enclosing
